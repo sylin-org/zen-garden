@@ -1,30 +1,52 @@
 //! Routing algorithm: select the optimal Ollama instance for a request.
 //!
-//! Core principle: route to the **lowest VRAM tier** that can serve the
-//! model. Overflow goes up, never down. Within a tier, pick the instance
-//! with the lowest queue depth.
+//! ## Strategy: Performance-first with demand-based reservation
+//!
+//! **Default (performance mode)**: flatten all candidates across tiers,
+//! sort by fitness score (fastest first), then VRAM (higher = faster
+//! hardware), then queue depth.  The most capable stone always wins —
+//! delivering maximum throughput.
+//!
+//! **Reservation mode**: activated dynamically when the orchestrator
+//! observes recent requests for large models that exclusively need
+//! higher-tier stones.  When active, small-model requests prefer
+//! lower-tier candidates first, keeping the high-tier stone available
+//! for the large models that actually need it.
+//!
+//! Key: reservation is based on actual request demand (recent traffic),
+//! NOT on model availability in the catalog.  If nobody is requesting
+//! large models, performance mode stays active and the fastest stone
+//! handles everything.
 //!
 //! Safety net: if no tier has enough VRAM, fall back to all tiers
-//! (highest-first in degraded mode). A model installed on a stone is
+//! (highest-first in degraded mode).  A model installed on a stone is
 //! always routable — the user explicitly chose to install it.
 
 use super::fitness::GpuMatrix;
 use super::types::{ModelInfo, OllamaInstance, RoutingDecision, RoutingError, Tier};
 use std::collections::HashMap;
 
+/// A routing candidate: one instance on one tier.
+struct Candidate<'a> {
+    instance: &'a OllamaInstance,
+    tier: &'a Tier,
+    /// True when the tier's VRAM is below the model's requirement (safety net).
+    is_degraded: bool,
+}
+
 /// Select the best instance for a model request.
 ///
 /// The algorithm:
-/// 1. Look up the model's VRAM requirement.
-/// 2. Find preferred tiers with enough VRAM (sorted ascending).
-/// 3. In the lowest preferred tier, pick the instance with the model
-///    available — sorted by **fitness score** (advisory) then queue depth.
-/// 4. If all instances in that tier are saturated, escalate to the next tier.
-/// 5. **Safety net**: if no tier has enough VRAM, fall back to ALL tiers
-///    (highest-first). A model installed on a stone is always routable —
-///    the user explicitly chose to install it.
-/// 6. Only returns error if no instance has the model at all, all
-///    instances are busy, or no healthy instances exist.
+/// 1. Collect healthy candidates (instance + tier) that have the model.
+/// 2. Filter out fitness-blocked candidates.
+/// 3. **Demand check**: if recent traffic includes large models that
+///    exclusively need higher tiers AND the current model fits on lower
+///    tiers → activate reservation (prefer lower tiers first).
+/// 4. Otherwise → performance-first (sort by fitness, then VRAM desc).
+/// 5. Pick the first candidate under `max_queue`, or the least-loaded
+///    as a safety fallback.
+/// 6. **Safety net**: if no tier has enough VRAM, candidates from
+///    smaller tiers are still included (marked degraded).
 pub fn select_instance(
     model: &str,
     instances: &HashMap<String, OllamaInstance>,
@@ -32,148 +54,183 @@ pub fn select_instance(
     tiers: &[Tier],
     max_queue: u32,
     fitness: Option<&GpuMatrix>,
+    recent_demand: &HashMap<String, f64>,
 ) -> Result<RoutingDecision, RoutingError> {
-    // Do we have any healthy instances at all?
+    // ── Basics ──────────────────────────────────────────────────
+
     let any_healthy = instances.values().any(|i| i.health.is_routable());
     if !any_healthy {
         return Err(RoutingError::NoHealthyInstances);
     }
 
-    // Look up model VRAM requirement.
-    // `None` = model has never been loaded so we have no real measurement.
     let vram_needed: Option<u64> = models.get(model).and_then(|m| m.vram_bytes);
 
-    // If model is completely unknown, try to find it on any instance
     let model_exists = instances
         .values()
         .any(|i| i.models_available.iter().any(|m| m == model));
-
     if !model_exists && !models.contains_key(model) {
         return Err(RoutingError::ModelNotFound(model.to_string()));
     }
 
-    // Find preferred tiers (VRAM >= needed), already sorted ascending.
-    // When VRAM requirement is unknown (None), every tier is viable —
-    // the model is on the instance so Ollama already loaded it successfully.
-    //
-    // Safety net: if no tier has enough VRAM, fall back to ALL tiers
-    // (highest-first). A model that exists on a stone MUST be routable —
-    // the user explicitly installed it, so we honour that decision.
-    let (preferred, fallback): (Vec<&Tier>, Vec<&Tier>) = match vram_needed {
-        Some(needed) => {
-            let pref: Vec<&Tier> = tiers.iter().filter(|t| t.vram_bytes >= needed).collect();
-            let fb: Vec<&Tier> = tiers
-                .iter()
-                .filter(|t| t.vram_bytes < needed)
-                .rev()
-                .collect();
-            (pref, fb)
+    // ── Collect candidates ──────────────────────────────────────
+
+    let lowest_tier_vram = tiers.first().map(|t| t.vram_bytes).unwrap_or(0);
+    let mut candidates: Vec<Candidate> = Vec::new();
+
+    for tier in tiers {
+        let is_degraded = vram_needed.map_or(false, |v| tier.vram_bytes < v);
+        for ep in &tier.instance_endpoints {
+            let Some(inst) = instances.get(ep.as_str()) else {
+                continue;
+            };
+            if !inst.health.is_routable() {
+                continue;
+            }
+            if !inst.models_available.iter().any(|m| m == model) {
+                continue;
+            }
+            candidates.push(Candidate {
+                instance: inst,
+                tier,
+                is_degraded,
+            });
         }
-        None => (tiers.iter().collect(), vec![]),
-    };
+    }
 
-    // Chain preferred tiers first, then fallback (degraded) tiers.
-    let viable_tiers: Vec<&Tier> = preferred.iter().chain(fallback.iter()).copied().collect();
-
-    if viable_tiers.is_empty() {
-        // No tiers defined at all — every instance is ungrouped.
+    if candidates.is_empty() {
         return Err(RoutingError::AllInstancesBusy {
             model: model.to_string(),
         });
     }
 
-    let preferred_count = preferred.len();
-    let lowest_tier_vram = tiers.first().map(|t| t.vram_bytes).unwrap_or(0);
+    // ── Fitness filter ──────────────────────────────────────────
 
-    // Try each tier: preferred (lowest-first), then fallback (highest-first)
     let mut all_blocked = false;
-    for (tier_idx, tier) in viable_tiers.iter().enumerate() {
-        // Find healthy instances in this tier that have the model
-        let mut candidates: Vec<&OllamaInstance> = tier
-            .instance_endpoints
-            .iter()
-            .filter_map(|ep| instances.get(ep.as_str()))
-            .filter(|i| i.health.is_routable() && i.models_available.iter().any(|m| m == model))
-            .collect();
-
-        if candidates.is_empty() {
-            continue;
-        }
-
-        // Sort by fitness score (descending) then queue depth (ascending).
-        // Fitness is advisory for Fast/Degraded/Vetoed: deprioritised but
-        // still routable as last resort. Blocked is hard: filtered out.
-        if let Some(f) = fitness {
-            candidates.retain(|i| {
-                // Keep candidate unless ALL its fitness entries for this model are Blocked.
-                // (A model may have multiple capabilities; blocked in one doesn't block all.)
-                let dominated = f
-                    .entries
-                    .iter()
-                    .filter(|e| e.model == model && e.endpoint == i.endpoint)
-                    .all(|e| e.verdict.is_blocked());
-                let has_entries = f
-                    .entries
-                    .iter()
-                    .any(|e| e.model == model && e.endpoint == i.endpoint);
-                // Only block if we have fitness data AND all entries are Blocked.
-                !(has_entries && dominated)
-            });
-        }
-
-        if candidates.is_empty() {
-            // All candidates in this tier were fitness-blocked.
-            // Track this so we can return ModelBlocked instead of AllInstancesBusy.
+    if let Some(f) = fitness {
+        let pre_len = candidates.len();
+        candidates.retain(|c| {
+            let dominated = f
+                .entries
+                .iter()
+                .filter(|e| e.model == model && e.endpoint == c.instance.endpoint)
+                .all(|e| e.verdict.is_blocked());
+            let has_entries = f
+                .entries
+                .iter()
+                .any(|e| e.model == model && e.endpoint == c.instance.endpoint);
+            !(has_entries && dominated)
+        });
+        if candidates.is_empty() && pre_len > 0 {
             all_blocked = true;
-            continue;
         }
+    }
 
-        candidates.sort_by(|a, b| {
-            let fa = fitness
-                .and_then(|f| f.fitness_score(model, &a.endpoint))
-                .unwrap_or(25); // Unknown score when no fitness data
-            let fb = fitness
-                .and_then(|f| f.fitness_score(model, &b.endpoint))
-                .unwrap_or(25);
-            fb.cmp(&fa).then(a.queue_depth.cmp(&b.queue_depth))
+    if candidates.is_empty() {
+        return if all_blocked {
+            Err(RoutingError::ModelBlocked(model.to_string()))
+        } else {
+            Err(RoutingError::AllInstancesBusy {
+                model: model.to_string(),
+            })
+        };
+    }
+
+    // ── Demand-based reservation check ──────────────────────────
+    //
+    // Reservation activates when ALL of:
+    //   1. The requested model fits on lower-tier stones.
+    //   2. Candidates exist on lower tiers for this model.
+    //   3. Recent demand includes a DIFFERENT model whose VRAM
+    //      requirement exceeds the lowest tier (i.e. it exclusively
+    //      needs high-tier stones).
+    //
+    // When active, lower-tier candidates are tried first so the
+    // high-tier stone stays available for the large model traffic.
+
+    let model_fits_low = vram_needed.map_or(true, |v| v <= lowest_tier_vram);
+    let has_low_candidates = candidates
+        .iter()
+        .any(|c| c.tier.vram_bytes == lowest_tier_vram && !c.is_degraded);
+
+    let reserve = model_fits_low
+        && has_low_candidates
+        && recent_demand.iter().any(|(dm, _)| {
+            dm != model
+                && models
+                    .get(dm)
+                    .and_then(|info| info.vram_bytes)
+                    .map_or(false, |v| v > lowest_tier_vram)
         });
 
-        // Pick the least-loaded instance (respect max_queue if set)
-        let best = if max_queue > 0 {
-            candidates
-                .iter()
-                .find(|i| i.queue_depth < max_queue)
-                .or(candidates.first())
-        } else {
-            candidates.first()
-        };
+    // ── Sort candidates ─────────────────────────────────────────
 
-        if let Some(inst) = best {
-            let is_degraded = tier_idx >= preferred_count;
-            return Ok(RoutingDecision {
-                target_endpoint: inst.endpoint.clone(),
-                stone_name: inst.stone_name.clone(),
-                model_name: model.to_string(),
-                tier_label: if is_degraded {
-                    format!("{}(degraded)", tier.label)
-                } else {
-                    tier.label.clone()
-                },
-                was_overflow: tier_idx > 0 && !is_degraded,
-                lease_acquired: tier.vram_bytes > lowest_tier_vram
-                    && vram_needed.unwrap_or(0) > lowest_tier_vram,
-            });
-        }
-    }
+    let score = |ep: &str| -> u32 {
+        fitness
+            .and_then(|f| f.fitness_score(model, ep))
+            .unwrap_or(25)
+    };
 
-    // Distinguish: all candidates fitness-blocked vs genuinely busy.
-    if all_blocked {
-        Err(RoutingError::ModelBlocked(model.to_string()))
+    if reserve {
+        // Reservation: non-degraded first, idle before busy, then lower
+        // VRAM tiers first, then fitness, then queue depth.
+        candidates.sort_by(|a, b| {
+            a.is_degraded
+                .cmp(&b.is_degraded)
+                .then_with(|| {
+                    (a.instance.queue_depth > 0).cmp(&(b.instance.queue_depth > 0))
+                })
+                .then_with(|| a.tier.vram_bytes.cmp(&b.tier.vram_bytes))
+                .then_with(|| score(&b.instance.endpoint).cmp(&score(&a.instance.endpoint)))
+                .then_with(|| a.instance.queue_depth.cmp(&b.instance.queue_depth))
+        });
     } else {
-        Err(RoutingError::AllInstancesBusy {
-            model: model.to_string(),
-        })
+        // Performance-first: non-degraded first, idle before busy, then
+        // highest fitness, highest VRAM, then lowest queue depth.
+        candidates.sort_by(|a, b| {
+            a.is_degraded
+                .cmp(&b.is_degraded)
+                .then_with(|| {
+                    (a.instance.queue_depth > 0).cmp(&(b.instance.queue_depth > 0))
+                })
+                .then_with(|| score(&b.instance.endpoint).cmp(&score(&a.instance.endpoint)))
+                .then_with(|| b.tier.vram_bytes.cmp(&a.tier.vram_bytes))
+                .then_with(|| a.instance.queue_depth.cmp(&b.instance.queue_depth))
+        });
     }
+
+    // ── Pick ────────────────────────────────────────────────────
+
+    let chosen = if max_queue > 0 {
+        candidates
+            .iter()
+            .find(|c| c.instance.queue_depth < max_queue)
+            .or_else(|| {
+                // All saturated — pick globally least-loaded.
+                candidates.iter().min_by_key(|c| c.instance.queue_depth)
+            })
+    } else {
+        candidates.first()
+    };
+
+    let c = chosen.ok_or_else(|| RoutingError::AllInstancesBusy {
+        model: model.to_string(),
+    })?;
+
+    let uses_high_tier = c.tier.vram_bytes > lowest_tier_vram;
+    let fits_low = vram_needed.map_or(false, |v| v <= lowest_tier_vram);
+
+    Ok(RoutingDecision {
+        target_endpoint: c.instance.endpoint.clone(),
+        stone_name: c.instance.stone_name.clone(),
+        model_name: model.to_string(),
+        tier_label: if c.is_degraded {
+            format!("{}(degraded)", c.tier.label)
+        } else {
+            c.tier.label.clone()
+        },
+        was_overflow: reserve && uses_high_tier && fits_low,
+        lease_acquired: uses_high_tier && fits_low,
+    })
 }
 
 /// For merged `/api/tags` — find which instances have a given model.
@@ -231,8 +288,13 @@ mod tests {
         }
     }
 
+    fn no_demand() -> HashMap<String, f64> {
+        HashMap::new()
+    }
+
     #[test]
-    fn routes_to_lowest_tier() {
+    fn performance_first_prefers_higher_tier() {
+        // No demand → performance mode → higher VRAM (faster hardware) preferred.
         let mut instances = HashMap::new();
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
@@ -256,16 +318,118 @@ mod tests {
             },
         ];
 
-        // m7b should route to 8G tier
-        let decision = select_instance("m7b", &instances, &models, &tiers, 0, None).unwrap();
-        assert_eq!(decision.target_endpoint, "a");
+        // m7b should route to 24G tier (performance-first, higher VRAM)
+        let decision =
+            select_instance("m7b", &instances, &models, &tiers, 0, None, &no_demand()).unwrap();
+        assert_eq!(decision.target_endpoint, "b");
         assert!(!decision.was_overflow);
     }
 
     #[test]
-    fn overflow_to_higher_tier() {
+    fn reservation_activates_on_large_model_demand() {
+        // Recent demand for m70b (needs 20G) → reservation active →
+        // m7b routes to 8G tier to keep 24G free.
         let mut instances = HashMap::new();
-        // 8G instance doesn't have m70b
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b", model("m7b", 4)), ("m70b", model("m70b", 20))]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        let tiers = vec![
+            Tier {
+                vram_bytes: 8 * GIB,
+                label: "8G".into(),
+                instance_endpoints: vec!["a".into()],
+            },
+            Tier {
+                vram_bytes: 24 * GIB,
+                label: "24G".into(),
+                instance_endpoints: vec!["b".into()],
+            },
+        ];
+
+        let demand: HashMap<String, f64> = [("m70b".to_string(), 0.3)].into_iter().collect();
+
+        let decision =
+            select_instance("m7b", &instances, &models, &tiers, 0, None, &demand).unwrap();
+        assert_eq!(decision.target_endpoint, "a"); // 8G tier, reservation active
+        assert!(!decision.was_overflow);
+    }
+
+    #[test]
+    fn no_reservation_without_large_demand() {
+        // Demand only contains small models → no reservation →
+        // performance-first routes to 24G.
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b"], 0));
+
+        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+
+        let tiers = vec![
+            Tier {
+                vram_bytes: 8 * GIB,
+                label: "8G".into(),
+                instance_endpoints: vec!["a".into()],
+            },
+            Tier {
+                vram_bytes: 24 * GIB,
+                label: "24G".into(),
+                instance_endpoints: vec!["b".into()],
+            },
+        ];
+
+        // Demand only has m7b (small) — no large model in demand
+        let demand: HashMap<String, f64> = [("m7b".to_string(), 1.0)].into_iter().collect();
+        let decision =
+            select_instance("m7b", &instances, &models, &tiers, 0, None, &demand).unwrap();
+        assert_eq!(decision.target_endpoint, "b"); // 24G, performance-first
+    }
+
+    #[test]
+    fn reservation_overflow_when_lower_saturated() {
+        // Reservation active but 8G tier saturated → overflow to 24G.
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 64)); // saturated
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b", model("m7b", 4)), ("m70b", model("m70b", 20))]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+
+        let tiers = vec![
+            Tier {
+                vram_bytes: 8 * GIB,
+                label: "8G".into(),
+                instance_endpoints: vec!["a".into()],
+            },
+            Tier {
+                vram_bytes: 24 * GIB,
+                label: "24G".into(),
+                instance_endpoints: vec!["b".into()],
+            },
+        ];
+
+        let demand: HashMap<String, f64> = [("m70b".to_string(), 0.3)].into_iter().collect();
+
+        let decision =
+            select_instance("m7b", &instances, &models, &tiers, 64, None, &demand).unwrap();
+        assert_eq!(decision.target_endpoint, "b"); // overflow to 24G
+        assert!(decision.was_overflow);
+    }
+
+    #[test]
+    fn large_model_routes_to_viable_tier() {
+        let mut instances = HashMap::new();
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
 
@@ -288,7 +452,8 @@ mod tests {
         ];
 
         // m70b needs 20G, only viable tier is 24G
-        let decision = select_instance("m70b", &instances, &models, &tiers, 0, None).unwrap();
+        let decision =
+            select_instance("m70b", &instances, &models, &tiers, 0, None, &no_demand()).unwrap();
         assert_eq!(decision.target_endpoint, "b");
     }
 
@@ -309,8 +474,47 @@ mod tests {
             instance_endpoints: vec!["a".into(), "b".into()],
         }];
 
-        let decision = select_instance("m7b", &instances, &models, &tiers, 0, None).unwrap();
+        let decision =
+            select_instance("m7b", &instances, &models, &tiers, 0, None, &no_demand()).unwrap();
         assert_eq!(decision.target_endpoint, "b"); // lower queue depth
+    }
+
+    #[test]
+    fn performance_spreads_to_idle_stones() {
+        // 24G stone is busy (queue=1), 8G stones idle → pick idle 8G.
+        // When 24G returns to idle, it wins again.
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b"], 1)); // busy
+
+        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+
+        let tiers = vec![
+            Tier {
+                vram_bytes: 8 * GIB,
+                label: "8G".into(),
+                instance_endpoints: vec!["a".into()],
+            },
+            Tier {
+                vram_bytes: 24 * GIB,
+                label: "24G".into(),
+                instance_endpoints: vec!["b".into()],
+            },
+        ];
+
+        // 24G busy, 8G idle → goes to idle 8G stone
+        let d = select_instance("m7b", &instances, &models, &tiers, 64, None, &no_demand())
+            .unwrap();
+        assert_eq!(d.target_endpoint, "a");
+
+        // Now 24G is idle again → performance picks it
+        instances.get_mut("b").unwrap().queue_depth = 0;
+        let d = select_instance("m7b", &instances, &models, &tiers, 64, None, &no_demand())
+            .unwrap();
+        assert_eq!(d.target_endpoint, "b");
     }
 
     #[test]
@@ -339,8 +543,8 @@ mod tests {
             },
         ];
 
-        // Previously would have returned NoViableTier — now routes via fallback.
-        let decision = select_instance("m48b", &instances, &models, &tiers, 0, None).unwrap();
+        let decision =
+            select_instance("m48b", &instances, &models, &tiers, 0, None, &no_demand()).unwrap();
         assert_eq!(decision.target_endpoint, "b");
         assert!(decision.tier_label.contains("degraded"));
     }
@@ -378,6 +582,7 @@ mod tests {
                     verdict: Verdict::Vetoed,
                     median_tps: 0.5,
                     cold_start_ms: 100_000,
+                    valid_ratio: None,
                 },
                 GpuMatrixEntry {
                     model: "m7b".into(),
@@ -388,18 +593,20 @@ mod tests {
                     verdict: Verdict::Fast,
                     median_tps: 25.0,
                     cold_start_ms: 3_000,
+                    valid_ratio: None,
                 },
             ],
         };
 
         // With fitness data, should prefer "b" (Fast) over "a" (Vetoed)
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
+            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix), &no_demand())
+                .unwrap();
         assert_eq!(decision.target_endpoint, "b");
 
         // Without fitness, both are equally loaded — deterministic order from sort
-        // (but the important thing is that it still works)
-        let decision2 = select_instance("m7b", &instances, &models, &tiers, 0, None).unwrap();
+        let decision2 =
+            select_instance("m7b", &instances, &models, &tiers, 0, None, &no_demand()).unwrap();
         assert!(decision2.target_endpoint == "a" || decision2.target_endpoint == "b");
     }
 
@@ -433,10 +640,12 @@ mod tests {
                 verdict: Verdict::Blocked,
                 median_tps: 0.0,
                 cold_start_ms: 0,
+                valid_ratio: None,
             }],
         };
 
-        let result = select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix));
+        let result =
+            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix), &no_demand());
         assert!(result.is_err());
         match result.unwrap_err() {
             RoutingError::ModelBlocked(m) => assert_eq!(m, "m7b"),
@@ -476,6 +685,7 @@ mod tests {
                     verdict: Verdict::Blocked,
                     median_tps: 0.0,
                     cold_start_ms: 0,
+                    valid_ratio: None,
                 },
                 GpuMatrixEntry {
                     model: "m7b".into(),
@@ -486,12 +696,14 @@ mod tests {
                     verdict: Verdict::Fast,
                     median_tps: 25.0,
                     cold_start_ms: 3_000,
+                    valid_ratio: None,
                 },
             ],
         };
 
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix)).unwrap();
+            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix), &no_demand())
+                .unwrap();
         assert_eq!(decision.target_endpoint, "b");
     }
 }

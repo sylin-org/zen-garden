@@ -15,11 +15,10 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use garden_common::offerings::OfferingFqn;
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
     api_utils::ApiErrorResponse,
-    constants::{OFFERING_ADOPTED_INSTANCE, OFFERING_FQN_SEPARATOR},
-    offerings::parse_offering_fqn,
     AdoptedControlLevel, AdoptedData, BorrowedData, Offering, OfferingLocation, OfferingModeData,
     OfferingStatus, ServiceHealthStatus,
 };
@@ -90,7 +89,7 @@ pub async fn adopt_offering_v1(
     headers: HeaderMap,
     Json(req): Json<AdoptOfferingRequest>,
 ) -> Result<Json<ApiResponse<Offering>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(&offering).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&offering).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -99,10 +98,14 @@ pub async fn adopt_offering_v1(
         )
     })?;
     let offering_type = offering_fqn.offering.clone();
-    let adopted_name = format!(
-        "{}{}{}",
-        offering_type, OFFERING_FQN_SEPARATOR, OFFERING_ADOPTED_INSTANCE
-    );
+    let adopted_fqn = OfferingFqn::adopted(&offering_type).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OFFERING_NAME",
+            format!("Invalid offering name '{}': {}", offering_type, e),
+            None,
+        )
+    })?;
 
     // Check if already adopted
     {
@@ -214,7 +217,7 @@ pub async fn adopt_offering_v1(
 
     let guidance = crate::tasks::build_adopted_guidance(
         &state,
-        &adopted_name,
+        &adopted_fqn.to_string(),
         &offering_type,
         location.port,
         None,
@@ -225,7 +228,7 @@ pub async fn adopt_offering_v1(
 
     let unified = Offering {
         offering_id: generate_guidv7(),
-        name: adopted_name,
+        name: adopted_fqn,
         offering: offering_type.clone(),
         version: detection_result
             .version
@@ -304,7 +307,7 @@ pub async fn unadopt_offering_v1(
     Path(offering): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_fqn = parse_offering_fqn(&offering).map_err(|e| {
+    let offering_fqn = OfferingFqn::parse(&offering).map_err(|e| {
         error_response(
             StatusCode::BAD_REQUEST,
             "INVALID_OFFERING_NAME",
@@ -319,7 +322,7 @@ pub async fn unadopt_offering_v1(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_name && o.is_adopted())
+            .find(|o| o.name == offering_fqn && o.is_adopted())
             .cloned()
     };
 
@@ -399,12 +402,21 @@ pub async fn borrow_service_v1(
     headers: HeaderMap,
     Json(req): Json<BorrowOfferingRequest>,
 ) -> Result<Json<ApiResponse<Offering>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let borrow_fqn = OfferingFqn::new(&req.name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_NAME",
+            format!("Invalid offering name '{}': {}", req.name, e),
+            None,
+        )
+    })?;
+
     // Check if already borrowed with this name
     {
         let offerings = state.offerings.read().await;
         if offerings
             .iter()
-            .any(|o| o.name == req.name && o.is_borrowed())
+            .any(|o| o.name == borrow_fqn && o.is_borrowed())
         {
             return Err(error_response(
                 StatusCode::CONFLICT,
@@ -439,7 +451,7 @@ pub async fn borrow_service_v1(
 
     let unified = Offering {
         offering_id: generate_guidv7(),
-        name: req.name.clone(),
+        name: borrow_fqn,
         offering: req.name.clone(), // For borrowed, name and offering are the same
         version: "unknown".to_string(),
         status: OfferingStatus::Running,
@@ -480,12 +492,21 @@ pub async fn unborrow_service_v1(
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let unborrow_fqn = OfferingFqn::parse(&name).map_err(|e| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "INVALID_NAME",
+            format!("Invalid offering name '{}': {}", name, e),
+            None,
+        )
+    })?;
+
     // Find the offering to remove
     let found = {
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == name && o.is_borrowed())
+            .find(|o| o.name == unborrow_fqn && o.is_borrowed())
             .cloned()
     };
 

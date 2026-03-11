@@ -148,8 +148,14 @@ pub async fn get_placement(State(state): State<AppState>) -> Json<Value> {
 
     // Build profiles from topology entries (all stones, not just ones with MongoDB)
     let instances = state.instances.read().await;
-    let mongo_stone_ids: std::collections::HashSet<String> =
-        instances.values().map(|i| i.stone_id.clone()).collect();
+    let mut fqns_by_stone: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for inst in instances.values() {
+        fqns_by_stone
+            .entry(inst.stone_id.clone())
+            .or_default()
+            .push(inst.fqn.to_string());
+    }
 
     let mut profiles: Vec<StonePlacementProfile> = Vec::new();
 
@@ -180,13 +186,18 @@ pub async fn get_placement(State(state): State<AppState>) -> Json<Value> {
             .filter(|s| s.status == "running")
             .count() as u32;
 
+        let cpu_cores = caps
+            .map(|c| c.hardware.cpu.cores as u32)
+            .unwrap_or(0);
+
         profiles.push(StonePlacementProfile {
             stone_name: entry.stone_name.clone(),
             stone_id: entry.stone_id.clone(),
             ram_mb,
+            cpu_cores,
             other_offerings,
             has_ssd,
-            already_has_mongo: mongo_stone_ids.contains(&entry.stone_id),
+            installed_fqns: fqns_by_stone.get(&entry.stone_id).cloned().unwrap_or_default(),
             vram_mb,
             moss_endpoint: Some(
                 entry
@@ -207,9 +218,10 @@ pub async fn get_placement(State(state): State<AppState>) -> Json<Value> {
                 stone_name: instance.stone_name.clone(),
                 stone_id: instance.stone_id.clone(),
                 ram_mb: 0,
+                cpu_cores: 0,
                 other_offerings: 0,
                 has_ssd: None,
-                already_has_mongo: true,
+                installed_fqns: fqns_by_stone.get(&instance.stone_id).cloned().unwrap_or_default(),
                 vram_mb: 0,
                 moss_endpoint: Some(instance.moss_endpoint.clone()),
             });

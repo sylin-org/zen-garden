@@ -348,14 +348,14 @@ pub mod validation {
         result.add_check("Seed bank mounted", ssh.dir_exists(stone, seed_bank_mount)?);
 
         // Check nurturing directory on seed bank using path constant
-        let nurturing_path = paths::seed_bank_memories_dir(seed_bank_mount);
+        let nurturing_path = paths::storage_memories_dir(seed_bank_mount);
         result.add_check(
             "Nurturing directory exists",
             ssh.dir_exists(stone, &nurturing_path)?,
         );
 
         // Check offering directory
-        let offering_path = paths::seed_bank_memory_offering_dir(seed_bank_mount, offering_id);
+        let offering_path = paths::storage_memory_offering_dir(seed_bank_mount, offering_id);
         result.add_check(
             "Offering directory exists",
             ssh.dir_exists(stone, &offering_path)?,
@@ -363,7 +363,7 @@ pub mod validation {
 
         // Check harvest tarball
         let tarball_path =
-            paths::seed_bank_memory_harvest_path(seed_bank_mount, offering_id, harvest_id);
+            paths::storage_memory_harvest_path(seed_bank_mount, offering_id, harvest_id);
         let tarball_exists = ssh.file_exists(stone, &tarball_path)?;
         result.add_check("Harvest tarball exists", tarball_exists);
 

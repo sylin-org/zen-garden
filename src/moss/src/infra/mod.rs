@@ -29,6 +29,7 @@ pub mod firmware;
 pub mod hardware;
 pub mod hardware_id;
 pub mod harvest;
+pub mod image_inspect;
 pub mod harvest_store;
 pub mod installer;
 pub mod listeners;
@@ -38,6 +39,7 @@ pub mod manifests;
 pub mod network;
 pub mod nurturing_store;
 pub mod persistence;
+pub mod platform;
 pub mod process;
 pub mod secrets;
 pub mod service;
@@ -45,6 +47,10 @@ pub mod stone_client;
 pub mod storage;
 pub mod task_store;
 pub mod tools;
+#[cfg(target_os = "windows")]
+pub mod cloud_filter;
+#[cfg(target_os = "windows")]
+pub mod shell_integration;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;
 
@@ -104,3 +110,4 @@ pub use service::{
 };
 pub use task_store::{TaskRegistry, TaskStore};
 pub use tools::broadcast_tools_beacon;
+pub use tools::broadcast_tools_snapshot_beacon;

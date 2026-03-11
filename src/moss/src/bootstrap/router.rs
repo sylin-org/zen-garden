@@ -18,10 +18,37 @@
 
 use crate::{api, AppState};
 use axum::{
-    routing::{delete, get, head, patch, post, put},
+    extract::State,
+    http::header::HeaderValue,
+    middleware::{self, Next},
+    response::Response,
+    routing::{any, delete, get, head, patch, post, put},
     Router,
 };
+use garden_common::constants::headers::{HEADER_STONE_ID, HEADER_STONE_NAME};
 use tower_http::trace::TraceLayer;
+
+// ── Middleware ───────────────────────────────────────────────────────────
+
+/// Inject `X-Stone-Id` and `X-Stone-Name` headers on every response.
+///
+/// This lets any client (rake, companion, browser) discover which stone
+/// it is talking to without a dedicated `/capabilities` call — the
+/// identity piggy-backs on every response for free.
+async fn inject_stone_identity(
+    State(state): State<AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    if let Ok(v) = HeaderValue::from_str(&state.stone_id) {
+        response.headers_mut().insert(HEADER_STONE_ID, v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&state.stone_name) {
+        response.headers_mut().insert(HEADER_STONE_NAME, v);
+    }
+    response
+}
 
 /// Configure the **public lobby** router for HTTP when pond security is active.
 ///
@@ -39,6 +66,7 @@ pub fn configure_public(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
         .route("/pulse", get(api::v1::pulse::get_pulse_page))
+        .route("/greenhouse", get(api::v1::greenhouse::get_greenhouse_page))
         .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════
@@ -79,6 +107,10 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::offerings::get_offering_manifest_v1),
         )
         .route(
+            "/api/v1/stone/offerings/{name}/export",
+            get(api::v1::offerings::export_offering_manifest_v1),
+        )
+        .route(
             "/api/v1/stone/services",
             get(api::v1::services::list_services_v1),
         )
@@ -117,6 +149,25 @@ pub fn configure_public(state: AppState) -> Router {
         .route(
             "/api/v1/stone/companions",
             get(api::v1::companions::get_companions),
+        )
+        // ══════════════════════════════════════════════════════════════════
+        // Greenhouse (catalog + file read)
+        // ══════════════════════════════════════════════════════════════════
+        .route(
+            "/api/v1/stone/greenhouse/catalog",
+            get(api::v1::greenhouse::get_catalog),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/file",
+            get(api::v1::greenhouse::get_file),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/export",
+            get(api::v1::greenhouse::export_offering),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/containers",
+            get(api::v1::greenhouse::list_containers_v1),
         )
         // ══════════════════════════════════════════════════════════════════
         // Garden topology (read-only discovery)
@@ -214,6 +265,7 @@ pub fn configure_public(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(state.clone(), inject_stone_identity))
         .with_state(state)
 }
 
@@ -229,6 +281,7 @@ pub fn configure(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .route("/", get(api::v1::portrait::get_portrait_page))
         .route("/pulse", get(api::v1::pulse::get_pulse_page))
+        .route("/greenhouse", get(api::v1::greenhouse::get_greenhouse_page))
         .route("/pond", get(api::v1::pond::get_pond_page))
         .route("/health", get(api::v1::health::get_health))
         // ══════════════════════════════════════════════════════════════════
@@ -272,6 +325,10 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::offerings::search_offerings_v1),
         )
         .route(
+            "/api/v1/stone/offerings/inspect",
+            get(api::v1::offerings::inspect_image_v1),
+        )
+        .route(
             "/api/v1/stone/offerings/heal",
             post(api::v1::offerings::heal_garden_v1),
         )
@@ -302,6 +359,41 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/offerings/{name}/manifest",
             get(api::v1::offerings::get_offering_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}/export",
+            get(api::v1::offerings::export_offering_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/manifests/test",
+            post(api::v1::offerings::test_manifest_v1),
+        )
+        // Greenhouse — manifest authoring + file CRUD
+        .route(
+            "/api/v1/stone/greenhouse/containers",
+            get(api::v1::greenhouse::list_containers_v1),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/validate",
+            post(api::v1::greenhouse::validate_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/generate",
+            post(api::v1::greenhouse::generate_manifest_v1),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/file",
+            get(api::v1::greenhouse::get_file)
+                .put(api::v1::greenhouse::put_file)
+                .delete(api::v1::greenhouse::delete_file),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/catalog",
+            get(api::v1::greenhouse::get_catalog),
+        )
+        .route(
+            "/api/v1/stone/greenhouse/export",
+            get(api::v1::greenhouse::export_offering),
         )
         .route(
             "/api/v1/stone/offerings/{name}/capabilities",
@@ -386,7 +478,8 @@ pub fn configure(state: AppState) -> Router {
         )
         .route(
             "/api/v1/stone/services/{service}/env",
-            get(api::v1::services::get_service_env_v1),
+            get(api::v1::services::get_service_env_v1)
+                .patch(api::v1::services::patch_service_env_v1),
         )
         .route(
             "/api/v1/stone/services/{service}/restart",
@@ -407,6 +500,10 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/stone/services/{service}/destroy",
             post(api::v1::services::destroy_service_v1),
+        )
+        .route(
+            "/api/v1/stone/services/{service}/reassign",
+            post(api::v1::services::reassign_service_v1),
         )
         .route(
             "/api/v1/stone/services/{service}/cordon",
@@ -444,28 +541,78 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/companions/{id}/down",
             post(api::v1::companions::stop_companion),
         )
-        // Garden storage — name-based, Primary-or-proxy (STORAGE-0008)
+        // Garden storage — name-based, Primary-or-proxy (STORAGE-0009)
+        .route(
+            "/api/v1/garden/storage",
+            get(api::v1::garden_storage::list_storages_v1),
+        )
         .route(
             "/api/v1/garden/storage/{name}",
             get(api::v1::garden_storage::discover_v1),
         )
+        // Garden storage: /files/ namespace (user content at mount root)
         .route(
-            "/api/v1/garden/storage/{name}/{*path}",
+            "/api/v1/garden/storage/{name}/files/{*path}",
+            get(api::v1::garden_storage::get_file_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/files/{*path}",
+            put(api::v1::garden_storage::put_file_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/files/{*path}",
+            delete(api::v1::garden_storage::delete_file_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/files/{*path}",
+            head(api::v1::garden_storage::head_file_v1),
+        )
+        // Garden storage: /objects/ namespace (S3 objects under .zen-garden/storage/)
+        .route(
+            "/api/v1/garden/storage/{name}/objects/{*path}",
             get(api::v1::garden_storage::get_object_v1),
         )
         .route(
-            "/api/v1/garden/storage/{name}/{*path}",
+            "/api/v1/garden/storage/{name}/objects/{*path}",
             put(api::v1::garden_storage::put_object_v1),
         )
         .route(
-            "/api/v1/garden/storage/{name}/{*path}",
+            "/api/v1/garden/storage/{name}/objects/{*path}",
             delete(api::v1::garden_storage::delete_object_v1),
         )
         .route(
-            "/api/v1/garden/storage/{name}/{*path}",
+            "/api/v1/garden/storage/{name}/objects/{*path}",
             head(api::v1::garden_storage::head_object_v1),
         )
-        // Stone storage (seed banks on THIS stone)
+        // Garden storage: /memories/ namespace (harvest artifacts)
+        .route(
+            "/api/v1/garden/storage/{name}/memories",
+            get(api::v1::garden_storage::list_memories_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/memories/{offering_id}",
+            get(api::v1::garden_storage::list_offering_snapshots_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/memories/{offering_id}/manifest",
+            get(api::v1::garden_storage::get_offering_manifest_v1),
+        )
+        .route(
+            "/api/v1/garden/storage/{name}/memories/{offering_id}/{harvest_id}",
+            get(api::v1::garden_storage::download_snapshot_v1),
+        )
+        // WebDAV file access — STORAGE-0009 Phase 3
+        // Accepts all HTTP methods (GET, PUT, DELETE, PROPFIND, MKCOL, MOVE, COPY, etc.)
+        .route(
+            "/dav/{name}/{*path}",
+            any(api::v1::webdav::handle_webdav),
+        )
+        // Root collection (PROPFIND on /dav/{name}/ without trailing content)
+        .route(
+            "/dav/{name}",
+            any(api::v1::webdav::handle_webdav),
+        )
+        // Stone storage (seed banks on THIS stone) — STORAGE-0009
         .route(
             "/api/v1/stone/storage",
             get(api::v1::storage::storage_overview_v1),
@@ -479,59 +626,49 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::storage::list_candidates_v1),
         )
         .route(
-            "/api/v1/stone/storage/prepare",
-            post(api::v1::storage::prepare_seed_bank_v1),
+            "/api/v1/stone/storage/add",
+            post(api::v1::storage::add_storage_v1),
         )
         .route(
             "/api/v1/stone/storage/release-all",
             post(api::v1::storage::release_all_seed_banks_v1),
         )
-        // Pin / Unpin (STORAGE-0006 Phase 5)
         .route(
-            "/api/v1/stone/storage/bank/pin",
-            post(api::v1::storage::pin_bank_v1),
-        )
-        .route(
-            "/api/v1/stone/storage/bank/unpin",
-            post(api::v1::storage::unpin_bank_v1),
-        )
-        .route(
-            "/api/v1/stone/storage/bank",
+            "/api/v1/stone/storage/banks",
             get(api::v1::storage::list_banks_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/{id}",
-            get(api::v1::storage::get_bank_v1),
+            "/api/v1/stone/storage/banks/{name}",
+            get(api::v1::storage::get_bank_v1)
+                .delete(api::v1::storage::delete_bank_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/{id}",
-            delete(api::v1::storage::delete_bank_v1),
-        )
-        .route(
-            "/api/v1/stone/storage/bank/{id}/visibility",
+            "/api/v1/stone/storage/banks/{name}/visibility",
             patch(api::v1::storage::set_visibility_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/{id}/rename",
+            "/api/v1/stone/storage/banks/{name}/rename",
             patch(api::v1::storage::rename_bank_v1),
         )
         .route(
-            "/api/v1/stone/storage/bank/{id}/release",
+            "/api/v1/stone/storage/banks/{name}/release",
             post(api::v1::storage::release_bank_v1),
         )
-        // Replication changelog (STORAGE-0006 Phase 4) — must precede {*path} catch-all
         .route(
-            "/api/v1/stone/storage/bank/{id}/changes",
+            "/api/v1/stone/storage/banks/{name}/pin",
+            post(api::v1::storage::pin_bank_v1),
+        )
+        .route(
+            "/api/v1/stone/storage/banks/{name}/unpin",
+            post(api::v1::storage::unpin_bank_v1),
+        )
+        .route(
+            "/api/v1/stone/storage/banks/{name}/roles",
+            patch(api::v1::storage::set_roles_v1),
+        )
+        .route(
+            "/api/v1/stone/storage/banks/{name}/changes",
             get(api::v1::storage::bank_changes_v1),
-        )
-        // Stone file ops — local reads only, no writes (STORAGE-0008)
-        .route(
-            "/api/v1/stone/storage/bank/{id}/{*path}",
-            get(api::v1::storage::get_object_v1),
-        )
-        .route(
-            "/api/v1/stone/storage/bank/{id}/{*path}",
-            head(api::v1::storage::head_object_v1),
         )
         // Storage replication SSE stream (STORAGE-0006 Phase 4)
         .route(
@@ -663,7 +800,7 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/garden/nourishment/execute",
             post(api::v1::nourishment::execute_garden),
         )
-        // Garden storage (S3-compatible interface)
+        // S3 gateway (preserved — independent of STORAGE-0009)
         .route("/api/v1/storage/s3", get(api::v1::s3_gateway::list_buckets))
         .route(
             "/api/v1/storage/s3/{bucket}",
@@ -684,41 +821,6 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/storage/s3/{bucket}/{*key}",
             delete(api::v1::s3_gateway::delete_object),
-        )
-        // Garden storage (REST interface for SDKs)
-        .route(
-            "/api/v1/storage",
-            get(api::v1::storage_gateway::list_buckets),
-        )
-        .route(
-            "/api/v1/storage/{*path}",
-            get(api::v1::storage_gateway::get_object),
-        )
-        .route(
-            "/api/v1/storage/{*path}",
-            put(api::v1::storage_gateway::put_object),
-        )
-        .route(
-            "/api/v1/storage/{*path}",
-            head(api::v1::storage_gateway::head_object),
-        )
-        .route(
-            "/api/v1/storage/{*path}",
-            delete(api::v1::storage_gateway::delete_object),
-        )
-        // Garden memories (read-only backups for hydration)
-        .route("/api/v1/memories", get(api::v1::memories::list_memories))
-        .route(
-            "/api/v1/memories/{offering_id}/manifest",
-            get(api::v1::memories::get_offering_manifest),
-        )
-        .route(
-            "/api/v1/memories/{offering_id}/{harvest_id}",
-            get(api::v1::memories::download_snapshot),
-        )
-        .route(
-            "/api/v1/memories/{offering_id}",
-            get(api::v1::memories::list_offering_snapshots),
         )
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/jobs - Job tracking
@@ -810,5 +912,6 @@ pub fn configure(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(state.clone(), inject_stone_identity))
         .with_state(state)
 }

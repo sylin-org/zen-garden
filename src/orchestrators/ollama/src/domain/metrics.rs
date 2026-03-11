@@ -311,6 +311,7 @@ impl MetricsEngine {
             MetricEvent::Request {
                 stone,
                 model,
+                capability: _,
                 tokens_in,
                 tokens_out,
                 duration_ns,

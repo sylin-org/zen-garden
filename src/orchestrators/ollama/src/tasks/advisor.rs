@@ -9,8 +9,8 @@
 //!    dashboard always has a reasonably fresh recommendation.
 
 use crate::app_state::AppState;
-use crate::domain::advisor;
-use std::time::Duration;
+use crate::domain::advisor::{self, DemandContext};
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// Periodic re-evaluation interval.
@@ -82,23 +82,46 @@ fn is_topology_event(event_type: &str) -> bool {
 
 /// Snapshot current state, run the advisor algorithm, and publish results.
 async fn recompute(state: &AppState, trigger: &str) {
-    let (gpu_slots, model_slots) = {
+    let (gpu_slots, model_slots, demand_ctx) = {
         let instances = state.instances.read().await;
         let models = state.models.read().await;
-        let gs = advisor::gpu_slots_from_instances(&instances);
+        let demand_ledger = state.demand_ledger.read().await;
+        let benchmark = state.benchmark_run.read().await;
+        let gpu_matrix = &benchmark.gpu_matrix;
+
+        let gs = advisor::gpu_slots_from_instances(
+            &instances,
+            Some(&demand_ledger),
+            Some(gpu_matrix),
+        );
         let ms = advisor::model_slots_projected(&models);
+
+        // Build demand context from the ledger
+        let now = Instant::now();
+        let ctx = if demand_ledger.total_requests > 0 {
+            Some(DemandContext {
+                capability_distribution: demand_ledger.capability_distribution(now),
+                model_distribution: demand_ledger.model_distribution(now),
+                confidence: demand_ledger.confidence(),
+                capability_rates: demand_ledger.capability_rates(now),
+            })
+        } else {
+            None
+        };
+
         tracing::debug!(
             trigger,
             gpu_slots = gs.len(),
             model_slots = ms.len(),
             instances_total = instances.len(),
             models_total = models.len(),
+            demand_confidence = ctx.as_ref().map(|d| d.confidence).unwrap_or(0.0),
             "advisor: input snapshot"
         );
-        (gs, ms)
+        (gs, ms, ctx)
     };
 
-    let mut advice = advisor::advise_topology(&gpu_slots, &model_slots);
+    let mut advice = advisor::advise_topology(&gpu_slots, &model_slots, demand_ctx.as_ref());
     advice.computed_at = Some(chrono::Utc::now().to_rfc3339());
     advice.trigger = trigger.to_string();
 

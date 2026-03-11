@@ -337,7 +337,7 @@ pub struct RemoteSnapshot {
     /// Seed bank ID where stored
     pub seed_bank_id: String,
     /// Seed bank name
-    pub seed_bank_name: String,
+    pub storage_name: String,
     /// Stone that created this snapshot
     pub source_stone: String,
     /// When this snapshot was created
@@ -360,7 +360,7 @@ pub struct ReplicationResult {
     /// Seed bank ID where stored
     pub seed_bank_id: String,
     /// Seed bank name
-    pub seed_bank_name: String,
+    pub storage_name: String,
     /// Size in bytes transferred
     pub size_bytes: u64,
     /// Harvest IDs pruned due to retention policy
@@ -644,7 +644,7 @@ mod tests {
                 offering_name: "mongodb".into(),
                 harvest_id: format!("harvest-{}", i),
                 seed_bank_id: "seed-bank-1".into(),
-                seed_bank_name: "portable-backup".into(),
+                storage_name: "portable-backup".into(),
                 source_stone: "stone-01".into(),
                 created_at: base_time + Duration::hours(i as i64),
                 size_bytes: 1000,
@@ -686,7 +686,7 @@ mod tests {
                 offering_name: "mongodb".into(),
                 harvest_id: format!("a-harvest-{}", i),
                 seed_bank_id: "seed-bank-1".into(),
-                seed_bank_name: "portable-backup".into(),
+                storage_name: "portable-backup".into(),
                 source_stone: "stone-01".into(),
                 created_at: base_time + Duration::hours(i as i64),
                 size_bytes: 1000,
@@ -702,7 +702,7 @@ mod tests {
                 offering_name: "redis".into(),
                 harvest_id: format!("b-harvest-{}", i),
                 seed_bank_id: "seed-bank-1".into(),
-                seed_bank_name: "portable-backup".into(),
+                storage_name: "portable-backup".into(),
                 source_stone: "stone-01".into(),
                 created_at: base_time + Duration::hours(i as i64),
                 size_bytes: 500,

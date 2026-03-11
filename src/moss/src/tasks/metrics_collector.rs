@@ -14,15 +14,11 @@
 
 use tokio::time::interval;
 
-use crate::infra::storage::SeedBankRegistry;
 use crate::AppState;
 use garden_common::constants::timeouts::{metrics_disk_interval, metrics_fast_interval};
 use garden_common::metrics::system::{
     get_fast_metrics, get_gpu_utilization, get_network_metrics, get_storage_metrics,
 };
-#[cfg(target_os = "linux")]
-use garden_common::storage::StorageDetectedInfo;
-#[cfg(target_os = "linux")]
 use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 
 /// Run system metrics collector with dual intervals
@@ -74,46 +70,53 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
         tracing::debug!("Initial network metrics collected");
     }
 
-    // Collect initial seed bank registry
-    // Lifecycle objects (state.seed_banks) are the source of truth;
-    // this scan populates disk usage via health ticks.
-    match SeedBankRegistry::scan().await {
-        Ok(registry) => {
-            let count = registry.list().len();
-            tracing::debug!(count, "Initial seed bank registry scanned");
-        }
-        Err(e) => {
-            tracing::warn!(error = ?e, "Failed to load initial seed bank registry");
+    // STORAGE-0011: Candidates derived from Volumes (cross-platform).
+    // A candidate is any unmanaged, removable, online volume.
+    {
+        let count = {
+            let map = state.volumes.read().await;
+            map.values()
+                .filter(|v| !v.is_managed() && v.removable && v.online)
+                .count()
+        };
+        state.notifications.set_if(
+            NOTIF_SOURCE_CANDIDATES,
+            NotificationTag::Opportunity,
+            count > 0,
+        );
+        if count > 0 {
+            tracing::info!(count, "Initial candidate devices detected");
         }
     }
 
-    // Collect initial candidates (USB devices eligible for preparation)
-    // Linux-only; other platforms always have empty candidates
-    #[cfg(target_os = "linux")]
-    {
-        match scan_candidates().await {
-            Ok(candidates) => {
-                let count = candidates.len();
-                let mut cache = state.candidates_cache.write().await;
-                *cache = candidates;
-                // Update notification registry for cross-stone awareness
-                state.notifications.set_if(
-                    NOTIF_SOURCE_CANDIDATES,
-                    NotificationTag::Opportunity,
-                    count > 0,
-                );
-                if count > 0 {
-                    tracing::info!(count, "Initial candidate devices detected");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = ?e, "Failed to scan initial candidates");
-            }
-        }
-    }
+    // STORAGE-0013: Subscribe to StorageChanged for immediate candidates refresh.
+    // Without this, candidates notification waits up to 30s for the next disk tick.
+    let mut storage_rx = state.subscribe_storage_changed();
 
     loop {
         tokio::select! {
+            // STORAGE-0013: React immediately to storage mutations for candidates
+            result = storage_rx.recv() => {
+                match result {
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let count = {
+                            let map = state.volumes.read().await;
+                            map.values()
+                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .count()
+                        };
+                        state.notifications.set_if(
+                            NOTIF_SOURCE_CANDIDATES,
+                            NotificationTag::Opportunity,
+                            count > 0,
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        // Channel closed — stop reacting but keep collecting metrics
+                    }
+                }
+            }
+
             _ = fast_interval.tick() => {
                 // Update CPU, memory, uptime (fast - in-memory kernel data)
                 match get_fast_metrics() {
@@ -176,43 +179,31 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                     }
                 }
 
-                // Refresh seed bank disk usage via lifecycle objects' health ticks
-                // (used_bytes / capacity_bytes updated through StorageDevice::health_tick)
+                // STORAGE-0011: Refresh volume disk usage via platform adapter
                 {
-                    let mut banks = state.seed_banks.write().await;
-                    for bank in banks.values_mut() {
-                        if let Some((used, avail)) = crate::infra::storage::DeviceAnalyzer::get_disk_usage(&bank.storage.mount_path.to_string_lossy()) {
-                            bank.storage.used_bytes = used;
-                            bank.storage.capacity_bytes = used + avail;
+                    let mut map = state.volumes.write().await;
+                    for vol in map.values_mut() {
+                        let path_str = vol.mount_path.to_string_lossy();
+                        if let Some(usage) = crate::infra::storage::platform::disk_usage(&path_str) {
+                            vol.used_bytes = usage.used_bytes;
+                            vol.capacity_bytes = usage.used_bytes + usage.available_bytes;
                         }
                     }
                 }
 
-                // Refresh candidates cache (Linux-only)
-                // Candidates change on USB insert/remove, detected by storage_monitor via udev.
-                // This periodic refresh catches any missed events and ensures consistency.
-                #[cfg(target_os = "linux")]
+                // STORAGE-0011: Refresh candidates notification from Volumes
                 {
-                    match scan_candidates().await {
-                        Ok(candidates) => {
-                            let mut cache = state.candidates_cache.write().await;
-                            let prev_count = cache.len();
-                            let new_count = candidates.len();
-                            *cache = candidates;
-                            // Update notification registry for cross-stone awareness
-                            state.notifications.set_if(
-                                NOTIF_SOURCE_CANDIDATES,
-                                NotificationTag::Opportunity,
-                                new_count > 0,
-                            );
-                            if new_count != prev_count {
-                                tracing::debug!(prev = prev_count, new = new_count, "Candidates cache updated");
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = ?e, "Failed to refresh candidates cache");
-                        }
-                    }
+                    let count = {
+                        let map = state.volumes.read().await;
+                        map.values()
+                            .filter(|v| !v.is_managed() && v.removable && v.online)
+                            .count()
+                    };
+                    state.notifications.set_if(
+                        NOTIF_SOURCE_CANDIDATES,
+                        NotificationTag::Opportunity,
+                        count > 0,
+                    );
                 }
             }
 
@@ -222,13 +213,4 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
             }
         }
     }
-}
-
-/// Scan for candidate devices (Linux-only)
-#[cfg(target_os = "linux")]
-async fn scan_candidates() -> anyhow::Result<Vec<StorageDetectedInfo>> {
-    use crate::infra::storage::list_usb_partitions;
-    tokio::task::spawn_blocking(|| list_usb_partitions())
-        .await
-        .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))?
 }

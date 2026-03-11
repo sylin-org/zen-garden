@@ -234,6 +234,57 @@ pub async fn route(
         }
 
         // =================================================================
+        // Manifest Authoring
+        // =================================================================
+
+        "manifest" => {
+            use commands::manifest::ManifestCommand;
+            match m.subcommand() {
+                Some(("init", sub)) => {
+                    let at = opt(sub, "at").or_else(|| opt(m, "at"));
+                    Inv::remote_at(
+                        ManifestCommand::init(
+                            req(sub, "image-ref")?,
+                            opt(sub, "output"),
+                            opt(sub, "name"),
+                            opt(sub, "category"),
+                            g.quiet,
+                        ),
+                        at,
+                    )
+                }
+                Some(("validate", sub)) => {
+                    let path = opt(sub, "path").unwrap_or_else(|| ".".into());
+                    Inv::local(ManifestCommand::validate(path, g.quiet))
+                }
+                Some(("test", sub)) => {
+                    let path = opt(sub, "path").unwrap_or_else(|| ".".into());
+                    let at = opt(sub, "at").or_else(|| opt(m, "at"));
+                    Inv::remote_at(ManifestCommand::test(path, g.quiet), at)
+                }
+                Some(("export", sub)) => {
+                    let at = opt(sub, "at").or_else(|| opt(m, "at"));
+                    Inv::remote_at(
+                        ManifestCommand::export(
+                            req(sub, "offering")?,
+                            opt(sub, "output"),
+                            g.quiet,
+                        ),
+                        at,
+                    )
+                }
+                Some(("enrich", sub)) => {
+                    let path = opt(sub, "path").unwrap_or_else(|| ".".into());
+                    let auto = sub.get_flag("auto");
+                    Inv::local(ManifestCommand::enrich(path, auto, g.quiet))
+                }
+                _ => anyhow::bail!(
+                    "Usage: garden-rake manifest <init|validate|test|export|enrich>"
+                ),
+            }
+        }
+
+        // =================================================================
         // Adoption
         // =================================================================
 
@@ -496,23 +547,52 @@ pub async fn route(
         // Storage
         // =================================================================
 
-        "seed-banks" => Inv::remote(commands::storage::ShowSeedBanksCommand::new(), m),
-
-        "release-seed-bank" => Inv::remote(
-            commands::storage::ReleaseSeedBankCommand::new(req(m, "name")?),
-            m,
-        ),
-
-        "prepare" => Inv::remote(
-            commands::storage::PrepareSeedBankCommand::new(
-                opt(m, "device"),
-                opt(m, "name"),
-                m.get_flag("random"),
-                opt(m, "fs"),
-                m.get_flag("encrypted"),
-            ),
-            m,
-        ),
+        "storage" => match m.subcommand() {
+            Some(("add", sub)) => {
+                let roles: Vec<String> = sub
+                    .get_many::<String>("roles")
+                    .map(|v| v.cloned().collect())
+                    .unwrap_or_default();
+                Inv::remote(
+                    commands::storage::AddStorageCommand::new(
+                        opt(sub, "target"),
+                        opt(sub, "name"),
+                        roles,
+                        sub.get_flag("format"),
+                        opt(sub, "fs"),
+                        sub.get_flag("encrypted"),
+                        sub.get_flag("yes"),
+                    ),
+                    m,
+                )
+            }
+            Some(("list", _)) => {
+                Inv::remote(commands::storage::ListStorageCommand::new(), m)
+            }
+            Some(("status", _)) => {
+                Inv::remote(commands::storage::StorageStatusCommand::new(), m)
+            }
+            Some(("release", sub)) => {
+                Inv::remote(
+                    commands::storage::ReleaseStorageCommand::new(req(sub, "name")?),
+                    m,
+                )
+            }
+            Some(("pin", sub)) => {
+                Inv::remote(
+                    commands::storage::PinStorageCommand::new(req(sub, "name")?),
+                    m,
+                )
+            }
+            Some(("unpin", sub)) => {
+                Inv::remote(
+                    commands::storage::UnpinStorageCommand::new(req(sub, "name")?),
+                    m,
+                )
+            }
+            // Bare `storage` — list all storages (same as `storage list`)
+            _ => Inv::remote(commands::storage::ListStorageCommand::new(), m),
+        },
 
         "store" => return route_store(m, g),
 
@@ -637,6 +717,20 @@ async fn route_offer(
     let anywhere_on_fail = m.get_flag("anywhere-on-fail");
     let placement_mode = opt(m, "placement-mode");
     let has_info_sub = m.subcommand_matches("info").is_some();
+
+    // ── image subcommand ──
+    if let Some(image_m) = m.subcommand_matches("image") {
+        let image_ref = image_m
+            .get_one::<String>("image-ref")
+            .expect("image-ref required")
+            .clone();
+        let instance = image_m.get_one::<String>("instance").cloned();
+        let info_only = image_m.get_flag("info-only");
+        return Ok(Some(Inv::remote_at(
+            commands::offering::OfferCommand::image(image_ref, instance, info_only, g.quiet),
+            at,
+        )));
+    }
 
     // ── --placement-mode ──
     if let Some(mode) = &placement_mode {

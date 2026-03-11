@@ -125,6 +125,7 @@ fn compatibility_decision_from_compiled(
         },
         "fallback" => super::compatibility::CompatibilityDecision::Fallback {
             image: compiled.fallback_image.clone().unwrap_or_default(),
+            name: compiled.fallback_name.clone(),
             reason: compiled.reason.clone().unwrap_or_default(),
         },
         _ => super::compatibility::CompatibilityDecision::Fail {
@@ -155,6 +156,7 @@ mod tests {
             reason: None,
             original_image: None,
             fallback_image: None,
+            fallback_name: None,
             suggestion: None,
         }
     }
@@ -165,6 +167,7 @@ mod tests {
             reason: Some(reason.to_string()),
             original_image: None,
             fallback_image: None,
+            fallback_name: None,
             suggestion: None,
         }
     }
@@ -175,6 +178,7 @@ mod tests {
             reason: Some(reason.to_string()),
             original_image: Some("original:latest".to_string()),
             fallback_image: Some("fallback:latest".to_string()),
+            fallback_name: None,
             suggestion: None,
         }
     }
@@ -185,6 +189,7 @@ mod tests {
             reason: Some(reason.to_string()),
             original_image: None,
             fallback_image: None,
+            fallback_name: None,
             suggestion: Some("Install GPU drivers".to_string()),
         }
     }
@@ -204,7 +209,7 @@ mod tests {
     fn make_offering(pinned: bool) -> Offering {
         Offering {
             offering_id: "test-id".to_string(),
-            name: "test-offering".to_string(),
+            name: garden_common::offerings::OfferingFqn::new("test-offering").unwrap(),
             offering: "test".to_string(),
             version: "1.0".to_string(),
             status: OfferingStatus::Running,

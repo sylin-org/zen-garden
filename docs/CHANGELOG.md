@@ -2,6 +2,77 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-08
+
+- **STORAGE-0010**: Unified `storage add` command replaces `prepare` and `adopt`. Single CLI entry point (`garden-rake storage add <device-or-path>`) with zen keywords (`as <name>`, `role <role>`, `with` noise word). Single API endpoint `POST /api/v1/stone/storage/add` replaces `/prepare` and `/adopt`. Three-way hotplug banners (connected, has_data, empty) with distinct domain events (`StorageConnected` vs `StorageDetected`). See [STORAGE-0010](decisions/STORAGE-0010-unified-storage-add-command.md).
+
+## 2026-03-07
+
+- **STORAGE-0009 Phase 6**: Discovery polish. Content catalog on adopt (walk existing files, seed changelog for replication baseline), `garden-rake storage-status` command with per-storage space breakdown (capacity/used/available, role, health), SMB signpost share (generates `.url` shortcuts and Samba config fragment for network browser discovery). See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- **STORAGE-0009 Phase 5**: Extended adapters and filesystem watchers. NAS adapter (NFS/SMB mount with reconnect-on-failure), cross-platform filesystem watcher (`notify` crate) detects external writes to managed storage mounts and records changelog entries so replication stays coherent. Debounced 2s window, `.zen-garden/` events filtered. See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- **STORAGE-0009 Phase 4**: Cloud Filter integration (Windows). Managed storages appear natively in Explorer via the Windows Cloud Sync Provider API (`cloud-filter` crate). Files are fetched on-demand from the hosting stone; placeholder directories appear/disappear as storage beacons arrive. Sync root at `%USERPROFILE%\Zen Garden\`. See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- **STORAGE-0009 Phase 3**: WebDAV file access for managed storage. Users can mount storage in Finder, Explorer, or Linux file managers via `http://stone-name:7185/dav/{storage-name}/`. See [STORAGE-0009](decisions/STORAGE-0009-managed-storage-and-file-sharing.md).
+- WebDAV handler with `dav-server` crate (`LocalFs` backend, `FakeLs` locks) — full RFC 4918 support (PROPFIND, GET, PUT, DELETE, MKCOL, COPY, MOVE, LOCK/UNLOCK)
+- Primary-or-proxy routing: any stone is a WebDAV entry point; requests for remote storage are proxied to the hosting stone
+- Changelog recording: mutations via WebDAV emit replication changelog entries so Dormant replicas stay current
+- `.zen-garden/` internals hidden from directory listings and direct access blocked; `Zen Garden` symlink visible (intentional transparency)
+- Updated `api-endpoints.md` with STORAGE-0009 garden-tier, stone-tier, and WebDAV routes
+
+## 2026-03-06
+
+- **ORCH-0011**: Recommended model monikers — use `recommended:chat`, `recommended:vision`, etc. as the model name. The orchestrator resolves to the top-ranked model for that capability, rewrites the request, and routes normally. Response includes `X-Zen-Resolved-Model` header.
+  See: [ORCH-0011](decisions/ORCH-0011-recommended-model-monikers.md) | [Usage guide](guides/ollama-orchestrator.md)
+- **ORCH-0009**: Demand-weighted topology advisor. Three-axis optimization (Demand × Topology × Fitness) replaces static VRAM-only placement. See [ORCH-0009](decisions/ORCH-0009-demand-weighted-topology-advisor.md).
+- New `DemandLedger` with exponentially decayed counters tracks per-capability and per-model demand at three time horizons (reactive 15m, tactical 6h, strategic 3d)
+- GPU projected fitness catalog: 100+ GPU entries mapping GPU name → relative performance score (0–100) for T=0 placement before any benchmarks
+- Three-source fitness resolver: Observed (live proxy tok/s) > Benchmarked (formal eval) > Projected (GPU name lookup)
+- Fitness-weighted model placement: hot models placed on fastest GPUs with VRAM headroom
+- Demand-weighted parallelism: embedding-heavy workloads get higher parallelism caps
+- Typed recommendations with priority (Urgent/Suggested/Informational) and auto-applicable flag
+- Advisor task now feeds demand context and benchmark data into topology computation
+- **ORCH-0010**: Extended fitness capabilities — Tools and Think benchmarks. See [ORCH-0010](decisions/ORCH-0010-extended-fitness-capabilities.md).
+- Tools benchmark: 5 structured prompts with tool schemas, validates JSON correctness per stone. Correctness gates the verdict (flaky = Degraded, unreliable = Vetoed, no tool calls = Blocked)
+- Think benchmark: 3 long-reasoning prompts with `num_predict: 2000` measuring sustained throughput under KV cache pressure. Relaxed thresholds (3 tok/s for Fast, 60s cold start)
+- Recommendation engine uses dedicated Tools/Think fitness entries with Generate fallback
+- **MOSS-0005**: Manageable environment variables for adopted bare-metal services. Manifests declare an allowlist of env vars; Moss reads/writes them cross-platform (Linux `/etc/default` + systemd overrides, Windows registry via `winreg`, macOS `launchctl`). See [MOSS-0005](decisions/MOSS-0005-manageable-env-vars.md).
+- New `PATCH /api/v1/stone/services/{service}/env` endpoint — set/delete env vars with allowlist validation
+- Enhanced `GET /api/v1/stone/services/{service}/env` — returns `manageable` var list and reads current values for adopted services
+- `ManageableEnv` type in `garden_common::manifests` — cross-mode manifest field for env var governance
+- Replaced all bespoke `reg.exe` shell-outs with typed `winreg` wrapper (`infra/platform/registry.rs`)
+- Added `ollama.frontmatter.json` and `ollama-cpu.frontmatter.json` manageable env declarations
+
+## 2026-03-05
+
+- Routing rewrite: performance-first with demand-based reservation
+- Fixed stale gateway registrations persisting after orchestrator stone switch
+- Added snapshot beacon reconciliation to evict stale announced tools entries
+- Periodic snapshot tools beacon every 60s ensures remote registries converge
+- TOOLS-0003: Gateways propagate via registry beacon instead of topology chirps
+- Fixed `find` sort order: exact name matches now appear before partial matches
+- Fixed stale gateway entries: registry reaper was never started; now broadcasts beacon on expiry
+- Introduced `StoneBag` for lazy-cached stone metadata; collapsed 5 pre-flight HTTP calls into 1–2
+- Capabilities cached in tending file; hot-path commands make zero pre-flight HTTP calls
+- Removed health vitality from stone banner (success = reachable, failure = discovery)
+- Moss injects `X-Stone-Name` / `X-Stone-Id` response headers on every HTTP response
+- Tools API snapshot returns 3-tier sorted results: exact fqid → category → alphabetical
+
+## 2026-03-02
+
+- **OFFER-0006 Phase 1 complete**: FQN v2 + image-direct deployment. See [OFFER-0006](decisions/OFFER-0006-image-direct-and-fqn-v2.md).
+- **FQN v2**: Changed offering instance separator from `:` to `::` (e.g., `ollama::dev`). Legacy formats (`ollama:dev`, `ollama@adopted`) auto-normalize on parse/deserialize.
+- `OfferingFqn` is now a proper type (`garden_common::offerings::OfferingFqn`) with source awareness, builder methods, custom serde, and container encoding — replaces raw string FQN passing throughout the codebase.
+- Added source scheme grammar (`image:`, `repo:`, `oci:`) to FQN parser.
+- `Offering.name` and `TopologyServiceEntry.name` are now `OfferingFqn` instead of `String`.
+- Deleted `normalize_legacy_fqn()` and `normalize_legacy_type()` from persistence — absorbed into `OfferingFqn` serde.
+- MongoDB orchestrator: `MongoInstance.fqn` is now `OfferingFqn`; `derive_replica_set_name()` uses typed field access instead of `strip_prefix("mongodb:")`.
+- Renamed `sanitize_name_allow_colon()` to `sanitize_fqn_input()` with expanded character set for image refs.
+- **Image-direct deployment**: deploy any Docker image without a curated manifest via `garden-rake offer image nginx:latest`. Resolution pipeline pulls, inspects OCI config, assigns ports/volumes, and deploys through the standard container pipeline.
+- New offering resolution domain (`domain/offering_resolution.rs`): `ResolvedOffering` type bridges image inspection and `ContainerSpec`, decoupling resolution from deployment.
+- New image inspection infrastructure (`infra/image_inspect.rs`): bollard-based OCI image inspection extracting ports, volumes, env, healthcheck, labels, architecture.
+- New API endpoint `GET /api/v1/stone/offerings/inspect?image={ref}` — inspect an image without deploying, with curated collision advisory.
+- New Rake subcommand `garden-rake offer image <ref> [--instance name] [--info]` — deploy or inspect Docker images directly.
+- Fixed projector FQID bug: `instance_name_from_fqid("mongodb::prod")` returned `":prod"` (V2 breakage). Rewritten to use `OfferingFqn` typed field access.
+
 ## 2026-02-26
 
 - Fixed 2-minute boot delay on all Linux stones (systemd-networkd-wait-online timeout)

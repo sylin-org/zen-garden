@@ -305,7 +305,7 @@ pub async fn find_local_services(
         // Check if matches criteria
         if !matches_criteria(
             criteria,
-            &offering.name,
+            &offering.name.to_string(),
             &offering.offering,
             &category,
             &tags,
@@ -334,7 +334,7 @@ pub async fn find_local_services(
 
         results.push(FoundService {
             offering_id: offering.offering_id.clone(),
-            name: offering.name.clone(),
+            name: offering.name.to_string(),
             offering: offering.offering.clone(),
             category,
             tags,
@@ -391,7 +391,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
 
         services.push(FoundService {
             offering_id: offering.offering_id.clone(),
-            name: offering.name.clone(),
+            name: offering.name.to_string(),
             offering: offering.offering.clone(),
             category,
             tags,
@@ -430,21 +430,26 @@ pub async fn find_services(
 
     // ── Gateway check (ORCH-0004) ────────────────────────────────
     // Gateways appear first (structural priority — routed endpoint before raw).
+    // Query by category (not origin) so both local and announced entries appear.
 
-    // Check local gateway registrations
     {
-        let gateways = state.gateways.read().await;
-        for (offering, gw) in gateways.iter() {
-            let gw_category = gw.category.as_deref().unwrap_or("orchestrator");
-            let gw_tags = if gw.tags.is_empty() {
+        let reg = state.registry.read().await;
+        let (_, orchestrator_tools) = reg.snapshot(&crate::domain::ToolQuery {
+            category: Some("orchestrator".to_string()),
+            ..Default::default()
+        });
+        for tool in &orchestrator_tools {
+            let offering = &tool.tool.tool_type;
+            let gw_category = &tool.tool.category;
+            let gw_tags = if tool.tool.tags.is_empty() {
                 vec!["orchestrator".to_string()]
             } else {
-                gw.tags.clone()
+                tool.tool.tags.clone()
             };
 
             if !matches_criteria(
                 criteria,
-                &gw.fqn,
+                &tool.fqid,
                 offering,
                 gw_category,
                 &gw_tags,
@@ -453,25 +458,27 @@ pub async fn find_services(
                 continue;
             }
 
-            let conn = connection::resolve_connection(
-                &gw.hostname,
-                &format!("http://{}:{}", gw.ip, gw.port),
-                gw.port,
-                &gw.protocol,
-                gw.uri_template.as_deref(),
-            );
+            // Use preserved source fields — no URI parsing needed.
+            let svc = &tool.service;
+            let conn = ResolvedConnection {
+                hostname: svc.hostname.clone().unwrap_or_else(|| tool.stone.name.clone()),
+                ip: svc.ip.clone().unwrap_or_default(),
+                port: svc.port.unwrap_or(0),
+                protocol: svc.protocol.clone(),
+                uris: svc.uris.clone(),
+            };
 
             all_services.push(FoundService {
                 offering_id: String::new(),
-                name: gw.fqn.clone(),
+                name: tool.fqid.clone(),
                 offering: offering.clone(),
                 category: gw_category.to_string(),
                 tags: gw_tags,
                 status: garden_common::SERVICE_RUNNING.to_string(),
                 stone: StoneRef {
-                    id: state.stone_id.clone(),
-                    name: state.stone_name.clone(),
-                    endpoint: state.self_entry.read().await.address.http_base(),
+                    id: tool.stone.id.clone(),
+                    name: tool.stone.name.clone(),
+                    endpoint: tool.stone.endpoint.clone(),
                 },
                 connection: conn,
                 sub_capabilities: vec![],
@@ -479,59 +486,10 @@ pub async fn find_services(
         }
     }
 
-    // Check topology cache for remote gateways (skip self — already covered above)
-    {
-        let stones = topology::get_online_stones(&state.topology_cache).await;
-        for stone in &stones {
-            if stone.stone_id == state.stone_id {
-                continue;
-            }
-            for gw in &stone.gateways {
-                let primary_offering = gw.handler_for.first().map(|s| s.as_str()).unwrap_or("");
-                let gw_category = gw.category.as_deref().unwrap_or("orchestrator");
-                let gw_tags = if gw.tags.is_empty() {
-                    vec!["orchestrator".to_string()]
-                } else {
-                    gw.tags.clone()
-                };
-
-                if !matches_criteria(
-                    criteria,
-                    &gw.fqn,
-                    primary_offering,
-                    gw_category,
-                    &gw_tags,
-                    &[],
-                ) {
-                    continue;
-                }
-
-                let conn = connection::resolve_connection(
-                    &gw.hostname,
-                    &format!("http://{}:{}", gw.ip, gw.port),
-                    gw.port,
-                    &gw.protocol,
-                    gw.uri_template.as_deref(),
-                );
-
-                all_services.push(FoundService {
-                    offering_id: String::new(),
-                    name: gw.fqn.clone(),
-                    offering: primary_offering.to_string(),
-                    category: gw_category.to_string(),
-                    tags: gw_tags,
-                    status: garden_common::SERVICE_RUNNING.to_string(),
-                    stone: StoneRef {
-                        id: stone.stone_id.clone(),
-                        name: stone.stone_name.clone(),
-                        endpoint: stone.address.http_base(),
-                    },
-                    connection: conn,
-                    sub_capabilities: vec![],
-                });
-            }
-        }
-    }
+    // TOOLS-0003: Remote gateways are now in the registry (via tools beacon).
+    // The topology cache gateway path is removed — the registry is the single
+    // source of truth for gateway entries. The old path duplicated entries
+    // because chirped gateways appeared on every stone's topology entry.
 
     // 1. Search local stone first (zero latency)
     let local_services = find_local_services(criteria, state).await;
@@ -549,6 +507,13 @@ pub async fn find_services(
         // For now, fresh just ensures we check the cache (which we always do now)
         tracing::debug!("Fresh mode: topology cache already checked");
     }
+
+    // ── Sort results ─────────────────────────────────────────────
+    // Ordering contract (all callers — CLI, API, etc.):
+    //   1. Exact name matches first, partial (offering-level) matches after.
+    //   2. Within each match-quality tier, orchestrators before data services.
+    //   3. Stable tie-break by service name then stone name.
+    sort_found_services(&mut all_services, criteria);
 
     let elapsed = start.elapsed();
     tracing::debug!(
@@ -608,7 +573,7 @@ async fn find_services_in_topology_cache(
             // Check if matches criteria
             // Note: Remote services don't include sub_capabilities in chirps yet
             // Sub-capability filtering only works for local services
-            if !matches_criteria(criteria, &svc.name, &svc.offering, &svc.category, &[], &[]) {
+            if !matches_criteria(criteria, &svc.name.to_string(), &svc.offering, &svc.category, &[], &[]) {
                 continue;
             }
 
@@ -638,7 +603,7 @@ async fn find_services_in_topology_cache(
 
             results.push(FoundService {
                 offering_id: svc.offering_id.clone(),
-                name: svc.name.clone(),
+                name: svc.name.to_string(),
                 offering: svc.offering.clone(),
                 category: svc.category.clone(),
                 tags: vec![],
@@ -803,6 +768,50 @@ async fn fetch_remote_services(
     }
 
     Ok(results)
+}
+
+/// Sort found services according to the discovery ordering contract.
+///
+/// For name-based searches:
+///   1. Exact name matches first (service `name` == query).
+///   2. Partial matches second (only `offering` matches the query).
+///   3. Within each tier, orchestrators (category == "orchestrator") first.
+///   4. Stable tie-break: service name, then stone name.
+///
+/// For non-name searches (category, tag) the collection order from the
+/// gateway → local → cache pipeline already has orchestrators first, so we
+/// only apply the stable tie-break.
+fn sort_found_services(services: &mut [FoundService], criteria: &ServiceSearchCriteria) {
+    if let Some(ref search_name) = criteria.name {
+        let lower_search = search_name.to_lowercase();
+
+        services.sort_by(|a, b| {
+            let a_exact = a.name.to_lowercase() == lower_search;
+            let b_exact = b.name.to_lowercase() == lower_search;
+
+            // Primary: exact name match first
+            match (a_exact, b_exact) {
+                (true, false) => return std::cmp::Ordering::Less,
+                (false, true) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
+
+            let a_orch = a.category == garden_common::constants::CATEGORY_ORCHESTRATOR;
+            let b_orch = b.category == garden_common::constants::CATEGORY_ORCHESTRATOR;
+
+            // Secondary: orchestrators before data services
+            match (a_orch, b_orch) {
+                (true, false) => return std::cmp::Ordering::Less,
+                (false, true) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
+
+            // Tertiary: alphabetical by name, then stone
+            a.name.cmp(&b.name).then(a.stone.name.cmp(&b.stone.name))
+        });
+    }
+    // Non-name searches: orchestrators are already first via collection order;
+    // no additional reordering needed.
 }
 
 /// Check if a service matches the search criteria
@@ -1161,5 +1170,81 @@ mod tests {
         )
         .has_sub_capability_filter());
         assert!(!ServiceSearchCriteria::by_name("mongodb").has_sub_capability_filter());
+    }
+
+    /// Helper to build a minimal FoundService for sort tests.
+    fn stub_service(name: &str, offering: &str, category: &str, stone: &str) -> FoundService {
+        FoundService {
+            offering_id: String::new(),
+            name: name.to_string(),
+            offering: offering.to_string(),
+            category: category.to_string(),
+            tags: vec![],
+            status: "running".to_string(),
+            stone: StoneRef {
+                id: stone.to_string(),
+                name: stone.to_string(),
+                endpoint: format!("http://{}", stone),
+            },
+            connection: ResolvedConnection {
+                hostname: stone.to_string(),
+                ip: "127.0.0.1".to_string(),
+                port: 27017,
+                protocol: "mongodb".to_string(),
+                uris: vec![],
+            },
+            sub_capabilities: vec![],
+        }
+    }
+
+    #[test]
+    fn test_sort_exact_name_matches_first() {
+        let criteria = ServiceSearchCriteria::by_name("mongodb");
+
+        // Simulate the real scenario: orchestrators collected first, then data.
+        let mut services = vec![
+            stub_service("mongodb::legacy", "mongodb", "orchestrator", "stone-a"),
+            stub_service("mongodb", "mongodb", "orchestrator", "stone-b"),
+            stub_service("mongodb", "mongodb", "data", "stone-c"),
+            stub_service("mongodb", "mongodb", "data", "stone-d"),
+            stub_service("mongodb::legacy", "mongodb", "data", "stone-a"),
+        ];
+
+        sort_found_services(&mut services, &criteria);
+
+        let names: Vec<(&str, &str)> = services
+            .iter()
+            .map(|s| (s.name.as_str(), s.category.as_str()))
+            .collect();
+
+        // Exact matches first (mongodb), then partials (mongodb::legacy).
+        // Within each tier, orchestrators before data.
+        assert_eq!(
+            names,
+            vec![
+                ("mongodb", "orchestrator"),
+                ("mongodb", "data"),
+                ("mongodb", "data"),
+                ("mongodb::legacy", "orchestrator"),
+                ("mongodb::legacy", "data"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sort_no_reorder_for_category_search() {
+        let criteria = ServiceSearchCriteria::by_category("database");
+
+        let mut services = vec![
+            stub_service("mongodb::legacy", "mongodb", "orchestrator", "stone-a"),
+            stub_service("mongodb", "mongodb", "data", "stone-b"),
+        ];
+
+        let original_order: Vec<String> = services.iter().map(|s| s.name.clone()).collect();
+
+        sort_found_services(&mut services, &criteria);
+
+        let after: Vec<String> = services.iter().map(|s| s.name.clone()).collect();
+        assert_eq!(original_order, after, "category search should not reorder");
     }
 }

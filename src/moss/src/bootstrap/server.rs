@@ -5,11 +5,9 @@
 
 use crate::infra::CompanionRegistry;
 use axum::Router;
-use garden_common::console::{
-    try_boot_banner, try_shutdown_banner, BootBannerInfo, ConsoleEvent, ConsolePrinter,
-    EventCategory, EventStatus, ShutdownBannerInfo,
-};
+use garden_common::console::{BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo};
 use garden_common::infra::platform::shutdown_signal;
+use garden_common::PlatformRuntime;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -129,6 +127,7 @@ pub async fn run(
     app: Router,
     api_endpoint: &str,
     console: Arc<ConsolePrinter>,
+    runtime: Arc<dyn PlatformRuntime>,
     shutdown_token: CancellationToken,
     config: ServerConfig,
     shutdown_callback: Option<ShutdownCallback>,
@@ -152,27 +151,25 @@ pub async fn run(
         format!("HTTP server → {}", api_endpoint),
     ));
 
-    // Print boot banner to TTY1 (Linux only)
-    try_boot_banner(boot_banner.as_ref());
-
-    // MOSS-0004: Notify systemd that we're ready (Type=notify)
-    #[cfg(target_os = "linux")]
-    {
-        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
-        tracing::debug!("sd_notify: READY=1");
+    // Print boot banner to physical console (platform-appropriate output)
+    if let Some(ref b) = boot_banner {
+        runtime.print_boot_banner(b);
     }
 
-    // MOSS-0004: Start systemd watchdog ping task (WatchdogSec=60)
+    // MOSS-0004: Notify process supervisor that we're ready
+    runtime.notify_ready();
+
+    // MOSS-0004: Start watchdog ping task (WatchdogSec=60 on Linux)
     // Ping every 25s — well within the 60s watchdog window.
-    #[cfg(target_os = "linux")]
     {
+        let watchdog_runtime = runtime.clone();
         let watchdog_token = shutdown_token.child_token();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(25));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]);
+                        watchdog_runtime.notify_watchdog();
                     }
                     _ = watchdog_token.cancelled() => break,
                 }
@@ -293,15 +290,13 @@ pub async fn run(
 
     tracing::info!("Moss daemon shutdown complete");
 
-    // MOSS-0004: Notify systemd we're stopping (completes the lifecycle)
-    #[cfg(target_os = "linux")]
-    {
-        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
-        tracing::debug!("sd_notify: STOPPING=1");
-    }
+    // Notify process supervisor we're stopping (completes the lifecycle)
+    runtime.notify_stopping();
 
-    // Print shutdown banner to TTY1 (Linux only)
-    try_shutdown_banner(shutdown_banner.as_ref());
+    // Print shutdown banner to physical console (platform-appropriate output)
+    if let Some(ref b) = shutdown_banner {
+        runtime.print_shutdown_banner(b);
+    }
 
     console.emit(ConsoleEvent::new(
         EventCategory::System,

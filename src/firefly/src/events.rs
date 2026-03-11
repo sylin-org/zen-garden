@@ -61,11 +61,11 @@ pub(crate) struct StoneState {
     #[serde(default)]
     pub(crate) net_tx_bytes_per_sec: u64,
     #[serde(default)]
-    pub(crate) seed_bank: Option<SeedBankSummary>,
+    pub(crate) seed_bank: Option<StorageSummary>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct SeedBankSummary {
+pub(crate) struct StorageSummary {
     pub(crate) name: String,
     pub(crate) used_gb: u64,
     pub(crate) total_gb: u64,
@@ -409,26 +409,24 @@ impl EventHandler for FireflyEventHandler {
                 }
             }
 
-            // Storage detected - green pulse and enable seed-bank fireflies
-            event_types::STORAGE_DETECTED => {
+            // Managed storage connected (STORAGE-0010)
+            event_types::STORAGE_CONNECTED => {
                 #[derive(Deserialize)]
-                struct StorageEvent {
+                struct ConnectedEvent {
                     name: String,
                     #[serde(default)]
-                    used_gb: u64,
-                    #[serde(default)]
-                    total_gb: u64,
+                    capacity_gb: u64,
                 }
-                if let Ok(evt) = serde_json::from_str::<StorageEvent>(&event.data) {
-                    tracing::info!(name = %evt.name, "Seed bank detected");
+                if let Ok(evt) = serde_json::from_str::<ConnectedEvent>(&event.data) {
+                    tracing::info!(name = %evt.name, "Storage connected");
 
                     match device_type {
                         FireflyDeviceType::Esp8266Oled => {
-                            self.send_oled_wipe_in("SEED BANK", "CONNECTED");
+                            self.send_oled_wipe_in("STORAGE", "CONNECTED");
                         }
                         FireflyDeviceType::Esp32TDisplay => {
                             let _ = self.connection.with_device(|s| {
-                                s.tdisplay_seed_bank_detected(&evt.name, evt.used_gb, evt.total_gb)
+                                s.tdisplay_seed_bank_detected(&evt.name, 0, evt.capacity_gb)
                             });
                         }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
@@ -440,7 +438,12 @@ impl EventHandler for FireflyEventHandler {
                 }
             }
 
-            // Storage removed - brief amber dim and disable seed-bank fireflies
+            // Unmanaged device detected — informational only (STORAGE-0010)
+            event_types::STORAGE_DETECTED => {
+                tracing::debug!("Unmanaged storage detected (no LED action)");
+            }
+
+            // Storage removed
             event_types::STORAGE_REMOVED => {
                 #[derive(Deserialize)]
                 struct StorageEvent {

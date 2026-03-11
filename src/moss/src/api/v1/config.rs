@@ -20,7 +20,7 @@ use axum::{
 use garden_common::{
     api_utils::ApiErrorResponse,
     manifests::offering::ServiceTemplate,
-    offerings::parse_offering_fqn,
+    offerings::OfferingFqn,
     types::ConfigPatch,
 };
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ pub async fn get_config_v1(
         let offerings = state.offerings.read().await;
         let offering = offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.fqn() == service_name && o.is_managed())
             .ok_or_else(|| {
                 error_response(
                     StatusCode::NOT_FOUND,
@@ -168,7 +168,7 @@ pub async fn patch_config_v1(
         let offerings = state.offerings.read().await;
         let offering = offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.fqn() == service_name && o.is_managed())
             .ok_or_else(|| {
                 error_response(
                     StatusCode::NOT_FOUND,
@@ -268,7 +268,7 @@ pub async fn delete_config_v1(
         let offerings = state.offerings.read().await;
         let offering = offerings
             .iter()
-            .find(|o| o.name == service_name && o.is_managed())
+            .find(|o| o.name.fqn() == service_name && o.is_managed())
             .ok_or_else(|| {
                 error_response(
                     StatusCode::NOT_FOUND,
@@ -349,7 +349,7 @@ pub async fn delete_config_v1(
 fn normalize_service_name(
     service: &str,
 ) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
-    parse_offering_fqn(service)
+    OfferingFqn::parse(service)
         .map(|fqn| fqn.fqn())
         .map_err(|e| {
             error_response(
@@ -362,18 +362,30 @@ fn normalize_service_name(
 }
 
 /// Resolve the `ServiceTemplate` for a managed offering from the manifest registry.
+///
+/// Accepts full FQN strings (e.g., `mongodb::prod`) — strips the instance part
+/// to look up the base offering name in the manifest registry.
 fn get_service_template(
     state: &AppState,
     name: &str,
 ) -> Result<ServiceTemplate, (StatusCode, Json<ApiErrorResponse>)> {
-    let manifest = state.manifest_registry.get_offering(name).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
-            "TEMPLATE_NOT_FOUND",
-            format!("No manifest template for '{}'", name),
-            None,
-        )
-    })?;
+    // Manifest registry keys by base offering name (e.g., "mongodb"),
+    // but callers pass the full FQN (e.g., "mongodb::prod").
+    let base_name = OfferingFqn::parse(name)
+        .map(|fqn| fqn.offering)
+        .unwrap_or_else(|_| name.to_string());
+
+    let manifest = state
+        .manifest_registry
+        .get_offering(&base_name)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "TEMPLATE_NOT_FOUND",
+                format!("No manifest template for '{}'", name),
+                None,
+            )
+        })?;
 
     manifest.parse_template().map_err(|e| {
         error_response(
@@ -433,7 +445,7 @@ async fn maybe_cycle_container(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == service_name)
+            .find(|o| o.name.fqn() == service_name)
             .map(|o| o.status == garden_common::OfferingStatus::Running)
             .unwrap_or(false)
     };
@@ -460,7 +472,7 @@ async fn maybe_cycle_container(
         // Resolve image via compiled offerings index for hardware capability
         // resolution (e.g., AVX fallback: mongo:7 → mongo:4.4).
         let mut resolved_spec = desired_spec;
-        let offering_type = parse_offering_fqn(service_name)
+        let offering_type = OfferingFqn::parse(service_name)
             .map(|fqn| fqn.offering.clone())
             .unwrap_or_else(|_| service_name.to_string());
 

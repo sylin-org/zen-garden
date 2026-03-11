@@ -19,5 +19,15 @@
   "minimum_memory_gb": 4,
   "connection": {
     "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "ollama",
+    "restart_required": true,
+    "vars": [
+      "OLLAMA_NUM_PARALLEL",
+      "OLLAMA_MAX_LOADED_MODELS",
+      "OLLAMA_FLASH_ATTENTION",
+      "OLLAMA_HOST"
+    ]
   }
 }

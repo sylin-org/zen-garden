@@ -5,6 +5,7 @@
 
 use crate::http::check_response;
 use anyhow::{Context, Result};
+use garden_common::offerings::OfferingFqn;
 use garden_common::types::HardwareCapabilities;
 use reqwest::Client;
 use serde::Deserialize;
@@ -19,6 +20,8 @@ pub struct TopologyOfferingStone {
     /// mDNS hostname, e.g. `stone-quartz-fen.local`.
     pub hostname: String,
     pub moss_port: u16,
+    /// Fully-qualified name of the offering instance (e.g. `mongodb::prod`).
+    pub fqn: OfferingFqn,
     /// Full hardware capabilities from the chirp payload.
     pub capabilities: Option<HardwareCapabilities>,
 }
@@ -72,25 +75,27 @@ pub async fn query_topology_for_offering(
 
     let mut results = Vec::new();
     for entry in &topo.data {
-        let has_offering = entry
-            .services
-            .iter()
-            .any(|s| s.offering == offering_name && s.status == "running");
-        if has_offering {
-            let sn = &entry.stone_name;
-            let hostname = if sn.contains('.') {
-                sn.clone()
-            } else {
-                format!("{}.local", sn)
-            };
-            results.push(TopologyOfferingStone {
-                stone_id: entry.stone_id.clone(),
-                stone_name: entry.stone_name.clone(),
-                ip: entry.address.ip.to_string(),
-                hostname,
-                moss_port: entry.address.port,
-                capabilities: entry.capabilities.clone(),
-            });
+        let sn = &entry.stone_name;
+        let hostname = if sn.contains('.') {
+            sn.clone()
+        } else {
+            format!("{}.local", sn)
+        };
+
+        // Emit one entry per matching service instance (a stone may host
+        // multiple instances of the same offering, e.g. mongodb + mongodb::prod).
+        for svc in &entry.services {
+            if svc.offering == offering_name && svc.status == "running" {
+                results.push(TopologyOfferingStone {
+                    stone_id: entry.stone_id.clone(),
+                    stone_name: entry.stone_name.clone(),
+                    ip: entry.address.ip.to_string(),
+                    hostname: hostname.clone(),
+                    moss_port: entry.address.port,
+                    fqn: svc.name.clone(),
+                    capabilities: entry.capabilities.clone(),
+                });
+            }
         }
     }
 

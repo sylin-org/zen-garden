@@ -1,7 +1,7 @@
-//! S3-compatible Object Storage Gateway API
+//! S3-compatible Object Storage Gateway API (STORAGE-0009)
 //!
-//! Provides S3-compatible endpoints for storing and retrieving objects from seed banks.
-//! See docs/reference/s3-api-reference.md and docs/decisions/STORAGE-0002-api-structure.md.
+//! Provides S3-compatible endpoints for storing and retrieving objects.
+//! Uses `StorageService` for resolution and routing.
 //!
 //! ## Endpoints
 //!
@@ -16,16 +16,12 @@
 //!
 //! ## Headers
 //!
-//! - `X-Seed-Bank` - Optional. Select a specific seed bank by name.
+//! - `X-Seed-Bank` - Optional. Select a specific storage by name.
 //! - `Content-Type` - MIME type for PUT (default: application/octet-stream)
 //!
 //! ## Query Params
 //!
-//! - `seed-bank` - Optional. Select a specific seed bank by name.
-//!
-//! ## Response Format
-//!
-//! S3-compliant XML for list operations. Raw bytes for GET. Empty body with headers for HEAD.
+//! - `seed-bank` - Optional. Select a specific storage by name.
 
 use axum::{
     body::Bytes,
@@ -36,11 +32,10 @@ use axum::{
 use serde::Deserialize;
 use tracing::{debug, warn};
 
-use crate::infra::storage::{ObjectStore, SeedBankRegistry};
+use crate::domain::storage_service::StorageRoute;
 use crate::AppState;
 use garden_common::constants::headers::HEADER_SEED_BANK;
-use garden_common::constants::paths;
-use garden_common::storage::{SeedBankRole, DEFAULT_PUBLIC_SEED_BANK_NAME};
+use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
 
 // ============================================================================
 // Constants
@@ -65,16 +60,11 @@ impl SeedBankSelector {
     }
 }
 
-enum SeedBankRoute {
-    Local { mount_path: String },
-    Remote { endpoint: String },
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-fn get_seed_bank_name(headers: &HeaderMap, selector: &SeedBankSelector) -> Option<String> {
+fn get_storage_name(headers: &HeaderMap, selector: &SeedBankSelector) -> Option<String> {
     if let Some(name) = headers.get(HEADER_SEED_BANK).and_then(|v| v.to_str().ok()) {
         let trimmed = name.trim();
         if !trimmed.is_empty() {
@@ -82,17 +72,6 @@ fn get_seed_bank_name(headers: &HeaderMap, selector: &SeedBankSelector) -> Optio
         }
     }
     selector.name()
-}
-
-fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
-    let memories = std::path::Path::new(mount_path).join(paths::SEED_BANK_MEMORIES_DIR);
-    let storage = std::path::Path::new(mount_path).join(paths::SEED_BANK_STORAGE_DIR);
-
-    if !memories.is_dir() || !storage.is_dir() {
-        return Err("Seed bank is non-canonical; missing garden/memories and/or garden/storage. Re-prepare the seed bank.".to_string());
-    }
-
-    Ok(())
 }
 
 fn has_path_traversal(value: &str) -> bool {
@@ -143,110 +122,6 @@ fn validate_key(key: &str) -> Option<Response> {
         ));
     }
     None
-}
-
-async fn resolve_seed_bank_route(
-    state: &AppState,
-    name: &str,
-) -> Result<SeedBankRoute, (StatusCode, String)> {
-    let registry = SeedBankRegistry::scan().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to scan seed banks: {}", e),
-        )
-    })?;
-
-    if let Some(bank) = registry.get(name) {
-        if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
-            return Err((StatusCode::CONFLICT, msg));
-        }
-        return Ok(SeedBankRoute::Local {
-            mount_path: bank.mount_path.clone(),
-        });
-    }
-
-    let cache = state.storage_cache.read().await;
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == state.stone_id {
-            continue;
-        }
-        for sb in &beacon.seed_banks {
-            if sb.name == name {
-                return Ok(SeedBankRoute::Remote {
-                    endpoint: beacon.endpoint.clone(),
-                });
-            }
-        }
-    }
-
-    Err((
-        StatusCode::SERVICE_UNAVAILABLE,
-        format!("Seed bank '{}' not available", name),
-    ))
-}
-
-/// Resolve route for write operations (PUT / DELETE).
-///
-/// Checks seed bank roles (STORAGE-0006): if the local bank is Dormant,
-/// routes to the remote Primary stone instead.
-async fn resolve_seed_bank_write_route(
-    state: &AppState,
-    name: &str,
-) -> Result<SeedBankRoute, (StatusCode, String)> {
-    let registry = SeedBankRegistry::scan().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to scan seed banks: {}", e),
-        )
-    })?;
-
-    if let Some(bank) = registry.get(name) {
-        if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
-            return Err((StatusCode::CONFLICT, msg));
-        }
-
-        let roles = state.seed_bank_roles_snapshot().await;
-        let role = roles.get(name).copied().unwrap_or(SeedBankRole::Primary);
-
-        if role == SeedBankRole::Primary {
-            return Ok(SeedBankRoute::Local {
-                mount_path: bank.mount_path.clone(),
-            });
-        }
-
-        debug!(
-            seed_bank = %name,
-            "Local seed bank is dormant, routing write to remote primary"
-        );
-    }
-
-    // Search beacons for Primary (or any) remote
-    let cache = state.storage_cache.read().await;
-    if let Some((stone_id, _sb)) = cache.find_primary_by_name(name) {
-        if let Some(endpoint) = cache.get_endpoint(stone_id) {
-            return Ok(SeedBankRoute::Remote {
-                endpoint: endpoint.to_string(),
-            });
-        }
-    }
-
-    for beacon in cache.all_beacons() {
-        if beacon.stone_id == state.stone_id {
-            continue;
-        }
-        for sb in &beacon.seed_banks {
-            if sb.name == name {
-                return Ok(SeedBankRoute::Remote {
-                    endpoint: beacon.endpoint.clone(),
-                });
-            }
-        }
-    }
-
-    Err((
-        StatusCode::SERVICE_UNAVAILABLE,
-        format!("Seed bank '{}' not available for writes", name),
-    ))
 }
 
 /// Build XML error response
@@ -311,29 +186,15 @@ async fn proxy_s3_request(
     let body = response.bytes().await.unwrap_or_default();
 
     let mut builder = Response::builder().status(status);
-    if let Some(value) = resp_headers
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-    {
-        builder = builder.header(header::CONTENT_TYPE, value);
-    }
-    if let Some(value) = resp_headers
-        .get(reqwest::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-    {
-        builder = builder.header(header::CONTENT_LENGTH, value);
-    }
-    if let Some(value) = resp_headers
-        .get(reqwest::header::ETAG)
-        .and_then(|v| v.to_str().ok())
-    {
-        builder = builder.header(header::ETAG, value);
-    }
-    if let Some(value) = resp_headers
-        .get(reqwest::header::LAST_MODIFIED)
-        .and_then(|v| v.to_str().ok())
-    {
-        builder = builder.header(header::LAST_MODIFIED, value);
+    for header_name in &[
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::CONTENT_LENGTH,
+        reqwest::header::ETAG,
+        reqwest::header::LAST_MODIFIED,
+    ] {
+        if let Some(value) = resp_headers.get(header_name).and_then(|v| v.to_str().ok()) {
+            builder = builder.header(header_name.as_str(), value);
+        }
     }
 
     builder.body(body.into()).unwrap()
@@ -343,7 +204,7 @@ async fn proxy_s3_request(
 // PUT /api/v1/storage/s3/:bucket/*key - Put Object
 // ============================================================================
 
-/// Put an object to seed bank storage
+/// Put an object to storage
 pub async fn put_object(
     State(state): State<AppState>,
     Path((bucket, key)): Path<(String, String)>,
@@ -351,7 +212,6 @@ pub async fn put_object(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    // Validate bucket and key
     if let Some(resp) = validate_bucket(&bucket) {
         return resp;
     }
@@ -360,23 +220,23 @@ pub async fn put_object(
         return resp;
     }
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
+    let selected = get_storage_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    // Writes route to Primary replica (STORAGE-0006)
-    let route = match resolve_seed_bank_write_route(&state, &selected).await {
+    let svc = state.storage_service();
+    let route = match svc.resolve_write(&selected).await {
         Ok(route) => route,
-        Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
+        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     match route {
-        SeedBankRoute::Local { mount_path } => {
+        StorageRoute::Local(local) => {
             let content_type = headers
                 .get(header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("application/octet-stream");
 
-            let store = ObjectStore::new(&mount_path);
+            let store = svc.notifying_object_store(&local);
             match store.put_object(&bucket, key, content_type, &body).await {
                 Ok(result) => {
                     debug!(bucket = %bucket, key = %key, size = body.len(), "PUT object success");
@@ -396,14 +256,14 @@ pub async fn put_object(
                 }
             }
         }
-        SeedBankRoute::Remote { endpoint } => {
+        StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
                 reqwest::Method::PUT,
-                &endpoint,
+                &target.endpoint,
                 &format!("/api/v1/storage/s3/{}/{}", bucket, key),
                 query,
                 &headers,
@@ -418,14 +278,13 @@ pub async fn put_object(
 // GET /api/v1/storage/s3/:bucket/*key - Get Object
 // ============================================================================
 
-/// Get an object from seed bank storage
+/// Get an object from storage
 pub async fn get_object(
     State(state): State<AppState>,
     Path((bucket, key)): Path<(String, String)>,
     Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    // Validate bucket and key
     if let Some(resp) = validate_bucket(&bucket) {
         return resp;
     }
@@ -441,17 +300,18 @@ pub async fn get_object(
         return resp;
     }
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
+    let selected = get_storage_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match resolve_seed_bank_route(&state, &selected).await {
+    let svc = state.storage_service();
+    let route = match svc.resolve_read(&selected).await {
         Ok(route) => route,
-        Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
+        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     match route {
-        SeedBankRoute::Local { mount_path } => {
-            let store = ObjectStore::new(&mount_path);
+        StorageRoute::Local(local) => {
+            let store = svc.object_store(&local);
             match store.get_object(&bucket, key).await {
                 Ok(Some((data, meta))) => {
                     debug!(bucket = %bucket, key = %key, size = data.len(), "GET object success");
@@ -479,14 +339,14 @@ pub async fn get_object(
                 }
             }
         }
-        SeedBankRoute::Remote { endpoint } => {
+        StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
                 reqwest::Method::GET,
-                &endpoint,
+                &target.endpoint,
                 &format!("/api/v1/storage/s3/{}/{}", bucket, key),
                 query,
                 &headers,
@@ -508,7 +368,6 @@ pub async fn head_object(
     Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    // Validate bucket and key
     if let Some(resp) = validate_bucket(&bucket) {
         return resp;
     }
@@ -523,17 +382,23 @@ pub async fn head_object(
         return resp;
     }
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
+    let selected = get_storage_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match resolve_seed_bank_route(&state, &selected).await {
+    let svc = state.storage_service();
+    let route = match svc.resolve_read(&selected).await {
         Ok(route) => route,
-        Err((status, _)) => return Response::builder().status(status).body("".into()).unwrap(),
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body("".into())
+                .unwrap()
+        }
     };
 
     match route {
-        SeedBankRoute::Local { mount_path } => {
-            let store = ObjectStore::new(&mount_path);
+        StorageRoute::Local(local) => {
+            let store = svc.object_store(&local);
             match store.head_object(&bucket, key).await {
                 Ok(Some(meta)) => {
                     debug!(bucket = %bucket, key = %key, "HEAD object success");
@@ -556,14 +421,14 @@ pub async fn head_object(
                     .unwrap(),
             }
         }
-        SeedBankRoute::Remote { endpoint } => {
+        StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
                 reqwest::Method::HEAD,
-                &endpoint,
+                &target.endpoint,
                 &format!("/api/v1/storage/s3/{}/{}", bucket, key),
                 query,
                 &headers,
@@ -578,14 +443,13 @@ pub async fn head_object(
 // DELETE /api/v1/storage/s3/:bucket/*key - Delete Object
 // ============================================================================
 
-/// Delete an object from seed bank storage
+/// Delete an object from storage
 pub async fn delete_object(
     State(state): State<AppState>,
     Path((bucket, key)): Path<(String, String)>,
     Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    // Validate bucket and key
     if let Some(resp) = validate_bucket(&bucket) {
         return resp;
     }
@@ -594,18 +458,18 @@ pub async fn delete_object(
         return resp;
     }
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
+    let selected = get_storage_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    // Deletes route to Primary replica (STORAGE-0006)
-    let route = match resolve_seed_bank_write_route(&state, &selected).await {
+    let svc = state.storage_service();
+    let route = match svc.resolve_write(&selected).await {
         Ok(route) => route,
-        Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
+        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     match route {
-        SeedBankRoute::Local { mount_path } => {
-            let store = ObjectStore::new(&mount_path);
+        StorageRoute::Local(local) => {
+            let store = svc.notifying_object_store(&local);
             match store.delete_object(&bucket, key).await {
                 Ok(_) => {
                     debug!(bucket = %bucket, key = %key, "DELETE object success");
@@ -624,14 +488,14 @@ pub async fn delete_object(
                 }
             }
         }
-        SeedBankRoute::Remote { endpoint } => {
+        StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
                 reqwest::Method::DELETE,
-                &endpoint,
+                &target.endpoint,
                 &format!("/api/v1/storage/s3/{}/{}", bucket, key),
                 query,
                 &headers,
@@ -652,17 +516,18 @@ pub async fn list_buckets(
     Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
+    let selected = get_storage_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match resolve_seed_bank_route(&state, &selected).await {
+    let svc = state.storage_service();
+    let route = match svc.resolve_read(&selected).await {
         Ok(route) => route,
-        Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
+        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     match route {
-        SeedBankRoute::Local { mount_path } => {
-            let store = ObjectStore::new(&mount_path);
+        StorageRoute::Local(local) => {
+            let store = svc.object_store(&local);
             match store.list_buckets().await {
                 Ok(buckets) => {
                     debug!(count = buckets.len(), "LIST buckets success");
@@ -683,14 +548,14 @@ pub async fn list_buckets(
                 }
             }
         }
-        SeedBankRoute::Remote { endpoint } => {
+        StorageRoute::Proxy(target) => {
             let mut query = Vec::new();
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
             }
             proxy_s3_request(
                 reqwest::Method::GET,
-                &endpoint,
+                &target.endpoint,
                 "/api/v1/storage/s3",
                 query,
                 &headers,
@@ -708,21 +573,14 @@ pub async fn list_buckets(
 /// Query parameters for list objects
 #[derive(Debug, Default, Deserialize)]
 pub struct ListObjectsQuery {
-    /// Only return keys with this prefix
     pub prefix: Option<String>,
-    /// Delimiter for grouping keys
     pub delimiter: Option<String>,
-    /// Start listing after this key
     pub marker: Option<String>,
-    /// Maximum keys to return (default: 1000)
     #[serde(rename = "max-keys")]
     pub max_keys: Option<usize>,
-    /// Optional seed bank selector
     #[serde(rename = "seed-bank")]
-    pub seed_bank: Option<String>,
+    pub storage: Option<String>,
 }
-
-impl ListObjectsQuery {}
 
 /// List objects in a bucket
 pub async fn list_objects(
@@ -731,28 +589,28 @@ pub async fn list_objects(
     Query(query): Query<ListObjectsQuery>,
     headers: HeaderMap,
 ) -> Response {
-    // Validate bucket
     if let Some(resp) = validate_bucket(&bucket) {
         return resp;
     }
 
     let selector = SeedBankSelector {
-        seed_bank: query.seed_bank.clone(),
+        seed_bank: query.storage.clone(),
     };
 
-    let selected = get_seed_bank_name(&headers, &selector)
-        .unwrap_or_else(|| DEFAULT_PUBLIC_SEED_BANK_NAME.to_string());
+    let selected = get_storage_name(&headers, &selector)
+        .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match resolve_seed_bank_route(&state, &selected).await {
+    let svc = state.storage_service();
+    let route = match svc.resolve_read(&selected).await {
         Ok(route) => route,
-        Err((status, msg)) => return xml_error(status, "NoSeedBank", &msg),
+        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     let max_keys = query.max_keys.unwrap_or(DEFAULT_MAX_KEYS).min(MAX_MAX_KEYS);
 
     match route {
-        SeedBankRoute::Local { mount_path } => {
-            let store = ObjectStore::new(&mount_path);
+        StorageRoute::Local(local) => {
+            let store = svc.object_store(&local);
             match store
                 .list_objects(
                     &bucket,
@@ -791,7 +649,7 @@ pub async fn list_objects(
                 }
             }
         }
-        SeedBankRoute::Remote { endpoint } => {
+        StorageRoute::Proxy(target) => {
             let mut query_params = Vec::new();
             if let Some(prefix) = &query.prefix {
                 query_params.push(("prefix".to_string(), prefix.clone()));
@@ -803,13 +661,13 @@ pub async fn list_objects(
                 query_params.push(("marker".to_string(), marker.clone()));
             }
             query_params.push(("max-keys".to_string(), max_keys.to_string()));
-            if selected != DEFAULT_PUBLIC_SEED_BANK_NAME {
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query_params.push(("seed-bank".to_string(), selected));
             }
 
             proxy_s3_request(
                 reqwest::Method::GET,
-                &endpoint,
+                &target.endpoint,
                 &format!("/api/v1/storage/s3/{}", bucket),
                 query_params,
                 &headers,
@@ -820,7 +678,10 @@ pub async fn list_objects(
     }
 }
 
-/// Build ListBucketResult XML
+// ============================================================================
+// XML builders
+// ============================================================================
+
 fn build_list_bucket_result(
     bucket: &str,
     prefix: &str,
@@ -873,7 +734,6 @@ fn build_list_bucket_result(
     xml
 }
 
-/// Escape special XML characters
 fn escape_xml(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -882,7 +742,6 @@ fn escape_xml(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-/// Build ListAllMyBucketsResult XML
 fn build_list_all_buckets_result(buckets: &[String]) -> String {
     let mut xml = String::new();
     xml.push_str(r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"#);
@@ -904,4 +763,257 @@ fn build_list_all_buckets_result(buckets: &[String]) -> String {
 
     xml.push_str("\n</ListAllMyBucketsResult>");
     xml
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infra::storage::{ListResult, ObjectMetadata};
+
+    // ── has_path_traversal ─────────────────────────────────────────────
+
+    #[test]
+    fn test_path_traversal_detects_parent_dir() {
+        assert!(has_path_traversal("../etc/passwd"));
+        assert!(has_path_traversal("foo/../bar"));
+    }
+
+    #[test]
+    fn test_path_traversal_detects_backslash() {
+        assert!(has_path_traversal("foo\\bar"));
+        assert!(has_path_traversal("..\\secret"));
+    }
+
+    #[test]
+    fn test_path_traversal_clean_paths_pass() {
+        assert!(!has_path_traversal("mybucket"));
+        assert!(!has_path_traversal("photos/2026/jan"));
+        assert!(!has_path_traversal("file.txt"));
+    }
+
+    #[test]
+    fn test_path_traversal_dot_alone_is_ok() {
+        // Single dot (current dir) is not a traversal risk for buckets/keys
+        // since we join it under a mount path. The function checks ParentDir,
+        // RootDir, and Prefix — CurDir (".") is allowed.
+        assert!(!has_path_traversal("./file.txt"));
+    }
+
+    // ── validate_bucket ────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_bucket_empty_returns_error() {
+        let resp = validate_bucket("");
+        assert!(resp.is_some());
+    }
+
+    #[test]
+    fn test_validate_bucket_traversal_returns_error() {
+        let resp = validate_bucket("../etc");
+        assert!(resp.is_some());
+    }
+
+    #[test]
+    fn test_validate_bucket_valid_returns_none() {
+        assert!(validate_bucket("my-bucket").is_none());
+        assert!(validate_bucket("photos").is_none());
+        assert!(validate_bucket("data-2026").is_none());
+    }
+
+    // ── validate_key ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_key_empty_returns_error() {
+        let resp = validate_key("");
+        assert!(resp.is_some());
+    }
+
+    #[test]
+    fn test_validate_key_traversal_returns_error() {
+        let resp = validate_key("../../shadow");
+        assert!(resp.is_some());
+    }
+
+    #[test]
+    fn test_validate_key_valid_returns_none() {
+        assert!(validate_key("report.pdf").is_none());
+        assert!(validate_key("logs/2026/jan.log").is_none());
+    }
+
+    // ── escape_xml ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_escape_xml_ampersand() {
+        assert_eq!(escape_xml("a&b"), "a&amp;b");
+    }
+
+    #[test]
+    fn test_escape_xml_angle_brackets() {
+        assert_eq!(escape_xml("<tag>"), "&lt;tag&gt;");
+    }
+
+    #[test]
+    fn test_escape_xml_quotes() {
+        assert_eq!(escape_xml(r#"he said "hi""#), "he said &quot;hi&quot;");
+        assert_eq!(escape_xml("it's"), "it&apos;s");
+    }
+
+    #[test]
+    fn test_escape_xml_no_special_chars() {
+        assert_eq!(escape_xml("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_escape_xml_all_special_chars() {
+        let input = "<>&\"'";
+        let expected = "&lt;&gt;&amp;&quot;&apos;";
+        assert_eq!(escape_xml(input), expected);
+    }
+
+    // ── build_list_all_buckets_result ───────────────────────────────────
+
+    #[test]
+    fn test_list_all_buckets_empty() {
+        let xml = build_list_all_buckets_result(&[]);
+        assert!(xml.contains("<Buckets>"));
+        assert!(xml.contains("</Buckets>"));
+        assert!(!xml.contains("<Bucket>"));
+    }
+
+    #[test]
+    fn test_list_all_buckets_includes_names() {
+        let buckets = vec!["photos".to_string(), "backups".to_string()];
+        let xml = build_list_all_buckets_result(&buckets);
+        assert!(xml.contains("<Name>photos</Name>"));
+        assert!(xml.contains("<Name>backups</Name>"));
+        assert_eq!(xml.matches("<Bucket>").count(), 2);
+    }
+
+    #[test]
+    fn test_list_all_buckets_escapes_names() {
+        let buckets = vec!["my<bucket>".to_string()];
+        let xml = build_list_all_buckets_result(&buckets);
+        assert!(xml.contains("<Name>my&lt;bucket&gt;</Name>"));
+    }
+
+    #[test]
+    fn test_list_all_buckets_has_owner() {
+        let xml = build_list_all_buckets_result(&[]);
+        assert!(xml.contains("<ID>zen-garden</ID>"));
+        assert!(xml.contains("<DisplayName>zen-garden</DisplayName>"));
+    }
+
+    // ── build_list_bucket_result ───────────────────────────────────────
+
+    #[test]
+    fn test_list_bucket_result_empty() {
+        let result = ListResult {
+            contents: vec![],
+            common_prefixes: vec![],
+            is_truncated: false,
+            next_marker: None,
+        };
+        let xml = build_list_bucket_result("test-bucket", "", "", 1000, "", &result);
+        assert!(xml.contains("<Name>test-bucket</Name>"));
+        assert!(xml.contains("<IsTruncated>false</IsTruncated>"));
+        assert!(!xml.contains("<Contents>"));
+    }
+
+    #[test]
+    fn test_list_bucket_result_with_objects() {
+        let result = ListResult {
+            contents: vec![ObjectMetadata {
+                key: "file.txt".to_string(),
+                size: 1024,
+                last_modified: "2026-01-01T00:00:00Z".to_string(),
+                etag: "\"abc123\"".to_string(),
+                content_type: "text/plain".to_string(),
+            }],
+            common_prefixes: vec![],
+            is_truncated: false,
+            next_marker: None,
+        };
+        let xml = build_list_bucket_result("data", "", "", 1000, "", &result);
+        assert!(xml.contains("<Key>file.txt</Key>"));
+        assert!(xml.contains("<Size>1024</Size>"));
+        assert!(xml.contains("<StorageClass>STANDARD</StorageClass>"));
+    }
+
+    #[test]
+    fn test_list_bucket_result_with_common_prefixes() {
+        let result = ListResult {
+            contents: vec![],
+            common_prefixes: vec!["logs/".to_string(), "data/".to_string()],
+            is_truncated: false,
+            next_marker: None,
+        };
+        let xml = build_list_bucket_result("mybucket", "", "", 1000, "/", &result);
+        assert!(xml.contains("<Prefix>logs/</Prefix>"));
+        assert!(xml.contains("<Prefix>data/</Prefix>"));
+        assert!(xml.contains("<Delimiter>/</Delimiter>"));
+    }
+
+    #[test]
+    fn test_list_bucket_result_truncated() {
+        let result = ListResult {
+            contents: vec![],
+            common_prefixes: vec![],
+            is_truncated: true,
+            next_marker: Some("marker123".to_string()),
+        };
+        let xml = build_list_bucket_result("bucket", "", "", 10, "", &result);
+        assert!(xml.contains("<IsTruncated>true</IsTruncated>"));
+        assert!(xml.contains("<MaxKeys>10</MaxKeys>"));
+    }
+
+    // ── get_storage_name ───────────────────────────────────────────────
+
+    #[test]
+    fn test_get_storage_name_from_query() {
+        let headers = HeaderMap::new();
+        let selector = SeedBankSelector {
+            seed_bank: Some("my-bank".to_string()),
+        };
+        assert_eq!(
+            get_storage_name(&headers, &selector),
+            Some("my-bank".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_storage_name_header_takes_precedence() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_SEED_BANK, "header-bank".parse().unwrap());
+        let selector = SeedBankSelector {
+            seed_bank: Some("query-bank".to_string()),
+        };
+        assert_eq!(
+            get_storage_name(&headers, &selector),
+            Some("header-bank".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_storage_name_none_when_empty() {
+        let headers = HeaderMap::new();
+        let selector = SeedBankSelector { seed_bank: None };
+        assert_eq!(get_storage_name(&headers, &selector), None);
+    }
+
+    #[test]
+    fn test_get_storage_name_empty_header_falls_through() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_SEED_BANK, "  ".parse().unwrap());
+        let selector = SeedBankSelector {
+            seed_bank: Some("fallback".to_string()),
+        };
+        assert_eq!(
+            get_storage_name(&headers, &selector),
+            Some("fallback".to_string())
+        );
+    }
 }

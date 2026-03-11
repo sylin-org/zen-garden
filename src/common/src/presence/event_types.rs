@@ -53,15 +53,17 @@ pub const JOB_PROGRESS: &str = "job.progress";
 pub const JOB_COMPLETED: &str = "job.completed";
 pub const JOB_FAILED: &str = "job.failed";
 
-// Storage events (seed bank lifecycle)
+// Storage events (STORAGE-0010)
 pub const CATEGORY_STORAGE: &str = "storage";
+/// Managed storage reconnected (has `.zen-garden/`, auto-mounted)
+pub const STORAGE_CONNECTED: &str = "storage.connected";
+/// Unmanaged device detected (empty or has files — needs `storage add`)
 pub const STORAGE_DETECTED: &str = "storage.detected";
-pub const STORAGE_PREPARED: &str = "storage.prepared";
 pub const STORAGE_RELEASED: &str = "storage.released";
 pub const STORAGE_REMOVED: &str = "storage.removed";
 pub const STORAGE_POOL_CONFLICT: &str = "storage.pool_conflict";
 pub const STORAGE_READONLY: &str = "storage.readonly_detected";
-pub const STORAGE_PREPARE_PROGRESS: &str = "storage.prepare.progress";
+pub const STORAGE_ADD_PROGRESS: &str = "storage.add.progress";
 pub const STORAGE_REDISCOVERED: &str = "storage.rediscovered";
 pub const STORAGE_SYNC_STARTED: &str = "storage.sync_started";
 pub const STORAGE_SYNC_COMPLETED: &str = "storage.sync_completed";

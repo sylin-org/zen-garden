@@ -1,13 +1,13 @@
-//! Object storage operations for seed banks
+//! Object storage operations for managed storage
 //!
-//! Provides S3-compatible object storage operations on seed bank filesystems.
-//! Objects are stored under: {mount_path}/garden/storage/{bucket}/{key}
+//! Provides S3-compatible object storage on managed storage filesystems.
+//! Objects stored at: `{mount_path}/.zen-garden/storage/{bucket}/{key}`
 //!
-//! Design: This is the infrastructure layer - handles actual filesystem I/O.
-//! All content I/O flows through [`SeedBankStore`] (STORAGE-0006 chokepoint).
+//! Design: Infrastructure layer — handles actual filesystem I/O.
+//! All content I/O flows through [`ContentStore`] (STORAGE-0006 chokepoint).
 //! When the store has a DEK, content is encrypted transparently.
 
-use super::store::SeedBankStore;
+use super::store::ContentStore;
 use anyhow::{Context, Result};
 use garden_common::constants::paths;
 use std::path::{Path, PathBuf};
@@ -37,8 +37,8 @@ pub struct PutResult {
 
 /// Object store interface for a specific seed bank
 pub struct ObjectStore {
-    /// SeedBankStore chokepoint — all content I/O flows through here
-    store: SeedBankStore,
+    /// ContentStore chokepoint — all content I/O flows through here
+    store: ContentStore,
     /// Full filesystem path for storage root (for directory walking)
     root_path: PathBuf,
     /// Relative path from mount root to storage dir (e.g., "garden/storage")
@@ -50,27 +50,27 @@ impl ObjectStore {
     ///
     /// For encrypted seed banks, use [`ObjectStore::with_store`] instead.
     pub fn new(mount_path: impl AsRef<Path>) -> Self {
-        let root_path = mount_path.as_ref().join(paths::SEED_BANK_STORAGE_DIR);
+        let root_path = mount_path.as_ref().join(paths::STORAGE_OBJECTS_DIR);
         Self {
-            store: SeedBankStore::new_public(mount_path.as_ref()),
+            store: ContentStore::new_public(mount_path.as_ref()),
             root_path,
-            storage_rel: PathBuf::from(paths::SEED_BANK_STORAGE_DIR),
+            storage_rel: PathBuf::from(paths::STORAGE_OBJECTS_DIR),
         }
     }
 
-    /// Create an object store backed by an explicit [`SeedBankStore`].
+    /// Create an object store backed by an explicit [`ContentStore`].
     ///
     /// Use this when the seed bank may be encrypted.
-    pub fn with_store(store: SeedBankStore) -> Self {
-        let root_path = store.mount_root().join(paths::SEED_BANK_STORAGE_DIR);
+    pub fn with_store(store: ContentStore) -> Self {
+        let root_path = store.mount_root().join(paths::STORAGE_OBJECTS_DIR);
         Self {
-            storage_rel: PathBuf::from(paths::SEED_BANK_STORAGE_DIR),
+            storage_rel: PathBuf::from(paths::STORAGE_OBJECTS_DIR),
             root_path,
             store,
         }
     }
 
-    /// Relative path from mount root for an object (for SeedBankStore)
+    /// Relative path from mount root for an object (for ContentStore)
     fn object_rel(&self, bucket: &str, key: &str) -> PathBuf {
         self.storage_rel.join(bucket).join(key)
     }
@@ -86,7 +86,7 @@ impl ObjectStore {
         self.root_path.join(bucket)
     }
 
-    /// PUT object - store data with atomic write through SeedBankStore
+    /// PUT object - store data with atomic write through ContentStore
     pub async fn put_object(
         &self,
         bucket: &str,
@@ -100,7 +100,7 @@ impl ObjectStore {
         let hash = md5::compute(data);
         let etag = format!("\"{}\"", hex::encode(hash.0));
 
-        // Write content through SeedBankStore (encrypts if dek is set)
+        // Write content through ContentStore (encrypts if dek is set)
         self.store
             .write(&rel, data)
             .await
@@ -276,7 +276,7 @@ impl ObjectStore {
     /// Recursively walk directory and collect objects.
     ///
     /// Directory walking uses the filesystem directly (just listing entries).
-    /// Content reads for metadata go through SeedBankStore.
+    /// Content reads for metadata go through ContentStore.
     #[allow(clippy::too_many_arguments)]
     fn walk_directory<'a>(
         &'a self,
@@ -347,7 +347,7 @@ impl ObjectStore {
                         }
                     }
 
-                    // Build store-relative path for reads through SeedBankStore
+                    // Build store-relative path for reads through ContentStore
                     let store_rel = self.object_rel(bucket, &relative);
 
                     // Get metadata
@@ -371,7 +371,7 @@ impl ObjectStore {
             .await
             .context("Failed to get file metadata")?;
 
-        // Try to read sidecar metadata through SeedBankStore
+        // Try to read sidecar metadata through ContentStore
         let sidecar_rel = self.meta_rel(rel);
         let (content_type, etag, size) = if self.store.exists(&sidecar_rel).await {
             match self.store.read_string(&sidecar_rel).await {
@@ -399,7 +399,7 @@ impl ObjectStore {
         })
     }
 
-    /// Compute metadata when sidecar is missing — reads through SeedBankStore (decrypts if needed)
+    /// Compute metadata when sidecar is missing — reads through ContentStore (decrypts if needed)
     async fn compute_metadata(
         &self,
         rel: &Path,

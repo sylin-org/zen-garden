@@ -44,7 +44,7 @@ use crate::{
     ServerConfig,
 };
 use garden_common::console;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -112,18 +112,19 @@ pub async fn run(
         tracing::debug!("Initial topology file written");
     }
 
-    // STORAGE-0003: Create storage cache for seed bank routing
-    let storage_cache = crate::domain::storage_cache::new_storage_cache();
-
-    // TOOLS-0001: Unified tools projection cache + stream channel
-    let tools_cache = crate::domain::tools::new_tools_cache();
     let (tools_tx, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
+
+    // TOOLS-0003: Unified garden registry (replaces tools_cache, storage_cache, gateways)
+    let registry = crate::domain::garden_registry::new_registry();
 
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(
         config.console_mode,
         config.event_dedup_ttl_secs,
     ));
+
+    // Create platform runtime for physical console output (ARCH-0002)
+    let runtime = crate::infra::platform::create_runtime();
 
     // Load ManifestRegistry early - needed for infrastructure handlers
     // Uses overlay pattern: embedded assets first, filesystem overlays on top
@@ -209,8 +210,10 @@ pub async fn run(
     // Create orchestration nudge early — shared between discovery listener and AppState
     let orchestration_nudge = Arc::new(tokio::sync::Notify::new());
 
-    // Seed bank lifecycle objects (STORAGE-0007) — created empty, populated after AppState
-    let seed_banks = crate::domain::new_seed_banks();
+    // Unified volume collection (STORAGE-0011) — created empty, populated after AppState
+    let volumes = crate::domain::new_volumes();
+    // Volume rescan channel — API handlers poke tx, watcher loop consumes rx
+    let (volume_rescan_tx, volume_rescan_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
@@ -219,15 +222,14 @@ pub async fn run(
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
         topology_dirty.clone(),
-        storage_cache.clone(),
-        tools_cache.clone(),
         tools_tx.clone(),
+        registry.clone(),
         self_entry.clone(),
         console_printer.clone(),
         infrastructure_handlers.clone(),
         manifest_registry.clone(),
         orchestration_nudge.clone(),
-        seed_banks.clone(),
+        volumes.clone(),
         shutdown_token.child_token(),
     )
     .await;
@@ -238,7 +240,7 @@ pub async fn run(
     // Windows: Uses hardware-id cache existence, sets DNS hostname via registry
     #[cfg(target_os = "linux")]
     if console::is_first_run() {
-        start_first_boot_task(&stone_name, port, config.docker_retry_delay_secs());
+        start_first_boot_task(&stone_name, port, config.docker_retry_delay_secs(), runtime.clone());
     }
 
     #[cfg(target_os = "windows")]
@@ -512,7 +514,7 @@ pub async fn run(
     emit_startup_events(&console_printer, &config);
 
     // Phase 7: Docker connection
-    let docker = connect_docker(&console_printer, DockerConfig::default()).await?;
+    let docker = connect_docker(&console_printer, &*runtime, DockerConfig::default()).await?;
 
     // Phase 7.1: Configure systemd-resolved for container DNS
     // resolved owns port 53; Koi DNS serves .zengarden on port 5642.
@@ -637,16 +639,15 @@ pub async fn run(
         start_time: std::time::Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
+        runtime: runtime.clone(),
         capabilities: capabilities_arc.clone(),
         network_monitor: Arc::new(network_monitor),
         api_port: port,
         topology_cache: topology_cache.clone(),
         topology_dirty: topology_dirty.clone(),
-        storage_cache: storage_cache.clone(),
-        tools_cache: tools_cache.clone(),
         tools_tx: tools_tx.clone(),
+        registry: registry.clone(),
         self_entry: self_entry.clone(),
-        gateways: Arc::new(RwLock::new(HashMap::new())),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),
         pond: pond_state,
@@ -666,7 +667,6 @@ pub async fn run(
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
         infrastructure_handlers: infrastructure_handlers.clone(),
         // Cached metrics - populated by background tasks, read-only for endpoints
-        candidates_cache: Arc::new(RwLock::new(Vec::new())),
         network_metrics_cache: Arc::new(RwLock::new(None)),
         // FIREFLY-0003: GPU utilization cache
         gpu_utilization: Arc::new(RwLock::new(None)),
@@ -676,9 +676,6 @@ pub async fn run(
         log_tx: log_tx.clone(),
         // Subsystem readiness (network_ready managed by NetworkMonitor)
         subsystems: subsystems.clone(),
-        // Mount tracker — shared with coordinator + release handler (STORAGE-0006)
-        #[cfg(target_os = "linux")]
-        mount_tracker: crate::infra::storage::create_mount_tracker(),
         // Storage replication tick channel — raw (STORAGE-0006 Phase 4)
         storage_tick_tx: {
             let (tx, _) = tokio::sync::broadcast::channel(64);
@@ -691,8 +688,20 @@ pub async fn run(
         },
         // Orchestration nudge — immediate role re-evaluation trigger
         orchestration_nudge: orchestration_nudge.clone(),
-        // Seed bank lifecycle objects — single source of truth (STORAGE-0007)
-        seed_banks: seed_banks.clone(),
+        // Unified volume collection (STORAGE-0011)
+        volumes: volumes.clone(),
+        // Physical media (STORAGE-0011) — host-only, for candidate discovery
+        media: crate::domain::new_media(),
+        // Volume rescan signal (STORAGE-0011) — API handlers poke this after
+        // mutating on-disk state (e.g. writing a manifest). The volume watcher
+        // loop consumes the rx side and triggers a full reconcile.
+        volume_rescan_tx: volume_rescan_tx.clone(),
+        // Storage domain events (STORAGE-0013) — event-driven notification channel.
+        // Subscribers react to changes by pulling fresh state from AppState.
+        storage_changed_tx: {
+            let (tx, _) = tokio::sync::broadcast::channel(64);
+            tx
+        },
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -744,60 +753,23 @@ pub async fn run(
     });
     tracing::info!("Discovery handler initialized (using p2p transport)");
 
-    // Phase 11.post4a: Initialize seed bank lifecycle objects (STORAGE-0007)
-    // Scan mounted devices, construct SeedBank objects with Storage + Store + pin state.
-    // This replaces the old scattered pin-loading code — SeedBank::from_storage loads pins.
+    // Phase 11.post4a: Initial volume scan (STORAGE-0011)
+    // Populates the unified Volumes map with all currently attached volumes.
+    // Cross-platform: uses platform::scan_volumes() (Linux: /proc/mounts, Windows: GetLogicalDrives).
     {
-        if let Ok(registry) = crate::infra::storage::SeedBankRegistry::scan().await {
-            let mut banks = state.seed_banks.write().await;
-            for info in registry.list() {
-                // Read manifest for full identity
-                let manifest_path = std::path::Path::new(&info.mount_path)
-                    .join(".zen-garden")
-                    .join("manifest.json");
-                let manifest = match tokio::fs::read_to_string(&manifest_path).await {
-                    Ok(content) => match serde_json::from_str::<
-                        garden_common::storage::SeedBankManifest,
-                    >(&content)
-                    {
-                        Ok(m) => m,
-                        Err(e) => {
-                            tracing::warn!(
-                                name = %info.name,
-                                error = %e,
-                                "Failed to parse seed bank manifest — skipping"
-                            );
-                            continue;
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!(
-                            name = %info.name,
-                            error = %e,
-                            "Failed to read seed bank manifest — skipping"
-                        );
-                        continue;
-                    }
-                };
+        let volumes = state.volumes.clone();
+        crate::domain::storage::initial_scan(&volumes).await;
+    }
 
-                let storage =
-                    crate::infra::storage::StorageDevice::from_seed_bank_info(info);
-                let bank =
-                    crate::domain::SeedBank::from_storage(storage, &manifest, None).await;
-                tracing::info!(
-                    name = %bank.name,
-                    id = %bank.id,
-                    pinned = bank.is_pinned(),
-                    "Seed bank lifecycle object initialized"
-                );
-
-                banks.insert(bank.id.clone(), bank);
-            }
-            let count = banks.len();
-            if count > 0 {
-                tracing::info!(count, "Seed bank lifecycle objects initialized (STORAGE-0007)");
-            }
-        }
+    // Phase 11.post4b: Initial media scan (STORAGE-0011)
+    // Detects physical disks including those without partitions or drive letters.
+    // Uses PowerShell Get-Disk (Windows) or lsblk (Linux).
+    {
+        let media = state.media.clone();
+        let snapshots = tokio::task::spawn_blocking(crate::infra::storage::platform::scan_media)
+            .await
+            .unwrap_or_default();
+        crate::domain::storage::reconcile_media(&media, &snapshots).await;
     }
 
     // Phase 11.post4: Start offering lifecycle event listeners
@@ -1183,34 +1155,159 @@ pub async fn run(
         );
     }
 
-    // Phase 17.5: Storage monitoring (Linux only)
-    #[cfg(target_os = "linux")]
+    // Phase 17.5: Cross-platform volume watcher (STORAGE-0011)
+    // Detects volume hotplug/removal events and feeds them into the Volumes domain.
+    // Also emits DomainPulse events so presence SSE (ribbon notifications) and
+    // the candidates notification stay current.
     {
-        tracing::info!("Starting storage monitor");
-        let storage_monitor = crate::infra::storage::StorageMonitor::new(state.event_bus.clone());
-        if let Err(e) = storage_monitor.start() {
-            tracing::error!("Failed to start storage monitor: {}", e);
-        } else {
-            // Scan for existing devices at startup
-            match storage_monitor.scan_existing().await {
-                Ok(devices) => {
-                    tracing::info!(
-                        "Scanned existing storage devices, found {} eligible",
-                        devices.len()
-                    );
-                    for device_info in devices {
-                        tracing::info!(
-                            "Found existing device: {} ({} GB)",
-                            device_info.device,
-                            device_info.capacity_bytes / 1_000_000_000
+        use crate::infra::storage::platform::VolumeEvent;
+        use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
+
+        let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel(32);
+        crate::infra::storage::platform::start_volume_watcher(vol_tx);
+
+        let volumes_for_watcher = state.volumes.clone();
+        let pulse_tx_for_watcher = state.pulse_tx.clone();
+        let storage_changed_tx_for_watcher = state.storage_changed_tx.clone();
+        let notifications = state.notifications.clone();
+        let watcher_token = shutdown_token.child_token();
+        let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
+        tokio::spawn(async move {
+            /// Process a single volume event: classify, emit pulse, update notifications.
+            async fn handle_volume_event(
+                ev: VolumeEvent,
+                volumes: &crate::domain::Volumes,
+                pulse_tx: &tokio::sync::broadcast::Sender<infra::PulseEvent>,
+                storage_changed_tx: &tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
+                notifications: &garden_common::NotificationRegistry,
+            ) {
+                // Build pulse before ingest consumes the event info
+                let pulse = match &ev {
+                    VolumeEvent::Appeared(snap) => {
+                        let capacity_gb = snap.capacity_bytes / 1_000_000_000;
+                        Some(infra::DomainPulse::storage_event(
+                            "storage_detected",
+                            format!("Volume appeared: {} ({})", snap.mount_path, snap.label.as_deref().unwrap_or("unlabeled")),
+                            "info",
+                            None,
+                            Some(serde_json::json!({
+                                "device": snap.path,
+                                "mount_path": snap.mount_path,
+                                "label": snap.label,
+                                "capacity_gb": capacity_gb,
+                                "removable": snap.removable,
+                            })),
+                        ))
+                    }
+                    VolumeEvent::Disappeared { path } => {
+                        Some(infra::DomainPulse::storage_event(
+                            "storage_removed",
+                            format!("Volume disappeared: {}", path),
+                            "info",
+                            None,
+                            Some(serde_json::json!({ "device": path })),
+                        ))
+                    }
+                };
+
+                // Ingest into Volumes domain; returns domain events to broadcast
+                let storage_events = crate::domain::storage::ingest_event(volumes, ev).await;
+
+                // Emit pulse for presence SSE / ribbon notifications
+                if let Some(p) = pulse {
+                    let _ = pulse_tx.send(infra::PulseEvent::Domain(p));
+                }
+
+                // Broadcast all domain events immediately so cloud filter,
+                // WebDAV router, and TTY ribbon display react without waiting
+                // for the next heartbeat.
+                for event in storage_events {
+                    tracing::debug!(event = ?event, "storage watcher: broadcasting domain event");
+                    let _ = storage_changed_tx.send(event);
+                }
+
+                // Update candidates notification
+                let candidate_count = {
+                    let map = volumes.read().await;
+                    map.values()
+                        .filter(|v| !v.is_managed() && v.removable && v.online)
+                        .count()
+                };
+                notifications.set_if(
+                    NOTIF_SOURCE_CANDIDATES,
+                    NotificationTag::Opportunity,
+                    candidate_count > 0,
+                );
+            }
+
+            loop {
+                tokio::select! {
+                    _ = watcher_token.cancelled() => break,
+                    event = vol_rx.recv() => {
+                        let Some(ev) = event else { break };
+                        handle_volume_event(
+                            ev,
+                            &volumes_for_watcher,
+                            &pulse_tx_for_watcher,
+                            &storage_changed_tx_for_watcher,
+                            &notifications,
+                        ).await;
+                    }
+                    _ = rescan_rx.recv() => {
+                        // Ad-hoc rescan requested (e.g. after `storage add` wrote a manifest).
+                        // Re-scan all volumes through the standard pipeline.
+                        let snaps = tokio::task::spawn_blocking(
+                            crate::infra::storage::platform::scan_volumes
+                        )
+                        .await
+                        .unwrap_or_default();
+                        crate::domain::storage::reconcile(&volumes_for_watcher, &snaps).await;
+                        crate::domain::storage::health_tick_all(&volumes_for_watcher).await;
+
+                        // Update candidates notification after rescan
+                        let candidate_count = {
+                            let map = volumes_for_watcher.read().await;
+                            map.values()
+                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .count()
+                        };
+                        notifications.set_if(
+                            NOTIF_SOURCE_CANDIDATES,
+                            NotificationTag::Opportunity,
+                            candidate_count > 0,
                         );
+                        tracing::debug!("Ad-hoc volume rescan complete");
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to scan existing storage devices: {}", e);
+            }
+        });
+        tracing::info!("Volume watcher started (STORAGE-0011)");
+    }
+
+    // Phase 17.5.2: Physical media watcher (STORAGE-0011)
+    // Polls physical disks (PowerShell/lsblk) to detect media without partitions.
+    // Lower cadence than the volume watcher since physical changes are rarer.
+    {
+        let media = state.media.clone();
+        let media_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            interval.tick().await; // skip first immediate tick (initial scan already done)
+            loop {
+                tokio::select! {
+                    _ = media_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        let snapshots = tokio::task::spawn_blocking(
+                            crate::infra::storage::platform::scan_media
+                        )
+                        .await
+                        .unwrap_or_default();
+                        crate::domain::storage::reconcile_media(&media, &snapshots).await;
+                    }
                 }
             }
-        }
+        });
+        tracing::info!("Media watcher started (STORAGE-0011)");
     }
 
     // Phase 17.6: Topology + storage cache maintenance
@@ -1222,46 +1319,18 @@ pub async fn run(
         shutdown_token.child_token(),
     );
 
-    // Seed bank resilience + storage cache hygiene
-    // Ensures hot-plugged prepared devices are auto-mounted and cache stays fresh.
-    #[cfg(target_os = "linux")]
-    {
-        crate::tasks::coordinator::start_seedbank_resilient_mount_system(
-            state.clone(),
-            shutdown_token.child_token(),
-        );
-    }
-    crate::tasks::start_storage_maintenance(
-        state.storage_cache.clone(),
-        state.topology_cache.clone(),
+    // Registry maintenance: reap expired gateway entries and broadcast removals
+    crate::tasks::start_registry_maintenance(
+        state.clone(),
         shutdown_token.child_token(),
     );
 
-    // Populate storage_cache with local seed banks (cross-platform)
-    // This makes storage_cache the unified view for both local and remote storage
-    let endpoint = state.self_entry.read().await.address.http_base();
-    if let Err(e) = crate::infra::storage::update_local_storage_cache(
-        &state.storage_cache,
-        &state.stone_id,
-        &state.stone_name,
-        &endpoint,
-        None,
-        None,
-    )
-    .await
-    {
-        tracing::warn!("Failed to populate local storage cache: {}", e);
-    } else {
-        let cache = state.storage_cache.read().await;
-        tracing::info!(
-            "Storage cache initialized with {} local seed banks",
-            cache
-                .get_beacon(&state.stone_id)
-                .map(|b| b.seed_banks.len())
-                .unwrap_or(0)
-        );
-    }
-
+    // Storage lifecycle (STORAGE-0011): auto-mount, health, beacon — all platforms.
+    // Replaces legacy seed bank resilience + hot-plug detection.
+    crate::tasks::coordinator::start_storage_lifecycle(
+        state.clone(),
+        shutdown_token.child_token(),
+    );
     // Phase 17.7: Offering orchestration (ORCH-0001)
     // Manages Primary/Dormant/Joining/Degraded lifecycle for replicated offerings.
     // Must run after registry loader, health monitor, and catalog builder are ready.
@@ -1286,7 +1355,7 @@ pub async fn run(
         let sb_state = state.clone();
         let sb_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            if let Err(e) = crate::tasks::seed_bank_orchestration::seed_bank_orchestration_task(
+            if let Err(e) = crate::tasks::storage_orchestration::storage_orchestration_task(
                 sb_state, sb_token,
             )
             .await
@@ -1295,6 +1364,21 @@ pub async fn run(
             }
         });
         tracing::info!("Seed bank orchestration task started (STORAGE-0006)");
+    }
+
+    // Phase 17.8b: Storage beacon subscriber (STORAGE-0013)
+    // Reacts to StorageChanged domain events by broadcasting beacons.
+    // Replaces manual beacon spawns from individual handlers.
+    {
+        let beacon_state = state.clone();
+        let beacon_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            crate::tasks::storage_orchestration::storage_beacon_subscriber(
+                beacon_state, beacon_token,
+            )
+            .await;
+        });
+        tracing::info!("Storage beacon subscriber started (STORAGE-0013)");
     }
 
     // Phase 17.9: Seed bank storage tick aggregator (STORAGE-0006 Phase 4f)
@@ -1319,7 +1403,7 @@ pub async fn run(
         let repl_state = state.clone();
         let repl_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            if let Err(e) = crate::tasks::seed_bank_replication::seed_bank_replication_task(
+            if let Err(e) = crate::tasks::storage_replication::storage_replication_task(
                 repl_state, repl_token,
             )
             .await
@@ -1328,6 +1412,84 @@ pub async fn run(
             }
         });
         tracing::info!("Seed bank replication task started (STORAGE-0006)");
+    }
+
+    // Phase 17.9b2: Shell integration (Windows only)
+    // Registers "Zen Garden" context menu on drives for storage adoption.
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = crate::infra::shell_integration::register() {
+            tracing::warn!(error = %e, "Shell integration failed to register (non-fatal)");
+        } else {
+            tracing::info!("Shell integration: drive context menu registered");
+        }
+    }
+
+    // Phase 17.9c: Cloud Filter sync provider (STORAGE-0009 Phase 4, Windows only)
+    // Registers a "Zen Garden" sync root in Explorer so storages appear natively.
+    #[cfg(target_os = "windows")]
+    {
+        let cf_endpoint = {
+            let entry = state.self_entry.read().await;
+            Arc::new(RwLock::new(entry.address.http_base()))
+        };
+        if let Err(e) = crate::infra::cloud_filter::start(
+            state.volumes.clone(),
+            state.registry.clone(),
+            state.stone_id.clone(),
+            state.storage_tick_tx.clone(),
+            state.subscribe_storage_changed(),
+            cf_endpoint,
+            shutdown_token.child_token(),
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "Cloud Filter provider failed to start (non-fatal)");
+        } else {
+            tracing::info!("Cloud Filter sync provider started (STORAGE-0009 Phase 4)");
+        }
+    }
+
+    // Phase 17.9d: Filesystem watcher (STORAGE-0009 Phase 5, event-driven per STORAGE-0013)
+    // Detects external writes to managed storage mounts and records changelog
+    // entries so replication stays coherent.
+    {
+        let watcher_set = crate::infra::storage::StorageWatcherSet::new(
+            state.volumes.clone(),
+            state.storage_tick_tx.clone(),
+            shutdown_token.child_token(),
+        );
+        // Initial reconciliation — start watchers for already-mounted storages
+        watcher_set.reconcile().await;
+
+        // Event-driven + heartbeat reconciliation — react to StorageChanged
+        // events immediately, with a 60s fallback heartbeat.
+        let watcher_token = shutdown_token.child_token();
+        let mut storage_rx = state.subscribe_storage_changed();
+        tokio::spawn(async move {
+            let heartbeat = tokio::time::Duration::from_secs(60);
+            loop {
+                tokio::select! {
+                    _ = watcher_token.cancelled() => break,
+                    result = storage_rx.recv() => {
+                        match result {
+                            Ok(event) => {
+                                tracing::debug!(event = ?event, "fs watcher: storage event");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::debug!(skipped = n, "fs watcher: lagged, reconciling");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                        watcher_set.reconcile().await;
+                    }
+                    _ = tokio::time::sleep(heartbeat) => {
+                        watcher_set.reconcile().await;
+                    }
+                }
+            }
+        });
+        tracing::info!("Filesystem watcher started (event-driven, STORAGE-0013)");
     }
 
     // Initialize tools projection from restored offerings + local seed-banks.
@@ -1404,6 +1566,7 @@ pub async fn run(
         app,
         &api_endpoint,
         console_printer,
+        runtime,
         shutdown_token,
         ServerConfig::default(),
         Some(shutdown_callback),
@@ -1521,7 +1684,12 @@ async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<(
 /// Waits for filesystem to become writable, then runs initialization.
 /// Exits process after completion so systemd restarts with new config.
 #[cfg(target_os = "linux")]
-fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
+fn start_first_boot_task(
+    stone_name: &str,
+    port: u16,
+    retry_delay_secs: u64,
+    runtime: std::sync::Arc<dyn garden_common::PlatformRuntime>,
+) {
     tracing::info!("First run detected on Linux, spawning background initialization task");
     tracing::info!("First boot detected - will initialize console after Docker connection");
 
@@ -1531,9 +1699,8 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
     tokio::spawn(async move {
         const MAX_ATTEMPTS: u32 = 20;
 
-        let _ = console::tty_write("");
-        let _ =
-            console::display_wait("First-boot setup: Waiting for filesystem to become writable");
+        runtime.write_line("");
+        runtime.display_wait("First-boot setup: Waiting for filesystem to become writable");
 
         for attempt in 1..=MAX_ATTEMPTS {
             match console::ensure_etc_writable().await {
@@ -1542,30 +1709,29 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
                         attempt,
                         "Filesystem is writable, proceeding with first boot initialization"
                     );
-                    let _ = console::display_success("Filesystem ready, starting configuration");
+                    runtime.display_success("Filesystem ready, starting configuration");
 
-                    match run_first_boot_initialization(&init_stone_name, init_port).await {
+                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
                         Ok(new_name) => {
                             if let Err(e) = console::mark_first_run_complete().await {
                                 tracing::error!(error = ?e, "Failed to mark first-run complete");
                             }
 
                             tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
-                            let _ = console::tty_write("");
-                            let _ = console::display_success(&format!(
-                                "? Stone configured as: {}",
+                            runtime.write_line("");
+                            runtime.display_success(&format!(
+                                "Stone configured as: {}",
                                 new_name
                             ));
-                            let _ =
-                                console::display_wait("Restarting to apply new configuration...");
-                            let _ = console::tty_write("");
+                            runtime.display_wait("Restarting to apply new configuration...");
+                            runtime.write_line("");
 
                             // Exit so systemd restarts us with the new configuration
                             std::process::exit(0);
                         }
                         Err(e) => {
                             tracing::error!(error = ?e, "First boot initialization failed");
-                            let _ = console::display_error(&format!("Setup failed: {}", e));
+                            runtime.display_error(&format!("Setup failed: {}", e));
                             if attempt < MAX_ATTEMPTS {
                                 tokio::time::sleep(tokio::time::Duration::from_secs(
                                     retry_delay_secs,
@@ -1581,7 +1747,7 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
                             .await;
                     } else {
                         tracing::error!("First boot initialization abandoned - filesystem never became writable");
-                        let _ = console::display_error(
+                        runtime.display_error(
                             "Setup abandoned - filesystem remained read-only",
                         );
                     }
@@ -1637,7 +1803,7 @@ async fn start_preinstall_handler(state: &AppState) {
     // Validate all offerings exist before creating job (supports FQN)
     let mut invalid_offerings = Vec::new();
     for offering in &manifest.offerings {
-        match parse_offering_fqn(offering) {
+        match OfferingFqn::parse(offering) {
             Ok(fqn) => {
                 if state.manifest_registry.sw.get(&fqn.offering).is_none() {
                     invalid_offerings.push(offering.clone());
@@ -1726,7 +1892,7 @@ fn start_windows_first_boot_task(stone_name: &str, _port: u16) {
     tokio::spawn(async move {
         // Set DNS hostname (not NetBIOS) via registry
         // Note: Requires elevation - will warn gracefully if running without admin rights
-        if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+        if let Err(e) = set_windows_dns_hostname(&configured_name) {
             tracing::warn!(
                 error = ?e,
                 name = %configured_name,
@@ -1763,7 +1929,7 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Get current DNS hostname
-        let current_hostname = get_windows_dns_hostname().await;
+        let current_hostname = get_windows_dns_hostname();
 
         match &current_hostname {
             Some(hostname) if hostname.eq_ignore_ascii_case(&configured_name) => {
@@ -1782,7 +1948,7 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
                     "DNS hostname mismatch detected, attempting to fix"
                 );
 
-                if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+                if let Err(e) = set_windows_dns_hostname(&configured_name) {
                     tracing::warn!(
                         error = ?e,
                         configured = %configured_name,
@@ -1800,7 +1966,7 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
                 // Couldn't read current hostname - try to set anyway
                 tracing::debug!("Could not read current DNS hostname, attempting to set");
 
-                if let Err(e) = set_windows_dns_hostname(&configured_name).await {
+                if let Err(e) = set_windows_dns_hostname(&configured_name) {
                     tracing::debug!(
                         error = ?e,
                         "Failed to set DNS hostname (may require elevation)"
@@ -1811,86 +1977,17 @@ fn start_windows_dns_maintenance_task(stone_name: &str) {
     });
 }
 
-/// Get current Windows DNS hostname from registry
+/// Get current Windows DNS hostname from registry.
 #[cfg(target_os = "windows")]
-async fn get_windows_dns_hostname() -> Option<String> {
-    let output = tokio::process::Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
-            "/v",
-            "Hostname",
-        ])
-        .output()
-        .await
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains("Hostname") && line.contains("REG_SZ") {
-            // Line format: "    Hostname    REG_SZ    value"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(hostname) = parts.last() {
-                return Some(hostname.to_string());
-            }
-        }
-    }
-    None
+fn get_windows_dns_hostname() -> Option<String> {
+    crate::infra::platform::registry::get_dns_hostname()
 }
 
-/// Set Windows DNS hostname without changing NetBIOS name
-///
-/// Writes to registry keys that control DNS hostname.
+/// Set Windows DNS hostname without changing NetBIOS name.
 /// Requires elevation. Requires reboot to take full effect.
 #[cfg(target_os = "windows")]
-async fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
-    use anyhow::Context;
-
-    // Use reg.exe to set DNS hostname (more reliable than winreg crate)
-    let tcpip_path = r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
-
-    // Set Hostname
-    let output = tokio::process::Command::new("reg")
-        .args([
-            "add", tcpip_path, "/v", "Hostname", "/t", "REG_SZ", "/d", name, "/f",
-        ])
-        .output()
-        .await
-        .context("Failed to execute reg.exe for Hostname")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!(error = %stderr, "Failed to set Hostname registry key");
-    }
-
-    // Set NV Hostname (non-volatile, persists across boots)
-    let output = tokio::process::Command::new("reg")
-        .args([
-            "add",
-            tcpip_path,
-            "/v",
-            "NV Hostname",
-            "/t",
-            "REG_SZ",
-            "/d",
-            name,
-            "/f",
-        ])
-        .output()
-        .await
-        .context("Failed to execute reg.exe for NV Hostname")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!(error = %stderr, "Failed to set NV Hostname registry key");
-    }
-
-    tracing::info!(name = %name, "Set Windows DNS hostname (reboot required)");
-    Ok(())
+fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
+    crate::infra::platform::registry::set_dns_hostname(name)
 }
 
 /// Activate pond security features (HTTPS + chirp signing/verification).

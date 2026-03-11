@@ -23,6 +23,7 @@ pub mod connectivity;
 pub mod constraints;
 pub mod events;
 pub mod fitness;
+pub mod garden_registry;
 pub mod harvest;
 pub mod health;
 pub mod infrastructure;
@@ -31,17 +32,18 @@ pub mod metrics_collection;
 pub mod modes;
 pub mod network;
 pub mod nurturing;
+pub mod offering_resolution;
 pub mod offerings;
 pub mod placement;
 pub mod pond;
 pub mod reconciliation;
 pub mod registry;
 pub mod scoring;
-pub mod seed_bank;
+pub mod storage;
+pub mod storage_service;
 pub mod service_discovery;
 pub mod service_manager;
 pub mod services;
-pub mod storage_cache;
 pub mod tools;
 pub mod topology;
 
@@ -68,7 +70,10 @@ pub use offerings::{
 };
 pub use reconciliation::{reconcile_services, ReconciliationResult};
 pub use registry::Registry;
-pub use seed_bank::{new_seed_banks, PinState, SeedBank, SeedBanks};
+pub use storage::{
+    new_media, new_volumes, Management, Media, Medium, Volume, VolumeHealth, Volumes,
+};
+pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute, StorageService};
 pub use service_discovery::{
     find_local_services, find_services, get_offering_port, list_all_local_services, FoundService,
     ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,
@@ -94,12 +99,10 @@ pub use nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
 };
 pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
-pub use storage_cache::{
-    find_by_name, find_s3_gateways, new_storage_cache, remove_stone as remove_stone_storage,
-    update_from_beacon, StorageCache, StorageCacheInner,
+pub use garden_registry::{
+    new_registry, EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery,
 };
 pub use tools::{
-    new_tools_cache, stream_event_type_for_delta, ToolQuery, ToolsCache, ToolsCacheInner,
-    ToolsSnapshotPayload,
+    stream_event_type_for_delta, ToolsSnapshotPayload,
 };
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

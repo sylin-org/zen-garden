@@ -51,6 +51,7 @@ pub use tasks::{
     detect_capabilities_background,
     health_monitor_task,
     install_batch_task,
+    install_image_direct_task,
     install_service_task,
     lantern_registration_loop,
     // Task coordination

@@ -57,6 +57,12 @@ url = "2.5"
 urlencoding = "2.1"
 cron = "0.12"
 
+# WebDAV server (STORAGE-0009 Phase 3)
+dav-server = "0.11"
+
+# Filesystem watcher — detect external writes for replication (STORAGE-0009 Phase 5)
+notify = "7"
+
 # S3 gateway
 md5 = "0.7"
 hex = "0.4"
@@ -69,12 +75,19 @@ rust-embed = "8"
 windows-sys = { version = "0.52", features = [
     "Win32_Networking_WinSock",
     "Win32_Storage_FileSystem",
-    "Win32_Foundation"
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging"
 ] }
 windows = { version = "0.52", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common"
 ] }
+winreg = "0.52"
+
+# Cloud Filter — native Windows Explorer sync (STORAGE-0009 Phase 4)
+cloud-filter = "0.0.6"
+nt-time = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.27", features = ["process", "signal"] }
@@ -87,3 +100,4 @@ tempfile = "3.10"
 
 [build-dependencies]
 garden-build-utils = { path = "../build-utils" }
+embed-resource = "3"

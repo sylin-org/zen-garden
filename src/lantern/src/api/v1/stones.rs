@@ -33,7 +33,7 @@ struct StoneView {
     #[serde(skip_serializing_if = "Option::is_none")]
     capabilities: Option<Value>,
     offerings: Vec<crate::domain::topology::EnrichedOffering>,
-    seed_banks: Vec<crate::domain::topology::EnrichedSeedBank>,
+    storages: Vec<crate::domain::topology::EnrichedStorage>,
     companions: Vec<crate::domain::topology::EnrichedCompanion>,
 }
 
@@ -124,7 +124,7 @@ fn build_stone_view(
             .iter()
             .map(|svc| ServiceView {
                 offering_id: svc.offering_id.clone(),
-                name: svc.name.clone(),
+                name: svc.name.to_string(),
                 offering: svc.offering.clone(),
                 category: svc.category.clone(),
                 status: svc.status.clone(),
@@ -136,7 +136,7 @@ fn build_stone_view(
             .as_ref()
             .and_then(|c| serde_json::to_value(c).ok()),
         offerings: enrich.offerings.clone(),
-        seed_banks: enrich.seed_banks.clone(),
+        storages: enrich.managed_storages.clone(),
         companions: enrich.companions.clone(),
     }
 }

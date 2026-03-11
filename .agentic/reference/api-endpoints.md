@@ -14,6 +14,7 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/stone/offerings/:name` | Get offering details |
 | POST | `/api/v1/stone/offerings` | Plant (install) offering |
 | DELETE | `/api/v1/stone/offerings/:name` | Remove offering |
+| GET | `/api/v1/stone/offerings/inspect?image={ref}` | Inspect Docker image (OFFER-0006) |
 | POST | `/api/v1/stone/offerings/refresh` | Refresh catalog |
 | POST | `/api/v1/stone/offerings/heal` | Adopt orphaned containers |
 
@@ -29,6 +30,8 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | POST | `/api/v1/stone/services/:service/wake` | Start |
 | POST | `/api/v1/stone/services/:service/nourish` | Update |
 | GET | `/api/v1/stone/services/:service/logs` | Stream logs (SSE) |
+| GET | `/api/v1/stone/services/:service/env` | Read env vars + manageable list |
+| PATCH | `/api/v1/stone/services/:service/env` | Set/delete env vars (allowlist) |
 
 ### Companions
 | Method | Endpoint | Purpose |
@@ -40,24 +43,31 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | POST | `/api/v1/stone/companions/:id/down` | Stop companion |
 | POST | `/api/v1/stone/companions/refresh` | Rescan directory |
 
-### Storage / Seed Banks
+### Storage (STORAGE-0009)
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/api/v1/stone/storage` | Storage overview |
+| GET | `/api/v1/stone/storage/health` | Health status |
 | GET | `/api/v1/stone/storage/candidates` | Eligible devices |
-| POST | `/api/v1/stone/storage/prepare` | Prepare seed bank |
-| GET | `/api/v1/stone/storage/bank` | List seed banks |
-| GET | `/api/v1/stone/storage/bank/:id` | Bank details |
-| DELETE | `/api/v1/stone/storage/bank/:id` | Remove bank |
-| POST | `/api/v1/stone/storage/bank/:id/release` | Unmount |
-| GET/HEAD | `/api/v1/stone/storage/bank/:id/*path` | Object reads (local only) |
+| POST | `/api/v1/stone/storage/add` | Add storage (device or directory) |
+| GET | `/api/v1/stone/storage/banks` | List local storages |
+| GET | `/api/v1/stone/storage/banks/{name}` | Storage details |
+| DELETE | `/api/v1/stone/storage/banks/{name}` | Remove storage |
+| POST | `/api/v1/stone/storage/banks/{name}/release` | Unmount |
+| POST | `/api/v1/stone/storage/banks/{name}/pin` | Claim Primary |
+| POST | `/api/v1/stone/storage/banks/{name}/unpin` | Release Primary |
+| PATCH | `/api/v1/stone/storage/banks/{name}/visibility` | Set visibility |
+| PATCH | `/api/v1/stone/storage/banks/{name}/rename` | Rename |
+| PATCH | `/api/v1/stone/storage/banks/{name}/roles` | Set roles (seed-bank, etc.) |
+| GET | `/api/v1/stone/storage/banks/{name}/changes` | Replication changelog |
+| GET | `/api/v1/stone/storage/stream` | SSE replication stream |
 
 ### S3 Gateway
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET | `/api/v1/stone/storage/s3` | List buckets |
-| GET | `/api/v1/stone/storage/s3/:bucket` | List objects |
-| PUT/GET/HEAD/DELETE | `/api/v1/stone/storage/s3/:bucket/*key` | Object ops |
+| GET | `/api/v1/storage/s3` | List buckets |
+| GET | `/api/v1/storage/s3/{bucket}` | List objects |
+| PUT/GET/HEAD/DELETE | `/api/v1/storage/s3/{bucket}/*key` | Object ops |
 
 ### System
 | Method | Endpoint | Purpose |
@@ -112,14 +122,81 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | POST | `/api/v1/garden/nourishment/execute` | Dispatch to affected stones |
 | GET | `/api/v1/garden/observe` | Aggregate topology |
 
-### Garden Storage (STORAGE-0008)
+### Garden Storage (STORAGE-0009)
+
 | Method | Endpoint | Purpose |
 |--------|----------|----------|
-| GET | `/api/v1/garden/storage/:name` | Discover replicas |
-| GET | `/api/v1/garden/storage/:name/*path` | Get object (Primary-or-proxy) |
-| PUT | `/api/v1/garden/storage/:name/*path` | Put object (Primary-or-proxy) |
-| DELETE | `/api/v1/garden/storage/:name/*path` | Delete object (Primary-or-proxy) |
-| HEAD | `/api/v1/garden/storage/:name/*path` | Object metadata (Primary-or-proxy) |
+| GET | `/api/v1/garden/storage` | List all storages across garden |
+| GET | `/api/v1/garden/storage/{name}` | Discover replicas |
+| GET | `/api/v1/garden/storage/{name}/files/*path` | Read user file (Primary-or-proxy) |
+| PUT | `/api/v1/garden/storage/{name}/files/*path` | Write user file |
+| DELETE | `/api/v1/garden/storage/{name}/files/*path` | Delete user file |
+| HEAD | `/api/v1/garden/storage/{name}/files/*path` | File metadata |
+| GET | `/api/v1/garden/storage/{name}/objects/*path` | Read S3 object |
+| PUT | `/api/v1/garden/storage/{name}/objects/*path` | Write S3 object |
+| DELETE | `/api/v1/garden/storage/{name}/objects/*path` | Delete S3 object |
+| HEAD | `/api/v1/garden/storage/{name}/objects/*path` | S3 object metadata |
+| GET | `/api/v1/garden/storage/{name}/memories` | List offerings with harvests |
+| GET | `/api/v1/garden/storage/{name}/memories/{offering}` | List offering snapshots |
+| GET | `/api/v1/garden/storage/{name}/memories/{offering}/manifest` | Offering manifest |
+| GET | `/api/v1/garden/storage/{name}/memories/{offering}/{harvest}` | Download snapshot |
+
+### WebDAV (STORAGE-0009 Phase 3)
+
+| Method | Endpoint | Purpose |
+|--------|----------|----------|
+| ANY | `/dav/{name}/{*path}` | RFC 4918 WebDAV (PROPFIND, GET, PUT, DELETE, MKCOL, COPY, MOVE, LOCK) |
+
+**Platform mapping:**
+
+| Platform | Connection |
+|----------|------------|
+| macOS | Finder > Connect to Server > `http://stone-name.local:7185/dav/personal/` |
+| Linux | File manager > Connect to Server, or `davfs2` mount |
+| Windows | Map Network Drive, or Cloud Filter (future Phase 4) |
+
+---
+
+## Ollama Orchestrator Endpoints
+
+**Proxy port** (`:21434`) — Ollama-compatible + extension endpoints.
+
+### Extension API (`/v1/`)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/v1/models` | Model inventory with placement, VRAM, fitness |
+| GET | `/v1/stones` | Stone inventory with GPU, VRAM, loaded models |
+| GET | `/v1/recommendations` | All capability recommendations (grouped) |
+| GET | `/v1/recommendations?capability={cap}` | Single capability recommendations |
+
+| PUT | `/v1/recommendations/{capability}/pin` | Pin a model for a capability |
+| DELETE | `/v1/recommendations/{capability}/pin` | Unpin a capability |
+
+**Capabilities**: `quick`, `chat`, `completion` (alias for chat), `synthesis`, `vision`, `ocr`, `tools`, `thinking`, `embedding`
+
+**Recommended model monikers**: Use `"model": "recommended:{capability}"` in any inference request. The proxy resolves to the top-ranked model, rewrites the body, and adds `X-Zen-Resolved-Model` response header. See [ORCH-0011](../../docs/decisions/ORCH-0011-recommended-model-monikers.md).
+
+All other paths are proxied to Ollama with smart routing.
+
+### Dashboard API (`:7190`)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/` | Dashboard HTML |
+| GET | `/api/status` | Full snapshot (stones, models, benchmark, metrics) |
+| GET | `/api/events` | SSE event stream |
+| GET | `/api/settings` | Current orchestrator settings |
+| POST | `/api/settings` | Update settings |
+| GET | `/api/jobs` | Active/recent orchestrator jobs |
+| POST | `/api/metrics/reset` | Reset all metrics |
+| POST | `/api/metrics/model-counters/reset` | Reset per-model request counters |
+| POST | `/api/management/pull` | Pull model to stones |
+| POST | `/api/management/delete` | Delete model from stones |
+| GET | `/api/management/feasibility` | Check if model fits stone VRAM |
+| POST | `/api/benchmark/start` | Start fitness benchmark |
+| POST | `/api/benchmark/cancel` | Cancel running benchmark |
+| GET | `/api/benchmark/results` | Benchmark run results |
+| GET | `/api/benchmark/export` | Export GPU fitness matrix |
+| GET | `/health` | Health check |
 
 ---
 

@@ -8,7 +8,8 @@
 
 use crate::api::proxy::ProxyState;
 use crate::domain::recommendation;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -228,12 +229,22 @@ pub async fn get_stones(State(state): State<ProxyState>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 pub struct RecommendationQuery {
-    /// One of: completion, embedding, vision, tools, thinking.
-    pub capability: String,
+    /// Optional capability filter.  When omitted, returns recommendations
+    /// for all applicable capabilities grouped in a single response.
+    /// Valid values: quick, chat, completion, synthesis, vision, ocr, tools,
+    /// thinking, embedding.
+    pub capability: Option<String>,
 }
 
-/// `GET /v1/recommendations?capability=vision` — ranked model recommendations
-/// for a given capability, scored by distribution, fitness, and context window.
+/// All user-facing recommendation categories.
+const ALL_CAPABILITIES: &[&str] = &[
+    "quick", "chat", "synthesis", "vision", "ocr", "tools", "thinking", "embedding",
+];
+
+/// `GET /v1/recommendations` — ranked model recommendations.
+///
+/// With `?capability=chat` returns a single `RecommendationResponse`.
+/// Without a capability parameter returns an array of all categories.
 pub async fn get_recommendations(
     State(state): State<ProxyState>,
     Query(params): Query<RecommendationQuery>,
@@ -244,13 +255,100 @@ pub async fn get_recommendations(
         let run = state.app.benchmark_run.read().await;
         run.gpu_matrix.clone()
     };
+    let pins = {
+        let config = state.app.config.read().await;
+        config.features.pins.clone()
+    };
 
-    let resp = recommendation::recommend(
-        &params.capability,
-        &models,
-        &instances,
-        &gpu_matrix,
-    );
+    match params.capability {
+        Some(cap) => {
+            let pin = pins.get(&cap).map(|s| s.as_str());
+            let resp = recommendation::recommend(&cap, &models, &instances, &gpu_matrix, pin);
+            Json(serde_json::to_value(resp).unwrap_or_default())
+        }
+        None => {
+            let all: Vec<recommendation::RecommendationResponse> = ALL_CAPABILITIES
+                .iter()
+                .map(|cap| {
+                    let pin = pins.get(*cap).map(|s| s.as_str());
+                    recommendation::recommend(cap, &models, &instances, &gpu_matrix, pin)
+                })
+                .filter(|r| !r.recommendations.is_empty())
+                .collect();
+            Json(serde_json::to_value(all).unwrap_or_default())
+        }
+    }
+}
 
-    Json(resp)
+// ── /v1/recommendations/:capability/pin ────────────────────────
+
+#[derive(Deserialize)]
+pub struct PinRequest {
+    pub model: String,
+}
+
+/// `PUT /v1/recommendations/:capability/pin` — pin a model for a capability.
+pub async fn put_pin(
+    State(state): State<ProxyState>,
+    Path(capability): Path<String>,
+    Json(body): Json<PinRequest>,
+) -> impl IntoResponse {
+    if !ALL_CAPABILITIES.contains(&capability.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("unknown capability: {capability}")})),
+        );
+    }
+
+    let new_config = {
+        let mut config = state.app.config.write().await;
+        config.features.pins.insert(capability.clone(), body.model.clone());
+        config.clone()
+    };
+
+    if let Err(e) =
+        crate::infra::persistence::save_config(&state.app.data_dir, &new_config).await
+    {
+        tracing::warn!(error = %e, "failed to persist pin");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        );
+    }
+
+    state.app.refresh_recommendations().await;
+    state.app.emit_event("config.updated", "{}").await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "ok", "capability": capability, "model": body.model})),
+    )
+}
+
+/// `DELETE /v1/recommendations/:capability/pin` — unpin a capability.
+pub async fn delete_pin(
+    State(state): State<ProxyState>,
+    Path(capability): Path<String>,
+) -> impl IntoResponse {
+    let new_config = {
+        let mut config = state.app.config.write().await;
+        config.features.pins.remove(&capability);
+        config.clone()
+    };
+
+    if let Err(e) =
+        crate::infra::persistence::save_config(&state.app.data_dir, &new_config).await
+    {
+        tracing::warn!(error = %e, "failed to persist unpin");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        );
+    }
+
+    state.app.refresh_recommendations().await;
+    state.app.emit_event("config.updated", "{}").await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "ok", "capability": capability})),
+    )
 }

@@ -37,13 +37,15 @@ pub enum CommandStyle {
 
 #[derive(Debug, Clone, Default)]
 pub struct ParsedKeywords {
-    pub on_stone: Option<String>, // `on <stone>` or `at <stone>` (legacy)
-    pub from_url: Option<String>, // `from <url>` for borrow
+    pub on_stone: Option<String>,       // `on <stone>` or `at <stone>` (legacy)
+    pub from_url: Option<String>,       // `from <url>` for borrow
+    pub as_name: Option<String>,        // `as <name>` for storage add (STORAGE-0010)
+    pub role: Option<String>,           // `role <role>` for storage add (STORAGE-0010)
     pub quietly: bool,
-    pub fresh: bool, // clear cache and force fresh discovery
+    pub fresh: bool,                    // clear cache and force fresh discovery
     pub until_condition: Option<String>,
-    pub somewhere: bool, // intelligent placement
-    pub wishfully: bool, // auto-provision if not found
+    pub somewhere: bool,                // intelligent placement
+    pub wishfully: bool,                // auto-provision if not found
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +113,8 @@ fn has_zen_keywords(args: &[String], verb: &str) -> bool {
     args.iter().any(|arg| {
         matches!(
             arg.as_str(),
-            "on" | "at" | "quietly" | "fresh" | "until" | "somewhere" | "wishfully"
+            "on" | "at" | "as" | "role" | "with" | "quietly" | "fresh" | "until" | "somewhere"
+                | "wishfully"
         ) || (verb == "borrow" && arg == "from")
     })
 }
@@ -148,6 +151,24 @@ fn extract_keywords(
                 }
                 keywords.from_url = Some(args[i].clone());
             }
+            // "as <name>" for storage add (STORAGE-0010)
+            "as" if *style == CommandStyle::Zen => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(anyhow!("'as' keyword requires a name"));
+                }
+                keywords.as_name = Some(args[i].clone());
+            }
+            // "role <role>" for storage add (STORAGE-0010)
+            "role" if *style == CommandStyle::Zen => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(anyhow!("'role' keyword requires a role name"));
+                }
+                keywords.role = Some(args[i].clone());
+            }
+            // "with" — semantic noise word, consumed and discarded (STORAGE-0010)
+            "with" if *style == CommandStyle::Zen => {}
             "quietly" if *style == CommandStyle::Zen => {
                 keywords.quietly = true;
             }
@@ -195,7 +216,7 @@ mod tests {
             "rest",
             "wake",
             "status",
-            "adopt",
+            "add",
             "release",
         ]
         .into_iter()
@@ -204,7 +225,9 @@ mod tests {
 
     /// Test fixture: minimal normative verbs for parser behavior tests
     fn norm() -> HashSet<&'static str> {
-        ["services", "offerings", "stones"].into_iter().collect()
+        ["services", "offerings", "stones", "storage"]
+            .into_iter()
+            .collect()
     }
 
     #[test]
@@ -314,5 +337,66 @@ mod tests {
         let args = vec!["observe".to_string(), "fresh".to_string()];
         let parsed = parse_args(args, &zen(), &norm()).unwrap();
         assert!(parsed.keywords.fresh);
+    }
+
+    // ── STORAGE-0010: as / role / with keywords ─────────────────────────
+
+    #[test]
+    fn test_zen_as_name() {
+        let args = vec![
+            "add".to_string(),
+            "/dev/sdb".to_string(),
+            "as".to_string(),
+            "photos".to_string(),
+        ];
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
+        assert_eq!(parsed.keywords.as_name, Some("photos".to_string()));
+        assert_eq!(parsed.args, vec!["/dev/sdb"]);
+    }
+
+    #[test]
+    fn test_zen_role() {
+        let args = vec![
+            "add".to_string(),
+            "/dev/sdb".to_string(),
+            "role".to_string(),
+            "seed-bank".to_string(),
+        ];
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
+        assert_eq!(parsed.keywords.role, Some("seed-bank".to_string()));
+        assert_eq!(parsed.args, vec!["/dev/sdb"]);
+    }
+
+    #[test]
+    fn test_zen_with_is_noise() {
+        let args = vec![
+            "add".to_string(),
+            "/dev/sdb".to_string(),
+            "as".to_string(),
+            "photos".to_string(),
+            "with".to_string(),
+            "role".to_string(),
+            "seed-bank".to_string(),
+        ];
+        let parsed = parse_args(args, &zen(), &norm()).unwrap();
+        assert_eq!(parsed.keywords.as_name, Some("photos".to_string()));
+        assert_eq!(parsed.keywords.role, Some("seed-bank".to_string()));
+        assert_eq!(parsed.args, vec!["/dev/sdb"]);
+    }
+
+    #[test]
+    fn test_zen_as_requires_value() {
+        let args = vec!["add".to_string(), "as".to_string()];
+        let result = parse_args(args, &zen(), &norm());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("'as' keyword requires"));
+    }
+
+    #[test]
+    fn test_zen_role_requires_value() {
+        let args = vec!["add".to_string(), "role".to_string()];
+        let result = parse_args(args, &zen(), &norm());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("'role' keyword requires"));
     }
 }

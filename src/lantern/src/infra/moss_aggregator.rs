@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::domain::topology::{
-    EnrichedCompanion, EnrichedOffering, EnrichedResources, EnrichedSeedBank, GardenTopology,
+    EnrichedCompanion, EnrichedOffering, EnrichedResources, EnrichedStorage, GardenTopology,
     StoneEnrichment,
 };
 use crate::infra::event_bus::EventBus;
@@ -125,10 +125,10 @@ async fn fetch_portrait(client: &MossClient, endpoint: &str) -> anyhow::Result<S
 
     // Parse seed banks from portrait
     if let Some(banks) = portrait.get("seed_banks").and_then(|v| v.as_array()) {
-        enrichment.seed_banks = banks
+        enrichment.managed_storages = banks
             .iter()
             .filter_map(|b| {
-                Some(EnrichedSeedBank {
+                Some(EnrichedStorage {
                     id: b
                         .get("id")
                         .and_then(|v| v.as_str())
@@ -142,7 +142,7 @@ async fn fetch_portrait(client: &MossClient, endpoint: &str) -> anyhow::Result<S
                     visibility: b
                         .get("visibility")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("open")
+                        .unwrap_or(garden_common::constants::VISIBILITY_OPEN)
                         .to_string(),
                     online: b.get("online").and_then(|v| v.as_bool()).unwrap_or(true),
                     encrypted: b

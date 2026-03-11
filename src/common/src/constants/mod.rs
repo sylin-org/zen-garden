@@ -117,9 +117,9 @@ pub const LANTERN_SERVICE: &str = "garden-lantern.service";
 // Offering Naming
 // ============================================================================
 
-/// Separator for offering fully-qualified instance names (FQN).
-/// Example: "ollama:dev"
-pub const OFFERING_FQN_SEPARATOR: char = ':';
+/// Separator for offering fully-qualified instance names (FQN v2).
+/// Example: "ollama::dev"
+pub(crate) const OFFERING_FQN_SEPARATOR: &str = "::";
 
 /// Prefix for managed offering containers.
 pub const OFFERING_CONTAINER_PREFIX: &str = "zen-offering-";
@@ -237,8 +237,62 @@ pub const VITALITY_NEEDS_ATTENTION: &str = "needs attention";
 /// Stone/service is critically unhealthy
 pub const VITALITY_WITHERING: &str = "withering";
 
+/// Stone/service is critically failing (terminal)
+pub const VITALITY_WILTING: &str = "wilting";
+
 /// Stone/service is offline or unreachable
 pub const VITALITY_DORMANT: &str = "dormant";
+
+// ============================================================================
+// Tool Category Constants (GardenTool / ToolIdentity)
+// ============================================================================
+
+/// Tool category: managed or adopted offering (e.g., mongodb, ollama)
+pub const CATEGORY_OFFERING: &str = "offering";
+
+/// Tool category: orchestrator gateway (e.g., mongodb orchestrator)
+pub const CATEGORY_ORCHESTRATOR: &str = "orchestrator";
+
+/// Tool category: storage / seed-bank
+pub const CATEGORY_STORAGE: &str = "storage";
+
+/// Tool category: companion (e.g., cricket, firefly)
+pub const CATEGORY_COMPANION: &str = "companion";
+
+// ============================================================================
+// Storage Role & Visibility Constants
+// ============================================================================
+
+/// Replication role: this stone owns the seed bank
+pub const ROLE_PRIMARY: &str = "primary";
+
+/// Replication role: passive replica, not serving reads
+pub const ROLE_DORMANT: &str = "dormant";
+
+/// Composable role: receives offering harvests from nurturing cycles
+pub const ROLE_SEED_BANK: &str = "seed-bank";
+
+/// Storage visibility: accessible by all stones in the garden
+pub const VISIBILITY_OPEN: &str = "open";
+
+/// Storage visibility: only accessible locally
+pub const VISIBILITY_CLOSED: &str = "closed";
+
+/// Storage visibility: visible but read-only (degraded state)
+pub const VISIBILITY_READ_ONLY: &str = "read-only";
+
+// ============================================================================
+// Storage Protocol Constants
+// ============================================================================
+
+/// Protocol identifier for S3-compatible access
+pub const PROTOCOL_S3: &str = "s3";
+
+/// Protocol identifier for garden storage (file-level) access
+pub const PROTOCOL_STORAGE: &str = "storage";
+
+/// Tool type for seed banks in ToolIdentity
+pub const TOOL_TYPE_SEED_BANK: &str = "seed-bank";
 
 // ============================================================================
 // Stone Boot Health Progression

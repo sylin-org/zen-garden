@@ -1,13 +1,16 @@
 ---
 audience: [operator, visitor]
 doc_type: guide
-status: current
+status: superseded
 last_verified: 2026-01-30
-canonical: true
-note: "Authoritative guide for seed bank setup and management."
+canonical: false
+superseded_by: storage.md
+note: "Legacy seed bank guide. See storage.md for the current guide covering managed storage, file sharing, replication, and all access protocols."
 ---
 
-# Seed Banks Guide
+# Seed Banks Guide (Legacy)
+
+> **This guide covers the pre-STORAGE-0009 seed bank model.** For the current storage system — including file sharing, WebDAV, S3, replication, and the adopt flow — see the **[Storage Guide](./storage.md)**.
 
 **External storage for nurturing (backups) with replication support.**
 

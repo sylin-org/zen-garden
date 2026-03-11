@@ -15,7 +15,7 @@ use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use garden_common::storage::SeedBankRole;
+use garden_common::storage::StorageRole;
 
 use crate::app_state::AppState;
 use crate::cli;
@@ -130,7 +130,7 @@ pub struct PortraitSeedBank {
     pub capacity_gb: f32,
     pub filesystem: String,
     pub visibility: String,
-    pub role: SeedBankRole,
+    pub role: StorageRole,
     pub pinned: bool,
     pub encrypted: bool,
     pub roaming: bool,
@@ -221,7 +221,7 @@ pub struct PortraitResponse {
     pub identity: PortraitIdentity,
     pub foundation: PortraitFoundation,
     pub offerings: Vec<PortraitOffering>,
-    pub seed_banks: Vec<PortraitSeedBank>,
+    pub managed_storages: Vec<PortraitSeedBank>,
     /// Candidate devices ready for seed bank preparation (hopeful state)
     pub candidates: Vec<PortraitCandidate>,
     pub companions: Vec<PortraitCompanion>,
@@ -524,7 +524,7 @@ pub async fn get_portrait_data(
                 };
 
                 PortraitOffering {
-                    name: o.name.clone(),
+                    name: o.name.to_string(),
                     // Managed offerings have containers, adopted/borrowed don't
                     container: if o.is_managed() {
                         Some(o.offering.clone())
@@ -541,42 +541,44 @@ pub async fn get_portrait_data(
     };
 
     // === Seed Banks ===
-    // STORAGE-0007: Read from unified lifecycle objects (single source of truth).
-    let seed_banks = {
-        let banks = state.seed_banks.read().await;
-        banks
+    // STORAGE-0011: Read from unified Volumes collection.
+    let (seed_banks, candidates) = {
+        let map = state.volumes.read().await;
+        let banks: Vec<PortraitSeedBank> = map
             .values()
-            .map(|bank| PortraitSeedBank {
-                id: bank.id.clone(),
-                short_id: bank.short_id.clone(),
-                name: bank.name.clone(),
-                used_gb: bank.storage.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                capacity_gb: bank.storage.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                filesystem: bank.storage.filesystem.clone(),
-                visibility: bank.visibility.to_string(),
-                role: bank.role,
-                pinned: bank.is_pinned(),
-                encrypted: bank.encrypted,
-                roaming: bank.roaming,
-                online: bank.storage.health.is_usable(),
+            .filter_map(|vol| {
+                let mgmt = vol.management.as_ref()?;
+                Some(PortraitSeedBank {
+                    id: mgmt.id.clone(),
+                    short_id: mgmt.short_id.clone(),
+                    name: mgmt.name.clone(),
+                    used_gb: vol.used_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                    capacity_gb: vol.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                    filesystem: String::new(), // populated by platform adapter (future)
+                    visibility: mgmt.visibility.to_string(),
+                    role: mgmt.role,
+                    pinned: vol.is_pinned(),
+                    encrypted: mgmt.encrypted,
+                    roaming: mgmt.roaming,
+                    online: vol.health.is_usable(),
+                })
             })
-            .collect()
-    };
+            .collect();
 
-    // === Candidates (hopeful state - devices ready to become seed banks) ===
-    // NOTE: Read from cache - populated by metrics_collector task + storage events
-    let candidates = {
-        let cached = state.candidates_cache.read().await;
-        cached
-            .iter()
-            .map(|c| PortraitCandidate {
-                device: c.device.clone(),
-                label: c.label.clone(),
-                capacity_gb: c.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                state: format!("{:?}", c.state).to_lowercase(),
-                mount_path: c.mount_path.clone(),
+        // Candidates: unmanaged removable volumes
+        let cands: Vec<PortraitCandidate> = map
+            .values()
+            .filter(|vol| vol.management.is_none() && vol.removable)
+            .map(|vol| PortraitCandidate {
+                device: vol.path.clone(),
+                label: vol.label.clone(),
+                capacity_gb: vol.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+                state: "empty".to_string(),
+                mount_path: Some(vol.mount_path.to_string_lossy().to_string()),
             })
-            .collect()
+            .collect();
+
+        (banks, cands)
     };
 
     // === Companions (adapters) ===
@@ -603,7 +605,8 @@ pub async fn get_portrait_data(
     // === Horizon (visible stones) ===
     let horizon = {
         let visible_stones = topology::get_all_stones(&state.topology_cache).await;
-        let storage_cache = state.storage_cache.read().await;
+        let reg = state.registry.read().await;
+        let storage_by_stone = reg.storage_grouped_by_stone();
         let stones: Vec<HorizonStone> = visible_stones
             .iter()
             .filter(|entry| entry.stone_id != state.stone_id) // Exclude self
@@ -619,10 +622,9 @@ pub async fn get_portrait_data(
                 let manufacturer = caps.and_then(|c| c.hardware.system_manufacturer.clone());
                 let model = caps.and_then(|c| c.hardware.system_product.clone());
                 let service_count = entry.services.len();
-                let has_seed_banks = storage_cache
-                    .get_beacon(&entry.stone_id)
-                    .map(|b| !b.seed_banks.is_empty())
-                    .unwrap_or(false);
+                let has_seed_banks = storage_by_stone
+                    .get(&entry.stone_id)
+                    .is_some_and(|banks| !banks.is_empty());
 
                 HorizonStone {
                     name: entry.stone_name.clone(),
@@ -643,13 +645,13 @@ pub async fn get_portrait_data(
             })
             .collect();
 
-        let seed_bank_count = visible_stones
+        let seed_bank_count: usize = visible_stones
             .iter()
             .filter(|entry| entry.stone_id != state.stone_id)
             .map(|entry| {
-                storage_cache
-                    .get_beacon(&entry.stone_id)
-                    .map(|b| b.seed_banks.len())
+                storage_by_stone
+                    .get(&entry.stone_id)
+                    .map(|banks| banks.len())
                     .unwrap_or(0)
             })
             .sum();
@@ -680,7 +682,7 @@ pub async fn get_portrait_data(
         identity,
         foundation,
         offerings,
-        seed_banks,
+        managed_storages: seed_banks,
         candidates,
         companions,
         pond,
@@ -708,7 +710,7 @@ pub async fn get_portrait_guidance(State(state): State<AppState>) -> axum::respo
                 o.managed_data()
                     .and_then(|m| m.guidance.as_ref())
                     .or_else(|| o.adopted_data().and_then(|a| a.guidance.as_ref()))
-                    .map(|g| (o.name.clone(), g.content.clone()))
+                    .map(|g| (o.name.to_string(), g.content.clone()))
             })
             .collect()
     };

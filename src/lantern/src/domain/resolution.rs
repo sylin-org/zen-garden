@@ -22,7 +22,7 @@ pub fn resolve_service(topology: &GardenTopology, service_type: &str) -> Option<
                     stone_name: entry.stone_name.clone(),
                     endpoint: entry.address.http_base(),
                     service: ResolveServiceInfo {
-                        name: svc.name.clone(),
+                        name: svc.name.to_string(),
                         service_type: svc.offering.clone(),
                         connection_string: String::new(),
                     },

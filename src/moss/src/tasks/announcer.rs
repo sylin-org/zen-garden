@@ -4,6 +4,9 @@
 //! Every chirp acts as a heartbeat — peers mark stones offline after 90s
 //! of silence, so chirps MUST be unconditional.
 //!
+//! Every other cycle (every ~60s) a full tools snapshot beacon is broadcast
+//! so remote registries can reconcile stale announced entries.
+//!
 //! Design:
 //! - Simple interval loop (KISS)
 //! - No complex state management (YAGNI)
@@ -22,6 +25,9 @@ use tokio_util::sync::CancellationToken;
 /// liveness (peers mark offline after 90s silence).
 /// Skips announcements only if network is not ready (no valid LAN IP).
 ///
+/// Every other tick (~60s) also broadcasts a snapshot tools beacon so
+/// remote registries can reconcile stale entries.
+///
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
 pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
@@ -31,6 +37,8 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
         // Skip first tick (already announced at startup)
         ticker.tick().await;
 
+        let mut tick_count: u64 = 0;
+
         loop {
             tokio::select! {
                 _ = ticker.tick() => {}
@@ -39,6 +47,8 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
                     break;
                 }
             }
+
+            tick_count += 1;
 
             // Check network readiness - skip if not ready
             if !state.subsystems.network.ready.load(Ordering::Relaxed) {
@@ -58,6 +68,28 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
             match crate::announcement::announce(&entry).await {
                 Ok(()) => tracing::trace!("Periodic chirp sent"),
                 Err(e) => tracing::warn!(error = ?e, "Periodic announcement failed"),
+            }
+
+            // Every other tick (~60s): broadcast a snapshot tools beacon so
+            // remote registries can reconcile stale announced entries.
+            if tick_count % 2 == 0 {
+                let snapshot_deltas = {
+                    let reg = state.registry.read().await;
+                    reg.local_snapshot_for_beacon(&state.stone_id)
+                };
+                let endpoint = state.self_entry.read().await.address.http_base();
+                if !endpoint.trim().is_empty() {
+                    if let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
+                        &state.stone_id,
+                        &state.stone_name,
+                        &endpoint,
+                        snapshot_deltas,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "Failed to broadcast periodic tools snapshot beacon");
+                    }
+                }
             }
         }
     });

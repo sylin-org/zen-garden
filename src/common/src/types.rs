@@ -2,6 +2,7 @@
 //! Core data structures for service discovery, health, resources, and registry
 
 use crate::constants::*;
+use crate::offerings::OfferingFqn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -719,7 +720,8 @@ pub struct TopologyServiceEntry {
     /// Survives renames, migrations, used for backup keying.
     #[serde(default)]
     pub offering_id: String,
-    pub name: String,
+    /// Fully-qualified offering name (auto-normalizes legacy formats on deserialize).
+    pub name: OfferingFqn,
     pub offering: String,
     pub category: String,
     pub status: String,
@@ -738,9 +740,17 @@ impl TopologyServiceEntry {
     /// Convert full ServiceInfo to lightweight TopologyServiceEntry
     /// Used when syncing registry to self_entry for chirp broadcasts
     pub fn from_service_info(service: &ServiceInfo, category: Option<&str>) -> Self {
+        let name = OfferingFqn::parse(&service.name)
+            .unwrap_or_else(|_| OfferingFqn::new(&service.offering)
+                .unwrap_or_else(|_| OfferingFqn {
+                    source: None,
+                    offering: service.offering.clone(),
+                    instance: None,
+                    image_ref: None,
+                }));
         Self {
             offering_id: service.offering_id.clone(),
-            name: service.name.clone(),
+            name,
             offering: service.offering.clone(),
             category: category.unwrap_or(&service.offering).to_string(),
             status: match service.status {
@@ -1064,6 +1074,10 @@ pub struct RuleCondition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FallbackConfig {
     pub image: String,
+    /// Suggested offering instance name when this fallback applies.
+    /// e.g. `"legacy"` → FQN becomes `mongodb::legacy` instead of `mongodb`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1304,8 +1318,9 @@ pub struct Offering {
     /// Unique identifier (GUIDv7) - generated for all modes
     pub offering_id: String,
 
-    /// Instance name (e.g., "my-mongodb", "ollama:adopted")
-    pub name: String,
+    /// Fully-qualified offering name (e.g., `mongodb`, `ollama::adopted`).
+    /// Serializes as a plain string in JSON; auto-normalizes legacy formats on load.
+    pub name: OfferingFqn,
 
     /// Offering type/template name (e.g., "mongodb", "ollama")
     pub offering: String,

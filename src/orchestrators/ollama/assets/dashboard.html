@@ -209,6 +209,21 @@ body {
 .stone-card.dormant { opacity: 0.45; filter: grayscale(0.6); }
 .stone-card.dormant .dot { background: var(--accent-muted); box-shadow: none; animation: none; }
 
+/* ── Stone Chip (clickable name + copy) ─────────────────── */
+.stone-chip { display: inline-flex; align-items: center; gap: 0.25rem; }
+.stone-chip a { color: var(--stone-900); text-decoration: none; font-weight: 600; }
+.stone-chip a:hover { color: var(--accent-sage); text-decoration: underline; }
+.stone-chip .chip-copy {
+  opacity: 0; transition: opacity 0.15s;
+  background: transparent; border: 1px solid var(--vellum-border, rgba(255,255,255,0.1));
+  border-radius: 2px; padding: 0 0.2rem;
+  font-size: 0.6rem; cursor: pointer; color: var(--stone-400);
+  font-family: var(--font-mono); line-height: 1.4;
+}
+.stone-chip:hover .chip-copy { opacity: 1; }
+.stone-chip .chip-copy:hover { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+.stone-chip .chip-copy.copied { opacity: 1; background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+
 /* ── Sortable Headers ───────────────────────────────────── */
 .sortable { cursor: pointer; user-select: none; }
 .sortable:hover { color: var(--accent-sage); }
@@ -551,6 +566,7 @@ body {
   font-size: 0.75rem; line-height: 1;
   background: rgba(132,165,157,0.1); color: var(--accent-sage);
 }
+/* Selection detail area */
 .rec-pick {
   border-left: 2px solid var(--accent-sage); padding-left: 0.75rem;
   margin-bottom: 0.75rem;
@@ -586,16 +602,32 @@ body {
   font-family: var(--font-mono); font-size: 0.55rem; color: var(--stone-400);
   margin-top: 0.35rem; line-height: 1.5;
 }
-.rec-runners {
+/* Model list area */
+.rec-list {
   border-top: 1px solid var(--vellum-border); padding-top: 0.5rem;
   margin-top: auto;
 }
-.rec-runner {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 0.2rem 0; font-family: var(--font-mono); font-size: 0.6rem;
+.rec-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.25rem 0.35rem; font-family: var(--font-mono); font-size: 0.6rem;
+  border-radius: 2px; transition: var(--transition-soft);
 }
-.rec-runner-name { color: var(--stone-600); word-break: break-all; }
-.rec-runner-score { color: var(--stone-400); white-space: nowrap; margin-left: 0.5rem; }
+.rec-row.active {
+  background: rgba(132,165,157,0.08); border-left: 2px solid var(--accent-sage);
+  padding-left: calc(0.35rem - 2px);
+}
+.rec-row-left { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.rec-row-name { color: var(--stone-600); word-break: break-all; }
+.rec-row.active .rec-row-name { color: var(--stone-900); font-weight: 600; }
+.rec-row-right { display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; color: var(--stone-400); margin-left: 0.5rem; }
+.rec-row { cursor: pointer; }
+.rec-row:hover { background: rgba(132,165,157,0.05); }
+.rec-pin-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.1rem; height: 1.1rem; font-size: 0.55rem; line-height: 1;
+  flex-shrink: 0; opacity: 0; color: var(--accent-sage); transition: var(--transition-soft);
+}
+.rec-pin-icon.pinned { opacity: 1; }
 .rec-empty {
   font-family: var(--font-mono); font-size: 0.7rem; color: var(--stone-400);
   text-align: center; padding: 1rem; font-style: italic;
@@ -947,6 +979,24 @@ let connected = true;
 let activityRing = [];
 const MAX_ACTIVITY = 30;
 
+// ── Capability Metadata ────────────────────────────────────────
+// Single registry — no hardcoded lists. `rank` controls display order.
+const CAP_META = {
+  generate: { rank: 0, label: 'Completion', css: 'completion' },
+  embed:    { rank: 1, label: 'Embedding',  css: 'embedding'  },
+  vision:   { rank: 2, label: 'Vision',     css: 'vision'     },
+  tools:    { rank: 3, label: 'Tool Use',   css: 'tools'      },
+  think:    { rank: 4, label: 'Thinking',   css: 'thinking'   },
+  thinking: { rank: 4, label: 'Thinking',   css: 'thinking'   },  // alias (model metadata uses "thinking")
+};
+function capLabel(cap) { return (CAP_META[cap] || {}).label || cap; }
+function capClass(cap) { return (CAP_META[cap] || {}).css   || cap; }
+function capRank(cap)  { return (CAP_META[cap] || {}).rank  ?? 99;  }
+/// Derive ordered capability list from the keys actually present in `dataKeys`.
+function capOrder(dataKeys) {
+  return [...new Set(dataKeys)].sort((a, b) => capRank(a) - capRank(b));
+}
+
 // ── Stone Color Palette ────────────────────────────────────────
 const STONE_COLORS = [
   '#84a59d', // sage
@@ -1097,7 +1147,7 @@ function renderStones(stones) {
     let html = `<div class="card stone-card${dormant ? ' dormant' : ''}" style="--stone-color:${color}">
       <div class="stone-header">
         <span class="dot ${healthClass}"></span>
-        <span class="stone-name">${esc(s.stone_name)}</span>
+        <span class="stone-name">${stoneChip(s.stone_name, 'http://' + s.stone_name + ':7185')}</span>
       </div>
       <div class="stone-meta">
         <div>${esc(s.gpu_name || 'GPU')} · ${s.vram_budget_mb != null ? s.vram_budget_mb : '?'} MB VRAM</div>
@@ -1210,7 +1260,7 @@ function renderModels(models) {
       `<span class="stone-dot loaded" title="${esc(s)}" style="--dot-color:${stoneColor(s)}; background:${stoneColor(s)}"></span>`
     ).join('') || '—';
     const caps = (m.capabilities || []).map(c =>
-      `<span class="cap-badge ${esc(c)}">${esc(c)}</span>`
+      `<span class="cap-badge ${capClass(c)}">${capLabel(c)}</span>`
     ).join('') || '—';
     const spec = [m.parameter_size, m.quantization_level].filter(Boolean).join(' / ') || '—';
     const ctx = m.context_length ? (m.context_length >= 1024 ? Math.round(m.context_length / 1024) + 'K' : m.context_length) : '—';
@@ -1509,28 +1559,30 @@ function renderJobs() {
 // ── Recommendations ─────────────────────────────────────────────
 
 // Scoring constants — mirrors recommendation.rs
-const REC_PER_AVAILABLE = 50;
-const REC_PER_LOADED    = 30;
-const REC_VERDICT_FAST     = 400;
-const REC_VERDICT_DEGRADED = 200;
-const REC_VERDICT_VETOED   = 50;
-const REC_VERDICT_BLOCKED  = -1000;
-const REC_TPS_CAP    = 200;
-const REC_COLD_CAP   = 100;
+// Layer 0: availability
+const REC_AVAILABLE        = 50;
+const REC_REDUNDANCY_PER   = 10;
+const REC_REDUNDANCY_CAP   = 30;
+const REC_LOADED           = 20;
+// Layer 1: fitness (best-stone-only)
+const REC_VERDICT_FAST     = 300;
+const REC_VERDICT_DEGRADED = 150;
+const REC_VERDICT_VETOED   = 30;
+const REC_VERDICT_BLOCKED  = -500;
+const REC_COLD_CAP         = 50;
 
 /// Map user-facing capability to fitness capability key.
 function recFitnessCap(cap) {
-  if (cap === 'completion' || cap === 'tools' || cap === 'thinking') return 'generate';
+  if (cap === 'quick' || cap === 'chat' || cap === 'completion' || cap === 'synthesis' || cap === 'tools' || cap === 'thinking') return 'generate';
   if (cap === 'embedding') return 'embed';
-  if (cap === 'vision') return 'vision';
+  if (cap === 'vision' || cap === 'ocr') return 'vision';
   return null;
 }
 
 /// Map user-facing capability to Ollama capability tag.
 function recOllamaCap(cap) {
-  if (cap === 'tools') return 'tools';
-  if (cap === 'thinking') return 'thinking';
-  if (cap === 'completion' || cap === 'tools' || cap === 'thinking') return 'completion';
+  if (cap === 'quick' || cap === 'chat' || cap === 'completion' || cap === 'synthesis' || cap === 'tools' || cap === 'thinking') return 'completion';
+  if (cap === 'ocr') return 'vision';
   return cap;
 }
 
@@ -1541,11 +1593,60 @@ function recCapFilter(cap) {
   return recOllamaCap(cap);
 }
 
+/// TPS bonus cap per capability.
+function recTpsCap(cap) {
+  if (cap === 'quick') return 200;
+  if (cap === 'chat' || cap === 'completion') return 50;
+  if (cap === 'tools' || cap === 'thinking') return 30;
+  if (cap === 'synthesis' || cap === 'ocr') return 0;
+  return 0;
+}
+
 /// Context bonus cap per capability.
 function recContextCap(cap) {
-  if (cap === 'thinking') return 200;
-  if (cap === 'tools') return 150;
-  if (cap === 'completion') return 100;
+  if (cap === 'synthesis') return 500;
+  if (cap === 'thinking') return 300;
+  if (cap === 'tools') return 250;
+  if (cap === 'chat' || cap === 'completion') return 150;
+  if (cap === 'ocr') return 150;
+  return 0;
+}
+
+/// Quality bonus cap per capability.
+function recQualityCap(cap) {
+  if (cap === 'thinking') return 500;
+  if (cap === 'tools') return 450;
+  if (cap === 'chat' || cap === 'completion' || cap === 'synthesis') return 400;
+  if (cap === 'ocr') return 400;
+  return 0;
+}
+
+/// Quality multiplier (points per billion params) per capability.
+function recQualityMul(cap) {
+  if (cap === 'thinking') return 60;
+  if (cap === 'tools') return 50;
+  if (cap === 'chat' || cap === 'completion' || cap === 'synthesis') return 40;
+  if (cap === 'ocr') return 40;
+  return 0;
+}
+
+/// Name-affinity bonus — purpose-built models get a boost.
+function recNameAffinity(cap) {
+  if (cap === 'ocr') return 200;
+  return 0;
+}
+
+/// Extract parameter count in billions. Prefers parameter_count (number),
+/// falls back to parsing parameter_size string (e.g. "7B" → 7.0).
+function paramBillions(m) {
+  if (m.parameter_count) return m.parameter_count / 1e9;
+  if (m.parameter_size) {
+    const s = (m.parameter_size || '').trim().toUpperCase();
+    if (s.endsWith('B')) {
+      const v = parseFloat(s.slice(0, -1));
+      if (!isNaN(v)) return v;
+    }
+  }
   return 0;
 }
 
@@ -1562,8 +1663,7 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
 
   // Build stone lookup: healthy stones only
   const healthyStones = (stones || []).filter(s => s.healthy !== false);
-  // Build model→stones map from stone data
-  const modelStoneMap = new Map(); // model_name → [{stone_name, endpoint, loaded}]
+  const modelStoneMap = new Map();
   healthyStones.forEach(s => {
     (s.models_available || []).forEach(mName => {
       if (!modelStoneMap.has(mName)) modelStoneMap.set(mName, []);
@@ -1582,7 +1682,6 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
     fitnessLookup.set(`${e.model}|${e.endpoint}|${e.capability}`, e);
   });
 
-  // Score each eligible model
   const scored = eligible.map(m => {
     let score = 0;
     const reasoning = [];
@@ -1594,9 +1693,12 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
     const availCount = mStones.length;
     const loadedCount = mStones.filter(s => s.loaded).length;
 
-    // Layer 0: distribution
-    score += availCount * REC_PER_AVAILABLE;
-    score += loadedCount * REC_PER_LOADED;
+    // Layer 0: availability (binary + small redundancy bonus)
+    if (availCount > 0) {
+      score += REC_AVAILABLE;
+      score += Math.min((availCount - 1) * REC_REDUNDANCY_PER, REC_REDUNDANCY_CAP);
+    }
+    if (loadedCount > 0) score += REC_LOADED;
 
     if (availCount > 1) reasoning.push(`available on ${availCount} stones`);
     else if (availCount === 1) reasoning.push('available on 1 stone');
@@ -1606,18 +1708,20 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
       reasoning.push(`loaded on ${names.join(', ')}`);
     }
 
-    // Layer 1: fitness
+    // Layer 1: fitness (best stone only)
+    const vRank = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
+    const vScoreMap = { fast: REC_VERDICT_FAST, degraded: REC_VERDICT_DEGRADED, vetoed: REC_VERDICT_VETOED, blocked: REC_VERDICT_BLOCKED };
+    let bestFitnessScore = -Infinity;
+    let bestFitnessTps = 0;
+    let bestFitnessCold = 0;
+
     mStones.forEach(ms => {
       const key = fitCap ? `${m.name}|${ms.endpoint}|${fitCap}` : null;
       const entry = key ? fitnessLookup.get(key) : null;
 
       const ss = {
-        stone: ms.stone,
-        endpoint: ms.endpoint,
-        verdict: null,
-        median_tps: null,
-        cold_start_ms: null,
-        loaded: ms.loaded
+        stone: ms.stone, endpoint: ms.endpoint,
+        verdict: null, median_tps: null, cold_start_ms: null, loaded: ms.loaded
       };
 
       if (entry) {
@@ -1627,20 +1731,16 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
         ss.cold_start_ms = entry.cold_start_ms;
 
         const v = (entry.verdict || '').toLowerCase();
-        const vScore = v === 'fast' ? REC_VERDICT_FAST
-          : v === 'degraded' ? REC_VERDICT_DEGRADED
-          : v === 'vetoed' ? REC_VERDICT_VETOED
-          : v === 'blocked' ? REC_VERDICT_BLOCKED : 0;
-        score += vScore;
+        const vScore = vScoreMap[v] || 0;
 
-        // TPS bonus
-        score += Math.min(Math.floor(entry.median_tps || 0), REC_TPS_CAP);
+        // Track best stone for scoring
+        if (vScore > bestFitnessScore || (vScore === bestFitnessScore && (entry.median_tps || 0) > bestFitnessTps)) {
+          bestFitnessScore = vScore;
+          bestFitnessTps = entry.median_tps || 0;
+          bestFitnessCold = entry.cold_start_ms || 0;
+        }
 
-        // Cold start penalty
-        score -= Math.min(Math.floor((entry.cold_start_ms || 0) / 1000), REC_COLD_CAP);
-
-        // Track best verdict
-        const vRank = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
+        // Track best verdict for display
         const rank = vRank[v] || 0;
         const bestRank = bestVerdict ? (vRank[bestVerdict.toLowerCase()] || 0) : 0;
         if (rank > bestRank) bestVerdict = entry.verdict;
@@ -1650,6 +1750,11 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
     });
 
     if (hasFitness) {
+      // Apply best-stone fitness
+      score += bestFitnessScore;
+      score += Math.min(Math.floor(bestFitnessTps), recTpsCap(cap));
+      score -= Math.min(Math.floor(bestFitnessCold / 1000), REC_COLD_CAP);
+
       const fastN = stoneScores.filter(s => (s.verdict || '').toLowerCase() === 'fast').length;
       const blockedN = stoneScores.filter(s => (s.verdict || '').toLowerCase() === 'blocked').length;
       if (fastN > 0) reasoning.push(`fast on ${fastN} of ${stoneScores.length} stones`);
@@ -1671,36 +1776,73 @@ function computeRecommendations(cap, models, stones, gpuEntries) {
       }
     }
 
+    // Layer 3: model quality
+    const qCap = recQualityCap(cap);
+    const qMul = recQualityMul(cap);
+    if (qCap > 0) {
+      const pB = paramBillions(m);
+      if (pB > 0) {
+        const bonus = Math.min(Math.floor(pB * qMul), qCap);
+        score += bonus;
+        if (pB >= 3) reasoning.push(`${Math.round(pB)}B parameters`);
+      }
+    }
+
+    // Layer 4: name affinity (purpose-built models)
+    const affinity = recNameAffinity(cap);
+    if (affinity > 0 && m.name.toLowerCase().includes(cap.toLowerCase())) {
+      score += affinity;
+      reasoning.push(`purpose-built ${cap} model`);
+    }
+
     // Sort stones: best verdict first, loaded first
-    const vOrd = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
     stoneScores.sort((a, b) => {
-      const va = vOrd[(a.verdict || '').toLowerCase()] || 0;
-      const vb = vOrd[(b.verdict || '').toLowerCase()] || 0;
+      const va = vRank[(a.verdict || '').toLowerCase()] || 0;
+      const vb = vRank[(b.verdict || '').toLowerCase()] || 0;
       return (vb - va) || (b.loaded - a.loaded) || a.stone.localeCompare(b.stone);
     });
 
     return {
-      model: m.name,
-      score,
-      verdict: bestVerdict,
-      parameter_size: m.parameter_size,
-      quantization_level: m.quantization_level,
-      context_length: m.context_length,
-      reasoning,
-      stones: stoneScores
+      model: m.name, score, verdict: bestVerdict,
+      parameter_size: m.parameter_size, quantization_level: m.quantization_level,
+      context_length: m.context_length, reasoning, stones: stoneScores
     };
   });
 
-  // Sort: score desc, name asc
   scored.sort((a, b) => (b.score - a.score) || a.model.localeCompare(b.model));
-
-  // Assign ranks
   scored.forEach((r, i) => { r.rank = i + 1; });
 
   return { capability: cap, recommendations: scored };
 }
 
+/// Toggle a recommendation pin via the orchestrator API.
+async function togglePin(capability, model) {
+  const pins = (settings && settings.pins) || {};
+  const isPinned = pins[capability] === model;
+  try {
+    if (isPinned) {
+      await fetch(`/api/recommendations/${encodeURIComponent(capability)}/pin`, { method: 'DELETE' });
+    } else {
+      await fetch(`/api/recommendations/${encodeURIComponent(capability)}/pin`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+    }
+    // Optimistic update so re-render is immediate
+    if (!settings.pins) settings.pins = {};
+    if (isPinned) delete settings.pins[capability];
+    else settings.pins[capability] = model;
+    renderRecommendations();
+  } catch (e) {
+    addActivity('error', `Failed to ${isPinned ? 'unpin' : 'pin'}: ${e.message}`);
+  }
+}
+
 /// Render role-based recommendation panels.
+/// Two areas per category: selection detail (top) and model list (bottom).
+/// The "active" model is the pinned one (if set), otherwise rank 1.
+/// The model list always shows models in score order — pinning highlights
+/// a row without reordering.
 function renderRecommendations() {
   const section = document.getElementById('recsSection');
   const container = document.getElementById('recsContainer');
@@ -1713,17 +1855,19 @@ function renderRecommendations() {
   const stones = state.stones || [];
   const gpuEntries = (state.benchmark && state.benchmark.gpu_matrix)
     ? (state.benchmark.gpu_matrix.entries || []) : [];
+  const pins = (settings && settings.pins) || {};
 
-  // Role definitions: each role maps to a capability and has presentation metadata
   const roles = [
-    { key: 'completion', label: 'Chat / Completion',  icon: '\u{1F4AC}', desc: 'General-purpose text generation' },
-    { key: 'vision',     label: 'Vision / OCR',        icon: '\u{1F441}', desc: 'Image understanding and OCR' },
-    { key: 'tools',      label: 'Tool Use',            icon: '\u{1F527}', desc: 'Function calling and agents' },
-    { key: 'thinking',   label: 'Reasoning',           icon: '\u{1F9E0}', desc: 'Extended thinking and analysis' },
-    { key: 'embedding',  label: 'Embedding',           icon: '\u{1F50D}', desc: 'Semantic search and RAG' },
+    { key: 'quick',     label: 'Quick',       icon: '\u26A1' },
+    { key: 'chat',      label: 'Chat',        icon: '\u{1F4AC}' },
+    { key: 'synthesis', label: 'Synthesis',    icon: '\u{1F4D6}' },
+    { key: 'vision',    label: 'Vision',       icon: '\u{1F441}' },
+    { key: 'ocr',       label: 'OCR',          icon: '\u{1F4C4}' },
+    { key: 'tools',     label: 'Tool Use',     icon: '\u{1F527}' },
+    { key: 'thinking',  label: 'Reasoning',    icon: '\u{1F9E0}' },
+    { key: 'embedding', label: 'Embedding',    icon: '\u{1F50D}' },
   ];
 
-  // Discover which capabilities exist
   const allCaps = new Set();
   models.forEach(m => (m.capabilities || []).forEach(c => allCaps.add(c)));
 
@@ -1738,58 +1882,68 @@ function renderRecommendations() {
     if (!result || !result.recommendations.length) return;
     panelCount++;
 
-    const recs = result.recommendations;
-    const top = recs[0];
-    const runners = recs.slice(1, 4); // up to 3 runners-up
+    // Score-ordered list, capped at 5
+    const recs = result.recommendations.slice(0, 5);
 
-    // Top pick details
-    const spec = [top.parameter_size, top.quantization_level].filter(Boolean).join(' / ');
-    const ctx = top.context_length
-      ? (top.context_length >= 1024 ? Math.round(top.context_length / 1024) + 'K' : top.context_length)
+    // Determine the active model: pinned if valid, otherwise rank 1
+    const pinnedModel = pins[role.key];
+    const pinnedInList = pinnedModel && recs.some(r => r.model === pinnedModel);
+    const activeModel = pinnedInList ? pinnedModel : recs[0].model;
+
+    // Find the active rec for the detail area
+    const active = recs.find(r => r.model === activeModel) || recs[0];
+
+    // ── Selection detail area ──
+    const spec = [active.parameter_size, active.quantization_level].filter(Boolean).join(' / ');
+    const ctx = active.context_length
+      ? (active.context_length >= 1024 ? Math.round(active.context_length / 1024) + 'K' : active.context_length)
       : null;
-    const specLine = [spec, ctx ? ctx + ' ctx' : ''].filter(Boolean).join(' · ');
+    const specLine = [spec, ctx ? ctx + ' ctx' : ''].filter(Boolean).join(' \u00B7 ');
 
-    const v = (top.verdict || '').toLowerCase();
+    const v = (active.verdict || '').toLowerCase();
     const verdictHtml = v
-      ? `<div class="rec-pick-verdict ${esc(v)}">${esc(v)}${top.stones.length ? ` on ${top.stones.filter(s => (s.verdict||'').toLowerCase() === v).length}/${top.stones.length} stones` : ''}</div>`
+      ? `<div class="rec-pick-verdict ${esc(v)}">${esc(v)}${active.stones.length ? ` on ${active.stones.filter(s => (s.verdict||'').toLowerCase() === v).length}/${active.stones.length} stones` : ''}</div>`
       : '';
 
-    // Stone chips for top pick
-    const chips = top.stones.map(s => {
+    const chips = active.stones.map(s => {
       const sv = (s.verdict || '').toLowerCase();
       const cls = sv === 'blocked' ? 'blocked' : s.loaded ? 'loaded' : '';
       return `<span class="rec-chip ${cls}" title="${esc(s.endpoint)}">${esc(s.stone)}</span>`;
     }).join('');
 
-    // Reasoning (top 2 reasons)
-    const reasons = top.reasoning.slice(0, 2).map(t => esc(t)).join(' · ');
+    const reasons = active.reasoning.slice(0, 2).map(t => esc(t)).join(' \u00B7 ');
 
-    // Runners-up
-    let runnersHtml = '';
-    if (runners.length) {
-      runnersHtml = '<div class="rec-runners">';
-      runners.forEach(r => {
-        const rv = (r.verdict || '').toLowerCase();
-        const rvColor = rv === 'fast' ? 'var(--accent-sage)' : rv === 'degraded' ? 'var(--accent-hopeful)' : rv === 'blocked' ? 'var(--accent-red)' : 'var(--stone-400)';
-        const rSpec = [r.parameter_size, r.quantization_level].filter(Boolean).join('/');
-        runnersHtml += `<div class="rec-runner">
-          <span class="rec-runner-name">${esc(r.model)}</span>
-          <span class="rec-runner-score">${rSpec}${rv ? ` <span style="color:${rvColor}">${esc(rv)}</span>` : ''}</span>
-        </div>`;
-      });
-      runnersHtml += '</div>';
-    }
+    // ── Model list area ──
+    let listHtml = '<div class="rec-list">';
+    recs.forEach(r => {
+      const isActive = r.model === activeModel;
+      const isPinned = pinnedModel === r.model;
+      const rv = (r.verdict || '').toLowerCase();
+      const rvColor = rv === 'fast' ? 'var(--accent-sage)' : rv === 'degraded' ? 'var(--accent-hopeful)' : rv === 'blocked' ? 'var(--accent-red)' : 'var(--stone-400)';
+      const rSpec = [r.parameter_size, r.quantization_level].filter(Boolean).join('/');
+      const pinCls = isPinned ? 'pinned' : '';
+
+      listHtml += `<div class="rec-row${isActive ? ' active' : ''}" onclick="togglePin('${esc(role.key)}','${esc(r.model)}')">
+        <span class="rec-row-left">
+          <span class="rec-row-name">${esc(r.model)}</span>
+        </span>
+        <span class="rec-row-right">${rSpec}${rv ? ` <span style="color:${rvColor}">${esc(rv)}</span>` : ''}
+          <span class="rec-pin-icon ${pinCls}">\u{1F4CC}</span>
+        </span>
+      </div>`;
+    });
+    listHtml += '</div>';
 
     panels += `<div class="rec-panel">
       <div class="rec-role"><span class="rec-role-icon">${role.icon}</span> ${esc(role.label)}</div>
       <div class="rec-pick">
-        <div class="rec-pick-name">${esc(top.model)}</div>
+        <div class="rec-pick-name">${esc(active.model)}</div>
         ${specLine ? `<div class="rec-pick-spec">${esc(specLine)}</div>` : ''}
         ${verdictHtml}
         ${chips ? `<div class="rec-pick-stones">${chips}</div>` : ''}
         ${reasons ? `<div class="rec-pick-reason">${reasons}</div>` : ''}
       </div>
-      ${runnersHtml}
+      ${listHtml}
     </div>`;
   });
 
@@ -1900,10 +2054,6 @@ function renderBenchmark(run, stones) {
 }
 
 // ── Shared table helpers ──────────────────────────────────────────
-const CAP_LABEL = { generate: 'Completion', embed: 'Embedding', vision: 'Vision' };
-const CAP_CLASS = { generate: 'completion', embed: 'embedding', vision: 'vision' };
-const CAP_ORDER = ['generate', 'embed', 'vision'];
-
 function buildStoneHeaders(stoneNames, stoneInfo) {
   let html = '<th class="col-model">Model</th><th class="col-cap">Capability</th>';
   stoneNames.forEach(sn => {
@@ -1918,7 +2068,7 @@ function buildStoneHeaders(stoneNames, stoneInfo) {
     }
     const isActive = fitnessSort.type === 'stone' && fitnessSort.stone === sn;
     const arrow = isActive ? (fitnessSort.dir === 'desc' ? ' \u25BC' : ' \u25B2') : '';
-    html += `<th class="stone-header sortable" style="--stone-hdr-color:${c}; color:${c}" onclick="sortFitnessStone(${JSON.stringify(sn)})">${esc(sn)}${arrow}`;
+    html += `<th class="stone-header sortable" style="--stone-hdr-color:${c}; color:${c}" onclick="sortFitnessStone(${JSON.stringify(sn)})">${stoneChip(sn, 'http://' + sn + ':7185')}${arrow}`;
     if (subtitle) html += `<span class="stone-subtitle">${subtitle}</span>`;
     html += '</th>';
   });
@@ -1942,34 +2092,44 @@ function buildLegend(stoneNames) {
   return html;
 }
 
-function renderResultCell(verdict, medianTps, coldMs, cap, isBest) {
+function renderResultCell(verdict, medianTps, coldMs, cap, isBest, validRatio) {
   const v = (verdict || 'unknown').toLowerCase();
   let cls = 'verdict-cell verdict-' + v;
   if (isBest) cls += ' verdict-best';
-  // Blocked: show explicit label instead of meaningless 0.0 stats.
   if (v === 'blocked') {
     return `<td class="${cls}" data-tip="blocked — model errors on this stone"><div class="verdict-inner"><span class="verdict-dot"></span><span class="verdict-stats">blocked</span></div></td>`;
   }
   const tps = (medianTps || 0).toFixed(1);
   const cold = (coldMs / 1000).toFixed(1);
-  const tip = cap === 'embed'
-    ? `${v} · cold start ${cold}s`
-    : `${v} · ${tps} tok/s · cold start ${cold}s`;
-  const inner = cap === 'embed'
-    ? `<span class="verdict-dot"></span><span class="verdict-stats">${cold}s</span>`
-    : `<span class="verdict-dot"></span><span class="verdict-stats">${tps} · ${cold}s</span>`;
+  let tip, inner;
+  if (cap === 'tools' && validRatio != null) {
+    // Tools: reliability is the primary metric, speed secondary
+    const pct = Math.round(validRatio * 100);
+    tip = `${v} · ${pct}% valid · ${tps} tok/s · cold ${cold}s`;
+    inner = `<span class="verdict-dot"></span><span class="verdict-stats">${pct}% · ${tps}</span>`;
+  } else if (cap === 'embed') {
+    tip = `${v} · cold start ${cold}s`;
+    inner = `<span class="verdict-dot"></span><span class="verdict-stats">${cold}s</span>`;
+  } else {
+    // generate, vision, think: speed + cold start
+    tip = `${v} · ${tps} tok/s · cold start ${cold}s`;
+    inner = `<span class="verdict-dot"></span><span class="verdict-stats">${tps} · ${cold}s</span>`;
+  }
   return `<td class="${cls}" data-tip="${esc(tip)}"><div class="verdict-inner">${inner}</div></td>`;
 }
 
 /// Score a result for best-stone comparison.
-/// Higher is better.  Verdict rank dominates, then TPS, then cold (inverted).
-function bestStoneScore(verdict, medianTps, coldMs, cap) {
+/// Higher is better.  Verdict rank dominates, then capability-appropriate secondary.
+function bestStoneScore(verdict, medianTps, coldMs, cap, validRatio) {
   const vRank = { fast: 4, degraded: 3, vetoed: 2, blocked: 1 };
   const vr = vRank[(verdict || '').toLowerCase()] || 0;
   const tps = medianTps || 0;
   const cold = coldMs || 999999;
-  // Embed has no TPS — rank by verdict then cold start only.
   if (cap === 'embed') return vr * 1e9 + (1e6 - cold);
+  // Tools: reliability dominates after verdict, then speed as tiebreaker.
+  if (cap === 'tools' && validRatio != null) {
+    return vr * 1e9 + validRatio * 1e6 + tps * 1e2 + (1e6 - cold);
+  }
   return vr * 1e9 + tps * 1e4 + (1e6 - cold);
 }
 
@@ -1978,7 +2138,7 @@ function findBestStone(results, cap) {
   if (results.length === 0) return null;
   let best = null, bestScore = -Infinity;
   for (const r of results) {
-    const s = bestStoneScore(r.verdict, r.medianTps, r.coldMs, cap);
+    const s = bestStoneScore(r.verdict, r.medianTps, r.coldMs, cap, r.validRatio);
     if (s > bestScore) { bestScore = s; best = r.stone; }
   }
   return best;
@@ -2051,7 +2211,7 @@ function buildModelRows(modelNames, capsFn, cellFn) {
       if (isLast) cls.push('model-last-row');
       html += `<tr class="${cls.join(' ')}">`;
       if (isFirst) html += `<td class="model-cell" rowspan="${modelCaps.length}">${esc(model)}</td>`;
-      html += `<td class="cap-cell"><span class="cap-badge ${CAP_CLASS[cap]}">${CAP_LABEL[cap]}</span></td>`;
+      html += `<td class="cap-cell"><span class="cap-badge ${capClass(cap)}">${capLabel(cap)}</span></td>`;
       html += cellFn(model, cap);
       html += '</tr>';
     });
@@ -2080,7 +2240,9 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
   });
 
   const modelSet = new Set();
-  stoneReports.forEach(sr => (sr.tests || []).forEach(t => modelSet.add(t.model)));
+  const capSet = new Set();
+  stoneReports.forEach(sr => (sr.tests || []).forEach(t => { modelSet.add(t.model); capSet.add(t.capability); }));
+  const liveCaps = capOrder([...capSet]);
 
   // Build model-level score index for sorting
   const modelMetaLookup = new Map();
@@ -2093,7 +2255,7 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
     let aggMax = -Infinity;
     stoneNames.forEach(sn => {
       let stoneMax = -Infinity;
-      CAP_ORDER.forEach(cap => {
+      liveCaps.forEach(cap => {
         const t = testLookup.get(`${model}|${sn}|${cap}`);
         let score = -Infinity;
         if (t && t.status === 'done' && t.summary) {
@@ -2122,17 +2284,17 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
   html += buildStoneHeaders(stoneNames, stoneInfo);
   html += '</tr></thead><tbody>';
   html += buildModelRows(modelNames,
-    model => CAP_ORDER.filter(cap => stoneNames.some(sn => testLookup.has(`${model}|${sn}|${cap}`))),
+    model => liveCaps.filter(cap => stoneNames.some(sn => testLookup.has(`${model}|${sn}|${cap}`))),
     (model, cap) => {
       // Collect completed results across stones for best-stone detection
       const results = [];
       stoneNames.forEach(sn => {
         const t = testLookup.get(`${model}|${sn}|${cap}`);
         if (t && t.status === 'done' && t.summary) {
-          results.push({ stone: sn, verdict: t.summary.verdict, medianTps: t.summary.median_tps, coldMs: t.summary.cold_start_ms });
+          results.push({ stone: sn, verdict: t.summary.verdict, medianTps: t.summary.median_tps, coldMs: t.summary.cold_start_ms, validRatio: t.summary.valid_ratio });
         } else if (t && t.status === 'done') {
           const me = matrixLookup.get(`${model}|${sn}|${cap}`);
-          if (me) results.push({ stone: sn, verdict: me.verdict, medianTps: me.median_tps, coldMs: me.cold_start_ms });
+          if (me) results.push({ stone: sn, verdict: me.verdict, medianTps: me.median_tps, coldMs: me.cold_start_ms, validRatio: me.valid_ratio });
         }
       });
       const bestStone = findBestStone(results, cap);
@@ -2142,10 +2304,10 @@ function buildLiveMatrix(stoneReports, matrixEntries) {
         const t = testLookup.get(`${model}|${sn}|${cap}`);
         if (!t) { cells += '<td class="verdict-cell verdict-unknown">—</td>'; return; }
         if (t.status === 'done' && t.summary) {
-          cells += renderResultCell(t.summary.verdict, t.summary.median_tps, t.summary.cold_start_ms, cap, sn === bestStone);
+          cells += renderResultCell(t.summary.verdict, t.summary.median_tps, t.summary.cold_start_ms, cap, sn === bestStone, t.summary.valid_ratio);
         } else if (t.status === 'done') {
           const me = matrixLookup.get(`${model}|${sn}|${cap}`);
-          if (me) cells += renderResultCell(me.verdict, me.median_tps, me.cold_start_ms, cap, sn === bestStone);
+          if (me) cells += renderResultCell(me.verdict, me.median_tps, me.cold_start_ms, cap, sn === bestStone, me.valid_ratio);
           else cells += renderStatusCell('done');
         } else {
           cells += renderStatusCell(t.status, t.error);
@@ -2164,6 +2326,7 @@ function buildFinalMatrix(stoneReports, entries) {
   const stoneNames = [...new Set(entries.map(e => e.stone_name))].sort();
   const lookup = new Map();
   entries.forEach(e => lookup.set(`${e.model}|${e.stone_name}|${e.capability}`, e));
+  const finalCaps = capOrder(entries.map(e => e.capability));
 
   const stoneInfo = new Map();
   stoneReports.forEach(sr => stoneInfo.set(sr.stone_name, { gpu: sr.gpu_model || '', vram_mb: sr.vram_mb || 0 }));
@@ -2179,7 +2342,7 @@ function buildFinalMatrix(stoneReports, entries) {
     let aggMax = -Infinity;
     stoneNames.forEach(sn => {
       let stoneMax = -Infinity;
-      CAP_ORDER.forEach(cap => {
+      finalCaps.forEach(cap => {
         const e = lookup.get(`${model}|${sn}|${cap}`);
         if (e) {
           const score = bestStoneScore(e.verdict, e.median_tps, e.cold_start_ms, cap);
@@ -2204,19 +2367,19 @@ function buildFinalMatrix(stoneReports, entries) {
   html += buildStoneHeaders(stoneNames, stoneInfo);
   html += '</tr></thead><tbody>';
   html += buildModelRows(modelNames,
-    model => CAP_ORDER.filter(cap => stoneNames.some(sn => lookup.has(`${model}|${sn}|${cap}`))),
+    model => finalCaps.filter(cap => stoneNames.some(sn => lookup.has(`${model}|${sn}|${cap}`))),
     (model, cap) => {
       const results = [];
       stoneNames.forEach(sn => {
         const e = lookup.get(`${model}|${sn}|${cap}`);
-        if (e) results.push({ stone: sn, verdict: e.verdict, medianTps: e.median_tps, coldMs: e.cold_start_ms });
+        if (e) results.push({ stone: sn, verdict: e.verdict, medianTps: e.median_tps, coldMs: e.cold_start_ms, validRatio: e.valid_ratio });
       });
       const bestStone = findBestStone(results, cap);
 
       let cells = '';
       stoneNames.forEach(sn => {
         const e = lookup.get(`${model}|${sn}|${cap}`);
-        if (e) cells += renderResultCell(e.verdict, e.median_tps, e.cold_start_ms, cap, sn === bestStone);
+        if (e) cells += renderResultCell(e.verdict, e.median_tps, e.cold_start_ms, cap, sn === bestStone, e.valid_ratio);
         else cells += '<td class="verdict-cell verdict-unknown">—</td>';
       });
       return cells;
@@ -2363,6 +2526,31 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+// Stone chip helpers
+function stoneChip(name, url) {
+  var safe = esc(name);
+  return '<span class="stone-chip">' +
+    '<a href="' + (url || '#') + '" title="Visit ' + safe + '">' + safe + '</a>' +
+    '<button class="chip-copy" onclick="copyStone(this,\'' + safe.replace(/'/g, "\\'") + '\')" title="Copy name">\u29C9</button>' +
+    '</span>';
+}
+function copyStone(btn, name) {
+  var done = function() {
+    btn.textContent = '\u2713'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = '\u29C9'; btn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(name).then(done);
+  } else {
+    var ta = document.createElement('textarea'); ta.value = name;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+    done();
+  }
 }
 
 function formatNum(n) {

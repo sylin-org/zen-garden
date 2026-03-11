@@ -194,6 +194,10 @@ async fn main() -> Result<()> {
             "/v1/recommendations",
             axum::routing::get(extension::get_recommendations),
         )
+        .route(
+            "/v1/recommendations/{capability}/pin",
+            axum::routing::put(extension::put_pin).delete(extension::delete_pin),
+        )
         .fallback(proxy::proxy_handler)
         .with_state(proxy_state);
 
@@ -225,6 +229,11 @@ async fn main() -> Result<()> {
         .route(
             "/api/metrics/model-counters/reset",
             axum::routing::post(dashboard::post_model_counters_reset),
+        )
+        // Recommendation pins
+        .route(
+            "/api/recommendations/{capability}/pin",
+            axum::routing::put(dashboard::put_pin).delete(dashboard::delete_pin),
         )
         // Jobs
         .route("/api/jobs", axum::routing::get(dashboard::get_jobs))

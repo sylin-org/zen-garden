@@ -11,16 +11,15 @@
 //! per-invocation target stone.
 
 use garden_common::ui::rendering::{self as ui, TerminalInfo};
-use garden_common::{GardenApiResponse, HardwareCapabilities};
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::client::{resolve_target_endpoint, CachedStoneOps};
 use garden_rake::commands::management::tend;
 use garden_rake::commands::Command;
 use garden_rake::context::{CommandContext, OutputFormat};
 use garden_rake::discovery;
+use garden_rake::stone_bag::StoneBag;
 use garden_rake::stone_cache::GLOBAL_CACHE;
 use garden_rake::tending;
-use std::time::Duration;
 
 // ============================================================================
 // CommandInvocation — pairs a Command with its target stone
@@ -86,10 +85,15 @@ impl Runtime {
     }
 
     /// Execute a command invocation with full middleware:
-    /// 1. Resolve endpoint (if `cmd.requires_endpoint()`)
-    /// 2. Print stone header (if `cmd.show_stone_header()`)
-    /// 3. Build `CommandContext` with all global flags + automation options
-    /// 4. Call `cmd.execute(&ctx)`
+    ///
+    /// 1. Resolve endpoint optimistically (no pre-flight health check)
+    /// 2. Create [`StoneBag`] seeded from tending cache when available
+    /// 3. Print stone header from cached bag data (if requested)
+    /// 4. Build `CommandContext` and call `cmd.execute()`
+    ///
+    /// If the actual command fails with a connection error the caller is
+    /// responsible for retry/discovery.  We intentionally do NOT pre-check
+    /// reachability — if the request succeeds, the stone is alive.
     pub async fn execute(&self, inv: CommandInvocation) -> anyhow::Result<()> {
         let cmd = inv.command;
 
@@ -103,14 +107,24 @@ impl Runtime {
             let endpoint =
                 resolve_endpoint(&self.client, inv.at, Some(&*GLOBAL_CACHE)).await?;
 
+            // Build bag — seeded from tending cache when the endpoint matches,
+            // so stone_name() is free.  Cold path (--at, env, discovery) does
+            // a single HTTP fetch on first access.
+            let bag = self.build_bag(&endpoint);
+
             if cmd.show_stone_header() && !output_format.is_json() {
-                print_stone_header(&self.client, &endpoint).await;
+                let stone_name = bag.stone_name().await.unwrap_or("unknown");
+                println!(
+                    "{}",
+                    ui::stone_name_banner(stone_name, self.term.supports_color)
+                );
+                println!();
             }
 
-            let stone_name = fetch_stone_name(&self.client, &endpoint).await;
+            let stone_name = bag.stone_name().await.map(|s| s.to_string());
             let ctx = CommandContext::with_automation(
                 self.client.clone(),
-                Some(endpoint),
+                Some(bag.endpoint().to_string()),
                 stone_name,
                 self.global.quiet,
                 self.global.fresh,
@@ -133,16 +147,30 @@ impl Runtime {
             cmd.execute(&ctx).await
         }
     }
+
+    /// Build a [`StoneBag`] for the given endpoint, seeding from the
+    /// tending cache when the endpoints match.
+    fn build_bag(&self, endpoint: &str) -> StoneBag {
+        if let Ok(state) = tending::read_tending() {
+            if state.endpoint == endpoint && state.capabilities.is_some() {
+                tracing::debug!(stone = %state.stone_name, "StoneBag: seeded from tending cache");
+                return StoneBag::from_tending(&state, self.client.clone());
+            }
+        }
+        StoneBag::new(self.client.clone(), endpoint.to_string())
+    }
 }
 
 // ============================================================================
 // Endpoint resolution + helpers
 // ============================================================================
 
-/// Resolve endpoint with priority: --at > env var > cached tending > auto-discover
+/// Resolve endpoint with priority: --at > env var > cached tending > auto-discover.
 ///
-/// This is the authoritative endpoint resolution logic used throughout rake.
-/// Includes reachability checking for cached tending and automatic fallback.
+/// Priorities 1–3 are pure string resolution (no side effects beyond name
+/// lookups).  Priority 4 triggers UDP discovery, writes tending state, and
+/// notifies the stone — kept here so that callers that bypass `Runtime`
+/// (launch, api, refresh, offer) still get auto-discovery for free.
 pub async fn resolve_endpoint(
     client: &reqwest::Client,
     at: Option<String>,
@@ -164,37 +192,19 @@ pub async fn resolve_endpoint(
     }
 
     // Priority 3: Cached tending state (no TTL - persists until stone unreachable)
+    //
+    // Optimistic dispatch: return the cached endpoint WITHOUT a health check.
+    // Reachability is verified later by the StoneBag's capabilities fetch in
+    // Runtime::execute(), which doubles as the probe — same round-trip that
+    // proves the stone is alive also populates the cached capabilities.
     if let Ok(tending) = tending::read_tending() {
-        tracing::debug!(
+        tracing::info!(
             stone = %tending.stone_name,
             endpoint = %tending.endpoint,
             age_secs = tending.age_seconds(),
-            "Checking cached tending state"
+            "Using cached tending state (optimistic)"
         );
-
-        // Check if stone is reachable before using cached endpoint
-        if is_stone_reachable(client, &tending.endpoint).await {
-            tracing::info!(
-                stone = %tending.stone_name,
-                endpoint = %tending.endpoint,
-                "Using cached tending state"
-            );
-            return Ok(tending.endpoint);
-        } else {
-            // Stone is offline - warn user and fall through to discovery
-            println!(
-                "{}{} Stone \"{}\" is sleeping (offline). Picking a new stone...",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("warn", term.supports_color),
-                tending.stone_name
-            );
-            tracing::warn!(
-                stone = %tending.stone_name,
-                endpoint = %tending.endpoint,
-                "Tended stone unreachable, falling back to discovery"
-            );
-            // Don't clear tending - user might want to return to this stone later
-        }
+        return Ok(tending.endpoint);
     }
 
     // Priority 4: Auto-discover via UDP broadcast + cache result
@@ -205,48 +215,8 @@ pub async fn resolve_endpoint(
         ui::status_indicator("info", term.supports_color)
     );
 
-    match discovery::discover_moss().await {
-        Ok(endpoint) => {
-            tracing::info!(endpoint = %endpoint, "Auto-discovered stone");
-
-            // Fetch capabilities to get stone name for cache and display
-            let caps_url = format!(
-                "{}/api/v1/stone/capabilities",
-                endpoint.trim_end_matches('/')
-            );
-            if let Ok(resp) = client
-                .get(&caps_url)
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await
-            {
-                if let Ok(response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
-                    let stone_name = &response.data.stone_name;
-                    let _ = tending::write_tending(stone_name.clone(), endpoint.clone());
-
-                    // Show which stone was picked
-                    println!(
-                        "{}{} Now tending to \"{}\"",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("success", term.supports_color),
-                        stone_name
-                    );
-
-                    // Notify stone of tending for visual feedback (glow/pulse)
-                    // Create minimal context for notification (fire-and-forget)
-                    let notify_ctx = CommandContext::without_endpoint(
-                        client.clone(),
-                        false, // quiet_mode
-                        false, // fresh_mode
-                        0,     // verbose
-                    );
-                    let _ = tend::notify_tending(&notify_ctx, &endpoint).await;
-                }
-            }
-
-            Ok(endpoint)
-        }
-        Err(_) => Err(anyhow::anyhow!(
+    let endpoint = discovery::discover_moss().await.map_err(|_| {
+        anyhow::anyhow!(
             "No Zen Garden stones discovered.\n\n\
             Possible causes:\n\
               • No stones present on your network\n\
@@ -260,95 +230,34 @@ pub async fn resolve_endpoint(
               • Check stone status: ssh stone@<ip> systemctl status garden-moss.service",
             garden_common::constants::DISCOVERY_UDP,
             garden_common::constants::MOSS_HTTP,
-        )),
+        )
+    })?;
+
+    tracing::info!(endpoint = %endpoint, "Auto-discovered stone");
+
+    // Use StoneBag to fetch stone name for tending (single capabilities call)
+    let bag = StoneBag::new(client.clone(), endpoint.clone());
+    if let Some(name) = bag.stone_name().await {
+        let caps = bag.capabilities_owned().await;
+        let _ = tending::write_tending(name.to_string(), endpoint.clone(), caps);
+
+        println!(
+            "{}{} Now tending to \"{}\"",
+            " ".repeat(ui::constants::DEFAULT_INDENT),
+            ui::status_indicator("success", term.supports_color),
+            name
+        );
+
+        // Notify stone of tending for visual feedback (glow/pulse)
+        let notify_ctx = CommandContext::without_endpoint(
+            client.clone(),
+            false, // quiet_mode
+            false, // fresh_mode
+            0,     // verbose
+        );
+        let _ = tend::notify_tending(&notify_ctx, &endpoint).await;
     }
+
+    Ok(endpoint)
 }
 
-/// Check if a stone is reachable (health check — generous timeout for slow x86 hardware)
-async fn is_stone_reachable(client: &reqwest::Client, endpoint: &str) -> bool {
-    let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
-    match client
-        .get(&health_url)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-    {
-        Ok(resp) => resp.status().is_success(),
-        Err(_) => false,
-    }
-}
-
-/// Print stone header banner
-async fn print_stone_header(client: &reqwest::Client, endpoint: &str) {
-    let term = TerminalInfo::detect();
-
-    // Fetch stone capabilities to get name and health
-    let caps_url = format!(
-        "{}/api/v1/stone/capabilities",
-        endpoint.trim_end_matches('/')
-    );
-    if let Ok(resp) = client
-        .get(&caps_url)
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-    {
-        if let Ok(response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
-            let stone_name = &response.data.stone_name;
-
-            // Fetch health to get status
-            let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
-            let health_status = if let Ok(health_resp) = client
-                .get(&health_url)
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await
-            {
-                if let Ok(health_json) = health_resp.json::<serde_json::Value>().await {
-                    // Map health to vitality language
-                    if let Some(status) = health_json.get("status").and_then(|v| v.as_str()) {
-                        match status {
-                            garden_common::HEALTH_HEALTHY => garden_common::VITALITY_THRIVING,
-                            garden_common::HEALTH_DEGRADED => {
-                                garden_common::VITALITY_NEEDS_ATTENTION
-                            }
-                            garden_common::HEALTH_UNHEALTHY => garden_common::VITALITY_WITHERING,
-                            _ => garden_common::VITALITY_DORMANT,
-                        }
-                    } else {
-                        garden_common::VITALITY_THRIVING
-                    }
-                } else {
-                    garden_common::VITALITY_DORMANT
-                }
-            } else {
-                garden_common::VITALITY_DORMANT
-            };
-
-            println!(
-                "{}",
-                ui::stone_banner(stone_name, health_status, term.supports_color)
-            );
-            println!();
-        }
-    }
-}
-
-/// Fetch stone name from capabilities
-async fn fetch_stone_name(client: &reqwest::Client, endpoint: &str) -> Option<String> {
-    let caps_url = format!(
-        "{}/api/v1/stone/capabilities",
-        endpoint.trim_end_matches('/')
-    );
-    if let Ok(resp) = client
-        .get(&caps_url)
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-    {
-        if let Ok(response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
-            return Some(response.data.stone_name);
-        }
-    }
-    None
-}

@@ -230,6 +230,29 @@ pub fn stone_banner(name: &str, status: &str, color: bool) -> String {
     format!("{}{}{}", prefix, middle, equals)
 }
 
+/// Render stone banner showing just the name (no health status).
+/// Format: === stone-name ==================
+pub fn stone_name_banner(name: &str, color: bool) -> String {
+    let term = TerminalInfo::detect();
+    let max_width = term.width.min(80);
+
+    let prefix = "=== ";
+    let name_display = if color {
+        name.bold().to_string()
+    } else {
+        name.to_string()
+    };
+    let total_len = prefix.len() + name.len() + 1; // +1 for space before trailing =
+
+    let equals = if max_width > total_len {
+        " ".to_string() + &"=".repeat(max_width - total_len)
+    } else {
+        String::new()
+    };
+
+    format!("{}{}{}", prefix, name_display, equals)
+}
+
 /// Render section header with dynamic width (max 40 chars)
 /// Format: --- TITLE ---[dashes to 40 chars max]
 pub fn section_header(title: &str, term: &TerminalInfo) -> String {

@@ -22,11 +22,10 @@ use crate::infra::{
 use crate::mdns::MdnsHandle;
 use crate::tasks::NetworkMonitor;
 use garden_common::console::ConsolePrinter;
-use garden_common::storage::StorageDetectedInfo;
+use garden_common::PlatformRuntime;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
-use garden_common::GatewayRegistration;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -117,6 +116,10 @@ pub struct AppState {
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
 
+    /// Platform runtime — console/ribbon output and lifecycle signals (ARCH-0002).
+    /// Single injection point; no `#[cfg]` above bootstrap/run.rs.
+    pub runtime: Arc<dyn PlatformRuntime>,
+
     /// Hardware capabilities cache (detected at startup, cached to disk)
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
 
@@ -133,22 +136,15 @@ pub struct AppState {
     /// Set by mutation functions, cleared after flush to disk.
     pub topology_dirty: crate::domain::topology::TopologyDirtyFlag,
 
-    /// Storage routing cache for seed banks across stones (STORAGE-0003)
-    pub storage_cache: crate::domain::storage_cache::StorageCache,
-
-    /// Unified tools projection cache (offerings + seed-banks)
-    pub tools_cache: crate::domain::tools::ToolsCache,
-
     /// Tools stream broadcast channel (normative automation stream)
     pub tools_tx: tokio::sync::broadcast::Sender<ToolDelta>,
 
+    /// Unified garden registry — single source of truth for offerings,
+    /// gateways, and storage (TOOLS-0003).
+    pub registry: crate::domain::garden_registry::GardenRegistry,
+
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
-
-    /// Gateway registrations from orchestrators (ORCH-0004).
-    /// Key: offering name ("ollama"), Value: gateway registration.
-    /// One gateway per offering per stone. TTL-evicted during chirp building.
-    pub gateways: Arc<RwLock<HashMap<String, GatewayRegistration>>>,
 
     /// mDNS handle for re-registration on resolution changes
     /// Used when IP/MAC changes to update mDNS service advertisement
@@ -216,11 +212,6 @@ pub struct AppState {
     // Background tasks are responsible for keeping caches fresh.
 
 
-    /// Cached candidate devices (empty USB drives ready for preparation)
-    /// Background task: storage_monitor (USB events) + periodic refresh
-    /// Linux-only; always empty on other platforms
-    pub candidates_cache: Arc<RwLock<Vec<StorageDetectedInfo>>>,
-
     /// Cached network metrics (updated every 5s by health_monitor task)
     pub network_metrics_cache: Arc<RwLock<Option<NetworkMetrics>>>,
 
@@ -242,13 +233,6 @@ pub struct AppState {
     /// Subsystem readiness state
     pub subsystems: SubSystems,
 
-    /// Mount tracker for seed bank mount persistence (STORAGE-0006)
-    /// Shared with coordinator (persistence + hotplug tasks) and release handler.
-    /// Prevents the fight-loop where persistence re-mounts a just-released device.
-    #[cfg(target_os = "linux")]
-    pub mount_tracker: crate::infra::storage::MountTracker,
-
-
 
     /// Storage replication tick channel — **raw** (STORAGE-0006 Phase 4)
     /// Primary seed-bank stores emit `StorageTick` on every write/delete.
@@ -265,15 +249,34 @@ pub struct AppState {
     /// resolution doesn't have to wait for the next 3-second tick.
     pub orchestration_nudge: Arc<tokio::sync::Notify>,
 
-    /// Seed bank lifecycle objects — single source of truth (STORAGE-0007).
+    /// Unified volume collection (STORAGE-0011) — keyed by device path.
     ///
-    /// Keyed by seed bank ID (GUIDv7). Each `SeedBank` composes a `StorageDevice`
-    /// (mount health) and a `SeedBankStore` (I/O), plus domain state (role, pin).
+    /// Single source of truth for all local storage volumes (Spaces).
+    /// Populated by `initial_scan()` at boot, kept current by the volume watcher.
+    pub volumes: crate::domain::Volumes,
+
+    /// Physical storage media (STORAGE-0011) — keyed by OS device ID.
     ///
-    /// Writers: bootstrap (init), coordinator (health tick, hotplug),
-    ///          orchestration (role assignment), pin/unpin handlers.
-    /// Readers: portrait, beacon builder, nurturing, replication, API handlers.
-    pub seed_banks: crate::domain::SeedBanks,
+    /// Host-only. Detects physical disks including those without partitions
+    /// or drive letters. Used for candidate discovery and `storage add`.
+    pub media: crate::domain::Media,
+
+    /// Signal to request a volume rescan (STORAGE-0011).
+    ///
+    /// API handlers send on this after mutating on-disk state (e.g. writing
+    /// a manifest during `storage add`). The volume watcher loop listens and
+    /// triggers a full reconcile through the existing detection pipeline.
+    pub volume_rescan_tx: tokio::sync::mpsc::Sender<()>,
+
+    /// Storage domain event channel (STORAGE-0013).
+    ///
+    /// Emitted by storage mutation operations (add, remove, rename, role change,
+    /// health change, rescan). Subscribers react by pulling fresh state from
+    /// AppState boundary methods — the event is a notification, not data carrier.
+    ///
+    /// Consumers: tools projector, cloud filter, beacon, watcher reconciler,
+    /// coordinator, metrics collector, API SSE streams.
+    pub storage_changed_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
 }
 
 // ============================================================================
@@ -331,6 +334,14 @@ impl Default for DockerSubSystem {
 }
 
 impl AppState {
+    /// Request the volume watcher to re-scan and re-classify all volumes.
+    ///
+    /// Non-blocking. If the channel is full (a rescan is already pending),
+    /// the request is silently dropped — one rescan is sufficient.
+    pub fn request_volume_rescan(&self) {
+        let _ = self.volume_rescan_tx.try_send(());
+    }
+
     /// Get stone ID (GUID v7)
     pub fn stone_id(&self) -> &str {
         &self.stone_id
@@ -360,11 +371,18 @@ impl AppState {
     /// Reconcile local tools projection and publish resulting deltas.
     ///
     /// This is the single entry point for publishing local tool updates.
+    /// Writes to both the registry (TOOLS-0003) and the legacy tools_cache
+    /// until all read sites are migrated.
     pub async fn refresh_local_tools_projection(&self) {
         let projections = crate::domain::tools::projector::project_local_tools(self).await;
+
         let deltas = {
-            let mut cache = self.tools_cache.write().await;
-            cache.reconcile_local(&self.stone_id, projections)
+            let mut reg = self.registry.write().await;
+            reg.reconcile_local(
+                &self.stone_id,
+                projections,
+                crate::domain::garden_registry::EntryOrigin::Local,
+            )
         };
 
         self.publish_tool_deltas(deltas, true).await;
@@ -373,8 +391,8 @@ impl AppState {
     /// Ingest remote tools beacon and publish resulting stream deltas locally.
     pub async fn ingest_tools_beacon(&self, beacon: garden_common::tools::ToolsBeacon) {
         let deltas = {
-            let mut cache = self.tools_cache.write().await;
-            cache.apply_remote_beacon(&beacon)
+            let mut reg = self.registry.write().await;
+            reg.apply_remote_beacon(&beacon)
         };
 
         self.publish_tool_deltas(deltas, false).await;
@@ -383,13 +401,16 @@ impl AppState {
     /// Remove all projected tools for a stone (goodbye/offline path).
     pub async fn remove_tools_for_stone(&self, stone_id: &str) {
         let deltas = {
-            let mut cache = self.tools_cache.write().await;
-            cache.remove_stone_tools(stone_id)
+            let mut reg = self.registry.write().await;
+            reg.remove_stone(stone_id)
         };
+
         self.publish_tool_deltas(deltas, false).await;
     }
 
-    async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {
+    /// Publish tool deltas to SSE subscribers and optionally broadcast a UDP
+    /// tools beacon so remote stones' registries get the update.
+    pub async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {
         if deltas.is_empty() {
             return;
         }
@@ -442,23 +463,14 @@ impl AppState {
         // Compile notification tags for cross-stone awareness
         let tags = self.notifications.compile();
 
-        // Collect non-expired gateway registrations (TTL = 60s)
-        let gateway_entries: Vec<GatewayRegistration> = {
-            let now = chrono::Utc::now();
-            let ttl = chrono::Duration::seconds(60);
-            let gateways = self.gateways.read().await;
-            gateways
-                .values()
-                .filter(|gw| now.signed_duration_since(gw.registered_at) < ttl)
-                .cloned()
-                .collect()
-        };
+        // TOOLS-0003: Gateways are no longer carried in chirps.
+        // They propagate via the tools beacon / registry path exclusively.
 
         {
             let mut entry = self.self_entry.write().await;
             entry.services = topology_services;
             entry.tags = tags;
-            entry.gateways = gateway_entries;
+            entry.gateways = vec![]; // Empty — registry beacon is the single path
             entry.last_seen = chrono::Utc::now();
         }
 
@@ -563,7 +575,7 @@ impl AppState {
     pub async fn remove_service(&self, service_name: &str, auto_chirp: bool) {
         {
             let mut offerings = self.offerings.write().await;
-            offerings.retain(|o| o.name != service_name);
+            offerings.retain(|o| o.name.to_string() != service_name);
         }
 
         self.sync_self_services(auto_chirp).await;
@@ -590,7 +602,8 @@ impl AppState {
             let mut best: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             for (i, o) in offerings.iter().enumerate() {
-                let dominated = best.get(&o.name).is_some_and(|&prev| {
+                let key = o.name.to_string();
+                let dominated = best.get(&key).is_some_and(|&prev| {
                     let prev_ts = offerings[prev]
                         .updated_at
                         .unwrap_or(offerings[prev].registered_at);
@@ -598,7 +611,7 @@ impl AppState {
                     cur_ts <= prev_ts
                 });
                 if !dominated {
-                    best.insert(o.name.clone(), i);
+                    best.insert(key, i);
                 }
             }
 
@@ -696,7 +709,7 @@ impl AppState {
     {
         let changed = {
             let mut offerings = self.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.name == name) {
+            if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
                 mutator(o)
             } else {
                 false
@@ -789,7 +802,7 @@ impl AppState {
             .read()
             .await
             .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(name))
+            .find(|o| o.name.to_string().eq_ignore_ascii_case(name))
             .cloned()
     }
 
@@ -909,128 +922,73 @@ impl AppState {
     }
 
     // ========================================================================
-    // Seed Bank Lifecycle (STORAGE-0007)
+    // Storage Service
     // ========================================================================
 
-    /// Refresh `seed_banks` from a registry scan.
+    /// Create a `StorageService` scoped to this stone's state.
     ///
-    /// Called by coordinator hotplug/persistence tasks after mount recovery or
-    /// device detection. Adds new seed banks, removes departed ones, and
-    /// updates health/capacity on existing ones.
-    pub async fn refresh_seed_banks_from_scan(
-        &self,
-        registry: &crate::infra::storage::SeedBankRegistry,
-    ) {
-        use crate::domain::SeedBank;
-        use crate::infra::storage::StorageDevice;
-
-        let scanned = registry.list();
-
-        let mut banks = self.seed_banks.write().await;
-
-        let mut seen_ids: std::collections::HashSet<String> =
-            std::collections::HashSet::with_capacity(scanned.len());
-
-        for info in &scanned {
-            seen_ids.insert(info.id.clone());
-
-            if let Some(existing) = banks.get_mut(&info.id) {
-                existing.storage.capacity_bytes = info.capacity_bytes;
-                existing.storage.used_bytes = info.used_bytes;
-                existing.name = info.name.clone();
-                existing.visibility = info.visibility;
-                if info.online {
-                    existing.storage.health =
-                        crate::infra::storage::StorageHealth::Healthy;
-                }
-            } else {
-                let manifest_path = std::path::Path::new(&info.mount_path)
-                    .join(".zen-garden")
-                    .join("manifest.json");
-                let manifest = match tokio::fs::read_to_string(&manifest_path).await {
-                    Ok(content) => {
-                        match serde_json::from_str::<garden_common::storage::SeedBankManifest>(
-                            &content,
-                        ) {
-                            Ok(m) => m,
-                            Err(e) => {
-                                tracing::warn!(
-                                    name = %info.name, error = %e,
-                                    "Failed to parse manifest for new seed bank"
-                                );
-                                continue;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            name = %info.name, error = %e,
-                            "Failed to read manifest for new seed bank"
-                        );
-                        continue;
-                    }
-                };
-
-                let storage = StorageDevice::from_seed_bank_info(info);
-                let bank = SeedBank::from_storage(storage, &manifest, None).await;
-
-                tracing::info!(
-                    name = %bank.name,
-                    id = %bank.id,
-                    "New seed bank lifecycle object created (hotplug)"
-                );
-
-                banks.insert(bank.id.clone(), bank);
-            }
-        }
-
-        banks.retain(|id, bank| {
-            if seen_ids.contains(id) {
-                true
-            } else {
-                tracing::info!(
-                    name = %bank.name,
-                    id = %id,
-                    "Seed bank departed — removing lifecycle object"
-                );
-                false
-            }
-        });
+    /// Cheap to construct (borrows only). Use per-request in handlers
+    /// instead of reimplementing resolution/routing logic.
+    pub fn storage_service(&self) -> crate::domain::StorageService<'_> {
+        crate::domain::StorageService::new(
+            &self.volumes,
+            &self.registry,
+            &self.stone_id,
+            Some(&self.storage_tick_tx),
+        )
     }
 
     // ========================================================================
-    // Seed Bank Projections
+    // Storage Events (STORAGE-0013)
     // ========================================================================
 
-    /// Snapshot of roles keyed by seed bank name — for beacon/broadcast callers.
-    pub async fn seed_bank_roles_snapshot(
-        &self,
-    ) -> HashMap<String, garden_common::storage::SeedBankRole> {
-        let banks = self.seed_banks.read().await;
-        banks
-            .values()
-            .map(|b| (b.name.clone(), b.role))
-            .collect()
-    }
-
-    /// Snapshot of pins keyed by seed bank name — for beacon/broadcast callers.
-    pub async fn seed_bank_pins_snapshot(&self) -> HashMap<String, String> {
-        let banks = self.seed_banks.read().await;
-        banks
-            .values()
-            .filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string())))
-            .collect()
-    }
-
-    /// Run health ticks on all local seed bank lifecycle objects.
+    /// Emit a storage domain event.
     ///
-    /// Called by the coordinator health tick (~10s). Each bank's storage
-    /// device is probed for mount liveness and capacity, and domain state
-    /// (pin) is reconciled from disk.
-    pub async fn tick_seed_bank_health(&self) {
-        let mut banks = self.seed_banks.write().await;
-        for bank in banks.values_mut() {
-            bank.health_tick().await;
+    /// Subscribers (beacon, cloud filter, watcher, coordinator, projector)
+    /// react by pulling fresh state from AppState boundary methods.
+    /// Also triggers an immediate tools projection refresh so the registry
+    /// stays coherent with storage state.
+    pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
+        tracing::debug!(event = ?event, "Storage domain event");
+        let _ = self.storage_changed_tx.send(event);
+
+        // Storage mutations affect the tools projection (seed-bank entries).
+        // Refresh immediately so registry consumers see the change without polling.
+        self.refresh_local_tools_projection().await;
+    }
+
+    /// Subscribe to storage domain events.
+    ///
+    /// Returns a broadcast receiver. Callers should `select!` on this alongside
+    /// their shutdown token. Missed events (lagged receiver) are non-fatal —
+    /// subscribers should do a full reconcile on lag.
+    pub fn subscribe_storage_changed(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged> {
+        self.storage_changed_tx.subscribe()
+    }
+
+    /// Broadcast a storage beacon to the garden.
+    ///
+    /// Reads current volumes, roles, and pins from the AppState boundary,
+    /// then sends a UDP STORAGE_BEACON announcement. This is the single
+    /// codepath for beacon broadcasting — callers should not inline this logic.
+    pub async fn broadcast_storage_beacon(&self) {
+        let endpoint = self.self_entry.read().await.address.http_base();
+        let roles = crate::domain::storage::roles_snapshot(&self.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&self.volumes).await;
+        if let Err(e) = crate::infra::storage::broadcast_beacon(
+            &self.stone_id,
+            &self.stone_name,
+            &endpoint,
+            &self.volumes,
+            Some(&roles),
+            Some(&pins),
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "Failed to broadcast storage beacon");
         }
     }
+
 }

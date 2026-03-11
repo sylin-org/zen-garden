@@ -38,8 +38,8 @@ async fn mutate_capability_set(
     let resolved_name = {
         let offerings = state.offerings.read().await;
         offerings.iter()
-            .find(|o| o.name.eq_ignore_ascii_case(offering_name))
-            .map(|o| o.name.clone())
+            .find(|o| o.name.to_string().eq_ignore_ascii_case(offering_name))
+            .map(|o| o.name.to_string())
     };
     let resolved_name = resolved_name.ok_or_else(|| {
         anyhow::anyhow!(

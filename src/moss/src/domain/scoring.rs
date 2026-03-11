@@ -212,6 +212,7 @@ mod tests {
         assert_eq!(
             calculate_compatibility_penalty(&CompatibilityDecision::Fallback {
                 image: "fallback".to_string(),
+                name: None,
                 reason: "test".to_string()
             }),
             -15

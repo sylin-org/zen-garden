@@ -90,7 +90,7 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
 pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::CancellationToken) {
     let mut interval = interval(Duration::from_secs(30));
-    let mut last_health = "thriving".to_string();
+    let mut last_health = garden_common::constants::VITALITY_THRIVING.to_string();
 
     loop {
         tokio::select! {
@@ -112,11 +112,11 @@ pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::C
         };
 
         let new_health = if cpu > 95.0 || memory > 95.0 {
-            "wilting"
+            garden_common::constants::VITALITY_WILTING
         } else if cpu > 80.0 || memory > 80.0 {
-            "withering"
+            garden_common::constants::VITALITY_WITHERING
         } else {
-            "thriving"
+            garden_common::constants::VITALITY_THRIVING
         };
 
         if new_health != last_health {

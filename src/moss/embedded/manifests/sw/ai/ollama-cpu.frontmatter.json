@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "ollama-cpu",
   "description": "Ollama CPU-only inference for thin clients (MIT licensed)",
   "category": "ai",
@@ -19,5 +19,14 @@
   "minimum_memory_gb": 2,
   "connection": {
     "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "ollama",
+    "restart_required": true,
+    "vars": [
+      "OLLAMA_NUM_PARALLEL",
+      "OLLAMA_MAX_LOADED_MODELS",
+      "OLLAMA_HOST"
+    ]
   }
 }

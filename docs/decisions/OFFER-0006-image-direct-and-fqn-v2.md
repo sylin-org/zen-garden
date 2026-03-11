@@ -1,13 +1,13 @@
 ---
 audience: developer
 doc_type: decision
-status: proposed
+status: accepted
 ---
 
 # OFFER-0006: Image-Direct Deployment, Source Schemes, and FQN v2
 
 **Date**: 2026-03-02
-**Status**: Proposed
+**Status**: Accepted — Phase 1 complete, Phases 2–4 pending
 **Supersedes**: [OFFER-0003](OFFER-0003-offering-fqn.md) (FQN format only; multi-instance semantics preserved)
 
 ---
@@ -594,6 +594,23 @@ API additions:
 **Auto-propagated (no code changes — constant handles it):**
 
 All API handlers, domain modules, infra modules, tasks, bootstrap, Rake commands, and common tools that use `OFFERING_FQN_SEPARATOR` or call `parse_offering_fqn()` / `.fqn()` work automatically.
+
+**Phase 1 status: COMPLETE** (2026-03-02). All items implemented, 799 tests pass, clippy clean. Key deliverables:
+
+| Item | Files |
+|------|-------|
+| FQN v2 separator (`::`) + `OfferingFqn` type | `common/src/offerings.rs`, `common/src/constants/mod.rs` |
+| String→Type migration (all crates) | `common/src/types.rs`, `moss/` (30+ files), orchestrators |
+| Container encoding (`img-` prefix for image-direct) | `moss/src/docker.rs` |
+| Persistence migration (V0/V1 auto-normalize via serde) | `OfferingFqn` custom deserializer |
+| Image inspection infrastructure | `moss/src/infra/image_inspect.rs` (new) |
+| Offering resolution domain | `moss/src/domain/offering_resolution.rs` (new) |
+| Image-direct API endpoint | `moss/src/api/v1/services.rs`, `offerings.rs` |
+| Image-direct async install task | `moss/src/tasks/job_executors.rs` |
+| Image inspect endpoint | `GET /api/v1/stone/offerings/inspect?image={ref}` |
+| Rake `offer image` subcommand | `rake/src/commands/offering/mod.rs`, `route.rs` |
+| Projector FQID bug fix | `moss/src/domain/tools/projector.rs` |
+| Doc sweep (V1→V2 examples) | 5 doc files, specs, guides |
 
 ### Phase 2: Manifest Authoring CLI
 

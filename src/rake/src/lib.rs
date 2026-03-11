@@ -17,6 +17,7 @@ pub mod commands;
 pub mod context;
 pub mod discovery;
 pub mod enrollment;
+pub mod stone_bag;
 pub mod stone_cache;
 pub mod suggestions;
 pub mod tending;

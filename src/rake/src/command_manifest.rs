@@ -96,10 +96,11 @@ pub mod cmd {
     // Developer Tools
     pub const API: &str = "api";
 
-    // Storage (Seed Bank operations)
-    pub const PREPARE: &str = "prepare";
-    pub const RELEASE_SEED_BANK: &str = "release-seed-bank";
-    pub const SEED_BANKS: &str = "seed-banks";
+    // Manifest authoring
+    pub const MANIFEST_CMD: &str = "manifest";
+
+    // Storage
+    pub const STORAGE: &str = "storage";
     pub const STORE: &str = "store";
 
     // Nurturing (Backup/Restore)
@@ -138,7 +139,7 @@ pub enum CommandCategory {
     Pond,
     /// Companion commands: hey tell
     Companion,
-    /// Storage commands: prepare, release-seed-bank, seed-banks, store
+    /// Storage commands: storage, store
     Storage,
 }
 
@@ -480,12 +481,27 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             ArgSpec::option("placement-mode", "Placement strategy (interactive, auto)")
                 .zen("--placement-mode <mode>"),
         ],
-        subcommands: vec![SubDef {
-            name: "info",
-            description: "Show offering details and compatibility",
-            args: vec![],
-            subcommands: vec![],
-        }],
+        subcommands: vec![
+            SubDef {
+                name: "info",
+                description: "Show offering details and compatibility",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "image",
+                description: "Deploy a Docker image directly (without manifest)",
+                args: vec![
+                    ArgSpec::positional("image-ref", "Docker image reference (e.g., nginx:latest)")
+                        .required(),
+                    ArgSpec::option("instance", "Named instance (e.g., staging)")
+                        .zen("--instance <name>"),
+                    ArgSpec::flag("info-only", "Inspect image without deploying")
+                        .zen("--info"),
+                ],
+                subcommands: vec![],
+            },
+        ],
         examples: vec![
             CommandExample {
                 description: "List all available offerings by category",
@@ -505,6 +521,16 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             CommandExample {
                 description: "Show offering details and compatibility",
                 zen_syntax: Some("garden-rake offer mongodb info"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Deploy a Docker image directly",
+                zen_syntax: Some("garden-rake offer image nginx:latest"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Inspect a Docker image without deploying",
+                zen_syntax: Some("garden-rake offer image nginx:latest --info"),
                 normative_syntax: None,
             },
             CommandExample {
@@ -2158,102 +2184,137 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
     // === STORAGE COMMANDS ===
 
     manifest.add(CommandDef {
-        name: cmd::PREPARE,
-        zen_name: "prepare",
+        name: cmd::STORAGE,
+        zen_name: "storage",
         zen_aliases: &[],
-        normative_name: None,
+        normative_name: Some("storage"),
         category: CommandCategory::Storage,
-        description: "Prepare a USB device as a seed bank",
-        long_description: "Initialize a USB storage device as a Zen Garden seed bank.\n\n\
-            Creates the required directory structure and metadata for the device\n\
-            to be used as portable storage in the Zen Garden ecosystem.",
-        remote_capable: true,
-        args: vec![
-            ArgSpec::positional("device", "Device name (e.g., sdb1)")
-                .zen("<device>")
-                .required(),
-            ArgSpec::option("name", "Custom seed bank name").zen("--name <name>"),
-            ArgSpec::flag("random", "Generate random seed bank name").zen("--random"),
-            ArgSpec::option("fs", "Filesystem type (ext4, btrfs)").zen("--fs <type>"),
-            ArgSpec::flag("encrypted", "Enable LUKS encryption").zen("--encrypted"),
-            at_arg(),
-        ],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "Prepare USB device",
-                zen_syntax: Some("garden-rake prepare sdb1"),
-                normative_syntax: None,
-            },
-            CommandExample {
-                description: "Prepare with custom name",
-                zen_syntax: Some("garden-rake prepare sdb1 --name my-seeds"),
-                normative_syntax: None,
-            },
-        ],
-        see_also: vec!["seed-banks", "release-seed-bank", "store"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-        on_stone_mapping: OnStoneMapping::ToAtFlag,
-    });
-
-    manifest.add(CommandDef {
-        name: cmd::RELEASE_SEED_BANK,
-        zen_name: "release-seed-bank",
-        zen_aliases: &[],
-        normative_name: None,
-        category: CommandCategory::Storage,
-        description: "Release a seed bank for safe removal",
-        long_description: "Safely unmount a seed bank, ensuring all writes are complete\n\
-            before the USB device is physically removed.",
-        remote_capable: true,
-        args: vec![
-            ArgSpec::positional("name", "Seed bank name to release")
-                .zen("<name>")
-                .required(),
-            at_arg(),
-        ],
-        subcommands: vec![],
-        examples: vec![CommandExample {
-            description: "Release seed bank",
-            zen_syntax: Some("garden-rake release-seed-bank my-seeds"),
-            normative_syntax: None,
-        }],
-        see_also: vec!["seed-banks", "prepare"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-        on_stone_mapping: OnStoneMapping::ToAtFlag,
-    });
-
-    manifest.add(CommandDef {
-        name: cmd::SEED_BANKS,
-        zen_name: "seed-banks",
-        zen_aliases: &[],
-        normative_name: None,
-        category: CommandCategory::Storage,
-        description: "Show seed banks on a stone",
-        long_description: "List all seed banks and eligible USB storage devices on a stone.\n\n\
-            Shows both actively mounted seed banks and available devices that can be prepared.",
+        description: "Manage storage devices and directories",
+        long_description: "Unified storage management for the Zen Garden ecosystem.\n\n\
+            Run bare to list all storages across the garden. Use subcommands to add,\n\
+            inspect, release, pin/unpin, or view detailed status.\n\n\
+            Subcommands:\n\
+            - add: Add a storage device or directory\n\
+            - list: List all storages and eligible devices\n\
+            - status: Detailed capacity/health breakdown\n\
+            - release: Safely unmount for removal\n\
+            - pin: Claim Primary role on this stone\n\
+            - unpin: Release Primary role",
         remote_capable: true,
         args: vec![at_arg()],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "List seed banks",
-                zen_syntax: Some("garden-rake seed-banks"),
-                normative_syntax: None,
+        subcommands: vec![
+            SubDef {
+                name: "add",
+                description: "Add a storage device or directory",
+                args: vec![
+                    ArgSpec::positional("target", "Device path or directory (e.g., /dev/sdb, /mnt/nas)")
+                        .zen("<target>"),
+                    ArgSpec::option("name", "Storage name")
+                        .zen("as <name>")
+                        .normative("--name <name>"),
+                    ArgSpec::multi_option("roles", "Roles to assign (e.g., seed-bank)")
+                        .zen("role <role>")
+                        .normative("--roles <role>")
+                        .delimiter(','),
+                    ArgSpec::flag("format", "Format the device before adding")
+                        .zen("--format"),
+                    ArgSpec::option("fs", "Filesystem type when formatting (ext4, btrfs)")
+                        .zen("--fs <type>")
+                        .default("btrfs"),
+                    ArgSpec::flag("encrypted", "Enable encryption (pond-scoped)")
+                        .zen("--encrypted"),
+                    ArgSpec::flag("yes", "Skip confirmation (non-interactive)")
+                        .short('y')
+                        .zen("--yes"),
+                ],
+                subcommands: vec![],
             },
-            CommandExample {
-                description: "List on specific stone",
-                zen_syntax: Some("garden-rake seed-banks --at stone-01"),
-                normative_syntax: None,
+            SubDef {
+                name: "list",
+                description: "List all storages and eligible devices",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "status",
+                description: "Show storage capacity and health breakdown",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "release",
+                description: "Safely unmount storage for removal",
+                args: vec![
+                    ArgSpec::positional("name", "Storage name to release (or 'all')")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "pin",
+                description: "Claim Primary role on this stone",
+                args: vec![
+                    ArgSpec::positional("name", "Storage name to pin")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "unpin",
+                description: "Release Primary role",
+                args: vec![
+                    ArgSpec::positional("name", "Storage name to unpin")
+                        .zen("<name>")
+                        .required(),
+                ],
+                subcommands: vec![],
             },
         ],
-        see_also: vec!["prepare", "release-seed-bank", "store"],
+        examples: vec![
+            CommandExample {
+                description: "List all storages in the garden",
+                zen_syntax: Some("garden-rake storage"),
+                normative_syntax: Some("garden-rake storage"),
+            },
+            CommandExample {
+                description: "Add a USB drive with zen syntax",
+                zen_syntax: Some("garden-rake storage add /dev/sdb as photos with role seed-bank"),
+                normative_syntax: Some("garden-rake storage add /dev/sdb --name photos --roles seed-bank"),
+            },
+            CommandExample {
+                description: "Add a NAS mount",
+                zen_syntax: Some("garden-rake storage add /mnt/nas-media as media"),
+                normative_syntax: Some("garden-rake storage add /mnt/nas-media --name media"),
+            },
+            CommandExample {
+                description: "View detailed storage status",
+                zen_syntax: Some("garden-rake storage status"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Release storage for safe removal",
+                zen_syntax: Some("garden-rake storage release my-seeds"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Pin Primary role to this stone",
+                zen_syntax: Some("garden-rake storage pin photos"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "List storages on a specific stone",
+                zen_syntax: Some("garden-rake storage on stone-01"),
+                normative_syntax: Some("garden-rake storage --at stone-01"),
+            },
+        ],
+        see_also: vec!["store", "nurturing", "restore"],
         hidden: false,
-        subcommand_negates_reqs: false,
+        subcommand_negates_reqs: true,
         on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
+
 
     manifest.add(CommandDef {
         name: cmd::STORE,
@@ -2322,11 +2383,12 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 normative_syntax: None,
             },
         ],
-        see_also: vec!["seed-banks", "prepare"],
+        see_also: vec!["storage"],
         hidden: false,
         subcommand_negates_reqs: false,
         on_stone_mapping: OnStoneMapping::ToAtFlag,
     });
+
 
     // === NURTURING (BACKUP/RESTORE) COMMANDS ===
 
@@ -2375,7 +2437,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 normative_syntax: None,
             },
         ],
-        see_also: vec!["nurturing", "seed-banks"],
+        see_also: vec!["nurturing", "storage"],
         hidden: false,
         subcommand_negates_reqs: false,
         on_stone_mapping: OnStoneMapping::ToAtFlag,
@@ -2464,7 +2526,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 normative_syntax: None,
             },
         ],
-        see_also: vec!["restore", "seed-banks", "nourish"],
+        see_also: vec!["restore", "storage", "nourish"],
         hidden: false,
         subcommand_negates_reqs: false,
         on_stone_mapping: OnStoneMapping::ToAtFlag,
@@ -2621,6 +2683,119 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         on_stone_mapping: OnStoneMapping::Ignore,
     });
 
+    // === MANIFEST AUTHORING COMMANDS ===
+
+    manifest.add(CommandDef {
+        name: cmd::MANIFEST_CMD,
+        zen_name: "manifest",
+        zen_aliases: &[],
+        normative_name: None,
+        category: CommandCategory::Lifecycle,
+        description: "Scaffold, validate, test, and export offering manifests",
+        long_description:
+            "Author and manage offering manifest files.\n\n\
+            Subcommands:\n\
+            - init: Scaffold manifest files from a Docker image via inspection\n\
+            - validate: Check manifest files for errors (runs locally)\n\
+            - test: Validate and test-deploy a manifest on a stone\n\
+            - export: Download manifest files for an installed offering\n\
+            - enrich: Add missing compatibility/guidance templates",
+        remote_capable: true,
+        args: vec![],
+        subcommands: vec![
+            SubDef {
+                name: "init",
+                description: "Scaffold manifest files from a Docker image",
+                args: vec![
+                    ArgSpec::positional("image-ref", "Docker image reference (e.g., nginx:latest)")
+                        .required(),
+                    ArgSpec::option("output", "Output directory (default: ./<name>)")
+                        .zen("--output <dir>"),
+                    ArgSpec::option("name", "Override offering name")
+                        .zen("--name <name>"),
+                    ArgSpec::option("category", "Override category (default: custom)")
+                        .zen("--category <cat>"),
+                    at_arg(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "validate",
+                description: "Check manifest files for errors (local)",
+                args: vec![
+                    ArgSpec::positional("path", "Path to manifest directory (default: .)")
+                        .zen("[path]"),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "test",
+                description: "Validate and test-deploy manifest on a stone",
+                args: vec![
+                    ArgSpec::positional("path", "Path to manifest directory (default: .)")
+                        .zen("[path]"),
+                    at_arg(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "export",
+                description: "Download manifest files for an installed offering",
+                args: vec![
+                    ArgSpec::positional("offering", "Offering name to export")
+                        .zen("<offering>")
+                        .required(),
+                    ArgSpec::option("output", "Output directory (default: ./<offering>)")
+                        .zen("--output <dir>"),
+                    at_arg(),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "enrich",
+                description: "Add missing compatibility/guidance templates",
+                args: vec![
+                    ArgSpec::positional("path", "Path to manifest directory (default: .)")
+                        .zen("[path]"),
+                    ArgSpec::flag("auto", "Auto-generate without prompting")
+                        .zen("--auto"),
+                ],
+                subcommands: vec![],
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "Scaffold manifest from Docker image",
+                zen_syntax: Some("garden-rake manifest init nginx:latest on stone-01"),
+                normative_syntax: Some("garden-rake manifest init nginx:latest --at stone-01"),
+            },
+            CommandExample {
+                description: "Validate manifest files in current directory",
+                zen_syntax: Some("garden-rake manifest validate"),
+                normative_syntax: None,
+            },
+            CommandExample {
+                description: "Test-deploy manifest on a stone",
+                zen_syntax: Some("garden-rake manifest test . on stone-01"),
+                normative_syntax: Some("garden-rake manifest test . --at stone-01"),
+            },
+            CommandExample {
+                description: "Export installed offering's manifest",
+                zen_syntax: Some("garden-rake manifest export mongodb on stone-01"),
+                normative_syntax: Some("garden-rake manifest export mongodb --at stone-01"),
+            },
+            CommandExample {
+                description: "Add missing templates automatically",
+                zen_syntax: Some("garden-rake manifest enrich . --auto"),
+                normative_syntax: None,
+            },
+        ],
+        see_also: vec!["offer"],
+        hidden: false,
+        subcommand_negates_reqs: false,
+        on_stone_mapping: OnStoneMapping::ToAtFlag,
+    });
+
     manifest
 });
 
@@ -2680,13 +2855,13 @@ pub fn validate_manifest() {
         // Developer Tools
         "api",
         // Storage
-        "prepare",
-        "release-seed-bank",
-        "seed-banks",
+        "storage",
         "store",
         // Nurturing
         "restore",
         "nurturing",
+        // Manifest authoring
+        "manifest",
         // Local utility
         "launch",
         "commands",

@@ -80,6 +80,12 @@ pub trait GatewayProvider: Send + Sync + Clone + 'static {
     ///
     /// Called every ~15 seconds. Return an empty vec if no instances are registered yet.
     fn fqn_gateway_entries(&self) -> impl Future<Output = Vec<FqnGatewayEntry>> + Send;
+
+    /// Return alternative Moss endpoints to try when the tended stone is
+    /// unreachable.  Stale data on another stone beats no data at all.
+    fn fallback_moss_endpoints(&self) -> impl Future<Output = Vec<String>> + Send {
+        async { vec![] }
+    }
 }
 
 /// Run the dynamic gateway sync lifecycle.
@@ -222,6 +228,10 @@ pub async fn run<P: GatewayProvider>(
 }
 
 /// Synchronize Moss gateway registrations with current FQN groups.
+///
+/// Tries the tended stone first.  If any registration fails, retries on
+/// fallback Moss endpoints so that connection strings survive a local
+/// Moss/Koi outage (stale data beats no data).
 async fn sync_fqn_gateways<P: GatewayProvider>(
     provider: &P,
     moss: &MossGatewayClient,
@@ -234,7 +244,7 @@ async fn sync_fqn_gateways<P: GatewayProvider>(
     let entries = provider.fqn_gateway_entries().await;
     let current_fqns: HashSet<String> = entries.iter().map(|e| e.fqn.clone()).collect();
 
-    // Deregister stale FQNs
+    // Deregister stale FQNs (best-effort on primary only)
     let stale: Vec<String> = registered.difference(&current_fqns).cloned().collect();
     for fqn in stale {
         tracing::info!(fqn = %fqn, "GatewaySync: deregistering stale FQN");
@@ -243,10 +253,9 @@ async fn sync_fqn_gateways<P: GatewayProvider>(
     }
 
     // Register/refresh each current FQN
+    let mut failed_fqns: Vec<(String, GatewayParams)> = Vec::new();
+
     for entry in entries {
-        // Use per-entry host identity when available (direct-connect services
-        // like MongoDB), otherwise fall back to orchestrator's own identity
-        // (proxy services like Ollama).
         let entry_hostname = entry.hostname.as_deref().unwrap_or(hostname);
         let entry_ip = entry.ip.as_deref().unwrap_or(self_ip);
 
@@ -270,7 +279,43 @@ async fn sync_fqn_gateways<P: GatewayProvider>(
                 }
             }
             Err(e) => {
-                tracing::warn!(fqn = %entry.fqn, error = %e, "GatewaySync: FQN registration failed");
+                tracing::warn!(fqn = %entry.fqn, error = %e, "GatewaySync: FQN registration failed on tended stone");
+                failed_fqns.push((entry.fqn.clone(), params));
+            }
+        }
+    }
+
+    // Failover: try alternative Moss endpoints for any registrations that
+    // failed on the tended stone.  This keeps connection strings visible in
+    // the garden even when the local Moss is down.
+    if !failed_fqns.is_empty() {
+        let fallbacks = provider.fallback_moss_endpoints().await;
+        if !fallbacks.is_empty() {
+            tracing::info!(
+                failed = failed_fqns.len(),
+                fallbacks = fallbacks.len(),
+                "GatewaySync: attempting failover registration on alternative stones"
+            );
+
+            'outer: for (fqn, params) in &failed_fqns {
+                for fallback_ep in &fallbacks {
+                    if fallback_ep == stone_endpoint {
+                        continue; // skip the one that just failed
+                    }
+                    match moss.register(fallback_ep, fqn, params).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                fqn = %fqn,
+                                endpoint = %fallback_ep,
+                                "GatewaySync: registered FQN on fallback stone"
+                            );
+                            registered.insert(fqn.clone());
+                            continue 'outer;
+                        }
+                        Err(_) => continue, // try next fallback
+                    }
+                }
+                tracing::warn!(fqn = %fqn, "GatewaySync: all endpoints exhausted, registration lost");
             }
         }
     }

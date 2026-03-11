@@ -39,7 +39,7 @@ pub async fn get_garden_v1(
     // Add self first with live metrics
     let self_info = topology_entry_to_stone_info_with_metrics(&self_entry, cpu_usage, memory_usage);
     total_services += self_info.services_count;
-    if self_info.health == "healthy" || self_info.health == "thriving" {
+    if self_info.health == garden_common::constants::HEALTH_HEALTHY || self_info.health == garden_common::constants::VITALITY_THRIVING {
         healthy_stones += 1;
     } else {
         degraded_stones += 1;
@@ -53,7 +53,7 @@ pub async fn get_garden_v1(
         }
         let info = topology_entry_to_stone_info(&entry);
         total_services += info.services_count;
-        if info.health == "healthy" || info.health == "thriving" {
+        if info.health == garden_common::constants::HEALTH_HEALTHY || info.health == garden_common::constants::VITALITY_THRIVING {
             healthy_stones += 1;
         } else {
             degraded_stones += 1;

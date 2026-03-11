@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Greenhouse</title>
+<style>
+:root {
+    --bg-base: #f4f2ee;
+    --stone-900: #1a1a1a;
+    --stone-600: #57534e;
+    --stone-400: #a8a29e;
+    --stone-200: #d6d3d1;
+    --vellum-white: rgba(255,255,255,0.45);
+    --vellum-border: rgba(255,255,255,0.6);
+    --accent-sage: #84a59d;
+    --accent-clay: #d4a373;
+    --accent-hopeful: #c4b060;
+    --accent-muted: #a8a29e;
+    --accent-purple: #9b7db8;
+    --glass-blur: blur(14px);
+    --transition-soft: all 0.6s cubic-bezier(0.22,1,0.36,1);
+}
+@media (prefers-color-scheme: dark) { :root {
+    --bg-base: #1a1a1a; --stone-900: #fafaf9; --stone-600: #a8a29e;
+    --stone-400: #78716c; --stone-200: #44403c;
+    --vellum-white: rgba(40,40,40,0.6); --vellum-border: rgba(255,255,255,0.1);
+    --accent-hopeful: #d4c170;
+}}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+    background-color: var(--bg-base);
+    background-image: radial-gradient(circle at 20% 20%, rgba(200,200,190,0.3) 0%, transparent 40%), radial-gradient(circle at 80% 80%, rgba(190,185,175,0.3) 0%, transparent 40%);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--stone-900); min-height: 100vh;
+    display: flex; justify-content: center; padding: 2rem 1.5rem; line-height: 1.5;
+}
+@media (prefers-color-scheme: dark) { body {
+    background-image: radial-gradient(circle at 20% 20%, rgba(60,60,55,0.5) 0%, transparent 40%), radial-gradient(circle at 80% 80%, rgba(50,50,45,0.5) 0%, transparent 40%);
+}}
+.vellum-grain { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:9999; opacity:0.03; }
+.container { width:100%; max-width:1000px; display:flex; flex-direction:column; gap:2rem; animation:fadeIn 0.8s ease-out; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+
+/* Header */
+.header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--stone-200); padding-bottom:1rem; }
+.header-left { display:flex; align-items:baseline; gap:1rem; }
+.header-title { font-size:1.5rem; font-weight:600; letter-spacing:-0.02em; }
+.header-back { font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--accent-sage); text-decoration:none; }
+.header-back:hover { text-decoration:underline; }
+.header-crumb { color:var(--stone-400); font-size:0.8rem; }
+.header-offering { font-family:ui-monospace,monospace; font-size:1.1rem; font-weight:600; }
+
+/* Section titles (portrait-style) */
+.section-title {
+    font-family:ui-monospace,monospace; font-size:0.65rem; text-transform:uppercase;
+    letter-spacing:0.25em; color:var(--stone-600);
+    display:flex; align-items:center; gap:1rem; margin-bottom:1rem;
+}
+.section-title::after { content:''; flex-grow:1; height:1px; background:linear-gradient(90deg, rgba(128,128,128,0.2), transparent); }
+
+/* Glass card */
+.card {
+    background:var(--vellum-white); backdrop-filter:var(--glass-blur); -webkit-backdrop-filter:var(--glass-blur);
+    border:1px solid var(--vellum-border); border-radius:3px;
+    box-shadow:0 4px 20px rgba(0,0,0,0.03), inset 0 0 20px rgba(255,255,255,0.1);
+    transition:var(--transition-soft);
+}
+.card:hover { transform:translateY(-1px); box-shadow:0 8px 30px rgba(0,0,0,0.05); }
+
+/* Buttons */
+.btn {
+    padding:5px 12px; border:1px solid var(--stone-200); border-radius:3px;
+    background:var(--vellum-white); backdrop-filter:var(--glass-blur);
+    color:var(--stone-900); font-size:0.75rem; cursor:pointer;
+    font-family:ui-monospace,monospace; transition:var(--transition-soft);
+}
+.btn:hover { border-color:var(--accent-sage); color:var(--accent-sage); }
+.btn:disabled { opacity:0.4; cursor:default; }
+.btn.accent { background:rgba(132,165,157,0.15); color:var(--accent-sage); border-color:var(--accent-sage); }
+.btn.sm { padding:3px 8px; font-size:0.7rem; }
+.btn.danger { border-color:var(--accent-clay); color:var(--accent-clay); }
+.btn.danger:hover { background:rgba(212,163,115,0.1); }
+
+/* Status dots */
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%; vertical-align:middle; margin-right:5px; }
+.dot-running { background:var(--accent-sage); animation:pulse 2s infinite; }
+.dot-stopped { background:var(--stone-400); }
+.dot-degraded { background:var(--accent-hopeful); }
+.dot-avail { /* no dot */ display:none; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+
+/* ── CATALOG ── */
+.catalog-bar { display:flex; align-items:center; gap:12px; }
+.catalog-bar input {
+    flex:1; padding:8px 12px; background:var(--vellum-white); backdrop-filter:var(--glass-blur);
+    border:1px solid var(--vellum-border); border-radius:3px;
+    color:var(--stone-900); font-size:0.85rem; outline:none; font-family:ui-monospace,monospace;
+}
+.catalog-bar input:focus { border-color:var(--accent-sage); }
+
+.toggle-row { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.75rem; color:var(--stone-400); font-family:ui-monospace,monospace; cursor:pointer; }
+.toggle-row:hover { color:var(--stone-600); }
+
+.cat-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:0.5rem; margin-bottom:0.5rem; }
+.tile {
+    padding:0.75rem 0.9rem; cursor:pointer; position:relative;
+    display:flex; flex-direction:column; gap:2px;
+}
+.tile:hover { transform:translateY(-2px); box-shadow:0 8px 30px rgba(0,0,0,0.06); }
+.tile-name { font-family:ui-monospace,monospace; font-weight:600; font-size:0.85rem; display:flex; align-items:center; gap:0; }
+.tile-sub { font-size:0.65rem; color:var(--stone-400); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tile-warn { position:absolute; top:6px; right:8px; font-size:0.6rem; color:var(--accent-hopeful); }
+.tile.incompat { opacity:0.35; }
+
+.empty-state { text-align:center; padding:3rem 2rem; color:var(--stone-600); font-size:0.85rem; }
+.empty-state .hint { font-size:0.75rem; color:var(--stone-400); margin-top:0.5rem; }
+.loading { color:var(--stone-600); font-size:0.85rem; padding:3rem; text-align:center; }
+
+/* ── DETAIL ── */
+.detail-identity { padding:1.25rem; }
+.detail-desc { font-size:0.85rem; color:var(--stone-600); margin-bottom:0.35rem; }
+.detail-image { font-family:ui-monospace,monospace; font-size:0.75rem; color:var(--stone-400); }
+.detail-category { font-family:ui-monospace,monospace; font-size:0.7rem; color:var(--stone-400); text-transform:uppercase; letter-spacing:0.1em; }
+
+.status-card { padding:1rem 1.25rem; display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
+.status-label { font-family:ui-monospace,monospace; font-size:0.85rem; flex:1; }
+.status-meta { font-size:0.75rem; color:var(--stone-400); font-family:ui-monospace,monospace; display:flex; gap:1rem; flex-wrap:wrap; }
+.status-actions { display:flex; gap:6px; }
+
+.garden-row { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:0.8rem; font-family:ui-monospace,monospace; }
+.garden-self { color:var(--stone-400); font-size:0.7rem; }
+.garden-empty { color:var(--stone-400); font-size:0.8rem; font-style:italic; padding:4px 0; }
+
+/* Stone chip (clickable name + copy) */
+.stone-chip { display:inline-flex; align-items:center; gap:0.25rem; }
+.stone-chip a { color:var(--stone-900); text-decoration:none; font-weight:600; }
+.stone-chip a:hover { color:var(--accent-sage); text-decoration:underline; }
+.stone-chip .chip-copy {
+    opacity:0; transition:opacity 0.15s;
+    background:transparent; border:1px solid var(--vellum-border);
+    border-radius:2px; padding:0 0.2rem;
+    font-size:0.6rem; cursor:pointer; color:var(--stone-400);
+    font-family:ui-monospace,monospace; line-height:1.4;
+}
+.stone-chip:hover .chip-copy { opacity:1; }
+.stone-chip .chip-copy:hover { background:var(--accent-sage); color:white; border-color:var(--accent-sage); }
+.stone-chip .chip-copy.copied { opacity:1; background:var(--accent-sage); color:white; border-color:var(--accent-sage); }
+
+/* Files toggle */
+.files-toggle {
+    font-family:ui-monospace,monospace; font-size:0.75rem; color:var(--stone-600);
+    cursor:pointer; padding:4px 0; user-select:none;
+}
+.files-toggle:hover { color:var(--accent-sage); }
+.files-area { margin-top:0.75rem; }
+
+/* Tabs + editor (reused from before) */
+.tabs { display:flex; gap:0; border-bottom:1px solid var(--stone-200); overflow-x:auto; }
+.tab {
+    padding:8px 14px; font-size:0.7rem; cursor:pointer; border:1px solid transparent; border-bottom:none;
+    border-radius:3px 3px 0 0; color:var(--stone-400); background:transparent;
+    font-family:ui-monospace,monospace; white-space:nowrap; transition:color 0.2s;
+}
+.tab:hover { color:var(--stone-900); }
+.tab.active { color:var(--accent-sage); background:var(--vellum-white); border-color:var(--vellum-border); position:relative; }
+.tab.active::after { content:''; position:absolute; bottom:-1px; left:0; right:0; height:1px; background:var(--bg-base); }
+.tab.ghost { opacity:0.3; font-style:italic; }
+.tab.ghost:hover { opacity:0.55; }
+.tab .origin-dot { display:inline-block; width:5px; height:5px; border-radius:50%; margin-left:5px; vertical-align:middle; }
+.origin-built-in { background:var(--accent-sage); }
+.origin-custom { background:var(--accent-clay); }
+.origin-customized { background:var(--accent-purple); }
+
+.editor-wrap {
+    background:var(--vellum-white); backdrop-filter:var(--glass-blur);
+    border:1px solid var(--vellum-border); border-top:none; border-radius:0 0 3px 3px;
+    min-height:250px; display:flex; flex-direction:column;
+}
+.editor-toolbar {
+    display:flex; align-items:center; gap:8px; padding:6px 12px;
+    border-bottom:1px solid var(--vellum-border); font-size:0.7rem; color:var(--stone-400); font-family:ui-monospace,monospace;
+}
+.editor-toolbar .spacer { flex:1; }
+.dirty-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--accent-hopeful); margin-right:4px; opacity:0; transition:opacity 0.3s; }
+.dirty-dot.visible { opacity:1; }
+.editor-body { display:flex; flex:1; }
+.line-numbers {
+    padding:12px 0; text-align:right; user-select:none; font-family:ui-monospace,monospace; font-size:0.8rem;
+    line-height:1.5; color:var(--stone-400); opacity:0.4; min-width:36px; padding-right:8px;
+    border-right:1px solid var(--vellum-border); overflow:hidden; white-space:pre;
+}
+.editor-body textarea {
+    flex:1; min-height:300px; padding:12px 16px; background:transparent; border:none; color:var(--stone-900);
+    font-family:ui-monospace,monospace; font-size:0.8rem; line-height:1.5; resize:vertical; outline:none; tab-size:2;
+}
+.validation-panel { border-top:1px solid var(--vellum-border); padding:8px 12px; font-size:0.75rem; max-height:120px; overflow-y:auto; }
+.finding { display:flex; gap:8px; padding:2px 0; }
+.finding-icon { flex-shrink:0; }
+.finding.error .finding-icon { color:var(--accent-clay); }
+.finding.warning .finding-icon { color:var(--accent-hopeful); }
+.finding.info .finding-icon { color:var(--accent-sage); }
+.finding-msg { color:var(--stone-600); }
+.valid-msg { color:var(--accent-sage); }
+
+.toast {
+    position:fixed; bottom:24px; right:24px; padding:8px 16px; border-radius:3px;
+    background:var(--vellum-white); backdrop-filter:var(--glass-blur); border:1px solid var(--vellum-border);
+    font-size:0.8rem; color:var(--stone-900); box-shadow:0 8px 30px rgba(0,0,0,0.1);
+    opacity:0; transition:opacity 0.3s, transform 0.3s; transform:translateY(8px); pointer-events:none; z-index:100;
+}
+.toast.visible { opacity:1; transform:translateY(0); }
+
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.3); backdrop-filter:blur(4px); z-index:50; align-items:center; justify-content:center; }
+.modal-overlay.visible { display:flex; }
+.modal { background:var(--bg-base); border:1px solid var(--stone-200); border-radius:6px; padding:24px; width:440px; max-width:90vw; box-shadow:0 20px 60px rgba(0,0,0,0.15); animation:fadeIn 0.3s ease-out; }
+.modal h3 { font-size:1rem; margin-bottom:16px; font-weight:600; }
+.modal input { width:100%; padding:8px 12px; margin-bottom:12px; background:var(--vellum-white); border:1px solid var(--vellum-border); border-radius:3px; color:var(--stone-900); font-family:ui-monospace,monospace; font-size:0.85rem; outline:none; }
+.modal input:focus { border-color:var(--accent-sage); }
+.modal .actions { display:flex; gap:8px; justify-content:flex-end; }
+.modal .progress { font-size:0.8rem; color:var(--stone-600); margin-bottom:12px; font-family:ui-monospace,monospace; }
+
+.view-enter { animation: viewEnter 0.4s cubic-bezier(0.22,1,0.36,1); }
+@keyframes viewEnter { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:none; } }
+</style>
+</head>
+<body>
+<svg class="vellum-grain"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+<div class="container">
+<div class="header" id="header"><div class="header-left"><a class="header-back" href="/">portrait</a><span class="header-title">Greenhouse</span></div></div>
+
+<!-- CATALOG -->
+<div id="catalog-view">
+  <div class="catalog-bar">
+    <input type="text" id="search" placeholder="search offerings..." oninput="filterCatalog()">
+    <button class="btn accent" onclick="showImageModal()">new from image</button>
+  </div>
+  <div class="toggle-row" id="incompat-toggle" style="display:none" onclick="toggleIncompat()"></div>
+  <div id="catalog-area" style="margin-top:1rem"><div class="loading">loading...</div></div>
+</div>
+
+<!-- DETAIL -->
+<div id="detail-view" style="display:none" class="view-enter">
+  <div class="card detail-identity" id="detail-identity"></div>
+
+  <div class="section-title" id="status-title">status</div>
+  <div class="card status-card" id="status-card"></div>
+
+  <div class="section-title">garden</div>
+  <div id="garden-area"></div>
+
+  <div class="section-title">files</div>
+  <div class="files-toggle" id="files-toggle" onclick="toggleFiles()"></div>
+  <div id="files-area" style="display:none">
+    <div class="tabs" id="detail-tabs"></div>
+    <div class="editor-wrap">
+      <div class="editor-toolbar">
+        <span class="dirty-dot" id="dirty-dot"></span>
+        <span id="editor-origin"></span>
+        <span class="spacer"></span>
+        <span style="opacity:0.4;font-size:0.6rem">ctrl+s</span>
+        <button class="btn sm" id="btn-reset" style="display:none" onclick="resetFile()">reset</button>
+        <button class="btn sm accent" id="btn-save" onclick="saveFile()">save</button>
+      </div>
+      <div class="editor-body">
+        <div class="line-numbers" id="line-numbers"></div>
+        <textarea id="editor" spellcheck="false" oninput="onEditorInput()" onscroll="syncLineNumbers()"></textarea>
+      </div>
+      <div class="validation-panel" id="validation-panel" style="display:none"></div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal-overlay" id="image-modal">
+  <div class="modal"><h3>New from image</h3>
+    <input type="text" id="image-ref-input" placeholder="nginx:latest or ghcr.io/org/app:v2" />
+    <div class="progress" id="image-progress" style="display:none"></div>
+    <div class="actions"><button class="btn" onclick="hideImageModal()">cancel</button><button class="btn accent" id="image-inspect-btn" onclick="inspectImage()">inspect</button></div>
+  </div>
+</div>
+<script>
+let catalog=[],topology=[],currentOffering=null,currentTab=null,editorDirty=false,validateTimer=null,showIncompat=false,filesOpen=false;
+const FILE_TYPES=['snippet','frontmatter','compatibility','guidance','research','adopted','adopted-guidance','capabilities'];
+const FILE_LABELS={snippet:'Config',frontmatter:'Frontmatter',compatibility:'Compatibility',guidance:'Guidance',research:'Research',adopted:'Adopted','adopted-guidance':'Adopted Guide',capabilities:'Capabilities'};
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('visible');setTimeout(()=>e.classList.remove('visible'),2500);}
+
+// Stone chip helpers
+function stonePortraitUrl(stone, isSelf) {
+  if (isSelf) return '/';
+  if (stone.endpoint) return stone.endpoint;
+  var addr = stone.address;
+  if (addr) {
+    if (typeof addr === 'object' && addr.ip) return 'http://' + addr.ip + ':' + (addr.port || 7185);
+    if (typeof addr === 'string' && addr.includes(':')) return 'http://' + addr;
+    if (typeof addr === 'string') return 'http://' + addr + ':7185';
+  }
+  var name = stone.stone_name || stone.name;
+  return name ? 'http://' + name + ':7185' : '#';
+}
+function stoneChip(name, url) {
+  var safe = esc(name);
+  return '<span class="stone-chip">' +
+    '<a href="' + (url || '#') + '" title="Visit ' + safe + '">' + safe + '</a>' +
+    '<button class="chip-copy" onclick="copyStone(this,\'' + safe.replace(/'/g, "\\'") + '\')" title="Copy name">\u29C9</button>' +
+    '</span>';
+}
+function copyStone(btn, name) {
+  var done = function() {
+    btn.textContent = '\u2713'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = '\u29C9'; btn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(name).then(done);
+  } else {
+    var ta = document.createElement('textarea'); ta.value = name;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+    done();
+  }
+}
+
+// ═══ CATALOG ═══
+async function loadCatalog(){
+  try{
+    const [cr,tr]=await Promise.all([fetch('/api/v1/stone/greenhouse/catalog'),fetch('/api/v1/garden/topology').catch(()=>({ok:false}))]);
+    catalog=await cr.json();
+    if(tr.ok){const td=await tr.json();topology=td.data||td;}else topology=[];
+    renderCatalog();
+  }catch(e){document.getElementById('catalog-area').innerHTML='<div class="empty-state">Failed to load catalog</div>';}
+}
+function filterCatalog(){renderCatalog();}
+function toggleIncompat(){showIncompat=!showIncompat;renderCatalog();}
+
+function renderCatalog(){
+  const q=document.getElementById('search').value.toLowerCase();
+  let items=catalog;
+  if(q)items=items.filter(o=>o.name.toLowerCase().includes(q)||(o.description||'').toLowerCase().includes(q)||o.category.toLowerCase().includes(q));
+
+  const compat=items.filter(o=>o.compatibility.status!=='incompatible');
+  const incompat=items.filter(o=>o.compatibility.status==='incompatible');
+
+  // Incompat toggle
+  const itog=document.getElementById('incompat-toggle');
+  if(incompat.length){itog.style.display='';itog.textContent=(showIncompat?'\u25BC hide':'\u25B6 show')+' '+incompat.length+' incompatible';}
+  else itog.style.display='none';
+
+  const visible=showIncompat?items:compat;
+  if(!visible.length){document.getElementById('catalog-area').innerHTML='<div class="empty-state">No offerings found<div class="hint">Use "new from image" to create your first offering.</div></div>';return;}
+
+  // Group by category
+  const groups=new Map();
+  for(const o of visible){const c=o.category||'custom';if(!groups.has(c))groups.set(c,[]);groups.get(c).push(o);}
+
+  let html='';
+  for(const [cat,offerings] of [...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+    html+='<div class="section-title">'+esc(cat)+'</div>';
+    html+='<div class="cat-grid">';
+    for(const o of offerings){
+      const isIncompat=o.compatibility.status==='incompatible';
+      const dotClass=o.running?'dot-running':o.state==='installed'?'dot-stopped':'dot-avail';
+      const warn=o.compatibility.status==='warning'?'\u25d0':'';
+      html+='<div class="card tile'+(isIncompat?' incompat':'')+'" onclick="openOffering(\''+esc(o.name)+'\')">';
+      html+='<div class="tile-name"><span class="dot '+dotClass+'"></span>'+esc(o.name)+'</div>';
+      if(o.description)html+='<div class="tile-sub">'+esc(o.description)+'</div>';
+      if(warn)html+='<span class="tile-warn" title="'+esc(o.compatibility.reason||'')+'">'+warn+'</span>';
+      html+='</div>';
+    }
+    html+='</div>';
+  }
+  document.getElementById('catalog-area').innerHTML=html;
+}
+
+// ═══ DETAIL ═══
+function openOffering(name){
+  currentOffering=catalog.find(o=>o.name===name);if(!currentOffering)return;
+  filesOpen=false;
+  document.title='Greenhouse \u2014 '+name;
+  document.getElementById('header').innerHTML='<div class="header-left"><a class="header-back" href="javascript:backToCatalog()">catalog</a><span class="header-crumb"> / </span><span class="header-offering">'+esc(name)+'</span></div>';
+
+  // Identity
+  const o=currentOffering;
+  let id='';
+  if(o.description)id+='<div class="detail-desc">'+esc(o.description)+'</div>';
+  if(o.image)id+='<span class="detail-image">'+esc(o.image)+'</span>';
+  if(o.image&&o.category)id+=' <span class="detail-category">\u00b7 '+esc(o.category)+'</span>';
+  else if(o.category)id+='<span class="detail-category">'+esc(o.category)+'</span>';
+  document.getElementById('detail-identity').innerHTML=id;
+
+  renderStatus();
+  renderGarden();
+  renderFilesToggle();
+  document.getElementById('files-area').style.display='none';
+
+  document.getElementById('catalog-view').style.display='none';
+  const dv=document.getElementById('detail-view');dv.style.display='';dv.classList.remove('view-enter');void dv.offsetWidth;dv.classList.add('view-enter');
+}
+
+function renderStatus(){
+  const o=currentOffering;
+  let html='';
+  if(o.state==='installed'&&o.running){
+    html+='<span class="status-label"><span class="dot dot-running"></span>running</span>';
+    html+='<div class="status-meta">';
+    if(o.ports&&o.ports.length)html+='<span>ports '+o.ports.map(p=>p[1]).join(', ')+'</span>';
+    if(o.volume_count)html+='<span>'+o.volume_count+' volume'+(o.volume_count>1?'s':'')+'</span>';
+    html+='</div>';
+    html+='<div class="status-actions">';
+    html+='<button class="btn sm" onclick="serviceAction(\'rest\')">rest</button>';
+    html+='<button class="btn sm" onclick="serviceAction(\'restart\')">restart</button>';
+    html+='<button class="btn sm danger" onclick="serviceAction(\'delete\')">uproot</button>';
+    html+='</div>';
+  } else if(o.state==='installed'){
+    html+='<span class="status-label"><span class="dot dot-stopped"></span>stopped</span>';
+    html+='<div class="status-actions">';
+    html+='<button class="btn sm accent" onclick="serviceAction(\'wake\')">wake</button>';
+    html+='<button class="btn sm danger" onclick="serviceAction(\'delete\')">uproot</button>';
+    html+='</div>';
+  } else {
+    html+='<span class="status-label">not installed</span>';
+    html+='<div class="status-meta">';
+    if(o.ports&&o.ports.length)html+='<span>ports '+o.ports.map(p=>p[1]).join(', ')+'</span>';
+    if(o.volume_count)html+='<span>'+o.volume_count+' volume'+(o.volume_count>1?'s':'')+'</span>';
+    const cs=o.compatibility.status;
+    html+='<span><span class="dot '+(cs==='compatible'?'dot-running':cs==='warning'?'dot-degraded':'dot-stopped')+'" style="animation:none"></span>'+esc(cs)+'</span>';
+    html+='</div>';
+    html+='<div class="status-actions"><button class="btn sm accent" onclick="serviceAction(\'plant\')">plant</button></div>';
+  }
+  document.getElementById('status-card').innerHTML=html;
+}
+
+function renderGarden(){
+  // Find this offering across topology
+  const name=currentOffering.name;
+  const stoneName=document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('stone_name='));
+  let html='';
+  let found=false;
+  for(const stone of topology){
+    for(const svc of stone.services||[]){
+      if(svc.offering===name||svc.name===name||(svc.name&&svc.name.offering===name)){
+        found=true;
+        const isSelf=stone.stone_name&&(location.hostname.includes(stone.stone_name)||stone.stone_id===topology[0]?.stone_id);
+        const statusDot=svc.status==='running'?'dot-running':'dot-stopped';
+        const url=stonePortraitUrl(stone, isSelf);
+        html+='<div class="garden-row"><span class="dot '+statusDot+'"></span>'+stoneChip(stone.stone_name, url)+' <span style="color:var(--stone-400);font-size:0.7rem">'+esc(svc.status)+'</span>';
+        if(isSelf)html+=' <span class="garden-self">(this stone)</span>';
+        html+='</div>';
+      }
+    }
+  }
+  if(!found)html='<div class="garden-empty">not found on any stone</div>';
+  document.getElementById('garden-area').innerHTML=html;
+}
+
+async function serviceAction(action){
+  const name=currentOffering.name;
+  let url,method,body=null;
+  if(action==='plant'){url='/api/v1/stone/services';method='POST';body=JSON.stringify({offering:name});}
+  else if(action==='delete'){url='/api/v1/stone/services/'+encodeURIComponent(name);method='DELETE';}
+  else{url='/api/v1/stone/services/'+encodeURIComponent(name)+'/'+action;method='POST';}
+
+  try{
+    const opts={method};
+    if(body)opts.headers={'Content-Type':'application/json'};
+    if(body)opts.body=body;
+    const r=await fetch(url,opts);
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.message||e.error||'HTTP '+r.status);}
+    toast(action==='plant'?'planting '+name:action==='delete'?'uprooting '+name:action+' '+name);
+    // Refresh after a moment
+    setTimeout(async()=>{await loadCatalog();currentOffering=catalog.find(o=>o.name===name);if(currentOffering){renderStatus();renderGarden();}else backToCatalog();},2000);
+  }catch(e){toast(action+' failed: '+e.message);}
+}
+
+function backToCatalog(){
+  if(editorDirty)autoSave();
+  editorDirty=false;currentOffering=null;currentTab=null;filesOpen=false;
+  document.title='Greenhouse';
+  document.getElementById('header').innerHTML='<div class="header-left"><a class="header-back" href="/">portrait</a><span class="header-title">Greenhouse</span></div>';
+  document.getElementById('catalog-view').style.display='';document.getElementById('detail-view').style.display='none';
+  loadCatalog();
+}
+
+// ═══ FILES ═══
+function renderFilesToggle(){
+  const n=currentOffering.files.length;
+  const src=currentOffering.customized?'customized':currentOffering.source;
+  document.getElementById('files-toggle').textContent=(filesOpen?'\u25BC':'\u25B6')+' '+n+' manifest file'+(n!==1?'s':'')+' \u00b7 '+src;
+}
+function toggleFiles(){
+  filesOpen=!filesOpen;
+  renderFilesToggle();
+  if(filesOpen){
+    document.getElementById('files-area').style.display='';
+    renderTabs();
+    const ft=currentOffering.files.length?currentOffering.files[0].file_type:'snippet';
+    switchTab(ft);
+  }else{
+    document.getElementById('files-area').style.display='none';
+  }
+}
+
+function renderTabs(){
+  const ex=new Map();for(const f of currentOffering.files)ex.set(f.file_type,f);
+  let h='';for(const ft of FILE_TYPES){const file=ex.get(ft);
+  let dot='';if(file)dot='<span class="origin-dot origin-'+file.origin+'"></span>';
+  h+='<button class="tab'+(file?'':' ghost')+(ft===currentTab?' active':'')+'" onclick="switchTab(\''+ft+'\')">'+esc(FILE_LABELS[ft]||ft)+dot+'</button>';}
+  document.getElementById('detail-tabs').innerHTML=h;
+}
+
+async function switchTab(ft){
+  if(editorDirty&&currentTab!==ft)await autoSave();
+  currentTab=ft;editorDirty=false;updateDirtyDot();renderTabs();
+  const editor=document.getElementById('editor');const file=currentOffering.files.find(f=>f.file_type===ft);
+  if(file){
+    document.getElementById('editor-origin').textContent=file.origin==='built-in'?'built-in':file.origin==='customized'?'customized':'custom';
+    document.getElementById('btn-reset').style.display=(file.origin!=='built-in')?'':'none';
+  }else{document.getElementById('editor-origin').textContent='new';document.getElementById('btn-reset').style.display='none';}
+  document.getElementById('validation-panel').style.display=ft==='snippet'?'':'none';
+  if(file){try{const r=await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(ft));editor.value=r.ok?await r.text():'# Failed to load';}catch(e){editor.value='# Error: '+e.message;}}
+  else{editor.value='';editor.placeholder='Start typing to create this file...';}
+  updateLineNumbers();if(ft==='snippet')runValidation();
+}
+
+function onEditorInput(){editorDirty=true;updateDirtyDot();updateLineNumbers();if(currentTab==='snippet'){clearTimeout(validateTimer);validateTimer=setTimeout(runValidation,800);}}
+function updateDirtyDot(){document.getElementById('dirty-dot').classList.toggle('visible',editorDirty);}
+function updateLineNumbers(){const e=document.getElementById('editor');const n=e.value.split('\n').length;const a=[];for(let i=1;i<=n;i++)a.push(i);document.getElementById('line-numbers').textContent=a.join('\n');}
+function syncLineNumbers(){document.getElementById('line-numbers').scrollTop=document.getElementById('editor').scrollTop;}
+
+async function autoSave(){if(!editorDirty||!currentOffering||!currentTab)return;const c=document.getElementById('editor').value;if(!c.trim())return;
+try{await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(currentTab),{method:'PUT',headers:{'Content-Type':'text/plain'},body:c});editorDirty=false;updateDirtyDot();updateFileEntry();toast('auto-saved');}catch(e){}}
+
+async function saveFile(){const c=document.getElementById('editor').value;if(!currentOffering||!currentTab)return;
+try{const r=await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(currentTab),{method:'PUT',headers:{'Content-Type':'text/plain'},body:c});if(!r.ok)throw new Error('HTTP '+r.status);editorDirty=false;updateDirtyDot();updateFileEntry();renderTabs();renderFilesToggle();toast('saved');}catch(e){toast('save failed: '+e.message);}}
+
+function updateFileEntry(){
+  const ex=currentOffering.files.find(f=>f.file_type===currentTab);
+  if(ex){if(ex.origin==='built-in')ex.origin='customized';}
+  else{const ext=currentTab.endsWith('guidance')||currentTab==='research'?'md':currentTab==='frontmatter'?'json':'yaml';currentOffering.files.push({file_type:currentTab,extension:ext,origin:'custom'});}
+  if(currentOffering.source==='curated')currentOffering.customized=true;
+  const file=currentOffering.files.find(f=>f.file_type===currentTab);
+  if(file){document.getElementById('editor-origin').textContent=file.origin==='built-in'?'built-in':file.origin==='customized'?'customized':'custom';document.getElementById('btn-reset').style.display=(file.origin!=='built-in')?'':'none';}
+}
+
+async function resetFile(){if(!confirm('Reset to built-in version?'))return;
+try{const r=await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(currentOffering.name)+'&type='+encodeURIComponent(currentTab),{method:'DELETE'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();toast(d.reset_to_builtin?'reset':'deleted');
+const idx=currentOffering.files.findIndex(f=>f.file_type===currentTab);if(d.reset_to_builtin&&idx>=0)currentOffering.files[idx].origin='built-in';else if(idx>=0)currentOffering.files.splice(idx,1);
+editorDirty=false;updateDirtyDot();renderTabs();renderFilesToggle();switchTab(currentTab);}catch(e){toast('failed: '+e.message);}}
+
+async function runValidation(){const c=document.getElementById('editor').value;if(!c.trim()){document.getElementById('validation-panel').innerHTML='';return;}
+try{const r=await fetch('/api/v1/stone/greenhouse/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({snippet_yaml:c})});if(!r.ok)return;const d=await r.json();const el=document.getElementById('validation-panel');
+if(d.valid&&d.findings.length===0){el.innerHTML='<div class="valid-msg">valid</div>';return;}
+const icons={error:'\u25cf',warning:'\u25d0',info:'\u25cb'};el.innerHTML=d.findings.map(f=>'<div class="finding '+f.severity+'"><span class="finding-icon">'+(icons[f.severity]||'\u25cb')+'</span><span class="finding-msg">'+esc(f.message)+'</span></div>').join('')+(d.valid?'<div class="valid-msg">valid (warnings only)</div>':'');}catch(e){}}
+
+// ═══ NEW FROM IMAGE ═══
+function showImageModal(){document.getElementById('image-ref-input').value='';document.getElementById('image-progress').style.display='none';document.getElementById('image-modal').classList.add('visible');document.getElementById('image-ref-input').focus();}
+function hideImageModal(){document.getElementById('image-modal').classList.remove('visible');}
+async function inspectImage(){const ref=document.getElementById('image-ref-input').value.trim();if(!ref)return;
+const btn=document.getElementById('image-inspect-btn');const prog=document.getElementById('image-progress');btn.disabled=true;prog.style.display='';prog.textContent='pulling image...';
+try{const ir=await fetch('/api/v1/stone/offerings/inspect?image='+encodeURIComponent(ref));if(!ir.ok){const e=await ir.json().catch(()=>({}));throw new Error(e.message||'HTTP '+ir.status);}
+prog.textContent='inspecting...';const insp=(await ir.json()).data||{};
+prog.textContent='generating manifest...';const gr=await fetch('/api/v1/stone/greenhouse/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inspection:insp})});if(!gr.ok)throw new Error('generation failed');const gen=await gr.json();
+prog.textContent='saving...';for(const[t,c]of[['snippet',gen.snippet_yaml],['frontmatter',gen.frontmatter_json],['compatibility',gen.compatibility_yaml],['guidance',gen.guidance_md]]){await fetch('/api/v1/stone/greenhouse/file?offering='+encodeURIComponent(gen.name)+'&type='+t,{method:'PUT',headers:{'Content-Type':'text/plain'},body:c});}
+hideImageModal();toast('created: '+gen.name);await loadCatalog();openOffering(gen.name);}catch(e){toast('failed: '+e.message);prog.textContent='failed: '+e.message;}finally{btn.disabled=false;}}
+
+// ═══ KEYBOARD ═══
+document.addEventListener('keydown',function(e){
+  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();if(currentOffering&&currentTab)saveFile();}
+  if(e.key==='Escape'){if(document.getElementById('image-modal').classList.contains('visible')){hideImageModal();return;}if(currentOffering){backToCatalog();return;}}
+  if(currentOffering&&filesOpen&&(e.ctrlKey||e.metaKey)&&(e.key==='['||e.key===']')){e.preventDefault();const fts=FILE_TYPES.filter(ft=>currentOffering.files.some(f=>f.file_type===ft));if(!fts.length)return;const idx=fts.indexOf(currentTab);const n=e.key===']'?(idx+1)%fts.length:(idx-1+fts.length)%fts.length;switchTab(fts[n]);}
+  if(e.key==='/'&&!currentOffering&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){e.preventDefault();document.getElementById('search').focus();}
+});
+document.getElementById('editor').addEventListener('keydown',function(e){if(e.key==='Tab'){e.preventDefault();const s=this.selectionStart,end=this.selectionEnd;this.value=this.value.substring(0,s)+'  '+this.value.substring(end);this.selectionStart=this.selectionEnd=s+2;onEditorInput();}});
+document.getElementById('image-modal').addEventListener('click',function(e){if(e.target===this)hideImageModal();});
+document.getElementById('image-ref-input').addEventListener('keydown',function(e){if(e.key==='Enter')inspectImage();});
+
+loadCatalog();
+</script>
+</body>
+</html>

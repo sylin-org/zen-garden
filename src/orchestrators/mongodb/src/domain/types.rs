@@ -3,6 +3,7 @@
 use crate::domain::cache_advisor::{CacheHealth, CacheRecommendation, CacheStatus};
 use crate::domain::oplog::OplogHealth;
 use chrono::{DateTime, Utc};
+use garden_common::offerings::OfferingFqn;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
@@ -18,14 +19,18 @@ pub struct MongoInstance {
     pub moss_endpoint: String,
     /// MongoDB wire protocol endpoint (e.g. `192.168.1.5:27017`).
     pub mongo_endpoint: String,
-    /// FQN of the offering instance (e.g. `mongodb`, `mongodb:analytics`).
-    pub fqn: String,
+    /// FQN of the offering instance (e.g. `mongodb`, `mongodb::analytics`).
+    pub fqn: OfferingFqn,
     /// Current health status.
     pub health: InstanceHealth,
     /// Replica set role (if known from rs.status()).
     pub role: Option<ReplicaRole>,
     /// Last time we saw this instance.
     pub last_seen: Instant,
+    /// MongoDB server version (e.g. "7.0.30"). Populated after first probe.
+    pub server_version: Option<String>,
+    /// Wire protocol version range [min, max]. Populated after first probe.
+    pub wire_version_range: Option<(i32, i32)>,
 }
 
 /// Health status of a MongoDB instance.
@@ -36,13 +41,18 @@ pub enum InstanceHealth {
     Healthy,
     /// Instance was discovered but not yet probed.
     Unknown,
-    /// Instance is not responding.
-    Unreachable,
-    /// Instance is responding but in a degraded state.
+    /// Stone is not reachable (network/power issue).
+    Offline,
+    /// Stone is online but MongoDB service is not responding.
+    Down,
+    /// Instance is responding but in a degraded state (recovering, rollback, startup).
     Degraded,
     /// Container is intentionally stopped on the stone (tools stream: ready = false).
-    /// Distinct from Unreachable — the offering exists but the container is down.
+    /// Distinct from Down — Stopped means the container was intentionally brought down.
     Stopped,
+    /// Instance is reachable but its MongoDB major version is incompatible
+    /// with the existing replica set (e.g. mongo:4.4 vs mongo:7).
+    Incompatible,
 }
 
 /// Replica set role for a MongoDB member.
@@ -130,13 +140,13 @@ pub struct MemberState {
 
 /// Derives a replica set name from a MongoDB FQN.
 ///
-/// - `"mongodb"` → `"zen-garden"`
-/// - `"mongodb:analytics"` → `"zen-garden-analytics"`
-/// - `"mongodb:logs"` → `"zen-garden-logs"`
-pub fn derive_replica_set_name(fqn: &str) -> String {
-    match fqn.strip_prefix("mongodb:") {
-        Some(suffix) if !suffix.is_empty() => format!("zen-garden-{suffix}"),
-        _ => "zen-garden".to_string(),
+/// - `mongodb` (no instance) → `"zen-garden"`
+/// - `mongodb::analytics`    → `"zen-garden-analytics"`
+/// - `mongodb::logs`         → `"zen-garden-logs"`
+pub fn derive_replica_set_name(fqn: &OfferingFqn) -> String {
+    match &fqn.instance {
+        Some(instance) => format!("zen-garden-{instance}"),
+        None => "zen-garden".to_string(),
     }
 }
 
@@ -146,6 +156,25 @@ pub fn derive_replica_set_name(fqn: &str) -> String {
 pub fn build_connection_string(members: &[MemberState], rs_name: &str) -> String {
     let hosts: Vec<&str> = members.iter().map(|m| m.endpoint.as_str()).collect();
     format!("mongodb://{}/?replicaSet={}", hosts.join(","), rs_name)
+}
+
+/// Check if a candidate's MongoDB major version is compatible with the RS.
+///
+/// MongoDB supports members from the current and previous major version.
+/// e.g., 7.x + 6.x = ok, 7.x + 4.x = not ok.
+pub fn major_versions_compatible(rs_version: &str, candidate_version: &str) -> bool {
+    let rs_major = rs_version
+        .split('.')
+        .next()
+        .and_then(|s| s.parse::<u32>().ok());
+    let cand_major = candidate_version
+        .split('.')
+        .next()
+        .and_then(|s| s.parse::<u32>().ok());
+    match (rs_major, cand_major) {
+        (Some(r), Some(c)) => r.abs_diff(c) <= 1,
+        _ => true, // Can't determine — fail-open
+    }
 }
 
 /// A pending membership action queued for eventual execution.
@@ -160,8 +189,8 @@ pub enum PendingAction {
     RemoveMember {
         /// MongoDB wire endpoint (e.g. "stone-quartz-fen.local:27017").
         mongo_endpoint: String,
-        /// FQN of the logical set (e.g. "mongodb", "mongodb:analytics").
-        fqn: String,
+        /// FQN of the logical set (e.g. "mongodb", "mongodb::analytics").
+        fqn: OfferingFqn,
         /// When the action was requested.
         requested_at: DateTime<Utc>,
     },
@@ -206,13 +235,17 @@ mod tests {
 
     #[test]
     fn test_derive_replica_set_name() {
-        assert_eq!(derive_replica_set_name("mongodb"), "zen-garden");
+        let fqn_default = OfferingFqn::new("mongodb").unwrap();
+        assert_eq!(derive_replica_set_name(&fqn_default), "zen-garden");
+
+        let fqn_analytics = OfferingFqn::with_instance("mongodb", "analytics").unwrap();
         assert_eq!(
-            derive_replica_set_name("mongodb:analytics"),
+            derive_replica_set_name(&fqn_analytics),
             "zen-garden-analytics"
         );
-        assert_eq!(derive_replica_set_name("mongodb:logs"), "zen-garden-logs");
-        assert_eq!(derive_replica_set_name("mongodb:"), "zen-garden");
+
+        let fqn_logs = OfferingFqn::with_instance("mongodb", "logs").unwrap();
+        assert_eq!(derive_replica_set_name(&fqn_logs), "zen-garden-logs");
     }
 
     #[test]
@@ -241,5 +274,22 @@ mod tests {
             conn,
             "mongodb://192.168.1.5:27017,192.168.1.6:27017/?replicaSet=zen-garden"
         );
+    }
+
+    #[test]
+    fn test_major_versions_compatible() {
+        // Same major version
+        assert!(major_versions_compatible("7.0.30", "7.0.20"));
+        // Adjacent major versions (allowed)
+        assert!(major_versions_compatible("7.0.30", "6.0.15"));
+        assert!(major_versions_compatible("6.0.15", "7.0.30"));
+        // Two apart (not allowed)
+        assert!(!major_versions_compatible("7.0.30", "5.0.10"));
+        // Three apart — the actual 4.4 vs 7.0 case
+        assert!(!major_versions_compatible("7.0.30", "4.4.30"));
+        assert!(!major_versions_compatible("4.4.30", "7.0.30"));
+        // Unknown version — fail-open
+        assert!(major_versions_compatible("unknown", "4.4.30"));
+        assert!(major_versions_compatible("7.0.30", "unknown"));
     }
 }

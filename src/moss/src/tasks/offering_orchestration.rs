@@ -122,16 +122,16 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
             continue;
         }
 
-        let fqn = &offering.name;
+        let fqn = offering.name.to_string();
 
         // Check if another stone is already claiming Primary for this FQN
-        if let Some(other_primary_id) = find_remote_primary(state, fqn).await {
+        if let Some(other_primary_id) = find_remote_primary(state, &fqn).await {
             tracing::info!(
                 offering = %fqn,
                 other_primary = %other_primary_id,
                 "Startup reconciliation: yielding Primary to existing holder"
             );
-            transition_role(state, &offering.offering_id, fqn, OfferingRole::Dormant).await?;
+            transition_role(state, &offering.offering_id, &fqn, OfferingRole::Dormant).await?;
         }
     }
 
@@ -157,7 +157,7 @@ async fn backfill_orchestration(state: &AppState) {
     let candidates: Vec<(String, String, String)> = offerings
         .iter()
         .filter(|o| o.orchestration.is_none() && o.status == OfferingStatus::Running)
-        .map(|o| (o.offering_id.clone(), o.name.clone(), o.offering.clone()))
+        .map(|o| (o.offering_id.clone(), o.name.to_string(), o.offering.clone()))
         .collect();
 
     if candidates.is_empty() {
@@ -221,7 +221,7 @@ async fn pin_recovery(state: &AppState) {
             _ => continue,
         };
 
-        let fqn = &offering.name;
+        let fqn = offering.name.to_string();
         tracing::info!(
             offering = %fqn,
             pinned_since = ?orch.pin_timestamp,
@@ -270,13 +270,13 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     };
 
     // ORCH-0008: collect offering types covered by any active gateway in the garden.
-    // A service registering handler_for: ["mongodb"] suppresses elections for mongodb.
+    // A service registering handler_for suppresses elections for that offering.
+    // Read from the unified registry (category=orchestrator entries).
     let gateway_handled: std::collections::HashSet<String> = {
-        let cache = state.topology_cache.read().await;
-        cache
-            .values()
-            .flat_map(|entry| entry.gateways.iter())
-            .flat_map(|gw| gw.handler_for.iter().cloned())
+        let reg = state.registry.read().await;
+        reg.gateway_entries()
+            .iter()
+            .map(|e| e.tool.tool.tool_type.clone())
             .collect()
     };
 
@@ -299,15 +299,15 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
             continue;
         }
 
-        let fqn = &offering.name;
+        let fqn = offering.name.to_string();
         let offering_id = &offering.offering_id;
 
         match orch.role {
             OfferingRole::Primary => {
-                dispatch_primary(state, offering_id, fqn, orch).await?;
+                dispatch_primary(state, offering_id, &fqn, orch).await?;
             }
             OfferingRole::Dormant => {
-                dispatch_dormant(state, offering_id, fqn, orch).await?;
+                dispatch_dormant(state, offering_id, &fqn, orch).await?;
             }
             OfferingRole::Joining => {
                 // No-op until Phase 5 (sync). Joining implies the offering is
@@ -397,7 +397,7 @@ async fn dispatch_dormant(
         let primary_degraded = primary_entry
             .services
             .iter()
-            .any(|svc| svc.name == fqn && svc.role.as_deref() == Some("degraded"));
+            .any(|svc| svc.name.to_string() == fqn && svc.role.as_deref() == Some("degraded"));
 
         if staleness_ms > PRIMARY_STALE_THRESHOLD_MS || primary_degraded {
             drop(cache); // Release lock before election
@@ -611,7 +611,7 @@ async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
         }
         // Check if this stone has the offering with role "primary"
         for svc in &entry.services {
-            if svc.name == fqn && svc.role.as_deref() == Some("primary") {
+            if svc.name.to_string() == fqn && svc.role.as_deref() == Some(garden_common::constants::ROLE_PRIMARY) {
                 return Some(stone_id.clone());
             }
         }

@@ -1,7 +1,16 @@
-//! Storage and seed bank types
+//! Managed storage types (STORAGE-0009, STORAGE-0013)
 //!
-//! Shared contracts between Moss and Rake for USB seed bank management.
-//! See docs/specs/STORAGE-0001-seed-bank-onboarding.md for full specification.
+//! Shared contracts between Moss and Rake for managed storage.
+//! Storage is the universal entity; seed bank is a composable role.
+//!
+//! ## Identity Model (STORAGE-0013)
+//!
+//! Two-level identity:
+//! - **Device**: `id` (GUIDv7) + `name` (display sugar). One per physical device.
+//! - **Replica set**: `replica_set_id` (GUIDv7) + `replica_set_name` (display sugar).
+//!   Groups devices that replicate the same content.
+//!
+//! FQN convention: empty name = default set ("storage"), named = "storage::{name}".
 
 use crate::manifests::Offering as OfferingManifest;
 use crate::types::Offering;
@@ -55,7 +64,7 @@ impl std::fmt::Display for DeviceState {
 // Storage Detection Types
 // ============================================================================
 
-/// Information about a detected storage device
+/// Information about a detected storage device (partition/volume level)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageDetectedInfo {
     /// Device path (e.g., "/dev/sdb1")
@@ -87,50 +96,195 @@ pub struct StorageDetectedInfo {
 }
 
 // ============================================================================
-// Seed Bank Types
+// Medium Detection Types (physical disk layer)
 // ============================================================================
 
-/// Visibility of a seed bank
+/// Bus type of the physical connection (matches infra::storage::platform::BusType).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BusType {
+    Usb,
+    Sata,
+    Nvme,
+    Scsi,
+    Mmc,
+    Unknown,
+}
+
+impl std::fmt::Display for BusType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usb => write!(f, "USB"),
+            Self::Sata => write!(f, "SATA"),
+            Self::Nvme => write!(f, "NVMe"),
+            Self::Scsi => write!(f, "SCSI"),
+            Self::Mmc => write!(f, "MMC"),
+            Self::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// Condition of a physical medium (matches infra::storage::platform::MediumCondition).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediumCondition {
+    /// No partition table — brand new or wiped disk.
+    Raw,
+    /// Has a partition table with 1+ partitions.
+    Partitioned,
+    /// Device is offline or reporting I/O errors.
+    Unreadable,
+}
+
+impl std::fmt::Display for MediumCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Raw => write!(f, "raw"),
+            Self::Partitioned => write!(f, "partitioned"),
+            Self::Unreadable => write!(f, "unreadable"),
+        }
+    }
+}
+
+/// A partition on a detected medium (for API responses).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediumPartitionInfo {
+    /// Partition number (1-based).
+    pub index: u32,
+    /// Size in bytes.
+    pub size_bytes: u64,
+    /// Filesystem type if known (e.g., "NTFS", "ext4").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<String>,
+    /// Drive letter (Windows) or mount point (Linux).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_path: Option<String>,
+    /// Volume label if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Information about a physical storage medium (disk-level).
+///
+/// Host-only — never broadcast to the garden. Used for `rake storage candidates`
+/// to show physical disks that may need partitioning or formatting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediumInfo {
+    /// OS device identifier (e.g., `\\.\PhysicalDrive2`, `/dev/sdb`).
+    pub device_id: String,
+    /// Vendor/model name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Physical bus type.
+    pub bus_type: BusType,
+    /// Total size in bytes.
+    pub size_bytes: u64,
+    /// Whether the medium is external/removable.
+    pub removable: bool,
+    /// Physical condition.
+    pub condition: MediumCondition,
+    /// Partitions on this medium.
+    pub partitions: Vec<MediumPartitionInfo>,
+    /// Whether any partition is already managed by Zen Garden.
+    pub managed: bool,
+    /// Suggested action for the user.
+    pub suggested_action: MediumAction,
+}
+
+/// What action the user should take for this medium.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediumAction {
+    /// Disk needs partitioning and formatting before use.
+    NeedsPartition,
+    /// Disk has partition(s) but no filesystem — needs formatting.
+    NeedsFormat,
+    /// Disk is ready — has a mounted volume that can be added with `storage add`.
+    Ready,
+    /// Disk is already managed by Zen Garden.
+    AlreadyManaged,
+    /// Disk is unreadable — may need physical inspection.
+    Unreadable,
+}
+
+impl std::fmt::Display for MediumAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NeedsPartition => write!(f, "needs partition"),
+            Self::NeedsFormat => write!(f, "needs format"),
+            Self::Ready => write!(f, "ready"),
+            Self::AlreadyManaged => write!(f, "already managed"),
+            Self::Unreadable => write!(f, "unreadable"),
+        }
+    }
+}
+
+/// Combined candidates response for GET /api/v1/stone/storage/candidates.
+///
+/// Returns both partition-level candidates (mounted volumes ready for `storage add`)
+/// and physical media (disks that may need partitioning/formatting).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidatesResponse {
+    /// Mounted volumes eligible for `storage add` (unmanaged, removable, online).
+    pub spaces: Vec<StorageDetectedInfo>,
+    /// Physical media visible to this stone (USB drives, external disks).
+    /// Includes disks without partitions or drive letters.
+    pub media: Vec<MediumInfo>,
+}
+
+// ============================================================================
+// Managed Storage Types (STORAGE-0009)
+// ============================================================================
+
+/// Visibility of a managed storage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum SeedBankVisibility {
+pub enum StorageVisibility {
     /// Visible to all stones in the garden
     #[default]
     Open,
-    /// Only accessible to stones with the same seed bank name
+    /// Only accessible locally
     Closed,
     /// Visible but read-only (degraded state)
     ReadOnly,
 }
 
-/// Default name for unencrypted (public) seed banks
-pub const DEFAULT_PUBLIC_SEED_BANK_NAME: &str = "public-seed-bank";
-/// Default name for encrypted (private / pond-scoped) seed banks
-pub const DEFAULT_PRIVATE_SEED_BANK_NAME: &str = "private-seed-bank";
 
-impl std::fmt::Display for SeedBankVisibility {
+/// Reserved display name for the default replica set (STORAGE-0013).
+/// When `replica_set_name` is empty, this is the display moniker.
+pub const DEFAULT_REPLICA_SET_DISPLAY: &str = "storage";
+
+impl std::fmt::Display for StorageVisibility {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SeedBankVisibility::Open => write!(f, "open"),
-            SeedBankVisibility::Closed => write!(f, "closed"),
-            SeedBankVisibility::ReadOnly => write!(f, "read-only"),
+            StorageVisibility::Open => write!(f, "{}", crate::constants::VISIBILITY_OPEN),
+            StorageVisibility::Closed => write!(f, "{}", crate::constants::VISIBILITY_CLOSED),
+            StorageVisibility::ReadOnly => write!(f, "{}", crate::constants::VISIBILITY_READ_ONLY),
         }
     }
 }
 
-/// Information about a prepared seed bank
+/// Information about a managed storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedBankInfo {
-    /// Unique identifier for the seed bank (GUIDv7)
+pub struct StorageInfo {
+    /// Unique device identifier (GUIDv7)
     pub id: String,
 
-    /// Human-readable name — logical FQN shared across replicas (STORAGE-0006)
+    /// Human-readable name — logical FQN shared across replicas
     pub name: String,
+
+    /// Replica set ID (GUIDv7). Groups devices that replicate the same content (STORAGE-0013).
+    #[serde(default)]
+    pub replica_set_id: String,
+
+    /// Replica set display name (STORAGE-0013).
+    #[serde(default)]
+    pub replica_set_name: String,
 
     /// Device path (e.g., "/dev/sdb1")
     pub device: String,
 
-    /// Mount path under data_dir (e.g., "/var/lib/zen-garden/mounts/my-bank/01956a3e")
+    /// Mount path under data_dir
     pub mount_path: String,
 
     /// Total capacity in bytes
@@ -140,22 +294,22 @@ pub struct SeedBankInfo {
     pub used_bytes: u64,
 
     /// Visibility setting
-    pub visibility: SeedBankVisibility,
+    pub visibility: StorageVisibility,
 
     /// Whether the filesystem is btrfs (vs ext4)
     pub btrfs: bool,
 
-    /// Stone that created this seed bank
+    /// Stone that created this storage
     pub origin_stone: String,
 
-    /// When the seed bank was created
+    /// When the storage was created
     pub created_at: DateTime<Utc>,
 
     /// Last sync timestamp
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_sync: Option<DateTime<Utc>>,
 
-    /// Whether this is a roaming seed bank (detected at boot, not originally created here)
+    /// Whether this is a roaming storage (detected at boot, not originally created here)
     #[serde(default)]
     pub roaming: bool,
 
@@ -163,53 +317,46 @@ pub struct SeedBankInfo {
     #[serde(default = "default_true")]
     pub online: bool,
 
-    /// Whether content on this seed bank is encrypted (STORAGE-0006)
+    /// Whether content is encrypted
     #[serde(default)]
     pub encrypted: bool,
 
-    // === Backward-compat: ignored fields from v2 manifests ===
-    /// Deprecated: pool_id. Ignored on deserialization.
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    pool_id: Option<String>,
-
-    /// Deprecated: group. Ignored on deserialization.
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    group: Option<String>,
-
-    /// Deprecated: replica_id. Ignored on deserialization.
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    replica_id: Option<u32>,
+    /// Composable roles (e.g., ["seed-bank"])
+    #[serde(default = "default_seed_bank_role")]
+    pub roles: Vec<String>,
 }
 
 fn default_true() -> bool {
     true
 }
 
-impl SeedBankInfo {
-    /// Create a new SeedBankInfo with all required fields.
+impl StorageInfo {
+    /// Create a new StorageInfo with all required fields.
     /// Deprecated backward-compat fields are set to None internally.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         name: String,
+        replica_set_id: String,
+        replica_set_name: String,
         device: String,
         mount_path: String,
         capacity_bytes: u64,
         used_bytes: u64,
-        visibility: SeedBankVisibility,
+        visibility: StorageVisibility,
         btrfs: bool,
         origin_stone: String,
         created_at: DateTime<Utc>,
         roaming: bool,
         online: bool,
         encrypted: bool,
+        roles: Vec<String>,
     ) -> Self {
         Self {
             id,
             name,
+            replica_set_id,
+            replica_set_name,
             device,
             mount_path,
             capacity_bytes,
@@ -222,10 +369,13 @@ impl SeedBankInfo {
             roaming,
             online,
             encrypted,
-            pool_id: None,
-            group: None,
-            replica_id: None,
+            roles,
         }
+    }
+
+    /// Whether this storage has the seed-bank role (receives offering backups)
+    pub fn is_seed_bank(&self) -> bool {
+        self.roles.iter().any(|r| r == crate::constants::ROLE_SEED_BANK)
     }
 
     /// Derive the short ID (first 8 hex chars of the GUIDv7, excluding dashes).
@@ -239,21 +389,25 @@ impl SeedBankInfo {
 }
 
 // ============================================================================
-// Seed Bank Summary (shared formatting utility — STORAGE-0006 Phase 5)
+// Storage Summary (shared formatting utility)
 // ============================================================================
 
-/// Compact seed-bank summary for CLI display and portrait enrichment.
-///
-/// Reusable across `garden-rake seed-banks`, `release` disambiguation picker,
-/// `pin` selection view, and the portrait endpoint. Avoids duplicating the
-/// formatting logic in multiple places.
+/// Compact storage summary for CLI display and portrait enrichment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedBankSummary {
-    /// First 8 hex chars of the GUIDv7
+pub struct StorageSummary {
+    /// First 8 hex chars of the device GUIDv7
     pub short_id: String,
 
-    /// Logical seed bank name (shared across replicas)
+    /// Device display name (sugar)
     pub name: String,
+
+    /// Replica set ID (STORAGE-0013)
+    #[serde(default)]
+    pub replica_set_id: String,
+
+    /// Replica set display name (STORAGE-0013). Empty = default "storage".
+    #[serde(default)]
+    pub replica_set_name: String,
 
     /// Capacity in GB (human-readable)
     pub capacity_gb: f32,
@@ -267,7 +421,7 @@ pub struct SeedBankSummary {
     pub stone_name: Option<String>,
 
     /// Runtime role (Primary / Dormant)
-    pub role: SeedBankRole,
+    pub role: StorageRole,
 
     /// Whether the Primary role is pinned (locked)
     #[serde(default)]
@@ -280,34 +434,20 @@ pub struct SeedBankSummary {
     /// Whether the device is online
     #[serde(default = "default_true")]
     pub online: bool,
+
+    /// Composable roles (e.g., ["seed-bank"])
+    #[serde(default = "default_seed_bank_role")]
+    pub roles: Vec<String>,
 }
 
-impl SeedBankSummary {
-    /// Build from a local `SeedBankInfo` plus runtime state.
-    pub fn from_info(
-        info: &SeedBankInfo,
-        role: SeedBankRole,
-        pinned: bool,
-        stone_name: Option<&str>,
-    ) -> Self {
-        Self {
-            short_id: SeedBankInfo::short_id(&info.id),
-            name: info.name.clone(),
-            capacity_gb: info.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-            device: Some(info.device.clone()),
-            stone_name: stone_name.map(|s| s.to_string()),
-            role,
-            pinned,
-            encrypted: info.encrypted,
-            online: info.online,
-        }
-    }
-
+impl StorageSummary {
     /// Build from a beacon announcement (remote stone).
-    pub fn from_announcement(ann: &SeedBankAnnouncement, stone_name: &str) -> Self {
+    pub fn from_announcement(ann: &StorageAnnouncement, stone_name: &str) -> Self {
         Self {
-            short_id: SeedBankInfo::short_id(&ann.id),
+            short_id: short_id_from_guid(&ann.id),
             name: ann.name.clone(),
+            replica_set_id: ann.replica_set_id.clone(),
+            replica_set_name: ann.replica_set_name.clone(),
             capacity_gb: ann.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
             device: None,
             stone_name: Some(stone_name.to_string()),
@@ -315,6 +455,16 @@ impl SeedBankSummary {
             pinned: ann.pin_id.is_some(),
             encrypted: ann.encrypted,
             online: true,
+            roles: ann.roles.clone(),
+        }
+    }
+
+    /// Display name for the replica set.
+    pub fn replica_set_display_name(&self) -> &str {
+        if self.replica_set_name.is_empty() {
+            DEFAULT_REPLICA_SET_DISPLAY
+        } else {
+            &self.replica_set_name
         }
     }
 
@@ -322,7 +472,7 @@ impl SeedBankSummary {
     ///
     /// Example: `● 01956a3e  64GB   stone-01  Primary  ★ pinned`
     pub fn format_line(&self) -> String {
-        let marker = if self.role == SeedBankRole::Primary {
+        let marker = if self.role == StorageRole::Primary {
             "●"
         } else {
             " "
@@ -341,88 +491,79 @@ impl SeedBankSummary {
 // API Request/Response Types
 // ============================================================================
 
-/// Request to prepare a seed bank
+/// Unified request to add storage (STORAGE-0010).
+///
+/// The server inspects `target` to determine the operation:
+/// - Block device with no filesystem → formats, mounts, creates `.zen-garden/`
+/// - Block device with filesystem, no files → mounts, creates `.zen-garden/`
+/// - Block device or directory with existing files → creates `.zen-garden/`, catalogs content
+/// - Path with existing `.zen-garden/` → 409 Conflict
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrepareSeedBankRequest {
-    /// Device path (e.g., "/dev/sdb1")
-    pub device: String,
+pub struct AddStorageRequest {
+    /// Target path: block device (e.g., "/dev/sdb1") or directory (e.g., "/mnt/nas-media").
+    pub target: String,
 
-    /// Name for the seed bank (default: context-dependent — see STORAGE-0006 §12)
+    /// Logical name for this storage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
-    /// Generate a random name (e.g., "seed-kind-meadow")
+    /// Whether to format the device (only valid for block devices).
     #[serde(default)]
-    pub random_name: bool,
+    pub format: bool,
 
-    /// Filesystem to use: "btrfs" (default) or "ext4"
+    /// Filesystem to use when formatting: "btrfs" (default) or "ext4".
     #[serde(default = "default_btrfs")]
     pub filesystem: String,
 
-    /// Whether to encrypt content (pond-scoped, STORAGE-0006)
+    /// Whether to encrypt content (pond-scoped).
     #[serde(default)]
     pub encrypted: bool,
 
-    // === Backward-compat: ignored fields from old API clients ===
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    group: Option<String>,
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    replica_id: Option<u32>,
-}
-
-impl PrepareSeedBankRequest {
-    /// Create a new prepare request with required fields. Deprecated fields default to None.
-    pub fn new(
-        device: String,
-        name: Option<String>,
-        random_name: bool,
-        filesystem: String,
-        encrypted: bool,
-    ) -> Self {
-        Self {
-            device,
-            name,
-            random_name,
-            filesystem,
-            encrypted,
-            group: None,
-            replica_id: None,
-        }
-    }
+    /// Roles to assign (e.g., ["seed-bank"]).
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 fn default_btrfs() -> String {
     "btrfs".to_string()
 }
 
-/// Response from prepare operation
+/// Response from add storage operation (STORAGE-0010).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrepareSeedBankResponse {
-    /// Job ID for tracking progress
-    pub job_id: String,
-
-    /// Expected seed bank name (may differ from requested if collision)
+pub struct AddStorageResponse {
+    /// Storage ID (GUIDv7).
+    pub id: String,
+    /// Logical storage name.
     pub name: String,
-
-    /// Whether operation started successfully
-    pub started: bool,
+    /// Mount path where storage is accessible.
+    pub mount_path: String,
+    /// Whether the device was formatted.
+    pub formatted: bool,
+    /// Number of existing files cataloged for replication baseline.
+    #[serde(default)]
+    pub cataloged: usize,
+    /// Job ID if formatting runs asynchronously.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
-/// Request to change seed bank visibility
+/// Request to change storage visibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetVisibilityRequest {
-    pub visibility: SeedBankVisibility,
+    pub visibility: StorageVisibility,
 }
 
-/// Request to rename a seed bank
+/// Request to rename a managed storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RenameSeedBankRequest {
+pub struct RenameStorageRequest {
     pub new_name: String,
 }
 
-// PoolConflictData, MergePolicy, MergeSeedBankRequest — removed in STORAGE-0006 (dead code)
+/// Request to set roles on a managed storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetRolesRequest {
+    pub roles: Vec<String>,
+}
 
 // ============================================================================
 // Hydration Metadata
@@ -462,7 +603,7 @@ impl MemoriesOfferingManifest {
     ) -> Self {
         Self {
             offering_id: offering.offering_id.clone(),
-            offering_name: offering.name.clone(),
+            offering_name: offering.name.to_string(),
             offering: offering.offering.clone(),
             mode: offering.mode(),
             version: offering.version.clone(),
@@ -501,7 +642,7 @@ impl std::fmt::Display for ChangelogOp {
 
 /// A single changelog entry — one line in `.zen-garden/changelog.jsonl`.
 ///
-/// Appended by `SeedBankStore::write()` and `SeedBankStore::delete()`.
+/// Appended by `ContentStore::write()` and `ContentStore::delete()`.
 /// The cursor `c` is a GUIDv7 — time-sortable, unique, extractable timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangelogEntry {
@@ -557,10 +698,13 @@ impl ChangelogEntry {
 /// The Dormant subscriber uses this to know when to pull changes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageTick {
-    /// Latest cursor on this seed bank
+    /// Latest cursor on this managed storage
     pub cursor: String,
-    /// Seed bank name
-    pub seed_bank: String,
+    /// Replica set display name (STORAGE-0013: was `storage`)
+    pub storage: String,
+    /// Replica set ID (STORAGE-0013)
+    #[serde(default)]
+    pub replica_set_id: String,
     /// Count of creates since last tick
     #[serde(rename = "C")]
     pub creates: u32,
@@ -591,36 +735,49 @@ fn is_false(v: &bool) -> bool {
 }
 
 // ============================================================================
-// Seed Bank Manifest (stored on device)
+// Storage Manifest (stored on device at .zen-garden/manifest.json)
 // ============================================================================
 
-/// Manifest stored at `.zen-garden/manifest.json` on the seed bank
+/// Manifest stored at `.zen-garden/manifest.json` on managed storage.
 ///
-/// The manifest is the single source of truth for seed bank identity and configuration.
+/// Single source of truth for storage identity and configuration.
 /// Mount paths are derived from this manifest, not from filesystem labels.
 ///
 /// ## Version History
-/// - v1: Original format (name, pool_id, visibility, origin_stone, filesystem)
-/// - v2: Added group/replica_id for multi-device seed banks (STORAGE-0005)
-/// - v3: Removed group/replica_id/pool_id. Added encrypted/pond_fingerprint. (STORAGE-0006)
-///   Identity simplified: `name` = FQN, `id` = physical. Same name = replicas.
+/// - v1-v3: Legacy formats (pre STORAGE-0009)
+/// - v4: Added roles array. Storage is the entity; seed bank is a role. (STORAGE-0009)
+/// - v5: Two-level identity — device + replica set. (STORAGE-0013)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedBankManifest {
-    /// Version of the manifest format (current: 3)
+pub struct StorageManifest {
+    /// Version of the manifest format (current: 5)
     #[serde(default = "default_manifest_version")]
     pub version: u32,
 
-    /// Unique seed bank identifier (GUIDv7) — one per physical device, never changes
+    /// Unique identifier (GUIDv7) — one per physical device, never changes.
     pub id: String,
 
-    /// Logical seed bank name (FQN). Shared across all replicas.
-    /// Two devices with the same name and different IDs are replicas.
+    /// Device display name (sugar). Unique per device, user-renamable.
     pub name: String,
 
-    /// Visibility setting
-    pub visibility: SeedBankVisibility,
+    /// Replica set identifier (GUIDv7). Groups devices that replicate the same content.
+    /// All devices with the same `replica_set_id` form a replica set.
+    #[serde(default = "generate_guidv7_string")]
+    pub replica_set_id: String,
 
-    /// Stone that created this seed bank
+    /// Replica set display name (sugar). Empty = default set ("storage").
+    /// Named set FQN: "storage::{replica_set_name}".
+    #[serde(default)]
+    pub replica_set_name: String,
+
+    /// Timestamp of last replica set rename. Used for rename catch-up
+    /// when offline members reconnect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_set_name_updated_at: Option<DateTime<Utc>>,
+
+    /// Visibility setting
+    pub visibility: StorageVisibility,
+
+    /// Stone that created this storage
     pub origin_stone: String,
 
     /// Filesystem type ("btrfs" or "ext4")
@@ -629,69 +786,99 @@ pub struct SeedBankManifest {
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 
-    /// Whether content is encrypted (STORAGE-0006)
+    /// Whether content is encrypted
     #[serde(default)]
     pub encrypted: bool,
 
     /// Pond CA fingerprint (present when encrypted = true)
-    /// Used to match the seed bank to the correct pond's data key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pond_fingerprint: Option<String>,
 
-    // === Backward-compat: old fields silently ignored on deserialization ===
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    pool_id: Option<String>,
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    group: Option<String>,
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    replica_id: Option<u32>,
+    /// Composable roles (STORAGE-0009). Default: ["seed-bank"] for backward compat.
+    #[serde(default = "default_seed_bank_role")]
+    pub roles: Vec<String>,
+}
+
+fn generate_guidv7_string() -> String {
+    crate::utils::ids::generate_guidv7()
 }
 
 fn default_manifest_version() -> u32 {
-    1 // Default for v1 manifests that don't have version field
+    1
 }
 
-impl SeedBankManifest {
-    /// Current manifest version
-    pub const CURRENT_VERSION: u32 = 3;
+fn default_seed_bank_role() -> Vec<String> {
+    vec![crate::constants::ROLE_SEED_BANK.to_string()]
+}
 
-    /// Create a new manifest
+impl StorageManifest {
+    pub const CURRENT_VERSION: u32 = 5;
+
+    /// Create a new manifest with default roles (seed-bank).
     ///
-    /// All seed banks — single or replicated — use this constructor.
-    /// Two devices prepared with the same `name` are replicas (STORAGE-0006).
+    /// Generates both a device ID and a replica set ID. The device `name`
+    /// is the user-visible device sugar. The `replica_set_name` defaults
+    /// to empty (= default set "storage").
     pub fn new(
         name: &str,
         origin_stone: &str,
         filesystem: &str,
-        visibility: SeedBankVisibility,
+        visibility: StorageVisibility,
     ) -> Self {
         let id = crate::utils::ids::generate_guidv7();
+        let replica_set_id = crate::utils::ids::generate_guidv7();
 
         Self {
             version: Self::CURRENT_VERSION,
             id,
             name: name.to_string(),
+            replica_set_id,
+            replica_set_name: String::new(),
+            replica_set_name_updated_at: None,
             visibility,
             origin_stone: origin_stone.to_string(),
             filesystem: filesystem.to_string(),
             created_at: Utc::now(),
             encrypted: false,
             pond_fingerprint: None,
-            pool_id: None,
-            group: None,
-            replica_id: None,
+            roles: vec![crate::constants::ROLE_SEED_BANK.to_string()],
         }
     }
 
-    /// Create a new manifest with encryption enabled (STORAGE-0006)
+    /// Create a new manifest joining a specific replica set.
+    pub fn new_in_set(
+        name: &str,
+        origin_stone: &str,
+        filesystem: &str,
+        visibility: StorageVisibility,
+        replica_set_id: &str,
+        replica_set_name: &str,
+    ) -> Self {
+        let mut manifest = Self::new(name, origin_stone, filesystem, visibility);
+        manifest.replica_set_id = replica_set_id.to_string();
+        manifest.replica_set_name = replica_set_name.to_string();
+        manifest
+    }
+
+    /// Create a new manifest with specific roles.
+    pub fn with_roles(
+        name: &str,
+        origin_stone: &str,
+        filesystem: &str,
+        visibility: StorageVisibility,
+        roles: Vec<String>,
+    ) -> Self {
+        let mut manifest = Self::new(name, origin_stone, filesystem, visibility);
+        manifest.roles = roles;
+        manifest
+    }
+
+    /// Create a new manifest with encryption enabled.
     pub fn new_encrypted(
         name: &str,
         origin_stone: &str,
         filesystem: &str,
-        visibility: SeedBankVisibility,
+        visibility: StorageVisibility,
         pond_fingerprint: &str,
     ) -> Self {
         let mut manifest = Self::new(name, origin_stone, filesystem, visibility);
@@ -700,21 +887,34 @@ impl SeedBankManifest {
         manifest
     }
 
-    /// Derive the mount path for this seed bank (STORAGE-0006)
-    ///
-    /// All seed banks: `{base}/mounts/{name}/{short_id}/`
-    /// Where short_id = first 8 hex chars of the GUIDv7.
-    ///
-    /// This 2-level scheme supports multiple replicas under the same name
-    /// and gives the scanner a consistent walk pattern.
+    /// Derive the mount path: `{base}/mounts/{name}/{short_id}/`
     pub fn derive_mount_path(&self, base_dir: &str) -> String {
-        let short_id = SeedBankInfo::short_id(&self.id);
+        let short_id = short_id_from_guid(&self.id);
         format!("{}/mounts/{}/{}", base_dir, self.name, short_id)
     }
 
-    /// Get the logical seed bank name (FQN)
-    pub fn logical_name(&self) -> &str {
-        &self.name
+    /// Whether this storage has the seed-bank role
+    pub fn is_seed_bank(&self) -> bool {
+        self.roles.iter().any(|r| r == crate::constants::ROLE_SEED_BANK)
+    }
+
+    /// Display name for the replica set — returns the reserved moniker
+    /// "storage" for the default (empty-name) set.
+    pub fn replica_set_display_name(&self) -> &str {
+        if self.replica_set_name.is_empty() {
+            DEFAULT_REPLICA_SET_DISPLAY
+        } else {
+            &self.replica_set_name
+        }
+    }
+
+    /// Full FQN for the replica set: "storage" or "storage::{name}".
+    pub fn replica_set_fqn(&self) -> String {
+        if self.replica_set_name.is_empty() {
+            "storage".to_string()
+        } else {
+            format!("storage::{}", self.replica_set_name)
+        }
     }
 }
 
@@ -739,68 +939,67 @@ pub struct StorageBeacon {
     /// HTTP endpoint for storage API (e.g., "http://stone-alpha.local:7185")
     pub endpoint: String,
 
-    /// List of available seed banks (empty = no storage)
-    pub seed_banks: Vec<SeedBankAnnouncement>,
+    /// List of available managed storages (empty = no storage)
+    pub storages: Vec<StorageAnnouncement>,
 
     /// Beacon timestamp
     pub timestamp: DateTime<Utc>,
 }
 
 impl StorageBeacon {
-    /// Create an empty beacon (no seed banks)
+    /// Create an empty beacon (no storages)
     pub fn empty(stone_id: &str, stone_name: &str, endpoint: &str) -> Self {
         Self {
             stone_id: stone_id.to_string(),
             stone_name: stone_name.to_string(),
             endpoint: endpoint.to_string(),
-            seed_banks: Vec::new(),
+            storages: Vec::new(),
             timestamp: Utc::now(),
         }
     }
 
     /// Check if this stone has any storage capability
     pub fn has_storage(&self) -> bool {
-        !self.seed_banks.is_empty()
+        !self.storages.is_empty()
     }
 
     /// Check if this stone supports S3 protocol
     pub fn supports_s3(&self) -> bool {
-        self.seed_banks
+        self.storages
             .iter()
-            .any(|sb| sb.protocols.contains(&"s3".to_string()))
+            .any(|s| s.protocols.contains(&"s3".to_string()))
     }
 }
 
-/// Runtime role of a seed bank within its replica group (STORAGE-0006)
+/// Runtime role of a managed storage within its replica group.
 ///
-/// Assigned at runtime by the seed bank orchestration task.
-/// Same pattern as OfferingRole (first-online-wins, reconciliation window).
+/// Assigned at runtime by the storage orchestration task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum SeedBankRole {
-    /// Accepts writes. One primary per logical seed bank name.
+pub enum StorageRole {
+    /// Accepts writes. One primary per logical storage name.
     #[default]
     Primary,
     /// Read-only replica. Replicates from primary via SSE pull.
     Dormant,
 }
 
-impl std::fmt::Display for SeedBankRole {
+impl std::fmt::Display for StorageRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SeedBankRole::Primary => write!(f, "primary"),
-            SeedBankRole::Dormant => write!(f, "dormant"),
+            StorageRole::Primary => write!(f, "{}", crate::constants::ROLE_PRIMARY),
+            StorageRole::Dormant => write!(f, "{}", crate::constants::ROLE_DORMANT),
         }
     }
 }
 
-/// Orchestration state for a logical seed bank (STORAGE-0006)
+/// Orchestration state for a logical managed storage.
 ///
-/// Persisted per seed bank name on the stone. Mirrors OfferingOrchestrationState.
+/// Persisted per storage name on the stone. Mirrors OfferingOrchestrationState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedBankOrchestrationState {
+pub struct StorageOrchestrationState {
     /// Current role of this seed bank on this stone
-    pub role: SeedBankRole,
+    pub role: StorageRole,
 
     /// Stone ID of the current primary (from beacons)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -819,10 +1018,10 @@ pub struct SeedBankOrchestrationState {
     pub pin_timestamp: Option<DateTime<Utc>>,
 }
 
-impl Default for SeedBankOrchestrationState {
+impl Default for StorageOrchestrationState {
     fn default() -> Self {
         Self {
-            role: SeedBankRole::Primary,
+            role: StorageRole::Primary,
             primary_stone_id: None,
             primary_seed_bank_id: None,
             pinned: false,
@@ -831,18 +1030,40 @@ impl Default for SeedBankOrchestrationState {
     }
 }
 
-/// Seed bank announcement entry for beacons
+/// Storage announcement entry for beacons (STORAGE-0013: canonical wire type).
+///
+/// Two-level identity: device (`id`/`name`) + replica set (`replica_set_id`/`replica_set_name`).
+/// This is the single wire format for beacon broadcast and registry storage.
+/// Replaces the former `StorageMetadata` on `GardenTool`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedBankAnnouncement {
-    /// Unique seed bank ID (GUIDv7)
+pub struct StorageAnnouncement {
+    // --- Device identity ---
+
+    /// Unique device ID (GUIDv7). One per physical storage device.
     pub id: String,
 
-    /// Human-readable name (logical FQN — shared across replicas)
+    /// Device display name (sugar). User-renamable.
     pub name: String,
 
-    /// Runtime role (STORAGE-0006)
+    // --- Replica set identity ---
+
+    /// Replica set ID (GUIDv7). Groups devices that replicate the same content.
     #[serde(default)]
-    pub role: SeedBankRole,
+    pub replica_set_id: String,
+
+    /// Replica set display name (sugar). Empty = default set ("storage").
+    #[serde(default)]
+    pub replica_set_name: String,
+
+    /// Timestamp of last replica set rename. For catch-up on reconnect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_set_name_updated_at: Option<DateTime<Utc>>,
+
+    // --- Runtime state ---
+
+    /// Runtime role (Primary / Dormant)
+    #[serde(default)]
+    pub role: StorageRole,
 
     /// Supported protocols (e.g., ["s3", "storage"])
     pub protocols: Vec<String>,
@@ -862,40 +1083,36 @@ pub struct SeedBankAnnouncement {
     /// Used space in bytes
     pub used_bytes: u64,
 
-    /// Whether content is encrypted (STORAGE-0006)
+    /// Whether content is encrypted
     #[serde(default)]
     pub encrypted: bool,
 
-    /// Pin ID — a GUIDv7 that claims Primary by pin (STORAGE-0006 Phase 5).
+    /// Pin ID — a GUIDv7 that claims Primary by pin.
     /// Higher GUIDv7 wins in a conflict (last-pin-wins).
-    /// `None` means unpinned; orchestration uses normal tiebreaker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_id: Option<String>,
+
+    /// Composable roles (e.g., ["seed-bank"])
+    #[serde(default = "default_seed_bank_role")]
+    pub roles: Vec<String>,
 }
 
-impl SeedBankAnnouncement {
-    /// Create from SeedBankInfo
-    pub fn from_info(info: &SeedBankInfo) -> Self {
-        Self {
-            id: info.id.clone(),
-            name: info.name.clone(),
-            role: SeedBankRole::default(),
-            protocols: vec!["s3".to_string(), "storage".to_string()],
-            access: StorageAccess::Direct,
-            visibility: info.visibility.to_string(),
-            health: if info.online {
-                if matches!(info.visibility, SeedBankVisibility::ReadOnly) {
-                    "read-only".to_string()
-                } else {
-                    "healthy".to_string()
-                }
-            } else {
-                "degraded".to_string()
-            },
-            capacity_bytes: info.capacity_bytes,
-            used_bytes: info.used_bytes,
-            encrypted: info.encrypted,
-            pin_id: None,
+impl StorageAnnouncement {
+    /// Display name for the replica set — returns "storage" for the default set.
+    pub fn replica_set_display_name(&self) -> &str {
+        if self.replica_set_name.is_empty() {
+            DEFAULT_REPLICA_SET_DISPLAY
+        } else {
+            &self.replica_set_name
+        }
+    }
+
+    /// Full FQN for the replica set: "storage" or "storage::{name}".
+    pub fn replica_set_fqn(&self) -> String {
+        if self.replica_set_name.is_empty() {
+            "storage".to_string()
+        } else {
+            format!("storage::{}", self.replica_set_name)
         }
     }
 }
@@ -915,6 +1132,70 @@ pub enum StorageAccess {
     },
 }
 
+// ============================================================================
+// Standalone helpers (STORAGE-0013: moved off StorageInfo)
+// ============================================================================
+
+/// Derive the short ID (first 8 hex chars of a GUIDv7, excluding dashes).
+///
+/// Used as the per-device directory name under mounts/{name}/{short_id}/.
+pub fn short_id_from_guid(guid: &str) -> String {
+    guid.chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(8)
+        .collect()
+}
+
+// ============================================================================
+// Storage Changed Event (STORAGE-0013)
+// ============================================================================
+
+/// Domain event emitted when storage state changes.
+///
+/// Broadcast on `storage_changed_tx`. Consumers subscribe and react by
+/// pulling fresh data from the AppState boundary.
+#[derive(Debug, Clone)]
+pub enum StorageChanged {
+    /// A new device was added (mounted, classified as managed).
+    Added {
+        device_id: String,
+        replica_set_id: String,
+    },
+    /// A device was removed (unmounted, released).
+    Removed {
+        device_id: String,
+        replica_set_id: String,
+    },
+    /// A device's role changed (Primary ↔ Dormant).
+    RoleChanged {
+        device_id: String,
+        replica_set_id: String,
+        new_role: StorageRole,
+    },
+    /// A replica set was renamed.
+    Renamed {
+        replica_set_id: String,
+        new_name: String,
+    },
+    /// A pin state changed on a device.
+    PinChanged {
+        device_id: String,
+        replica_set_id: String,
+    },
+    /// Volumes were reclassified (broad change, re-pull everything).
+    Reclassified,
+    /// Managed storage connected or reconnected — triggers connected ribbon.
+    Connected {
+        name: String,
+        roles: Vec<String>,
+        used_bytes: u64,
+    },
+    /// Storage released — triggers released ribbon.
+    Released {
+        name: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -922,7 +1203,7 @@ mod tests {
     #[test]
     fn test_short_id_from_guid() {
         let guid = "01956a3e-7c00-7000-8000-000000000001";
-        let short = SeedBankInfo::short_id(guid);
+        let short = short_id_from_guid(guid);
         assert_eq!(short, "01956a3e");
     }
 
@@ -937,30 +1218,34 @@ mod tests {
 
     #[test]
     fn test_manifest_creation() {
-        let manifest = SeedBankManifest::new(
+        let manifest = StorageManifest::new(
             "test-bank",
             "stone-alpha",
             "btrfs",
-            SeedBankVisibility::Open,
+            StorageVisibility::Open,
         );
 
-        assert_eq!(manifest.version, 3);
+        assert_eq!(manifest.version, 5);
         assert_eq!(manifest.name, "test-bank");
+        assert!(!manifest.replica_set_id.is_empty());
+        assert!(manifest.replica_set_name.is_empty());
+        assert_eq!(manifest.replica_set_display_name(), "storage");
         assert!(!manifest.encrypted);
         assert!(manifest.pond_fingerprint.is_none());
+        assert!(manifest.is_seed_bank());
     }
 
     #[test]
     fn test_encrypted_manifest_creation() {
-        let manifest = SeedBankManifest::new_encrypted(
+        let manifest = StorageManifest::new_encrypted(
             "private-bank",
             "stone-alpha",
             "ext4",
-            SeedBankVisibility::Open,
+            StorageVisibility::Open,
             "abc123def456",
         );
 
-        assert_eq!(manifest.version, 3);
+        assert_eq!(manifest.version, 5);
         assert!(manifest.encrypted);
         assert_eq!(manifest.pond_fingerprint.as_deref(), Some("abc123def456"));
     }
@@ -971,11 +1256,11 @@ mod tests {
 
         // All seed banks use {name}/{short_id} now
         let manifest =
-            SeedBankManifest::new("my-backup", "stone", "ext4", SeedBankVisibility::Open);
+            StorageManifest::new("my-backup", "stone", "ext4", StorageVisibility::Open);
         let path = manifest.derive_mount_path(base);
 
         // Path should be: /var/lib/zen-garden/mounts/my-backup/{first 8 hex of id}
-        let short_id = SeedBankInfo::short_id(&manifest.id);
+        let short_id = short_id_from_guid(&manifest.id);
         assert_eq!(
             path,
             format!("/var/lib/zen-garden/mounts/my-backup/{}", short_id)
@@ -984,58 +1269,73 @@ mod tests {
 
     #[test]
     fn test_seed_bank_role_display() {
-        assert_eq!(SeedBankRole::Primary.to_string(), "primary");
-        assert_eq!(SeedBankRole::Dormant.to_string(), "dormant");
+        assert_eq!(StorageRole::Primary.to_string(), "primary");
+        assert_eq!(StorageRole::Dormant.to_string(), "dormant");
     }
 
     #[test]
-    fn test_backward_compat_deserialize() {
-        // Old v2 manifest with group/replica_id/pool_id should deserialize fine
+    fn test_manifest_roles_default() {
+        // Manifest without roles field gets default ["seed-bank"]
         let json = r#"{
-            "version": 2,
+            "version": 4,
             "id": "01956a3e-7c00-7000-8000-000000000001",
-            "name": "old-bank",
-            "pool_id": "0195",
-            "group": "primary",
-            "replica_id": 1,
+            "name": "zen-garden",
             "visibility": "open",
             "origin_stone": "stone-alpha",
             "filesystem": "btrfs",
             "created_at": "2026-01-01T00:00:00Z"
         }"#;
-        let manifest: SeedBankManifest = serde_json::from_str(json).unwrap();
-        assert_eq!(manifest.name, "old-bank");
-        assert_eq!(manifest.version, 2);
-        assert!(!manifest.encrypted);
+        let manifest: StorageManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.is_seed_bank());
+        assert_eq!(manifest.roles, vec!["seed-bank"]);
+    }
+
+    #[test]
+    fn test_manifest_no_roles() {
+        let manifest = StorageManifest::with_roles(
+            "personal",
+            "stone-alpha",
+            "ext4",
+            StorageVisibility::Open,
+            vec![],
+        );
+        assert!(!manifest.is_seed_bank());
+        assert!(manifest.roles.is_empty());
     }
 
     // ====================================================================
-    // SeedBankSummary tests
+    // StorageSummary tests
     // ====================================================================
 
-    fn make_test_info() -> SeedBankInfo {
-        SeedBankInfo::new(
+    fn make_test_info() -> StorageInfo {
+        StorageInfo::new(
             "01956a3e-7c00-7000-8000-000000000001".to_string(),
+            "public-seed-bank".to_string(),
+            "01956a3e-7c00-7000-8000-rs0000000001".to_string(),
             "public-seed-bank".to_string(),
             "/dev/sdb1".to_string(),
             "/var/lib/zen-garden/mounts/public-seed-bank/01956a3e".to_string(),
             64 * 1024 * 1024 * 1024, // 64 GB
             10 * 1024 * 1024 * 1024, // 10 GB used
-            SeedBankVisibility::Open,
+            StorageVisibility::Open,
             true,
             "stone-alpha".to_string(),
             Utc::now(),
             false,
             true,
             false,
+            vec![crate::constants::ROLE_SEED_BANK.to_string()],
         )
     }
 
-    fn make_test_announcement() -> SeedBankAnnouncement {
-        SeedBankAnnouncement {
+    fn make_test_announcement() -> StorageAnnouncement {
+        StorageAnnouncement {
             id: "01956a3e-7c00-7000-8000-000000000002".to_string(),
             name: "private-seed-bank".to_string(),
-            role: SeedBankRole::Dormant,
+            replica_set_id: "019aaaaa-0000-7000-8000-000000000001".to_string(),
+            replica_set_name: "personal".to_string(),
+            replica_set_name_updated_at: None,
+            role: StorageRole::Dormant,
             protocols: vec!["s3".to_string()],
             access: StorageAccess::Direct,
             visibility: "open".to_string(),
@@ -1044,49 +1344,24 @@ mod tests {
             used_bytes: 0,
             encrypted: true,
             pin_id: Some("019c6d5a-0000-7000-8000-000000000001".to_string()),
+            roles: vec![crate::constants::ROLE_SEED_BANK.to_string()],
         }
-    }
-
-    #[test]
-    fn test_summary_from_info() {
-        let info = make_test_info();
-        let summary =
-            SeedBankSummary::from_info(&info, SeedBankRole::Primary, false, Some("stone-alpha"));
-
-        assert_eq!(summary.short_id, "01956a3e");
-        assert_eq!(summary.name, "public-seed-bank");
-        assert_eq!(summary.capacity_gb as u32, 64);
-        assert_eq!(summary.device.as_deref(), Some("/dev/sdb1"));
-        assert_eq!(summary.stone_name.as_deref(), Some("stone-alpha"));
-        assert_eq!(summary.role, SeedBankRole::Primary);
-        assert!(!summary.pinned);
-        assert!(!summary.encrypted);
-        assert!(summary.online);
-    }
-
-    #[test]
-    fn test_summary_from_info_pinned_encrypted() {
-        let mut info = make_test_info();
-        info.encrypted = true;
-        let summary = SeedBankSummary::from_info(&info, SeedBankRole::Dormant, true, None);
-
-        assert_eq!(summary.role, SeedBankRole::Dormant);
-        assert!(summary.pinned);
-        assert!(summary.encrypted);
-        assert!(summary.stone_name.is_none());
     }
 
     #[test]
     fn test_summary_from_announcement() {
         let ann = make_test_announcement();
-        let summary = SeedBankSummary::from_announcement(&ann, "stone-beta");
+        let summary = StorageSummary::from_announcement(&ann, "stone-beta");
 
         assert_eq!(summary.short_id, "01956a3e");
         assert_eq!(summary.name, "private-seed-bank");
+        assert_eq!(summary.replica_set_id, "019aaaaa-0000-7000-8000-000000000001");
+        assert_eq!(summary.replica_set_name, "personal");
+        assert_eq!(summary.replica_set_display_name(), "personal");
         assert_eq!(summary.capacity_gb as u32, 128);
         assert!(summary.device.is_none()); // remote — no device
         assert_eq!(summary.stone_name.as_deref(), Some("stone-beta"));
-        assert_eq!(summary.role, SeedBankRole::Dormant);
+        assert_eq!(summary.role, StorageRole::Dormant);
         assert!(summary.pinned);
         assert!(summary.encrypted);
         assert!(summary.online); // remote assumed online
@@ -1094,16 +1369,19 @@ mod tests {
 
     #[test]
     fn test_format_line_primary() {
-        let summary = SeedBankSummary {
+        let summary = StorageSummary {
             short_id: "01956a3e".to_string(),
             name: "public-seed-bank".to_string(),
+            replica_set_id: String::new(),
+            replica_set_name: String::new(),
             capacity_gb: 64.0,
             device: Some("/dev/sdb1".to_string()),
             stone_name: Some("stone-01".to_string()),
-            role: SeedBankRole::Primary,
+            role: StorageRole::Primary,
             pinned: false,
             encrypted: false,
             online: true,
+            roles: vec![],
         };
         let line = summary.format_line();
         assert!(line.contains("●"), "Primary should have ● marker");
@@ -1116,16 +1394,19 @@ mod tests {
 
     #[test]
     fn test_format_line_dormant_pinned() {
-        let summary = SeedBankSummary {
+        let summary = StorageSummary {
             short_id: "0195b2c4".to_string(),
             name: "private-seed-bank".to_string(),
+            replica_set_id: String::new(),
+            replica_set_name: String::new(),
             capacity_gb: 128.0,
             device: None,
             stone_name: Some("stone-02".to_string()),
-            role: SeedBankRole::Dormant,
+            role: StorageRole::Dormant,
             pinned: true,
             encrypted: true,
             online: true,
+            roles: vec![],
         };
         let line = summary.format_line();
         assert!(!line.contains("●"), "Dormant should not have ● marker");
@@ -1137,46 +1418,96 @@ mod tests {
 
     #[test]
     fn test_format_line_no_stone_name_uses_local() {
-        let summary = SeedBankSummary {
+        let summary = StorageSummary {
             short_id: "abcdef01".to_string(),
             name: "test".to_string(),
+            replica_set_id: String::new(),
+            replica_set_name: String::new(),
             capacity_gb: 32.0,
             device: None,
             stone_name: None,
-            role: SeedBankRole::Primary,
+            role: StorageRole::Primary,
             pinned: false,
             encrypted: false,
             online: true,
+            roles: vec![],
         };
         let line = summary.format_line();
         assert!(line.contains("local"));
     }
 
     #[test]
-    fn test_announcement_from_info_sets_defaults() {
-        let info = make_test_info();
-        let ann = SeedBankAnnouncement::from_info(&info);
+    fn test_announcement_replica_set_display_name() {
+        let ann = make_test_announcement();
+        assert_eq!(ann.replica_set_display_name(), "personal");
 
-        assert_eq!(ann.role, SeedBankRole::Primary); // default
-        assert!(ann.pin_id.is_none()); // always None from_info
-        assert!(!ann.encrypted);
-        assert_eq!(ann.health, "healthy");
-        assert_eq!(ann.capacity_bytes, 64 * 1024 * 1024 * 1024);
+        let mut default_ann = make_test_announcement();
+        default_ann.replica_set_name = String::new();
+        assert_eq!(default_ann.replica_set_display_name(), "storage");
     }
 
     #[test]
-    fn test_announcement_from_info_read_only() {
-        let mut info = make_test_info();
-        info.visibility = SeedBankVisibility::ReadOnly;
-        let ann = SeedBankAnnouncement::from_info(&info);
-        assert_eq!(ann.health, "read-only");
+    fn test_manifest_replica_set_fqn() {
+        let mut manifest = StorageManifest::new(
+            "seed-01",
+            "stone-alpha",
+            "btrfs",
+            StorageVisibility::Open,
+        );
+
+        // Default set → "storage"
+        assert_eq!(manifest.replica_set_fqn(), "storage");
+
+        // Named set → "storage::images"
+        manifest.replica_set_name = "images".to_string();
+        assert_eq!(manifest.replica_set_fqn(), "storage::images");
     }
 
     #[test]
-    fn test_announcement_from_info_offline() {
-        let mut info = make_test_info();
-        info.online = false;
-        let ann = SeedBankAnnouncement::from_info(&info);
-        assert_eq!(ann.health, "degraded");
+    fn test_manifest_new_in_set() {
+        let manifest = StorageManifest::new_in_set(
+            "seed-02",
+            "stone-beta",
+            "ext4",
+            StorageVisibility::Open,
+            "existing-set-id",
+            "images",
+        );
+
+        assert_eq!(manifest.replica_set_id, "existing-set-id");
+        assert_eq!(manifest.replica_set_name, "images");
+        assert_eq!(manifest.replica_set_fqn(), "storage::images");
+    }
+
+    #[test]
+    fn test_storage_changed_variants() {
+        // Ensure all variants compile and debug-print
+        let events = vec![
+            StorageChanged::Added {
+                device_id: "d1".into(),
+                replica_set_id: "r1".into(),
+            },
+            StorageChanged::Removed {
+                device_id: "d1".into(),
+                replica_set_id: "r1".into(),
+            },
+            StorageChanged::RoleChanged {
+                device_id: "d1".into(),
+                replica_set_id: "r1".into(),
+                new_role: StorageRole::Primary,
+            },
+            StorageChanged::Renamed {
+                replica_set_id: "r1".into(),
+                new_name: "photos".into(),
+            },
+            StorageChanged::PinChanged {
+                device_id: "d1".into(),
+                replica_set_id: "r1".into(),
+            },
+            StorageChanged::Reclassified,
+        ];
+        for e in &events {
+            let _ = format!("{:?}", e);
+        }
     }
 }

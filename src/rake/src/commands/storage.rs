@@ -1,39 +1,31 @@
-//! Storage commands - seed bank preparation and management
+//! Storage commands — unified storage management (STORAGE-0010)
 //!
-//! Provides CLI commands for USB seed bank onboarding:
-//! - `prepare seed-bank` - Format and prepare device as seed bank
-//! - `release seed-bank` - Safely unmount seed bank for removal
-//! - `show seed-banks` - List all seed banks on stone
+//! All storage operations live under `garden-rake storage`:
+//! - `storage` (bare) — List all storages in the garden
+//! - `storage add` — Add a device or directory
+//! - `storage list` — List all storages and eligible devices
+//! - `storage status` — Detailed capacity/health breakdown
+//! - `storage release` — Safely unmount for removal
+//! - `storage pin` — Claim Primary role
+//! - `storage unpin` — Release Primary role
 //!
-//! And S3-compatible object storage:
-//! - `store put <bucket> <key> <file>` - Store object
-//! - `store get <bucket> <key> [file]` - Retrieve object
-//! - `store ls <bucket> [prefix]` - List objects
-//! - `store rm <bucket> <key>` - Delete object
-//! - `store head <bucket> <key>` - Get object metadata
+//! S3-compatible object storage (separate `store` command):
+//! - `store put <bucket> <key> <file>` — Store object
+//! - `store get <bucket> <key> [file]` — Retrieve object
+//! - `store ls <bucket> [prefix]` — List objects
+//! - `store rm <bucket> <key>` — Delete object
+//! - `store head <bucket> <key>` — Get object metadata
 
 use crate::commands::{Command, CommandResult};
 use crate::context::CommandContext;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
-use garden_common::storage::{PrepareSeedBankRequest, SeedBankInfo, SeedBankRole, SeedBankSummary};
+use garden_common::storage::{
+    AddStorageRequest, CandidatesResponse, MediumAction, StorageInfo, StorageRole,
+};
 use serde::Deserialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
-
-// ============================================================================
-// Response Types (mirror of API responses)
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct CandidateDevice {
-    pub device: String,
-    pub capacity_bytes: u64,
-    pub label: Option<String>,
-    pub state: String,
-    pub eligible: bool,
-    pub ineligible_reason: Option<String>,
-}
 
 /// Storage overview response from GET /api/v1/stone/storage
 #[derive(Debug, Deserialize)]
@@ -46,23 +38,41 @@ pub struct StorageOverview {
 #[derive(Debug, Deserialize)]
 pub struct GardenBankInfo {
     pub id: String,
+    /// Replica set display name (user-facing identity)
     pub name: String,
+    /// Individual volume/device name
+    #[serde(default)]
+    pub volume_name: String,
+    /// Replica set ID (STORAGE-0013).
+    #[serde(default)]
+    pub replica_set_id: String,
+    /// Replica set display name (STORAGE-0013).
+    #[serde(default)]
+    pub replica_set_name: String,
     pub stone_name: String,
     pub is_local: bool,
     pub capacity_bytes: u64,
     #[serde(default)]
-    pub role: SeedBankRole,
+    pub role: StorageRole,
     #[serde(default)]
     pub pinned: bool,
     #[serde(default)]
     pub encrypted: bool,
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
+/// Response from add storage endpoint
 #[derive(Debug, Deserialize)]
-pub struct PrepareAcceptedResponse {
-    pub accepted: bool,
-    pub job_id: String,
-    pub message: String,
+pub struct AddStorageResponseData {
+    pub id: String,
+    pub name: String,
+    pub mount_path: String,
+    #[serde(default)]
+    pub formatted: bool,
+    #[serde(default)]
+    pub cataloged: usize,
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,58 +83,158 @@ pub struct ReleaseResponse {
 }
 
 // ============================================================================
-// Prepare Seed Bank Command
+// Add Storage Command (STORAGE-0010)
 // ============================================================================
 
-pub struct PrepareSeedBankCommand {
-    /// Device path (e.g., /dev/sdb, auto for auto-select)
-    pub device: Option<String>,
-    /// Seed bank name (optional — default depends on pond/encryption context)
+pub struct AddStorageCommand {
+    /// Target — block device path (e.g. /dev/sdb) or directory path
+    pub target: Option<String>,
+    /// Human-readable name (zen: `as <name>`)
     pub name: Option<String>,
-    /// Generate random name
-    pub random_name: bool,
-    /// Filesystem preference
+    /// Roles to assign (zen: `role <role>`)
+    pub roles: Vec<String>,
+    /// Format the device before adding (destructive)
+    pub format: bool,
+    /// Filesystem preference (only when format=true)
     pub filesystem: String,
-    /// Whether to encrypt content (pond-scoped, STORAGE-0006)
+    /// Encrypt content
     pub encrypted: bool,
+    /// Skip confirmation prompt
+    pub yes: bool,
     /// Quiet mode
     pub quiet: bool,
 }
 
-impl PrepareSeedBankCommand {
+impl AddStorageCommand {
     pub fn new(
-        device: Option<String>,
+        target: Option<String>,
         name: Option<String>,
-        random_name: bool,
+        roles: Vec<String>,
+        format: bool,
         filesystem: Option<String>,
         encrypted: bool,
+        yes: bool,
     ) -> Self {
         Self {
-            device,
+            target,
             name,
-            random_name,
+            roles,
+            format,
             filesystem: filesystem.unwrap_or_else(|| "btrfs".to_string()),
             encrypted,
+            yes,
             quiet: false,
         }
     }
 }
 
 #[async_trait]
-impl Command for PrepareSeedBankCommand {
+impl Command for AddStorageCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for prepare command"))?;
+            .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage add command"))?;
+        let base = endpoint.trim_end_matches('/');
 
-        // First, get list of candidates
-        let url = format!(
-            "{}/api/v1/stone/storage/candidates",
-            endpoint.trim_end_matches('/')
-        );
+        // Resolve target — if not provided, list candidates and let user pick
+        let target = match &self.target {
+            Some(t) => t.clone(),
+            None => self.pick_target(ctx, base).await?,
+        };
+
+        let is_block_device = target.starts_with("/dev/");
+
+        // Destructive format confirmation
+        if is_block_device && self.format && !self.yes {
+            println!(
+                "\n{} WARNING: This will FORMAT and ERASE ALL DATA on {}",
+                ui::status_indicator("warn", ctx.term.supports_color),
+                target
+            );
+            print!("Type 'yes' to continue: ");
+            io::stdout().flush()?;
+
+            let mut confirm = String::new();
+            io::stdin().read_line(&mut confirm)?;
+
+            if confirm.trim().to_lowercase() != "yes" {
+                println!("Cancelled.");
+                return Ok(());
+            }
+        }
+
+        // Build unified request
+        let request = AddStorageRequest {
+            target: target.clone(),
+            name: self.name.clone(),
+            format: self.format,
+            filesystem: self.filesystem.clone(),
+            encrypted: self.encrypted,
+            roles: self.roles.clone(),
+        };
+
+        // POST /api/v1/stone/storage/add
+        let url = format!("{}/api/v1/stone/storage/add", base);
+        let response = ctx
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to submit storage add request: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Storage add failed ({}): {}", status, text);
+        }
+
+        let result: AddStorageResponseData = response
+            .json::<ApiResponse<AddStorageResponseData>>()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+            .data;
+
+        if !self.quiet {
+            println!(
+                "\n{} Storage '{}' added successfully",
+                ui::status_indicator("success", ctx.term.supports_color),
+                result.name
+            );
+            println!("  Mount: {}", result.mount_path);
+            if result.formatted {
+                println!("  Formatted: yes ({})", self.filesystem);
+            }
+            if result.cataloged > 0 {
+                println!("  Cataloged: {} existing items", result.cataloged);
+            }
+            if let Some(ref job_id) = result.job_id {
+                println!("  Job ID: {}", job_id);
+                println!("\nTip: Use 'garden-rake watch' to monitor format progress");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn requires_endpoint(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &'static str {
+        "storage-add"
+    }
+}
+
+impl AddStorageCommand {
+    /// Interactive device selection when no target provided.
+    async fn pick_target(&self, ctx: &CommandContext, base: &str) -> anyhow::Result<String> {
+        use garden_common::ui::rendering as ui;
+
+        let url = format!("{}/api/v1/stone/storage/candidates", base);
         let response = ctx
             .client
             .get(&url)
@@ -138,168 +248,114 @@ impl Command for PrepareSeedBankCommand {
             anyhow::bail!("API error {}: {}", status, text);
         }
 
-        let candidates: Vec<CandidateDevice> = response
-            .json::<ApiResponse<Vec<CandidateDevice>>>()
+        let resp: CandidatesResponse = response
+            .json()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse candidates: {}", e))?
-            .data;
+            .map_err(|e| anyhow::anyhow!("Failed to parse candidates: {}", e))?;
 
-        // Filter to eligible only
-        let eligible: Vec<&CandidateDevice> = candidates.iter().filter(|c| c.eligible).collect();
+        // Build a flat list of eligible targets from spaces (mounted volumes).
+        struct EligibleTarget {
+            device: String,
+            capacity_bytes: u64,
+            label: String,
+        }
+        let eligible: Vec<EligibleTarget> = resp
+            .spaces
+            .iter()
+            .filter(|s| s.eligible)
+            .map(|s| EligibleTarget {
+                device: s.device.clone(),
+                capacity_bytes: s.capacity_bytes,
+                label: s.label.as_deref().unwrap_or("(no label)").to_string(),
+            })
+            .collect();
 
         if eligible.is_empty() {
-            println!(
-                "\n{} No eligible devices found.",
-                ui::status_indicator("warn", ctx.term.supports_color)
+            // Check if there are media that need action
+            let actionable: Vec<_> = resp
+                .media
+                .iter()
+                .filter(|m| matches!(m.suggested_action, MediumAction::NeedsPartition | MediumAction::NeedsFormat))
+                .collect();
+            if !actionable.is_empty() {
+                let mut msg = String::from("No ready volumes found, but detected physical media:\n");
+                for m in &actionable {
+                    msg.push_str(&format!(
+                        "  {} ({}) — {}\n",
+                        m.model.as_deref().unwrap_or(&m.device_id),
+                        format_bytes(m.size_bytes),
+                        m.suggested_action,
+                    ));
+                }
+                msg.push_str("\nPartition and format these disks first, then try again.");
+                anyhow::bail!(msg);
+            }
+            anyhow::bail!(
+                "No eligible devices found. Insert a USB drive or specify a directory path."
             );
-            println!("\nTo prepare a seed bank, insert a USB drive that is:");
-            println!("  • Removable (USB, SD card)");
-            println!("  • Empty or unformatted");
-            println!("  • Not currently in use by Zen Garden");
-            return Ok(());
         }
 
-        // Select device
-        let device = if let Some(ref d) = self.device {
-            if d == "auto" && eligible.len() == 1 {
-                eligible[0].device.clone()
-            } else {
-                d.clone()
-            }
-        } else if eligible.len() == 1 {
-            // Auto-select if only one device
+        if eligible.len() == 1 {
             println!(
                 "\n{} Found: {} ({})",
                 ui::status_indicator("info", ctx.term.supports_color),
                 eligible[0].device,
                 format_bytes(eligible[0].capacity_bytes)
             );
-            eligible[0].device.clone()
-        } else {
-            // Interactive selection
-            println!(
-                "\n{} Multiple devices found:",
-                ui::status_indicator("info", ctx.term.supports_color)
-            );
-            for (i, dev) in eligible.iter().enumerate() {
-                let label = dev.label.as_deref().unwrap_or("(no label)");
-                println!(
-                    "  [{}] {} - {} - {}",
-                    i + 1,
-                    dev.device,
-                    format_bytes(dev.capacity_bytes),
-                    label
-                );
-            }
+            return Ok(eligible[0].device.clone());
+        }
 
-            print!("\nSelect device [1-{}]: ", eligible.len());
-            io::stdout().flush()?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-
-            let idx: usize = input
-                .trim()
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
-            if idx < 1 || idx > eligible.len() {
-                anyhow::bail!("Selection out of range");
-            }
-            eligible[idx - 1].device.clone()
-        };
-
-        // Confirm destruction
+        // Interactive selection
         println!(
-            "\n{} WARNING: This will ERASE ALL DATA on {}",
-            ui::status_indicator("warn", ctx.term.supports_color),
-            device
+            "\n{} Multiple devices found:",
+            ui::status_indicator("info", ctx.term.supports_color)
         );
-        print!("Type 'yes' to continue: ");
+        for (i, dev) in eligible.iter().enumerate() {
+            println!(
+                "  [{}] {} - {} - {}",
+                i + 1,
+                dev.device,
+                format_bytes(dev.capacity_bytes),
+                dev.label,
+            );
+        }
+
+        print!("\nSelect device [1-{}]: ", eligible.len());
         io::stdout().flush()?;
 
-        let mut confirm = String::new();
-        io::stdin().read_line(&mut confirm)?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
 
-        if confirm.trim().to_lowercase() != "yes" {
-            println!("Cancelled.");
-            return Ok(());
+        let idx: usize = input
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
+        if idx < 1 || idx > eligible.len() {
+            anyhow::bail!("Selection out of range");
         }
-
-        // Build request
-        let request = PrepareSeedBankRequest::new(
-            device.clone(),
-            self.name.clone(),
-            self.random_name,
-            self.filesystem.clone(),
-            self.encrypted,
-        );
-
-        // Submit preparation request
-        let url = format!(
-            "{}/api/v1/stone/storage/prepare",
-            endpoint.trim_end_matches('/')
-        );
-        let response = ctx
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to submit prepare request: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Preparation failed ({}): {}", status, text);
-        }
-
-        let accepted: PrepareAcceptedResponse = response
-            .json::<ApiResponse<PrepareAcceptedResponse>>()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-            .data;
-
-        if !self.quiet {
-            println!(
-                "\n{} {}",
-                ui::status_indicator("success", ctx.term.supports_color),
-                accepted.message
-            );
-            println!("Job ID: {}", accepted.job_id);
-            println!("\nTip: Use 'garden-rake watch' to monitor preparation progress");
-        }
-
-        Ok(())
-    }
-
-    fn requires_endpoint(&self) -> bool {
-        true
-    }
-
-    fn name(&self) -> &'static str {
-        "prepare"
+        Ok(eligible[idx - 1].device.clone())
     }
 }
 
 // ============================================================================
-// Release Seed Bank Command
+// Release Storage Command
 // ============================================================================
 
-pub struct ReleaseSeedBankCommand {
-    /// Seed bank name (or "all" to release all)
+pub struct ReleaseStorageCommand {
+    /// Storage name (or "all" to release all)
     pub name: String,
     /// Quiet mode
     pub quiet: bool,
 }
 
-impl ReleaseSeedBankCommand {
+impl ReleaseStorageCommand {
     pub fn new(name: String) -> Self {
         Self { name, quiet: false }
     }
 }
 
 #[async_trait]
-impl Command for ReleaseSeedBankCommand {
+impl Command for ReleaseStorageCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
@@ -355,10 +411,7 @@ impl Command for ReleaseSeedBankCommand {
             return Ok(());
         }
 
-        // Single release — resolve name to bank ID with disambiguation
-        let bank_id = resolve_bank_id_by_name(ctx, base, &self.name).await?;
-
-        let url = format!("{}/api/v1/stone/storage/bank/{}/release", base, bank_id);
+        let url = format!("{}/api/v1/stone/storage/banks/{}/release", base, self.name);
         let response = ctx
             .client
             .post(&url)
@@ -401,38 +454,38 @@ impl Command for ReleaseSeedBankCommand {
 }
 
 // ============================================================================
-// Show Seed Banks Command
+// List Storage Command
 // ============================================================================
 
-pub struct ShowSeedBanksCommand {
+pub struct ListStorageCommand {
     pub quiet: bool,
 }
 
-impl Default for ShowSeedBanksCommand {
+impl Default for ListStorageCommand {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ShowSeedBanksCommand {
+impl ListStorageCommand {
     pub fn new() -> Self {
         Self { quiet: false }
     }
 }
 
 #[async_trait]
-impl Command for ShowSeedBanksCommand {
+impl Command for ListStorageCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for seed-banks command"))?;
+            .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage list command"))?;
 
-        // Fetch local seed banks
+        // Fetch local storages
         let banks_url = format!(
-            "{}/api/v1/stone/storage/bank",
+            "{}/api/v1/stone/storage/banks",
             endpoint.trim_end_matches('/')
         );
         let banks_response = ctx
@@ -440,7 +493,7 @@ impl Command for ShowSeedBanksCommand {
             .get(&banks_url)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch seed banks: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to fetch storages: {}", e))?;
 
         if !banks_response.status().is_success() {
             let status = banks_response.status();
@@ -448,8 +501,8 @@ impl Command for ShowSeedBanksCommand {
             anyhow::bail!("API error {}: {}", status, text);
         }
 
-        let seed_banks: Vec<SeedBankInfo> = banks_response
-            .json::<ApiResponse<Vec<SeedBankInfo>>>()
+        let storages: Vec<StorageInfo> = banks_response
+            .json::<ApiResponse<Vec<StorageInfo>>>()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
             .data;
@@ -465,75 +518,82 @@ impl Command for ShowSeedBanksCommand {
             _ => Vec::new(),
         };
 
-        // Fetch candidates if on Linux
-        let candidates: Vec<CandidateDevice> = {
+        // Fetch candidates (cross-platform)
+        let candidates: Option<CandidatesResponse> = {
             let cand_url = format!(
                 "{}/api/v1/stone/storage/candidates",
                 endpoint.trim_end_matches('/')
             );
             match ctx.client.get(&cand_url).send().await {
-                Ok(resp) if resp.status().is_success() => resp
-                    .json::<Vec<CandidateDevice>>()
-                    .await
-                    .unwrap_or_default(),
-                _ => Vec::new(),
+                Ok(resp) if resp.status().is_success() => {
+                    resp.json::<CandidatesResponse>().await.ok()
+                }
+                _ => None,
             }
         };
 
-        // Display seed banks — grouped by logical name with garden-wide view
-        if seed_banks.is_empty() && garden_banks.is_empty() {
+        // Display storages — grouped by replica set name with volumes underneath
+        if storages.is_empty() && garden_banks.is_empty() {
             println!(
-                "\n{} No seed banks configured.",
+                "\n{} No managed storage found.",
                 ui::status_indicator("info", ctx.term.supports_color)
             );
         } else if !garden_banks.is_empty() {
-            // Group by logical name for garden-wide view
+            // Group by replica set name (user-facing identity)
             let mut by_name: std::collections::BTreeMap<String, Vec<&GardenBankInfo>> =
                 std::collections::BTreeMap::new();
             for gb in &garden_banks {
                 by_name.entry(gb.name.clone()).or_default().push(gb);
             }
 
-            println!("\n{}", ui::section_header("SEED BANKS", &ctx.term));
+            println!("\n{}", ui::section_header("STORAGE", &ctx.term));
             for (name, replicas) in &by_name {
                 let replica_count = replicas.len();
-                let primary = replicas.iter().find(|r| r.role == SeedBankRole::Primary);
-                let _primary_stone = primary.map(|p| p.stone_name.as_str()).unwrap_or("unknown");
                 let is_encrypted = replicas.iter().any(|r| r.encrypted);
                 let is_pinned = replicas.iter().any(|r| r.pinned);
 
                 let enc_label = if is_encrypted { " [encrypted]" } else { "" };
-                let pin_label = if is_pinned { " ★ pinned" } else { "" };
+                let pin_label = if is_pinned { " pinned" } else { "" };
+
+                // Total capacity across all volumes in this replica set
+                let total_cap: u64 = replicas.iter().map(|r| r.capacity_bytes).sum();
+                let cap_str = format_bytes(total_cap);
 
                 println!(
-                    "\n  {} {}  ({} replica{}){}{}",
+                    "\n  {} {}  ({} volume{}, {}){}{}",
                     ui::status_indicator("success", ctx.term.supports_color),
                     name,
                     replica_count,
                     if replica_count == 1 { "" } else { "s" },
+                    cap_str,
                     enc_label,
                     pin_label,
                 );
 
                 for r in replicas {
-                    let summary = SeedBankSummary {
-                        short_id: SeedBankInfo::short_id(&r.id),
-                        name: r.name.clone(),
-                        capacity_gb: r.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-                        device: None,
-                        stone_name: Some(r.stone_name.clone()),
-                        role: r.role,
-                        pinned: r.pinned,
-                        encrypted: r.encrypted,
-                        online: true,
+                    let vol_name = if r.volume_name.is_empty() {
+                        &r.id[..8.min(r.id.len())]
+                    } else {
+                        &r.volume_name
                     };
-                    println!("  {}", summary.format_line());
+                    let role_tag = match r.role {
+                        StorageRole::Primary => " [primary]",
+                        StorageRole::Dormant => " [dormant]",
+                    };
+                    let cap = format_bytes(r.capacity_bytes);
+                    println!(
+                        "      {} — {} ({}){}",
+                        vol_name,
+                        r.stone_name,
+                        cap,
+                        role_tag,
+                    );
                 }
             }
         } else {
-            // Fallback: only local banks (no garden view)
-            println!("\n{}", ui::section_header("SEED BANKS", &ctx.term));
-            for sb in &seed_banks {
+            // Fallback: only local storages (no garden view)
+            println!("\n{}", ui::section_header("STORAGE", &ctx.term));
+            for sb in &storages {
                 let status = if sb.online {
                     ui::status_indicator("success", ctx.term.supports_color)
                 } else {
@@ -554,25 +614,57 @@ impl Command for ShowSeedBanksCommand {
         }
 
         // Display candidates
-        if !candidates.is_empty() {
-            let eligible_candidates: Vec<_> = candidates.iter().filter(|c| c.eligible).collect();
-            if !eligible_candidates.is_empty() {
+        if let Some(ref cands) = candidates {
+            // Ready volumes (can be added immediately)
+            let eligible: Vec<_> = cands.spaces.iter().filter(|s| s.eligible).collect();
+            if !eligible.is_empty() {
                 println!("\n{}", ui::section_header("ELIGIBLE DEVICES", &ctx.term));
-                for c in eligible_candidates {
+                for s in &eligible {
+                    let label = s.label.as_deref().unwrap_or("");
+                    let mount = s.mount_path.as_deref().unwrap_or(&s.device);
                     println!(
-                        "  {} {} - {} - available for preparation",
+                        "  {} {} - {} {} (use: storage add {})",
                         ui::status_indicator("info", ctx.term.supports_color),
-                        c.device,
-                        format_bytes(c.capacity_bytes)
+                        mount,
+                        format_bytes(s.capacity_bytes),
+                        label,
+                        mount,
+                    );
+                }
+            }
+
+            // Physical media needing action
+            let actionable: Vec<_> = cands
+                .media
+                .iter()
+                .filter(|m| {
+                    matches!(
+                        m.suggested_action,
+                        MediumAction::NeedsPartition | MediumAction::NeedsFormat
+                    )
+                })
+                .collect();
+            if !actionable.is_empty() {
+                println!("\n{}", ui::section_header("PHYSICAL MEDIA (needs setup)", &ctx.term));
+                for m in &actionable {
+                    let name = m.model.as_deref().unwrap_or(&m.device_id);
+                    println!(
+                        "  {} {} - {} via {} — {}",
+                        ui::status_indicator("warn", ctx.term.supports_color),
+                        name,
+                        format_bytes(m.size_bytes),
+                        m.bus_type,
+                        m.suggested_action,
                     );
                 }
             }
         }
 
-        if seed_banks.is_empty()
-            && garden_banks.is_empty()
-            && candidates.iter().all(|c| !c.eligible)
-        {
+        let has_candidates = candidates
+            .as_ref()
+            .map(|c| !c.spaces.is_empty() || !c.media.is_empty())
+            .unwrap_or(false);
+        if storages.is_empty() && garden_banks.is_empty() && !has_candidates {
             println!("\nTip: Insert a USB drive to see available devices");
         }
 
@@ -584,35 +676,35 @@ impl Command for ShowSeedBanksCommand {
     }
 
     fn name(&self) -> &'static str {
-        "seed-banks"
+        "storage-list"
     }
 }
 
 // ============================================================================
-// Pin / Unpin Seed Bank Commands (STORAGE-0006 Phase 5)
+// Pin / Unpin Storage Commands
 // ============================================================================
 
 /// Response from pin/unpin API
 #[derive(Debug, Deserialize)]
-pub struct PinSeedBankResponse {
+pub struct PinStorageResponse {
     pub name: String,
     pub pinned: bool,
     pub message: String,
 }
 
-/// Pin the Primary role for a seed bank
-pub struct PinSeedBankCommand {
+/// Pin the Primary role for a storage
+pub struct PinStorageCommand {
     pub name: String,
 }
 
-impl PinSeedBankCommand {
+impl PinStorageCommand {
     pub fn new(name: String) -> Self {
         Self { name }
     }
 }
 
 #[async_trait]
-impl Command for PinSeedBankCommand {
+impl Command for PinStorageCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
@@ -622,16 +714,14 @@ impl Command for PinSeedBankCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for pin command"))?;
 
         let url = format!(
-            "{}/api/v1/stone/storage/bank/pin",
-            endpoint.trim_end_matches('/')
+            "{}/api/v1/stone/storage/banks/{}/pin",
+            endpoint.trim_end_matches('/'),
+            self.name
         );
-
-        let body = serde_json::json!({ "name": self.name });
 
         let response = ctx
             .client
             .post(&url)
-            .json(&body)
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to pin: {}", e))?;
@@ -642,8 +732,8 @@ impl Command for PinSeedBankCommand {
             anyhow::bail!("Pin failed ({}): {}", status, text);
         }
 
-        let result: PinSeedBankResponse = response
-            .json::<ApiResponse<PinSeedBankResponse>>()
+        let result: PinStorageResponse = response
+            .json::<ApiResponse<PinStorageResponse>>()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
             .data;
@@ -662,19 +752,19 @@ impl Command for PinSeedBankCommand {
     }
 }
 
-/// Unpin the Primary role for a seed bank
-pub struct UnpinSeedBankCommand {
+/// Unpin the Primary role for a storage
+pub struct UnpinStorageCommand {
     pub name: String,
 }
 
-impl UnpinSeedBankCommand {
+impl UnpinStorageCommand {
     pub fn new(name: String) -> Self {
         Self { name }
     }
 }
 
 #[async_trait]
-impl Command for UnpinSeedBankCommand {
+impl Command for UnpinStorageCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
@@ -684,16 +774,14 @@ impl Command for UnpinSeedBankCommand {
             .ok_or_else(|| anyhow::anyhow!("Endpoint required for unpin command"))?;
 
         let url = format!(
-            "{}/api/v1/stone/storage/bank/unpin",
-            endpoint.trim_end_matches('/')
+            "{}/api/v1/stone/storage/banks/{}/unpin",
+            endpoint.trim_end_matches('/'),
+            self.name
         );
-
-        let body = serde_json::json!({ "name": self.name });
 
         let response = ctx
             .client
             .post(&url)
-            .json(&body)
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to unpin: {}", e))?;
@@ -704,8 +792,8 @@ impl Command for UnpinSeedBankCommand {
             anyhow::bail!("Unpin failed ({}): {}", status, text);
         }
 
-        let result: PinSeedBankResponse = response
-            .json::<ApiResponse<PinSeedBankResponse>>()
+        let result: PinStorageResponse = response
+            .json::<ApiResponse<PinStorageResponse>>()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
             .data;
@@ -1385,74 +1473,204 @@ impl Command for StoreHeadCommand {
 }
 
 // ============================================================================
-// Shared Helpers
+// Storage Status Command (STORAGE-0009 Phase 6)
 // ============================================================================
 
-/// Resolve a user-supplied seed bank name to its GUIDv7 id on the target stone.
-///
-/// If a stone has multiple same-name replicas (e.g. two USB drives both
-/// carrying "zen-garden"), this shows a numbered disambiguation picker.
-async fn resolve_bank_id_by_name(
-    ctx: &CommandContext,
-    base: &str,
-    name: &str,
-) -> Result<String, anyhow::Error> {
-    let url = format!("{}/api/v1/stone/storage/bank", base);
-    let resp = ctx
-        .client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to list seed banks: {}", e))?;
+pub struct StorageStatusCommand {
+    pub quiet: bool,
+}
 
-    if !resp.status().is_success() {
-        anyhow::bail!("Failed to list seed banks ({})", resp.status());
-    }
-
-    let all: Vec<SeedBankInfo> = resp
-        .json::<ApiResponse<Vec<SeedBankInfo>>>()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to parse bank list: {}", e))?
-        .data;
-
-    let matches: Vec<&SeedBankInfo> = all.iter().filter(|b| b.name == name).collect();
-
-    match matches.len() {
-        0 => anyhow::bail!("No seed bank named '{}' found on this stone", name),
-        1 => Ok(matches[0].id.clone()),
-        _ => {
-            // Disambiguation picker
-            println!("\nMultiple replicas of '{}' found on this stone:\n", name);
-            for (i, bank) in matches.iter().enumerate() {
-                let short = SeedBankInfo::short_id(&bank.id);
-                let cap = bank.capacity_bytes as f32 / 1024.0 / 1024.0 / 1024.0;
-                let online = if bank.online { "" } else { "  (offline)" };
-                println!(
-                    "  [{}] {}  {:.0}GB  {}{}",
-                    i + 1,
-                    short,
-                    cap,
-                    bank.device,
-                    online,
-                );
-            }
-
-            print!("\nSelect replica [1-{}]: ", matches.len());
-            use std::io::Write;
-            std::io::stdout().flush()?;
-
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            let choice: usize = input
-                .trim()
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
-
-            if choice < 1 || choice > matches.len() {
-                anyhow::bail!("Selection out of range");
-            }
-
-            Ok(matches[choice - 1].id.clone())
-        }
+impl StorageStatusCommand {
+    pub fn new() -> Self {
+        Self { quiet: false }
     }
 }
+
+impl Default for StorageStatusCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Command for StorageStatusCommand {
+    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+        use garden_common::ui::rendering as ui;
+
+        let endpoint = ctx
+            .endpoint
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage status command"))?;
+
+        // Fetch local banks
+        let banks_url = format!(
+            "{}/api/v1/stone/storage/banks",
+            endpoint.trim_end_matches('/')
+        );
+        let banks_response = ctx
+            .client
+            .get(&banks_url)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch storage banks: {}", e))?;
+
+        if !banks_response.status().is_success() {
+            let status = banks_response.status();
+            let text = banks_response.text().await.unwrap_or_default();
+            anyhow::bail!("API error {}: {}", status, text);
+        }
+
+        let banks: Vec<StorageInfo> = banks_response
+            .json::<ApiResponse<Vec<StorageInfo>>>()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+            .data;
+
+        // Fetch garden-wide overview for roles
+        let overview_url = format!("{}/api/v1/stone/storage", endpoint.trim_end_matches('/'));
+        let garden_banks: Vec<GardenBankInfo> = match ctx.client.get(&overview_url).send().await {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<ApiResponse<StorageOverview>>()
+                .await
+                .map(|r| r.data.garden_banks)
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+
+        if banks.is_empty() && garden_banks.is_empty() {
+            println!(
+                "\n{} No managed storage found.",
+                ui::status_indicator("info", ctx.term.supports_color)
+            );
+            println!("\nTip: Use 'garden-rake storage add <device-or-path>' to add storage");
+            return Ok(());
+        }
+
+        println!("\n{}", ui::section_header("STORAGE STATUS", &ctx.term));
+
+        // Build a role lookup from garden banks
+        let mut role_map: std::collections::HashMap<String, StorageRole> =
+            std::collections::HashMap::new();
+        let mut pin_map: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+        for gb in &garden_banks {
+            if gb.is_local {
+                role_map.insert(gb.id.clone(), gb.role);
+                pin_map.insert(gb.id.clone(), gb.pinned);
+            }
+        }
+
+        // Totals
+        let mut total_capacity: u64 = 0;
+        let mut total_used: u64 = 0;
+
+        for bank in &banks {
+            let role = role_map
+                .get(&bank.id)
+                .copied()
+                .unwrap_or(StorageRole::Dormant);
+            let pinned = pin_map.get(&bank.id).copied().unwrap_or(false);
+
+            let status_icon = if bank.online {
+                ui::status_indicator("success", ctx.term.supports_color)
+            } else {
+                ui::status_indicator("error", ctx.term.supports_color)
+            };
+
+            let available = bank.capacity_bytes.saturating_sub(bank.used_bytes);
+            let usage_pct = if bank.capacity_bytes > 0 {
+                (bank.used_bytes as f64 / bank.capacity_bytes as f64 * 100.0) as u32
+            } else {
+                0
+            };
+
+            let pin_label = if pinned { " ★ pinned" } else { "" };
+            let enc_label = if bank.encrypted { " [encrypted]" } else { "" };
+            let roles_label = if bank.roles.is_empty() {
+                String::new()
+            } else {
+                format!("  roles: {}", bank.roles.join(", "))
+            };
+
+            println!(
+                "\n  {} {}  ({}){}{}\n",
+                status_icon,
+                bank.name,
+                role,
+                pin_label,
+                enc_label,
+            );
+            println!(
+                "    Capacity:   {}",
+                format_bytes(bank.capacity_bytes)
+            );
+            println!(
+                "    Used:       {} ({}%)",
+                format_bytes(bank.used_bytes),
+                usage_pct,
+            );
+            println!(
+                "    Available:  {}",
+                format_bytes(available)
+            );
+            println!(
+                "    Device:     {}",
+                bank.device
+            );
+            println!(
+                "    Mount:      {}",
+                bank.mount_path
+            );
+            println!(
+                "    Visibility: {}",
+                bank.visibility,
+            );
+            if !bank.replica_set_id.is_empty() {
+                let rs_display = if bank.replica_set_name.is_empty() {
+                    "storage".to_string()
+                } else {
+                    bank.replica_set_name.clone()
+                };
+                let rs_short = StorageInfo::short_id(&bank.replica_set_id);
+                println!("    Replica set: {} ({})", rs_display, rs_short);
+            }
+            if !roles_label.is_empty() {
+                println!("   {}", roles_label);
+            }
+
+            total_capacity += bank.capacity_bytes;
+            total_used += bank.used_bytes;
+        }
+
+        // Summary line
+        if banks.len() > 1 {
+            let total_available = total_capacity.saturating_sub(total_used);
+            let total_pct = if total_capacity > 0 {
+                (total_used as f64 / total_capacity as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            println!("\n{}", ui::section_header("TOTALS", &ctx.term));
+            println!(
+                "  {} storage{}: {} used of {} ({}% used, {} available)",
+                banks.len(),
+                if banks.len() == 1 { "" } else { "s" },
+                format_bytes(total_used),
+                format_bytes(total_capacity),
+                total_pct,
+                format_bytes(total_available),
+            );
+        }
+
+        Ok(())
+    }
+
+    fn requires_endpoint(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &'static str {
+        "storage-status"
+    }
+}
+

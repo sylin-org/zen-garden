@@ -184,34 +184,7 @@ async fn get_windows_motherboard_uuid() -> Result<String> {
 
 #[cfg(target_os = "windows")]
 async fn get_windows_machine_guid() -> Result<String> {
-    // Query registry for Windows MachineGuid (very reliable)
-    let output = tokio::process::Command::new("reg")
-        .args([
-            "query",
-            "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
-            "/v",
-            "MachineGuid",
-        ])
-        .output()
-        .await
-        .context("Failed to query registry")?;
-
-    if !output.status.success() {
-        anyhow::bail!("Registry query failed");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains("MachineGuid") && line.contains("REG_SZ") {
-            // Line format: "    MachineGuid    REG_SZ    {GUID}"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(guid) = parts.last() {
-                return Ok(guid.to_string());
-            }
-        }
-    }
-
-    anyhow::bail!("MachineGuid not found in registry output")
+    crate::infra::platform::registry::get_machine_guid()
 }
 
 #[cfg(target_os = "windows")]

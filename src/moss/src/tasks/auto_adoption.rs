@@ -97,7 +97,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
         let adoptable_manifests = state
             .manifest_registry
             .offerings_by_mode(&OfferingMode::Adopted);
-        tracing::info!(
+        tracing::debug!(
             count = adoptable_manifests.len(),
             scan = scan_count,
             elapsed_secs = elapsed_secs,
@@ -299,14 +299,19 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         ServiceHealthStatus::Degraded
                     };
 
+                    let adopted_fqn =
+                        garden_common::offerings::OfferingFqn::adopted(&manifest.name)
+                            .unwrap_or_else(|e| {
+                                // Should never happen for valid manifest names
+                                panic!(
+                                    "Invalid manifest name '{}' for adopted FQN: {}",
+                                    manifest.name, e
+                                );
+                            });
+
                     let guidance = crate::tasks::build_adopted_guidance(
                         &state,
-                        &format!(
-                            "{}{}{}",
-                            manifest.name,
-                            garden_common::constants::OFFERING_FQN_SEPARATOR,
-                            garden_common::constants::OFFERING_ADOPTED_INSTANCE
-                        ),
+                        &adopted_fqn.to_string(),
                         &manifest.name,
                         location.port,
                         None,
@@ -314,12 +319,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
                     let adopted_offering = garden_common::Offering {
                         offering_id: garden_common::utils::ids::generate_guidv7(),
-                        name: format!(
-                            "{}{}{}",
-                            manifest.name,
-                            garden_common::constants::OFFERING_FQN_SEPARATOR,
-                            garden_common::constants::OFFERING_ADOPTED_INSTANCE
-                        ),
+                        name: adopted_fqn,
                         offering: manifest.name.clone(),
                         version: result.version.unwrap_or_else(|| "unknown".to_string()),
                         status: garden_common::OfferingStatus::Running,

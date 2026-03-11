@@ -263,7 +263,7 @@ mod tests {
 
         entry.services.push(TopologyServiceEntry {
             offering_id: "test-offering-id".to_string(),
-            name: "redis".to_string(),
+            name: garden_common::offerings::OfferingFqn::new("redis").unwrap(),
             offering: "redis".to_string(),
             category: "data".to_string(),
             status: "Running".to_string(),

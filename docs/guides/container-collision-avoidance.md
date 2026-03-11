@@ -33,7 +33,7 @@ You have a Windows machine with:
 **Rule**: Managed offerings MUST use the `zen-offering-{name}` container naming convention.
 
 **Instance note**: `{name}` is the offering FQN encoded for containers.  
-Example: `ollama:dev` → `zen-offering-ollama--dev`.
+Example: `ollama::dev` → `zen-offering-ollama--dev`.
 
 ### Namespace Boundaries
 

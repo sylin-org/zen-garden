@@ -246,27 +246,7 @@ impl EncryptedFileBackend {
 
     #[cfg(target_os = "windows")]
     fn get_machine_id() -> Result<String> {
-        // Use Windows MachineGuid from registry
-        use std::process::Command;
-
-        let output = Command::new("reg")
-            .args([
-                "query",
-                "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
-                "/v",
-                "MachineGuid",
-            ])
-            .output()
-            .context("Failed to query registry")?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let guid = stdout
-            .lines()
-            .find(|line| line.contains("MachineGuid"))
-            .and_then(|line| line.split_whitespace().last())
-            .context("Could not parse MachineGuid")?;
-
-        Ok(guid.to_string())
+        crate::infra::platform::registry::get_machine_guid()
     }
 
     #[cfg(target_os = "macos")]

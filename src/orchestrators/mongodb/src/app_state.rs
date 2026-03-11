@@ -3,14 +3,16 @@
 //! Follows the Moss pattern: every field is `Arc` or cheap-to-clone.
 //! Mutation goes through methods that acquire write locks.
 
+use crate::domain::group_state::{self, GroupState, KnownMember};
 use crate::domain::types::*;
+use garden_common::offerings::OfferingFqn;
 use orchestrator_common::events::DashboardEvent;
 use orchestrator_common::persistence::TendedStone;
 use orchestrator_common::stone_catalog::{StoneCatalog, StoneIdentity};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 
 /// Shared state for the MongoDB Orchestrator.
@@ -35,10 +37,16 @@ pub struct AppState {
     pub catalog: Arc<RwLock<StoneCatalog>>,
     /// All discovered MongoDB instances, keyed by stone_name.
     pub instances: Arc<RwLock<HashMap<String, MongoInstance>>>,
-    /// Replica set states, keyed by FQN (e.g. "mongodb", "mongodb:analytics").
-    pub replica_sets: Arc<RwLock<HashMap<String, ReplicaSetState>>>,
+    /// Replica set states, keyed by FQN (e.g. `mongodb`, `mongodb::analytics`).
+    pub replica_sets: Arc<RwLock<HashMap<OfferingFqn, ReplicaSetState>>>,
     /// Pending membership actions (persisted across restarts).
     pub pending_actions: Arc<RwLock<Vec<PendingAction>>>,
+    /// Per-FQN group state (persisted across restarts).
+    pub groups: Arc<RwLock<HashMap<String, GroupState>>>,
+
+    // ── Signals ──
+    /// Wake the conductor when the instance registry changes.
+    pub conductor_notify: Arc<Notify>,
 
     // ── Events ──
     pub dashboard_tx: broadcast::Sender<DashboardEvent>,
@@ -70,6 +78,8 @@ impl AppState {
             instances: Arc::new(RwLock::new(HashMap::new())),
             replica_sets: Arc::new(RwLock::new(HashMap::new())),
             pending_actions: Arc::new(RwLock::new(Vec::new())),
+            groups: Arc::new(RwLock::new(HashMap::new())),
+            conductor_notify: Arc::new(Notify::new()),
             dashboard_tx,
             shutdown,
             start_time: Instant::now(),
@@ -109,13 +119,24 @@ impl AppState {
                         instance.mongo_endpoint.clone(),
                     ));
                 }
-                // Merge: update discovery fields, preserve health/role
+                // Merge: update discovery fields, preserve health/role/version
                 existing.stone_id = instance.stone_id;
                 existing.stone_name = instance.stone_name;
                 existing.moss_endpoint = instance.moss_endpoint;
                 existing.mongo_endpoint = instance.mongo_endpoint;
                 existing.fqn = instance.fqn;
                 existing.last_seen = instance.last_seen;
+                // Preserve version info populated by probe_sweep (discovery has None)
+                if instance.server_version.is_some() {
+                    existing.server_version = instance.server_version;
+                    existing.wire_version_range = instance.wire_version_range;
+                }
+                // Offline means the stone was unreachable — the only state
+                // probe_sweep skips.  Re-discovery proves the stone is back,
+                // so reset to Unknown so the next probe picks it up.
+                if matches!(existing.health, InstanceHealth::Offline) {
+                    existing.health = InstanceHealth::Unknown;
+                }
                 is_new = false;
             } else {
                 reg.insert(key, instance);
@@ -196,19 +217,19 @@ impl AppState {
     }
 
     /// Get all instances for a specific FQN.
-    pub async fn instances_for_fqn(&self, fqn: &str) -> Vec<MongoInstance> {
+    pub async fn instances_for_fqn(&self, fqn: &OfferingFqn) -> Vec<MongoInstance> {
         let reg = self.instances.read().await;
         reg.values()
-            .filter(|i| i.fqn == fqn)
+            .filter(|i| i.fqn == *fqn)
             .cloned()
             .collect()
     }
 
     /// Get all distinct FQNs from registered instances.
-    pub async fn distinct_fqns(&self) -> Vec<String> {
+    pub async fn distinct_fqns(&self) -> Vec<OfferingFqn> {
         let reg = self.instances.read().await;
-        let mut fqns: Vec<String> = reg.values().map(|i| i.fqn.clone()).collect();
-        fqns.sort();
+        let mut fqns: Vec<OfferingFqn> = reg.values().map(|i| i.fqn.clone()).collect();
+        fqns.sort_by_key(|a| a.to_string());
         fqns.dedup();
         fqns
     }
@@ -259,6 +280,22 @@ impl AppState {
         ))
     }
 
+    /// Check if there is a pending removal for a specific endpoint AND FQN.
+    ///
+    /// Unlike `has_pending_removal`, this won't suppress discovery of the same
+    /// endpoint under a *different* FQN (e.g. after reassignment).
+    pub async fn has_pending_removal_for_fqn(
+        &self,
+        mongo_endpoint: &str,
+        fqn: &OfferingFqn,
+    ) -> bool {
+        let actions = self.pending_actions.read().await;
+        actions.iter().any(|a| matches!(a,
+            PendingAction::RemoveMember { mongo_endpoint: ep, fqn: f, .. }
+                if ep == mongo_endpoint && f == fqn
+        ))
+    }
+
     /// Load persisted pending actions from the data directory.
     pub async fn load_pending_actions(&self) {
         let actions = load_pending_actions(&self.data_dir).await;
@@ -276,15 +313,77 @@ impl AppState {
     // ── Replica Set State ────────────────────────────────────────
 
     /// Update the replica set state for a given FQN.
-    pub async fn update_replica_set(&self, fqn: &str, state: ReplicaSetState) {
+    pub async fn update_replica_set(&self, fqn: &OfferingFqn, state: ReplicaSetState) {
         let mut rs_map = self.replica_sets.write().await;
-        rs_map.insert(fqn.to_string(), state);
+        rs_map.insert(fqn.clone(), state);
     }
 
     /// Get the replica set state for a given FQN.
-    pub async fn replica_set_for(&self, fqn: &str) -> Option<ReplicaSetState> {
+    pub async fn replica_set_for(&self, fqn: &OfferingFqn) -> Option<ReplicaSetState> {
         let rs_map = self.replica_sets.read().await;
         rs_map.get(fqn).cloned()
+    }
+
+    // ── Group State (Persisted) ─────────────────────────────────
+
+    /// Update the group state for a given FQN. Persists to disk.
+    pub async fn update_group(&self, fqn: &OfferingFqn, state: GroupState) {
+        let mut groups = self.groups.write().await;
+        groups.insert(fqn.fqn(), state);
+        group_state::save_groups(&self.data_dir, &groups).await;
+    }
+
+    /// Get the group state for a given FQN.
+    pub async fn group_for(&self, fqn: &OfferingFqn) -> Option<GroupState> {
+        let groups = self.groups.read().await;
+        groups.get(&fqn.fqn()).cloned()
+    }
+
+    /// Update the known members for a group from a successful RS probe.
+    ///
+    /// Called by the health monitor after `rs.status()` succeeds, so the
+    /// persisted state stays current for drift detection on restart.
+    pub async fn update_group_members(&self, fqn: &OfferingFqn, rs_state: &ReplicaSetState) {
+        let mut groups = self.groups.write().await;
+        let key = fqn.fqn();
+        let group = groups.entry(key).or_insert_with(|| GroupState {
+            rs_name: rs_state.rs_name.clone(),
+            phase: group_state::GroupPhase::Healthy,
+            known_members: vec![],
+            last_updated: chrono::Utc::now(),
+        });
+
+        // Update known members from the RS member list.
+        // We don't have member _ids from rs.status() — those come from rs.conf().
+        // Preserve existing _ids if the stone_name matches.
+        let existing_ids: HashMap<String, i32> = group
+            .known_members
+            .iter()
+            .map(|km| (km.stone_name.clone(), km.member_id))
+            .collect();
+
+        group.known_members = rs_state
+            .members
+            .iter()
+            .map(|m| KnownMember {
+                stone_name: m.stone_name.clone(),
+                endpoint: m.endpoint.clone(),
+                member_id: existing_ids.get(&m.stone_name).copied().unwrap_or(-1),
+            })
+            .collect();
+        group.phase = group_state::GroupPhase::Healthy;
+        group.last_updated = chrono::Utc::now();
+
+        group_state::save_groups(&self.data_dir, &groups).await;
+    }
+
+    /// Load persisted group states from disk.
+    pub async fn load_groups(&self) {
+        let groups = group_state::load_groups(&self.data_dir).await;
+        if !groups.is_empty() {
+            tracing::info!(count = groups.len(), "restored group states from disk");
+            *self.groups.write().await = groups;
+        }
     }
 
     // ── Events ───────────────────────────────────────────────────

@@ -268,7 +268,7 @@ pub async fn backfill_missing_tasks(state: &AppState) -> usize {
         offerings
             .iter()
             .filter(|o| o.is_managed())
-            .map(|o| (o.offering_id.clone(), o.name.clone(), o.offering.clone()))
+            .map(|o| (o.offering_id.clone(), o.name.to_string(), o.offering.clone()))
             .collect()
     };
 

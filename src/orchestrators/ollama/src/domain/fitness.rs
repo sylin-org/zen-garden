@@ -69,6 +69,61 @@ impl Verdict {
                     Self::Vetoed
                 }
             }
+            Capability::Think => {
+                // Thinking = sustained long generation (2000+ tokens).
+                // Relaxed thresholds: users expect slower responses.
+                if tokens_per_second <= 0.0 {
+                    Self::Blocked
+                } else if cold_start_ms < 60_000 && tokens_per_second > 3.0 {
+                    Self::Fast
+                } else if cold_start_ms < 120_000 && tokens_per_second > 0.5 {
+                    Self::Degraded
+                } else {
+                    Self::Vetoed
+                }
+            }
+            Capability::Tools => {
+                // Tools verdict is computed by the benchmark runner using
+                // compute_tools_verdict() which factors in correctness.
+                // This branch handles the fallback if called directly.
+                if tokens_per_second <= 0.0 {
+                    Self::Blocked
+                } else if cold_start_ms < 30_000 && tokens_per_second > 5.0 {
+                    Self::Fast
+                } else if cold_start_ms < 90_000 && tokens_per_second > 1.0 {
+                    Self::Degraded
+                } else {
+                    Self::Vetoed
+                }
+            }
+        }
+    }
+
+    /// Compute verdict for tools capability factoring in correctness.
+    ///
+    /// `valid_count` / `total_prompts` determines the correctness gate:
+    /// - All valid: speed determines Fast vs Degraded
+    /// - 3-4/5 valid: Degraded (flaky) regardless of speed
+    /// - 0-2/5 valid: Vetoed or Blocked
+    pub fn compute_tools(
+        valid_count: u32,
+        total_prompts: u32,
+        cold_start_ms: u64,
+        tokens_per_second: f64,
+    ) -> Self {
+        if total_prompts == 0 || valid_count == 0 {
+            return Self::Blocked;
+        }
+        let ratio = valid_count as f64 / total_prompts as f64;
+        if ratio < 0.5 {
+            // < 50% valid: model can't reliably produce tool calls
+            Self::Vetoed
+        } else if ratio < 1.0 {
+            // Flaky: works sometimes — Degraded regardless of speed
+            Self::Degraded
+        } else {
+            // All valid: let speed decide
+            Self::compute(Capability::Tools, cold_start_ms, tokens_per_second)
         }
     }
 }
@@ -93,6 +148,10 @@ pub enum Capability {
     Generate,
     Embed,
     Vision,
+    /// Structured tool-calling: correctness + speed (ORCH-0010).
+    Tools,
+    /// Sustained long-generation: throughput under KV pressure (ORCH-0010).
+    Think,
 }
 
 impl std::fmt::Display for Capability {
@@ -101,6 +160,8 @@ impl std::fmt::Display for Capability {
             Self::Generate => write!(f, "generate"),
             Self::Embed => write!(f, "embed"),
             Self::Vision => write!(f, "vision"),
+            Self::Tools => write!(f, "tools"),
+            Self::Think => write!(f, "think"),
         }
     }
 }
@@ -174,6 +235,10 @@ pub struct TestSummary {
     pub cold_start_ms: u64,
     pub median_duration_ms: u64,
     pub verdict: Verdict,
+    /// Fraction of valid results (0.0–1.0).  Meaningful for quality-gated
+    /// capabilities like Tools; `None` for speed-only benchmarks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_ratio: Option<f64>,
 }
 
 // ── Test Suite ───────────────────────────────────────────────────
@@ -215,6 +280,7 @@ impl TestSuite {
                     cold_start_ms: 0,
                     median_duration_ms: 0,
                     verdict: Verdict::Blocked,
+                    valid_ratio: None,
                 });
             }
             return;
@@ -229,6 +295,7 @@ impl TestSuite {
             cold_start_ms,
             median_duration_ms,
             verdict,
+            valid_ratio: None,
         });
     }
 }
@@ -278,6 +345,9 @@ pub struct GpuMatrixEntry {
     pub verdict: Verdict,
     pub median_tps: f64,
     pub cold_start_ms: u64,
+    /// Fraction of valid results (0.0–1.0) for quality-gated capabilities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_ratio: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -364,6 +434,7 @@ impl BenchmarkRun {
                         verdict: summary.verdict,
                         median_tps: summary.median_tps,
                         cold_start_ms: summary.cold_start_ms,
+                        valid_ratio: summary.valid_ratio,
                     });
                 }
             }
@@ -558,6 +629,7 @@ mod tests {
                     cold_start_ms: 5_000,
                     median_duration_ms: 8_000,
                     verdict: Verdict::Fast,
+                    valid_ratio: None,
                 });
                 t
             }],
@@ -568,5 +640,56 @@ mod tests {
         assert_eq!(run.gpu_matrix.entries[0].verdict, Verdict::Fast);
         assert_eq!(run.gpu_matrix.fitness_score("m1", "http://a"), Some(100));
         assert_eq!(run.gpu_matrix.fitness_score("unknown", "http://a"), None);
+    }
+
+    #[test]
+    fn compute_verdict_think() {
+        // Relaxed thresholds for sustained generation
+        assert_eq!(
+            Verdict::compute(Capability::Think, 10_000, 8.0),
+            Verdict::Fast
+        );
+        assert_eq!(
+            Verdict::compute(Capability::Think, 50_000, 1.0),
+            Verdict::Degraded
+        );
+        // Below 0.5 tok/s sustained = vetoed
+        assert_eq!(
+            Verdict::compute(Capability::Think, 50_000, 0.3),
+            Verdict::Vetoed
+        );
+        assert_eq!(
+            Verdict::compute(Capability::Think, 10_000, 0.0),
+            Verdict::Blocked
+        );
+    }
+
+    #[test]
+    fn compute_tools_verdict_correctness() {
+        // All valid + fast = Fast
+        assert_eq!(
+            Verdict::compute_tools(5, 5, 5_000, 20.0),
+            Verdict::Fast
+        );
+        // All valid + slow = Degraded
+        assert_eq!(
+            Verdict::compute_tools(5, 5, 50_000, 3.0),
+            Verdict::Degraded
+        );
+        // Flaky (4/5) = Degraded regardless of speed
+        assert_eq!(
+            Verdict::compute_tools(4, 5, 5_000, 50.0),
+            Verdict::Degraded
+        );
+        // Low correctness (2/5) = Vetoed
+        assert_eq!(
+            Verdict::compute_tools(2, 5, 5_000, 50.0),
+            Verdict::Vetoed
+        );
+        // Zero valid = Blocked
+        assert_eq!(
+            Verdict::compute_tools(0, 5, 5_000, 50.0),
+            Verdict::Blocked
+        );
     }
 }

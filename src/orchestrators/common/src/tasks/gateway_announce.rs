@@ -192,13 +192,16 @@ pub async fn run<F, Fut>(
     let mut interval = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
     interval.tick().await; // consume immediate first tick
 
+    // Track the endpoint we last registered with so we can deregister on switch.
+    let mut last_registered_endpoint = stone_endpoint.clone();
+
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 tracing::info!("Gateway: deregistering (shutdown)");
                 deregister_mdns(&koi, &mdns_id).await;
                 if moss_registered {
-                    deregister_moss(&moss_gw, &stone_endpoint, &config.offering).await;
+                    deregister_moss(&moss_gw, &last_registered_endpoint, &config.offering).await;
                 }
                 return;
             }
@@ -209,10 +212,28 @@ pub async fn run<F, Fut>(
                 }
 
                 // Moss heartbeat (re-PUT is idempotent)
-                // Re-resolve stone endpoint in case it changed (stone failover)
-                let current_endpoint = get_tended_endpoint()
-                    .await
-                    .unwrap_or_else(|| stone_endpoint.clone());
+                // Re-resolve stone endpoint in case it changed (stone failover).
+                // Only switch if get_tended_endpoint() returns a concrete value —
+                // a transient None (during re-discovery) must NOT fall back to the
+                // original stone_endpoint because that would refresh the old lease.
+                let current_endpoint = match get_tended_endpoint().await {
+                    Some(ep) => ep,
+                    None => {
+                        tracing::debug!("Gateway: no tended endpoint, skipping heartbeat");
+                        continue;
+                    }
+                };
+
+                // Stone switch: deregister from old stone before registering with new.
+                if current_endpoint != last_registered_endpoint && moss_registered {
+                    tracing::info!(
+                        old = %last_registered_endpoint,
+                        new = %current_endpoint,
+                        "Gateway: tended stone changed, deregistering from old stone"
+                    );
+                    deregister_moss(&moss_gw, &last_registered_endpoint, &config.offering).await;
+                    moss_registered = false;
+                }
 
                 match moss_gw.register(&current_endpoint, &config.offering, &gw_params).await {
                     Ok(_) => {
@@ -223,6 +244,7 @@ pub async fn run<F, Fut>(
                             );
                         }
                         moss_registered = true;
+                        last_registered_endpoint = current_endpoint;
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "Gateway: Moss heartbeat failed");

@@ -125,6 +125,21 @@
         .stone-spacer { flex-grow: 1; }
         .stone-expires { font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--stone-400); }
 
+        /* Stone chip (clickable name + copy) */
+        .stone-chip { display: inline-flex; align-items: center; gap: 0.25rem; }
+        .stone-chip a { color: var(--stone-900); text-decoration: none; font-weight: 600; }
+        .stone-chip a:hover { color: var(--accent-sage); text-decoration: underline; }
+        .stone-chip .chip-copy {
+            opacity: 0; transition: opacity 0.15s;
+            background: transparent; border: 1px solid var(--vellum-border);
+            border-radius: 2px; padding: 0 0.2rem;
+            font-size: 0.6rem; cursor: pointer; color: var(--stone-400);
+            font-family: ui-monospace, monospace; line-height: 1.4;
+        }
+        .stone-chip:hover .chip-copy { opacity: 1; }
+        .stone-chip .chip-copy:hover { background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+        .stone-chip .chip-copy.copied { opacity: 1; background: var(--accent-sage); color: white; border-color: var(--accent-sage); }
+
         /* Action buttons */
         .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.25rem; }
         .action-btn {
@@ -358,28 +373,33 @@
             // Render status details
             const details = $('status-details');
             details.innerHTML = '';
+            const cornerstoneHtml = s.cornerstone
+                ? stoneChip(s.cornerstone, 'http://' + s.cornerstone + ':7185')
+                : '—';
             const fields = [
-                ['Cornerstone', s.cornerstone || '—'],
-                ['Profile', s.profile],
-                ['Enrollment', s.enrollment_state],
+                ['Cornerstone', cornerstoneHtml, true],
+                ['Profile', esc(s.profile), false],
+                ['Enrollment', esc(s.enrollment_state), false],
             ];
-            if (s.ca_fingerprint) fields.push(['CA Fingerprint', s.ca_fingerprint]);
-            for (const [k, v] of fields) {
-                details.innerHTML += `<dt>${k}</dt><dd>${esc(v)}</dd>`;
+            if (s.ca_fingerprint) fields.push(['CA Fingerprint', esc(s.ca_fingerprint), false]);
+            for (const [k, v, raw] of fields) {
+                details.innerHTML += `<dt>${k}</dt><dd>${raw ? v : v}</dd>`;
             }
 
             // Render stones
             const list = $('stones-list');
             if (s.stones.length > 0) {
-                list.innerHTML = s.stones.map(st => `
-                    <div class="stone-item">
+                list.innerHTML = s.stones.map(st => {
+                    const isSelf = st.name === location.hostname;
+                    const url = isSelf ? '/' : 'http://' + st.name + ':7185';
+                    return `<div class="stone-item">
                         <span class="dot ${st.status === 'active' ? 'active' : 'inactive'}"></span>
-                        <span class="stone-name">${esc(st.name)}</span>
+                        <span class="stone-name">${stoneChip(st.name, url)}</span>
                         <span class="stone-role">${esc(st.role)}</span>
                         <span class="stone-spacer"></span>
                         <span class="stone-expires">${formatExpiry(st.certificate_expires)}</span>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
             } else {
                 list.innerHTML = '';
             }
@@ -946,6 +966,32 @@
         d.textContent = s;
         return d.innerHTML;
     }
+
+    // Stone chip helpers
+    function stoneChip(name, url) {
+        const safe = esc(name);
+        return '<span class="stone-chip">' +
+            '<a href="' + (url || '#') + '" title="Visit ' + safe + '">' + safe + '</a>' +
+            '<button class="chip-copy" onclick="copyStone(this,\'' + safe.replace(/'/g, "\\'") + '\')" title="Copy name">\u29C9</button>' +
+            '</span>';
+    }
+
+    window.copyStone = function(btn, name) {
+        const done = function() {
+            btn.textContent = '\u2713'; btn.classList.add('copied');
+            setTimeout(function() { btn.textContent = '\u29C9'; btn.classList.remove('copied'); }, 1500);
+        };
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(name).then(done);
+        } else {
+            const ta = document.createElement('textarea'); ta.value = name;
+            ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+            done();
+        }
+    };
 
     function formatExpiry(iso) {
         if (!iso) return '';

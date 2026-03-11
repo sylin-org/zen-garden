@@ -113,19 +113,33 @@ impl DomainPulse {
 
     fn from_storage(event: &StorageEvent) -> Self {
         let data = match event {
-            StorageEvent::SeedBankDetected {
+            StorageEvent::StorageConnected {
                 name,
                 device,
                 mount_path,
                 capacity_gb,
+                roles,
                 ..
             } => Some(serde_json::json!({
                 "name": name,
                 "device": device,
                 "mount_path": mount_path,
                 "capacity_gb": capacity_gb,
+                "roles": roles,
             })),
-            StorageEvent::SeedBankRemoved { name, device, .. } => Some(serde_json::json!({
+            StorageEvent::StorageDetected {
+                device,
+                state,
+                capacity_gb,
+                used_gb,
+                ..
+            } => Some(serde_json::json!({
+                "device": device,
+                "state": state,
+                "capacity_gb": capacity_gb,
+                "used_gb": used_gb,
+            })),
+            StorageEvent::StorageRemoved { name, device, .. } => Some(serde_json::json!({
                 "name": name,
                 "device": device,
             })),
@@ -604,19 +618,32 @@ mod tests {
     }
 
     #[test]
-    fn test_domain_pulse_from_storage() {
-        let event = DomainEvent::Storage(StorageEvent::seed_bank_detected(
+    fn test_domain_pulse_from_storage_connected() {
+        let event = DomainEvent::Storage(StorageEvent::storage_connected(
             "backup",
             "/dev/sdb1",
             "/mnt/backup",
             500,
+            vec!["seed-bank".to_string()],
+        ));
+        let pulse = DomainPulse::from_domain_event(&event);
+
+        assert_eq!(pulse.event_type, event_types::STORAGE_CONNECTED);
+        assert!(pulse.message.contains("backup"));
+        assert_eq!(pulse.category, event_types::CATEGORY_STORAGE);
+        assert!(pulse.data.is_some());
+    }
+
+    #[test]
+    fn test_domain_pulse_from_storage_detected() {
+        let event = DomainEvent::Storage(StorageEvent::storage_detected(
+            "/dev/sdc1", "has_data", 500, 200,
         ));
         let pulse = DomainPulse::from_domain_event(&event);
 
         assert_eq!(pulse.event_type, event_types::STORAGE_DETECTED);
-        assert!(pulse.message.contains("backup"));
+        assert!(pulse.message.contains("/dev/sdc1"));
         assert_eq!(pulse.category, event_types::CATEGORY_STORAGE);
-        assert!(pulse.data.is_some());
     }
 
     #[test]

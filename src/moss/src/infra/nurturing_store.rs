@@ -26,7 +26,7 @@ use crate::domain::nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
     RemoteNurturingIndex, RemoteSnapshot, ReplicationResult,
 };
-use crate::infra::storage::SeedBankStore;
+use crate::infra::storage::ContentStore;
 use crate::infra::{create_harvest, HarvestStore};
 use anyhow::{Context, Result};
 use garden_common::constants::paths;
@@ -321,14 +321,14 @@ impl NurturingStore {
     /// * `offering_id` - GUIDv7 identifier for the offering
     /// * `seed_bank_mount` - Mount path of the seed bank
     /// * `seed_bank_id` - ID of the seed bank
-    /// * `seed_bank_name` - Name of the seed bank
+    /// * `storage_name` - Name of the seed bank
     /// * `stone_id` - This stone's ID
     pub async fn replicate_to_seed_bank(
         &self,
         offering_id: &str,
-        store: &SeedBankStore,
+        store: &ContentStore,
         seed_bank_id: &str,
-        seed_bank_name: &str,
+        storage_name: &str,
         stone_id: &str,
         hydration_manifest: Option<MemoriesOfferingManifest>,
     ) -> Result<ReplicationResult> {
@@ -350,7 +350,7 @@ impl NurturingStore {
             offering_id,
             offering_name,
             harvest_id,
-            seed_bank = seed_bank_name,
+            seed_bank = storage_name,
             "Replicating nurturing snapshot to seed bank"
         );
 
@@ -359,7 +359,7 @@ impl NurturingStore {
         let archive_data = self.create_harvest_archive(&harvest_path).await?;
         let size_bytes = archive_data.len() as u64;
 
-        // Store on seed bank under garden/memories (through SeedBankStore chokepoint)
+        // Store on seed bank under garden/memories (through ContentStore chokepoint)
         let object_key = format!("{}/{}.tar.gz", offering_id, harvest_id);
         let archive_rel = memories_rel_path(&object_key);
         store
@@ -381,7 +381,7 @@ impl NurturingStore {
             offering_name: offering_name.to_string(),
             harvest_id: harvest_id.to_string(),
             seed_bank_id: seed_bank_id.to_string(),
-            seed_bank_name: seed_bank_name.to_string(),
+            storage_name: storage_name.to_string(),
             source_stone: stone_id.to_string(),
             created_at: snapshot.created_at,
             size_bytes,
@@ -413,7 +413,7 @@ impl NurturingStore {
         tracing::info!(
             offering_id,
             harvest_id,
-            seed_bank = seed_bank_name,
+            seed_bank = storage_name,
             size = garden_common::utils::format_bytes(size_bytes),
             pruned_count,
             "Snapshot replicated to seed bank"
@@ -422,14 +422,14 @@ impl NurturingStore {
         let message = if pruned_count > 0 {
             format!(
                 "Replicated to {} ({}), pruned {} old snapshot(s)",
-                seed_bank_name,
+                storage_name,
                 garden_common::utils::format_bytes(size_bytes),
                 pruned_count
             )
         } else {
             format!(
                 "Replicated to {} ({})",
-                seed_bank_name,
+                storage_name,
                 garden_common::utils::format_bytes(size_bytes)
             )
         };
@@ -439,7 +439,7 @@ impl NurturingStore {
             offering_id: offering_id.to_string(),
             harvest_id: harvest_id.to_string(),
             seed_bank_id: seed_bank_id.to_string(),
-            seed_bank_name: seed_bank_name.to_string(),
+            storage_name: storage_name.to_string(),
             size_bytes,
             pruned_harvest_ids,
             message,
@@ -449,7 +449,7 @@ impl NurturingStore {
     /// List remote snapshots on a seed bank
     pub async fn list_remote_snapshots(
         &self,
-        store: &SeedBankStore,
+        store: &ContentStore,
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
         self.load_remote_index(store, seed_bank_id).await
@@ -467,7 +467,7 @@ impl NurturingStore {
     pub async fn restore_from_seed_bank(
         &self,
         docker: &DockerManager,
-        store: &SeedBankStore,
+        store: &ContentStore,
         seed_bank_id: &str,
         offering_id: &str,
         harvest_id: Option<&str>,
@@ -499,7 +499,7 @@ impl NurturingStore {
             "Restoring from remote seed bank snapshot"
         );
 
-        // Download the archive (through SeedBankStore — decrypts if encrypted)
+        // Download the archive (through ContentStore — decrypts if encrypted)
         let archive_rel = memories_rel_path(&snapshot.object_key);
         let archive_data = store
             .read(&archive_rel)
@@ -530,14 +530,14 @@ impl NurturingStore {
     /// Delete a remote snapshot from a seed bank
     pub async fn delete_remote_snapshot(
         &self,
-        store: &SeedBankStore,
+        store: &ContentStore,
         seed_bank_id: &str,
         harvest_id: &str,
     ) -> Result<bool> {
         let mut remote_index = self.load_remote_index(store, seed_bank_id).await?;
 
         if let Some(snapshot) = remote_index.remove(harvest_id) {
-            // Delete the object through SeedBankStore
+            // Delete the object through ContentStore
             let archive_rel = memories_rel_path(&snapshot.object_key);
             let _ = store.delete(&archive_rel).await;
 
@@ -558,7 +558,7 @@ impl NurturingStore {
     /// Load the remote nurturing index from a seed bank
     async fn load_remote_index(
         &self,
-        store: &SeedBankStore,
+        store: &ContentStore,
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
         let index_rel = memories_index_rel();
@@ -576,7 +576,7 @@ impl NurturingStore {
     /// Save the remote nurturing index to a seed bank
     async fn save_remote_index(
         &self,
-        store: &SeedBankStore,
+        store: &ContentStore,
         index: &RemoteNurturingIndex,
     ) -> Result<()> {
         let json =
@@ -592,14 +592,14 @@ impl NurturingStore {
 
     async fn store_offering_manifest(
         &self,
-        store: &SeedBankStore,
+        store: &ContentStore,
         manifest: &MemoriesOfferingManifest,
     ) -> Result<()> {
         let json = serde_json::to_string_pretty(manifest)
             .context("Failed to serialize offering manifest")?;
-        let manifest_rel = Path::new(paths::SEED_BANK_MEMORIES_DIR)
+        let manifest_rel = Path::new(paths::STORAGE_MEMORIES_DIR)
             .join(&manifest.offering_id)
-            .join(paths::SEED_BANK_MEMORIES_OFFERING_MANIFEST_FILE);
+            .join(paths::STORAGE_MEMORIES_OFFERING_MANIFEST_FILE);
         store
             .write_string(&manifest_rel, &json)
             .await
@@ -646,17 +646,17 @@ impl NurturingStore {
 }
 
 // ========================================================================
-// Seed Bank Memories Helpers (relative paths for SeedBankStore)
+// Seed Bank Memories Helpers (relative paths for ContentStore)
 // ========================================================================
 
 /// Relative path: `garden/memories/index.json`
 fn memories_index_rel() -> PathBuf {
-    Path::new(paths::SEED_BANK_MEMORIES_DIR).join(paths::SEED_BANK_MEMORIES_INDEX_FILE)
+    Path::new(paths::STORAGE_MEMORIES_DIR).join(paths::STORAGE_MEMORIES_INDEX_FILE)
 }
 
 /// Relative path: `garden/memories/{object_key}`
 fn memories_rel_path(object_key: &str) -> PathBuf {
-    Path::new(paths::SEED_BANK_MEMORIES_DIR).join(object_key)
+    Path::new(paths::STORAGE_MEMORIES_DIR).join(object_key)
 }
 
 #[cfg(test)]

@@ -4,7 +4,6 @@
 //! All persistence uses temp file + rename for atomic writes.
 
 use anyhow::Result;
-use garden_common::offerings::parse_offering_fqn;
 use std::path::PathBuf;
 
 /// Get offerings cache file path
@@ -66,77 +65,28 @@ fn normalize_offering_identities(offerings: &mut [garden_common::Offering]) -> u
 }
 
 fn normalize_offering_identity(offering: &mut garden_common::Offering) -> bool {
-    let mut changed = false;
-    let mut offering_from_name: Option<String> = None;
-
-    if let Some(canonical_name) = normalize_legacy_fqn(&offering.name) {
-        if offering.name != canonical_name {
-            offering.name = canonical_name;
-            changed = true;
-        }
-        offering_from_name = parse_offering_fqn(&offering.name)
-            .ok()
-            .map(|fqn| fqn.offering);
-    }
-
-    if let Some(offering_type) = offering_from_name {
-        if !offering.offering.eq_ignore_ascii_case(&offering_type) {
-            offering.offering = offering_type;
-            changed = true;
-        }
-    }
-
-    if let Some(canonical_type) = normalize_legacy_type(&offering.offering) {
-        if !offering.offering.eq_ignore_ascii_case(&canonical_type) {
-            offering.offering = canonical_type;
-            changed = true;
-        }
-    }
-
-    if changed {
+    // With OfferingFqn serde, offering.name is already normalized after
+    // deserialization (legacy `@` and single `:` formats are auto-migrated).
+    // We only need to sync offering.offering from offering.name.offering.
+    if offering.offering != offering.name.offering {
+        offering.offering = offering.name.offering.clone();
         return true;
     }
-
-    if offering.name.contains('@') {
-        tracing::warn!(
-            name = %offering.name,
-            "Found legacy offering name but could not normalize it"
-        );
-    }
-
     false
-}
-
-fn normalize_legacy_fqn(name: &str) -> Option<String> {
-    if !name.contains('@') {
-        return None;
-    }
-
-    let candidate = name.replace('@', ":");
-    parse_offering_fqn(&candidate).ok().map(|fqn| fqn.fqn())
-}
-
-fn normalize_legacy_type(offering_type: &str) -> Option<String> {
-    if !(offering_type.contains('@') || offering_type.contains(':')) {
-        return None;
-    }
-
-    let candidate = offering_type.replace('@', ":");
-    parse_offering_fqn(&candidate).ok().map(|fqn| fqn.offering)
 }
 
 #[cfg(test)]
 mod normalize_tests {
     use super::*;
     use garden_common::{
-        AdoptedControlLevel, AdoptedData, Offering, OfferingLocation, OfferingModeData,
-        OfferingStatus, ServiceHealthStatus,
+        offerings::OfferingFqn, AdoptedControlLevel, AdoptedData, Offering, OfferingLocation,
+        OfferingModeData, OfferingStatus, ServiceHealthStatus,
     };
 
     fn sample_offering(name: &str, offering_type: &str) -> Offering {
         Offering {
             offering_id: "test-id".to_string(),
-            name: name.to_string(),
+            name: OfferingFqn::parse(name).unwrap(),
             offering: offering_type.to_string(),
             version: "unknown".to_string(),
             status: OfferingStatus::Running,
@@ -167,16 +117,28 @@ mod normalize_tests {
 
     #[test]
     fn normalize_legacy_name_with_at() {
+        // OfferingFqn serde auto-normalizes "ollama@adopted" → offering="ollama", instance=Some("adopted")
+        // So after deserialization, name is already canonical. The normalize function
+        // syncs offering.offering from offering.name.offering.
         let mut offerings = vec![sample_offering("ollama@adopted", "ollama")];
+        // name is already normalized by OfferingFqn::parse, offering matches → no change needed
+        assert_eq!(offerings[0].name.offering, "ollama");
+        assert_eq!(
+            offerings[0].name.instance.as_deref(),
+            Some("adopted")
+        );
+        assert_eq!(offerings[0].name.to_string(), "ollama::adopted");
         let normalized = normalize_offering_identities(&mut offerings);
-        assert_eq!(normalized, 1);
-        assert_eq!(offerings[0].name, "ollama:adopted");
+        assert_eq!(normalized, 0); // offering already matches
         assert_eq!(offerings[0].offering, "ollama");
     }
 
     #[test]
     fn normalize_legacy_type_with_at() {
+        // name is "ollama:adopted" (V1 legacy, parsed to offering="ollama" instance="adopted")
+        // offering_type is "ollama@adopted" which is wrong — normalize should fix it
         let mut offerings = vec![sample_offering("ollama:adopted", "ollama@adopted")];
+        assert_eq!(offerings[0].name.offering, "ollama");
         let normalized = normalize_offering_identities(&mut offerings);
         assert_eq!(normalized, 1);
         assert_eq!(offerings[0].offering, "ollama");

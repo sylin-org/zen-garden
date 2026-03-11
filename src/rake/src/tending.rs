@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use garden_common::HardwareCapabilities;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -42,6 +43,10 @@ pub struct TendingState {
     pub endpoint: String,
     #[serde(with = "iso8601")]
     pub last_seen: SystemTime,
+    /// Cached capabilities fetched at tend-time.  `None` for legacy files
+    /// written before this field existed.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub capabilities: Option<HardwareCapabilities>,
 }
 
 mod iso8601 {
@@ -138,11 +143,16 @@ pub fn read_tending() -> Result<TendingState> {
     Ok(state)
 }
 
-pub fn write_tending(stone_name: String, endpoint: String) -> Result<()> {
+pub fn write_tending(
+    stone_name: String,
+    endpoint: String,
+    capabilities: Option<HardwareCapabilities>,
+) -> Result<()> {
     let state = TendingState {
         stone_name,
         endpoint,
         last_seen: SystemTime::now(),
+        capabilities,
     };
 
     let path = tending_file_path()?;
@@ -397,7 +407,7 @@ where
                     "Auto-tending to new stone after fallback"
                 );
                 if let Err(e) =
-                    write_tending(candidate.stone_name.clone(), candidate.endpoint.clone())
+                    write_tending(candidate.stone_name.clone(), candidate.endpoint.clone(), None)
                 {
                     tracing::warn!(error = ?e, "Failed to write tending state");
                 }
@@ -482,7 +492,7 @@ pub fn auto_tend_to(candidate: &StoneCandidate) -> Result<()> {
         "Auto-tending to new stone after fallback"
     );
 
-    write_tending(candidate.stone_name.clone(), candidate.endpoint.clone())
+    write_tending(candidate.stone_name.clone(), candidate.endpoint.clone(), None)
 }
 
 #[cfg(test)]
@@ -497,6 +507,7 @@ mod tests {
             stone_name: "test-stone".to_string(),
             endpoint: "http://127.0.0.1:7185".to_string(),
             last_seen: SystemTime::now(),
+            capabilities: None,
         };
         assert!(state.is_valid());
     }
@@ -508,6 +519,7 @@ mod tests {
             stone_name: "test-stone".to_string(),
             endpoint: "http://127.0.0.1:7185".to_string(),
             last_seen: SystemTime::now() - Duration::from_secs(86400), // 24 hours old
+            capabilities: None,
         };
         assert!(state.is_valid());
         assert!(state.age_seconds() >= 86400);

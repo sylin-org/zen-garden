@@ -1,5 +1,7 @@
 ﻿pub mod advisor;
+pub mod demand;
 pub mod fitness;
+pub mod gpu_catalog;
 pub mod lease;
 pub mod metrics;
 pub mod placement;

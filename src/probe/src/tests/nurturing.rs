@@ -707,7 +707,7 @@ async fn test_remote_list(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
     let mut seed_banks: Vec<(String, String, String)> = Vec::new(); // (stone, bank_id, bank_name)
 
     for stone in &garden.stones {
-        let result = stone.get_json("/api/v1/stone/storage/bank").await;
+        let result = stone.get_json("/api/v1/stone/storage/banks").await;
         if let Ok(resp) = result {
             if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
@@ -994,7 +994,7 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                     format!("Seed bank detected: {}", name),
                     duration.as_millis() as u64,
                     StepResult::ok_with(serde_json::json!({
-                        "seed_bank": name,
+                        "storage": name,
                     })),
                 );
             } else {
@@ -1003,7 +1003,7 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                     "No online seed banks available",
                     duration.as_millis() as u64,
                     StepResult::ok_with(serde_json::json!({
-                        "seed_bank": null,
+                        "storage": null,
                     })),
                 );
             }
@@ -1026,7 +1026,7 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
         let start = Instant::now();
         let replicate_path = format!("/api/v1/stone/nurturing/{}/replicate", offering_name);
         let replicate_body = serde_json::json!({
-            "seed_bank": bank_name,
+            "storage": bank_name,
         });
 
         let replicate_result = stone.post_json(&replicate_path, &replicate_body).await;
@@ -1060,7 +1060,7 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                         ),
                         duration.as_millis() as u64,
                         StepResult::ok_with(serde_json::json!({
-                            "seed_bank": bank_name,
+                            "storage": bank_name,
                             "harvest_id": harvest_id,
                             "pruned_count": pruned,
                             "message": message,
@@ -1706,7 +1706,7 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
 
     for stone in &garden.stones {
         // Get seed banks
-        let banks_result = stone.get_json("/api/v1/stone/storage/bank").await;
+        let banks_result = stone.get_json("/api/v1/stone/storage/banks").await;
         if let Ok(banks_resp) = banks_result {
             if let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
@@ -1805,7 +1805,7 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
         0,
         StepResult::ok_with(serde_json::json!({
             "offering": offering_name,
-            "seed_bank": seed_bank,
+            "storage": seed_bank,
             "harvest_id": harvest_id,
         })),
     );
@@ -1814,7 +1814,7 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
     let start = Instant::now();
     let restore_path = format!("/api/v1/stone/nurturing/{}/restore-remote", offering_name);
     let restore_body = serde_json::json!({
-        "seed_bank": seed_bank,
+        "storage": seed_bank,
         "harvest_id": harvest_id,
     });
 
@@ -1838,7 +1838,7 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
                 duration.as_millis() as u64,
                 StepResult::ok_with(serde_json::json!({
                     "offering": offering_name,
-                    "seed_bank": seed_bank,
+                    "storage": seed_bank,
                     "harvest_id": restored_id,
                 })),
             );
@@ -1881,7 +1881,7 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     for stone in &garden.stones {
         // Get seed banks
-        let banks_result = stone.get_json("/api/v1/stone/storage/bank").await;
+        let banks_result = stone.get_json("/api/v1/stone/storage/banks").await;
         if let Ok(banks_resp) = banks_result {
             if let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
@@ -2000,7 +2000,7 @@ async fn test_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
 
     for stone in &garden.stones {
         let start = Instant::now();
-        let result = stone.get_json("/api/v1/stone/storage/bank").await;
+        let result = stone.get_json("/api/v1/stone/storage/banks").await;
         let duration = start.elapsed();
 
         if let Ok(resp) = result {
@@ -2157,7 +2157,7 @@ async fn test_seed_bank_routing(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     for stone in &garden.stones {
         let start = Instant::now();
-        let result = stone.get_json("/api/v1/stone/storage/bank").await;
+        let result = stone.get_json("/api/v1/stone/storage/banks").await;
         let duration = start.elapsed();
 
         match result {
@@ -2678,7 +2678,7 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
         };
 
         // Get seed banks
-        let banks_resp = match stone.get_json("/api/v1/stone/storage/bank").await {
+        let banks_resp = match stone.get_json("/api/v1/stone/storage/banks").await {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -2757,7 +2757,7 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
         StepResult::ok_with(serde_json::json!({
             "stone": stone_name,
             "offering": offering_name,
-            "seed_bank": bank_name,
+            "storage": bank_name,
         })),
     );
 
@@ -2862,7 +2862,7 @@ async fn test_physical_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> 
     let start = Instant::now();
     let restore_path = format!("/api/v1/stone/nurturing/{}/restore-remote", offering_name);
     let restore_body = serde_json::json!({
-        "seed_bank": bank_name,
+        "storage": bank_name,
         "harvest_id": harvest_id,
     });
 
@@ -2967,7 +2967,7 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
         }
 
         // Get seed banks
-        let banks_resp = match stone.get_json("/api/v1/stone/storage/bank").await {
+        let banks_resp = match stone.get_json("/api/v1/stone/storage/banks").await {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -2998,7 +2998,7 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
             // List offering directories on seed bank
             // Use the correct seed bank path: {mount}/garden/memories
             let nurturing_path =
-                garden_common::constants::paths::seed_bank_memories_dir(bank_mount);
+                garden_common::constants::paths::storage_memories_dir(bank_mount);
             let start = Instant::now();
             let offerings = ssh.list_files(stone, &nurturing_path).unwrap_or_default();
             let duration = start.elapsed();
@@ -3138,7 +3138,7 @@ async fn test_physical_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         }
 
         // Get seed banks from API
-        let banks_resp = match stone.get_json("/api/v1/stone/storage/bank").await {
+        let banks_resp = match stone.get_json("/api/v1/stone/storage/banks").await {
             Ok(r) => r,
             Err(_) => continue,
         };

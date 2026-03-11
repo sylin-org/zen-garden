@@ -105,14 +105,14 @@ use super::find::{FoundService, ServiceDiscoveryResponse};
 #[async_trait]
 impl Command for ConfigCommand {
     async fn execute(&self, ctx: &CommandContext) -> CommandResult {
-        use garden_common::api_utils::{is_suspicious, sanitize_name_allow_colon, ApiResponse};
+        use garden_common::api_utils::{is_suspicious, sanitize_fqn_input, ApiResponse};
 
         // Validate service name
         if is_suspicious(&self.service) {
             anyhow::bail!("Service name contains invalid patterns");
         }
 
-        let sanitized = sanitize_name_allow_colon(&self.service).into_value();
+        let sanitized = sanitize_fqn_input(&self.service).into_value();
 
         // Use the find endpoint with exact name match
         let url = format!(

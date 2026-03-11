@@ -155,8 +155,11 @@ tr:hover td { background: var(--surface-hover); }
 }
 .dot.healthy { background: var(--accent); }
 .dot.unknown { background: var(--text-dim); }
-.dot.unreachable { background: var(--danger); }
+.dot.offline { background: var(--danger); }
+.dot.down { background: var(--warn); }
 .dot.degraded { background: var(--warn); }
+.dot.incompatible { background: var(--warn); }
+.dot.stopped { background: var(--text-dim); }
 .role-badge {
   display: inline-block;
   padding: 2px 7px;
@@ -172,6 +175,20 @@ tr:hover td { background: var(--surface-hover); }
 .role-badge.recovering { background: var(--warn-dim); color: var(--warn); }
 .role-badge.startup { background: var(--surface); color: var(--text-dim); }
 .role-badge.unknown { background: var(--surface); color: var(--text-dim); }
+/* Stone chip (clickable name + copy) */
+.stone-chip { display: inline-flex; align-items: center; gap: 0.25rem; }
+.stone-chip a { color: var(--text-bright); text-decoration: none; font-weight: 600; }
+.stone-chip a:hover { color: var(--accent); text-decoration: underline; }
+.stone-chip .chip-copy {
+  opacity: 0; transition: opacity 0.15s;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 2px; padding: 0 0.2rem;
+  font-size: 0.6rem; cursor: pointer; color: var(--text-dim);
+  font-family: var(--mono); line-height: 1.4;
+}
+.stone-chip:hover .chip-copy { opacity: 1; }
+.stone-chip .chip-copy:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.stone-chip .chip-copy.copied { opacity: 1; background: var(--accent); color: #fff; border-color: var(--accent); }
 .severity-healthy { color: var(--accent); }
 .severity-warning { color: var(--warn); }
 .severity-danger { color: var(--danger); }
@@ -292,6 +309,34 @@ tr:hover td { background: var(--surface-hover); }
   background: var(--accent-dim);
   color: var(--accent);
 }
+tr.incompatible-row td { background: var(--warn-dim); }
+tr.incompatible-row:hover td { background: rgba(234,179,8,0.2); }
+.detail-pane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 4px 0 8px;
+  animation: slideDown 0.15s ease-out;
+}
+@keyframes slideDown { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+.detail-pane h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warn);
+  margin-bottom: 8px;
+}
+.detail-pane p {
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.detail-pane .detail-actions { display: flex; gap: 8px; }
+.version-text {
+  font-family: var(--mono);
+  font-size: 12px;
+}
 </style>
 </head>
 <body>
@@ -323,7 +368,7 @@ tr:hover td { background: var(--surface-hover); }
       <h2>Instances</h2>
       <table>
         <thead><tr>
-          <th>Stone</th><th>Endpoint</th><th>FQN</th><th>Health</th><th>Role</th>
+          <th>Stone</th><th>Endpoint</th><th>FQN</th><th>Health</th><th>Role</th><th></th>
         </tr></thead>
         <tbody id="instances-body"></tbody>
       </table>
@@ -378,12 +423,38 @@ tr:hover td { background: var(--surface-hover); }
 <script>
 const MAX_ACTIVITY = 50;
 let activities = [];
+const expandedDetails = new Set();
 
 function esc(s) {
   if (!s) return '';
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+// Stone chip helpers
+function stoneChip(name, url) {
+  var safe = esc(name);
+  return '<span class="stone-chip">' +
+    '<a href="' + (url || '#') + '" title="Visit ' + safe + '">' + safe + '</a>' +
+    '<button class="chip-copy" onclick="copyStone(this,\'' + safe.replace(/'/g, "\\'") + '\')" title="Copy name">\u29C9</button>' +
+    '</span>';
+}
+function copyStone(btn, name) {
+  var done = function() {
+    btn.textContent = '\u2713'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = '\u29C9'; btn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(name).then(done);
+  } else {
+    var ta = document.createElement('textarea'); ta.value = name;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+    done();
+  }
 }
 
 function showSection(name) {
@@ -454,16 +525,22 @@ function renderOverview(d) {
   html += '<div class="card"><div class="label">Replica Sets</div><div class="value">' + rsets.length + '</div><div class="sub">' + rsets.filter(r=>r.initialized).length + ' initialized</div></div>';
   html += '<div class="card"><div class="label">Primaries</div><div class="value">' + primaryCount + '</div></div>';
   if (d.tended_stone) {
-    html += '<div class="card"><div class="label">Tended Stone</div><div class="value" style="font-size:14px">' + esc(d.tended_stone.stone_name) + '</div><div class="sub">' + esc(d.tended_stone.endpoint) + '</div></div>';
+    html += '<div class="card"><div class="label">Tended Stone</div><div class="value" style="font-size:14px">' + stoneChip(d.tended_stone.stone_name, 'http://' + d.tended_stone.stone_name + ':7185') + '</div><div class="sub">' + esc(d.tended_stone.endpoint) + '</div></div>';
   }
   document.getElementById('overview-cards').innerHTML = html;
 
   // Instance table
   let rows = '';
   for (const i of inst) {
-    rows += '<tr><td>' + esc(i.stone_name) + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td></tr>';
+    const h = (i.health || '').toLowerCase();
+    const dismissable = h === 'offline' || h === 'down' || h === 'stopped';
+    const actionCell = dismissable
+      ? '<button class="btn danger" style="padding:3px 8px;font-size:11px" onclick="dismissInstance(\'' + esc(i.stone_name).replace(/'/g, "\\'") + '\')">Dismiss</button>'
+      : '';
+    const ep = i.mongo_endpoint ? '<span style="font-family:var(--mono);font-size:12px">' + esc(i.mongo_endpoint) + '</span>' : '<span style="color:var(--text-dim)">\u2014</span>';
+    rows += '<tr><td>' + stoneChip(i.stone_name, 'http://' + i.stone_name + ':7185') + '</td><td>' + ep + '</td><td>' + esc(i.fqn) + '</td><td>' + healthDot(i.health) + '</td><td>' + roleBadge(i.role) + '</td><td>' + actionCell + '</td></tr>';
   }
-  document.getElementById('instances-body').innerHTML = rows || '<tr><td colspan="5" class="empty-state">No instances discovered</td></tr>';
+  document.getElementById('instances-body').innerHTML = rows || '<tr><td colspan="6" class="empty-state">No instances discovered</td></tr>';
 }
 
 // ── Logical Sets ──
@@ -478,20 +555,60 @@ async function refreshMembers() {
     }
     let html = '';
     for (const ls of sets) {
+      const memberCount = (ls.members || []).length;
       const badge = ls.initialized
         ? '<span style="color:var(--accent);font-size:11px;margin-left:8px">initialized</span>'
-        : '<span style="color:var(--warn);font-size:11px;margin-left:8px">pending init</span>';
+        : memberCount <= 1
+          ? '<span style="color:var(--text-dim);font-size:11px;margin-left:8px">standalone</span>'
+          : '<span style="color:var(--warn);font-size:11px;margin-left:8px">pending init</span>';
       html += '<h3 style="margin:16px 0 8px;font-size:14px;color:var(--text-bright)">' + esc(ls.rs_name) + ' <span style="color:var(--text-dim);font-size:12px">(' + esc(ls.fqn) + ')</span>' + badge + '</h3>';
       if (ls.connection_string) {
         html += '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:8px;word-break:break-all">' + esc(ls.connection_string) + '</div>';
       }
-      html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Health</th><th>Role</th><th>Lag</th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Health</th><th>Role</th><th>Version</th><th>Lag</th></tr></thead><tbody>';
       for (const m of (ls.members || [])) {
-        html += '<tr><td>' + esc(m.stone_name) + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(m.endpoint) + '</td><td>' + healthDot(m.health) + '</td><td>' + roleBadge(m.role) + '</td><td>' + formatLag(m.lag_seconds) + '</td></tr>';
+        const isIncompat = (m.health || '').toLowerCase() === 'incompatible';
+        const rowClass = isIncompat ? ' class="incompatible-row"' : '';
+        const rowId = 'row-' + esc(m.stone_name).replace(/[^a-z0-9]/gi, '-');
+        const verText = m.server_version
+          ? '<span class="version-text">' + esc(m.server_version) + '</span>'
+          : '<span style="color:var(--text-dim)">\u2014</span>';
+        html += '<tr' + rowClass + (isIncompat ? ' style="cursor:pointer" onclick="toggleDetail(\'' + rowId + '\')"' : '') + '><td>' + stoneChip(m.stone_name, 'http://' + m.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(m.endpoint) + '</td><td>' + healthDot(m.health) + '</td><td>' + roleBadge(m.role) + '</td><td>' + verText + '</td><td>' + formatLag(m.lag_seconds) + '</td></tr>';
+        if (isIncompat) {
+          const wireRange = m.wire_version_range ? m.wire_version_range[0] + '\u2013' + m.wire_version_range[1] : '?';
+          const safeStoneName = esc(m.stone_name).replace(/'/g, "\\'");
+          html += '<tr id="' + rowId + '" style="display:none"><td colspan="6" style="padding:0;border:none">'
+            + '<div class="detail-pane">'
+            + '<h4>\u26A0 Wire Version Incompatibility</h4>'
+            + '<p>' + esc(m.stone_name) + ' is running MongoDB ' + esc(m.server_version) + ' (wire version ' + wireRange + ') '
+            + 'but the replica set requires a compatible major version. These versions cannot coexist in the same replica set.</p>'
+            + '<div class="detail-actions">'
+            + '<button class="btn danger" onclick="event.stopPropagation();removeService(\'' + safeStoneName + '\')">Remove Service</button>'
+            + '<button class="btn accent" id="reassign-btn-' + rowId + '" onclick="event.stopPropagation();showReassignForm(\'' + rowId + '\')">Assign to a different Set</button>'
+            + '</div>'
+            + '<div id="reassign-form-' + rowId + '" style="display:none;margin-top:12px" onclick="event.stopPropagation()">'
+            + '<div style="display:flex;align-items:center;gap:8px">'
+            + '<span style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">mongodb::</span>'
+            + '<input type="text" id="reassign-input-' + rowId + '" value="legacy" '
+            + 'style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:12px;width:140px" '
+            + 'oninput="updateReassignPreview(\'' + rowId + '\')" />'
+            + '<button class="btn accent" onclick="confirmReassign(\'' + rowId + '\',\'' + safeStoneName + '\')">Confirm</button>'
+            + '<button class="btn" onclick="hideReassignForm(\'' + rowId + '\')">Cancel</button>'
+            + '</div>'
+            + '<div style="font-size:11px;color:var(--text-dim);margin-top:4px">'
+            + 'New FQN: <span id="reassign-preview-' + rowId + '" style="font-family:var(--mono)">mongodb::legacy</span>'
+            + '</div></div>'
+            + '</div></td></tr>';
+        }
       }
       html += '</tbody></table>';
     }
     document.getElementById('members-content').innerHTML = html;
+    // Restore expanded detail panes
+    for (const rowId of expandedDetails) {
+      const row = document.getElementById(rowId);
+      if (row) row.style.display = '';
+    }
   } catch(e) {
     document.getElementById('members-content').innerHTML = '<div class="empty-state">Error loading logical sets</div>';
   }
@@ -517,7 +634,7 @@ async function refreshLag() {
       html += '<table><thead><tr><th>Stone</th><th>Endpoint</th><th>Lag</th><th>Health</th></tr></thead><tbody>';
       for (const s of rs.secondaries) {
         const lagClass = (s.lag_seconds || 0) > 10 ? 'severity-danger' : (s.lag_seconds || 0) > 5 ? 'severity-warning' : '';
-        html += '<tr><td>' + esc(s.stone_name) + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(s.endpoint) + '</td><td class="' + lagClass + '">' + formatLag(s.lag_seconds) + '</td><td>' + (s.healthy ? '<span class="dot healthy"></span>yes' : '<span class="dot unreachable"></span>no') + '</td></tr>';
+        html += '<tr><td>' + stoneChip(s.stone_name, 'http://' + s.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-size:12px">' + esc(s.endpoint) + '</td><td class="' + lagClass + '">' + formatLag(s.lag_seconds) + '</td><td>' + (s.healthy ? '<span class="dot healthy"></span>yes' : '<span class="dot offline"></span>no') + '</td></tr>';
       }
       html += '</tbody></table>';
     }
@@ -571,13 +688,13 @@ async function refreshCache() {
     for (const inst of items) {
       const c = inst.cache;
       if (c && c.error) {
-        html += '<div class="card"><div class="label">' + esc(inst.stone_name) + '</div><div class="sub" style="color:var(--danger)">' + esc(c.error) + '</div></div>';
+        html += '<div class="card"><div class="label">' + stoneChip(inst.stone_name, 'http://' + inst.stone_name + ':7185') + '</div><div class="sub" style="color:var(--danger)">' + esc(c.error) + '</div></div>';
         continue;
       }
       const status = c && c.status;
       const recs = c && c.recommendations || [];
       if (!status) continue;
-      html += '<div class="card"><div class="label">' + esc(inst.stone_name) + '</div>';
+      html += '<div class="card"><div class="label">' + stoneChip(inst.stone_name, 'http://' + inst.stone_name + ':7185') + '</div>';
       html += '<div class="sub">Cache: ' + (status.used_mb||0).toFixed(0) + '/' + (status.configured_mb||0).toFixed(0) + ' MB · Hit: ' + ((status.hit_ratio||0)*100).toFixed(1) + '%</div>';
       html += '<div class="sub">Dirty: ' + ((status.dirty_ratio||0)*100).toFixed(1) + '% · Evictions: ' + (status.app_evictions||0) + '</div>';
       for (const rec of recs) {
@@ -604,13 +721,16 @@ async function refreshPlacement() {
     }
     let html = '<table><thead><tr><th>Stone</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead><tbody>';
     for (const p of items) {
-      let action = '';
-      if (p.already_has_mongo) {
-        action = '<span class="installed-badge">installed</span>';
-      } else if (p.moss_endpoint) {
-        action = '<button class="btn accent" onclick="openInstallModal(\'' + esc(p.stone_name).replace(/'/g, "\\'") + '\', \'' + esc(p.moss_endpoint).replace(/'/g, "\\'") + '\')">Install</button>';
+      const fqns = p.installed_fqns || [];
+      let badges = fqns.map(f => '<span class="installed-badge">' + esc(f) + '</span>').join(' ');
+      let action = badges;
+      if (p.moss_endpoint) {
+        const safeName = esc(p.stone_name).replace(/'/g, "\\'");
+        const safeEndpoint = esc(p.moss_endpoint).replace(/'/g, "\\'");
+        const safeFqns = JSON.stringify(fqns).replace(/'/g, "\\'");
+        action += ' <button class="btn accent" onclick="openInstallModal(\'' + safeName + '\', \'' + safeEndpoint + '\', ' + safeFqns + ')">Install</button>';
       }
-      html += '<tr><td>' + esc(p.stone_name) + '</td><td style="font-family:var(--mono);font-weight:600">' + p.score + '</td><td style="font-size:12px;color:var(--text-dim)">' + (p.reasons||[]).map(esc).join('<br>') + '</td><td>' + action + '</td></tr>';
+      html += '<tr><td>' + stoneChip(p.stone_name, 'http://' + p.stone_name + ':7185') + '</td><td style="font-family:var(--mono);font-weight:600">' + p.score + '</td><td style="font-size:12px;color:var(--text-dim)">' + (p.reasons||[]).map(esc).join('<br>') + '</td><td>' + action + '</td></tr>';
     }
     html += '</tbody></table>';
     document.getElementById('placement-content').innerHTML = html;
@@ -672,6 +792,104 @@ function connectSSE() {
   };
 }
 
+// ── Dismiss instance ──
+async function dismissInstance(stoneName) {
+  if (!confirm('Remove ' + stoneName + ' from the registry?\n\nIt will reappear automatically if the stone comes back online.')) return;
+  try {
+    const r = await fetch('/api/cluster/instances/' + encodeURIComponent(stoneName), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.success) {
+      addActivity('instance.dismissed', stoneName);
+      refresh();
+    } else {
+      alert('Failed: ' + (d.message || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+  }
+}
+
+// ── Incompatible detail pane ──
+function toggleDetail(rowId) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? '' : 'none';
+  if (isHidden) {
+    expandedDetails.add(rowId);
+  } else {
+    expandedDetails.delete(rowId);
+  }
+}
+
+async function removeService(stoneName) {
+  if (!confirm('Remove the MongoDB service from ' + stoneName + '?\n\nThis will delete the service on the stone.')) return;
+  try {
+    const r = await fetch('/api/cluster/instances/' + encodeURIComponent(stoneName), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.success) {
+      expandedDetails.delete('row-' + stoneName.replace(/[^a-z0-9]/gi, '-'));
+      addActivity('instance.removed', stoneName);
+      refreshMembers();
+      refresh();
+    } else {
+      alert('Failed: ' + (d.message || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+  }
+}
+
+function showReassignForm(rowId) {
+  var form = document.getElementById('reassign-form-' + rowId);
+  var btn = document.getElementById('reassign-btn-' + rowId);
+  if (form) form.style.display = '';
+  if (btn) btn.style.display = 'none';
+  var input = document.getElementById('reassign-input-' + rowId);
+  if (input) input.focus();
+}
+
+function hideReassignForm(rowId) {
+  var form = document.getElementById('reassign-form-' + rowId);
+  var btn = document.getElementById('reassign-btn-' + rowId);
+  if (form) form.style.display = 'none';
+  if (btn) btn.style.display = '';
+}
+
+function updateReassignPreview(rowId) {
+  var input = document.getElementById('reassign-input-' + rowId);
+  var preview = document.getElementById('reassign-preview-' + rowId);
+  if (!input || !preview) return;
+  var val = input.value.trim();
+  preview.textContent = val ? 'mongodb::' + val : 'mongodb';
+}
+
+async function confirmReassign(rowId, stoneName) {
+  var input = document.getElementById('reassign-input-' + rowId);
+  if (!input) return;
+  var instance = input.value.trim();
+  if (!instance) return;
+  var newFqn = 'mongodb::' + instance;
+  try {
+    var r = await fetch('/api/cluster/reassign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stone_name: stoneName, new_fqn: newFqn })
+    });
+    var d = await r.json();
+    if (d.success) {
+      expandedDetails.delete(rowId);
+      addActivity('instance.reassigned', stoneName + ' \u2192 ' + newFqn);
+      refreshMembers();
+      refresh();
+    } else {
+      alert('Reassign failed: ' + (d.message || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+  }
+}
+
 // ── Init ──
 async function refreshAll() {
   await refresh();
@@ -710,9 +928,12 @@ connectSSE();
     <div style="font-size:11px;color:var(--text-dim);margin-top:-12px;margin-bottom:16px">
       Result: <span id="install-fqn-preview" style="font-family:var(--mono)">mongodb</span>
     </div>
+    <div id="install-duplicate-warn" style="display:none;font-size:12px;color:#e06c75;margin-bottom:12px">
+      This FQN is already installed on this stone.
+    </div>
     <div class="actions">
       <button class="btn" onclick="closeInstallModal()">Cancel</button>
-      <button class="btn accent" onclick="submitInstall()">Install</button>
+      <button class="btn accent" id="install-submit-btn" onclick="submitInstall()">Install</button>
     </div>
   </div>
 </div>
@@ -720,11 +941,12 @@ connectSSE();
 <script>
 let installTarget = null;
 
-function openInstallModal(stoneName, mossEndpoint) {
-  installTarget = { stoneName, mossEndpoint };
+function openInstallModal(stoneName, mossEndpoint, installedFqns) {
+  installTarget = { stoneName, mossEndpoint, installedFqns: installedFqns || [] };
   document.getElementById('install-target-name').textContent = stoneName;
   document.getElementById('install-fqn-suffix').value = '';
   document.getElementById('install-fqn-preview').textContent = 'mongodb';
+  validateInstallFqn();
   document.getElementById('install-modal').classList.add('visible');
 }
 
@@ -733,9 +955,19 @@ function closeInstallModal() {
   installTarget = null;
 }
 
+function validateInstallFqn() {
+  if (!installTarget) return;
+  const suffix = document.getElementById('install-fqn-suffix').value.trim();
+  const fqn = suffix ? 'mongodb::' + suffix : 'mongodb';
+  const isDuplicate = installTarget.installedFqns.includes(fqn);
+  document.getElementById('install-duplicate-warn').style.display = isDuplicate ? '' : 'none';
+  document.getElementById('install-submit-btn').disabled = isDuplicate;
+}
+
 document.getElementById('install-fqn-suffix').addEventListener('input', function() {
   const suffix = this.value.trim();
   document.getElementById('install-fqn-preview').textContent = suffix ? 'mongodb:' + suffix : 'mongodb';
+  validateInstallFqn();
 });
 
 async function submitInstall() {

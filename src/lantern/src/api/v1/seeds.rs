@@ -30,7 +30,7 @@ pub async fn get_seeds(State(state): State<AppState>) -> Json<Value> {
 
     for (key, entry) in &topology.stones {
         if let Some(enrichment) = topology.enrichment.get(key) {
-            for bank in &enrichment.seed_banks {
+            for bank in &enrichment.managed_storages {
                 banks.push(SeedBankView {
                     stone_id: entry.stone_id.clone(),
                     stone_name: entry.stone_name.clone(),

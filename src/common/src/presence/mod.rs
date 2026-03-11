@@ -7,6 +7,6 @@ pub mod event_types;
 pub mod types;
 
 pub use types::{
-    ClientNotification, EventFilter, OfferingState, PresenceSnapshot, SeedBankSummary,
+    ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StorageSummary,
     StoneHealthChangedPayload, StoneLoadUpdatedPayload, StoneState,
 };

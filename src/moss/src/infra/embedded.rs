@@ -504,11 +504,25 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
 /// Vec of Offering definitions
 pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
     use garden_common::manifests::{
-        AdoptedConfig, ConnectivityConfig, ControlConfig, HealthConfig, OfferingMetadata,
-        OsDetectionRules,
+        AdoptedConfig, ConnectivityConfig, ConnectionProfile, ControlConfig, HealthConfig,
+        ManageableEnv, OfferingMetadata, OsDetectionRules,
     };
     use garden_common::types::AdoptedControlLevel;
     use serde::Deserialize;
+
+    /// Subset of frontmatter fields relevant for adopted offerings.
+    #[derive(Debug, Deserialize)]
+    struct FrontmatterData {
+        description: Option<String>,
+        #[serde(default)]
+        tags: Vec<String>,
+        icon: Option<String>,
+        homepage: Option<String>,
+        documentation: Option<String>,
+        port: Option<u16>,
+        connection: Option<ConnectionProfile>,
+        manageable_env: Option<ManageableEnv>,
+    }
 
     /// File format for .adopted.yaml files
     #[derive(Debug, Deserialize)]
@@ -564,8 +578,17 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
         let guidance_content = EmbeddedManifests::get_string(&guidance_path)
             .map(|md| garden_common::manifests::offering::strip_markdown_frontmatter(&md));
 
+        // Load frontmatter (shared with managed counterpart, e.g. ollama.frontmatter.json)
+        let frontmatter_path = path_str.replace(".adopted.yaml", ".frontmatter.json");
+        let frontmatter: Option<FrontmatterData> = EmbeddedManifests::get_string(&frontmatter_path)
+            .and_then(|json| {
+                let json = garden_common::utils::strings::strip_bom(&json);
+                serde_json::from_str::<FrontmatterData>(json).ok()
+            });
+
         match serde_yaml::from_str::<AdoptedFile>(content) {
             Ok(file) => {
+                let fm = frontmatter.as_ref();
                 let offering = Offering {
                     name: file.name.unwrap_or(name.clone()),
                     category: file.category.unwrap_or(category),
@@ -580,16 +603,17 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                     }),
                     borrowed: None,
                     metadata: OfferingMetadata {
-                        description: file.description,
-                        tags: file.tags.unwrap_or_default(),
-                        icon: None,
-                        homepage: None,
-                        documentation: None,
-                        port: None,
+                        description: file.description.or_else(|| fm.and_then(|f| f.description.clone())),
+                        tags: file.tags.unwrap_or_else(|| fm.map(|f| f.tags.clone()).unwrap_or_default()),
+                        icon: fm.and_then(|f| f.icon.clone()),
+                        homepage: fm.and_then(|f| f.homepage.clone()),
+                        documentation: fm.and_then(|f| f.documentation.clone()),
+                        port: fm.and_then(|f| f.port),
                     },
                     compatibility: None,
                     guidance: None,
-                    connection: file.connection,
+                    connection: file.connection.or_else(|| fm.and_then(|f| f.connection.clone())),
+                    manageable_env: fm.and_then(|f| f.manageable_env.clone()),
                     coordination: file.coordination,
                 };
 

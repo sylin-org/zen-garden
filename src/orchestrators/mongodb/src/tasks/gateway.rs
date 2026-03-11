@@ -19,6 +19,17 @@ impl GatewayProvider for AppState {
         AppState::tended_endpoint(self).await
     }
 
+    async fn fallback_moss_endpoints(&self) -> Vec<String> {
+        use orchestrator_common::stone_catalog::ServiceKey;
+        let catalog = self.catalog.read().await;
+        catalog
+            .stone_names()
+            .iter()
+            .filter_map(|name| catalog.service_endpoint(name, ServiceKey::Moss))
+            .map(|s| s.to_string())
+            .collect()
+    }
+
     async fn fqn_gateway_entries(&self) -> Vec<FqnGatewayEntry> {
         let fqns = self.distinct_fqns().await;
         let replica_sets = self.replica_sets.read().await;
@@ -26,7 +37,7 @@ impl GatewayProvider for AppState {
         let mut entries = Vec::with_capacity(fqns.len());
 
         for fqn in &fqns {
-            let rs = replica_sets.get(fqn.as_str());
+            let rs = replica_sets.get(fqn);
             let rs_name = rs
                 .map(|r| r.rs_name.clone())
                 .unwrap_or_else(|| derive_replica_set_name(fqn));
@@ -70,7 +81,7 @@ impl GatewayProvider for AppState {
                 .map(|i| format!("{}.local", i.stone_name));
 
             entries.push(FqnGatewayEntry {
-                fqn: fqn.clone(),
+                fqn: fqn.to_string(),
                 protocol: "mongodb".to_string(),
                 port,
                 uri_template,

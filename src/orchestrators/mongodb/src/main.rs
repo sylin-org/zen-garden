@@ -85,6 +85,7 @@ async fn main() -> Result<()> {
     // Load any cached tending state from a previous run
     state.load_tending().await;
     state.load_pending_actions().await;
+    state.load_groups().await;
 
     // ── Background Tasks ─────────────────────────────────────────
     let discovery_handle = tokio::spawn(tasks::discovery::run(
@@ -92,12 +93,14 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
-    let bootstrap_handle = tokio::spawn(tasks::bootstrap::run(
+    // Periodic topology rescan — compensates for tools stream not aggregating
+    // remote events when the tended stone has no local MongoDB instances.
+    let topology_rescan_handle = tokio::spawn(tasks::discovery::run_topology_rescan(
         state.clone(),
         shutdown.clone(),
     ));
 
-    let health_handle = tokio::spawn(tasks::health_monitor::run(
+    let conductor_handle = tokio::spawn(tasks::conductor::run(
         state.clone(),
         shutdown.clone(),
     ));
@@ -148,8 +151,16 @@ async fn main() -> Result<()> {
             axum::routing::delete(cluster::delete_member),
         )
         .route(
+            "/api/cluster/instances/{stone_name}",
+            axum::routing::delete(cluster::delete_instance),
+        )
+        .route(
             "/api/cluster/actions",
             axum::routing::get(cluster::get_pending_actions),
+        )
+        .route(
+            "/api/cluster/reassign",
+            axum::routing::post(cluster::post_reassign),
         )
         // Monitoring
         .route(
@@ -192,8 +203,8 @@ async fn main() -> Result<()> {
     // Wait for tasks to complete (with timeout)
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let _ = discovery_handle.await;
-        let _ = bootstrap_handle.await;
-        let _ = health_handle.await;
+        let _ = topology_rescan_handle.await;
+        let _ = conductor_handle.await;
         let _ = gateway_handle.await;
     })
     .await

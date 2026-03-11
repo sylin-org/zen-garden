@@ -30,6 +30,10 @@ pub struct GardenTool {
     /// Capabilities (models, collections, etc.).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<Capability>,
+
+    /// Storage-specific metadata. Present only when `tool.category == "storage"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<StorageMetadata>,
 }
 
 /// Tool identity — what this resource is.
@@ -77,6 +81,22 @@ pub struct ServiceInfo {
     /// Connection URIs, ordered by preference.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uris: Vec<String>,
+
+    /// Source hostname (preserved from registration, not parsed from URIs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+
+    /// Source IP (preserved from registration, not parsed from URIs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+
+    /// Source port (preserved from registration, not parsed from URIs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+
+    /// URI template before substitution (e.g. `"mongodb://{host}:{port}/?replicaSet=zen-garden"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri_template: Option<String>,
 }
 
 /// Typed capability entry.
@@ -88,6 +108,40 @@ pub struct Capability {
 
     /// Items within this capability type.
     pub items: Vec<String>,
+}
+
+/// Storage-specific metadata carried by seed-bank entries.
+///
+/// Present only when `tool.category == "storage"`. Part of the boundary
+/// model — no transforms needed, read sites access fields directly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StorageMetadata {
+    /// Replica set ID (GUIDv7, STORAGE-0013).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replica_set_id: String,
+    /// Replica set display name (STORAGE-0013).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replica_set_name: String,
+    /// Replication role: `"primary"`, `"dormant"`, or `None` if unassigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Total capacity in bytes.
+    pub capacity_bytes: u64,
+    /// Used space in bytes.
+    pub used_bytes: u64,
+    /// Visibility: `"open"`, `"closed"`, `"read-only"`.
+    pub visibility: String,
+    /// Whether the seed bank is encrypted.
+    pub encrypted: bool,
+    /// Pinned Primary identifier (STORAGE-0006).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_id: Option<String>,
+    /// Supported protocols: `["s3", "storage"]`.
+    #[serde(default)]
+    pub protocols: Vec<String>,
+    /// Composable roles (e.g., ["seed-bank"]).
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -126,16 +180,25 @@ impl GardenTool {
 /// Match a query fqid against a tool.
 ///
 /// - Bare name (e.g., `"mongodb"`) matches all tools with `tool.tool_type == "mongodb"`.
-/// - Instance name (e.g., `"mongodb:prod"`) matches exact `fqid`.
+/// - Instance-qualified (e.g., `"mongodb::prod"`) matches exact `fqid`.
+/// - Legacy V1 queries (`"mongodb:prod"`) are normalized to V2 before matching.
 /// - Does NOT prefix-match: `"ollama"` does NOT match `"ollama-cpu"`.
 pub fn fqid_matches(query: &str, tool: &GardenTool) -> bool {
     let q = query.trim().to_ascii_lowercase();
     if q.is_empty() {
         return true;
     }
-    if q.contains(':') {
-        // Exact instance match
+    if q.contains("::") {
+        // V2 instance-qualified match
         tool.fqid.eq_ignore_ascii_case(&q)
+    } else if q.contains(':') {
+        // Could be V1 legacy ("mongodb:prod") or source scheme ("image:nginx").
+        // Try normalizing through OfferingFqn::parse to get canonical form.
+        if let Ok(parsed) = crate::offerings::OfferingFqn::parse(&q) {
+            tool.fqid.eq_ignore_ascii_case(&parsed.fqn())
+        } else {
+            tool.fqid.eq_ignore_ascii_case(&q)
+        }
     } else {
         // Type match: all instances of this offering type
         tool.tool.tool_type.eq_ignore_ascii_case(&q)
@@ -177,6 +240,11 @@ pub struct ToolsBeacon {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deltas: Vec<ToolDelta>,
     pub timestamp: DateTime<Utc>,
+    /// When true, `deltas` represents the complete set of local tools for
+    /// this stone. Receivers should remove any previously-announced entries
+    /// from this stone that are absent from the snapshot (reconciliation).
+    #[serde(default)]
+    pub snapshot: bool,
 }
 
 impl ToolsBeacon {
@@ -187,6 +255,7 @@ impl ToolsBeacon {
             endpoint: endpoint.to_string(),
             deltas: Vec::new(),
             timestamp: Utc::now(),
+            snapshot: false,
         }
     }
 }
@@ -310,7 +379,7 @@ pub fn parse_capability_wish(
         let offering_part = &trimmed[..start];
         let selectors_raw = &trimmed[start + 1..trimmed.len() - 1];
 
-        let offering_fqn = crate::offerings::parse_offering_fqn(offering_part)
+        let offering_fqn = crate::offerings::OfferingFqn::parse(offering_part)
             .map_err(|e| CapabilityWishParseError(e.to_string()))?
             .fqn();
 
@@ -336,7 +405,7 @@ pub fn parse_capability_wish(
         ));
     }
 
-    let offering_fqn = crate::offerings::parse_offering_fqn(offering_part)
+    let offering_fqn = crate::offerings::OfferingFqn::parse(offering_part)
         .map_err(|e| CapabilityWishParseError(e.to_string()))?
         .fqn();
 
@@ -444,14 +513,14 @@ fn parse_capability_selector(
 #[serde(rename_all = "kebab-case")]
 pub enum ToolType {
     Offering,
-    SeedBank,
+    ManagedStorage,
 }
 
 impl ToolType {
     pub fn as_category(self) -> &'static str {
         match self {
             Self::Offering => "offering",
-            Self::SeedBank => "storage",
+            Self::ManagedStorage => "storage",
         }
     }
 }
@@ -490,8 +559,13 @@ mod tests {
                 ready: true,
                 protocol: tool_type.to_string(),
                 uris: Vec::new(),
+                hostname: None,
+                ip: None,
+                port: None,
+                uri_template: None,
             },
             capabilities: Vec::new(),
+            storage: None,
         }
     }
 
@@ -503,16 +577,17 @@ mod tests {
     }
 
     #[test]
-    fn fqid_bare_matches_named_instance() {
-        let tool = sample_tool("mongodb:prod", "mongodb", "offering");
+    fn fqid_v2_matches_named_instance() {
+        let tool = sample_tool("mongodb::prod", "mongodb", "offering");
         assert!(fqid_matches("mongodb", &tool)); // type match
-        assert!(fqid_matches("mongodb:prod", &tool)); // exact match
-        assert!(!fqid_matches("mongodb:dev", &tool)); // wrong instance
+        assert!(fqid_matches("mongodb::prod", &tool)); // V2 exact match
+        assert!(fqid_matches("mongodb:prod", &tool)); // V1 legacy normalized
+        assert!(!fqid_matches("mongodb::dev", &tool)); // wrong instance
     }
 
     #[test]
     fn fqid_no_prefix_match() {
-        let tool = sample_tool("ollama-cpu:adopted", "ollama-cpu", "offering");
+        let tool = sample_tool("ollama-cpu::adopted", "ollama-cpu", "offering");
         assert!(!fqid_matches("ollama", &tool)); // different type
         assert!(fqid_matches("ollama-cpu", &tool)); // exact type
     }
@@ -544,7 +619,7 @@ mod tests {
     #[test]
     fn parse_capability_wish_bracket() {
         let wish = parse_capability_wish("ollama:dev[model:modelv1]", None).unwrap();
-        assert_eq!(wish.offering_fqn, "ollama:dev");
+        assert_eq!(wish.offering_fqn, "ollama::dev");
         assert_eq!(wish.selectors.len(), 1);
         assert_eq!(wish.selectors[0].cap_type, "model");
         assert_eq!(wish.selectors[0].item, "modelv1");
@@ -581,7 +656,7 @@ mod tests {
     #[test]
     fn parse_capability_wish_shorthand_with_instance() {
         let wish = parse_capability_wish("ollama:dev:modelv1", Some("model")).unwrap();
-        assert_eq!(wish.offering_fqn, "ollama:dev");
+        assert_eq!(wish.offering_fqn, "ollama::dev");
         assert_eq!(wish.selectors[0].item, "modelv1");
     }
 

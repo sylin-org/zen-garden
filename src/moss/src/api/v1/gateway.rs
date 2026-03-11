@@ -4,6 +4,7 @@
 //! PUT upserts (idempotent), DELETE removes. Both trigger auto-chirp
 //! so the gateway entry propagates through topology.
 
+use crate::domain::garden_registry::EntryOrigin;
 use crate::AppState;
 use axum::{
     extract::{Path, State},
@@ -11,6 +12,8 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use garden_common::offerings::OfferingFqn;
+use garden_common::tools::{build_tool_key, GardenTool, ServiceInfo, Stone, ToolIdentity};
 use garden_common::GatewayRegistration;
 use serde::{Deserialize, Serialize};
 
@@ -82,13 +85,73 @@ pub async fn put_gateway(
         "Gateway registered"
     );
 
-    {
-        let mut gateways = state.gateways.write().await;
-        gateways.insert(offering, registration);
-    }
+    // Build GardenTool for gateway registration
+    let fqn = OfferingFqn::parse(&registration.fqn).ok();
+    let fqid = fqn.as_ref().map(|f| f.fqn()).unwrap_or_else(|| registration.fqn.clone());
+    let tool_type = fqn
+        .as_ref()
+        .map(|f| f.offering.clone())
+        .unwrap_or_else(|| offering.clone());
+    let instance = fqn.as_ref().and_then(|f| f.instance.clone()).unwrap_or_default();
 
-    // Auto-chirp: gateways changed → propagate via topology
-    state.sync_self_services(true).await;
+    let tool = GardenTool {
+        fqid: fqid.clone(),
+        tool: ToolIdentity {
+            name: instance,
+            tool_type,
+            category: registration
+                .category
+                .clone()
+                .unwrap_or_else(|| "orchestrator".to_string()),
+            id: String::new(),
+            tags: registration.tags.clone(),
+        },
+        stone: Stone {
+            id: state.stone_id.clone(),
+            name: state.stone_name.clone(),
+            endpoint: state.self_entry.read().await.address.http_base(),
+        },
+        service: ServiceInfo {
+            status: garden_common::SERVICE_RUNNING.to_string(),
+            ready: true,
+            protocol: registration.protocol.clone(),
+            uris: {
+                let template = registration
+                    .uri_template
+                    .as_deref()
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|| {
+                        crate::domain::connection::default_template(&registration.protocol)
+                    });
+                crate::domain::connection::resolve_uris(
+                    &template,
+                    &registration.hostname,
+                    &registration.ip,
+                    registration.port,
+                    &registration.protocol,
+                )
+            },
+            // Preserve source fields — don't lose them in URI composition
+            hostname: Some(registration.hostname.clone()),
+            ip: Some(registration.ip.clone()),
+            port: Some(registration.port),
+            uri_template: registration.uri_template.clone(),
+        },
+        capabilities: Vec::new(),
+        storage: None,
+    };
+
+    let delta = {
+        let mut reg = state.registry.write().await;
+        reg.upsert(tool, EntryOrigin::Registered)
+    };
+
+    // Broadcast via tools beacon so remote registries get the entry
+    if let Some(delta) = delta {
+        state
+            .publish_tool_deltas(vec![delta], true)
+            .await;
+    }
 
     Ok(Json(PutGatewayResponse {
         lease_id,
@@ -103,14 +166,15 @@ pub async fn delete_gateway(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> StatusCode {
-    let removed = {
-        let mut gateways = state.gateways.write().await;
-        gateways.remove(&offering).is_some()
+    let key = build_tool_key(&state.stone_id, &offering, "orchestrator");
+    let delta = {
+        let mut reg = state.registry.write().await;
+        reg.remove(&key)
     };
 
-    if removed {
+    if let Some(delta) = delta {
         tracing::info!(offering = %offering, "Gateway deregistered");
-        state.sync_self_services(true).await;
+        state.publish_tool_deltas(vec![delta], true).await;
     } else {
         tracing::debug!(offering = %offering, "Gateway not found for deregistration");
     }

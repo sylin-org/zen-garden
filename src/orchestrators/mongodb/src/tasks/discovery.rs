@@ -11,12 +11,13 @@
 
 use crate::app_state::AppState;
 use crate::domain::types::{InstanceHealth, MongoInstance, PendingAction};
+use garden_common::offerings::OfferingFqn;
 use orchestrator_common::resilient_stream::{self, StreamConfig, StreamContext};
 use orchestrator_common::stone_catalog::{ServiceKey, StoneIdentity};
 use orchestrator_common::tools_stream::ToolStreamEvent;
 use orchestrator_common::topology;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// Run the discovery task.
@@ -41,7 +42,7 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         explicit_stone: state.explicit_stone.clone(),
 
         fqid_filter: |fqid: &str| {
-            fqid == "offering:mongodb" || fqid.starts_with("offering:mongodb:")
+            fqid == "offering:mongodb" || fqid.starts_with("offering:mongodb::")
         },
 
         on_event: {
@@ -93,13 +94,56 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
     resilient_stream::run_resilient_stream(ctx, shutdown).await;
 }
 
-/// Bootstrap from topology — one-shot scan for existing MongoDB instances.
-async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
+/// Periodically re-scan topology for MongoDB instances.
+///
+/// The tools stream on the tended stone may not aggregate tools from remote
+/// stones (e.g., when the tended stone is a non-MongoDB host). This task
+/// compensates by re-querying topology every 60 seconds, ensuring instances
+/// that appear after the initial bootstrap are discovered.
+pub async fn run_topology_rescan(state: AppState, shutdown: CancellationToken) {
+    const RESCAN_INTERVAL: Duration = Duration::from_secs(60);
+
+    // Wait for the initial tending to be established by the discovery task
+    loop {
+        if shutdown.is_cancelled() {
+            return;
+        }
+        if state.tended_endpoint().await.is_some() {
+            break;
+        }
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_secs(5)) => continue,
+        }
+    }
+
+    let mut interval = tokio::time::interval(RESCAN_INTERVAL);
+    interval.tick().await; // skip the immediate first tick
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = interval.tick() => {
+                if let Some(endpoint) = state.tended_endpoint().await {
+                    bootstrap_from_topology(&state, &endpoint).await;
+                }
+            }
+        }
+    }
+}
+
+/// Scan topology for MongoDB instances and reconcile with the registry.
+///
+/// - New instances are added (health = Unknown).
+/// - Existing instances that were Offline/Down get their endpoints refreshed
+///   and health reset to Unknown so the health monitor picks them up.
+/// - Called on stream connect, failover, and periodically.
+pub async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
     match topology::query_topology_for_offering(stone_endpoint, "mongodb").await {
         Ok(stones) => {
             tracing::info!(
                 count = stones.len(),
-                "bootstrapped MongoDB instances from topology"
+                "topology scan complete"
             );
             for s in stones {
                 // Use IP for endpoint — .local mDNS unreliable in Docker on Windows
@@ -121,23 +165,56 @@ async fn bootstrap_from_topology(state: &AppState, stone_endpoint: &str) {
                     })
                     .await;
 
+                // Check if existing instance needs re-activation
+                let was_inactive = {
+                    let reg = state.instances.read().await;
+                    reg.get(&s.stone_name)
+                        .map(|i| matches!(
+                            i.health,
+                            InstanceHealth::Offline
+                            | InstanceHealth::Down
+                            | InstanceHealth::Stopped
+                            | InstanceHealth::Incompatible
+                        ))
+                        .unwrap_or(false)
+                };
+
                 let instance = MongoInstance {
                     stone_id: s.stone_id.clone(),
                     stone_name: s.stone_name.clone(),
                     moss_endpoint,
                     mongo_endpoint,
-                    fqn: "mongodb".to_string(), // Default FQN; refined by tools stream
+                    fqn: s.fqn.clone(),
                     health: InstanceHealth::Unknown,
                     role: None,
                     last_seen: Instant::now(),
+                    server_version: None,
+                    wire_version_range: None,
                 };
-                state.upsert_instance(instance).await;
+                let is_new = state.upsert_instance(instance).await;
+
+                // upsert_instance preserves health — reset it for returning stones
+                if !is_new && was_inactive {
+                    let mut reg = state.instances.write().await;
+                    if let Some(inst) = reg.get_mut(&s.stone_name) {
+                        tracing::info!(
+                            stone = %s.stone_name,
+                            from = ?inst.health,
+                            "instance re-discovered in topology — resuming monitoring"
+                        );
+                        inst.health = InstanceHealth::Unknown;
+                    }
+                }
             }
         }
         Err(e) => {
-            tracing::warn!(error = %e, "topology bootstrap failed (will rely on tools stream)");
+            tracing::warn!(error = %e, "topology scan failed (will rely on tools stream)");
+            return;
         }
     }
+
+    // Wake the conductor — topology scan may have added/updated instances
+    state.conductor_notify.notify_one();
 }
 
 /// Handle a single tool stream event.
@@ -151,12 +228,12 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
             ready,
         } => {
             // Derive FQN from tool_fqid:
-            //   "offering:mongodb"           → "mongodb"
-            //   "offering:mongodb:analytics"  → "mongodb:analytics"
+            //   "offering:mongodb"             → mongodb (default)
+            //   "offering:mongodb::analytics"  → mongodb::analytics
             let fqn = tool_fqid
                 .strip_prefix("offering:")
-                .unwrap_or("mongodb")
-                .to_string();
+                .and_then(|s| OfferingFqn::parse(s).ok())
+                .unwrap_or_else(|| OfferingFqn::new("mongodb").unwrap());
 
             // Extract host:port from endpoint URL.
             // The tools stream constructs endpoints using the connection protocol
@@ -171,8 +248,10 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     &state.koi_endpoint, &mongo_endpoint_raw,
                 ).await;
 
-                // Suppress registration if a pending removal exists for this endpoint
-                if state.has_pending_removal(&mongo_endpoint).await {
+                // Suppress registration if a pending removal exists for this
+                // endpoint+FQN pair. Uses FQN-aware check so that a reassigned
+                // instance (same endpoint, different FQN) is not suppressed.
+                if state.has_pending_removal_for_fqn(&mongo_endpoint, &fqn).await {
                     tracing::trace!(
                         stone = %stone_name,
                         endpoint = %mongo_endpoint,
@@ -225,14 +304,22 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     health,
                     role: None,
                     last_seen: Instant::now(),
+                    server_version: None,
+                    wire_version_range: None,
                 };
 
                 let is_new = state.upsert_instance(instance).await;
+
+                // Wake the conductor on any registry change
+                if is_new {
+                    state.conductor_notify.notify_one();
+                }
+
                 if is_new {
                     tracing::info!(
                         stone = %stone_name,
                         endpoint = %endpoint,
-                        fqn = %fqn,
+                        fqn = %fqn.to_string(),
                         ready = ready,
                         "MongoDB instance discovered via tools stream"
                     );
@@ -249,18 +336,30 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                         }
                     }
                 } else {
-                    // Existing instance with ready=true — if it was Stopped, transition to Unknown
+                    // Existing instance with ready=true — if it was inactive
+                    // (Stopped/Offline/Down), transition back to Unknown so
+                    // the health monitor picks it up for probing.
                     let mut reg = state.instances.write().await;
                     if let Some(inst) = reg.get_mut(&stone_name) {
-                        if inst.health == InstanceHealth::Stopped {
-                            tracing::info!(
-                                stone = %stone_name,
-                                "MongoDB instance restarted (transitioning from stopped)"
-                            );
-                            inst.health = InstanceHealth::Unknown;
+                        match inst.health {
+                            InstanceHealth::Stopped
+                            | InstanceHealth::Offline
+                            | InstanceHealth::Down
+                            | InstanceHealth::Incompatible => {
+                                tracing::info!(
+                                    stone = %stone_name,
+                                    from = ?inst.health,
+                                    "instance re-discovered — resuming monitoring"
+                                );
+                                inst.health = InstanceHealth::Unknown;
+                            }
+                            _ => {}
                         }
                         inst.last_seen = Instant::now();
                     }
+
+                    // Wake the conductor — instance re-activated
+                    state.conductor_notify.notify_one();
                 }
             });
         }
@@ -301,6 +400,9 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     }
                 }
                 state.remove_instance(&stone_name).await;
+
+                // Wake the conductor — instance removed
+                state.conductor_notify.notify_one();
             });
         }
         ToolStreamEvent::Heartbeat => {

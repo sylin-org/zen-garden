@@ -24,9 +24,7 @@ use crate::{
 };
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
-use garden_common::storage::SeedBankRole;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -71,34 +69,39 @@ pub fn start_topology_maintenance(
     });
 }
 
-/// Start storage cache maintenance task (STORAGE-0003)
+/// Periodically reaps expired gateway entries from the registry.
 ///
-/// Periodically prunes stale entries from storage cache.
-/// Runs every 60 seconds (2x topology interval).
-pub fn start_storage_maintenance(
-    storage_cache: crate::domain::storage_cache::StorageCache,
-    topology_cache: TopologyCache,
+/// Runs every 15 seconds (gateway TTL is 60s, orchestrators refresh every 30s).
+/// Reaped entries are broadcast via SSE **and** UDP tools beacon so remote
+/// stones learn about the removal promptly.
+pub fn start_registry_maintenance(
+    state: AppState,
     token: CancellationToken,
 ) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
         interval.tick().await; // Skip first immediate tick
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {}
                 _ = token.cancelled() => {
-                    tracing::debug!("Storage maintenance shutting down (MOSS-0004)");
+                    tracing::debug!("Registry maintenance shutting down");
                     break;
                 }
             }
-            let pruned =
-                crate::domain::storage_cache::prune_stale(&storage_cache, &topology_cache).await;
-            if pruned > 0 {
+            let reaped = {
+                let mut reg = state.registry.write().await;
+                reg.reap_expired()
+            };
+            if !reaped.is_empty() {
                 tracing::debug!(
-                    pruned = pruned,
-                    "Storage cache maintenance: pruned stale entries"
+                    count = reaped.len(),
+                    "Registry maintenance: reaped expired gateway entries"
                 );
+                // Notify SSE subscribers AND broadcast beacon so remote
+                // registries drop the reaped entries.
+                state.publish_tool_deltas(reaped, true).await;
             }
         }
     });
@@ -117,15 +120,14 @@ pub async fn start_discovery_listener(
     api_endpoint: String,
     topology_cache: TopologyCache,
     topology_dirty: TopologyDirtyFlag,
-    storage_cache: crate::domain::storage_cache::StorageCache,
-    tools_cache: crate::domain::tools::ToolsCache,
     tools_tx: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
+    registry: crate::domain::GardenRegistry,
     self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
     orchestration_nudge: Arc<tokio::sync::Notify>,
-    seed_banks: crate::domain::SeedBanks,
+    volumes: crate::domain::Volumes,
     token: CancellationToken,
 ) {
     // Spawn UDP event monitor that handles chirps, goodbyes, and storage beacons
@@ -206,8 +208,8 @@ pub async fn start_discovery_listener(
                         let local_stone_name = stone_name.clone();
                         let local_endpoint = api_endpoint.clone();
                         let local_entry = self_entry.clone();
-                        let local_tools_cache = tools_cache.clone();
-                        let local_seed_banks = seed_banks.clone();
+                        let local_registry = registry.clone();
+                        let local_volumes = volumes.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
                                 let current = local_entry.read().await.address.http_base();
@@ -218,16 +220,13 @@ pub async fn start_discovery_listener(
                                 }
                             };
 
-                            let (roles, pins) = {
-                                let banks = local_seed_banks.read().await;
-                                let roles: HashMap<String, SeedBankRole> = banks.values().map(|b| (b.name.clone(), b.role)).collect();
-                                let pins: HashMap<String, String> = banks.values().filter_map(|b| b.pin_id().map(|p| (b.name.clone(), p.to_string()))).collect();
-                                (roles, pins)
-                            };
+                            let roles = crate::domain::storage::roles_snapshot(&local_volumes).await;
+                            let pins = crate::domain::storage::pins_snapshot(&local_volumes).await;
                             match crate::infra::storage::broadcast_if_has_storage(
                                 &local_stone_id,
                                 &local_stone_name,
                                 &resolved_endpoint,
+                                &local_volumes,
                                 Some(&roles),
                                 Some(&pins),
                             )
@@ -251,26 +250,24 @@ pub async fn start_discovery_listener(
                                 }
                             }
 
-                            // TOOLS-0001: Broadcast current local tools snapshot for new stone.
+                            // TOOLS-0003: Broadcast current local tools snapshot for new stone.
                             let snapshot_deltas = {
-                                let cache = local_tools_cache.read().await;
-                                cache.local_snapshot_for_beacon(&local_stone_id)
+                                let reg = local_registry.read().await;
+                                reg.local_snapshot_for_beacon(&local_stone_id)
                             };
-                            if !snapshot_deltas.is_empty() {
-                                if let Err(e) = crate::infra::broadcast_tools_beacon(
-                                    &local_stone_id,
-                                    &local_stone_name,
-                                    &resolved_endpoint,
-                                    snapshot_deltas,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        error = %e,
-                                        new_stone = %chirp.stone_name,
-                                        "Failed to broadcast tools beacon for new stone"
-                                    );
-                                }
+                            if let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
+                                &local_stone_id,
+                                &local_stone_name,
+                                &resolved_endpoint,
+                                snapshot_deltas,
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    new_stone = %chirp.stone_name,
+                                    "Failed to broadcast tools snapshot beacon for new stone"
+                                );
                             }
                         });
                     }
@@ -294,18 +291,15 @@ pub async fn start_discovery_listener(
                     mark_stone_offline_dirty(&topology_cache, &goodbye.stone_id, &topology_dirty)
                         .await;
 
-                    // STORAGE-0003: Remove from storage cache
-                    crate::domain::storage_cache::remove_stone(&storage_cache, &goodbye.stone_id)
-                        .await;
-
-                    // TOOLS-0001: Remove tool projections for offline stone.
+                    // TOOLS-0003: Remove all entries for offline stone from registry
                     let removed = {
-                        let mut cache = tools_cache.write().await;
-                        cache.remove_stone_tools(&goodbye.stone_id)
+                        let mut reg = registry.write().await;
+                        reg.remove_stone(&goodbye.stone_id)
                     };
-                    for delta in removed {
-                        let _ = tools_tx.send(delta);
+                    for delta in &removed {
+                        let _ = tools_tx.send(delta.clone());
                     }
+
                 }
                 garden_common::infra::communications::announcement_types::STORAGE_BEACON => {
                     // STORAGE-0003: Handle storage beacon from peer
@@ -320,13 +314,13 @@ pub async fn start_discovery_listener(
 
                     tracing::debug!(
                         stone = %beacon.stone_name,
-                        seed_banks = beacon.seed_banks.len(),
+                        seed_banks = beacon.storages.len(),
                         from = %from_addr,
                         "Storage beacon received, updating storage cache"
                     );
 
-                    // Update storage cache
-                    crate::domain::storage_cache::update_from_beacon(&storage_cache, beacon).await;
+                    // TOOLS-0003: Storage data now flows through ToolsBeacon / registry.
+                    // StorageBeacon is kept for orchestration nudge only.
 
                     // Nudge orchestration so role resolution happens immediately
                     orchestration_nudge.notify_one();
@@ -352,13 +346,15 @@ pub async fn start_discovery_listener(
                         "Tools beacon received, updating tools cache"
                     );
 
+                    // TOOLS-0003: Apply to unified registry
                     let applied = {
-                        let mut cache = tools_cache.write().await;
-                        cache.apply_remote_beacon(&beacon)
+                        let mut reg = registry.write().await;
+                        reg.apply_remote_beacon(&beacon)
                     };
-                    for delta in applied {
-                        let _ = tools_tx.send(delta);
+                    for delta in &applied {
+                        let _ = tools_tx.send(delta.clone());
                     }
+
                 }
                 _ => {
                     // Ignore other announcement types (election events handled by election service, discovery handled by discovery_handler)
@@ -407,7 +403,7 @@ pub fn start_registry_loader(state: AppState) {
             offerings
                 .iter()
                 .filter(|o| o.is_managed())
-                .map(|o| (o.offering_id.clone(), o.name.clone()))
+                .map(|o| (o.offering_id.clone(), o.name.to_string()))
                 .collect()
         };
         let mut any_changed = false;
@@ -746,251 +742,75 @@ pub async fn start_lantern_registration(
 /// This is a comprehensive, self-healing mount system with two background tasks:
 ///
 /// 1. **Mount Persistence Task** (every 5 seconds):
-///    - Verifies all tracked mounts are still active
-///    - Automatically re-mounts devices that have unexpectedly become unmounted
-///    - Handles race conditions with udisks2 or other system processes
-///    - Continues retrying indefinitely (devices can come back)
+///    - Auto-mounts unmounted managed devices (manifest-based discovery)
+///    - Health-ticks all volumes (capacity, liveness)
+///    - Broadcasts storage beacon for garden-wide awareness
 ///
-/// 2. **Hot-plug Detection Task** (every 10 seconds):
-///    - Scans for new zen-seed devices that may have been plugged in
-///    - Auto-mounts unmounted devices
-///    - Updates storage cache and broadcasts beacon
-///
-/// Both tasks share a MountTracker to maintain state about expected mounts.
-#[cfg(target_os = "linux")]
-pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
-    use crate::infra::storage::SeedBankRegistry;
-
-    // Use the mount tracker from AppState (shared with release handler — STORAGE-0006)
-    let tracker = state.mount_tracker.clone();
-    let tracker_persistence = tracker.clone();
-    let tracker_hotplug = tracker.clone();
-
-    let state_persistence = state.clone();
-    let state_hotplug = state;
-    let token_persistence = token.child_token();
-    let token_hotplug = token.child_token();
-
-    // Task 1: Mount persistence verification (every 5 seconds)
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-        interval.tick().await; // Skip first immediate tick
-
-        tracing::info!("Seed bank mount persistence task started (5s interval)");
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = token_persistence.cancelled() => {
-                    tracing::debug!("Seed bank mount persistence shutting down (MOSS-0004)");
-                    break;
-                }
-            }
-
-            // Verify and recover any mounts that disappeared
-            let recovered = SeedBankRegistry::verify_and_recover_mounts(&tracker_persistence).await;
-
-            if recovered > 0 {
-                tracing::info!(
-                    recovered = recovered,
-                    "Mount persistence: recovered disappeared mounts"
-                );
-
-                // Update storage cache since mounts changed
-                let endpoint = state_persistence
-                    .self_entry
-                    .read()
-                    .await
-                    .address
-                    .http_base();
-                let roles = state_persistence.seed_bank_roles_snapshot().await;
-                let pins = state_persistence.seed_bank_pins_snapshot().await;
-                if let Err(e) = crate::infra::storage::update_and_broadcast(
-                    &state_persistence.storage_cache,
-                    &state_persistence.stone_id,
-                    &state_persistence.stone_name,
-                    &endpoint,
-                    Some(&roles),
-                    Some(&pins),
-                )
-                .await
-                {
-                    tracing::debug!(
-                        error = %e,
-                        "Failed to update storage cache after mount recovery"
-                    );
-                } else {
-                    state_persistence.refresh_local_tools_projection().await;
-                }
-
-                // Refresh seed bank cache + lifecycle objects
-                match SeedBankRegistry::scan().await {
-                    Ok(registry) => {
-                        // STORAGE-0007: update lifecycle objects from fresh scan
-                        state_persistence
-                            .refresh_seed_banks_from_scan(&registry)
-                            .await;
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            error = %e,
-                            "Failed to refresh seed bank cache after mount recovery"
-                        );
-                    }
-                }
-            }
-        }
-    });
-
-    // Task 2: Hot-plug detection (every 10 seconds)
+/// Unified across all platforms (STORAGE-0011). No separate MountTracker.
+pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
         interval.tick().await; // Skip first immediate tick
 
-        tracing::info!("Seed bank hot-plug detection task started (10s interval)");
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = token_hotplug.cancelled() => {
-                    tracing::debug!("Seed bank hot-plug detection shutting down (MOSS-0004)");
-                    break;
-                }
-            }
-
-            // Scan triggers auto-mount for any new zen-seed devices
-            // Use the tracker so new mounts are monitored for persistence
-            // Pass event_bus to emit storage.detected events for Companions
-            match SeedBankRegistry::auto_mount_seed_banks_with_tracker(
-                Some(&tracker_hotplug),
-                Some(&state_hotplug.event_bus),
-            )
-            .await
-            {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::trace!(
-                        error = %e,
-                        "Hot-plug auto-mount scan failed"
-                    );
-                }
-            }
-
-            // STORAGE-0007: health tick all seed banks (~10s)
-            state_hotplug.tick_seed_bank_health().await;
-
-            // Scan to get registry state (also triggers auto-mount internally, but we need the result)
-            match SeedBankRegistry::scan().await {
-                Ok(registry) => {
-                    let count = registry.list().len();
-                    if count > 0 {
-                        tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
-                    }
-
-                    // STORAGE-0007: refresh lifecycle objects
-                    state_hotplug
-                        .refresh_seed_banks_from_scan(&registry)
-                        .await;
-
-                    // Update storage cache and broadcast if we have storage
-                    let endpoint = state_hotplug.self_entry.read().await.address.http_base();
-                    let roles = state_hotplug.seed_bank_roles_snapshot().await;
-                    let pins = state_hotplug.seed_bank_pins_snapshot().await;
-                    if let Err(e) = crate::infra::storage::update_and_broadcast(
-                        &state_hotplug.storage_cache,
-                        &state_hotplug.stone_id,
-                        &state_hotplug.stone_name,
-                        &endpoint,
-                        Some(&roles),
-                        Some(&pins),
-                    )
-                    .await
-                    {
-                        tracing::trace!(
-                            error = %e,
-                            "Failed to update storage cache during hot-plug scan"
-                        );
-                    } else {
-                        state_hotplug.refresh_local_tools_projection().await;
-                    }
-                }
-                Err(e) => {
-                    tracing::trace!(
-                        error = %e,
-                        "Hot-plug scan failed"
-                    );
-                }
-            }
-        }
-    });
-}
-
-/// Start seed bank hot-plug detection task (non-Linux fallback)
-///
-/// On non-Linux platforms, just runs the basic scan without mount tracking.
-#[cfg(not(target_os = "linux"))]
-pub fn start_seedbank_resilient_mount_system(state: AppState, token: CancellationToken) {
-    start_seedbank_hotplug_detection_basic(state, token);
-}
-
-/// Basic hot-plug detection without mount tracking (used on non-Linux)
-#[cfg(not(target_os = "linux"))]
-fn start_seedbank_hotplug_detection_basic(state: AppState, token: CancellationToken) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
-        interval.tick().await; // Skip first immediate tick
+        tracing::info!("Storage lifecycle task started (10s interval)");
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {}
                 _ = token.cancelled() => {
-                    tracing::debug!("Seed bank hot-plug detection shutting down (MOSS-0004)");
+                    tracing::debug!("Storage lifecycle shutting down");
                     break;
                 }
             }
 
-            // STORAGE-0007: health tick all seed banks (~10s)
-            state.tick_seed_bank_health().await;
-
-            // Scan triggers auto-mount for any new zen-seed devices
-            match crate::infra::storage::SeedBankRegistry::scan().await {
-                Ok(registry) => {
-                    let count = registry.list().len();
-                    if count > 0 {
-                        tracing::trace!(seed_banks = count, "Hot-plug scan: seed banks detected");
-                    }
-
-                    // STORAGE-0007: refresh lifecycle objects
-                    state.refresh_seed_banks_from_scan(&registry).await;
-
-                    // Update storage cache and broadcast if we have storage
-                    let endpoint = state.self_entry.read().await.address.http_base();
-                    let roles = state.seed_bank_roles_snapshot().await;
-                    let pins = state.seed_bank_pins_snapshot().await;
-                    if let Err(e) = crate::infra::storage::update_and_broadcast(
-                        &state.storage_cache,
-                        &state.stone_id,
-                        &state.stone_name,
-                        &endpoint,
-                        Some(&roles),
-                        Some(&pins),
-                    )
-                    .await
-                    {
-                        tracing::trace!(
-                            error = %e,
-                            "Failed to update storage cache during hot-plug scan"
-                        );
-                    } else {
-                        state.refresh_local_tools_projection().await;
-                    }
+            // Auto-mount any unmounted managed devices (replaces legacy auto_mount_seed_banks)
+            let connected = crate::domain::storage::auto_mount_unmounted(&state.volumes).await;
+            if !connected.is_empty() {
+                for event in connected {
+                    state.emit_storage_changed(event).await;
                 }
-                Err(e) => {
-                    tracing::trace!(
-                        error = %e,
-                        "Hot-plug scan failed"
-                    );
-                }
+                state.emit_storage_changed(
+                    garden_common::storage::StorageChanged::Reclassified,
+                ).await;
+            }
+
+            // Health tick all volumes (~10s)
+            crate::domain::storage::health_tick_all(&state.volumes).await;
+
+            // Periodic beacon heartbeat (tools projection + beacon)
+            state.refresh_local_tools_projection().await;
+            state.broadcast_storage_beacon().await;
+        }
+    });
+}
+
+/// Subscribe to `StorageChanged` and render storage ribbons to the physical console.
+///
+/// Delegates to `PlatformRuntime` so output goes to the appropriate destination
+/// on each platform (TTY1 on Linux, stdout on Windows).
+pub fn start_storage_console_task(
+    runtime: Arc<dyn garden_common::PlatformRuntime>,
+    rx: tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged>,
+    token: CancellationToken,
+) {
+    use garden_common::storage::StorageChanged;
+
+    tokio::spawn(async move {
+        let mut rx = rx;
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => break,
+                result = rx.recv() => match result {
+                    Ok(StorageChanged::Connected { name, roles, used_bytes }) => {
+                        runtime.print_storage_connected(&name, &roles, used_bytes);
+                    }
+                    Ok(StorageChanged::Released { name }) => {
+                        runtime.print_storage_released(&name);
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                },
             }
         }
     });
@@ -1018,15 +838,11 @@ pub async fn start_all_background_tasks(
         token.child_token(),
     );
 
-    // Start storage cache maintenance (STORAGE-0003: prune stale entries)
-    start_storage_maintenance(
-        state.storage_cache.clone(),
-        state.topology_cache.clone(),
-        token.child_token(),
-    );
+    // Start unified storage lifecycle (STORAGE-0011: auto-mount, health, beacon)
+    start_storage_lifecycle(state.clone(), token.child_token());
 
-    // Start resilient seed bank mount system (STORAGE-0004: mount persistence + hot-plug)
-    start_seedbank_resilient_mount_system(state.clone(), token.child_token());
+    // Start storage console task — sole renderer of storage ribbons
+    start_storage_console_task(state.runtime.clone(), state.subscribe_storage_changed(), token.child_token());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(
@@ -1035,15 +851,14 @@ pub async fn start_all_background_tasks(
         api_endpoint.to_string(),
         state.topology_cache.clone(),
         state.topology_dirty.clone(),
-        state.storage_cache.clone(),
-        state.tools_cache.clone(),
         state.tools_tx.clone(),
+        state.registry.clone(),
         state.self_entry.clone(),
         console.clone(),
         state.infrastructure_handlers.clone(),
         state.manifest_registry.clone(),
         state.orchestration_nudge.clone(),
-        state.seed_banks.clone(),
+        state.volumes.clone(),
         token.child_token(),
     )
     .await;

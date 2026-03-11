@@ -2,13 +2,12 @@
 //!
 //! TOOLS-0002: Offerings are projected through `find_services()` (same path as
 //! garden-rake find) to get gateway/orchestrator-aware resolution.
-//! Seed-banks are projected directly from the storage cache.
+//! Seed-banks are projected directly from the seed bank lifecycle objects.
 
-use crate::domain::connection;
 use crate::domain::service_discovery::{self, FoundService};
-use crate::domain::tools::readiness::seed_bank_readiness;
+use crate::domain::storage::VolumeHealth;
 use crate::AppState;
-use garden_common::storage::DEFAULT_PUBLIC_SEED_BANK_NAME;
+use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
 use std::collections::BTreeSet;
 
@@ -26,113 +25,91 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     }
 
     // ── Gateway / orchestrator entries ───────────────────────────
-    // Gateways registered via Koi mDNS that handle offerings (e.g. MongoDB orchestrator).
-    // These appear as category=orchestrator tools.
-    {
-        let gateways = state.gateways.read().await;
-        for (offering, gw) in gateways.iter() {
-            let category = gw.category.as_deref().unwrap_or("orchestrator");
-            let tags = if gw.tags.is_empty() {
-                vec!["orchestrator".to_string()]
-            } else {
-                gw.tags.clone()
-            };
+    // Gateways are written directly to the registry with EntryOrigin::Registered
+    // by the gateway API (PUT /api/v1/garden/gateway). They are NOT projected
+    // here — the reconcile_local() call skips Registered entries.
 
-            let fqid = build_offering_fqid(&gw.fqn, offering);
-
-            let conn = connection::resolve_connection(
-                &gw.hostname,
-                &format!("http://{}:{}", gw.ip, gw.port),
-                gw.port,
-                &gw.protocol,
-                gw.uri_template.as_deref(),
-            );
-
-            tools.push(GardenTool {
-                fqid: fqid.clone(),
-                tool: ToolIdentity {
-                    name: instance_name_from_fqid(&fqid),
-                    tool_type: offering.to_ascii_lowercase(),
-                    category: category.to_string(),
-                    id: String::new(),
-                    tags,
-                },
-                stone: Stone {
-                    id: state.stone_id.clone(),
-                    name: state.stone_name.clone(),
-                    endpoint: state.self_entry.read().await.address.http_base(),
-                },
-                service: ServiceInfo {
-                    status: garden_common::SERVICE_RUNNING.to_string(),
-                    ready: true,
-                    protocol: conn.protocol.clone(),
-                    uris: conn.uris,
-                },
-                capabilities: Vec::new(),
-            });
-        }
-    }
-
-    // ── Seed-banks via storage cache ─────────────────────────────
-    let local_storage = {
-        let cache = state.storage_cache.read().await;
-        cache.get_beacon(&state.stone_id).cloned()
+    // ── Managed storages from unified volumes ────────────────────
+    let endpoint = state.self_entry.read().await.address.http_base();
+    let managed_vols: Vec<_> = {
+        let map = state.volumes.read().await;
+        map.values()
+            .filter(|v| v.is_managed())
+            .cloned()
+            .collect()
     };
 
-    if let Some(beacon) = local_storage {
-        for seed_bank in beacon.seed_banks {
-            let canonical = canonical_seed_bank_name(&seed_bank.name);
-            let (status, ready) = seed_bank_readiness(&seed_bank);
-            let protocol = seed_bank
-                .protocols
-                .iter()
-                .find(|p| p.eq_ignore_ascii_case("s3"))
-                .cloned()
-                .or_else(|| seed_bank.protocols.first().cloned())
-                .unwrap_or_else(|| "storage".to_string())
-                .to_ascii_lowercase();
-            let _port = parse_port_from_endpoint(&beacon.endpoint).unwrap_or(0);
+    for vol in &managed_vols {
+        let mgmt = vol.management.as_ref().unwrap(); // safe: filtered above
+        let (status, ready) = volume_health_to_readiness(&vol.health);
+        let visibility_str = mgmt.visibility.to_string();
 
-            let mut uris = Vec::new();
-            uris.push(format!(
-                "{}/api/v1/storage",
-                beacon.endpoint.trim_end_matches('/')
-            ));
-            if protocol == "s3" {
-                uris.push(format!(
-                    "{}/api/v1/storage/s3",
-                    beacon.endpoint.trim_end_matches('/')
-                ));
-            }
-            uris = uris
-                .into_iter()
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
+        // fqid = replica set display name (used for grouping replicas and Explorer folders).
+        // Users see replica set names, not individual volume names.
+        // The stable GUID lives in StorageMetadata.replica_set_id.
+        let fqid = if mgmt.replica_set_name.is_empty() {
+            garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY.to_string()
+        } else {
+            mgmt.replica_set_name.clone()
+        };
 
-            tools.push(GardenTool {
-                fqid: canonical.clone(),
-                tool: ToolIdentity {
-                    name: String::new(),
-                    tool_type: "seed-bank".to_string(),
-                    category: "storage".to_string(),
-                    id: seed_bank.id.clone(),
-                    tags: Vec::new(),
-                },
-                stone: Stone {
-                    id: state.stone_id.clone(),
-                    name: state.stone_name.clone(),
-                    endpoint: beacon.endpoint.clone(),
-                },
-                service: ServiceInfo {
-                    status: status.to_string(),
-                    ready,
-                    protocol,
-                    uris,
-                },
-                capabilities: Vec::new(),
-            });
-        }
+        // Local storages always support s3 + storage protocols
+        let protocols = vec![garden_common::constants::PROTOCOL_S3.to_string(), garden_common::constants::PROTOCOL_STORAGE.to_string()];
+        let protocol = garden_common::constants::PROTOCOL_S3.to_string();
+
+        let mut uris = Vec::new();
+        uris.push(format!(
+            "{}/api/v1/storage",
+            endpoint.trim_end_matches('/')
+        ));
+        uris.push(format!(
+            "{}/api/v1/storage/s3",
+            endpoint.trim_end_matches('/')
+        ));
+        uris = uris
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        tools.push(GardenTool {
+            fqid,
+            tool: ToolIdentity {
+                name: mgmt.name.clone(),
+                tool_type: garden_common::constants::TOOL_TYPE_SEED_BANK.to_string(),
+                category: garden_common::constants::CATEGORY_STORAGE.to_string(),
+                id: mgmt.id.clone(),
+                tags: Vec::new(),
+            },
+            stone: Stone {
+                id: state.stone_id.clone(),
+                name: state.stone_name.clone(),
+                endpoint: endpoint.clone(),
+            },
+            service: ServiceInfo {
+                status: status.to_string(),
+                ready,
+                protocol,
+                uris,
+                hostname: None,
+                ip: None,
+                port: None,
+                uri_template: None,
+            },
+            capabilities: Vec::new(),
+            storage: Some(garden_common::tools::StorageMetadata {
+                replica_set_id: mgmt.replica_set_id.clone(),
+                replica_set_name: mgmt.replica_set_name.clone(),
+                role: Some(mgmt.role.to_string().to_ascii_lowercase()),
+                capacity_bytes: vol.capacity_bytes,
+                used_bytes: vol.used_bytes,
+                visibility: visibility_str,
+                encrypted: mgmt.encrypted,
+                pin_id: vol.pin_id().map(|s| s.to_string()),
+                protocols,
+                roles: mgmt.roles.clone(),
+            }),
+        });
     }
 
     tools
@@ -140,7 +117,8 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
 
 /// Convert a `FoundService` (from service discovery) into a `GardenTool`.
 fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
-    let fqid = build_offering_fqid(&svc.name, &svc.offering);
+    let fqn = parse_fqn_for_fqid(&svc.name, &svc.offering);
+    let fqid = fqn.fqn();
 
     let capabilities: Vec<Capability> = svc
         .sub_capabilities
@@ -163,7 +141,7 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
     GardenTool {
         fqid: fqid.clone(),
         tool: ToolIdentity {
-            name: instance_name_from_fqid(&fqid),
+            name: fqn.instance.clone().unwrap_or_default(),
             tool_type: svc.offering.to_ascii_lowercase(),
             category: svc.category.to_ascii_lowercase(),
             id: svc.offering_id,
@@ -179,55 +157,57 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
             ready: svc.status.eq_ignore_ascii_case(garden_common::SERVICE_RUNNING),
             protocol: svc.connection.protocol,
             uris: svc.connection.uris,
+            hostname: Some(svc.connection.hostname),
+            ip: Some(svc.connection.ip),
+            port: Some(svc.connection.port),
+            uri_template: None,
         },
         capabilities,
+        storage: None,
     }
 }
 
-/// Build the bare fqid from a service name and offering type.
+/// Parse an FQN from a service name and offering type.
 ///
-/// If the name and offering are the same (default instance), fqid is just the offering.
-/// If different (named instance like "mongodb:prod"), fqid is "offering:name".
-fn build_offering_fqid(name: &str, offering: &str) -> String {
+/// Tries parsing `name` as an FQN first; falls back to constructing
+/// `offering::name` if the name is an unqualified instance identifier.
+fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     let name_lower = name.to_ascii_lowercase();
     let offering_lower = offering.to_ascii_lowercase();
 
+    // Default instance — name matches offering type
     if name_lower == offering_lower || name_lower.is_empty() {
-        offering_lower
-    } else if name_lower.starts_with(&format!("{}:", offering_lower)) {
-        // Already qualified: "mongodb:prod" → keep as-is
-        name_lower
-    } else {
-        format!("{}:{}", offering_lower, name_lower)
+        return OfferingFqn::new(&offering_lower).unwrap_or(OfferingFqn {
+            source: None,
+            offering: offering_lower,
+            instance: None,
+            image_ref: None,
+        });
     }
-}
 
-/// Extract the instance name from a fqid.
-/// `"mongodb:prod"` → `"prod"`, `"mongodb"` → `""`.
-fn instance_name_from_fqid(fqid: &str) -> String {
-    fqid.split_once(':')
-        .map(|(_, name)| name.to_string())
-        .unwrap_or_default()
-}
-
-fn canonical_seed_bank_name(name: &str) -> String {
-    if name.eq_ignore_ascii_case(DEFAULT_PUBLIC_SEED_BANK_NAME) {
-        "default".to_string()
-    } else {
-        name.trim().to_ascii_lowercase()
+    // Already a qualified FQN (V2 "mongodb::prod" or V1 "mongodb:prod") — parse it
+    if let Ok(fqn) = OfferingFqn::parse(&name_lower) {
+        if fqn.offering == offering_lower {
+            return fqn;
+        }
     }
+
+    // Bare instance name — construct qualified FQN
+    OfferingFqn::with_instance(&offering_lower, &name_lower).unwrap_or(OfferingFqn {
+        source: None,
+        offering: offering_lower,
+        instance: Some(name_lower),
+        image_ref: None,
+    })
 }
 
-fn parse_port_from_endpoint(endpoint: &str) -> Option<u16> {
-    let trimmed = endpoint.trim().trim_end_matches('/');
-    let without_scheme = trimmed
-        .strip_prefix("http://")
-        .or_else(|| trimmed.strip_prefix("https://"))
-        .unwrap_or(trimmed);
-    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-    host_port
-        .rsplit_once(':')
-        .and_then(|(_, port)| port.parse().ok())
+/// Map `VolumeHealth` to `(status, ready)` for tool projection.
+fn volume_health_to_readiness(health: &VolumeHealth) -> (&'static str, bool) {
+    match health {
+        VolumeHealth::Healthy => ("running", true),
+        VolumeHealth::Degraded(_) => ("degraded", false),
+        VolumeHealth::Unmounted | VolumeHealth::Lost => ("stopped", false),
+    }
 }
 
 #[cfg(test)]
@@ -235,46 +215,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_offering_fqid_default_instance() {
-        assert_eq!(build_offering_fqid("mongodb", "mongodb"), "mongodb");
-        assert_eq!(build_offering_fqid("MongoDB", "mongodb"), "mongodb");
+    fn fqid_default_instance() {
+        let fqn = parse_fqn_for_fqid("mongodb", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb");
+        assert_eq!(fqn.instance, None);
+
+        let fqn = parse_fqn_for_fqid("MongoDB", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb");
     }
 
     #[test]
-    fn build_offering_fqid_named_instance() {
-        assert_eq!(build_offering_fqid("prod", "mongodb"), "mongodb:prod");
-        assert_eq!(
-            build_offering_fqid("mongodb:prod", "mongodb"),
-            "mongodb:prod"
-        );
-    }
+    fn fqid_named_instance() {
+        // Bare instance name
+        let fqn = parse_fqn_for_fqid("prod", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb::prod");
+        assert_eq!(fqn.instance, Some("prod".to_string()));
 
-    #[test]
-    fn instance_name_extraction() {
-        assert_eq!(instance_name_from_fqid("mongodb"), "");
-        assert_eq!(instance_name_from_fqid("mongodb:prod"), "prod");
-        assert_eq!(instance_name_from_fqid("ollama:adopted"), "adopted");
-    }
+        // V2 qualified
+        let fqn = parse_fqn_for_fqid("mongodb::prod", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb::prod");
+        assert_eq!(fqn.instance, Some("prod".to_string()));
 
-    #[test]
-    fn parse_port_examples() {
-        assert_eq!(
-            parse_port_from_endpoint("http://192.168.1.20:7185"),
-            Some(7185)
-        );
-        assert_eq!(
-            parse_port_from_endpoint("http://192.168.1.20:7185/"),
-            Some(7185)
-        );
-        assert_eq!(parse_port_from_endpoint("http://localhost"), None);
-    }
-
-    #[test]
-    fn canonical_seed_bank() {
-        assert_eq!(
-            canonical_seed_bank_name(DEFAULT_PUBLIC_SEED_BANK_NAME),
-            "default"
-        );
-        assert_eq!(canonical_seed_bank_name("custom-bank"), "custom-bank");
+        // V1 legacy qualified (auto-normalized)
+        let fqn = parse_fqn_for_fqid("mongodb:prod", "mongodb");
+        assert_eq!(fqn.fqn(), "mongodb::prod");
+        assert_eq!(fqn.instance, Some("prod".to_string()));
     }
 }

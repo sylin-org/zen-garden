@@ -9,10 +9,12 @@ pub mod ceremony;
 pub mod connection;
 pub mod connectivity;
 pub mod detection;
+pub mod generate;
 pub mod hw;
 pub mod offering;
 pub mod ports;
 pub mod registry;
+pub mod validation;
 
 pub use category::{
     get_category_registry, init_category_registry, load_categories, CategoryConfig,
@@ -40,9 +42,9 @@ pub use registry::{discover_subdirectories, ManifestRegistry, RUNTIME_MANIFESTS_
 
 // Unified Offering Model
 pub use offering::{
-    runtime_manifests_dir, AdoptedConfig, BorrowedConfig, ManagedConfig, NetworkRequirements,
-    Offering, OfferingMetadata, OfferingRegistry, ServiceTemplate, StaticIpPreference,
-    TemplateInfo,
+    runtime_manifests_dir, AdoptedConfig, BorrowedConfig, ManageableEnv, ManagedConfig,
+    NetworkRequirements, Offering, OfferingMetadata, OfferingRegistry, ServiceTemplate,
+    StaticIpPreference, TemplateInfo,
 };
 
 pub use connection::ConnectionProfile;

@@ -10,7 +10,7 @@ use crate::domain::harvest::{HarvestManifest, VolumeArchive};
 use crate::infra::HarvestStore;
 use anyhow::{Context, Result};
 use garden_common::infra::archive;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 use std::path::Path;
 
 /// Create a harvest for an offering
@@ -36,7 +36,7 @@ pub async fn create_harvest(
     source_stone: &str,
     commit_image: bool,
 ) -> Result<HarvestManifest> {
-    let fqn = parse_offering_fqn(offering)
+    let fqn = OfferingFqn::parse(offering)
         .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", offering, e))?;
     let encoded_offering = fqn.encoded_for_container();
     let container_name = crate::docker::zen_offering_container_name(offering)?;

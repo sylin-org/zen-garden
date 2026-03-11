@@ -34,11 +34,10 @@ use crate::domain::nurturing::{
     build_memories_manifest, NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots,
     RemoteNurturingIndex, ReplicationResult,
 };
-use crate::infra::storage::SeedBankRegistry;
 use crate::tasks::{trigger_all_nurturing, trigger_nurturing, NurturingWorkflowResult};
 use crate::AppState;
 use garden_common::api_utils::ApiErrorResponse;
-use garden_common::offerings::parse_offering_fqn;
+use garden_common::offerings::OfferingFqn;
 
 /// Request for creating a snapshot
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -94,7 +93,7 @@ pub async fn get_offering_slots(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
@@ -149,8 +148,8 @@ pub async fn create_snapshot(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup)
-            .map(|o| (o.offering_id.clone(), o.name.clone()))
+            .find(|o| o.name.to_string() == offering_lookup)
+            .map(|o| (o.offering_id.clone(), o.name.to_string()))
             .ok_or_else(|| {
                 crate::infra::error_response(
                     StatusCode::NOT_FOUND,
@@ -225,7 +224,7 @@ pub async fn restore_snapshot(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup)
+            .find(|o| o.name.to_string() == offering_lookup)
             .map(|o| o.offering_id.clone())
             .ok_or_else(|| {
                 crate::infra::error_response(
@@ -317,7 +316,7 @@ pub async fn delete_nurturing(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
             .map(|o| o.offering_id.clone())
     };
 
@@ -353,14 +352,14 @@ pub async fn delete_nurturing(
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ReplicateRequest {
     /// Seed bank name or ID to replicate to
-    pub seed_bank: String,
+    pub storage: String,
 }
 
 /// Request for restoring from a remote seed bank
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct RestoreRemoteRequest {
     /// Seed bank name or ID
-    pub seed_bank: String,
+    pub storage: String,
     /// Optional specific harvest ID (defaults to latest)
     #[serde(default)]
     pub harvest_id: Option<String>,
@@ -382,7 +381,7 @@ pub async fn replicate_to_seed_bank(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
             .cloned()
             .ok_or_else(|| {
                 crate::infra::error_response(
@@ -396,11 +395,11 @@ pub async fn replicate_to_seed_bank(
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.seed_bank).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
-            format!("Seed bank '{}' not found: {}", request.seed_bank, e),
+            format!("Seed bank '{}' not found: {}", request.storage, e),
             None,
         )
     })?;
@@ -422,7 +421,7 @@ pub async fn replicate_to_seed_bank(
         &state.stone_name,
     );
 
-    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+    let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let result = state
         .nurturing_store
@@ -456,19 +455,19 @@ pub async fn replicate_to_seed_bank(
 
 pub async fn list_remote_snapshots(
     State(state): State<AppState>,
-    Path(seed_bank_name): Path<String>,
+    Path(storage_name): Path<String>,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Find the seed bank
-    let seed_bank = find_seed_bank(&seed_bank_name).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.volumes, &storage_name).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
-            format!("Seed bank '{}' not found: {}", seed_bank_name, e),
+            format!("Seed bank '{}' not found: {}", storage_name, e),
             None,
         )
     })?;
 
-    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+    let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let index = state
         .nurturing_store
@@ -506,8 +505,8 @@ pub async fn restore_from_seed_bank(
         let offerings = state.offerings.read().await;
         offerings
             .iter()
-            .find(|o| o.name == offering_lookup || o.offering_id == offering)
-            .map(|o| (o.offering_id.clone(), o.name.clone()))
+            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
+            .map(|o| (o.offering_id.clone(), o.name.to_string()))
             .ok_or_else(|| {
                 crate::infra::error_response(
                     StatusCode::NOT_FOUND,
@@ -519,11 +518,11 @@ pub async fn restore_from_seed_bank(
     };
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&request.seed_bank).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
-            format!("Seed bank '{}' not found: {}", request.seed_bank, e),
+            format!("Seed bank '{}' not found: {}", request.storage, e),
             None,
         )
     })?;
@@ -546,7 +545,7 @@ pub async fn restore_from_seed_bank(
     }
 
     // Restore from seed bank
-    let store = crate::infra::storage::SeedBankStore::new_public(&seed_bank.mount_path);
+    let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
     let manifest = state
         .nurturing_store
         .restore_from_seed_bank(
@@ -587,7 +586,7 @@ pub async fn restore_from_seed_bank(
 }
 
 fn normalize_offering_for_lookup(offering: &str) -> Option<String> {
-    parse_offering_fqn(offering).ok().map(|fqn| fqn.fqn())
+    OfferingFqn::parse(offering).ok().map(|fqn| fqn.fqn())
 }
 
 // ============================================================================
@@ -653,14 +652,16 @@ pub async fn trigger_all_offerings_nurturing(
 // Helper functions
 // ============================================================================
 
-/// Find a seed bank by name or ID
-async fn find_seed_bank(name_or_id: &str) -> anyhow::Result<garden_common::storage::SeedBankInfo> {
-    let registry = SeedBankRegistry::scan().await?;
-
-    // Try by name first, then by ID
-    registry
-        .get_by_name(name_or_id)
-        .or_else(|| registry.get_by_id(name_or_id))
-        .cloned()
+/// Find a seed bank by name or ID from the Volumes domain.
+async fn find_seed_bank(
+    volumes: &crate::domain::storage::Volumes,
+    name_or_id: &str,
+) -> anyhow::Result<garden_common::storage::StorageInfo> {
+    let map = volumes.read().await;
+    map.values()
+        .find(|v| {
+            v.management.as_ref().is_some_and(|m| m.name == name_or_id || m.id == name_or_id)
+        })
+        .and_then(|v| v.to_storage_info())
         .ok_or_else(|| anyhow::anyhow!("Seed bank not found: {}", name_or_id))
 }

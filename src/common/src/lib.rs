@@ -34,7 +34,10 @@ pub mod tools;
 pub mod traits;
 pub mod types;
 pub mod ui;
+pub mod platform_runtime;
 pub mod utils;
+
+pub use platform_runtime::PlatformRuntime;
 
 // Re-export commonly used items
 pub use audit::{log_access, AuditAccessEntry};

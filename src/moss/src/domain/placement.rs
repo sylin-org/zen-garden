@@ -276,6 +276,7 @@ async fn score_local_stone(
                 .fallback_image
                 .clone()
                 .unwrap_or_default(),
+            name: offering.compatibility.fallback_name.clone(),
             reason: offering.compatibility.reason.clone().unwrap_or_default(),
         },
         _ => compatibility::CompatibilityDecision::Fail {
@@ -359,6 +360,7 @@ async fn score_remote_stone(
                 .fallback_image
                 .clone()
                 .unwrap_or_default(),
+            name: offering.compatibility.fallback_name.clone(),
             reason: offering.compatibility.reason.clone().unwrap_or_default(),
         },
         _ => compatibility::CompatibilityDecision::Fail {
@@ -509,6 +511,7 @@ async fn fetch_remote_offerings(
                 reason: view.compatibility.and_then(|c| c.reason),
                 original_image: None,
                 fallback_image: None,
+                fallback_name: None,
                 suggestion: None,
             },
             tasks: std::collections::HashMap::new(), // Not included in OfferingView

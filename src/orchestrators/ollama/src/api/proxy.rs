@@ -5,6 +5,7 @@
 //! streams the response back. NDJSON passthrough with metrics extraction.
 
 use crate::app_state::AppState;
+use crate::domain::demand::RequestCapability;
 use crate::domain::routing;
 use crate::domain::types::{
     AutoPullMode, JobKind, JobStatus, MetricEvent, OllamaInferenceFinal, RoutingError,
@@ -108,13 +109,84 @@ async fn proxy_inference(
     body: Bytes,
 ) -> Result<Response, StatusCode> {
     // Extract model name from request body
-    let model = extract_model(&body).ok_or(StatusCode::BAD_REQUEST)?;
+    let raw_model = extract_model(&body).ok_or(StatusCode::BAD_REQUEST)?;
 
-    // Check if streaming is explicitly disabled
-    let stream_disabled = serde_json::from_slice::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|v| v.get("stream")?.as_bool())
+    // Parse body once for capability inference + stream check
+    let mut body_json: serde_json::Value =
+        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+
+    let stream_disabled = body_json
+        .get("stream")
+        .and_then(|v| v.as_bool())
         == Some(false);
+
+    // ── Recommended-model moniker resolution (ORCH-0011) ─────────
+    //
+    // "recommended:chat" → lookup pre-computed cache → rewrite body.
+    // The cache is refreshed on model/instance/benchmark/pin changes.
+    let (model, moniker_capability, resolved_header) =
+        if let Some(cap) = raw_model.strip_prefix("recommended:") {
+            let resolved = {
+                let cache = state.app.recommended_models.read().await;
+                cache.get(cap).cloned()
+            };
+
+            let resolved = match resolved {
+                Some(m) => m,
+                None => {
+                    // Distinguish "unknown capability" from "no model available":
+                    // if the capability key is valid but absent, no model qualifies.
+                    let valid_caps = [
+                        "quick", "chat", "completion", "synthesis", "vision", "ocr",
+                        "tools", "thinking", "embedding",
+                    ];
+                    if !valid_caps.contains(&cap) {
+                        let err = serde_json::json!({"error": format!("unknown capability: {cap}")});
+                        return Ok((StatusCode::BAD_REQUEST, axum::Json(err)).into_response());
+                    }
+                    let err = serde_json::json!({
+                        "error": format!("no model available for capability '{cap}'")
+                    });
+                    return Ok((StatusCode::NOT_FOUND, axum::Json(err)).into_response());
+                }
+            };
+
+            tracing::info!(
+                moniker = %raw_model,
+                resolved = %resolved,
+                "moniker resolved"
+            );
+
+            // Rewrite the model field in the body
+            if let Some(obj) = body_json.as_object_mut() {
+                obj.insert("model".into(), serde_json::Value::String(resolved.clone()));
+            }
+
+            let cap_override = RequestCapability::from_moniker(cap);
+            (resolved.clone(), Some(cap_override), Some(resolved))
+        } else {
+            (raw_model, None, None)
+        };
+
+    // Rebuild body bytes if moniker rewrote the model
+    let body = if resolved_header.is_some() {
+        Bytes::from(serde_json::to_vec(&body_json).unwrap_or_default())
+    } else {
+        body
+    };
+
+    // Infer request capability from path + body + model tags (ORCH-0009/0010)
+    // Moniker-derived capability overrides body-based inference.
+    let capability = if let Some(cap) = moniker_capability {
+        cap
+    } else {
+        let models = state.app.models.read().await;
+        let model_caps = models
+            .get(&model)
+            .map(|m| m.capabilities.as_slice())
+            .unwrap_or(&[]);
+        RequestCapability::from_request(path, &body_json, model_caps)
+    };
 
     // Route to best instance (snapshot state, no locks held during routing)
     let decision = {
@@ -141,7 +213,14 @@ async fn proxy_inference(
         } else {
             Some(&gpu_matrix)
         };
-        routing::select_instance(&model, &instances, &models, &tiers, 64, fitness_ref)
+
+        // Demand shares for routing reservation decisions (5-min window).
+        let recent_demand = {
+            let metrics = state.app.metrics.read().await;
+            metrics.demand_shares(300)
+        };
+
+        routing::select_instance(&model, &instances, &models, &tiers, 64, fitness_ref, &recent_demand)
     };
 
     let decision = match decision {
@@ -293,6 +372,7 @@ async fn proxy_inference(
             let _ = state.app.metrics_tx.send(MetricEvent::Request {
                 stone: stone_name.clone(),
                 model: model.clone(),
+                capability,
                 tokens_in: final_obj.prompt_eval_count,
                 tokens_out: final_obj.eval_count,
                 duration_ns: final_obj.total_duration,
@@ -300,11 +380,13 @@ async fn proxy_inference(
             });
         }
 
-        Ok(Response::builder()
+        let mut builder = Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", "application/json")
-            .body(Body::from(response_bytes))
-            .unwrap())
+            .header("content-type", "application/json");
+        if let Some(ref resolved) = resolved_header {
+            builder = builder.header("x-zen-resolved-model", resolved.as_str());
+        }
+        Ok(builder.body(Body::from(response_bytes)).unwrap())
     } else {
         // Streaming: pass through NDJSON, inspect each line for metrics
         let app = state.app.clone();
@@ -315,45 +397,58 @@ async fn proxy_inference(
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(64);
 
-        // Spawn a task to tee the stream: forward chunks AND inspect for final object
+        // Spawn a task to tee the stream: forward chunks AND inspect for final object.
+        // Uses select! to detect client disconnect even while waiting for upstream,
+        // so we don't hold the Ollama connection (and queue depth slot) open after
+        // the client is gone.
         tokio::spawn(async move {
             let mut line_buf = Vec::new();
             futures_util::pin_mut!(upstream);
 
-            while let Some(chunk_result) = upstream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        // Forward chunk to client
-                        if tx.send(Ok(chunk.clone())).await.is_err() {
-                            break; // client disconnected
-                        }
+            loop {
+                tokio::select! {
+                    chunk_opt = upstream.next() => {
+                        match chunk_opt {
+                            Some(Ok(chunk)) => {
+                                // Forward chunk to client
+                                if tx.send(Ok(chunk.clone())).await.is_err() {
+                                    break; // client disconnected
+                                }
 
-                        // Buffer for NDJSON line parsing
-                        line_buf.extend_from_slice(&chunk);
-                        while let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
-                            let line = &line_buf[..pos];
-                            if !line.is_empty() {
-                                if let Ok(obj) =
-                                    serde_json::from_slice::<OllamaInferenceFinal>(line)
-                                {
-                                    if obj.done {
-                                        let _ = app.metrics_tx.send(MetricEvent::Request {
-                                            stone: stone_for_metrics.clone(),
-                                            model: model_for_metrics.clone(),
-                                            tokens_in: obj.prompt_eval_count,
-                                            tokens_out: obj.eval_count,
-                                            duration_ns: obj.total_duration,
-                                            eval_duration_ns: obj.eval_duration,
-                                        });
+                                // Buffer for NDJSON line parsing
+                                line_buf.extend_from_slice(&chunk);
+                                while let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
+                                    let line = &line_buf[..pos];
+                                    if !line.is_empty() {
+                                        if let Ok(obj) =
+                                            serde_json::from_slice::<OllamaInferenceFinal>(line)
+                                        {
+                                            if obj.done {
+                                                let _ = app.metrics_tx.send(MetricEvent::Request {
+                                                    stone: stone_for_metrics.clone(),
+                                                    model: model_for_metrics.clone(),
+                                                    capability,
+                                                    tokens_in: obj.prompt_eval_count,
+                                                    tokens_out: obj.eval_count,
+                                                    duration_ns: obj.total_duration,
+                                                    eval_duration_ns: obj.eval_duration,
+                                                });
+                                            }
+                                        }
                                     }
+                                    line_buf.drain(..=pos);
                                 }
                             }
-                            line_buf.drain(..=pos);
+                            Some(Err(e)) => {
+                                tracing::warn!(error = %e, "upstream stream error");
+                                let _ = tx.send(Err(std::io::Error::other(e))).await;
+                                break;
+                            }
+                            None => break, // upstream finished
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "upstream stream error");
-                        let _ = tx.send(Err(std::io::Error::other(e))).await;
+                    _ = tx.closed() => {
+                        tracing::debug!("client disconnected, dropping upstream");
                         break;
                     }
                 }
@@ -366,12 +461,14 @@ async fn proxy_inference(
         let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         let body = Body::from_stream(body_stream);
 
-        Ok(Response::builder()
+        let mut builder = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/x-ndjson")
-            .header("transfer-encoding", "chunked")
-            .body(body)
-            .unwrap())
+            .header("transfer-encoding", "chunked");
+        if let Some(ref resolved) = resolved_header {
+            builder = builder.header("x-zen-resolved-model", resolved.as_str());
+        }
+        Ok(builder.body(body).unwrap())
     }
 }
 

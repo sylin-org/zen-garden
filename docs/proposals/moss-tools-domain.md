@@ -15,7 +15,7 @@ Zen Garden needs a **normative, automation-grade** event surface for garden tool
 This proposal introduces a dedicated **Tools** bounded context with:
 
 1. A canonical identifier format: `tool_fqid = "{tool-type}:{fqid}"`  
-   Examples: `offering:ollama:dev`, `seed-bank:seed-beautiful-garden`, `seed-bank:default`
+   Examples: `offering:ollama::dev`, `seed-bank:seed-beautiful-garden`, `seed-bank:default`
 2. A new inter-Moss announcement model: **Tools Beacon** (expanding current storage-beacon concern to all tools)
 3. A new garden API surface in Moss: `GET /api/v1/garden/tools` and `GET /api/v1/garden/tools/stream`
 4. Strict stream semantics for adapters: snapshot-first, cursored deltas, replay support, correlation fields
@@ -134,7 +134,7 @@ This increases cognitive load for adapter authors and creates unclear semantics 
 `tool_fqid: "{tool-type}:{fqid}"`
 
 Examples:
-- `offering:ollama:dev`
+- `offering:ollama::dev`
 - `seed-bank:seed-beautiful-garden`
 - `seed-bank:default`
 
@@ -191,7 +191,7 @@ GET /api/v1/garden/tools/stream
   "event_id": "019d....",
   "cursor": "8742",
   "timestamp": "2026-02-06T22:15:00Z",
-  "tool_fqid": "offering:ollama:dev",
+  "tool_fqid": "offering:ollama::dev",
   "tool_uid": "019c26fc-5e46-7ac1-9fbb-f1664790dead",
   "tool_type": "offering",
   "revision": 14,
@@ -209,7 +209,7 @@ GET /api/v1/garden/tools/stream
   },
   "job_id": "job_abc123",
   "request_id": "req_123",
-  "aliases": ["offering:ollama", "offering:ollama:dev"]
+  "aliases": ["offering:ollama", "offering:ollama::dev"]
 }
 ```
 
@@ -228,7 +228,7 @@ Canonical capability wish syntax:
 Examples:
 - `ollama[modelv1]`
 - `ollama[modelv1,modelv2]`
-- `ollama:dev[modelv1,modelv2]`
+- `ollama::dev[modelv1,modelv2]`
 - `postgres[extension:pgvector]`
 
 Nomenclature rule:
@@ -386,7 +386,7 @@ Response:
   "cursor": "8742",
   "tools": [
     {
-      "tool_fqid": "offering:ollama:dev",
+      "tool_fqid": "offering:ollama::dev",
       "tool_uid": "019c26fc-5e46-7ac1-9fbb-f1664790dead",
       "tool_type": "offering",
       "state": "ready",

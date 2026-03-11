@@ -1360,6 +1360,12 @@ pub async fn run(
         state.clone(),
         shutdown_token.child_token(),
     );
+    // Storage console task: renders connected/released ribbons to physical console.
+    crate::tasks::coordinator::start_storage_console_task(
+        state.platform.runtime.clone(),
+        state.subscribe_storage_changed(),
+        shutdown_token.child_token(),
+    );
     // Phase 17.7: Offering orchestration (ORCH-0001)
     // Manages Primary/Dormant/Joining/Degraded lifecycle for replicated offerings.
     // Must run after registry loader, health monitor, and catalog builder are ready.

@@ -32,7 +32,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     // ── Managed storages from unified volumes ────────────────────
     let endpoint = state.self_entry.read().await.address.http_base();
     let managed_vols: Vec<_> = {
-        let map = state.volumes.read().await;
+        let map = state.storage.volumes.read().await;
         map.values()
             .filter(|v| v.is_managed())
             .cloned()

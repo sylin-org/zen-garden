@@ -764,7 +764,7 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
             }
 
             // Auto-mount any unmounted managed devices (replaces legacy auto_mount_seed_banks)
-            let connected = crate::domain::storage::auto_mount_unmounted(&state.volumes).await;
+            let connected = crate::domain::storage::auto_mount_unmounted(&state.storage.volumes).await;
             if !connected.is_empty() {
                 for event in connected {
                     state.emit_storage_changed(event).await;
@@ -775,7 +775,7 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
             }
 
             // Health tick all volumes (~10s)
-            crate::domain::storage::health_tick_all(&state.volumes).await;
+            crate::domain::storage::health_tick_all(&state.storage.volumes).await;
 
             // Periodic beacon heartbeat (tools projection + beacon)
             state.refresh_local_tools_projection().await;
@@ -858,7 +858,7 @@ pub async fn start_all_background_tasks(
         state.infrastructure_handlers.clone(),
         state.manifest_registry.clone(),
         state.storage.orchestration.nudge.clone(),
-        state.volumes.clone(),
+        state.storage.volumes.clone(),
         token.child_token(),
     )
     .await;

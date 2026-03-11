@@ -305,7 +305,7 @@ impl NurturingScheduler {
     ///
     /// Returns managed volumes that are online and healthy.
     async fn find_available_seed_banks(&self) -> Result<Vec<StorageInfo>> {
-        let map = self.state.volumes.read().await;
+        let map = self.state.storage.volumes.read().await;
         let seed_banks: Vec<StorageInfo> = map
             .values()
             .filter(|v| v.is_managed() && v.online)
@@ -324,7 +324,7 @@ impl NurturingScheduler {
     ///
     /// STORAGE-0007: Uses lifecycle objects for role lookup.
     async fn select_targets(&self, seed_banks: &[StorageInfo]) -> Vec<StorageInfo> {
-        let volumes_map = self.state.volumes.read().await;
+        let volumes_map = self.state.storage.volumes.read().await;
 
         let primary_banks: Vec<StorageInfo> = seed_banks
             .iter()
@@ -387,7 +387,7 @@ impl NurturingScheduler {
 
         // STORAGE-0011: prefer store from Volume management; fall back to ad-hoc
         let store = {
-            let map = self.state.volumes.read().await;
+            let map = self.state.storage.volumes.read().await;
             map.values()
                 .find_map(|v| {
                     let m = v.management.as_ref()?;

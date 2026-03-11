@@ -543,7 +543,7 @@ pub async fn get_portrait_data(
     // === Seed Banks ===
     // STORAGE-0011: Read from unified Volumes collection.
     let (seed_banks, candidates) = {
-        let map = state.volumes.read().await;
+        let map = state.storage.volumes.read().await;
         let banks: Vec<PortraitSeedBank> = map
             .values()
             .filter_map(|vol| {

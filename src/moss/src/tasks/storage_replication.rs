@@ -85,7 +85,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
     // Subscribe to aggregated storage ticks — the aggregator quantizes raw
     // per-write events into per-seed-bank batches (2s quiet / 10s deadline).
     // For remote Primaries we still rely on polling as a fallback.
-    let mut tick_rx = state.storage_agg.subscribe();
+    let mut tick_rx = state.storage.orchestration.agg.subscribe();
 
     loop {
         // Wait for either the poll interval or a storage tick
@@ -122,7 +122,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
 /// Run one replication cycle for all local Dormant seed banks.
 async fn replication_tick(state: &AppState) -> Result<()> {
     // Collect Dormant volumes from unified collection
-    let map = state.volumes.read().await;
+    let map = state.storage.volumes.read().await;
     let dormant_banks: Vec<(String, String, std::path::PathBuf)> = map
         .values()
         .filter_map(|vol| {
@@ -189,7 +189,7 @@ async fn sync_dormant_bank(
     // 3. Read local last_cursor
     // STORAGE-0011: prefer store from Volume management if available
     let lifecycle_store = {
-        let map = state.volumes.read().await;
+        let map = state.storage.volumes.read().await;
         map.values()
             .find_map(|vol| {
                 let mgmt = vol.management.as_ref()?;

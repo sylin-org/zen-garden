@@ -276,7 +276,7 @@ pub async fn list_storages_v1(
         std::collections::HashMap::new();
 
     // Local storages
-    for local in StorageRoute::list_local(&state.volumes).await {
+    for local in StorageRoute::list_local(&state.storage.volumes).await {
         let entry = by_name
             .entry(local.name.clone())
             .or_insert_with(|| GardenStorageSummary {
@@ -336,8 +336,8 @@ pub async fn discover_v1(
     let mut instances = Vec::new();
 
     // Check local storages
-    if let Some(local) = StorageRoute::find_local(&name, &state.volumes).await {
-        let map = state.volumes.read().await;
+    if let Some(local) = StorageRoute::find_local(&name, &state.storage.volumes).await {
+        let map = state.storage.volumes.read().await;
         let (pin_id, roles) = map
             .values()
             .find_map(|v| {

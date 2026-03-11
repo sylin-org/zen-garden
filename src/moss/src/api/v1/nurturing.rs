@@ -395,7 +395,7 @@ pub async fn replicate_to_seed_bank(
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.storage.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -458,7 +458,7 @@ pub async fn list_remote_snapshots(
     Path(storage_name): Path<String>,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.volumes, &storage_name).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.storage.volumes, &storage_name).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -518,7 +518,7 @@ pub async fn restore_from_seed_bank(
     };
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.storage.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",

@@ -709,12 +709,6 @@ pub async fn run(
             nurturing: nurturing_for_storage,
             nourishment: nourishment_map.clone(),
         }),
-        // Flat storage fields — migrating to state.storage.* (ARCH-0004)
-        storage_tick: storage_tick_tx,
-        storage_agg: storage_agg_tx,
-        volumes: volumes.clone(),
-        media,
-        storage_changed: storage_changed_tx,
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -770,7 +764,7 @@ pub async fn run(
     // Populates the unified Volumes map with all currently attached volumes.
     // Cross-platform: uses platform::scan_volumes() (Linux: /proc/mounts, Windows: GetLogicalDrives).
     {
-        let volumes = state.volumes.clone();
+        let volumes = state.storage.volumes.clone();
         crate::domain::storage::initial_scan(&volumes).await;
     }
 
@@ -778,7 +772,7 @@ pub async fn run(
     // Detects physical disks including those without partitions or drive letters.
     // Uses PowerShell Get-Disk (Windows) or lsblk (Linux).
     {
-        let media = state.media.clone();
+        let media = state.storage.media.clone();
         let snapshots = tokio::task::spawn_blocking(crate::infra::storage::platform::scan_media)
             .await
             .unwrap_or_default();
@@ -1179,9 +1173,9 @@ pub async fn run(
         let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel(32);
         crate::infra::storage::platform::start_volume_watcher(vol_tx);
 
-        let volumes_for_watcher = state.volumes.clone();
+        let volumes_for_watcher = state.storage.volumes.clone();
         let pulse_tx_for_watcher = state.pulse.clone();
-        let storage_changed_tx_for_watcher = state.storage_changed.clone();
+        let storage_changed_tx_for_watcher = state.storage.changed.clone();
         let notifications = state.notifications.clone();
         let watcher_token = shutdown_token.child_token();
         let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
@@ -1301,7 +1295,7 @@ pub async fn run(
     // Polls physical disks (PowerShell/lsblk) to detect media without partitions.
     // Lower cadence than the volume watcher since physical changes are rarer.
     {
-        let media = state.media.clone();
+        let media = state.storage.media.clone();
         let media_token = shutdown_token.child_token();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -1398,8 +1392,8 @@ pub async fn run(
     // Quantizes raw per-write ticks into per-seed-bank aggregated ticks
     // (2s quiet threshold / 10s deadline cap).
     {
-        let raw_rx = state.storage_tick.subscribe();
-        let agg_tx = state.storage_agg.clone();
+        let raw_rx = state.storage.orchestration.tick.subscribe();
+        let agg_tx = state.storage.orchestration.agg.clone();
         let agg_token = shutdown_token.child_token();
         tokio::spawn(async move {
             crate::tasks::storage_tick_aggregator::storage_tick_aggregator_task(
@@ -1447,10 +1441,10 @@ pub async fn run(
             Arc::new(RwLock::new(entry.address.http_base()))
         };
         if let Err(e) = crate::infra::cloud_filter::start(
-            state.volumes.clone(),
+            state.storage.volumes.clone(),
             state.registry.clone(),
             state.stone_id.clone(),
-            state.storage_tick.clone(),
+            state.storage.orchestration.tick.clone(),
             state.subscribe_storage_changed(),
             cf_endpoint,
             shutdown_token.child_token(),
@@ -1468,8 +1462,8 @@ pub async fn run(
     // entries so replication stays coherent.
     {
         let watcher_set = crate::infra::storage::StorageWatcherSet::new(
-            state.volumes.clone(),
-            state.storage_tick.clone(),
+            state.storage.volumes.clone(),
+            state.storage.orchestration.tick.clone(),
             shutdown_token.child_token(),
         );
         // Initial reconciliation — start watchers for already-mounted storages

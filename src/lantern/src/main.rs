@@ -16,8 +16,8 @@ use garden_lantern::AppState;
 #[command(about = "Zen Garden Lantern - Dashboard & service registry daemon")]
 struct Cli {
     /// Lantern identifier
-    #[arg(long, env = "LANTERN_NAME")]
-    lantern_name: Option<String>,
+    #[arg(long = "lantern-name", env = "LANTERN_NAME")]
+    name: Option<String>,
 
     /// HTTP server port
     #[arg(long, env = "LANTERN_HTTP_PORT")]
@@ -40,13 +40,13 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let lantern_name = cli.lantern_name.unwrap_or_else(|| "lantern-01".to_string());
+    let name = cli.name.unwrap_or_else(|| "lantern-01".to_string());
     let http_port = cli
         .http_port
         .unwrap_or(garden_common::constants::LANTERN_HTTP);
 
     tracing::info!(
-        lantern_name = %lantern_name,
+        name = %name,
         http_port = http_port,
         "Lantern daemon starting"
     );
@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
         };
 
         match mdns.register(koi_embedded::RegisterPayload {
-            name: format!("ZenGarden: {}", lantern_name),
+            name: format!("ZenGarden: {}", name),
             service_type: garden_common::constants::HTTP_SERVICE_TYPE.to_string(),
             port: http_port,
             ip: ip_opt,
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
         }) {
             Ok(_) => {
                 tracing::info!(
-                    name = %lantern_name,
+                    name = %name,
                     port = http_port,
                     "Lantern registered as _http._tcp on mDNS"
                 );
@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
     }
 
     // Initialize application state
-    let state = AppState::new(lantern_name, http_port, koi_handle);
+    let state = AppState::new(name, http_port, koi_handle);
 
     // Spawn background tasks
     let _ttl_handle = cleanup::spawn_ttl_cleanup(&state);

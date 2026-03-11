@@ -14,15 +14,15 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::Client;
-use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry, Orchestration, Storage};
+use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry, Orchestration, Storage, Tool};
 use crate::infra::{
     stone_client::StoneClient, CeremonyJournal, EventBus, ManifestRegistry, PulseEvent,
 };
 use crate::mdns::MdnsHandle;
 use crate::tasks::Network;
 use garden_common::console::ConsolePrinter;
-use garden_common::PlatformRuntime;
 use garden_common::tools::ToolDelta;
+use garden_common::PlatformRuntime;
 use garden_common::NetworkMetrics;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
 use std::collections::HashMap;
@@ -135,12 +135,8 @@ pub struct AppState {
     /// Set by mutation functions, cleared after flush to disk.
     pub topology_dirty: crate::domain::topology::TopologyDirtyFlag,
 
-    /// Tools stream broadcast channel (normative automation stream)
-    pub tools: tokio::sync::broadcast::Sender<ToolDelta>,
-
-    /// Unified garden registry — single source of truth for offerings,
-    /// gateways, and storage (TOOLS-0003).
-    pub registry: crate::domain::garden_registry::GardenRegistry,
+    /// Garden-wide tool registry and delta stream (ARCH-0004).
+    pub tool: Arc<Tool>,
 
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
@@ -331,7 +327,7 @@ impl AppState {
         let projections = crate::domain::tools::projector::project_local_tools(self).await;
 
         let deltas = {
-            let mut reg = self.registry.write().await;
+            let mut reg = self.tool.registry.write().await;
             reg.reconcile_local(
                 &self.stone_id,
                 projections,
@@ -345,7 +341,7 @@ impl AppState {
     /// Ingest remote tools beacon and publish resulting stream deltas locally.
     pub async fn ingest_tools_beacon(&self, beacon: garden_common::tools::ToolsBeacon) {
         let deltas = {
-            let mut reg = self.registry.write().await;
+            let mut reg = self.tool.registry.write().await;
             reg.apply_remote_beacon(&beacon)
         };
 
@@ -355,7 +351,7 @@ impl AppState {
     /// Remove all projected tools for a stone (goodbye/offline path).
     pub async fn remove_tools_for_stone(&self, stone_id: &str) {
         let deltas = {
-            let mut reg = self.registry.write().await;
+            let mut reg = self.tool.registry.write().await;
             reg.remove_stone(stone_id)
         };
 
@@ -370,7 +366,7 @@ impl AppState {
         }
 
         for delta in &deltas {
-            let _ = self.tools.send(delta.clone());
+            let _ = self.tool.delta.send(delta.clone());
         }
 
         if broadcast_beacon {

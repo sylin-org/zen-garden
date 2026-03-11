@@ -259,7 +259,7 @@ pub async fn storage_overview_v1(
     let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
 
     // Get garden-wide view from unified registry
-    let reg = state.registry.read().await;
+    let reg = state.tool.registry.read().await;
     let local_roles = crate::domain::storage::roles_snapshot(&state.storage.volumes).await;
     let local_pins = crate::domain::storage::pins_snapshot(&state.storage.volumes).await;
     let mut garden_banks = Vec::new();

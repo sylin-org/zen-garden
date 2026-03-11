@@ -173,7 +173,7 @@ async fn sync_dormant_bank(
 ) -> Result<()> {
     // 1. Resolve the Primary stone + endpoint from registry
     let (_primary_stone_id, primary_endpoint, _primary_bank_id) = {
-        let reg = state.registry.read().await;
+        let reg = state.tool.registry.read().await;
         match reg.route_to_primary(name, &state.stone_id) {
             Some(route) => route,
             None => {

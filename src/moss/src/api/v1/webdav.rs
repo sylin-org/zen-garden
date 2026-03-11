@@ -87,9 +87,9 @@ pub async fn handle_webdav(
 
     // Resolve storage routing
     let route = if is_mutation {
-        StorageRoute::for_write(storage_name, &state.storage.volumes, &state.registry, &state.stone_id).await
+        StorageRoute::for_write(storage_name, &state.storage.volumes, &state.tool.registry, &state.stone_id).await
     } else {
-        StorageRoute::for_read(storage_name, &state.storage.volumes, &state.registry, &state.stone_id).await
+        StorageRoute::for_read(storage_name, &state.storage.volumes, &state.tool.registry, &state.stone_id).await
     };
 
     let route = match route {

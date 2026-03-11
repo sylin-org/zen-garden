@@ -50,11 +50,11 @@ Pond { ceremony: Ceremony, active: Arc<AtomicBool>, state: PondState }
 Ceremony { host: Arc<CeremonyHost>, registry: Arc<CeremonyRegistry>, ... }
 
 // Runtime path
-appState.security.pond.ceremony.host
-appState.security.pond.active
+state.security.pond.ceremony.host
+state.security.pond.active
 ```
 
-A field like `appState.pond_active` is not a domain boundary — it is a name with an
+A field like `state.pond_active` is not a domain boundary — it is a name with an
 underscore. The compiler does not see Security; neither does anyone reading the code cold.
 
 ### Data Plane vs. Coordination Plane
@@ -68,6 +68,40 @@ A critical architectural distinction drives the domain split:
 
 `Storage { volumes, media }` is correct. `Storage { volumes, media, tick, nudge, harvest }`
 conflates the data plane with its coordination layer.
+
+### `current` vs. Garden-Wide Domains
+
+Every domain has two views:
+
+- **`state.current.*`** — this stone's local, owned, writable state. Authoritative source
+  for this stone.
+- **`state.*`** — garden-wide aggregate: this stone's current + remote stones' announced
+  data merged in. Equivalent to what topology is for stone presence.
+
+| This stone (current) | Garden-wide aggregate |
+|---|---|
+| `state.current.storage` | `state.storage` |
+| `state.current.tool.registry` | `state.tool.registry` |
+| `state.current.fqn_handler.registry` | `state.fqn_handler.registry` |
+| `state.current.stone` | — (identity; no aggregate equivalent) |
+| `state.current.topology` | — (self-entry; feeds into garden topology broadcast) |
+
+Write paths:
+- **Local change** → write to `state.current.*`, then propagate/merge into the
+  garden-wide aggregate.
+- **Remote beacon arrives** → write directly into the garden-wide aggregate `state.*`.
+
+`state.current.storage` is what Phase 1 committed as `state.storage`. The naming is
+corrected in Phase 8 when the `current` struct is introduced.
+
+### `fqn` Is a Value Type, Not a Domain
+
+`fqn` (fully qualified name) is a cross-cutting **value type** — `OfferingFqn` in
+`garden_common`. It has parse methods, encoding, display. A storage has an FQN; an
+offering has an FQN. It is a naming concern, not a domain.
+
+`fqn_handler` is the domain: processes that register as handlers for `OfferingFqn`
+patterns and take over FIND request resolution for those FQNs.
 
 ### FQN Handlers Are Not Internal Orchestrators
 
@@ -83,20 +117,17 @@ The codebase uses "orchestrator" to mean two unrelated things:
    schedulers that drive Moss's own internal loops (storage ticks, volume rescans,
    nurturing jobs). These live in `orchestration.*`.
 
-These must be separated. `Fqn` is a first-class type in the codebase (like DNS — an
-acronym that names a concept). `state.fqn.registry` is the home for external handler
-registrations; the internal coordination plane is `state.orchestration.*`.
+These must be separated. FQN handler registrations belong in `state.fqn_handler.*`;
+the internal coordination plane is `state.orchestration.*`.
 
 ### `current` Is This Node's Self-Model
 
-`current` is not only identity (`stone_id`, `stone_name`) — it is the node's complete
-live self-model: who it is AND what it sees. Topology is a perception, not a garden-wide
-truth; different nodes may have different views.
+`current` is the node's complete live self-model: who it is AND what it sees locally.
 
 ```rust
 pub struct Current {
     pub stone:    Arc<RwLock<Stone>>,   // who this node IS
-    pub topology: TopologyContext,      // what this node SEES
+    pub topology: TopologyContext,      // what this node SEES of itself
 }
 
 pub struct TopologyContext {
@@ -107,8 +138,8 @@ pub struct TopologyContext {
 ```
 
 `topology_cache`, `topology_dirty`, and `self_entry` all collapse here. Topology is
-this instance's perception of the garden — it belongs on `current`, not floating at the
-`AppState` level.
+this instance's perception of the garden — it belongs on `current`, not floating at
+the `AppState` level.
 
 ## Decision
 
@@ -126,21 +157,22 @@ When `stone_id` is removed from `AppState`, every call site must be updated to
 Every domain context struct lives at the path that names it:
 
 ```
-domain/current/mod.rs               → Current
-domain/current/topology.rs          → TopologyContext
-domain/storage/mod.rs               → Storage          (already moved; content needs correction)
-domain/orchestration/mod.rs         → Orchestration
-domain/orchestration/storage.rs     → StorageOrchestration
-domain/orchestration/nurturing.rs   → NurturingOrchestration
-domain/orchestration/nourishment.rs → NourishmentOrchestration
-domain/security/mod.rs              → Security
-domain/security/pond.rs             → Pond
-domain/security/ceremony.rs         → Ceremony
-domain/discovery/mod.rs             → Discovery
-domain/fqn/mod.rs                   → Fqn
-domain/companion/mod.rs             → Companion
-domain/infra/mod.rs                 → Infra
-domain/presence/mod.rs              → Presence
+domain/current/mod.rs                    → Current
+domain/current/topology.rs              → TopologyContext
+domain/storage/mod.rs                   → Storage (local; Phase 1 done — renamed in Phase 8)
+domain/orchestration/mod.rs             → Orchestration     ✓ Phase 1
+domain/orchestration/storage.rs         → StorageOrchestration  ✓ Phase 1
+domain/orchestration/nurturing.rs       → NurturingOrchestration  ✓ Phase 1
+domain/orchestration/nourishment.rs     → NourishmentOrchestration  ✓ Phase 1
+domain/tool/mod.rs                      → Tool
+domain/fqn_handler/mod.rs              → FqnHandler
+domain/security/mod.rs                 → Security
+domain/security/pond.rs                → Pond
+domain/security/ceremony.rs            → Ceremony
+domain/discovery/mod.rs                → Discovery
+domain/companion/mod.rs                → Companion
+domain/infra/mod.rs                    → Infra
+domain/presence/mod.rs                 → Presence
 ```
 
 Files that do not match this layout are moved via two-commit discipline: rename commit
@@ -176,10 +208,10 @@ domain context clones rather than a full `AppState` clone where they touch a sin
 
 ```rust
 pub struct Current {
-    pub stone:    Arc<RwLock<Stone>>,   // permanent id; mutable name and host
-    pub topology: TopologyContext,      // this node's live garden perception
+    pub stone:    Arc<RwLock<Stone>>,
+    pub topology: TopologyContext,
     pub resources: Arc<RwLock<Option<StoneResources>>>,
-    pub metrics:   CurrentMetrics,
+    pub metrics:  CurrentMetrics,
 }
 
 pub struct TopologyContext {
@@ -205,27 +237,35 @@ pub struct CurrentMetrics {
 | `network_metrics_cache` | `current.metrics.network` |
 | `gpu_utilization` | `current.metrics.gpu` |
 
-### `storage` — Data Plane
+### `storage` — Local Data Plane → Garden-Wide Aggregate
 
-Storage is what physically exists: volumes and media. Nothing else.
+Phase 1 introduced `state.storage` as this stone's local data plane. In Phase 8,
+`state.storage` (local) is re-homed to `state.current.storage`, and `state.storage`
+becomes the garden-wide aggregate of all stones' storage.
+
+**Phase 1 (current, local data plane):**
 
 ```rust
 pub struct Storage {
     pub volumes: Volumes,
     pub media:   Media,
-    pub changed: broadcast::Sender<StorageChanged>,  // domain event
+    pub changed: broadcast::Sender<StorageChanged>,
 }
+```
+
+**Phase 8 target:**
+
+```rust
+// state.current.storage — this stone's local data plane (same struct, re-homed)
+// state.storage         — garden-wide aggregate (future; new type)
 ```
 
 | Flat field | Domain path |
 |---|---|
-| `volumes` | `storage.volumes` ✓ migrated |
-| `media` | `storage.media` ✓ migrated |
-| `storage_changed` | `storage.changed` ✓ migrated |
+| `volumes` | `current.storage.volumes` (currently `storage.volumes` — corrected in Phase 8) |
+| `media` | `current.storage.media` (currently `storage.media` — corrected in Phase 8) |
 
-### `orchestration` — Coordination Plane
-
-Orchestration coordinates operations across domains. It owns no data.
+### `orchestration` — Coordination Plane ✓ Phase 1
 
 ```rust
 pub struct Orchestration {
@@ -235,15 +275,19 @@ pub struct Orchestration {
 }
 
 pub struct StorageOrchestration {
-    pub tick:   broadcast::Sender<StorageTick>,
-    pub agg:    broadcast::Sender<StorageTick>,
+    pub tick:   Tick,
     pub nudge:  Arc<Notify>,
     pub rescan: mpsc::Sender<()>,
 }
 
+pub struct Tick {
+    pub raw:       broadcast::Sender<StorageTick>,
+    pub debounced: broadcast::Sender<StorageTick>,
+}
+
 pub struct NurturingOrchestration {
-    pub harvest:   Arc<HarvestStore>,
-    pub store:     Arc<NurturingStore>,
+    pub harvest: Arc<HarvestStore>,
+    pub store:   Arc<NurturingStore>,
 }
 
 pub struct NourishmentOrchestration {
@@ -253,13 +297,84 @@ pub struct NourishmentOrchestration {
 
 | Flat field | Domain path |
 |---|---|
-| `storage_tick` | `orchestration.storage.tick` |
-| `storage_agg` | `orchestration.storage.agg` |
-| `orchestration_nudge` | `orchestration.storage.nudge` (currently at `storage.orchestration.nudge` — needs correction) |
-| `volume_rescan` | `orchestration.storage.rescan` (currently at `storage.orchestration.rescan` — needs correction) |
-| `harvest_store` | `orchestration.nurturing.harvest` |
-| `nurturing_store` | `orchestration.nurturing.store` |
-| `nourishment_jobs` | `orchestration.nourishment.jobs` |
+| `storage_tick_raw` | `orchestration.storage.tick.raw` ✓ |
+| `storage_tick_debounced` | `orchestration.storage.tick.debounced` ✓ |
+| `orchestration_nudge` | `orchestration.storage.nudge` ✓ |
+| `volume_rescan` | `orchestration.storage.rescan` ✓ |
+| `harvest_store` | `orchestration.nurturing.harvest` ✓ |
+| `nurturing_store` | `orchestration.nurturing.store` ✓ |
+| `nourishment_jobs` | `orchestration.nourishment.jobs` ✓ |
+
+### `tool` — Garden Tool Registry
+
+Two separate stores that mirror the current/garden-wide pattern:
+
+```rust
+// state.current.tool — this stone's tools (authoritative local write side)
+pub struct CurrentTool {
+    pub registry: ToolRegistry,  // Local-origin GardenTool entries for this stone
+}
+
+// state.tool — garden-wide aggregate
+pub struct Tool {
+    pub registry: GardenRegistry,  // All stones: Local + Announced entries
+    pub delta:    broadcast::Sender<ToolDelta>,
+}
+```
+
+**Write path**: local offering/storage change → write to `state.current.tool.registry`,
+propagate into `state.tool.registry`.
+
+**Remote path**: remote beacon → write directly into `state.tool.registry`.
+
+| Flat field | Domain path |
+|---|---|
+| `registry` (GardenRegistry, Local+Announced) | `tool.registry` |
+| `tools` (broadcast::Sender<ToolDelta>) | `tool.delta` |
+
+`state.current.tool.registry` is the local projection; it replaces the
+`reconcile_local` write path.
+
+### `fqn_handler` — FQN Handler Registry
+
+External processes that register as handlers for `OfferingFqn` patterns. Registration
+means: "when a FIND request arrives for this FQN, forward it to me." Registrations are
+ephemeral, TTL-based; handlers refresh every 30 seconds.
+
+Two separate stores:
+
+```rust
+// state.current.fqn_handler — handlers registered on this stone
+pub struct CurrentFqnHandler {
+    pub registry: Arc<RwLock<FqnHandlerRegistry>>,
+}
+
+// state.fqn_handler — garden-wide view (this stone's + remote stones')
+pub struct FqnHandler {
+    pub registry: Arc<RwLock<FqnHandlerRegistry>>,
+}
+
+pub struct FqnHandlerEntry {
+    pub fqn:          OfferingFqn,
+    pub location:     FqnHandlerLocation,
+    pub registered_at: DateTime<Utc>,
+    pub expires_at:   Instant,
+}
+
+pub enum FqnHandlerLocation {
+    Local  { port: u16 },
+    Remote { stone_id: String, endpoint: String },
+}
+```
+
+`PUT /api/v1/garden/gateway/{offering}` writes to `state.current.fqn_handler.registry`
+and propagates to `state.fqn_handler.registry`.
+
+FIND resolution reads `state.fqn_handler.registry` to locate the handler before
+proxying the request.
+
+`EntryOrigin::Registered` entries are removed from `GardenRegistry`. After this phase,
+`GardenRegistry` holds only `Local` and `Announced` entries.
 
 ### `security` — Trust Domain
 
@@ -267,12 +382,12 @@ pub struct NourishmentOrchestration {
 pub struct Security {
     pub pond:         Pond,
     pub stone_client: Arc<StoneClient>,
-    pub https:        Arc<AtomicBool>,   // HTTPS listener started guard
+    pub https:        Arc<AtomicBool>,
 }
 
 pub struct Pond {
-    pub state:    PondState,             // enrollment state
-    pub active:   Arc<AtomicBool>,       // CA initialized and unlocked
+    pub state:    PondState,
+    pub active:   Arc<AtomicBool>,
     pub ceremony: Ceremony,
 }
 
@@ -306,39 +421,6 @@ pub struct Discovery {
 |---|---|
 | `mdns_handle` | `discovery.mdns` |
 | `koi_handle` | `discovery.koi` |
-
-### `fqn` — FQN Handler Registry
-
-External processes (ollama, mongodb orchestrators) that register as handlers for
-`OfferingFqn` patterns. Registrations carry a physical location (local port or remote
-stone) and are used by FIND operation resolution.
-
-Currently these entries are mixed into `GardenRegistry.gateway_entries()`. They are
-extracted into a dedicated domain context.
-
-```rust
-pub struct Fqn {
-    pub registry: Arc<RwLock<FqnHandlerRegistry>>,
-}
-
-pub struct FqnHandlerEntry {
-    pub fqn:          OfferingFqn,
-    pub handler_for:  Vec<String>,
-    pub location:     FqnHandlerLocation,
-    pub registered_at: DateTime<Utc>,
-}
-
-pub enum FqnHandlerLocation {
-    Local  { port: u16 },
-    Remote { stone_id: String, port: u16 },
-}
-```
-
-The `PUT /api/v1/garden/gateway/{offering}` handler writes to `state.fqn.registry`.
-FIND resolution reads from `state.fqn.registry` to locate the handler before proxying.
-
-`GardenRegistry` (`state.registry`) retains stone discovery and tool projection entries.
-Gateway entries are removed from it.
 
 ### `companion` — Companion Processes
 
@@ -402,14 +484,13 @@ These fields genuinely belong at the `AppState` level:
 | `start_time` | Stone uptime; belongs to no domain |
 | `api_port` | Infrastructure constant |
 | `pulse` | Cross-domain broadcast firehose |
-| `tools` | Cross-domain tool delta stream |
 | `log` | Cross-domain log broadcast |
-| `registry` | `GardenRegistry` for stone/tool discovery (after FQN gateway entries extracted) |
 | `offerings` | Offering lifecycle spans all domains |
 | `manifest_registry` | Read by offerings, storage, security, infra |
 | `jobs` | Background job tracker; spans domains |
 | `offerings_index` | Computed view; read-only cache |
 | `subsystems` | Boot readiness flags |
+| `capabilities` | Hardware capability cache; read by offerings, security, infra |
 
 ---
 
@@ -418,56 +499,65 @@ These fields genuinely belong at the `AppState` level:
 Fields are migrated in dependency order — most isolated first, most pervasive last.
 Each field is one commit; the build must pass between commits.
 
-### Phase 1 — Correct `Storage` and create `Orchestration` (in progress)
+### Phase 1 — Correct `Storage` and create `Orchestration` ✓ Complete
 
-`Storage` currently contains `orchestration`, `harvest`, `nurturing`, `nourishment`
-fields that belong in the new `Orchestration` domain.
+`Storage` stripped to data plane `{ volumes, media, changed }`. `Orchestration` created
+with `{ storage, nurturing, nourishment }` sub-structs. All 35 call sites updated.
 
-1. Create `domain/orchestration/mod.rs` with all sub-structs
-2. Strip `Storage` to `{ volumes, media, changed }`
-3. Move call sites: `storage.orchestration.*` → `orchestration.storage.*`
-4. Move call sites: `storage.harvest/nurturing/nourishment` → `orchestration.nurturing.*`
-   and `orchestration.nourishment.*`
-5. Add `orchestration: Arc<Orchestration>` to `AppState`
+Commit: `9e6586d` — ARCH-0004: introduce Orchestration domain; correct Storage to data plane only
 
-### Phase 2 — `fqn`
+### Phase 2 — `tool`
 
-1. Create `domain/fqn/mod.rs` with `Fqn` and `FqnHandlerRegistry`
-2. Migrate gateway registration writes → `state.fqn.registry`
-3. Migrate gateway reads (FIND resolution, `gateway_entries()`) → `state.fqn.registry`
-4. Remove gateway methods from `GardenRegistry`
+1. Create `domain/tool/mod.rs` with `Tool` and `CurrentTool`
+2. Add `tool: Arc<Tool>` to `AppState`; remove `registry` and `tools` flat fields
+3. Migrate: `state.registry` → `state.tool.registry`
+4. Migrate: `state.tools` → `state.tool.delta`
+5. `state.current.tool.registry` write path replaces `reconcile_local` direct calls
 
-### Phase 3 — `security`
+### Phase 3 — `fqn_handler`
+
+1. Create `domain/fqn_handler/mod.rs` with `FqnHandler`, `CurrentFqnHandler`,
+   `FqnHandlerRegistry`, `FqnHandlerEntry`, `FqnHandlerLocation`
+2. Add `fqn_handler: Arc<FqnHandler>` to `AppState`
+3. Extract `EntryOrigin::Registered` entries from `GardenRegistry` into
+   `state.current.fqn_handler.registry`
+4. Migrate gateway API writes → `state.current.fqn_handler.registry`
+5. Migrate FIND resolution reads → `state.fqn_handler.registry`
+6. Remove `gateway_entries()`, `gateway_for_offering()`, `EntryOrigin::Registered`
+   from `GardenRegistry`
+
+### Phase 4 — `security`
 
 1. Create `domain/security/mod.rs`, `pond.rs`, `ceremony.rs`
 2. Migrate: `pond`, `pond_active`, `https_started`, `stone_client`, ceremony fields
 
-### Phase 4 — `discovery`
+### Phase 5 — `discovery`
 
 1. Create `domain/discovery/mod.rs`
 2. Migrate: `mdns_handle`, `koi_handle`
 
-### Phase 5 — `companion`
+### Phase 6 — `companion`
 
 1. Create `domain/companion/mod.rs`
 2. Migrate: `companion_registry`
 
-### Phase 6 — `infra`
+### Phase 7 — `infra`
 
 1. Create `domain/infra/mod.rs`
 2. Migrate: `docker`, `runtime`, `network`, `infrastructure_handlers`
 
-### Phase 7 — `presence`
+### Phase 8 — `presence`
 
 1. Create `domain/presence/mod.rs`
 2. Migrate: `elections`, `notifications`
 
-### Phase 8 — `current`
+### Phase 9 — `current`
 
 1. Create `domain/current/mod.rs`, `domain/current/topology.rs`
-2. Migrate: `topology_cache`, `topology_dirty`, `self_entry` → `current.topology`
-3. Migrate: `system_resources`, `network_metrics_cache`, `gpu_utilization`
-4. Migrate: `stone_id`, `stone_name` → `current.stone` (most pervasive — done last)
+2. Re-home `state.storage` → `state.current.storage` (corrects Phase 1 naming)
+3. Migrate: `topology_cache`, `topology_dirty`, `self_entry` → `current.topology`
+4. Migrate: `system_resources`, `network_metrics_cache`, `gpu_utilization`
+5. Migrate: `stone_id`, `stone_name` → `current.stone` (most pervasive — done last)
 
 ---
 
@@ -487,16 +577,19 @@ The migration is complete when:
 
 **Positive**:
 - Handler dependency surfaces are enforced by the compiler
-- FQN resolution has a dedicated home separate from stone discovery
-- The data plane (`storage.*`) is never polluted by coordination primitives
-- `current` captures the complete self-model: identity and garden perception
+- `fqn_handler` domain separates FIND resolution from stone/tool discovery
+- `fqn` value type (`OfferingFqn`) remains a clean cross-cutting concern in `garden_common`
+- The `current` / garden-wide symmetry makes local vs. aggregate state explicit at every
+  call site
+- The data plane (`current.storage.*`) is never polluted by coordination primitives
 - New code has an unambiguous home — the file path tells you where to put it
 - Domain contexts are independently constructable and testable
 
 **Negative / Trade-offs**:
 - `current.stone.read().id` at every identity call site is more verbose than `stone_id`;
   this is the correct trade — explicitness over convenience
-- The gateway/FQN split requires touching both `api/v1/gateway.rs` and `GardenRegistry`
+- Phase 9 (`current`) requires re-homing `state.storage` to `state.current.storage`,
+  touching all storage call sites a second time
 - Background tasks that currently clone the full `AppState` must be audited and narrowed
 
 ## Out of Scope

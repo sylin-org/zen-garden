@@ -142,7 +142,7 @@ pub async fn put_gateway(
     };
 
     let delta = {
-        let mut reg = state.registry.write().await;
+        let mut reg = state.tool.registry.write().await;
         reg.upsert(tool, EntryOrigin::Registered)
     };
 
@@ -168,7 +168,7 @@ pub async fn delete_gateway(
 ) -> StatusCode {
     let key = build_tool_key(&state.stone_id, &offering, "orchestrator");
     let delta = {
-        let mut reg = state.registry.write().await;
+        let mut reg = state.tool.registry.write().await;
         reg.remove(&key)
     };
 

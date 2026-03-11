@@ -188,7 +188,7 @@ async fn resolve_route(
     state: &AppState,
     name: &str,
 ) -> Result<StorageRoute, (StatusCode, String)> {
-    StorageRoute::for_read(name, &state.storage.volumes, &state.registry, &state.stone_id)
+    StorageRoute::for_read(name, &state.storage.volumes, &state.tool.registry, &state.stone_id)
         .await
         .map_err(|e| {
             (

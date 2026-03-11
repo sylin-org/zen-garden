@@ -112,10 +112,11 @@ pub async fn run(
         tracing::debug!("Initial topology file written");
     }
 
-    let (tools, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
-
-    // TOOLS-0003: Unified garden registry (replaces tools_cache, storage_cache, gateways)
-    let registry = crate::domain::garden_registry::new_registry();
+    let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
+    let tool = Arc::new(crate::domain::Tool {
+        registry: crate::domain::garden_registry::new_registry(),
+        delta:    tool_delta,
+    });
 
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(
@@ -222,8 +223,8 @@ pub async fn run(
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
         topology_dirty.clone(),
-        tools.clone(),
-        registry.clone(),
+        tool.delta.clone(),
+        tool.registry.clone(),
         self_entry.clone(),
         console_printer.clone(),
         infrastructure_handlers.clone(),
@@ -657,8 +658,7 @@ pub async fn run(
         api_port: port,
         topology_cache: topology_cache.clone(),
         topology_dirty: topology_dirty.clone(),
-        tools: tools.clone(),
-        registry: registry.clone(),
+        tool: tool.clone(),
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),
@@ -1442,7 +1442,7 @@ pub async fn run(
         };
         if let Err(e) = crate::infra::cloud_filter::start(
             state.storage.volumes.clone(),
-            state.registry.clone(),
+            state.tool.registry.clone(),
             state.stone_id.clone(),
             state.orchestration.storage.tick.raw.clone(),
             state.subscribe_storage_changed(),

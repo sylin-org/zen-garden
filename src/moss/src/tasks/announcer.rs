@@ -74,7 +74,7 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
             // remote registries can reconcile stale announced entries.
             if tick_count % 2 == 0 {
                 let snapshot_deltas = {
-                    let reg = state.registry.read().await;
+                    let reg = state.tool.registry.read().await;
                     reg.local_snapshot_for_beacon(&state.stone_id)
                 };
                 let endpoint = state.self_entry.read().await.address.http_base();

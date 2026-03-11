@@ -60,7 +60,7 @@ pub async fn get_object_v1(
         }
     }
 
-    let route = match StorageRoute::for_read(&name, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(
@@ -165,7 +165,7 @@ pub async fn put_object_v1(
         }
     }
 
-    let route = StorageRoute::for_write(&name, &state.storage.volumes, &state.registry, &state.stone_id)
+    let route = StorageRoute::for_write(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id)
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
@@ -272,7 +272,7 @@ pub async fn delete_object_v1(
         }
     }
 
-    let route = StorageRoute::for_write(&name, &state.storage.volumes, &state.registry, &state.stone_id)
+    let route = StorageRoute::for_write(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id)
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
@@ -357,7 +357,7 @@ pub async fn head_object_v1(
         }
     }
 
-    let route = match StorageRoute::for_read(&name, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(

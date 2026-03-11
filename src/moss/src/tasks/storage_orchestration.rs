@@ -146,7 +146,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     }
 
     let my_stone_id = &state.stone_id;
-    let reg = state.registry.read().await;
+    let reg = state.tool.registry.read().await;
 
     let mut new_roles = std::collections::HashMap::new();
     let mut any_changed = false;

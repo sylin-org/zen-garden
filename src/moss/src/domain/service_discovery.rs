@@ -433,7 +433,7 @@ pub async fn find_services(
     // Query by category (not origin) so both local and announced entries appear.
 
     {
-        let reg = state.registry.read().await;
+        let reg = state.tool.registry.read().await;
         let (_, orchestrator_tools) = reg.snapshot(&crate::domain::ToolQuery {
             category: Some("orchestrator".to_string()),
             ..Default::default()

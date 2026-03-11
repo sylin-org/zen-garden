@@ -91,7 +91,7 @@ pub fn start_registry_maintenance(
                 }
             }
             let reaped = {
-                let mut reg = state.registry.write().await;
+                let mut reg = state.tool.registry.write().await;
                 reg.reap_expired()
             };
             if !reaped.is_empty() {
@@ -851,8 +851,8 @@ pub async fn start_all_background_tasks(
         api_endpoint.to_string(),
         state.topology_cache.clone(),
         state.topology_dirty.clone(),
-        state.tools.clone(),
-        state.registry.clone(),
+        state.tool.delta.clone(),
+        state.tool.registry.clone(),
         state.self_entry.clone(),
         console.clone(),
         state.infrastructure_handlers.clone(),

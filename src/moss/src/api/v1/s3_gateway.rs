@@ -223,7 +223,7 @@ pub async fn put_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_write(&selected, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_write(&selected, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
@@ -302,7 +302,7 @@ pub async fn get_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
@@ -383,7 +383,7 @@ pub async fn head_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(_) => {
             return Response::builder()
@@ -458,7 +458,7 @@ pub async fn delete_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_write(&selected, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_write(&selected, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
@@ -515,7 +515,7 @@ pub async fn list_buckets(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
@@ -595,7 +595,7 @@ pub async fn list_objects(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&selected, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };

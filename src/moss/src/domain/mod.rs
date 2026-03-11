@@ -16,6 +16,7 @@
 pub mod adoption;
 pub mod capabilities;
 pub mod ceremony;
+pub mod discovery;
 pub mod orchestration;
 pub mod config_compose;
 pub mod compatibility;
@@ -110,6 +111,7 @@ pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
 pub use garden_registry::{
     new_registry, EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery,
 };
+pub use discovery::Discovery;
 pub use fqn_handler::{FqnHandler, FqnHandlerEntry, FqnHandlerRegistry};
 pub use security::{Pond, Security};
 pub use tool::Tool;

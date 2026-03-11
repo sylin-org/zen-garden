@@ -16,7 +16,6 @@
 use crate::docker::Client;
 use crate::domain::{FqnHandler, InfrastructureHandlerRegistry, Orchestration, Security, Storage, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
-use crate::mdns::MdnsHandle;
 use crate::tasks::Network;
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
@@ -146,13 +145,8 @@ pub struct AppState {
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
 
-    /// mDNS handle for re-registration on resolution changes
-    /// Used when IP/MAC changes to update mDNS service advertisement
-    pub mdns_handle: Option<Arc<MdnsHandle>>,
-
-    /// Koi embedded handle — provides mDNS, DNS, certmesh, proxy, and health capabilities
-    /// Shared across all subsystems; sub-handles accessed via `koi_handle.mdns()`, `.dns()`, etc.
-    pub koi_handle: Arc<koi_embedded::KoiHandle>,
+    /// Discovery domain — mDNS re-registration handle and Koi embedded handle.
+    pub discovery: Arc<crate::domain::Discovery>,
 
 
     /// Election service for distributed elections (testing)
@@ -804,7 +798,7 @@ impl AppState {
         }
 
         // Re-register mDNS with updated IP and MAC
-        if let Some(ref mdns) = self.mdns_handle {
+        if let Some(ref mdns) = self.discovery.mdns {
             if let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await {
                 tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
             }

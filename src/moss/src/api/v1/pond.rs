@@ -272,7 +272,7 @@ fn certmesh_err(e: koi_certmesh::CertmeshError) -> (StatusCode, Json<ApiErrorRes
 fn get_certmesh_core(
     state: &AppState,
 ) -> Result<std::sync::Arc<koi_certmesh::CertmeshCore>, (StatusCode, Json<ApiErrorResponse>)> {
-    let handle = state.koi_handle.certmesh().map_err(|e| {
+    let handle = state.discovery.koi.certmesh().map_err(|e| {
         error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CERTMESH_UNAVAILABLE",
@@ -297,7 +297,7 @@ fn get_certmesh_core(
 /// 2. It is an enrolled member (has cert + key from a prior enrollment)
 async fn refresh_pond_active(state: &AppState) {
     // Cornerstone path: CA initialized and unlocked
-    if let Ok(handle) = state.koi_handle.certmesh() {
+    if let Ok(handle) = state.discovery.koi.certmesh() {
         if let Ok(core) = handle.core() {
             let status = core.certmesh_status().await;
             if status.ca_initialized && !status.ca_locked {
@@ -340,7 +340,7 @@ async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone
         ));
 
     // Re-register mDNS with/without pond TXT properties
-    if let Some(ref mdns) = state.mdns_handle {
+    if let Some(ref mdns) = state.discovery.mdns {
         let (ip, mac) = garden_common::infra::network::get_local_ip_and_mac();
         if ip != "127.0.0.1" && !ip.is_empty() {
             let _ = mdns.reregister(&ip, mac.as_deref()).await;
@@ -350,7 +350,7 @@ async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone
     // Register certmesh CA service on mDNS if this is the cornerstone
     if enrolled {
         crate::mdns::register_certmesh_service(
-            &state.koi_handle,
+            &state.discovery.koi,
             garden_common::constants::MOSS_HTTP,
         )
         .await;
@@ -589,7 +589,7 @@ pub async fn pond_join_v1(
     Json(payload): Json<PondJoinRequest>,
 ) -> PondResult<PondJoinResponse> {
     // Determine if this stone is the cornerstone (has CA initialized)
-    let is_cornerstone = if let Ok(handle) = state.koi_handle.certmesh() {
+    let is_cornerstone = if let Ok(handle) = state.discovery.koi.certmesh() {
         if let Ok(core) = handle.core() {
             core.certmesh_status().await.ca_initialized
         } else {
@@ -1721,7 +1721,7 @@ pub async fn pond_enroll_client_v1(
     Json(payload): Json<ClientEnrollRequest>,
 ) -> PondResult<ClientEnrollResponse> {
     // Only the cornerstone can issue certificates
-    let is_cornerstone = if let Ok(handle) = state.koi_handle.certmesh() {
+    let is_cornerstone = if let Ok(handle) = state.discovery.koi.certmesh() {
         if let Ok(core) = handle.core() {
             core.certmesh_status().await.ca_initialized
         } else {
@@ -1751,7 +1751,7 @@ pub async fn pond_enroll_client_v1(
     let join_resp = core.enroll(&join_req).await.map_err(certmesh_err)?;
 
     // Update the member's role to Client in the roster
-    if let Ok(handle) = state.koi_handle.certmesh() {
+    if let Ok(handle) = state.discovery.koi.certmesh() {
         if let Ok(core) = handle.core() {
             let _ = core
                 .set_member_role(&payload.hostname, koi_certmesh::roster::MemberRole::Client)

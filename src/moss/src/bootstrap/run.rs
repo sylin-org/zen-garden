@@ -661,8 +661,10 @@ pub async fn run(
         tool: tool.clone(),
         fqn_handler: Arc::new(crate::domain::FqnHandler::new()),
         self_entry: self_entry.clone(),
-        mdns_handle: mdns_handle.clone(),
-        koi_handle: koi_handle.clone(),
+        discovery: Arc::new(crate::domain::Discovery {
+            mdns: mdns_handle.clone(),
+            koi: koi_handle.clone(),
+        }),
         security: Arc::new(crate::domain::Security {
             pond: crate::domain::Pond {
                 state: pond_state,
@@ -920,7 +922,7 @@ pub async fn run(
 
     // Phase 11.2: mDNS health-change listener
     // Re-registers mDNS TXT record when stone health transitions (ARCH-0066)
-    if let Some(ref mdns) = state.mdns_handle {
+    if let Some(ref mdns) = state.discovery.mdns {
         let mdns_for_health = mdns.clone();
         let mut health_rx = state.event_bus.subscribe();
         tokio::spawn(async move {

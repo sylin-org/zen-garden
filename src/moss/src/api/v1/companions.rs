@@ -35,11 +35,11 @@ pub struct CompanionListResponse {
 pub async fn get_companions(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<CompanionListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let companions = state.companion_registry.list().await;
+    let companions = state.companion.registry.list().await;
 
     let mut summaries = Vec::new();
     for a in companions {
-        let running = state.companion_registry.is_running(&a.id).await;
+        let running = state.companion.registry.is_running(&a.id).await;
         summaries.push(CompanionSummary {
             id: a.manifest.id.clone(),
             name: a.manifest.name.clone(),
@@ -71,7 +71,7 @@ pub async fn get_companion_manifest(
     State(state): State<AppState>,
     Path(companion_id): Path<String>,
 ) -> Result<Json<ApiResponse<CompanionDetailResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state.companion_registry.get(&companion_id).await {
+    match state.companion.registry.get(&companion_id).await {
         Some(c) => {
             let running = c.is_running();
             Ok(Json(ApiResponse::new(CompanionDetailResponse {
@@ -135,7 +135,7 @@ async fn execute_companion_command_local(
     request: &CompanionCommandRequest,
 ) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
     // Get Companion and its assigned port
-    let companion = match state.companion_registry.get(companion_id).await {
+    let companion = match state.companion.registry.get(companion_id).await {
         Some(a) => a,
         None => {
             return Err((
@@ -158,7 +158,7 @@ async fn execute_companion_command_local(
         drop(self_entry);
 
         if let Err(e) = state
-            .companion_registry
+            .companion.registry
             .start(companion_id, &moss_endpoint)
             .await
         {
@@ -369,12 +369,12 @@ pub async fn start_companion(
     drop(self_entry);
 
     // Enable the Companion (mark for auto-start on boot)
-    if let Err(e) = state.companion_registry.enable(&companion_id).await {
+    if let Err(e) = state.companion.registry.enable(&companion_id).await {
         tracing::warn!(companion_id = %companion_id, error = %e, "Failed to enable Companion");
     }
 
     match state
-        .companion_registry
+        .companion.registry
         .start(&companion_id, &moss_endpoint)
         .await
     {
@@ -406,7 +406,7 @@ pub async fn stop_companion(
     Path(companion_id): Path<String>,
 ) -> Result<Json<ApiResponse<CompanionLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     match state
-        .companion_registry
+        .companion.registry
         .stop_and_disable(&companion_id)
         .await
     {
@@ -433,13 +433,13 @@ pub async fn stop_companion(
 pub async fn refresh_companions(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<CompanionListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state.companion_registry.refresh_all().await {
+    match state.companion.registry.refresh_all().await {
         Ok(_) => {
             // Return updated list with running status
-            let companions = state.companion_registry.list().await;
+            let companions = state.companion.registry.list().await;
             let mut summaries = Vec::new();
             for a in companions {
-                let running = state.companion_registry.is_running(&a.id).await;
+                let running = state.companion.registry.is_running(&a.id).await;
                 summaries.push(CompanionSummary {
                     id: a.manifest.id.clone(),
                     name: a.manifest.name.clone(),

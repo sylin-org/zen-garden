@@ -583,10 +583,10 @@ pub async fn get_portrait_data(
 
     // === Companions (adapters) ===
     let companions = {
-        let adapters = state.companion_registry.list().await;
+        let adapters = state.companion.registry.list().await;
         let mut result = Vec::new();
         for adapter in adapters {
-            let running = state.companion_registry.is_running(&adapter.id).await;
+            let running = state.companion.registry.is_running(&adapter.id).await;
             result.push(PortraitCompanion {
                 id: adapter.manifest.id.clone(),
                 name: adapter.manifest.name.clone(),

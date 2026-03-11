@@ -155,8 +155,8 @@ pub struct AppState {
     /// System metrics cache (CPU/memory/disk usage, updated every 5s)
     pub system_resources: Arc<RwLock<Option<StoneResources>>>,
 
-    /// Companion registry (external Companions like Cricket, Firefly)
-    pub companion_registry: Arc<crate::infra::CompanionRegistry>,
+    /// Companion domain — registry of external companions (Cricket, Firefly, etc.)
+    pub companion: Arc<crate::domain::Companion>,
 
     /// Infrastructure handlers for garden-wide effects (registry trust, DNS, etc.)
     /// Handlers react to topology changes and configure local infrastructure.

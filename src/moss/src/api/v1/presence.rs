@@ -192,7 +192,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     };
 
     let has_cricket = state
-        .companion_registry
+        .companion.registry
         .get("cricket")
         .await
         .is_some();

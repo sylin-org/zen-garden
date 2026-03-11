@@ -669,7 +669,7 @@ pub async fn deploy_stone_v1(
                 );
             }
 
-            let stop_results = state.companion_registry.stop_all().await;
+            let stop_results = state.companion.registry.stop_all().await;
             for (id, result) in &stop_results {
                 match result {
                     Ok(()) => {

@@ -42,7 +42,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         }
 
         // Reap any terminated Companion processes to prevent zombies
-        let reaped = state.companion_registry.reap_terminated().await;
+        let reaped = state.companion.registry.reap_terminated().await;
         if reaped > 0 {
             tracing::debug!(reaped = reaped, "Reaped terminated Companion processes");
         }

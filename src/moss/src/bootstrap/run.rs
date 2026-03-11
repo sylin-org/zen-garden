@@ -682,7 +682,9 @@ pub async fn run(
         }),
         elections: election_service_placeholder,
         system_resources: Arc::new(RwLock::new(None)),
-        companion_registry: Arc::new(infra::CompanionRegistry::new().await),
+        companion: Arc::new(crate::domain::Companion {
+            registry: Arc::new(infra::CompanionRegistry::new().await),
+        }),
         infrastructure_handlers: infrastructure_handlers.clone(),
         // Cached metrics - populated by background tasks, read-only for endpoints
         network_metrics_cache: Arc::new(RwLock::new(None)),
@@ -858,7 +860,7 @@ pub async fn run(
             .address
             .http_base();
         match companion_scan_state
-            .companion_registry
+            .companion.registry
             .scan_and_autostart(&endpoint)
             .await
         {
@@ -1588,7 +1590,7 @@ pub async fn run(
         Some(shutdown_callback),
         boot_banner,
         shutdown_banner,
-        Some(state.companion_registry.clone()),
+        Some(state.companion.registry.clone()),
     )
     .await
 }

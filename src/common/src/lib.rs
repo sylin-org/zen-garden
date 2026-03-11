@@ -29,6 +29,7 @@ pub mod persistence;
 pub mod presence;
 pub mod responses;
 pub mod storage;
+pub mod stone;
 pub mod templates;
 pub mod tools;
 pub mod traits;
@@ -38,6 +39,11 @@ pub mod platform_runtime;
 pub mod utils;
 
 pub use platform_runtime::PlatformRuntime;
+
+// Canonical stone value objects (ARCH-0003 Wave 1b)
+pub use stone::{Current, Environment, OsKind, Stone};
+// Canonical companion value objects (ARCH-0003 Wave 1b)
+pub use companion::{Companion, Manifest};
 
 // Re-export commonly used items
 pub use audit::{log_access, AuditAccessEntry};

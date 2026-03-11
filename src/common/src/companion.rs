@@ -1,14 +1,67 @@
-//! Companion types for Zen Garden
+//! Companion value objects and legacy shims.
 //!
-//! NOTE: This module is being consolidated. Prefer using:
-//! - `garden_common::command_manifest::CommandManifest` for Companion manifests
-//! - `garden_common::command_manifest::CommandResponse` for responses
-//! - `garden_common::command_manifest::CompanionCommandRequest` for requests
+//! ## Canonical types (ARCH-0003)
 //!
-//! This module will be deprecated in a future version.
+//! - [`Companion`] — the authoritative companion description.
+//! - [`Manifest`]  — the companion's command manifest, nested inside [`Companion`].
+//!
+//! These replace scattered `companion_id: String`, `companion_name: String`
+//! fields and the `CompanionManifest` alias. Consumers migrate wave-by-wave;
+//! the legacy re-exports below will be removed once all callers are updated.
 
+use crate::command_manifest::CommandDef;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+// ============================================================================
+// Canonical value objects (ARCH-0003 Wave 1b)
+// ============================================================================
+
+/// The authoritative description of a companion process.
+///
+/// Replaces scattered `companion_id: String` / `companion_name: String` fields
+/// and the `CompanionManifest` alias. The manifest is a nested field — it is
+/// not a peer type.
+///
+/// Access pattern:
+/// ```text
+/// companion.id                      // identifier (e.g. "cricket")
+/// companion.name                    // display name (e.g. "Cricket")
+/// companion.port                    // assigned port from ledger
+/// companion.manifest.version        // manifest version
+/// companion.manifest.commands       // available commands
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Companion {
+    /// Companion identifier (e.g., "cricket", "firefly"). Permanent.
+    pub id: String,
+
+    /// Human-readable display name (e.g., "Cricket"). Changeable.
+    pub name: String,
+
+    /// Assigned port from the companion port ledger (7187–7199).
+    pub port: u16,
+
+    /// Command manifest — nested, not a peer type.
+    pub manifest: Manifest,
+}
+
+/// A companion's command manifest — nested inside [`Companion`].
+///
+/// Contains metadata and the list of available commands. Mirrors the wire
+/// format produced by `--dump-commands` but is the canonical in-memory form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Manifest {
+    /// Companion version string (e.g., "0.1.0").
+    pub version: String,
+
+    /// Short description of this companion.
+    pub description: String,
+
+    /// Available commands defined by this companion.
+    #[serde(default)]
+    pub commands: Vec<CommandDef>,
+}
 
 // Re-export from command_manifest for backwards compatibility
 pub use crate::command_manifest::{

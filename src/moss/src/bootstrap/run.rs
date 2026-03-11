@@ -644,7 +644,12 @@ pub async fn run(
         stone_name: stone_name.clone(),
         offerings: Arc::new(RwLock::new(offerings)),
         manifest_registry: manifest_registry.clone(),
-        docker: docker.clone(),
+        platform: Arc::new(crate::domain::Platform {
+            docker: docker.clone(),
+            runtime: runtime.clone(),
+            network: Arc::new(network),
+            handlers: infrastructure_handlers.clone(),
+        }),
         jobs: Arc::new(RwLock::new(HashMap::new())),
         pulse: pulse.clone(),
         event_bus: event_bus.clone(),
@@ -652,9 +657,7 @@ pub async fn run(
         start_time: std::time::Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
-        runtime: runtime.clone(),
         capabilities: capabilities.clone(),
-        network: Arc::new(network),
         api_port: port,
         topology_cache: topology_cache.clone(),
         topology_dirty: topology_dirty.clone(),
@@ -685,7 +688,6 @@ pub async fn run(
         companion: Arc::new(crate::domain::Companion {
             registry: Arc::new(infra::CompanionRegistry::new().await),
         }),
-        infrastructure_handlers: infrastructure_handlers.clone(),
         // Cached metrics - populated by background tasks, read-only for endpoints
         network_metrics_cache: Arc::new(RwLock::new(None)),
         // FIREFLY-0003: GPU utilization cache
@@ -896,7 +898,7 @@ pub async fn run(
     // Uses AppState.announce_resolution_change() for proper SoC
     if use_static_host.is_none() {
         let state_for_ip = state.clone();
-        let mut network_rx = state.network.subscribe();
+        let mut network_rx = state.platform.network.subscribe();
 
         tokio::spawn(async move {
             while let Ok(event) = network_rx.recv().await {
@@ -1563,7 +1565,7 @@ pub async fn run(
     });
 
     // Prepare boot banner info
-    let current_ip = state.network.get_ip().await;
+    let current_ip = state.platform.network.get_ip().await;
     let manifests_count = state.manifest_registry.sw.entries.len();
     let boot_banner = Some(console::BootBannerInfo {
         stone_name: stone_name.clone(),

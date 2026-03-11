@@ -226,7 +226,7 @@ pub async fn adopt_offering_container(
 /// - Emitting events
 /// - Logging warnings for failed adoptions
 pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
-    let existing = match state.docker.list_zen_containers().await {
+    let existing = match state.platform.docker.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {
             tracing::warn!(error = ?e, "Failed to list zen containers for adoption");
@@ -252,7 +252,7 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
         }
 
         match adopt_offering_container(
-            &state.docker,
+            &state.platform.docker,
             &state.manifest_registry,
             &offering,
             &state.stone_name,

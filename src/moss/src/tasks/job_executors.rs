@@ -738,7 +738,7 @@ pub async fn install_service_task(
         config_files: vec![],
     };
     let actual_ports = match state
-        .docker
+        .platform.docker
         .install_service(offering, &spec, Some(&state.console))
         .await
     {
@@ -976,7 +976,7 @@ pub async fn install_image_direct_task(
         service_name,
     );
 
-    let inspection = match image_inspect::inspect_image(&state.docker, image_ref).await {
+    let inspection = match image_inspect::inspect_image(&state.platform.docker, image_ref).await {
         Ok(i) => i,
         Err(e) => {
             let msg = format!("Image inspection failed: {}", e);
@@ -1037,7 +1037,7 @@ pub async fn install_image_direct_task(
     );
 
     let actual_ports = match state
-        .docker
+        .platform.docker
         .install_service(service_name, &spec, Some(&state.console))
         .await
     {
@@ -1312,7 +1312,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             config_files: vec![],
         };
         let actual_ports = match state
-            .docker
+            .platform.docker
             .install_service(&service_name, &spec, Some(&state.console))
             .await
         {

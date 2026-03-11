@@ -13,13 +13,10 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::docker::Client;
-use crate::domain::{FqnHandler, InfrastructureHandlerRegistry, Orchestration, Security, Storage, Tool};
+use crate::domain::{FqnHandler, Orchestration, Security, Storage, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
-use crate::tasks::Network;
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
-use garden_common::PlatformRuntime;
 use garden_common::NetworkMetrics;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
 use std::collections::HashMap;
@@ -84,8 +81,8 @@ pub struct AppState {
     /// Contains both software (sw) and hardware (hw) manifests
     pub manifest_registry: Arc<ManifestRegistry>,
 
-    /// Client daemon manager
-    pub docker: Arc<Client>,
+    /// Platform domain — Docker, runtime, network monitor, infrastructure handlers.
+    pub platform: Arc<crate::domain::Platform>,
 
     /// Background job tracker
     pub jobs: Arc<RwLock<HashMap<String, Job>>>,
@@ -112,15 +109,8 @@ pub struct AppState {
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
 
-    /// Platform runtime — console/ribbon output and lifecycle signals (ARCH-0002).
-    /// Single injection point; no `#[cfg]` above bootstrap/run.rs.
-    pub runtime: Arc<dyn PlatformRuntime>,
-
     /// Hardware capabilities cache (detected at startup, cached to disk)
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
-
-    /// Network monitor for IP change detection
-    pub network: Arc<Network>,
 
     /// API port for constructing endpoint URLs
     pub api_port: u16,
@@ -158,9 +148,6 @@ pub struct AppState {
     /// Companion domain — registry of external companions (Cricket, Firefly, etc.)
     pub companion: Arc<crate::domain::Companion>,
 
-    /// Infrastructure handlers for garden-wide effects (registry trust, DNS, etc.)
-    /// Handlers react to topology changes and configure local infrastructure.
-    pub infrastructure_handlers: Arc<InfrastructureHandlerRegistry>,
 
     // === Cached Metrics (updated by background tasks, read-only for endpoints) ===
     // IMPORTANT: These caches exist to keep API endpoints fast (<10ms).

@@ -53,7 +53,7 @@ pub async fn list_adoptable_v1(
         }
 
         // Try detection (this will use cached results if available)
-        let orchestrator = crate::domain::DetectionOrchestrator::new(state.docker.clone());
+        let orchestrator = crate::domain::DetectionOrchestrator::new(state.platform.docker.clone());
         match orchestrator.detect(offering).await {
             Ok(result) if result.detected && result.stable => {
                 adoptable.push(AdoptableOffering {
@@ -147,7 +147,7 @@ pub async fn adopt_offering_v1(
     }
 
     // Detect offering
-    let orchestrator = crate::domain::DetectionOrchestrator::new(state.docker.clone());
+    let orchestrator = crate::domain::DetectionOrchestrator::new(state.platform.docker.clone());
     let detection_result = orchestrator.detect(offering_def).await.map_err(|e| {
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -183,7 +183,7 @@ pub async fn adopt_offering_v1(
         port_map: std::collections::HashMap::new(),
     };
 
-    let connectivity = ConnectivityOrchestrator::new(state.docker.clone());
+    let connectivity = ConnectivityOrchestrator::new(state.platform.docker.clone());
     let connectivity_outcome = connectivity
         .ensure_connectivity(offering_def, Some(&location), &state.stone_name)
         .await

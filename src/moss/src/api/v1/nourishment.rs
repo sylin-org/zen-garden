@@ -647,7 +647,7 @@ async fn execute_offering_update(
 
     // Get the target image from the Docker service
     let target_image = state
-        .docker
+        .platform.docker
         .get_service_image(name)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to get image for service '{}': {}", name, e))?;
@@ -655,7 +655,7 @@ async fn execute_offering_update(
     // Step 1: Pull the latest image
     let _ = tx.send(format!("    Pulling image: {}", target_image));
     state
-        .docker
+        .platform.docker
         .pull_image(&target_image, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to pull image '{}': {}", target_image, e))?;
@@ -663,14 +663,14 @@ async fn execute_offering_update(
     // Step 2: Stop and remove the existing container
     let _ = tx.send(format!("    Stopping service: {}", name));
     state
-        .docker
+        .platform.docker
         .stop_service(name, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to stop service '{}': {}", name, e))?;
 
     let _ = tx.send(format!("    Removing old container: {}", name));
     state
-        .docker
+        .platform.docker
         .remove_service(name, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to remove service '{}': {}", name, e))?;
@@ -730,14 +730,14 @@ async fn execute_offering_update(
     };
 
     state
-        .docker
+        .platform.docker
         .install_service(name, &spec, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to recreate service '{}': {}", name, e))?;
 
     // Step 4: Verify service health
     tokio::time::sleep(Duration::from_secs(2)).await; // Allow startup
-    match state.docker.get_service_status(name).await {
+    match state.platform.docker.get_service_status(name).await {
         Ok(garden_common::ServiceStatus::Running) => {
             let _ = tx.send(format!("    ✅ Service {} updated and running", name));
         }
@@ -865,7 +865,7 @@ async fn check_offering_updates(
     for offering in offerings.iter().filter(|o| o.is_managed()) {
         // Get the template image reference (e.g., "redis:latest")
         let offering_name_str = offering.name.to_string();
-        let template_image = match state.docker.get_service_image(&offering_name_str).await {
+        let template_image = match state.platform.docker.get_service_image(&offering_name_str).await {
             Ok(img) => img,
             Err(_) => continue,
         };

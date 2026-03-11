@@ -373,7 +373,7 @@ pub async fn create_service_v1(
 
     // Self-heal: if the container exists but registry forgot it (e.g. after restart), adopt it.
     if state
-        .docker
+        .platform.docker
         .zen_container_exists(&service_name)
         .await
         .unwrap_or(false)
@@ -386,7 +386,7 @@ pub async fn create_service_v1(
         if !in_registry {
             let cached_caps = state.capabilities.read().await.clone();
             if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
-                &state.docker,
+                &state.platform.docker,
                 &state.manifest_registry,
                 &service_name,
                 &state.stone_name,
@@ -606,7 +606,7 @@ pub async fn rest_service_v1(
 
     // Stop the Docker container
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&service_name, Some(&state.console))
         .await
     {
@@ -678,7 +678,7 @@ pub async fn wake_service_v1(
     // but the container was removed (pruned, failed upgrade, etc.), transparently
     // reinstall it from the manifest — preserving data in named volumes/mounts.
     let container_exists = state
-        .docker
+        .platform.docker
         .zen_container_exists(&service_name)
         .await
         .unwrap_or(false);
@@ -732,7 +732,7 @@ pub async fn wake_service_v1(
 
         // Start the Docker container
         if let Err(e) = state
-            .docker
+            .platform.docker
             .start_service(&service_name, Some(&state.console))
             .await
         {
@@ -861,7 +861,7 @@ pub async fn nourish_service_v1(
         config_files: template.config_files,
     };
     if let Err(e) = state
-        .docker
+        .platform.docker
         .upgrade_service(&service_name, &spec, Some(&state.console))
         .await
     {
@@ -955,7 +955,7 @@ pub async fn delete_service_v1(
 
     // Remove container first (preserves volumes by default)
     if let Err(e) = state
-        .docker
+        .platform.docker
         .remove_service(&service_name, Some(&state.console))
         .await
     {
@@ -1055,7 +1055,7 @@ pub async fn destroy_service_v1(
     // If the container doesn't exist (already removed, failed install, etc.),
     // continue with registry cleanup — the goal is to fully remove the offering.
     if let Err(e) = state
-        .docker
+        .platform.docker
         .remove_service(&service_name, Some(&state.console))
         .await
     {
@@ -1253,7 +1253,7 @@ pub async fn get_service_env_v1(
 
     // For Docker-managed containers, inspect to get env vars
     if offering.is_managed() {
-        match state.docker.inspect_container_spec(&service_name).await {
+        match state.platform.docker.inspect_container_spec(&service_name).await {
             Ok(spec) => {
                 let env_map: std::collections::HashMap<String, String> = spec
                     .environment
@@ -1381,7 +1381,7 @@ pub async fn restart_service_v1(
     let service_name = normalize_service_name(&service)?;
     // Stop then start
     state
-        .docker
+        .platform.docker
         .stop_service(&service_name, Some(&state.console))
         .await
         .map_err(|e| {
@@ -1394,7 +1394,7 @@ pub async fn restart_service_v1(
         })?;
 
     state
-        .docker
+        .platform.docker
         .start_service(&service_name, Some(&state.console))
         .await
         .map_err(|e| {
@@ -1798,7 +1798,7 @@ async fn rebuild_missing_container(
         .context("Failed to build container spec from manifest")?;
 
     state
-        .docker
+        .platform.docker
         .install_service(service_name, &spec, Some(&state.console))
         .await
         .context("Failed to install container")?;
@@ -1835,14 +1835,14 @@ async fn compose_on_start(state: &crate::AppState, service_name: &str) -> anyhow
         .context("Failed to build spec for compose-on-start")?;
 
     // Check if container needs cycling
-    match state.docker.needs_cycle(service_name, &desired_spec).await {
+    match state.platform.docker.needs_cycle(service_name, &desired_spec).await {
         Ok(true) => {
             tracing::info!(
                 service = %service_name,
                 "Compose-on-start: container spec mismatch, cycling"
             );
             state
-                .docker
+                .platform.docker
                 .recreate_service(service_name, &desired_spec)
                 .await
                 .context("Failed to recreate container for compose-on-start")?;
@@ -1940,7 +1940,7 @@ pub async fn reassign_service_v1(
 
     // Step 1: Stop the container
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&old_name, Some(&state.console))
         .await
     {
@@ -1949,10 +1949,10 @@ pub async fn reassign_service_v1(
     }
 
     // Step 2: Rename the Docker container
-    if let Err(e) = state.docker.rename_service(&old_name, &new_name).await {
+    if let Err(e) = state.platform.docker.rename_service(&old_name, &new_name).await {
         // Try to restart the old container on failure
         let _ = state
-            .docker
+            .platform.docker
             .start_service(&old_name, Some(&state.console))
             .await;
         return Err(error_response(
@@ -1977,7 +1977,7 @@ pub async fn reassign_service_v1(
 
     // Step 4: Start the container with its new name
     if let Err(e) = state
-        .docker
+        .platform.docker
         .start_service(&new_name, Some(&state.console))
         .await
     {

@@ -57,8 +57,8 @@ use tokio_util::sync::CancellationToken;
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
-    let orchestrator = DetectionOrchestrator::new(state.docker.clone());
-    let connectivity = ConnectivityOrchestrator::new(state.docker.clone());
+    let orchestrator = DetectionOrchestrator::new(state.platform.docker.clone());
+    let connectivity = ConnectivityOrchestrator::new(state.platform.docker.clone());
 
     // Track elapsed time for schedule phases
     let start_time = Instant::now();

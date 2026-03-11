@@ -66,7 +66,7 @@ pub async fn get_stone_info_v1(
     let offerings = state.get_offerings().await;
 
     // Build endpoint
-    let current_ip = state.network.get_ip().await;
+    let current_ip = state.platform.network.get_ip().await;
     let endpoint = format!("http://{}:{}", current_ip, state.api_port);
 
     let response = StoneInfoResponse {
@@ -632,7 +632,7 @@ pub async fn deploy_stone_v1(
         ));
 
         // Show update banner on physical console (platform-appropriate output)
-        state.runtime.print_update_banner(&garden_common::console::UpdateBannerInfo {
+        state.platform.runtime.print_update_banner(&garden_common::console::UpdateBannerInfo {
             stone_name: state.stone_name.clone(),
             new_version: None, // Version extracted earlier but not easily accessible here
         });

@@ -409,7 +409,7 @@ pub fn start_registry_loader(state: AppState) {
         let mut any_changed = false;
         for (offering_id, name) in managed_snapshot {
             if !state
-                .docker
+                .platform.docker
                 .zen_container_exists(&name)
                 .await
                 .unwrap_or(false)
@@ -842,7 +842,7 @@ pub async fn start_all_background_tasks(
     start_storage_lifecycle(state.clone(), token.child_token());
 
     // Start storage console task — sole renderer of storage ribbons
-    start_storage_console_task(state.runtime.clone(), state.subscribe_storage_changed(), token.child_token());
+    start_storage_console_task(state.platform.runtime.clone(), state.subscribe_storage_changed(), token.child_token());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(
@@ -855,7 +855,7 @@ pub async fn start_all_background_tasks(
         state.tool.registry.clone(),
         state.self_entry.clone(),
         console.clone(),
-        state.infrastructure_handlers.clone(),
+        state.platform.handlers.clone(),
         state.manifest_registry.clone(),
         state.orchestration.storage.nudge.clone(),
         state.storage.volumes.clone(),

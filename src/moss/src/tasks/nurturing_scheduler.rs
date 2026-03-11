@@ -221,7 +221,7 @@ impl NurturingScheduler {
         self.state
             .orchestration.nurturing.store
             .create_snapshot(
-                &self.state.docker,
+                &self.state.platform.docker,
                 offering_id,
                 offering_name,
                 &self.state.stone_id,

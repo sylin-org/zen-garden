@@ -185,7 +185,7 @@ pub async fn create_snapshot(
     let result = state
         .orchestration.nurturing.store
         .create_snapshot(
-            &state.docker,
+            &state.platform.docker,
             &offering_id,
             &offering_name,
             &state.stone_id,
@@ -260,7 +260,7 @@ pub async fn restore_snapshot(
 
     // Stop the service first
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&offering_lookup, Some(&state.console))
         .await
     {
@@ -270,7 +270,7 @@ pub async fn restore_snapshot(
     // Restore the snapshot
     let manifest = state
         .orchestration.nurturing.store
-        .restore_snapshot(&state.docker, &offering_id, slot)
+        .restore_snapshot(&state.platform.docker, &offering_id, slot)
         .await
         .map_err(|e| {
             crate::infra::error_response(
@@ -283,7 +283,7 @@ pub async fn restore_snapshot(
 
     // Start the service
     if let Err(e) = state
-        .docker
+        .platform.docker
         .start_service(&offering_lookup, Some(&state.console))
         .await
     {
@@ -537,7 +537,7 @@ pub async fn restore_from_seed_bank(
 
     // Stop the service first
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&offering_name, Some(&state.console))
         .await
     {
@@ -549,7 +549,7 @@ pub async fn restore_from_seed_bank(
     let manifest = state
         .orchestration.nurturing.store
         .restore_from_seed_bank(
-            &state.docker,
+            &state.platform.docker,
             &store,
             &seed_bank.id,
             &offering_id,
@@ -567,7 +567,7 @@ pub async fn restore_from_seed_bank(
 
     // Start the service
     if let Err(e) = state
-        .docker
+        .platform.docker
         .start_service(&offering_name, Some(&state.console))
         .await
     {

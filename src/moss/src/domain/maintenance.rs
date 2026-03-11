@@ -220,7 +220,7 @@ async fn sweep_docker(ctx: &Sweep<'_>) -> SweepReport {
         };
     }
 
-    match ctx.state.docker.prune_dangling_images().await {
+    match ctx.state.platform.docker.prune_dangling_images().await {
         Ok((count, bytes)) => {
             let mut notes = Vec::new();
             if count > 0 {

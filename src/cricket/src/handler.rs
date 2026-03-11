@@ -5,35 +5,35 @@
 use garden_companion_sdk::{async_trait, CommandHandler, CommandResponse, CompanionState};
 use std::sync::Arc;
 
-use crate::manifest::TuneManager;
+use crate::manifest::Tunes;
 use crate::mixer::{Channel, Mixer};
 
 /// Cricket command handler
 ///
 /// Implements the Companion SDK's CommandHandler trait.
-pub struct CricketHandler {
+pub struct CricketCommands {
     pub mixer: Arc<Mixer>,
-    pub tune_manager: Arc<TuneManager>,
+    pub tunes: Arc<Tunes>,
     pub state: Arc<CompanionState>,
 }
 
-impl CricketHandler {
+impl CricketCommands {
     /// Create a new Cricket command handler
     pub fn new(
         mixer: Arc<Mixer>,
-        tune_manager: Arc<TuneManager>,
+        tunes: Arc<Tunes>,
         state: Arc<CompanionState>,
     ) -> Self {
         Self {
             mixer,
-            tune_manager,
+            tunes,
             state,
         }
     }
 }
 
 #[async_trait]
-impl CommandHandler for CricketHandler {
+impl CommandHandler for CricketCommands {
     async fn handle(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {
             return CommandResponse::error("No command provided").with_suggestions([
@@ -91,13 +91,13 @@ impl CommandHandler for CricketHandler {
     }
 }
 
-impl CricketHandler {
+impl CricketCommands {
     /// Play an event's audio
     async fn handle_play(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {
             // Show available events from active tune
             let active_name = self
-                .tune_manager
+                .tunes
                 .active_name()
                 .unwrap_or_else(|| "(none)".to_string());
             let events = self.get_event_suggestions();
@@ -123,7 +123,7 @@ impl CricketHandler {
         let event = &args[0];
 
         // Get mapping from active tune
-        let Some(mapping) = self.tune_manager.get_event_mapping(event) else {
+        let Some(mapping) = self.tunes.get_event_mapping(event) else {
             return CommandResponse::not_found(format!("No mapping for event: {}", event))
                 .with_suggestions(self.get_event_suggestions());
         };
@@ -136,9 +136,9 @@ impl CricketHandler {
             ));
         };
 
-        let active_name = self.tune_manager.active_name().unwrap_or_default();
+        let active_name = self.tunes.active_name().unwrap_or_default();
         let Some(audio_data) = self
-            .tune_manager
+            .tunes
             .resolve_resource_bytes_with_fallback(&active_name, &mapping.resource)
         else {
             return CommandResponse::not_found(format!(
@@ -206,7 +206,7 @@ impl CricketHandler {
     async fn handle_select(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {
             return CommandResponse::error("Usage: select <tune>").with_suggestions(
-                self.tune_manager
+                self.tunes
                     .list_tunes()
                     .into_iter()
                     .map(|t| format!("select {}", t.name))
@@ -216,11 +216,11 @@ impl CricketHandler {
 
         let tune_name = &args[0];
 
-        match self.tune_manager.select(tune_name) {
+        match self.tunes.select(tune_name) {
             Ok(()) => CommandResponse::success(format!("Switched to tune: {}", tune_name)),
             Err(_) => CommandResponse::not_found(format!("Tune not found: {}", tune_name))
                 .with_suggestions(
-                    self.tune_manager
+                    self.tunes
                         .list_tunes()
                         .into_iter()
                         .map(|t| format!("select {}", t.name))
@@ -231,8 +231,8 @@ impl CricketHandler {
 
     /// List available tunes
     async fn handle_list(&self) -> CommandResponse {
-        let tunes = self.tune_manager.list_tunes();
-        let active = self.tune_manager.active_name();
+        let tunes = self.tunes.list_tunes();
+        let active = self.tunes.active_name();
 
         if tunes.is_empty() {
             return CommandResponse::success_with_details(
@@ -266,7 +266,7 @@ impl CricketHandler {
     async fn handle_show(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {
             return CommandResponse::error("Usage: show <tune>").with_suggestions(
-                self.tune_manager
+                self.tunes
                     .list_tunes()
                     .into_iter()
                     .map(|t| format!("show {}", t.name))
@@ -276,10 +276,10 @@ impl CricketHandler {
 
         let tune_name = &args[0];
 
-        let Some(tune) = self.tune_manager.get_tune(tune_name) else {
+        let Some(tune) = self.tunes.get_tune(tune_name) else {
             return CommandResponse::not_found(format!("Tune not found: {}", tune_name))
                 .with_suggestions(
-                    self.tune_manager
+                    self.tunes
                         .list_tunes()
                         .into_iter()
                         .map(|t| format!("show {}", t.name))
@@ -307,10 +307,10 @@ impl CricketHandler {
     /// Show status
     async fn handle_status(&self) -> CommandResponse {
         let active = self
-            .tune_manager
+            .tunes
             .active_name()
             .unwrap_or_else(|| "(none)".to_string());
-        let tune = self.tune_manager.active();
+        let tune = self.tunes.active();
         let sse_status = if self.state.is_enabled() { "on" } else { "off" };
 
         let mut output = format!("Active tune: {}\n", active);
@@ -349,7 +349,7 @@ impl CricketHandler {
 
     /// Get event suggestions from active tune
     fn get_event_suggestions(&self) -> Vec<String> {
-        self.tune_manager
+        self.tunes
             .active()
             .map(|t| t.events.keys().cloned().collect())
             .unwrap_or_default()

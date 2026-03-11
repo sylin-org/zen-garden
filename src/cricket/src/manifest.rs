@@ -93,22 +93,22 @@ pub struct TuneSummary {
 }
 
 /// Manages tune manifests (embedded + filesystem)
-pub struct TuneManager {
+pub struct Tunes {
     /// Optional filesystem tunes directory
     #[allow(dead_code)]
-    fs_tunes_dir: Option<PathBuf>,
+    fs_dir: Option<PathBuf>,
     /// All loaded tunes (embedded + filesystem merged)
     tunes: HashMap<String, LoadedTune>,
     /// Currently active tune
-    active_tune: RwLock<Option<String>>,
+    active: RwLock<Option<String>>,
 }
 
-impl TuneManager {
-    /// Create new TuneManager
+impl Tunes {
+    /// Create new Tunes
     ///
     /// Loads embedded tunes first, then overlays filesystem tunes.
     /// Filesystem tunes with same name override embedded ones.
-    pub fn new(fs_tunes_dir: Option<&str>) -> Result<Self> {
+    pub fn new(fs_dir: Option<&str>) -> Result<Self> {
         let mut tunes = HashMap::new();
 
         // 1. Load embedded tunes
@@ -117,8 +117,8 @@ impl TuneManager {
         tunes.extend(embedded);
 
         // 2. Overlay filesystem tunes (if directory provided)
-        let fs_tunes_dir = fs_tunes_dir.map(PathBuf::from);
-        if let Some(ref dir) = fs_tunes_dir {
+        let fs_dir = fs_dir.map(PathBuf::from);
+        if let Some(ref dir) = fs_dir {
             if dir.exists() {
                 let fs_tunes = Self::scan_filesystem_tunes(dir)?;
                 tracing::debug!(count = fs_tunes.len(), dir = %dir.display(), "Loaded filesystem tunes");
@@ -137,13 +137,13 @@ impl TuneManager {
                 .values()
                 .filter(|t| matches!(t.source, TuneSource::Filesystem(_)))
                 .count(),
-            "TuneManager initialized"
+            "Tunes initialized"
         );
 
         Ok(Self {
-            fs_tunes_dir,
+            fs_dir,
             tunes,
-            active_tune: RwLock::new(None),
+            active: RwLock::new(None),
         })
     }
 
@@ -276,20 +276,20 @@ impl TuneManager {
             );
         }
 
-        *self.active_tune.write().unwrap() = Some(name.to_string());
+        *self.active.write().unwrap() = Some(name.to_string());
         tracing::info!(tune = name, "Selected tune");
         Ok(())
     }
 
     /// Get active tune
     pub fn active(&self) -> Option<TuneManifest> {
-        let guard = self.active_tune.read().unwrap();
+        let guard = self.active.read().unwrap();
         guard.as_ref().and_then(|name| self.get_tune(name))
     }
 
     /// Get active tune name
     pub fn active_name(&self) -> Option<String> {
-        self.active_tune.read().unwrap().clone()
+        self.active.read().unwrap().clone()
     }
 
     /// Get event mapping from active tune
@@ -364,8 +364,8 @@ impl TuneManager {
 
     /// Get filesystem tunes directory (if set)
     #[allow(dead_code)]
-    pub fn fs_tunes_dir(&self) -> Option<&Path> {
-        self.fs_tunes_dir.as_deref()
+    pub fn fs_dir(&self) -> Option<&Path> {
+        self.fs_dir.as_deref()
     }
 
     /// Reload filesystem tunes (keeps embedded, refreshes fs)
@@ -375,7 +375,7 @@ impl TuneManager {
         let mut tunes = Self::load_embedded_tunes()?;
 
         // Overlay filesystem
-        if let Some(ref dir) = self.fs_tunes_dir {
+        if let Some(ref dir) = self.fs_dir {
             if dir.exists() {
                 let fs_tunes = Self::scan_filesystem_tunes(dir)?;
                 tunes.extend(fs_tunes);
@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn test_embedded_tunes_load() {
         // This will work once tunes are embedded
-        let manager = TuneManager::new(None).unwrap();
+        let manager = Tunes::new(None).unwrap();
         // Should have at least zen-garden embedded
         let tunes = manager.list_tunes();
         assert!(!tunes.is_empty(), "Should have embedded tunes");

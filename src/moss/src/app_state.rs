@@ -263,13 +263,6 @@ pub struct AppState {
     /// or drive letters. Used for candidate discovery and `storage add`.
     pub media: crate::domain::Media,
 
-    /// Signal to request a volume rescan (STORAGE-0011).
-    ///
-    /// API handlers send on this after mutating on-disk state (e.g. writing
-    /// a manifest during `storage add`). The volume watcher loop listens and
-    /// triggers a full reconcile through the existing detection pipeline.
-    pub volume_rescan: tokio::sync::mpsc::Sender<()>,
-
     /// Storage domain event channel (STORAGE-0013).
     ///
     /// Emitted by storage mutation operations (add, remove, rename, role change,
@@ -341,7 +334,7 @@ impl AppState {
     /// Non-blocking. If the channel is full (a rescan is already pending),
     /// the request is silently dropped — one rescan is sufficient.
     pub fn request_volume_rescan(&self) {
-        let _ = self.volume_rescan.try_send(());
+        let _ = self.storage.orchestration.rescan.try_send(());
     }
 
     /// Get stone ID (GUID v7)

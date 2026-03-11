@@ -714,7 +714,6 @@ pub async fn run(
         storage_agg: storage_agg_tx,
         volumes: volumes.clone(),
         media,
-        volume_rescan: volume_rescan.clone(),
         storage_changed: storage_changed_tx,
     };
 

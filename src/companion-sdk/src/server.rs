@@ -20,8 +20,8 @@ use crate::handler::CommandHandler;
 /// Server state shared across handlers
 pub(crate) struct ServerState<H: CommandHandler> {
     pub handler: Arc<H>,
-    pub shutdown_tx: watch::Sender<bool>,
-    pub companion_name: String,
+    pub shutdown: watch::Sender<bool>,
+    pub name: String,
 }
 
 /// Command request from Moss
@@ -46,8 +46,8 @@ pub async fn start_server<H: CommandHandler>(
 
     let state = Arc::new(ServerState {
         handler,
-        shutdown_tx,
-        companion_name: companion_name.into(),
+        shutdown: shutdown_tx,
+        name: companion_name.into(),
     });
 
     let app = Router::new()
@@ -86,19 +86,19 @@ async fn handle_command<H: CommandHandler>(
 async fn handle_shutdown<H: CommandHandler>(
     State(state): State<Arc<ServerState<H>>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    tracing::info!(Companion = %state.companion_name, "Shutdown requested by Moss");
+    tracing::info!(companion = %state.name, "Shutdown requested by Moss");
 
     // Notify handler of shutdown
     state.handler.on_shutdown().await;
 
     // Signal shutdown to runtime
-    let _ = state.shutdown_tx.send(true);
+    let _ = state.shutdown.send(true);
 
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "status": "shutting_down",
-            "Companion": state.companion_name,
+            "companion": state.name,
             "message": "Companion is shutting down gracefully"
         })),
     )
@@ -112,7 +112,7 @@ async fn handle_health<H: CommandHandler>(
         StatusCode::OK,
         Json(serde_json::json!({
             "status": "healthy",
-            "Companion": state.companion_name
+            "companion": state.name
         })),
     )
 }

@@ -406,7 +406,7 @@ fn find_remote_primary_with_pin(
 /// `StorageChanged` domain events.
 ///
 /// Replaces the old pattern of manually spawning beacon broadcasts from
-/// each API handler / task. The task subscribes to the `storage_changed_tx`
+/// each API handler / task. The task subscribes to the `storage_changed`
 /// channel and calls `state.broadcast_storage_beacon()` on every event.
 ///
 /// Debounces: coalesces rapid events (e.g. release-all emitting per-volume

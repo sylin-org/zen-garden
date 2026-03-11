@@ -96,7 +96,7 @@ pub struct AppState {
 
     /// Unified pulse event channel (domain + transport events).
     /// Consumers: pulse stream (full firehose), presence stream (domain-only, translated).
-    pub pulse_tx: tokio::sync::broadcast::Sender<PulseEvent>,
+    pub pulse: tokio::sync::broadcast::Sender<PulseEvent>,
 
     /// Domain event bus (unified event dispatch for offerings, storage, stone events)
     pub event_bus: EventBus,
@@ -137,7 +137,7 @@ pub struct AppState {
     pub topology_dirty: crate::domain::topology::TopologyDirtyFlag,
 
     /// Tools stream broadcast channel (normative automation stream)
-    pub tools_tx: tokio::sync::broadcast::Sender<ToolDelta>,
+    pub tools: tokio::sync::broadcast::Sender<ToolDelta>,
 
     /// Unified garden registry — single source of truth for offerings,
     /// gateways, and storage (TOOLS-0003).
@@ -228,7 +228,7 @@ pub struct AppState {
     pub notifications: Arc<NotificationRegistry>,
 
     /// Log broadcast channel (for live SSE log streaming)
-    pub log_tx: tokio::sync::broadcast::Sender<String>,
+    pub log: tokio::sync::broadcast::Sender<String>,
 
     /// Subsystem readiness state
     pub subsystems: SubSystems,
@@ -237,12 +237,12 @@ pub struct AppState {
     /// Storage replication tick channel — **raw** (STORAGE-0006 Phase 4)
     /// Primary seed-bank stores emit `StorageTick` on every write/delete.
     /// Internal only — consumed by the aggregator task, not by downstream consumers.
-    pub storage_tick_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+    pub storage_tick: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
 
     /// Storage tick channel — **aggregated** (STORAGE-0006 Phase 4f)
     /// Per-seed-bank quantized ticks (2 s quiet / 10 s deadline cap).
     /// Subscribers: SSE `/api/v1/stone/storage/stream`, replication task.
-    pub storage_agg_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+    pub storage_agg: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
 
     /// Orchestration nudge — wakes the seed-bank orchestration loop immediately.
     /// Fired when a storage beacon arrives, or after rename/pin/unpin, so role
@@ -266,7 +266,7 @@ pub struct AppState {
     /// API handlers send on this after mutating on-disk state (e.g. writing
     /// a manifest during `storage add`). The volume watcher loop listens and
     /// triggers a full reconcile through the existing detection pipeline.
-    pub volume_rescan_tx: tokio::sync::mpsc::Sender<()>,
+    pub volume_rescan: tokio::sync::mpsc::Sender<()>,
 
     /// Storage domain event channel (STORAGE-0013).
     ///
@@ -276,7 +276,7 @@ pub struct AppState {
     ///
     /// Consumers: tools projector, cloud filter, beacon, watcher reconciler,
     /// coordinator, metrics collector, API SSE streams.
-    pub storage_changed_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
+    pub storage_changed: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
 }
 
 // ============================================================================
@@ -339,7 +339,7 @@ impl AppState {
     /// Non-blocking. If the channel is full (a rescan is already pending),
     /// the request is silently dropped — one rescan is sufficient.
     pub fn request_volume_rescan(&self) {
-        let _ = self.volume_rescan_tx.try_send(());
+        let _ = self.volume_rescan.try_send(());
     }
 
     /// Get stone ID (GUID v7)
@@ -416,7 +416,7 @@ impl AppState {
         }
 
         for delta in &deltas {
-            let _ = self.tools_tx.send(delta.clone());
+            let _ = self.tools.send(delta.clone());
         }
 
         if broadcast_beacon {
@@ -934,7 +934,7 @@ impl AppState {
             &self.volumes,
             &self.registry,
             &self.stone_id,
-            Some(&self.storage_tick_tx),
+            Some(&self.storage_tick),
         )
     }
 
@@ -950,7 +950,7 @@ impl AppState {
     /// stays coherent with storage state.
     pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
         tracing::debug!(event = ?event, "Storage domain event");
-        let _ = self.storage_changed_tx.send(event);
+        let _ = self.storage_changed.send(event);
 
         // Storage mutations affect the tools projection (seed-bank entries).
         // Refresh immediately so registry consumers see the change without polling.
@@ -965,7 +965,7 @@ impl AppState {
     pub fn subscribe_storage_changed(
         &self,
     ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged> {
-        self.storage_changed_tx.subscribe()
+        self.storage_changed.subscribe()
     }
 
     /// Broadcast a storage beacon to the garden.

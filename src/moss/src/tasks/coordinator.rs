@@ -120,7 +120,7 @@ pub async fn start_discovery_listener(
     api_endpoint: String,
     topology_cache: TopologyCache,
     topology_dirty: TopologyDirtyFlag,
-    tools_tx: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
+    tools: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
     registry: crate::domain::GardenRegistry,
     self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
     console: Arc<ConsolePrinter>,
@@ -297,7 +297,7 @@ pub async fn start_discovery_listener(
                         reg.remove_stone(&goodbye.stone_id)
                     };
                     for delta in &removed {
-                        let _ = tools_tx.send(delta.clone());
+                        let _ = tools.send(delta.clone());
                     }
 
                 }
@@ -352,7 +352,7 @@ pub async fn start_discovery_listener(
                         reg.apply_remote_beacon(&beacon)
                     };
                     for delta in &applied {
-                        let _ = tools_tx.send(delta.clone());
+                        let _ = tools.send(delta.clone());
                     }
 
                 }
@@ -851,7 +851,7 @@ pub async fn start_all_background_tasks(
         api_endpoint.to_string(),
         state.topology_cache.clone(),
         state.topology_dirty.clone(),
-        state.tools_tx.clone(),
+        state.tools.clone(),
         state.registry.clone(),
         state.self_entry.clone(),
         console.clone(),

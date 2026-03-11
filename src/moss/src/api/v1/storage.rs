@@ -498,7 +498,7 @@ pub async fn delete_bank_v1(
         None,
         Some(serde_json::json!({ "name": name })),
     );
-    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     info!(name = %name, "Bank mount directory removed");
     Ok(StatusCode::NO_CONTENT)
@@ -537,7 +537,7 @@ pub async fn release_bank_v1(
         None,
         Some(serde_json::json!({ "name": name })),
     );
-    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     // STORAGE-0011: Remove management from the released volume
     // Capture identity before clearing management.
@@ -867,7 +867,7 @@ pub async fn add_storage_v1(
             let encrypted = request.encrypted;
             let roles = request.roles.clone();
             let stone_name = state.stone_name.clone();
-            let pulse_tx = state.pulse_tx.clone();
+            let pulse = state.pulse.clone();
             let tools_state = state.clone();
             let guard_device = target.to_string();
 
@@ -876,7 +876,7 @@ pub async fn add_storage_v1(
 
                 match run_format_and_add(
                     &job_id_clone, &device, &name_clone, &filesystem,
-                    encrypted, &roles, &stone_name, pulse_tx.clone(),
+                    encrypted, &roles, &stone_name, pulse.clone(),
                 ).await {
                     Ok(()) => {
                         tools_state.emit_storage_changed(
@@ -895,14 +895,14 @@ pub async fn add_storage_v1(
                             job_id = %job_id_clone, device = %device, name = %name_clone,
                             error = %e, error_chain = ?e, "Storage add (format) FAILED"
                         );
-                        let pulse = DomainPulse::storage_event(
+                        let failure_pulse = DomainPulse::storage_event(
                             event_types::STORAGE_ADD_PROGRESS,
                             format!("Add failed: {} - {}", name_clone, e),
                             "error",
                             Some(job_id_clone.clone()),
                             Some(serde_json::json!({ "name": name_clone, "error": e.to_string() })),
                         );
-                        let _ = pulse_tx.send(PulseEvent::Domain(pulse));
+                        let _ = pulse.send(PulseEvent::Domain(failure_pulse));
                     }
                 }
             });
@@ -1080,12 +1080,12 @@ async fn run_format_and_add(
     encrypted: bool,
     roles: &[String],
     stone_name: &str,
-    pulse_tx: tokio::sync::broadcast::Sender<PulseEvent>,
+    pulse: tokio::sync::broadcast::Sender<PulseEvent>,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
     info!(job_id, device, name, encrypted, "Starting storage add (format)");
-    emit_progress(&pulse_tx, job_id, name, "analyzing", "Analyzing device...");
+    emit_progress(&pulse, job_id, name, "analyzing", "Analyzing device...");
 
     let actual_fs = if filesystem == "btrfs" && check_btrfs_support().await {
         "btrfs"
@@ -1126,13 +1126,13 @@ async fn run_format_and_add(
     tokio::fs::create_dir_all(&mount_dir).await
         .context("Failed to create mount directory")?;
 
-    emit_progress(&pulse_tx, job_id, name, "formatting", &format!("Formatting as {}...", actual_fs));
+    emit_progress(&pulse, job_id, name, "formatting", &format!("Formatting as {}...", actual_fs));
 
     #[cfg(target_os = "linux")]
     format_device(device, actual_fs).await
         .context("Failed to format device")?;
 
-    emit_progress(&pulse_tx, job_id, name, "mounting", "Mounting filesystem...");
+    emit_progress(&pulse, job_id, name, "mounting", "Mounting filesystem...");
 
     #[cfg(target_os = "linux")]
     mount_device(device, &mount_dir).await
@@ -1149,7 +1149,7 @@ async fn run_format_and_add(
         }
     }
 
-    emit_progress(&pulse_tx, job_id, name, "creating", "Creating storage structure...");
+    emit_progress(&pulse, job_id, name, "creating", "Creating storage structure...");
 
     // Initialize canonical layout
     layout::initialize_layout(&mount_dir).await
@@ -1165,14 +1165,14 @@ async fn run_format_and_add(
     let _ = tokio::process::Command::new("sync").output().await;
 
     // Emit completion
-    let pulse = DomainPulse::storage_event(
+    let connected_pulse = DomainPulse::storage_event(
         event_types::STORAGE_CONNECTED,
         format!("Storage '{}' added at {}", name, mount_dir.display()),
         "info",
         Some(job_id.to_string()),
         Some(serde_json::json!({ "name": name, "mount_path": mount_dir.to_string_lossy() })),
     );
-    let _ = pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = pulse.send(PulseEvent::Domain(connected_pulse));
 
     info!(name, "Storage add completed");
     Ok(())
@@ -1510,7 +1510,7 @@ pub async fn release_all_seed_banks_v1(
         None,
         Some(serde_json::json!({ "count": results.len() })),
     );
-    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     // STORAGE-0011: Clear management from all volumes (all banks released)
     {
@@ -1760,7 +1760,7 @@ pub async fn stream_storage_v1(
     use tokio_stream::StreamExt;
 
     let token = state.shutdown_token.child_token();
-    let rx = state.storage_agg_tx.subscribe();
+    let rx = state.storage_agg.subscribe();
     let filter_name = query.storage.clone();
 
     info!(

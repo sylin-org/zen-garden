@@ -152,7 +152,7 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
 /// to ensure the non-blocking file writer flushes on shutdown.
 pub fn init_tracing(
     config: &DaemonConfig,
-    log_tx: tokio::sync::broadcast::Sender<String>,
+    log: tokio::sync::broadcast::Sender<String>,
 ) -> tracing_appender::non_blocking::WorkerGuard {
     // Per-layer filtering: stderr respects console mode, file+broadcast always capture info+.
     // This ensures log files and SSE streaming work regardless of console mode (critical on
@@ -187,7 +187,7 @@ pub fn init_tracing(
         .with_filter(make_filter("info"));
 
     // Layer 3: broadcast channel — always info+ (for live SSE streaming)
-    let broadcast_layer = crate::infra::log_broadcast::LogBroadcastLayer::new(log_tx)
+    let broadcast_layer = crate::infra::log_broadcast::LogBroadcastLayer::new(log)
         .with_filter(make_filter("info"));
 
     tracing_subscriber::registry()

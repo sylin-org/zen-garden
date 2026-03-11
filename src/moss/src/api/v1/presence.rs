@@ -40,7 +40,7 @@ pub struct PresenceQuery {
 ///
 /// **Flow:**
 /// 1. Generate snapshot from AppState
-/// 2. Subscribe to pulse_tx (unified pulse channel)
+/// 2. Subscribe to pulse (unified pulse channel)
 /// 3. Filter for Domain events only, apply category filter
 /// 4. Translate to presence vocabulary and emit as SSE
 ///
@@ -68,7 +68,7 @@ pub async fn stream_stone_presence(
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
     // Subscribe to pulse channel (unified domain + transport events)
-    let rx = state.pulse_tx.subscribe();
+    let rx = state.pulse.subscribe();
 
     // Create the inner event stream: snapshot first, then filtered domain events
     let inner = futures_util::stream::once(async move {
@@ -304,7 +304,7 @@ pub async fn notify_presence(
     tracing::info!(
         event_type = event_types::STONE_TENDED,
         "Broadcasted presence notification to {} pulse subscribers",
-        state.pulse_tx.receiver_count()
+        state.pulse.receiver_count()
     );
 
     Ok(StatusCode::ACCEPTED)

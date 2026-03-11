@@ -55,7 +55,7 @@ use tokio::sync::RwLock;
 /// Handles all startup phases and background task coordination.
 pub async fn run(
     config: DaemonConfig,
-    log_tx: tokio::sync::broadcast::Sender<String>,
+    log: tokio::sync::broadcast::Sender<String>,
 ) -> anyhow::Result<()> {
     let stone_name = config.stone_name.clone();
     let port = config.port;
@@ -112,7 +112,7 @@ pub async fn run(
         tracing::debug!("Initial topology file written");
     }
 
-    let (tools_tx, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
+    let (tools, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
 
     // TOOLS-0003: Unified garden registry (replaces tools_cache, storage_cache, gateways)
     let registry = crate::domain::garden_registry::new_registry();
@@ -213,7 +213,7 @@ pub async fn run(
     // Unified volume collection (STORAGE-0011) — created empty, populated after AppState
     let volumes = crate::domain::new_volumes();
     // Volume rescan channel — API handlers poke tx, watcher loop consumes rx
-    let (volume_rescan_tx, volume_rescan_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (volume_rescan, volume_rescan_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     // Start UDP listener with full infrastructure handler support
     start_discovery_listener(
@@ -222,7 +222,7 @@ pub async fn run(
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
         topology_dirty.clone(),
-        tools_tx.clone(),
+        tools.clone(),
         registry.clone(),
         self_entry.clone(),
         console_printer.clone(),
@@ -560,7 +560,7 @@ pub async fn run(
 
     // Phase 8: Create domain event bus and pulse channel
     let event_bus = infra::EventBus::new();
-    let (pulse_tx, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(512);
+    let (pulse, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(512);
     tracing::debug!("Domain event bus and pulse channel initialized");
 
     // Phase 9: Capabilities loading
@@ -633,7 +633,7 @@ pub async fn run(
         manifest_registry: manifest_registry.clone(),
         docker: docker.clone(),
         jobs: Arc::new(RwLock::new(HashMap::new())),
-        pulse_tx: pulse_tx.clone(),
+        pulse: pulse.clone(),
         event_bus: event_bus.clone(),
         shutdown_token: shutdown_token.clone(),
         start_time: std::time::Instant::now(),
@@ -645,7 +645,7 @@ pub async fn run(
         api_port: port,
         topology_cache: topology_cache.clone(),
         topology_dirty: topology_dirty.clone(),
-        tools_tx: tools_tx.clone(),
+        tools: tools.clone(),
         registry: registry.clone(),
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
@@ -673,16 +673,16 @@ pub async fn run(
         // Notification registry - subsystems set/clear, chirp compiles to tags
         notifications: Arc::new(garden_common::NotificationRegistry::new()),
         // Log broadcast channel (for live SSE log streaming)
-        log_tx: log_tx.clone(),
+        log: log.clone(),
         // Subsystem readiness (network_ready managed by NetworkMonitor)
         subsystems: subsystems.clone(),
         // Storage replication tick channel — raw (STORAGE-0006 Phase 4)
-        storage_tick_tx: {
+        storage_tick: {
             let (tx, _) = tokio::sync::broadcast::channel(64);
             tx
         },
         // Storage tick channel — aggregated (STORAGE-0006 Phase 4f)
-        storage_agg_tx: {
+        storage_agg: {
             let (tx, _) = tokio::sync::broadcast::channel(64);
             tx
         },
@@ -695,10 +695,10 @@ pub async fn run(
         // Volume rescan signal (STORAGE-0011) — API handlers poke this after
         // mutating on-disk state (e.g. writing a manifest). The volume watcher
         // loop consumes the rx side and triggers a full reconcile.
-        volume_rescan_tx: volume_rescan_tx.clone(),
+        volume_rescan: volume_rescan.clone(),
         // Storage domain events (STORAGE-0013) — event-driven notification channel.
         // Subscribers react to changes by pulling fresh state from AppState.
-        storage_changed_tx: {
+        storage_changed: {
             let (tx, _) = tokio::sync::broadcast::channel(64);
             tx
         },
@@ -788,13 +788,13 @@ pub async fn run(
         let _chirp_handle = infra::spawn_listener(&event_bus, chirp_listener);
 
         // PulseDomainBridge: Bridges domain events into the unified pulse channel
-        // Replaces former SseListener — presence.rs and pulse.rs subscribe to pulse_tx
-        let pulse_bridge = infra::PulseDomainBridge::new(pulse_tx.clone());
+        // Replaces former SseListener — presence.rs and pulse.rs subscribe to pulse
+        let pulse_bridge = infra::PulseDomainBridge::new(pulse.clone());
         let _pulse_handle = infra::spawn_listener(&event_bus, Arc::new(pulse_bridge));
 
         // Transport tap: Bridges raw UDP announcements into pulse channel
         let _transport_tap_handle =
-            infra::spawn_transport_tap(pulse_tx.clone(), shutdown_token.clone());
+            infra::spawn_transport_tap(pulse.clone(), shutdown_token.clone());
 
         // TimerListener: Manages nurturing schedule timers (stub - no callback yet)
         let timer_listener = Arc::new(infra::TimerListener::new());
@@ -1167,8 +1167,8 @@ pub async fn run(
         crate::infra::storage::platform::start_volume_watcher(vol_tx);
 
         let volumes_for_watcher = state.volumes.clone();
-        let pulse_tx_for_watcher = state.pulse_tx.clone();
-        let storage_changed_tx_for_watcher = state.storage_changed_tx.clone();
+        let pulse_tx_for_watcher = state.pulse.clone();
+        let storage_changed_tx_for_watcher = state.storage_changed.clone();
         let notifications = state.notifications.clone();
         let watcher_token = shutdown_token.child_token();
         let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
@@ -1177,12 +1177,12 @@ pub async fn run(
             async fn handle_volume_event(
                 ev: VolumeEvent,
                 volumes: &crate::domain::Volumes,
-                pulse_tx: &tokio::sync::broadcast::Sender<infra::PulseEvent>,
-                storage_changed_tx: &tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
+                pulse: &tokio::sync::broadcast::Sender<infra::PulseEvent>,
+                storage_changed: &tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
                 notifications: &garden_common::NotificationRegistry,
             ) {
                 // Build pulse before ingest consumes the event info
-                let pulse = match &ev {
+                let event_pulse = match &ev {
                     VolumeEvent::Appeared(snap) => {
                         let capacity_gb = snap.capacity_bytes / 1_000_000_000;
                         Some(infra::DomainPulse::storage_event(
@@ -1214,8 +1214,8 @@ pub async fn run(
                 let storage_events = crate::domain::storage::ingest_event(volumes, ev).await;
 
                 // Emit pulse for presence SSE / ribbon notifications
-                if let Some(p) = pulse {
-                    let _ = pulse_tx.send(infra::PulseEvent::Domain(p));
+                if let Some(p) = event_pulse {
+                    let _ = pulse.send(infra::PulseEvent::Domain(p));
                 }
 
                 // Broadcast all domain events immediately so cloud filter,
@@ -1223,7 +1223,7 @@ pub async fn run(
                 // for the next heartbeat.
                 for event in storage_events {
                     tracing::debug!(event = ?event, "storage watcher: broadcasting domain event");
-                    let _ = storage_changed_tx.send(event);
+                    let _ = storage_changed.send(event);
                 }
 
                 // Update candidates notification
@@ -1385,8 +1385,8 @@ pub async fn run(
     // Quantizes raw per-write ticks into per-seed-bank aggregated ticks
     // (2s quiet threshold / 10s deadline cap).
     {
-        let raw_rx = state.storage_tick_tx.subscribe();
-        let agg_tx = state.storage_agg_tx.clone();
+        let raw_rx = state.storage_tick.subscribe();
+        let agg_tx = state.storage_agg.clone();
         let agg_token = shutdown_token.child_token();
         tokio::spawn(async move {
             crate::tasks::storage_tick_aggregator::storage_tick_aggregator_task(
@@ -1437,7 +1437,7 @@ pub async fn run(
             state.volumes.clone(),
             state.registry.clone(),
             state.stone_id.clone(),
-            state.storage_tick_tx.clone(),
+            state.storage_tick.clone(),
             state.subscribe_storage_changed(),
             cf_endpoint,
             shutdown_token.child_token(),
@@ -1456,7 +1456,7 @@ pub async fn run(
     {
         let watcher_set = crate::infra::storage::StorageWatcherSet::new(
             state.volumes.clone(),
-            state.storage_tick_tx.clone(),
+            state.storage_tick.clone(),
             shutdown_token.child_token(),
         );
         // Initial reconciliation — start watchers for already-mounted storages

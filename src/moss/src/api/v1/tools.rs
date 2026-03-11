@@ -78,7 +78,7 @@ pub async fn stream_garden_tools_v1(
 
     // MOSS-0004: child token for cooperative shutdown
     let token = state.shutdown_token.child_token();
-    let rx = state.tools_tx.subscribe();
+    let rx = state.tools.subscribe();
 
     let (snapshot_cursor, snapshot_tools, replay) = {
         let reg = state.registry.read().await;

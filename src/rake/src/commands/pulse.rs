@@ -13,7 +13,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use async_trait::async_trait;
 use colored::Colorize;
 use futures_util::StreamExt;
@@ -60,7 +60,7 @@ impl PulseCommand {
 
 #[async_trait]
 impl Command for PulseCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?.to_string();
         run_pulse_monitor(&ctx.client, &endpoint, &ctx.term).await
     }

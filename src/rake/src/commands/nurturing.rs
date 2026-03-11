@@ -10,7 +10,7 @@
 //! - `nurturing trigger-all` - Trigger all offerings
 
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
 use serde::Deserialize;
@@ -86,7 +86,7 @@ pub struct WorkflowResult {
 }
 
 // ============================================================================
-// Restore from Local Slot Command
+// Restore from Local Slot Runtime
 // ============================================================================
 
 pub struct RestoreLocalCommand {
@@ -113,7 +113,7 @@ impl RestoreLocalCommand {
 
 #[async_trait]
 impl Command for RestoreLocalCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -252,7 +252,7 @@ impl Command for RestoreLocalCommand {
 }
 
 // ============================================================================
-// Restore from Seed Bank Command
+// Restore from Seed Bank Runtime
 // ============================================================================
 
 pub struct RestoreRemoteCommand {
@@ -287,7 +287,7 @@ impl RestoreRemoteCommand {
 
 #[async_trait]
 impl Command for RestoreRemoteCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -450,7 +450,7 @@ impl Command for RestoreRemoteCommand {
 }
 
 // ============================================================================
-// Nurturing Status Command
+// Nurturing Status Runtime
 // ============================================================================
 
 pub struct NurturingStatusCommand {
@@ -471,7 +471,7 @@ impl NurturingStatusCommand {
 
 #[async_trait]
 impl Command for NurturingStatusCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -579,7 +579,7 @@ impl Command for NurturingStatusCommand {
 impl NurturingStatusCommand {
     async fn show_offering_detail(
         &self,
-        ctx: &CommandContext,
+        ctx: &Runtime,
         endpoint: &str,
         offering: &str,
     ) -> CommandResult {
@@ -717,7 +717,7 @@ impl NurturingStatusCommand {
 }
 
 // ============================================================================
-// Nurturing List Command
+// Nurturing List Runtime
 // ============================================================================
 
 pub struct NurturingListCommand {
@@ -744,7 +744,7 @@ impl NurturingListCommand {
 
 #[async_trait]
 impl Command for NurturingListCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -926,7 +926,7 @@ impl Command for NurturingListCommand {
 }
 
 // ============================================================================
-// Nurturing Trigger Command
+// Nurturing Trigger Runtime
 // ============================================================================
 
 pub struct NurturingTriggerCommand {
@@ -947,7 +947,7 @@ impl NurturingTriggerCommand {
 
 #[async_trait]
 impl Command for NurturingTriggerCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx

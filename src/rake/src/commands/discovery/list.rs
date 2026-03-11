@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -49,7 +49,7 @@ impl ListCommand {
 
 #[async_trait]
 impl Command for ListCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let url = ctx.api_v1_url("stone/services")?;
         let response = ctx.client.get(&url).send().await?;
 

@@ -7,7 +7,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::discovery;
 use crate::suggestions;
 use crate::tending;
@@ -55,7 +55,7 @@ impl ObserveCommand {
 
 #[async_trait]
 impl Command for ObserveCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         observe_garden(ctx, self.stone_filter.clone(), self.offering_filter.clone()).await?;
 
         // Self-teaching suggestions
@@ -75,7 +75,7 @@ impl Command for ObserveCommand {
 
 /// Main observe implementation
 async fn observe_garden(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     stone_filter: Option<String>,
     offering_filter: Option<String>,
 ) -> anyhow::Result<()> {

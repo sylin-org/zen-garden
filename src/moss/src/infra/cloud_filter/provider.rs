@@ -47,6 +47,7 @@ pub struct ZenGardenProvider {
     pub(crate) volumes: Volumes,
     pub(crate) registry: GardenRegistry,
     pub(crate) stone_id: String,
+    #[allow(dead_code)]
     pub(crate) tick: tokio::sync::broadcast::Sender<StorageTick>,
     pub(crate) sync_root_path: PathBuf,
     #[allow(dead_code)]

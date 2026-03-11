@@ -7,10 +7,10 @@
 //! - Background task polls Docker ping endpoint
 //! - When disconnected, retries every N seconds (tunable, default 5s)
 //! - When connected, polls less frequently (default 30s)
-//! - Broadcasts DockerEvent when state changes
+//! - Broadcasts Event when state changes
 //! - Updates subsystems.docker.ready flag
 
-use crate::docker::Docker;
+use crate::docker::Client;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +24,7 @@ pub const DEFAULT_CONNECTED_POLL_SECS: u64 = 30;
 
 /// Docker events broadcast by the monitor
 #[derive(Debug, Clone)]
-pub enum DockerEvent {
+pub enum Event {
     /// Docker daemon became available (initial connection)
     Connected,
     /// Docker daemon became unavailable
@@ -38,14 +38,14 @@ pub enum DockerEvent {
 
 /// Configuration for the Docker monitor
 #[derive(Debug, Clone)]
-pub struct DockerMonitorConfig {
+pub struct Config {
     /// Retry interval when disconnected (seconds)
     pub disconnect_retry_secs: u64,
     /// Poll interval when connected (seconds)
     pub connected_poll_secs: u64,
 }
 
-impl Default for DockerMonitorConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             disconnect_retry_secs: DEFAULT_DISCONNECT_RETRY_SECS,
@@ -54,7 +54,7 @@ impl Default for DockerMonitorConfig {
     }
 }
 
-impl DockerMonitorConfig {
+impl Config {
     /// Create config with custom disconnect retry interval
     pub fn with_disconnect_retry(mut self, secs: u64) -> Self {
         self.disconnect_retry_secs = secs;
@@ -70,25 +70,25 @@ impl DockerMonitorConfig {
 
 /// Docker monitor that tracks daemon availability and broadcasts changes
 #[derive(Clone)]
-pub struct DockerMonitor {
+pub struct Monitor {
     /// Docker manager reference (stored for potential future methods)
-    _docker: Arc<Docker>,
-    tx: broadcast::Sender<DockerEvent>,
+    _docker: Arc<Client>,
+    tx: broadcast::Sender<Event>,
     /// Subsystem readiness flag (set when Docker daemon is healthy)
     /// Stored for `is_ready()` method; actual updates happen in spawned task.
     docker_ready: Arc<AtomicBool>,
 }
 
-impl DockerMonitor {
+impl Monitor {
     /// Start background Docker monitoring with default config
-    pub async fn start(docker: Arc<Docker>, docker_ready: Arc<AtomicBool>) -> Self {
-        Self::start_with_config(docker, DockerMonitorConfig::default(), docker_ready).await
+    pub async fn start(docker: Arc<Client>, docker_ready: Arc<AtomicBool>) -> Self {
+        Self::start_with_config(docker, Config::default(), docker_ready).await
     }
 
     /// Start background Docker monitoring with custom config
     pub async fn start_with_config(
-        docker: Arc<Docker>,
-        config: DockerMonitorConfig,
+        docker: Arc<Client>,
+        config: Config,
         docker_ready: Arc<AtomicBool>,
     ) -> Self {
         let (tx, _) = broadcast::channel(100);
@@ -107,13 +107,13 @@ impl DockerMonitor {
         if !initially_healthy {
             tracing::warn!(
                 retry_secs = config.disconnect_retry_secs,
-                "DockerMonitor started in disconnected state, will retry"
+                "Monitor started in disconnected state, will retry"
             );
         } else {
             tracing::info!(
                 poll_secs = config.connected_poll_secs,
                 docker_ready = true,
-                "DockerMonitor started with healthy Docker daemon"
+                "Monitor started with healthy Docker daemon"
             );
         }
 
@@ -129,16 +129,16 @@ impl DockerMonitor {
     }
 
     /// Subscribe to Docker events
-    pub fn subscribe(&self) -> broadcast::Receiver<DockerEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.tx.subscribe()
     }
 }
 
 /// Background task that monitors Docker daemon health
 async fn docker_monitor_task(
-    docker: Arc<Docker>,
-    tx: broadcast::Sender<DockerEvent>,
-    config: DockerMonitorConfig,
+    docker: Arc<Client>,
+    tx: broadcast::Sender<Event>,
+    config: Config,
     docker_ready: Arc<AtomicBool>,
 ) {
     let mut was_disconnected = !docker.is_healthy().await;
@@ -164,7 +164,7 @@ async fn docker_monitor_task(
             let event = if was_disconnected && !now_disconnected {
                 // Reconnected
                 tracing::info!(docker_ready = true, "Docker daemon reconnected");
-                DockerEvent::Reconnected
+                Event::Reconnected
             } else if !was_disconnected && now_disconnected {
                 // Disconnected
                 tracing::warn!(
@@ -172,7 +172,7 @@ async fn docker_monitor_task(
                     retry_secs = config.disconnect_retry_secs,
                     "Docker daemon disconnected, will retry"
                 );
-                DockerEvent::Disconnected {
+                Event::Disconnected {
                     reason: "Docker ping failed".to_string(),
                 }
             } else {
@@ -200,14 +200,14 @@ mod tests {
 
     #[test]
     fn test_config_defaults() {
-        let config = DockerMonitorConfig::default();
+        let config = Config::default();
         assert_eq!(config.disconnect_retry_secs, DEFAULT_DISCONNECT_RETRY_SECS);
         assert_eq!(config.connected_poll_secs, DEFAULT_CONNECTED_POLL_SECS);
     }
 
     #[test]
     fn test_config_builder() {
-        let config = DockerMonitorConfig::default()
+        let config = Config::default()
             .with_disconnect_retry(10)
             .with_connected_poll(60);
         assert_eq!(config.disconnect_retry_secs, 10);

@@ -7,7 +7,7 @@
 //! - Remove adopted/borrowed offerings
 
 use crate::api::responses::ApiResponse;
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::{connection, ConnectivityOrchestrator, ConnectivityStatus};
 use crate::{error_response, AppState};
 use axum::{
@@ -70,7 +70,7 @@ pub async fn list_adoptable_v1(
         }
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "list_adoptable");
+    let ctx = Suggestion::from_headers(&headers, "list_adoptable");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -258,7 +258,7 @@ pub async fn adopt_offering_v1(
         tracing::error!(error = ?e, "Failed to persist offerings after adoption");
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "adopt_offering");
+    let ctx = Suggestion::from_headers(&headers, "adopt_offering");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -274,7 +274,7 @@ pub async fn list_adopted_v1(
 ) -> Result<Json<ApiResponse<Vec<Offering>>>, (StatusCode, Json<ApiErrorResponse>)> {
     let offerings = state.get_adopted_offerings().await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "list_adopted");
+    let ctx = Suggestion::from_headers(&headers, "list_adopted");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -290,7 +290,7 @@ pub async fn list_borrowed_v1(
 ) -> Result<Json<ApiResponse<Vec<Offering>>>, (StatusCode, Json<ApiErrorResponse>)> {
     let offerings = state.get_borrowed_offerings().await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "list_borrowed");
+    let ctx = Suggestion::from_headers(&headers, "list_borrowed");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -343,7 +343,7 @@ pub async fn unadopt_offering_v1(
         }
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "unadopt_offering");
+    let ctx = Suggestion::from_headers(&headers, "unadopt_offering");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -475,7 +475,7 @@ pub async fn borrow_service_v1(
         tracing::error!(error = ?e, "Failed to persist offerings after borrow");
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "borrow_service");
+    let ctx = Suggestion::from_headers(&headers, "borrow_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -527,7 +527,7 @@ pub async fn unborrow_service_v1(
         }
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "unborrow_service");
+    let ctx = Suggestion::from_headers(&headers, "unborrow_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {

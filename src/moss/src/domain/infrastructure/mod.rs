@@ -26,7 +26,7 @@
 //! ```ignore
 //! // Create handler registry during bootstrap
 //! let handlers = InfrastructureHandlerRegistry::new(vec![
-//!     Box::new(DockerRegistryHandler::new()),
+//!     Box::new(DockerRegistry::new()),
 //! ]);
 //!
 //! // After topology update in coordinator
@@ -35,7 +35,7 @@
 
 mod docker_registry;
 
-pub use docker_registry::DockerRegistryHandler;
+pub use docker_registry::DockerRegistry;
 
 use anyhow::Result;
 use async_trait::async_trait;

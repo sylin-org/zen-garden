@@ -21,7 +21,7 @@ use crate::infra::network::{apply_static_from_pool, load_network_state};
 use crate::infra::TaskStore;
 use crate::{AppState, JobStatus};
 use garden_common::console;
-use garden_common::templates::{render_template, TemplateContext};
+use garden_common::templates::{render_template, Template};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
     offerings::OfferingFqn, ManagedData, Offering, OfferingGuidance, OfferingLocation,
@@ -47,7 +47,7 @@ fn substitute_guidance_templates(
     stone_name: &str,
     static_ip: Option<&str>,
 ) -> String {
-    let mut ctx = TemplateContext::new();
+    let mut ctx = Template::new();
 
     // Set basic variables
     ctx.set("server-name", stone_name);

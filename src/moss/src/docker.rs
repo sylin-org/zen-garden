@@ -398,11 +398,11 @@ pub async fn check_and_remediate_ports(
     Ok(resolved_ports)
 }
 
-pub struct Docker {
+pub struct Client {
     docker: BollardDocker,
 }
 
-impl Docker {
+impl Client {
     pub fn new() -> Result<Self> {
         #[cfg(target_os = "windows")]
         let docker = {

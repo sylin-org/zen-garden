@@ -8,7 +8,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -39,7 +39,7 @@ impl MakeCommand {
 
 #[async_trait]
 impl Command for MakeCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
         let url = format!("{}/api/v1/console/mode", endpoint.trim_end_matches('/'));
 
@@ -69,7 +69,7 @@ impl Command for MakeCommand {
     }
 }
 
-async fn execute_make_sing(ctx: &CommandContext, url: &str, forever: bool) -> anyhow::Result<()> {
+async fn execute_make_sing(ctx: &Runtime, url: &str, forever: bool) -> anyhow::Result<()> {
     let timeout_minutes = if forever { 0 } else { 30 };
     let persist = forever;
 
@@ -133,7 +133,7 @@ async fn execute_make_sing(ctx: &CommandContext, url: &str, forever: bool) -> an
     Ok(())
 }
 
-async fn execute_make_quiet(ctx: &CommandContext, url: &str) -> anyhow::Result<()> {
+async fn execute_make_quiet(ctx: &Runtime, url: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({
         "mode": "informative",
         "persist": true,
@@ -186,7 +186,7 @@ async fn execute_make_quiet(ctx: &CommandContext, url: &str) -> anyhow::Result<(
     Ok(())
 }
 
-async fn execute_make_silent(ctx: &CommandContext, url: &str) -> anyhow::Result<()> {
+async fn execute_make_silent(ctx: &Runtime, url: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({
         "mode": "silent",
         "persist": true,
@@ -239,7 +239,7 @@ async fn execute_make_silent(ctx: &CommandContext, url: &str) -> anyhow::Result<
     Ok(())
 }
 
-async fn execute_make_minimal(ctx: &CommandContext, url: &str) -> anyhow::Result<()> {
+async fn execute_make_minimal(ctx: &Runtime, url: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({
         "mode": "minimal",
         "persist": true,

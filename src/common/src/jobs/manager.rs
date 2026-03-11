@@ -18,13 +18,13 @@ use tokio::sync::RwLock;
 /// - Dispatch jobs to appropriate executors
 /// - Publish progress events
 /// - Track running jobs
-pub struct JobManager {
+pub struct Jobs {
     persistence: Arc<JsonJobPersistence>,
     event_bus: Arc<EventBus>,
     executors: Arc<RwLock<HashMap<String, Arc<dyn JobExecutor>>>>,
 }
 
-impl JobManager {
+impl Jobs {
     /// Create a new job manager
     pub fn new(persistence: JsonJobPersistence, event_bus: Arc<EventBus>) -> Self {
         Self {
@@ -261,7 +261,7 @@ impl JobManager {
     }
 }
 
-impl Clone for JobManager {
+impl Clone for Jobs {
     fn clone(&self) -> Self {
         Self {
             persistence: Arc::clone(&self.persistence),
@@ -332,7 +332,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let persistence = JsonJobPersistence::new(temp_dir.path().join("jobs.json"));
         let event_bus = Arc::new(EventBus::new(100));
-        let manager = JobManager::new(persistence, event_bus);
+        let manager = Jobs::new(persistence, event_bus);
 
         // Register executor
         let executor = Arc::new(MockExecutor {
@@ -367,7 +367,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let persistence = JsonJobPersistence::new(temp_dir.path().join("jobs.json"));
         let event_bus = Arc::new(EventBus::new(100));
-        let manager = JobManager::new(persistence, event_bus);
+        let manager = Jobs::new(persistence, event_bus);
 
         // Try to submit without registering executor
         let result = manager.submit("nonexistent-job", json!({}), None).await;
@@ -380,7 +380,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let persistence = JsonJobPersistence::new(temp_dir.path().join("jobs.json"));
         let event_bus = Arc::new(EventBus::new(100));
-        let manager = JobManager::new(persistence, event_bus);
+        let manager = Jobs::new(persistence, event_bus);
 
         let executor = Arc::new(MockExecutor {
             job_type: "test-job".into(),

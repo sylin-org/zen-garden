@@ -7,7 +7,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::discovery;
 use crate::suggestions;
 use async_trait::async_trait;
@@ -58,7 +58,7 @@ impl WatchCommand {
 
 #[async_trait]
 impl Command for WatchCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         match &self.target {
             WatchTargetType::Events { until } => {
                 let endpoint = ctx.endpoint()?;

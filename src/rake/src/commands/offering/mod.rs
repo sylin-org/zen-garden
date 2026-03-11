@@ -7,8 +7,8 @@
 //! - View offering details
 
 use crate::command_manifest::cmd;
+use crate::context::Runtime;
 use crate::commands::Command;
-use crate::context::CommandContext;
 use crate::discovery;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -1292,7 +1292,7 @@ async fn install_on_stone(
     quiet: bool,
 ) -> Result<()> {
     // Delegate to existing install logic by creating a context
-    let ctx = crate::context::CommandContext::with_endpoint(
+    let ctx = crate::context::Runtime::with_endpoint(
         client.clone(),
         endpoint.to_string(),
         None,
@@ -1307,7 +1307,7 @@ async fn install_on_stone(
 }
 
 // ============================================================================
-// Command Implementation
+// Runtime Implementation
 // ============================================================================
 
 impl OfferCommand {
@@ -1425,7 +1425,7 @@ impl Command for OfferCommand {
         cmd::OFFER
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> Result<()> {
+    async fn execute(&self, ctx: &Runtime) -> Result<()> {
         let term = ui::TerminalInfo::detect();
 
         match &self.action {

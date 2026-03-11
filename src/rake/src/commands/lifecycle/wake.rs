@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -26,7 +26,7 @@ impl WakeCommand {
 
 #[async_trait]
 impl Command for WakeCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let service_path = urlencoding::encode(&self.service);
         let url = ctx.api_v1_url(&format!("stone/services/{}/wake", service_path))?;
         let response = ctx.client.post(&url).send().await?;

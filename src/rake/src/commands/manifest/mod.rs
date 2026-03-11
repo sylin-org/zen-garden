@@ -8,8 +8,8 @@
 //! - `manifest enrich` — add compatibility/guidance templates
 
 use crate::command_manifest::cmd;
+use crate::context::Runtime;
 use crate::commands::Command;
-use crate::context::CommandContext;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -102,7 +102,7 @@ impl ManifestCommand {
 }
 
 // ============================================================================
-// Command trait
+// Runtime trait
 // ============================================================================
 
 #[async_trait]
@@ -122,7 +122,7 @@ impl Command for ManifestCommand {
         false
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> Result<()> {
+    async fn execute(&self, ctx: &Runtime) -> Result<()> {
         match &self.action {
             ManifestAction::Init {
                 image_ref,
@@ -148,7 +148,7 @@ impl Command for ManifestCommand {
 // ============================================================================
 
 async fn execute_init(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     image_ref: &str,
     output_dir: Option<&str>,
     name: Option<&str>,
@@ -369,7 +369,7 @@ async fn execute_validate(path: &str) -> Result<()> {
 // Test — deploy manifest on a stone
 // ============================================================================
 
-async fn execute_test(ctx: &CommandContext, path: &str) -> Result<()> {
+async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
     let endpoint = ctx.endpoint.as_ref().context("endpoint required for test")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
@@ -476,7 +476,7 @@ async fn execute_test(ctx: &CommandContext, path: &str) -> Result<()> {
 // ============================================================================
 
 async fn execute_export(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     offering: &str,
     output_dir: Option<&str>,
 ) -> Result<()> {

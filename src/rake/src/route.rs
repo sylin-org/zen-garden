@@ -784,7 +784,7 @@ async fn route_offer(
                     prefer.clone(),
                     g.quiet,
                 );
-                let ctx = garden_rake::CommandContext::with_endpoint(
+                let ctx = garden_rake::Runtime::with_endpoint(
                     rt.client.clone(),
                     endpoint,
                     None,

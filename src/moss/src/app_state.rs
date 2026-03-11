@@ -2,7 +2,7 @@
 //!
 //! Holds all dependencies for moss daemon:
 //! - Offerings registry (Vec<Offering>)
-//! - Docker manager
+//! - Client manager
 //! - Manifest registry (unified software/hardware manifests)
 //! - Job tracking
 //! - Event broadcasting
@@ -13,7 +13,7 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::docker::Docker;
+use crate::docker::Client;
 use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
 use crate::infra::{
     stone_client::StoneClient, CeremonyJournal, EventBus, HarvestStore, ManifestRegistry,
@@ -55,7 +55,7 @@ pub struct Job {
 }
 
 // Offerings types moved to domain/offerings.rs
-pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndexCache};
+pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndex};
 
 // Offering types (unified)
 pub use garden_common::{
@@ -88,8 +88,8 @@ pub struct AppState {
     /// Contains both software (sw) and hardware (hw) manifests
     pub manifest_registry: Arc<ManifestRegistry>,
 
-    /// Docker daemon manager
-    pub docker: Arc<Docker>,
+    /// Client daemon manager
+    pub docker: Arc<Client>,
 
     /// Background job tracker
     pub jobs: Arc<RwLock<HashMap<String, Job>>>,
@@ -111,7 +111,7 @@ pub struct AppState {
     pub start_time: Instant,
 
     /// Compiled offerings index (with compatibility checks)
-    pub offerings_index: Arc<RwLock<Option<OfferingsIndexCache>>>,
+    pub offerings_index: Arc<RwLock<Option<OfferingsIndex>>>,
 
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
@@ -291,7 +291,7 @@ pub struct AppState {
 pub struct SubSystems {
     /// Network subsystem state
     pub network: NetworkSubSystem,
-    /// Docker subsystem state
+    /// Client subsystem state
     pub docker: DockerSubSystem,
 }
 
@@ -314,12 +314,12 @@ impl Default for NetworkSubSystem {
     }
 }
 
-/// Docker subsystem state
+/// Client subsystem state
 ///
-/// Tracks whether the Docker daemon is available for container operations.
+/// Tracks whether the Client daemon is available for container operations.
 #[derive(Clone)]
 pub struct DockerSubSystem {
-    /// True when Docker daemon is healthy (ping succeeds).
+    /// True when Client daemon is healthy (ping succeeds).
     /// Set by DockerMonitor, read by API handlers and background tasks.
     /// Use `ready.load(Ordering::Relaxed)` to check.
     pub ready: Arc<AtomicBool>,

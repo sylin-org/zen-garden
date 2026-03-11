@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -44,7 +44,7 @@ impl InstallServiceCommand {
 
 #[async_trait]
 impl Command for InstallServiceCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
         let url = format!("{}/admin/take-root", endpoint.trim_end_matches('/'));
 
@@ -140,7 +140,7 @@ impl Command for InstallServiceCommand {
     }
 }
 
-fn print_success_message(ctx: &CommandContext, style: &InstallStyle) {
+fn print_success_message(ctx: &Runtime, style: &InstallStyle) {
     let message = match style {
         InstallStyle::TakeRoot => "Stone has taken root as a system service",
         InstallStyle::InstallService => "Service installed successfully",

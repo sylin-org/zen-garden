@@ -1,18 +1,18 @@
 //! Container-based service detection
 //!
-//! Detects services by inspecting Docker containers.
+//! Detects services by inspecting Client containers.
 //! Supports:
 //! - Container name pattern matching (regex)
 //! - Image pattern matching (regex)
 //! - Running state verification
 
-use crate::docker::Docker;
+use crate::docker::Client;
 use anyhow::{Context, Result};
 use garden_common::detection::DetectionResult;
 use garden_common::manifests::ContainerInspectDetection;
 use regex::Regex;
 
-/// Detect service by inspecting Docker containers
+/// Detect service by inspecting Client containers
 ///
 /// # Examples
 /// ```ignore
@@ -23,7 +23,7 @@ use regex::Regex;
 /// let detected = detect_by_container_inspect(&docker, &config).await?;
 /// ```
 pub async fn detect_by_container_inspect(
-    docker: &Docker,
+    docker: &Client,
     config: &ContainerInspectDetection,
 ) -> Result<DetectionResult> {
     tracing::debug!(
@@ -119,7 +119,7 @@ pub async fn detect_by_container_inspect(
     })
 }
 
-/// Extract version from Docker image tag
+/// Extract version from Client image tag
 fn extract_version_from_image(image: &str) -> Option<String> {
     // Extract tag after colon (e.g., "mongo:7.0.5" -> "7.0.5")
     if let Some(tag_start) = image.rfind(':') {

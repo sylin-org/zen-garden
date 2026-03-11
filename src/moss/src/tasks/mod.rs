@@ -19,7 +19,7 @@ pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
 pub mod discovery_handler;
-pub mod docker_monitor;
+pub mod docker;
 pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
@@ -44,7 +44,7 @@ pub use coordinator::{
     start_registry_maintenance, start_topology_maintenance,
 };
 pub use discovery::lantern_registration_loop;
-pub use docker_monitor::{DockerEvent, DockerMonitor, DockerMonitorConfig};
+pub use docker::{Event as DockerEvent, Monitor as DockerMonitor, Config as DockerMonitorConfig};
 pub use hardware_detection::detect_capabilities_background;
 pub use health_monitor::health_monitor_task;
 pub use job_executors::{

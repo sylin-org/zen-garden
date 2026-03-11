@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 
@@ -22,7 +22,7 @@ impl CeremonyCommand {
 
 #[async_trait]
 impl Command for CeremonyCommand {
-    async fn execute(&self, _ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, _ctx: &Runtime) -> CommandResult {
         println!();
         println!("  ⏳ Ceremony workflows are not yet implemented.");
         println!();

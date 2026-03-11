@@ -1,5 +1,5 @@
 use crate::api::responses::{ApiResponse, CreateServiceRequest, ServiceActionResponse};
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::connection;
 use crate::domain::events::OfferingEvent;
 use crate::infra::network::{load_network_state, revert_to_dhcp};
@@ -117,7 +117,7 @@ pub async fn list_services_v1(
 
     let response = list_all_local_services(&state).await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "list_services");
+    let ctx = Suggestion::from_headers(&headers, "list_services");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -196,7 +196,7 @@ pub async fn find_services_v1(
         list_all_local_services(&state).await
     };
 
-    let ctx = SuggestionContext::from_headers(&headers, "find_services");
+    let ctx = Suggestion::from_headers(&headers, "find_services");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -236,7 +236,7 @@ pub async fn get_service_v1(
         })?;
     drop(offerings);
 
-    let ctx = SuggestionContext::from_headers(&headers, "get_service");
+    let ctx = Suggestion::from_headers(&headers, "get_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -277,7 +277,7 @@ pub async fn create_service_v1(
                 .find(|o| o.name.to_string() == service_name && o.is_managed())
             {
                 if existing.status == OfferingStatus::Maintenance {
-                    let ctx = SuggestionContext::from_headers(&headers, "create_service");
+                    let ctx = Suggestion::from_headers(&headers, "create_service");
                     let suggestions = generate_suggestions(&ctx);
                     return Ok(Json(ApiResponse {
                         data: ServiceActionResponse {
@@ -355,7 +355,7 @@ pub async fn create_service_v1(
             .await;
         });
 
-        let ctx = SuggestionContext::from_headers(&headers, "create_service");
+        let ctx = Suggestion::from_headers(&headers, "create_service");
         let suggestions = generate_suggestions(&ctx);
         return Ok(Json(ApiResponse {
             data: ServiceActionResponse {
@@ -397,7 +397,7 @@ pub async fn create_service_v1(
                 state.upsert_offering(adopted_offering, true).await;
                 let _ = state.persist_offerings().await;
 
-                let ctx = SuggestionContext::from_headers(&headers, "create_service");
+                let ctx = Suggestion::from_headers(&headers, "create_service");
                 let suggestions = generate_suggestions(&ctx);
 
                 return Ok(Json(ApiResponse {
@@ -472,7 +472,7 @@ pub async fn create_service_v1(
     {
         if existing.status == OfferingStatus::Maintenance {
             drop(offerings);
-            let ctx = SuggestionContext::from_headers(&headers, "create_service");
+            let ctx = Suggestion::from_headers(&headers, "create_service");
             let suggestions = generate_suggestions(&ctx);
             return Ok(Json(ApiResponse {
                 data: ServiceActionResponse {
@@ -563,7 +563,7 @@ pub async fn create_service_v1(
         .await;
     });
 
-    let ctx = SuggestionContext::from_headers(&headers, "create_service");
+    let ctx = Suggestion::from_headers(&headers, "create_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -636,7 +636,7 @@ pub async fn rest_service_v1(
         state.stone_name(),
     ));
 
-    let ctx = SuggestionContext::from_headers(&headers, "rest_service");
+    let ctx = Suggestion::from_headers(&headers, "rest_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -763,7 +763,7 @@ pub async fn wake_service_v1(
         state.stone_name(),
     ));
 
-    let ctx = SuggestionContext::from_headers(&headers, "wake_service");
+    let ctx = Suggestion::from_headers(&headers, "wake_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -801,7 +801,7 @@ pub async fn nourish_service_v1(
             })?;
 
         if o.status == OfferingStatus::Maintenance {
-            let ctx = SuggestionContext::from_headers(&headers, "nourish_service");
+            let ctx = Suggestion::from_headers(&headers, "nourish_service");
             let suggestions = generate_suggestions(&ctx);
             return Ok(Json(ApiResponse {
                 data: ServiceActionResponse {
@@ -913,7 +913,7 @@ pub async fn nourish_service_v1(
         &new_image,
     ));
 
-    let ctx = SuggestionContext::from_headers(&headers, "nourish_service");
+    let ctx = Suggestion::from_headers(&headers, "nourish_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -1012,7 +1012,7 @@ pub async fn delete_service_v1(
         }
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "delete_service");
+    let ctx = Suggestion::from_headers(&headers, "delete_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -1114,7 +1114,7 @@ pub async fn destroy_service_v1(
         }
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "destroy_service");
+    let ctx = Suggestion::from_headers(&headers, "destroy_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {

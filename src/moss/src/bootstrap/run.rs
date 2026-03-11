@@ -204,7 +204,7 @@ pub async fn run(
     // Create infrastructure handlers - wired to UDP pipeline from the start
     let infrastructure_handlers =
         Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
-            Box::new(crate::domain::DockerRegistryHandler::new()),
+            Box::new(crate::domain::DockerRegistry::new()),
         ]));
 
     // Create orchestration nudge early — shared between discovery listener and AppState

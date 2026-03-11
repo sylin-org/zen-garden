@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -56,7 +56,7 @@ impl PlaceCommand {
 
 #[async_trait]
 impl Command for PlaceCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
 
         match &self.target {
@@ -80,7 +80,7 @@ impl Command for PlaceCommand {
 }
 
 async fn execute_place_keystone(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
@@ -138,7 +138,7 @@ async fn execute_place_keystone(
 }
 
 async fn execute_place_stone(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     code: &str,
 ) -> anyhow::Result<()> {

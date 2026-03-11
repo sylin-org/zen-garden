@@ -1,5 +1,5 @@
 use crate::api::responses::{ApiResponse, GardenOverview, StoneInfo};
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::{
     placement::{PlacementRequest, PlacementResponse},
     topology, TopologyEntry,
@@ -69,7 +69,7 @@ pub async fn get_garden_v1(
         pond_status: None, // Phase 3
     };
 
-    let ctx = SuggestionContext::from_headers(&headers, "observe_garden");
+    let ctx = Suggestion::from_headers(&headers, "observe_garden");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -117,7 +117,7 @@ pub async fn get_stone_v1(
 
     let caps = get_capabilities(&state).await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "observe_stone");
+    let ctx = Suggestion::from_headers(&headers, "observe_stone");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -133,7 +133,7 @@ pub async fn get_local_stone_v1(
 ) -> Result<Json<ApiResponse<HardwareCapabilities>>, (StatusCode, Json<ApiErrorResponse>)> {
     let caps = get_capabilities(&state).await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "observe_stone");
+    let ctx = Suggestion::from_headers(&headers, "observe_stone");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -149,7 +149,7 @@ pub async fn recommend_placement_v1(
 ) -> Result<Json<ApiResponse<PlacementResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     match crate::domain::placement::recommend_placement(request.clone(), &state).await {
         Ok(response) => {
-            let ctx = SuggestionContext::from_headers(&headers, "placement_success");
+            let ctx = Suggestion::from_headers(&headers, "placement_success");
             let suggestions = generate_suggestions(&ctx);
 
             Ok(Json(ApiResponse {
@@ -302,7 +302,7 @@ pub async fn get_topology_v1(
 
     tracing::debug!(total_stones = stones.len(), "Topology: response built");
 
-    let ctx = SuggestionContext::from_headers(&headers, "topology_query");
+    let ctx = Suggestion::from_headers(&headers, "topology_query");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {

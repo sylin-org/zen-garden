@@ -41,7 +41,7 @@ impl OutputFormat {
 /// - Output formatting utilities
 /// - Mode flags (quiet, fresh, verbose)
 /// - Automation: output_format, field extraction
-pub struct CommandContext {
+pub struct Runtime {
     /// HTTP client with connection pooling
     pub client: reqwest::Client,
     /// Resolved stone endpoint (e.g., "http://10.0.0.5:7185")
@@ -64,7 +64,7 @@ pub struct CommandContext {
     pub field: Option<String>,
 }
 
-impl CommandContext {
+impl Runtime {
     /// Create context with resolved endpoint
     pub fn with_endpoint(
         client: reqwest::Client,
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_api_url_building() {
-        let ctx = CommandContext::with_endpoint(
+        let ctx = Runtime::with_endpoint(
             reqwest::Client::new(),
             "http://10.0.0.5:7185".to_string(),
             Some("stone-01".to_string()),
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_endpoint_without_resolution() {
-        let ctx = CommandContext::without_endpoint(reqwest::Client::new(), false, false, 0);
+        let ctx = Runtime::without_endpoint(reqwest::Client::new(), false, false, 0);
 
         assert!(ctx.endpoint().is_err());
         assert!(ctx.api_url("health").is_err());

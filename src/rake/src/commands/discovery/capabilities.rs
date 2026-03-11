@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -40,7 +40,7 @@ impl CapabilitiesCommand {
 
 #[async_trait]
 impl Command for CapabilitiesCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let offering_path = urlencoding::encode(&self.offering);
         let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities", offering_path))?;
         let response = ctx.client.get(&url).send().await?;
@@ -238,7 +238,7 @@ impl AddCapabilityCommand {
 
 #[async_trait]
 impl Command for AddCapabilityCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let action = if self.dry_run { "Validating" } else { "Adding" };
         println!(
             "{} {} {} to {}...",
@@ -390,7 +390,7 @@ impl RemoveCapabilityCommand {
 
 #[async_trait]
 impl Command for RemoveCapabilityCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         println!(
             "{} Removing {} from {}...",
             ui::status_indicator("info", ctx.term.supports_color),
@@ -601,7 +601,7 @@ impl RefreshCapabilitiesCommand {
 
 #[async_trait]
 impl Command for RefreshCapabilitiesCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let action = if self.dry_run {
             "Checking"
         } else {
@@ -767,7 +767,7 @@ impl Command for RefreshCapabilitiesCommand {
 
 #[async_trait]
 impl Command for MirrorCapabilitiesCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let (from_arg, to_arg) = parse_mirror_targets(&self.args)?;
         let local_stone = ctx.stone.clone();
 

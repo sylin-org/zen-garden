@@ -66,7 +66,7 @@ pub use modes::{AggregatedDetectionResult, DetectionOrchestrator};
 pub use offerings::{
     current_capabilities_hash, ensure_offerings_index, get_compiled_offering, manifests_hash,
     moss_version_string, rebuild_offerings_index, CompiledOffering, OfferingsFingerprint,
-    OfferingsIndexCache,
+    OfferingsIndex,
 };
 pub use reconciliation::{reconcile_services, ReconciliationResult};
 pub use registry::Registry;
@@ -80,7 +80,7 @@ pub use service_discovery::{
 };
 pub use service_manager::ServiceLifecycle;
 // Re-export TopologyEntry from common (now shared type)
-pub use capabilities::{CapabilityExecutor, CapabilityMutationResult, ExecutorContext};
+pub use capabilities::{CapabilityExecutor, CapabilityMutationResult, Executor};
 pub use ceremony::{
     execute_nourish_offering, Ceremony, CeremonyId, CeremonyInitiator, CeremonyOptions,
     CeremonyRegistry, CeremonyState, CeremonyType, Phase, PhaseState,
@@ -89,7 +89,7 @@ pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent
 pub use garden_common::TopologyEntry;
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
-    DockerRegistryHandler, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
+    DockerRegistry, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
 };
 pub use network::{
     NetworkError, NetworkMode, PoolExhausted, ProbeResult, StaticIpActive, StaticIpDesired,

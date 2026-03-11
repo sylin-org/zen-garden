@@ -6,7 +6,7 @@
 use crate::client::resolve_target_endpoint;
 use crate::command_manifest::cmd::{self, tend_target};
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::discovery;
 use crate::tending;
 use async_trait::async_trait;
@@ -32,7 +32,7 @@ impl TendCommand {
 
 #[async_trait]
 impl Command for TendCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         if self.clear {
             tending::clear_tending()?;
             println!("Tending state cleared.");
@@ -341,7 +341,7 @@ impl Command for TendCommand {
 /// Used by:
 /// - Explicit tend commands
 /// - Auto-switch during dispatch when tended stone offline
-pub async fn notify_tending(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
+pub async fn notify_tending(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
     use garden_common::presence::ClientNotification;
 
     // Get hostname for "from" field

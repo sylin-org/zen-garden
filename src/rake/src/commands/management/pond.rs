@@ -14,7 +14,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::enrollment;
 use crate::suggestions;
 use anyhow::Context;
@@ -69,7 +69,7 @@ impl PondCommand {
 
 #[async_trait]
 impl Command for PondCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         // Enroll and Trust are local operations — they don't require
         // a tended stone endpoint.
         match &self.action {
@@ -147,7 +147,7 @@ impl Command for PondCommand {
 }
 
 async fn execute_pond_init(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     passphrase: Option<String>,
     profile: Option<String>,
@@ -213,7 +213,7 @@ async fn execute_pond_init(
     Ok(())
 }
 
-async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
+async fn execute_pond_status(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond/status", endpoint.trim_end_matches('/'));
 
     match ctx.client.get(&url).send().await {
@@ -319,7 +319,7 @@ async fn execute_pond_status(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
 }
 
 async fn execute_pond_invite(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
@@ -381,7 +381,7 @@ async fn execute_pond_invite(
     Ok(())
 }
 
-async fn execute_pond_join(ctx: &CommandContext, endpoint: &str, code: &str) -> anyhow::Result<()> {
+async fn execute_pond_join(ctx: &Runtime, endpoint: &str, code: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond/join", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "code": code });
 
@@ -432,7 +432,7 @@ async fn execute_pond_join(ctx: &CommandContext, endpoint: &str, code: &str) -> 
 /// Unlike `pond join` (which delegates to the tended Moss stone), `pond enroll`
 /// contacts the cornerstone directly via mDNS and installs certificates on this
 /// machine for mTLS access to the pond.
-async fn execute_pond_enroll(ctx: &CommandContext) -> anyhow::Result<()> {
+async fn execute_pond_enroll(ctx: &Runtime) -> anyhow::Result<()> {
     use std::time::Duration;
 
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
@@ -719,7 +719,7 @@ fn is_elevated() -> bool {
 }
 
 /// Install CA from existing enrollment certs into the OS trust store.
-async fn execute_pond_trust(ctx: &CommandContext) -> anyhow::Result<()> {
+async fn execute_pond_trust(ctx: &Runtime) -> anyhow::Result<()> {
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let hostname = hostname::get()
         .ok()
@@ -790,7 +790,7 @@ async fn execute_pond_trust(ctx: &CommandContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn execute_pond_remove(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
+async fn execute_pond_remove(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond", endpoint.trim_end_matches('/'));
 
     match ctx.client.delete(&url).send().await {
@@ -823,7 +823,7 @@ async fn execute_pond_remove(ctx: &CommandContext, endpoint: &str) -> anyhow::Re
 }
 
 async fn execute_pond_untrust(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     stone_name: &str,
 ) -> anyhow::Result<()> {
@@ -864,7 +864,7 @@ async fn execute_pond_untrust(
 }
 
 async fn execute_pond_unlock(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     passphrase: Option<String>,
     totp: Option<String>,
@@ -925,7 +925,7 @@ async fn execute_pond_unlock(
 }
 
 async fn execute_pond_promote(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
@@ -981,7 +981,7 @@ async fn execute_pond_promote(
 }
 
 async fn execute_pond_rename(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     name: Option<String>,
 ) -> anyhow::Result<()> {

@@ -91,7 +91,7 @@ pub struct OfferingsFingerprint {
 
 /// Cached offerings index with fingerprint
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct OfferingsIndexCache {
+pub struct OfferingsIndex {
     pub fingerprint: OfferingsFingerprint,
     pub generated_at: String,
     pub offerings: Vec<CompiledOffering>,
@@ -196,7 +196,7 @@ pub async fn ensure_offerings_index(state: &crate::AppState, force_rebuild: bool
 
     // Try disk cache first (best-effort)
     if !force_rebuild {
-        if let Some(on_disk) = crate::infra::load_offerings_cache::<OfferingsIndexCache>().await? {
+        if let Some(on_disk) = crate::infra::load_offerings_cache::<OfferingsIndex>().await? {
             let current = OfferingsFingerprint {
                 moss_version: moss_version_string(),
                 capabilities_hash: current_capabilities_hash(cached_caps_ref),
@@ -246,7 +246,7 @@ pub async fn get_compiled_offering(
 pub fn rebuild_offerings_index(
     registry: &ManifestRegistry,
     cached_capabilities: Option<&garden_common::HardwareCapabilities>,
-) -> Result<OfferingsIndexCache> {
+) -> Result<OfferingsIndex> {
     let mut entries: Vec<_> = registry.sw.entries.values().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -277,7 +277,7 @@ pub fn rebuild_offerings_index(
         });
     }
 
-    Ok(OfferingsIndexCache {
+    Ok(OfferingsIndex {
         fingerprint,
         generated_at: chrono::Utc::now().to_rfc3339(),
         offerings,

@@ -24,6 +24,6 @@ pub mod tending;
 
 // Re-exports for convenience
 pub use client::{resolve_target_endpoint, CachedStoneInfo, CachedStoneOps};
-pub use context::CommandContext;
+pub use context::Runtime;
 pub use garden_common::ui::layout::{IndentLevel, Layout};
 pub use garden_common::ui::rendering::{OutputWriter, TerminalInfo};

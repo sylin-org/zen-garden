@@ -5,7 +5,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -23,7 +23,7 @@ impl InviteCommand {
 
 #[async_trait]
 impl Command for InviteCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
         let url = format!("{}/api/v1/pond/invite", endpoint.trim_end_matches('/'));
 

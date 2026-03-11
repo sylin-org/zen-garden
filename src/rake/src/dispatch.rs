@@ -15,7 +15,7 @@ use garden_rake::cli_build::GlobalFlags;
 use garden_rake::client::{resolve_target_endpoint, CachedStoneOps};
 use garden_rake::commands::management::tend;
 use garden_rake::commands::Command;
-use garden_rake::context::{CommandContext, OutputFormat};
+use garden_rake::context::{Runtime as CommandCtx, OutputFormat};
 use garden_rake::discovery;
 use garden_rake::stone_bag::StoneBag;
 use garden_rake::stone_cache::STONE;
@@ -89,7 +89,7 @@ impl Runtime {
     /// 1. Resolve endpoint optimistically (no pre-flight health check)
     /// 2. Create [`StoneBag`] seeded from tending cache when available
     /// 3. Print stone header from cached bag data (if requested)
-    /// 4. Build `CommandContext` and call `cmd.execute()`
+    /// 4. Build `Command` and call `cmd.execute()`
     ///
     /// If the actual command fails with a connection error the caller is
     /// responsible for retry/discovery.  We intentionally do NOT pre-check
@@ -122,7 +122,7 @@ impl Runtime {
             }
 
             let stone_name = bag.stone_name().await.map(|s| s.to_string());
-            let ctx = CommandContext::with_automation(
+            let ctx = CommandCtx::with_automation(
                 self.client.clone(),
                 Some(bag.endpoint().to_string()),
                 stone_name,
@@ -134,7 +134,7 @@ impl Runtime {
             );
             cmd.execute(&ctx).await
         } else {
-            let ctx = CommandContext::with_automation(
+            let ctx = CommandCtx::with_automation(
                 self.client.clone(),
                 None,
                 None,
@@ -249,7 +249,7 @@ pub async fn resolve_endpoint(
         );
 
         // Notify stone of tending for visual feedback (glow/pulse)
-        let notify_ctx = CommandContext::without_endpoint(
+        let notify_ctx = CommandCtx::without_endpoint(
             client.clone(),
             false, // quiet
             false, // fresh

@@ -1,14 +1,14 @@
 use axum::http::HeaderMap;
 
 /// Context for generating context-aware suggestions
-pub struct SuggestionContext {
+pub struct Suggestion {
     pub operation: String,
     pub service_name: Option<String>,
     pub success: bool,
     pub quiet_mode: bool,
 }
 
-impl SuggestionContext {
+impl Suggestion {
     pub fn from_headers(headers: &HeaderMap, operation: &str) -> Self {
         let quiet_mode = headers
             .get("X-Quiet")
@@ -38,7 +38,7 @@ impl SuggestionContext {
 }
 
 /// Generate context-aware suggestions based on operation
-pub fn generate_suggestions(ctx: &SuggestionContext) -> Option<Vec<String>> {
+pub fn generate_suggestions(ctx: &Suggestion) -> Option<Vec<String>> {
     if ctx.quiet_mode {
         return None;
     }

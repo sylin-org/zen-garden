@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 /// Authentication context after successful auth
 #[derive(Debug, Clone)]
-pub struct AuthContext {
+pub struct Auth {
     /// Authenticated stone name
     pub stone_name: String,
 
@@ -48,13 +48,13 @@ pub trait AuthProvider: Send + Sync {
     ///
     /// For NoAuth: Returns default context
     /// For JwtAuth: Validates JWT, extracts claims
-    async fn authenticate(&self, auth_header: Option<&str>) -> Result<AuthContext, AuthError>;
+    async fn authenticate(&self, auth_header: Option<&str>) -> Result<Auth, AuthError>;
 
     /// Check if a context has admin permissions
     ///
     /// For NoAuth: Always false
     /// For JwtAuth: Checks keystone claim
-    fn is_admin(&self, context: &AuthContext) -> bool;
+    fn is_admin(&self, context: &Auth) -> bool;
 
     /// Get the authentication scheme name
     ///

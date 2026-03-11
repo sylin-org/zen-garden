@@ -7,7 +7,7 @@ use crate::commands::help::{
     display_all_commands, display_command_category, display_command_detail,
 };
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
 
@@ -32,14 +32,14 @@ impl BrowseCommand {
 
 #[async_trait]
 impl Command for BrowseCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         if let Some(cmd_name) = &self.name {
             // Show detailed info for specific command
             if let Some(cmd) = MANIFEST.get(cmd_name) {
                 display_command_detail(cmd, self.zen, self.normative);
             } else {
                 eprintln!(
-                    "{}{} Command '{}' not found",
+                    "{}{} Runtime '{}' not found",
                     " ".repeat(ui::constants::DEFAULT_INDENT),
                     ui::status_indicator("error", ctx.term.supports_color),
                     cmd_name

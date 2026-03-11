@@ -44,7 +44,7 @@ pub mod presence;
 pub mod pulse;
 pub mod storage;
 
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use async_trait::async_trait;
 
 /// Command execution result
@@ -57,7 +57,7 @@ pub type CommandResult = anyhow::Result<()>;
 #[async_trait]
 pub trait Command: Send + Sync {
     /// Execute the command with the given context
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult;
+    async fn execute(&self, ctx: &Runtime) -> CommandResult;
 
     /// Whether this command requires a resolved stone endpoint
     ///

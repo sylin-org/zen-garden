@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -54,7 +54,7 @@ impl LiftCommand {
 
 #[async_trait]
 impl Command for LiftCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
 
         match &self.target {
@@ -77,7 +77,7 @@ impl Command for LiftCommand {
     }
 }
 
-async fn execute_lift_keystone(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
+async fn execute_lift_keystone(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond", endpoint.trim_end_matches('/'));
 
     match ctx.client.delete(&url).send().await {
@@ -121,7 +121,7 @@ async fn execute_lift_keystone(ctx: &CommandContext, endpoint: &str) -> anyhow::
 }
 
 async fn execute_lift_stone(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     stone_name: &str,
 ) -> anyhow::Result<()> {

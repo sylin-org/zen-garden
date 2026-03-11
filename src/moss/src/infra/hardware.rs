@@ -14,10 +14,10 @@ use std::path::PathBuf;
 /// - Docker installed but not running (None)
 /// - Docker running and functional (Some("24.0.7"))
 async fn detect_docker() -> Option<String> {
-    use crate::docker::Docker;
+    use crate::docker::Client;
 
     // Try to connect to Docker
-    let docker = match Docker::new() {
+    let docker = match Client::new() {
         Ok(d) => d,
         Err(e) => {
             tracing::debug!(error = ?e, "Docker not available (connection failed)");

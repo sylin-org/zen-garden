@@ -59,7 +59,7 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
     let uptime_seconds = state.start_time.elapsed().as_secs();
 
     // Platform information from capabilities
-    let caps_guard = state.capabilities.read().await;
+    let caps_guard = state.current.capabilities.read().await;
     let (os, architecture) = if let Some(caps) = caps_guard.as_ref() {
         // Extract OS family from "family/version" format (e.g., "windows/Windows 11" -> "windows")
         let os_family = caps
@@ -141,7 +141,7 @@ async fn build_initialization_component(state: &AppState) -> ComponentHealth {
     let mut details = HashMap::new();
 
     // Check hardware detection status
-    let caps_guard = state.capabilities.read().await;
+    let caps_guard = state.current.capabilities.read().await;
     let detection_status = if let Some(caps) = caps_guard.as_ref() {
         match caps.detection_status {
             garden_common::DetectionStatus::Scanning => "scanning",

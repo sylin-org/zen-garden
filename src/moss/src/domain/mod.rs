@@ -17,6 +17,7 @@ pub mod adoption;
 pub mod capabilities;
 pub mod ceremony;
 pub mod companion;
+pub mod current;
 pub mod discovery;
 pub mod orchestration;
 pub mod config_compose;
@@ -115,6 +116,7 @@ pub use garden_registry::{
     new_registry, EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery,
 };
 pub use companion::Companion;
+pub use current::{Current, Stone as CurrentStone, Topology as CurrentTopology};
 pub use discovery::Discovery;
 pub use platform::Platform;
 pub use presence::Presence;

@@ -276,7 +276,7 @@ pub async fn list_storages_v1(
         std::collections::HashMap::new();
 
     // Local storages
-    for local in StorageRoute::list_local(&state.storage.volumes).await {
+    for local in StorageRoute::list_local(&state.current.storage.volumes).await {
         let entry = by_name
             .entry(local.name.clone())
             .or_insert_with(|| GardenStorageSummary {
@@ -287,14 +287,14 @@ pub async fn list_storages_v1(
             });
         entry.replica_count += 1;
         if local.role == StorageRole::Primary {
-            entry.primary_stone = Some(state.stone_name.clone());
+            entry.primary_stone = Some(state.current.stone.name.clone());
         }
     }
 
     // Remote storages from registry beacons
     let reg = state.tool.registry.read().await;
     for storage_entry in reg.storage_entries() {
-        if storage_entry.tool.stone.id == state.stone_id {
+        if storage_entry.tool.stone.id == state.current.stone.id {
             continue; // Already counted above
         }
         let sm = storage_entry.tool.storage.as_ref();
@@ -336,8 +336,8 @@ pub async fn discover_v1(
     let mut instances = Vec::new();
 
     // Check local storages
-    if let Some(local) = StorageRoute::find_local(&name, &state.storage.volumes).await {
-        let map = state.storage.volumes.read().await;
+    if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
+        let map = state.current.storage.volumes.read().await;
         let (pin_id, roles) = map
             .values()
             .find_map(|v| {
@@ -354,11 +354,11 @@ pub async fn discover_v1(
             .unwrap_or_default();
         drop(map);
 
-        let local_endpoint = state.self_entry.read().await.address.http_base();
+        let local_endpoint = state.current.topology.self_entry.read().await.address.http_base();
 
         instances.push(StorageInstance {
-            stone_id: state.stone_id.clone(),
-            stone_name: state.stone_name.clone(),
+            stone_id: state.current.stone.id.clone(),
+            stone_name: state.current.stone.name.clone(),
             storage_id: local.id.clone(),
             role: local.role,
             pinned: pin_id.is_some(),
@@ -373,7 +373,7 @@ pub async fn discover_v1(
     // Add remote instances from registry beacons
     let reg = state.tool.registry.read().await;
     for entry in reg.storage_by_name(&name) {
-        if entry.tool.stone.id == state.stone_id {
+        if entry.tool.stone.id == state.current.stone.id {
             continue;
         }
         let sm = entry.tool.storage.as_ref();

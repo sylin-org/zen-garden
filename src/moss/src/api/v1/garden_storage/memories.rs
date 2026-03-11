@@ -95,8 +95,8 @@ fn log_memories_access(
         category: AUDIT_CATEGORY.to_string(),
         action: action.to_string(),
         status: status.as_u16(),
-        stone_id: state.stone_id.clone(),
-        stone_name: state.stone_name.clone(),
+        stone_id: state.current.stone.id.clone(),
+        stone_name: state.current.stone.name.clone(),
         storage: storage_name.map(|s| s.to_string()),
         offering_id: offering_id.map(|s| s.to_string()),
         harvest_id: harvest_id.map(|s| s.to_string()),
@@ -188,7 +188,7 @@ async fn resolve_route(
     state: &AppState,
     name: &str,
 ) -> Result<StorageRoute, (StatusCode, String)> {
-    StorageRoute::for_read(name, &state.storage.volumes, &state.tool.registry, &state.stone_id)
+    StorageRoute::for_read(name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id)
         .await
         .map_err(|e| {
             (
@@ -249,8 +249,8 @@ pub async fn list_memories_v1(
                 &target,
                 &format!("api/v1/garden/storage/{}/memories", name),
                 &headers,
-                &state.stone_id,
-                &state.stone_name,
+                &state.current.stone.id,
+                &state.current.stone.name,
             )
             .await;
 
@@ -338,8 +338,8 @@ pub async fn list_offering_snapshots_v1(
                 &target,
                 &format!("api/v1/garden/storage/{}/memories/{}", name, offering_id),
                 &headers,
-                &state.stone_id,
-                &state.stone_name,
+                &state.current.stone.id,
+                &state.current.stone.name,
             )
             .await;
 
@@ -433,8 +433,8 @@ pub async fn get_offering_manifest_v1(
                     name, offering_id
                 ),
                 &headers,
-                &state.stone_id,
-                &state.stone_name,
+                &state.current.stone.id,
+                &state.current.stone.name,
             )
             .await;
 
@@ -526,8 +526,8 @@ pub async fn download_snapshot_v1(
                     name, offering_id, harvest_id
                 ),
                 &headers,
-                &state.stone_id,
-                &state.stone_name,
+                &state.current.stone.id,
+                &state.current.stone.name,
             )
             .await
         }

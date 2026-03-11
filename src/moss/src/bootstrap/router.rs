@@ -41,10 +41,10 @@ async fn inject_stone_identity(
     next: Next,
 ) -> Response {
     let mut response = next.run(request).await;
-    if let Ok(v) = HeaderValue::from_str(&state.stone_id) {
+    if let Ok(v) = HeaderValue::from_str(&state.current.stone.id) {
         response.headers_mut().insert(HEADER_STONE_ID, v);
     }
-    if let Ok(v) = HeaderValue::from_str(&state.stone_name) {
+    if let Ok(v) = HeaderValue::from_str(&state.current.stone.name) {
         response.headers_mut().insert(HEADER_STONE_NAME, v);
     }
     response

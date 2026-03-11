@@ -640,8 +640,25 @@ pub async fn run(
         ));
 
     let state = AppState {
-        stone_id: stone_id.clone(),
-        stone_name: stone_name.clone(),
+        current: Arc::new(crate::domain::Current {
+            stone: Arc::new(crate::domain::current::Stone {
+                id: stone_id.clone(),
+                name: stone_name.clone(),
+            }),
+            storage: Arc::new(crate::domain::Storage {
+                volumes: volumes.clone(),
+                media: media.clone(),
+                changed: storage_changed_tx.clone(),
+            }),
+            topology: crate::domain::current::Topology {
+                cache: topology_cache.clone(),
+                dirty: topology_dirty.clone(),
+                self_entry: self_entry.clone(),
+            },
+            capabilities: capabilities.clone(),
+            api_port: port,
+            system_resources: Arc::new(RwLock::new(None)),
+        }),
         offerings: Arc::new(RwLock::new(offerings)),
         manifest_registry: manifest_registry.clone(),
         platform: Arc::new(crate::domain::Platform {
@@ -657,13 +674,8 @@ pub async fn run(
         start_time: std::time::Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
-        capabilities: capabilities.clone(),
-        api_port: port,
-        topology_cache: topology_cache.clone(),
-        topology_dirty: topology_dirty.clone(),
         tool: tool.clone(),
         fqn_handler: Arc::new(crate::domain::FqnHandler::new()),
-        self_entry: self_entry.clone(),
         discovery: Arc::new(crate::domain::Discovery {
             mdns: mdns_handle.clone(),
             koi: koi_handle.clone(),
@@ -687,7 +699,6 @@ pub async fn run(
             elections: election_service_placeholder,
             notifications: Arc::new(garden_common::NotificationRegistry::new()),
         }),
-        system_resources: Arc::new(RwLock::new(None)),
         companion: Arc::new(crate::domain::Companion {
             registry: Arc::new(infra::CompanionRegistry::new().await),
         }),
@@ -699,12 +710,6 @@ pub async fn run(
         log: log.clone(),
         // Subsystem readiness (network_ready managed by Network)
         subsystems: subsystems.clone(),
-        // Storage data plane (ARCH-0004) — volumes, media, domain event channel.
-        storage: Arc::new(crate::domain::Storage {
-            volumes: volumes.clone(),
-            media: media.clone(),
-            changed: storage_changed_tx.clone(),
-        }),
         // Orchestration coordination plane (ARCH-0004) — coordination primitives.
         orchestration: Arc::new(crate::domain::Orchestration {
             storage: crate::domain::StorageOrchestration {
@@ -767,7 +772,7 @@ pub async fn run(
     });
 
     // Phase 11.post3: Start discovery handler (responds to discovery requests)
-    let self_entry_for_discovery = state.self_entry.clone();
+    let self_entry_for_discovery = state.current.topology.self_entry.clone();
     tokio::spawn(async move {
         if let Err(e) =
             crate::tasks::discovery_handler::start_discovery_handler(self_entry_for_discovery).await
@@ -781,7 +786,7 @@ pub async fn run(
     // Populates the unified Volumes map with all currently attached volumes.
     // Cross-platform: uses platform::scan_volumes() (Linux: /proc/mounts, Windows: GetLogicalDrives).
     {
-        let volumes = state.storage.volumes.clone();
+        let volumes = state.current.storage.volumes.clone();
         crate::domain::storage::initial_scan(&volumes).await;
     }
 
@@ -789,7 +794,7 @@ pub async fn run(
     // Detects physical disks including those without partitions or drive letters.
     // Uses PowerShell Get-Disk (Windows) or lsblk (Linux).
     {
-        let media = state.storage.media.clone();
+        let media = state.current.storage.media.clone();
         let snapshots = tokio::task::spawn_blocking(crate::infra::storage::platform::scan_media)
             .await
             .unwrap_or_default();
@@ -799,7 +804,7 @@ pub async fn run(
     // Phase 11.post4: Start offering lifecycle event listeners
     {
         // ChirpListener: Broadcasts topology changes via UDP
-        let self_entry_for_chirp = state.self_entry.clone();
+        let self_entry_for_chirp = state.current.topology.self_entry.clone();
         let chirp_listener = Arc::new(infra::ChirpListener::new(Arc::new(move || {
             let entry = self_entry_for_chirp.clone();
             tokio::spawn(async move {
@@ -860,7 +865,7 @@ pub async fn run(
     tokio::spawn(async move {
         // Get endpoint for Companion communication
         let endpoint = companion_scan_state
-            .self_entry
+            .current.topology.self_entry
             .read()
             .await
             .address
@@ -1009,8 +1014,8 @@ pub async fn run(
 
     // Phase 11.5: mDNS lurk-listener (passive topology discovery)
     // Listens for mDNS announcements from neighbor stones to populate topology cache
-    let topology_cache_for_mdns = state.topology_cache.clone();
-    let topology_dirty_for_mdns = state.topology_dirty.clone();
+    let topology_cache_for_mdns = state.current.topology.cache.clone();
+    let topology_dirty_for_mdns = state.current.topology.dirty.clone();
     let self_stone_name_for_mdns = stone_name.clone();
     if let Ok(mut mdns_rx) =
         mdns::start_mdns_lurk_listener(koi_handle.clone(), stone_name.clone()).await
@@ -1135,9 +1140,9 @@ pub async fn run(
                         gateways: vec![],
                     };
                     crate::domain::topology::upsert_from_chirp_dirty(
-                        &state.topology_cache,
+                        &state.current.topology.cache,
                         entry,
-                        &state.topology_dirty,
+                        &state.current.topology.dirty,
                     )
                     .await;
                 }
@@ -1149,7 +1154,7 @@ pub async fn run(
 
     // Phase 13: Initial announcement (announce ourselves)
     tracing::info!("Sending initial announcement...");
-    let entry = state.self_entry.read().await.clone();
+    let entry = state.current.topology.self_entry.read().await.clone();
     if let Err(e) = crate::announcement::announce(&entry).await {
         tracing::warn!(error = ?e, "Initial announcement failed");
     }
@@ -1190,9 +1195,9 @@ pub async fn run(
         let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel(32);
         crate::infra::storage::platform::start_volume_watcher(vol_tx);
 
-        let volumes_for_watcher = state.storage.volumes.clone();
+        let volumes_for_watcher = state.current.storage.volumes.clone();
         let pulse_tx_for_watcher = state.pulse.clone();
-        let storage_changed_tx_for_watcher = state.storage.changed.clone();
+        let storage_changed_tx_for_watcher = state.current.storage.changed.clone();
         let notifications = state.presence.notifications.clone();
         let watcher_token = shutdown_token.child_token();
         let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
@@ -1312,7 +1317,7 @@ pub async fn run(
     // Polls physical disks (PowerShell/lsblk) to detect media without partitions.
     // Lower cadence than the volume watcher since physical changes are rarer.
     {
-        let media = state.storage.media.clone();
+        let media = state.current.storage.media.clone();
         let media_token = shutdown_token.child_token();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -1337,9 +1342,9 @@ pub async fn run(
     // Phase 17.6: Topology + storage cache maintenance
     // Topology: mark stale stones offline, evict old, persist dirty cache to disk
     crate::tasks::start_topology_maintenance(
-        state.topology_cache.clone(),
-        state.topology_dirty.clone(),
-        state.self_entry.clone(),
+        state.current.topology.cache.clone(),
+        state.current.topology.dirty.clone(),
+        state.current.topology.self_entry.clone(),
         shutdown_token.child_token(),
     );
 
@@ -1454,13 +1459,13 @@ pub async fn run(
     #[cfg(target_os = "windows")]
     {
         let cf_endpoint = {
-            let entry = state.self_entry.read().await;
+            let entry = state.current.topology.self_entry.read().await;
             Arc::new(RwLock::new(entry.address.http_base()))
         };
         if let Err(e) = crate::infra::cloud_filter::start(
-            state.storage.volumes.clone(),
+            state.current.storage.volumes.clone(),
             state.tool.registry.clone(),
-            state.stone_id.clone(),
+            state.current.stone.id.clone(),
             state.orchestration.storage.tick.raw.clone(),
             state.subscribe_storage_changed(),
             cf_endpoint,
@@ -1479,7 +1484,7 @@ pub async fn run(
     // entries so replication stays coherent.
     {
         let watcher_set = crate::infra::storage::StorageWatcherSet::new(
-            state.storage.volumes.clone(),
+            state.current.storage.volumes.clone(),
             state.orchestration.storage.tick.raw.clone(),
             shutdown_token.child_token(),
         );
@@ -1556,9 +1561,9 @@ pub async fn run(
         Box::pin(async move {
             // TOPO-0002: Flush topology to disk before shutdown
             crate::domain::topology::flush_topology(
-                &goodbye_state.topology_cache,
-                &goodbye_state.topology_dirty,
-                &goodbye_state.self_entry,
+                &goodbye_state.current.topology.cache,
+                &goodbye_state.current.topology.dirty,
+                &goodbye_state.current.topology.self_entry,
             )
             .await;
 
@@ -2026,7 +2031,7 @@ async fn activate_pond_security(
     let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
         .join("koi")
         .join("certs")
-        .join(&state.stone_name);
+        .join(&state.current.stone.name);
     let key_path = certs_dir.join("key.pem");
     let cert_path = certs_dir.join("cert.pem");
 
@@ -2100,7 +2105,7 @@ async fn activate_pond_security(
     {
         let handle = tls::try_start_https(
             garden_common::constants::MOSS_HTTPS,
-            &state.stone_name,
+            &state.current.stone.name,
             router::configure(state.clone()),
             console,
             state.shutdown_token.clone(),

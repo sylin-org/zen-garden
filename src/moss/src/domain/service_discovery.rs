@@ -283,7 +283,7 @@ pub async fn find_local_services(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
 ) -> Vec<FoundService> {
-    let self_endpoint = state.self_entry.read().await.address.http_base();
+    let self_endpoint = state.current.topology.self_entry.read().await.address.http_base();
     let offerings = state.offerings.read().await;
     let offerings_index = state.offerings_index.read().await;
 
@@ -325,7 +325,7 @@ pub async fn find_local_services(
         let uri_template = connection::select_uri_template(connection_profile, &category);
 
         let conn = connection::resolve_connection(
-            &state.stone_name,
+            &state.current.stone.name,
             &self_endpoint,
             port,
             &protocol,
@@ -340,8 +340,8 @@ pub async fn find_local_services(
             tags,
             status: format!("{}", offering.status),
             stone: StoneRef {
-                id: state.stone_id.clone(),
-                name: state.stone_name.clone(),
+                id: state.current.stone.id.clone(),
+                name: state.current.stone.name.clone(),
                 endpoint: self_endpoint.clone(),
             },
             connection: conn,
@@ -357,7 +357,7 @@ pub async fn find_local_services(
 /// Returns all offerings from unified registry with full connection info.
 /// Includes both running and non-running offerings.
 pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryResponse {
-    let self_endpoint = state.self_entry.read().await.address.http_base();
+    let self_endpoint = state.current.topology.self_entry.read().await.address.http_base();
     let offerings = state.offerings.read().await;
     let offerings_index = state.offerings_index.read().await;
 
@@ -382,7 +382,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
         let uri_template = connection::select_uri_template(connection_profile, &category);
 
         let conn = connection::resolve_connection(
-            &state.stone_name,
+            &state.current.stone.name,
             &self_endpoint,
             port,
             &protocol,
@@ -397,8 +397,8 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
             tags,
             status: format!("{}", offering.status),
             stone: StoneRef {
-                id: state.stone_id.clone(),
-                name: state.stone_name.clone(),
+                id: state.current.stone.id.clone(),
+                name: state.current.stone.name.clone(),
                 endpoint: self_endpoint.clone(),
             },
             connection: conn,
@@ -525,7 +525,7 @@ pub async fn find_services(
 
     // Compute cache age from the most recent topology entry's last_seen
     let cache_age_seconds = {
-        let map = state.topology_cache.read().await;
+        let map = state.current.topology.cache.read().await;
         map.values().map(|e| e.last_seen).max().map(|newest| {
             let age = Utc::now().signed_duration_since(newest);
             age.num_seconds().max(0) as u64
@@ -550,12 +550,12 @@ async fn find_services_in_topology_cache(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
 ) -> Vec<FoundService> {
-    let stones = topology::get_online_stones(&state.topology_cache).await;
+    let stones = topology::get_online_stones(&state.current.topology.cache).await;
     let mut results = Vec::new();
 
     for stone in stones {
         // Skip self — local services are already covered by find_local_services
-        if stone.stone_id == state.stone_id {
+        if stone.stone_id == state.current.stone.id {
             continue;
         }
 
@@ -651,7 +651,7 @@ async fn find_remote_services(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
 ) -> Vec<FoundService> {
-    let stones = topology::get_online_stones(&state.topology_cache).await;
+    let stones = topology::get_online_stones(&state.current.topology.cache).await;
     let mut results = Vec::new();
 
     // Query each remote stone in parallel

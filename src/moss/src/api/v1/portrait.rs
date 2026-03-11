@@ -371,18 +371,18 @@ pub async fn get_portrait_data(
     State(state): State<AppState>,
 ) -> Result<Json<PortraitResponse>, StatusCode> {
     // === Identity ===
-    let stone_color = derive_stone_color(&state.stone_id);
+    let stone_color = derive_stone_color(&state.current.stone.id);
 
     // Role is always STONE for now — multi-role (LANTERN, CORNERSTONE) requires
     // a role field in AppState once Pond/elections are implemented.
     let role = "STONE".to_string();
 
     // Build endpoint URL
-    let endpoint = format!("http://{}:{}", state.stone_name, state.api_port);
+    let endpoint = format!("http://{}:{}", state.current.stone.name, state.current.api_port);
 
     // Get uptime from resources
     let uptime = {
-        let resources = state.system_resources.read().await;
+        let resources = state.current.system_resources.read().await;
         resources
             .as_ref()
             .map(|r| r.uptime_friendly.clone())
@@ -397,7 +397,7 @@ pub async fn get_portrait_data(
 
     // Get hardware manufacturer/model and local OS info from capabilities
     let (manufacturer, model, os_family, os_version) = {
-        let caps = state.capabilities.read().await;
+        let caps = state.current.capabilities.read().await;
         if let Some(ref c) = *caps {
             let (os_family, os_version) = c
                 .runtime
@@ -416,8 +416,8 @@ pub async fn get_portrait_data(
     };
 
     let identity = PortraitIdentity {
-        id: state.stone_id.clone(),
-        name: state.stone_name.clone(),
+        id: state.current.stone.id.clone(),
+        name: state.current.stone.name.clone(),
         role,
         version: cli::VERSION.to_string(),
         color: stone_color,
@@ -433,7 +433,7 @@ pub async fn get_portrait_data(
     // === Foundation (system resources) ===
     // NOTE: All metrics read from cache - no I/O allowed here
     let foundation = {
-        let resources = state.system_resources.read().await;
+        let resources = state.current.system_resources.read().await;
 
         // Read network metrics from cache (populated by health_monitor task)
         let network = {
@@ -543,7 +543,7 @@ pub async fn get_portrait_data(
     // === Seed Banks ===
     // STORAGE-0011: Read from unified Volumes collection.
     let (seed_banks, candidates) = {
-        let map = state.storage.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         let banks: Vec<PortraitSeedBank> = map
             .values()
             .filter_map(|vol| {
@@ -604,12 +604,12 @@ pub async fn get_portrait_data(
 
     // === Horizon (visible stones) ===
     let horizon = {
-        let visible_stones = topology::get_all_stones(&state.topology_cache).await;
+        let visible_stones = topology::get_all_stones(&state.current.topology.cache).await;
         let reg = state.tool.registry.read().await;
         let storage_by_stone = reg.storage_grouped_by_stone();
         let stones: Vec<HorizonStone> = visible_stones
             .iter()
-            .filter(|entry| entry.stone_id != state.stone_id) // Exclude self
+            .filter(|entry| entry.stone_id != state.current.stone.id) // Exclude self
             .map(|entry| {
                 // Extract resource hints from capabilities
                 let caps = entry.capabilities.as_ref();
@@ -647,7 +647,7 @@ pub async fn get_portrait_data(
 
         let seed_bank_count: usize = visible_stones
             .iter()
-            .filter(|entry| entry.stone_id != state.stone_id)
+            .filter(|entry| entry.stone_id != state.current.stone.id)
             .map(|entry| {
                 storage_by_stone
                     .get(&entry.stone_id)

@@ -138,7 +138,7 @@ pub fn build_guidance(
         name,
         offering,
         ports,
-        &state.stone_name,
+        &state.current.stone.name,
         static_ip,
     );
 
@@ -152,7 +152,7 @@ pub fn build_guidance(
             variables.insert(format!("{}-port", port_name), host_port.to_string());
         }
     }
-    variables.insert("server-name".to_string(), state.stone_name.clone());
+    variables.insert("server-name".to_string(), state.current.stone.name.clone());
     variables.insert("offering".to_string(), offering.to_string());
     variables.insert("name".to_string(), name.to_string());
     variables.insert("os".to_string(), std::env::consts::OS.to_string());
@@ -192,13 +192,13 @@ pub fn build_adopted_guidance(
         name,
         offering,
         &ports,
-        &state.stone_name,
+        &state.current.stone.name,
         static_ip,
     );
 
     let mut variables = std::collections::HashMap::new();
     variables.insert("port".to_string(), port.to_string());
-    variables.insert("server-name".to_string(), state.stone_name.clone());
+    variables.insert("server-name".to_string(), state.current.stone.name.clone());
     variables.insert("offering".to_string(), offering.to_string());
     variables.insert("name".to_string(), name.to_string());
     variables.insert("os".to_string(), std::env::consts::OS.to_string());
@@ -873,7 +873,7 @@ pub async fn install_service_task(
     state.event_bus.emit(OfferingEvent::deployed(
         &offering_id,
         offering,
-        state.stone_name(),
+        &state.current.stone.name,
         &image_full,
     ));
 
@@ -1121,7 +1121,7 @@ pub async fn install_image_direct_task(
     state.event_bus.emit(OfferingEvent::deployed(
         service_name,
         &fqn.offering,
-        state.stone_name(),
+        &state.current.stone.name,
         image_ref,
     ));
 
@@ -1394,7 +1394,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         state.event_bus.emit(OfferingEvent::deployed(
             &offering_id,
             &service_name,
-            state.stone_name(),
+            &state.current.stone.name,
             &image_full,
         ));
 

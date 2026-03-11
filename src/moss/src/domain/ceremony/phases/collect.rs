@@ -43,7 +43,7 @@ pub async fn execute(
         &state.platform.docker,
         &state.orchestration.nurturing.harvest,
         offering,
-        &state.stone_id,
+        &state.current.stone.id,
         commit_image,
     )
     .await?;

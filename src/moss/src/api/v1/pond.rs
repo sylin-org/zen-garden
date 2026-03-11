@@ -311,7 +311,7 @@ async fn refresh_pond_active(state: &AppState) {
     let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
         .join("koi")
         .join("certs")
-        .join(&state.stone_name);
+        .join(&state.current.stone.name);
     if certs_dir.join("cert.pem").exists() && certs_dir.join("key.pem").exists() {
         state.security.pond.active.store(true, Ordering::Relaxed);
     }
@@ -517,10 +517,10 @@ pub async fn pond_init_v1(
     }
 
     // Notify enrollment change — listener starts HTTPS + chirp signing
-    notify_enrollment_changed(&state, true, Some(state.stone_name.clone())).await;
+    notify_enrollment_changed(&state, true, Some(state.current.stone.name.clone())).await;
 
     tracing::info!(
-        cornerstone = %state.stone_name,
+        cornerstone = %state.current.stone.name,
         pond_name = %pond_name,
         profile = ?profile,
         fingerprint = %create_resp.ca_fingerprint,
@@ -528,7 +528,7 @@ pub async fn pond_init_v1(
     );
 
     Ok(Json(ApiResponse::new(PondInitResponse {
-        cornerstone: state.stone_name.clone(),
+        cornerstone: state.current.stone.name.clone(),
         keystone_path: koi_certmesh::ca::ca_dir().display().to_string(),
         certificate_expires: "30 days".to_string(),
         status: "active".to_string(),
@@ -613,7 +613,7 @@ async fn local_enrollment(
 ) -> PondResult<PondJoinResponse> {
     let core = get_certmesh_core(state)?;
 
-    let hostname = payload.hostname.unwrap_or_else(|| state.stone_name.clone());
+    let hostname = payload.hostname.unwrap_or_else(|| state.current.stone.name.clone());
 
     let join_req = koi_certmesh::protocol::JoinRequest {
         hostname: hostname.clone(),
@@ -666,13 +666,13 @@ async fn proxy_enrollment(
     // Forward the join request with our hostname
     let proxy_payload = serde_json::json!({
         "code": payload.code,
-        "hostname": state.stone_name,
+        "hostname": state.current.stone.name,
         "sans": payload.sans,
     });
 
     tracing::info!(
         cornerstone = %cornerstone_addr,
-        stone = %state.stone_name,
+        stone = %state.current.stone.name,
         "Proxying pond join to cornerstone"
     );
 
@@ -753,13 +753,13 @@ async fn proxy_enrollment(
     };
 
     // Write certs to local filesystem
-    write_enrollment_certs(&state.stone_name, &ca_cert, &service_cert, &service_key).await?;
+    write_enrollment_certs(&state.current.stone.name, &ca_cert, &service_cert, &service_key).await?;
 
     // Notify enrollment change — listener starts HTTPS + chirp signing
     notify_enrollment_changed(state, true, join_resp.cornerstone.clone()).await;
 
     tracing::info!(
-        stone = %state.stone_name,
+        stone = %state.current.stone.name,
         cornerstone = ?join_resp.cornerstone,
         fingerprint = %join_resp.ca_fingerprint,
         "Stone enrolled in pond (proxied via cornerstone)"
@@ -785,12 +785,12 @@ async fn proxy_enrollment(
 async fn discover_cornerstone(
     state: &AppState,
 ) -> Result<garden_common::PeerAddress, (StatusCode, Json<ApiErrorResponse>)> {
-    let cache = state.topology_cache.read().await;
+    let cache = state.current.topology.cache.read().await;
 
     // Collect online peers, most recently seen first
     let mut candidates: Vec<_> = cache
         .values()
-        .filter(|e| e.stone_name != state.stone_name)
+        .filter(|e| e.stone_name != state.current.stone.name)
         .filter(|e| e.status == garden_common::types::StoneStatus::Online)
         .collect();
     candidates.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
@@ -993,7 +993,7 @@ pub async fn pond_invite_v1(
         .map_err(certmesh_err)?;
 
     tracing::info!(
-        inviter = %state.stone_name,
+        inviter = %state.current.stone.name,
         ttl_minutes = ttl_minutes,
         "Pond enrollment opened with fresh invitation"
     );
@@ -1002,7 +1002,7 @@ pub async fn pond_invite_v1(
         totp_uri,
         expires_at: Some(deadline.to_rfc3339()),
         ttl_seconds: Some(ttl_minutes * 60),
-        inviter_stone: state.stone_name.clone(),
+        inviter_stone: state.current.stone.name.clone(),
         enrollment_state: "open".to_string(),
     })))
 }
@@ -1194,7 +1194,7 @@ pub async fn pond_promote_v1(
         .map_err(certmesh_err)?;
 
     tracing::info!(
-        stone = %state.stone_name,
+        stone = %state.current.stone.name,
         "Stone promoted — received CA key material"
     );
 
@@ -1270,7 +1270,7 @@ pub async fn pond_ceremony_v1(
     if req.ceremony.as_deref() == Some("init") && req.session_id.is_none() {
         req.data
             .entry("_self_hostname".to_string())
-            .or_insert_with(|| serde_json::json!(state.stone_name));
+            .or_insert_with(|| serde_json::json!(state.current.stone.name));
     }
 
     let response = host.step(req).map_err(|e| {
@@ -1584,10 +1584,10 @@ async fn execute_pond_init_from_ceremony(
         tracing::warn!(error = %e, "Failed to persist pond metadata");
     }
 
-    notify_enrollment_changed(state, true, Some(state.stone_name.clone())).await;
+    notify_enrollment_changed(state, true, Some(state.current.stone.name.clone())).await;
 
     tracing::info!(
-        cornerstone = %state.stone_name,
+        cornerstone = %state.current.stone.name,
         pond_name = %pond_name,
         profile = ?profile,
         fingerprint = %create_resp.ca_fingerprint,
@@ -1601,7 +1601,7 @@ async fn execute_pond_init_from_ceremony(
         "ca_fingerprint".into(),
         serde_json::json!(create_resp.ca_fingerprint),
     );
-    safe_data.insert("cornerstone".into(), serde_json::json!(state.stone_name));
+    safe_data.insert("cornerstone".into(), serde_json::json!(state.current.stone.name));
     safe_data.insert("profile".into(), serde_json::json!(effective_profile));
     response.result_data = Some(safe_data);
 

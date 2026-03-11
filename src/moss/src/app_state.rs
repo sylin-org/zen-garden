@@ -13,12 +13,11 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{FqnHandler, Orchestration, Security, Storage, Tool};
+use crate::domain::{FqnHandler, Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
-use garden_common::{HardwareCapabilities, StoneResources};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -62,11 +61,8 @@ pub use garden_common::{
 /// All fields are wrapped in Arc for cheap cloning across tasks.
 #[derive(Clone)]
 pub struct AppState {
-    /// Unique stone identifier (GUID v7, immutable once generated)
-    pub stone_id: String,
-
-    /// Stone identity (e.g., "stone-01", hostname)
-    pub stone_name: String,
+    /// Current domain — this stone's identity, local storage, topology, capabilities, metrics.
+    pub current: Arc<crate::domain::Current>,
 
     /// Unified offerings registry (all modes: managed, adopted, borrowed).
     ///
@@ -109,18 +105,6 @@ pub struct AppState {
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
 
-    /// Hardware capabilities cache (detected at startup, cached to disk)
-    pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
-
-    /// API port for constructing endpoint URLs
-    pub api_port: u16,
-
-    /// Topology cache for discovered stones (in-memory, persisted via dirty flag)
-    pub topology_cache: crate::domain::topology::TopologyCache,
-
-    /// Dirty flag for topology persistence (TOPO-0002)
-    /// Set by mutation functions, cleared after flush to disk.
-    pub topology_dirty: crate::domain::topology::TopologyDirtyFlag,
 
     /// Garden-wide tool registry and delta stream (ARCH-0004).
     pub tool: Arc<Tool>,
@@ -132,18 +116,11 @@ pub struct AppState {
     /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
     pub security: Arc<Security>,
 
-    /// Self topology entry (this stone's current state)
-    pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
-
     /// Discovery domain — mDNS re-registration handle and Koi embedded handle.
     pub discovery: Arc<crate::domain::Discovery>,
 
-
     /// Presence domain — election service and notification registry.
     pub presence: Arc<crate::domain::Presence>,
-
-    /// System metrics cache (CPU/memory/disk usage, updated every 5s)
-    pub system_resources: Arc<RwLock<Option<StoneResources>>>,
 
     /// Companion domain — registry of external companions (Cricket, Firefly, etc.)
     pub companion: Arc<crate::domain::Companion>,
@@ -169,8 +146,6 @@ pub struct AppState {
     pub subsystems: SubSystems,
 
 
-    /// Storage data plane — volumes, media, and domain event channel (ARCH-0004).
-    pub storage: Arc<Storage>,
 
     /// Orchestration coordination plane — tick signals, nudge, rescan,
     /// nurturing stores, nourishment job channels (ARCH-0004).
@@ -243,12 +218,12 @@ impl AppState {
 
     /// Get stone ID (GUID v7)
     pub fn stone_id(&self) -> &str {
-        &self.stone_id
+        &self.current.stone.id
     }
 
     /// Get stone name
     pub fn stone_name(&self) -> &str {
-        &self.stone_name
+        &self.current.stone.name
     }
 
     /// Persist offerings to disk
@@ -278,7 +253,7 @@ impl AppState {
         let deltas = {
             let mut reg = self.tool.registry.write().await;
             reg.reconcile_local(
-                &self.stone_id,
+                &self.current.stone.id,
                 projections,
                 crate::domain::garden_registry::EntryOrigin::Local,
             )
@@ -319,13 +294,13 @@ impl AppState {
         }
 
         if broadcast_beacon {
-            let endpoint = self.self_entry.read().await.address.http_base();
+            let endpoint = self.current.topology.self_entry.read().await.address.http_base();
             if endpoint.trim().is_empty() {
                 return;
             }
             if let Err(e) = crate::infra::broadcast_tools_beacon(
-                &self.stone_id,
-                &self.stone_name,
+                &self.current.stone.id,
+                &self.current.stone.name,
                 &endpoint,
                 deltas,
             )
@@ -366,7 +341,7 @@ impl AppState {
         // They propagate via the tools beacon / registry path exclusively.
 
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             entry.services = topology_services;
             entry.tags = tags;
             entry.gateways = vec![]; // Empty — registry beacon is the single path
@@ -379,7 +354,7 @@ impl AppState {
         );
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.self_entry.read().await.clone();
+            let entry = self.current.topology.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
             }
@@ -392,10 +367,10 @@ impl AppState {
     /// chirps carry the freshly-detected hardware data instead of the
     /// stale skeleton/cache loaded at boot.
     pub(crate) async fn sync_self_capabilities(&self, auto_chirp: bool) {
-        let caps = self.capabilities.read().await.clone();
+        let caps = self.current.capabilities.read().await.clone();
 
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             entry.capabilities = caps;
             entry.last_seen = chrono::Utc::now();
         }
@@ -403,7 +378,7 @@ impl AppState {
         tracing::info!("Synced self_entry capabilities from background detection");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.self_entry.read().await.clone();
+            let entry = self.current.topology.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after capabilities sync");
             }
@@ -725,7 +700,7 @@ impl AppState {
     /// - `auto_chirp`: If true, broadcasts updated state immediately (if network is ready)
     pub async fn update_stone_health(&self, health: String, auto_chirp: bool) {
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             entry.health = health.clone();
             entry.last_seen = chrono::Utc::now();
         }
@@ -733,7 +708,7 @@ impl AppState {
         tracing::debug!(health = %health, "Updated stone health");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.self_entry.read().await.clone();
+            let entry = self.current.topology.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after health update");
             }
@@ -750,7 +725,7 @@ impl AppState {
     ///
     /// For service-only changes (no resolution change), use `sync_self_services()` instead.
     pub async fn announce_resolution_change(&self, new_ip: &str) {
-        let new_endpoint = format!("http://{}:{}", new_ip, self.api_port);
+        let new_endpoint = format!("http://{}:{}", new_ip, self.current.api_port);
 
         tracing::info!(
             endpoint = %new_endpoint,
@@ -762,12 +737,12 @@ impl AppState {
 
         // Update self_entry with new endpoint and MAC
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             let old_tls_port = entry.address.tls_port;
             let new_ip: std::net::IpAddr = new_ip
                 .parse()
                 .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-            let mut new_addr = garden_common::PeerAddress::new(new_ip, self.api_port);
+            let mut new_addr = garden_common::PeerAddress::new(new_ip, self.current.api_port);
             if let Some(tp) = old_tls_port {
                 new_addr = new_addr.with_tls(tp);
             }
@@ -784,7 +759,7 @@ impl AppState {
         }
 
         // Immediately chirp the updated entry via UDP
-        let entry = self.self_entry.read().await.clone();
+        let entry = self.current.topology.self_entry.read().await.clone();
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to chirp after resolution change");
         } else {
@@ -832,7 +807,7 @@ impl AppState {
     /// stays coherent with storage state.
     pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
         tracing::debug!(event = ?event, "Storage domain event");
-        let _ = self.storage.changed.send(event);
+        let _ = self.current.storage.changed.send(event);
 
         // Storage mutations affect the tools projection (seed-bank entries).
         // Refresh immediately so registry consumers see the change without polling.
@@ -847,7 +822,7 @@ impl AppState {
     pub fn subscribe_storage_changed(
         &self,
     ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged> {
-        self.storage.changed.subscribe()
+        self.current.storage.changed.subscribe()
     }
 
     /// Broadcast a storage beacon to the garden.
@@ -856,14 +831,14 @@ impl AppState {
     /// then sends a UDP STORAGE_BEACON announcement. This is the single
     /// codepath for beacon broadcasting — callers should not inline this logic.
     pub async fn broadcast_storage_beacon(&self) {
-        let endpoint = self.self_entry.read().await.address.http_base();
-        let roles = crate::domain::storage::roles_snapshot(&self.storage.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&self.storage.volumes).await;
+        let endpoint = self.current.topology.self_entry.read().await.address.http_base();
+        let roles = crate::domain::storage::roles_snapshot(&self.current.storage.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&self.current.storage.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &self.stone_id,
-            &self.stone_name,
+            &self.current.stone.id,
+            &self.current.stone.name,
             &endpoint,
-            &self.storage.volumes,
+            &self.current.storage.volumes,
             Some(&roles),
             Some(&pins),
         )

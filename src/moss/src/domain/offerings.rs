@@ -191,7 +191,7 @@ pub async fn ensure_offerings_index(state: &crate::AppState, force_rebuild: bool
     }
 
     // Snapshot cached capabilities once
-    let cached_caps = state.capabilities.read().await.clone();
+    let cached_caps = state.current.capabilities.read().await.clone();
     let cached_caps_ref = cached_caps.as_ref();
 
     // Try disk cache first (best-effort)

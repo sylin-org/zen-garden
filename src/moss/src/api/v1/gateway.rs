@@ -106,9 +106,9 @@ pub async fn put_gateway(
             tags: registration.tags.clone(),
         },
         stone: Stone {
-            id: state.stone_id.clone(),
-            name: state.stone_name.clone(),
-            endpoint: state.self_entry.read().await.address.http_base(),
+            id: state.current.stone.id.clone(),
+            name: state.current.stone.name.clone(),
+            endpoint: state.current.topology.self_entry.read().await.address.http_base(),
         },
         service: ServiceInfo {
             status: garden_common::SERVICE_RUNNING.to_string(),
@@ -165,7 +165,7 @@ pub async fn delete_gateway(
 ) -> StatusCode {
     let delta = {
         let mut reg = state.fqn_handler.registry.write().await;
-        reg.remove(&offering, &state.stone_id)
+        reg.remove(&offering, &state.current.stone.id)
     };
 
     if let Some(delta) = delta {

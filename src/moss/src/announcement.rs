@@ -140,8 +140,8 @@ async fn send_udp_announcement(entry: &TopologyEntry) -> Result<()> {
 /// **REFACTORED (COMM-0001 Phase 2)**: Now uses p2p transport singleton instead of creating own socket.
 pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
     let goodbye = StoneGoodbyePayload {
-        stone_id: state.stone_id.clone(),
-        stone_name: state.stone_name.clone(),
+        stone_id: state.current.stone.id.clone(),
+        stone_name: state.current.stone.name.clone(),
     };
 
     tracing::info!(

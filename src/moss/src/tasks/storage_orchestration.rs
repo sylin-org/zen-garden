@@ -8,7 +8,7 @@
 //! - Dual-primary resolution: lower stone_id yields to higher
 //! - 6 s stale detection (2 × reconciliation window)
 //!
-//! The task updates roles on `state.storage.volumes` (STORAGE-0011) which the beacon
+//! The task updates roles on `state.current.storage.volumes` (STORAGE-0011) which the beacon
 //! builder reads when constructing `StorageAnnouncement::role`.
 
 use anyhow::Result;
@@ -123,7 +123,7 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
 async fn orchestration_tick(state: &AppState) -> Result<()> {
     // Read current managed volumes
     let (current_roles, current_pins, local_names) = {
-        let map = state.storage.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         let mut names = Vec::new();
         let mut roles = std::collections::HashMap::new();
         let mut pins = std::collections::HashMap::new();
@@ -145,7 +145,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         return Ok(());
     }
 
-    let my_stone_id = &state.stone_id;
+    let my_stone_id = &state.current.stone.id;
     let reg = state.tool.registry.read().await;
 
     let mut new_roles = std::collections::HashMap::new();
@@ -216,7 +216,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
     // Apply auto-unpin and role updates via unified Volumes
     {
-        let mut map = state.storage.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
 
         for name in &auto_unpin {
             if let Some(vol) = map.values_mut().find(|v| {
@@ -271,7 +271,7 @@ async fn compact_primary_changelogs(state: &AppState) {
 
     let cutoff_cursor = build_cutoff_cursor(cutoff_ms);
 
-    let map = state.storage.volumes.read().await;
+    let map = state.current.storage.volumes.read().await;
     for vol in map.values() {
         let mgmt = match vol.management.as_ref() {
             Some(m) if m.role == StorageRole::Primary => m,

@@ -336,10 +336,10 @@ async fn dispatch_primary(
     // Dual-primary resolution: if another stone also claims Primary for this FQN,
     // the stone with the lexicographically lower stone_id yields.
     if let Some(other_primary_id) = find_remote_primary(state, fqn).await {
-        if state.stone_id < other_primary_id {
+        if state.current.stone.id < other_primary_id {
             tracing::warn!(
                 offering = %fqn,
-                self_id = %state.stone_id,
+                self_id = %state.current.stone.id,
                 other_id = %other_primary_id,
                 "Dual-primary detected: yielding (lower stone_id)"
             );
@@ -384,7 +384,7 @@ async fn dispatch_dormant(
     };
 
     // Check primary staleness via topology cache
-    let cache = state.topology_cache.read().await;
+    let cache = state.current.topology.cache.read().await;
     if let Some(primary_entry) = cache.get(&primary_stone_id) {
         let staleness_ms = (Utc::now() - primary_entry.last_seen)
             .num_milliseconds()
@@ -484,7 +484,7 @@ async fn handle_election_result(
     fqn: &str,
     winner: &garden_common::election::ElectionWinner,
 ) -> Result<()> {
-    if winner.stone_id == state.stone_id {
+    if winner.stone_id == state.current.stone.id {
         tracing::info!(offering = %fqn, "Election won — promoting to Primary");
         transition_role(state, offering_id, fqn, OfferingRole::Primary).await?;
     } else {
@@ -532,7 +532,7 @@ async fn transition_role(
     }
 
     // Transition via gateway — syncs self_entry + chirps
-    let stone_id = state.stone_id.clone();
+    let stone_id = state.current.stone.id.clone();
     state.update_offering(offering_id, true, |o| {
         let orch = o
             .orchestration
@@ -560,7 +560,7 @@ async fn transition_role(
     state.event_bus.emit(OfferingEvent::role_changed(
         offering_id,
         fqn,
-        &state.stone_id,
+        &state.current.stone.id,
         old_role,
         new_role,
     ));
@@ -595,11 +595,11 @@ async fn update_primary_stone_id(
 /// Scans the topology cache for online stones with a matching service entry
 /// whose role is "primary". Returns the stone_id of the first match.
 async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
-    let cache = state.topology_cache.read().await;
+    let cache = state.current.topology.cache.read().await;
 
     for (stone_id, entry) in cache.iter() {
         // Skip self
-        if stone_id == &state.stone_id {
+        if stone_id == &state.current.stone.id {
             continue;
         }
         // Only consider online stones
@@ -678,7 +678,7 @@ pub async fn assign_initial_role(state: &AppState, offering_id: &str, fqn: &str)
 
     // Resolve primary_id before taking the write lock
     let primary_id = if new_role == OfferingRole::Primary {
-        Some(state.stone_id.clone())
+        Some(state.current.stone.id.clone())
     } else {
         find_remote_primary(state, fqn).await
     };

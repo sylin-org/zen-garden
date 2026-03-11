@@ -43,7 +43,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
             // Also get initial storage metrics
             let storage = get_storage_metrics().unwrap_or_else(|_| Vec::new());
 
-            let mut cache = state.system_resources.write().await;
+            let mut cache = state.current.system_resources.write().await;
             *cache = Some(garden_common::StoneResources {
                 cpu: cpu.clone(),
                 memory: memory.clone(),
@@ -74,7 +74,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
     // A candidate is any unmanaged, removable, online volume.
     {
         let count = {
-            let map = state.storage.volumes.read().await;
+            let map = state.current.storage.volumes.read().await;
             map.values()
                 .filter(|v| !v.is_managed() && v.removable && v.online)
                 .count()
@@ -100,7 +100,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 match result {
                     Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                         let count = {
-                            let map = state.storage.volumes.read().await;
+                            let map = state.current.storage.volumes.read().await;
                             map.values()
                                 .filter(|v| !v.is_managed() && v.removable && v.online)
                                 .count()
@@ -121,7 +121,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update CPU, memory, uptime (fast - in-memory kernel data)
                 match get_fast_metrics() {
                     Ok((cpu, memory, uptime_seconds, uptime_friendly)) => {
-                        let mut cache = state.system_resources.write().await;
+                        let mut cache = state.current.system_resources.write().await;
                         if let Some(ref mut resources) = *cache {
                             resources.cpu = cpu;
                             resources.memory = memory;
@@ -164,7 +164,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update storage metrics (slow - involves statvfs syscalls)
                 match get_storage_metrics() {
                     Ok(storage) => {
-                        let mut cache = state.system_resources.write().await;
+                        let mut cache = state.current.system_resources.write().await;
                         if let Some(ref mut resources) = *cache {
                             resources.storage = storage;
                             let disk_count = resources.storage.len();
@@ -181,7 +181,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
 
                 // STORAGE-0011: Refresh volume disk usage via platform adapter
                 {
-                    let mut map = state.storage.volumes.write().await;
+                    let mut map = state.current.storage.volumes.write().await;
                     for vol in map.values_mut() {
                         let path_str = vol.mount_path.to_string_lossy();
                         if let Some(usage) = crate::infra::storage::platform::disk_usage(&path_str) {
@@ -194,7 +194,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // STORAGE-0011: Refresh candidates notification from Volumes
                 {
                     let count = {
-                        let map = state.storage.volumes.read().await;
+                        let map = state.current.storage.volumes.read().await;
                         map.values()
                             .filter(|v| !v.is_managed() && v.removable && v.online)
                             .count()

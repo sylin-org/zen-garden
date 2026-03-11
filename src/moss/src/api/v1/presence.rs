@@ -146,7 +146,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // Get real metrics from system monitor (fallback to zeros if not yet collected)
     let (cpu_percent, memory_percent, disk_percent) = {
-        let resources = state.system_resources.read().await;
+        let resources = state.current.system_resources.read().await;
         if let Some(ref res) = *resources {
             // Use primary mount point (root or largest disk) for summary disk %
             let primary_disk_percent = res
@@ -185,7 +185,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: Capability flags
     let has_gpu = {
-        let caps = state.capabilities.read().await;
+        let caps = state.current.capabilities.read().await;
         caps.as_ref()
             .map(|c| !c.hardware.gpus.is_empty())
             .unwrap_or(false)
@@ -199,7 +199,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: Seed bank summary (only if one is plugged in)
     let seed_bank = {
-        let map = state.storage.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values().find_map(|v| {
             let mgmt = v.management.as_ref()?;
             Some(StorageSummary {
@@ -220,7 +220,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     PresenceSnapshot {
         stone: StoneState {
-            name: state.stone_name.clone(),
+            name: state.current.stone.name.clone(),
             health,
             cpu_percent,
             memory_percent,

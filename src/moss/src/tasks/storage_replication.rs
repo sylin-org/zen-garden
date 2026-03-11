@@ -122,7 +122,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
 /// Run one replication cycle for all local Dormant seed banks.
 async fn replication_tick(state: &AppState) -> Result<()> {
     // Collect Dormant volumes from unified collection
-    let map = state.storage.volumes.read().await;
+    let map = state.current.storage.volumes.read().await;
     let dormant_banks: Vec<(String, String, std::path::PathBuf)> = map
         .values()
         .filter_map(|vol| {
@@ -174,7 +174,7 @@ async fn sync_dormant_bank(
     // 1. Resolve the Primary stone + endpoint from registry
     let (_primary_stone_id, primary_endpoint, _primary_bank_id) = {
         let reg = state.tool.registry.read().await;
-        match reg.route_to_primary(name, &state.stone_id) {
+        match reg.route_to_primary(name, &state.current.stone.id) {
             Some(route) => route,
             None => {
                 debug!(name = %name, "No remote Primary found for seed bank — skipping sync");
@@ -189,7 +189,7 @@ async fn sync_dormant_bank(
     // 3. Read local last_cursor
     // STORAGE-0011: prefer store from Volume management if available
     let lifecycle_store = {
-        let map = state.storage.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find_map(|vol| {
                 let mgmt = vol.management.as_ref()?;

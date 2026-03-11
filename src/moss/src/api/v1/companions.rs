@@ -153,7 +153,7 @@ async fn execute_companion_command_local(
         tracing::info!(companion_id = %companion_id, "Companion not running, auto-starting before command execution");
 
         // Get moss endpoint for Companion to connect to
-        let self_entry = state.self_entry.read().await;
+        let self_entry = state.current.topology.self_entry.read().await;
         let moss_endpoint = self_entry.address.http_base();
         drop(self_entry);
 
@@ -274,12 +274,12 @@ async fn broadcast_to_topology(
 
     // Get our own stone_id to exclude from broadcast
     let self_id = {
-        let self_entry = state.self_entry.read().await;
+        let self_entry = state.current.topology.self_entry.read().await;
         self_entry.stone_id.clone()
     };
 
     // Get all online stones except self
-    let stones = topology::get_online_stones(&state.topology_cache).await;
+    let stones = topology::get_online_stones(&state.current.topology.cache).await;
     let other_stones: Vec<_> = stones
         .into_iter()
         .filter(|s| s.stone_id != self_id)
@@ -364,7 +364,7 @@ pub async fn start_companion(
     Path(companion_id): Path<String>,
 ) -> Result<Json<ApiResponse<CompanionLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Build this Moss's endpoint for the Companion to connect to
-    let self_entry = state.self_entry.read().await;
+    let self_entry = state.current.topology.self_entry.read().await;
     let moss_endpoint = self_entry.address.http_base();
     drop(self_entry);
 

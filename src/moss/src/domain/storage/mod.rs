@@ -44,7 +44,7 @@ use crate::infra::storage::ContentStore;
 /// and the domain event channel. Coordination primitives (tick, nudge, rescan,
 /// nurturing, nourishment) live in `state.orchestration.*`.
 ///
-/// Field path: `state.storage.*`
+/// Field path: `state.current.storage.*`
 #[derive(Clone)]
 pub struct Storage {
     /// Unified volume collection — keyed by device path.

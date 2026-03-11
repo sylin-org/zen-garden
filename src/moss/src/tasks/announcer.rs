@@ -61,7 +61,7 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
             state.sync_self_services(false).await;
 
             // Read current self topology entry
-            let entry = state.self_entry.read().await.clone();
+            let entry = state.current.topology.self_entry.read().await.clone();
 
             // Always chirp — peers rely on periodic chirps as heartbeats
             // to maintain online status in the topology cache.
@@ -75,13 +75,13 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
             if tick_count % 2 == 0 {
                 let snapshot_deltas = {
                     let reg = state.tool.registry.read().await;
-                    reg.local_snapshot_for_beacon(&state.stone_id)
+                    reg.local_snapshot_for_beacon(&state.current.stone.id)
                 };
-                let endpoint = state.self_entry.read().await.address.http_base();
+                let endpoint = state.current.topology.self_entry.read().await.address.http_base();
                 if !endpoint.trim().is_empty() {
                     if let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
-                        &state.stone_id,
-                        &state.stone_name,
+                        &state.current.stone.id,
+                        &state.current.stone.name,
                         &endpoint,
                         snapshot_deltas,
                     )

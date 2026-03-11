@@ -276,7 +276,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         // Check for containers not in offerings (external changes)
         // This provides self-heal: if someone manually starts a zen-offering container,
         // moss will adopt it into the offerings registry
-        let cached_caps = state.capabilities.read().await.clone();
+        let cached_caps = state.current.capabilities.read().await.clone();
         let cached_caps_ref = cached_caps.as_ref();
         match state.platform.docker.list_zen_containers().await {
             Ok(container_names) => {
@@ -293,7 +293,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                             &state.platform.docker,
                             &state.manifest_registry,
                             container_name,
-                            &state.stone_name,
+                            &state.current.stone.name,
                             cached_caps_ref,
                         )
                         .await

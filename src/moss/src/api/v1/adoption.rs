@@ -185,7 +185,7 @@ pub async fn adopt_offering_v1(
 
     let connectivity = ConnectivityOrchestrator::new(state.platform.docker.clone());
     let connectivity_outcome = connectivity
-        .ensure_connectivity(offering_def, Some(&location), &state.stone_name)
+        .ensure_connectivity(offering_def, Some(&location), &state.current.stone.name)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!(

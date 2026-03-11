@@ -235,7 +235,7 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
     };
 
     // Snapshot cached capabilities once for all adoptions (avoids N subprocess calls)
-    let cached_caps = state.capabilities.read().await.clone();
+    let cached_caps = state.current.capabilities.read().await.clone();
     let cached_caps_ref = cached_caps.as_ref();
 
     let mut adopted = Vec::new();
@@ -255,7 +255,7 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
             &state.platform.docker,
             &state.manifest_registry,
             &offering,
-            &state.stone_name,
+            &state.current.stone.name,
             cached_caps_ref,
         )
         .await

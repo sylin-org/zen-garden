@@ -26,7 +26,7 @@ pub async fn get_capabilities(
     State(state): State<AppState>,
 ) -> Json<ApiResponse<HardwareCapabilities>> {
     // Read from cache - capabilities are detected in background at startup
-    let caps_guard = state.capabilities.read().await;
+    let caps_guard = state.current.capabilities.read().await;
 
     if let Some(caps) = caps_guard.as_ref() {
         Json(ApiResponse {
@@ -36,7 +36,7 @@ pub async fn get_capabilities(
     } else {
         // Should never happen - skeleton is created immediately at startup
         // But handle gracefully with skeleton data
-        let skeleton = crate::infra::hardware::create_skeleton(state.stone_name().to_string());
+        let skeleton = crate::infra::hardware::create_skeleton(state.current.stone.name.to_string());
         Json(ApiResponse {
             data: skeleton,
             suggestions: None,

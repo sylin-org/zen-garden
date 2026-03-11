@@ -11,7 +11,7 @@ pub async fn get_api_manifest_v1(
     State(state): State<AppState>,
 ) -> Result<Json<ApiManifest>, StatusCode> {
     // Build base URL from stone name and API port
-    let base_url = format!("http://{}:{}", state.stone_name(), state.api_port);
+    let base_url = format!("http://{}:{}", state.current.stone.name, state.current.api_port);
 
     // Generate manifest from registry
     let manifest = build_manifest(&base_url);

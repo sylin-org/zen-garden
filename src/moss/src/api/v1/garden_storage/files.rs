@@ -151,7 +151,7 @@ pub async fn get_file_v1(
     }
 
     if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.storage.volumes).await {
+        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
             if local.role != StorageRole::Primary {
                 return error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -162,7 +162,7 @@ pub async fn get_file_v1(
         }
     }
 
-    let route = match StorageRoute::for_read(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(
@@ -244,7 +244,7 @@ pub async fn put_file_v1(
     }
 
     if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.storage.volumes).await {
+        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
             if local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -255,7 +255,7 @@ pub async fn put_file_v1(
         }
     }
 
-    let route = StorageRoute::for_write(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id)
+    let route = StorageRoute::for_write(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id)
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
@@ -340,7 +340,7 @@ pub async fn delete_file_v1(
     }
 
     if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.storage.volumes).await {
+        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
             if local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -351,7 +351,7 @@ pub async fn delete_file_v1(
         }
     }
 
-    let route = StorageRoute::for_write(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id)
+    let route = StorageRoute::for_write(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id)
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
@@ -422,7 +422,7 @@ pub async fn head_file_v1(
     }
 
     if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.storage.volumes).await {
+        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
             if local.role != StorageRole::Primary {
                 return error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -433,7 +433,7 @@ pub async fn head_file_v1(
         }
     }
 
-    let route = match StorageRoute::for_read(&name, &state.storage.volumes, &state.tool.registry, &state.stone_id).await {
+    let route = match StorageRoute::for_read(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(

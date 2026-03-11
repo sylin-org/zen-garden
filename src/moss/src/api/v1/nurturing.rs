@@ -188,7 +188,7 @@ pub async fn create_snapshot(
             &state.platform.docker,
             &offering_id,
             &offering_name,
-            &state.stone_id,
+            &state.current.stone.id,
             commit_image,
         )
         .await
@@ -395,7 +395,7 @@ pub async fn replicate_to_seed_bank(
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.storage.volumes, &request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.current.storage.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -417,8 +417,8 @@ pub async fn replicate_to_seed_bank(
     let hydration_manifest = build_memories_manifest(
         &offering_entry,
         manifest,
-        &state.stone_id,
-        &state.stone_name,
+        &state.current.stone.id,
+        &state.current.stone.name,
     );
 
     let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
@@ -430,7 +430,7 @@ pub async fn replicate_to_seed_bank(
             &store,
             &seed_bank.id,
             &seed_bank.name,
-            &state.stone_id,
+            &state.current.stone.id,
             Some(hydration_manifest),
         )
         .await
@@ -458,7 +458,7 @@ pub async fn list_remote_snapshots(
     Path(storage_name): Path<String>,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.storage.volumes, &storage_name).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.current.storage.volumes, &storage_name).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -518,7 +518,7 @@ pub async fn restore_from_seed_bank(
     };
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.storage.volumes, &request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.current.storage.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",

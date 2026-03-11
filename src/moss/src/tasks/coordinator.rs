@@ -92,7 +92,7 @@ pub fn start_registry_maintenance(
             }
             let reaped = {
                 let mut reg = state.fqn_handler.registry.write().await;
-                reg.reap_expired(&state.stone_id)
+                reg.reap_expired(&state.current.stone.id)
             };
             if !reaped.is_empty() {
                 tracing::debug!(
@@ -764,7 +764,7 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
             }
 
             // Auto-mount any unmounted managed devices (replaces legacy auto_mount_seed_banks)
-            let connected = crate::domain::storage::auto_mount_unmounted(&state.storage.volumes).await;
+            let connected = crate::domain::storage::auto_mount_unmounted(&state.current.storage.volumes).await;
             if !connected.is_empty() {
                 for event in connected {
                     state.emit_storage_changed(event).await;
@@ -775,7 +775,7 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
             }
 
             // Health tick all volumes (~10s)
-            crate::domain::storage::health_tick_all(&state.storage.volumes).await;
+            crate::domain::storage::health_tick_all(&state.current.storage.volumes).await;
 
             // Periodic beacon heartbeat (tools projection + beacon)
             state.refresh_local_tools_projection().await;
@@ -832,9 +832,9 @@ pub async fn start_all_background_tasks(
 
     // Start topology maintenance (mark stale offline, evict old, persist if dirty)
     start_topology_maintenance(
-        state.topology_cache.clone(),
-        state.topology_dirty.clone(),
-        state.self_entry.clone(),
+        state.current.topology.cache.clone(),
+        state.current.topology.dirty.clone(),
+        state.current.topology.self_entry.clone(),
         token.child_token(),
     );
 
@@ -846,19 +846,19 @@ pub async fn start_all_background_tasks(
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(
-        state.stone_id.clone(),
+        state.current.stone.id.clone(),
         stone_name.to_string(),
         api_endpoint.to_string(),
-        state.topology_cache.clone(),
-        state.topology_dirty.clone(),
+        state.current.topology.cache.clone(),
+        state.current.topology.dirty.clone(),
         state.tool.delta.clone(),
         state.tool.registry.clone(),
-        state.self_entry.clone(),
+        state.current.topology.self_entry.clone(),
         console.clone(),
         state.platform.handlers.clone(),
         state.manifest_registry.clone(),
         state.orchestration.storage.nudge.clone(),
-        state.storage.volumes.clone(),
+        state.current.storage.volumes.clone(),
         token.child_token(),
     )
     .await;

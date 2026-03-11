@@ -45,7 +45,7 @@ pub async fn check_stone(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     // Get hardware capabilities for constraint checking
-    let caps_guard = state.capabilities.read().await;
+    let caps_guard = state.current.capabilities.read().await;
     let capabilities = caps_guard.as_ref().ok_or_else(|| {
         crate::infra::error_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -98,7 +98,7 @@ pub async fn check_stone(
     }
 
     let response = NourishmentCheckResponse {
-        stone_name: state.stone_name.clone(),
+        stone_name: state.current.stone.name.clone(),
         updates: Updates { available, blocked },
     };
 
@@ -122,7 +122,7 @@ pub async fn check_garden(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     // Get topology from this stone's cache
-    let entries = crate::domain::topology::get_all_stones(&state.topology_cache).await;
+    let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
 
     // Query all stones in parallel
     let tasks: Vec<_> = entries
@@ -208,7 +208,7 @@ pub async fn execute_garden(
     use garden_common::utils::ids::generate_guidv7;
 
     // Step 1: Query all stones for their pending updates
-    let entries = crate::domain::topology::get_all_stones(&state.topology_cache).await;
+    let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -380,7 +380,7 @@ pub async fn execute_stone(
     use garden_common::utils::ids::generate_guidv7;
 
     // Get this stone's pending updates
-    let caps_guard = state.capabilities.read().await;
+    let caps_guard = state.current.capabilities.read().await;
     let capabilities = caps_guard.as_ref().ok_or_else(|| {
         crate::infra::error_response(
             StatusCode::SERVICE_UNAVAILABLE,

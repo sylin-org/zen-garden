@@ -6,6 +6,9 @@
 
 ## 🎯 Before Writing Code
 
+**Read code standards**: [../docs/code-standards.md](../docs/code-standards.md)
+- Naming, namespacing, type system usage, channel conventions, DDD patterns
+
 **Check existing utilities**: [reference/utilities.md](reference/utilities.md)
 - Formatting, paths, timeouts, limits, shared types
 
@@ -166,6 +169,7 @@ Keep entries concise (3-5 lines). Link to ADRs and specs for details.
 
 ## Always Do
 
+- Read `docs/code-standards.md` before writing any Rust
 - Check ARCHITECTURE-REFERENCE.md first
 - Use shared types from `garden_common`
 - Propagate errors with `.context()`

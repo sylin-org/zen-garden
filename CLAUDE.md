@@ -18,3 +18,4 @@ This file contains tool-agnostic rules shared across all AI assistants.
 
 - Utilities & constants: @.agentic/reference/utilities.md
 - API endpoints: @.agentic/reference/api-endpoints.md
+- Code standards: @docs/code-standards.md

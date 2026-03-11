@@ -87,7 +87,7 @@ pub struct StorageService<'a> {
     volumes: &'a Volumes,
     registry: &'a GardenRegistry,
     stone_id: &'a str,
-    tick_tx: Option<&'a broadcast::Sender<StorageTick>>,
+    tick: Option<&'a broadcast::Sender<StorageTick>>,
 }
 
 impl<'a> StorageService<'a> {
@@ -96,13 +96,13 @@ impl<'a> StorageService<'a> {
         volumes: &'a Volumes,
         registry: &'a GardenRegistry,
         stone_id: &'a str,
-        tick_tx: Option<&'a broadcast::Sender<StorageTick>>,
+        tick: Option<&'a broadcast::Sender<StorageTick>>,
     ) -> Self {
         Self {
             volumes,
             registry,
             stone_id,
-            tick_tx,
+            tick,
         }
     }
 
@@ -197,7 +197,7 @@ impl<'a> StorageService<'a> {
     /// The notification channel feeds the SSE doorbell and replication task.
     pub fn notifying_content_store(&self, local: &LocalStorage) -> ContentStore {
         let store = ContentStore::new(local.mount_path.clone(), None);
-        if let Some(tx) = self.tick_tx {
+        if let Some(tx) = self.tick {
             store.with_notifications(local.name.clone(), local.replica_set_id.clone(), tx.clone())
         } else {
             store

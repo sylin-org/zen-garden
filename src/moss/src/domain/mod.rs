@@ -78,7 +78,7 @@ pub use service_discovery::{
     find_local_services, find_services, get_offering_port, list_all_local_services, FoundService,
     ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,
 };
-pub use service_manager::ServiceManager;
+pub use service_manager::ServiceLifecycle;
 // Re-export TopologyEntry from common (now shared type)
 pub use capabilities::{CapabilityExecutor, CapabilityMutationResult, ExecutorContext};
 pub use ceremony::{

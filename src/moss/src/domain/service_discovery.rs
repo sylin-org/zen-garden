@@ -660,14 +660,14 @@ async fn find_remote_services(
         .into_iter()
         .map(|stone| {
             let criteria = criteria.clone();
-            let state_clone = state.clone();
+            let state = state.clone();
             tokio::spawn(async move {
                 fetch_remote_services(
                     &stone.address.http_base(),
                     &criteria,
                     &stone,
                     timeout,
-                    &state_clone,
+                    &state,
                 )
                 .await
             })

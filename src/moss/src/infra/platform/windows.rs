@@ -10,6 +10,12 @@ impl WindowsRuntime {
     }
 }
 
+impl Default for WindowsRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlatformRuntime for WindowsRuntime {
     fn write_line(&self, text: &str) {
         println!("{}", text);

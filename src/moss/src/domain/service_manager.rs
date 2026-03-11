@@ -12,23 +12,23 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// Service manager handles service lifecycle
-pub struct ServiceManager {
+pub struct ServiceLifecycle {
     container_runtime: Arc<ContainerRuntime>,
     event_bus: Arc<EventBus>,
-    stone_name: String,
+    stone: String,
 }
 
-impl ServiceManager {
+impl ServiceLifecycle {
     /// Create a new service manager
     pub fn new(
         container_runtime: Arc<ContainerRuntime>,
         event_bus: Arc<EventBus>,
-        stone_name: String,
+        stone: String,
     ) -> Self {
         Self {
             container_runtime,
             event_bus,
-            stone_name,
+            stone,
         }
     }
 
@@ -38,7 +38,7 @@ impl ServiceManager {
         let _ = self
             .event_bus
             .publish(DomainEvent::Service(ServiceEvent::Started {
-                stone_name: self.stone_name.clone(),
+                stone_name: self.stone.clone(),
                 service_name: service_name.to_string(),
                 timestamp: Utc::now(),
             }))
@@ -55,7 +55,7 @@ impl ServiceManager {
         let _ = self
             .event_bus
             .publish(DomainEvent::Service(ServiceEvent::Stopped {
-                stone_name: self.stone_name.clone(),
+                stone_name: self.stone.clone(),
                 service_name: service_name.to_string(),
                 timestamp: Utc::now(),
             }))
@@ -72,7 +72,7 @@ impl ServiceManager {
         let _ = self
             .event_bus
             .publish(DomainEvent::Service(ServiceEvent::Removed {
-                stone_name: self.stone_name.clone(),
+                stone_name: self.stone.clone(),
                 service_name: service_name.to_string(),
                 timestamp: Utc::now(),
             }))
@@ -96,11 +96,11 @@ impl ServiceManager {
 ///
 /// Handles long-running service installation as background job
 pub struct InstallServiceExecutor {
-    _service_manager: Arc<ServiceManager>,
+    _service_manager: Arc<ServiceLifecycle>,
 }
 
 impl InstallServiceExecutor {
-    pub fn new(service_manager: Arc<ServiceManager>) -> Self {
+    pub fn new(service_manager: Arc<ServiceLifecycle>) -> Self {
         Self {
             _service_manager: service_manager,
         }

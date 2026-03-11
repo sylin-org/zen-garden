@@ -72,7 +72,7 @@ impl super::election_service::StateProvider for PlaceholderStateProvider {
 
 /// Fitness provider that computes scores from live AppState.
 ///
-/// Injected into `ElectionService` after bootstrap so the election protocol
+/// Injected into `Elections` after bootstrap so the election protocol
 /// can ask "how fit is this stone for offering X?" without knowing the answer
 /// algorithm. SoC between election protocol (infra) and fitness scoring (domain).
 ///

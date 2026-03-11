@@ -13,14 +13,14 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
 use crate::infra::{
     stone_client::StoneClient, CeremonyJournal, EventBus, HarvestStore, ManifestRegistry,
     NurturingStore, PulseEvent,
 };
 use crate::mdns::MdnsHandle;
-use crate::tasks::NetworkMonitor;
+use crate::tasks::Network;
 use garden_common::console::ConsolePrinter;
 use garden_common::PlatformRuntime;
 use garden_common::tools::ToolDelta;
@@ -89,7 +89,7 @@ pub struct AppState {
     pub manifest_registry: Arc<ManifestRegistry>,
 
     /// Docker daemon manager
-    pub docker: Arc<DockerManager>,
+    pub docker: Arc<Docker>,
 
     /// Background job tracker
     pub jobs: Arc<RwLock<HashMap<String, Job>>>,
@@ -124,7 +124,7 @@ pub struct AppState {
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
 
     /// Network monitor for IP change detection
-    pub network_monitor: Arc<NetworkMonitor>,
+    pub network: Arc<Network>,
 
     /// API port for constructing endpoint URLs
     pub api_port: u16,
@@ -194,7 +194,7 @@ pub struct AppState {
     pub nourishment_jobs: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,
 
     /// Election service for distributed elections (testing)
-    pub election_service: Arc<crate::tasks::election_service::ElectionService>,
+    pub elections: Arc<crate::tasks::election_service::Elections>,
 
     /// System metrics cache (CPU/memory/disk usage, updated every 5s)
     pub system_resources: Arc<RwLock<Option<StoneResources>>>,
@@ -301,7 +301,7 @@ pub struct SubSystems {
 #[derive(Clone)]
 pub struct NetworkSubSystem {
     /// True when a valid LAN IP is detected (not loopback).
-    /// Set by NetworkMonitor, read by Announcer/mDNS.
+    /// Set by Network, read by Announcer/mDNS.
     /// Use `ready.load(Ordering::Relaxed)` to check.
     pub ready: Arc<AtomicBool>,
 }

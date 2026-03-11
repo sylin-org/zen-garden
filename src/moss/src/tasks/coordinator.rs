@@ -16,7 +16,7 @@ use crate::domain::topology::{
     mark_stone_offline_dirty, upsert_from_chirp_dirty, TopologyCache, TopologyDirtyFlag,
 };
 use crate::tasks::backfill_missing_guidance;
-use crate::tasks::network_monitor::{NetworkEvent, NetworkMonitor};
+use crate::tasks::network_monitor::{NetworkEvent, Network};
 use crate::tasks::task_scheduler::{backfill_missing_tasks, start_task_scheduler};
 use crate::{
     adopt_existing_containers, auto_adoption_task, detect_capabilities_background,
@@ -601,7 +601,7 @@ pub async fn start_lantern_registration(
     api_endpoint: &str,
     port: u16,
     use_static_host: bool,
-    network_monitor: &NetworkMonitor,
+    network: &Network,
     console: Option<&ConsolePrinter>,
     token: CancellationToken,
 ) {
@@ -650,7 +650,7 @@ pub async fn start_lantern_registration(
         let change_stone_name = stone_name.to_string();
         let change_lantern = lantern_endpoint.clone();
         let change_port = port;
-        let mut network_rx = network_monitor.subscribe();
+        let mut network_rx = network.subscribe();
 
         tokio::spawn(async move {
             while let Ok(event) = network_rx.recv().await {

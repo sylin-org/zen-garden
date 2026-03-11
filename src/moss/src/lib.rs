@@ -68,8 +68,8 @@ pub use tasks::{
     DockerMonitor,
     DockerMonitorConfig,
     NetworkEvent,
-    NetworkMonitor,
-    NetworkMonitorConfig,
+    Network,
+    NetworkConfig,
 };
 
 // Re-export bootstrap utilities

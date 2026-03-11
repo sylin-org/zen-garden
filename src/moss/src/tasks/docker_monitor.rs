@@ -10,7 +10,7 @@
 //! - Broadcasts DockerEvent when state changes
 //! - Updates subsystems.docker.ready flag
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -72,7 +72,7 @@ impl DockerMonitorConfig {
 #[derive(Clone)]
 pub struct DockerMonitor {
     /// Docker manager reference (stored for potential future methods)
-    _docker: Arc<DockerManager>,
+    _docker: Arc<Docker>,
     tx: broadcast::Sender<DockerEvent>,
     /// Subsystem readiness flag (set when Docker daemon is healthy)
     /// Stored for `is_ready()` method; actual updates happen in spawned task.
@@ -81,13 +81,13 @@ pub struct DockerMonitor {
 
 impl DockerMonitor {
     /// Start background Docker monitoring with default config
-    pub async fn start(docker: Arc<DockerManager>, docker_ready: Arc<AtomicBool>) -> Self {
+    pub async fn start(docker: Arc<Docker>, docker_ready: Arc<AtomicBool>) -> Self {
         Self::start_with_config(docker, DockerMonitorConfig::default(), docker_ready).await
     }
 
     /// Start background Docker monitoring with custom config
     pub async fn start_with_config(
-        docker: Arc<DockerManager>,
+        docker: Arc<Docker>,
         config: DockerMonitorConfig,
         docker_ready: Arc<AtomicBool>,
     ) -> Self {
@@ -136,7 +136,7 @@ impl DockerMonitor {
 
 /// Background task that monitors Docker daemon health
 async fn docker_monitor_task(
-    docker: Arc<DockerManager>,
+    docker: Arc<Docker>,
     tx: broadcast::Sender<DockerEvent>,
     config: DockerMonitorConfig,
     docker_ready: Arc<AtomicBool>,

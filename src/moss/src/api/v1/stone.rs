@@ -66,7 +66,7 @@ pub async fn get_stone_info_v1(
     let offerings = state.get_offerings().await;
 
     // Build endpoint
-    let current_ip = state.network_monitor.get_ip().await;
+    let current_ip = state.network.get_ip().await;
     let endpoint = format!("http://{}:{}", current_ip, state.api_port);
 
     let response = StoneInfoResponse {

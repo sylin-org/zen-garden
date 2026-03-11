@@ -6,7 +6,7 @@
 //! - Image pattern matching (regex)
 //! - Running state verification
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use anyhow::{Context, Result};
 use garden_common::detection::DetectionResult;
 use garden_common::manifests::ContainerInspectDetection;
@@ -23,7 +23,7 @@ use regex::Regex;
 /// let detected = detect_by_container_inspect(&docker, &config).await?;
 /// ```
 pub async fn detect_by_container_inspect(
-    docker: &DockerManager,
+    docker: &Docker,
     config: &ContainerInspectDetection,
 ) -> Result<DetectionResult> {
     tracing::debug!(

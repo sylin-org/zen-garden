@@ -45,14 +45,14 @@ pub enum NetworkEvent {
 
 /// Configuration for the network monitor
 #[derive(Debug, Clone)]
-pub struct NetworkMonitorConfig {
+pub struct NetworkConfig {
     /// Retry interval when disconnected (seconds)
     pub disconnect_retry_secs: u64,
     /// Poll interval when connected (seconds)
     pub connected_poll_secs: u64,
 }
 
-impl Default for NetworkMonitorConfig {
+impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             disconnect_retry_secs: DEFAULT_DISCONNECT_RETRY_SECS,
@@ -61,7 +61,7 @@ impl Default for NetworkMonitorConfig {
     }
 }
 
-impl NetworkMonitorConfig {
+impl NetworkConfig {
     /// Create config with custom disconnect retry interval
     pub fn with_disconnect_retry(mut self, secs: u64) -> Self {
         self.disconnect_retry_secs = secs;
@@ -77,7 +77,7 @@ impl NetworkMonitorConfig {
 
 /// Network monitor that tracks current IP and broadcasts changes
 #[derive(Clone)]
-pub struct NetworkMonitor {
+pub struct Network {
     current_ip: Arc<RwLock<String>>,
     tx: broadcast::Sender<NetworkEvent>,
     /// Subsystem readiness flag (set when valid LAN IP detected)
@@ -85,15 +85,15 @@ pub struct NetworkMonitor {
     _network_ready: Arc<AtomicBool>,
 }
 
-impl NetworkMonitor {
+impl Network {
     /// Start background network monitoring with default config
     pub async fn start(network_ready: Arc<AtomicBool>) -> Self {
-        Self::start_with_config(NetworkMonitorConfig::default(), network_ready).await
+        Self::start_with_config(NetworkConfig::default(), network_ready).await
     }
 
     /// Start background network monitoring with custom config
     pub async fn start_with_config(
-        config: NetworkMonitorConfig,
+        config: NetworkConfig,
         network_ready: Arc<AtomicBool>,
     ) -> Self {
         let initial_ip = get_current_ip();
@@ -115,14 +115,14 @@ impl NetworkMonitor {
             tracing::warn!(
                 ip = %initial_ip,
                 retry_secs = config.disconnect_retry_secs,
-                "NetworkMonitor started in disconnected state, will retry"
+                "Network started in disconnected state, will retry"
             );
         } else {
             tracing::info!(
                 ip = %initial_ip,
                 poll_secs = config.connected_poll_secs,
                 network_ready = true,
-                "NetworkMonitor started with valid LAN IP"
+                "Network started with valid LAN IP"
             );
         }
 
@@ -204,7 +204,7 @@ fn get_current_ip() -> String {
 async fn network_monitor_task(
     current_ip: Arc<RwLock<String>>,
     tx: broadcast::Sender<NetworkEvent>,
-    config: NetworkMonitorConfig,
+    config: NetworkConfig,
     network_ready: Arc<AtomicBool>,
 ) {
     let mut was_disconnected = is_disconnected(&current_ip.read().await);
@@ -314,14 +314,14 @@ mod tests {
 
     #[test]
     fn test_config_defaults() {
-        let config = NetworkMonitorConfig::default();
+        let config = NetworkConfig::default();
         assert_eq!(config.disconnect_retry_secs, DEFAULT_DISCONNECT_RETRY_SECS);
         assert_eq!(config.connected_poll_secs, DEFAULT_CONNECTED_POLL_SECS);
     }
 
     #[test]
     fn test_config_builder() {
-        let config = NetworkMonitorConfig::default()
+        let config = NetworkConfig::default()
             .with_disconnect_retry(10)
             .with_connected_poll(60);
         assert_eq!(config.disconnect_retry_secs, 10);

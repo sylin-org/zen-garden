@@ -52,7 +52,7 @@ pub use job_executors::{
     install_batch_task, install_image_direct_task, install_service_task, refresh_capabilities_task,
 };
 pub use metrics_collector::run_metrics_collector;
-pub use network_monitor::{NetworkEvent, NetworkMonitor, NetworkMonitorConfig};
+pub use network_monitor::{NetworkEvent, Network, NetworkConfig};
 pub use nurturing_scheduler::{
     trigger_all_nurturing, trigger_nurturing, NurturingScheduler, NurturingWorkflowConfig,
     NurturingWorkflowResult, ReplicationAttempt, RoutingStrategy,

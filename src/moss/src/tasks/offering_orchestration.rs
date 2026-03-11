@@ -230,7 +230,7 @@ async fn pin_recovery(state: &AppState) {
 
         let election_id = generate_guidv7();
         if let Err(e) = state
-            .election_service
+            .elections
             .start_election(
                 election_id,
                 ElectionType::OfferingPrimary(fqn.clone()),
@@ -418,7 +418,7 @@ async fn dispatch_dormant(
 
             let election_id = generate_guidv7();
             match state
-                .election_service
+                .elections
                 .start_election(
                     election_id,
                     ElectionType::OfferingPrimary(fqn.to_string()),
@@ -451,7 +451,7 @@ async fn dispatch_dormant(
 
         let election_id = generate_guidv7();
         match state
-            .election_service
+            .elections
             .start_election(
                 election_id,
                 ElectionType::OfferingPrimary(fqn.to_string()),
@@ -730,5 +730,5 @@ mod tests {
     // Note: Full state-machine tests require AppState mocking which is
     // covered by integration tests. Unit tests here validate constants
     // and pure logic. The resolve_fitness_election tests live in
-    // election_service.rs. Fitness scoring tests live in domain/fitness.rs.
+    // elections.rs. Fitness scoring tests live in domain/fitness.rs.
 }

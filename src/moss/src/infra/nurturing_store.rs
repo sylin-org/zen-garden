@@ -20,7 +20,7 @@
 //!     {harvest_id}.tar.gz                <- Compressed harvest archive
 //! ```
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use crate::domain::harvest::HarvestManifest;
 use crate::domain::nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
@@ -127,7 +127,7 @@ impl NurturingStore {
     /// * `commit_image` - Whether to commit the container image
     pub async fn create_snapshot(
         &self,
-        docker: &DockerManager,
+        docker: &Docker,
         offering_id: &str,
         offering_name: &str,
         stone_id: &str,
@@ -238,7 +238,7 @@ impl NurturingStore {
     /// * `slot` - Which slot to restore from (None = current/latest)
     pub async fn restore_snapshot(
         &self,
-        docker: &DockerManager,
+        docker: &Docker,
         offering_id: &str,
         slot: Option<NurturingSlot>,
     ) -> Result<HarvestManifest> {
@@ -466,7 +466,7 @@ impl NurturingStore {
     /// * `harvest_id` - Optional specific harvest (defaults to latest)
     pub async fn restore_from_seed_bank(
         &self,
-        docker: &DockerManager,
+        docker: &Docker,
         store: &ContentStore,
         seed_bank_id: &str,
         offering_id: &str,

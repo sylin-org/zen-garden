@@ -805,20 +805,20 @@ pub async fn install_service_task(
 
     // Update existing offering entry (created with Installing status before job started)
     // Change status from Installing to Running and clear job_id (via gateway)
-    let image_version_clone = image_version.clone();
-    let offering_protocol_clone = offering_protocol.clone();
-    let guidance_clone = guidance.clone();
-    let port_map_clone = port_map.clone();
+    let update_version = image_version.clone();
+    let update_protocol = offering_protocol.clone();
+    let update_guidance = guidance.clone();
+    let update_port_map = port_map.clone();
     let updated = state.update_offering_by_name(offering, false, |o| {
         o.status = OfferingStatus::Running;
         o.health = ServiceHealthStatus::Healthy;
-        o.version = image_version_clone;
+        o.version = update_version;
         o.location.port = actual_port;
-        o.location.protocol = offering_protocol_clone;
-        o.location.port_map = port_map_clone;
+        o.location.protocol = update_protocol;
+        o.location.port_map = update_port_map;
         if let Some(ref mut managed) = o.managed_data_mut() {
             managed.job_id = None;
-            managed.guidance = guidance_clone;
+            managed.guidance = update_guidance;
         }
         true
     }).await;

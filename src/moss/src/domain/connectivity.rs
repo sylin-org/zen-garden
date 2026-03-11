@@ -16,12 +16,12 @@ use regex::Regex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use crate::infra::detection::{detect_by_container_inspect, detect_by_http_probe, DetectionResult};
 
 /// Connectivity orchestration with caching and enforcement cooldowns
 pub struct ConnectivityOrchestrator {
-    docker: Arc<DockerManager>,
+    docker: Arc<Docker>,
     cache: Arc<DashMap<String, CachedCheck>>,
     last_enforced: Arc<DashMap<String, Instant>>,
     attempts: Arc<DashMap<String, EnforceState>>,
@@ -94,7 +94,7 @@ impl ConnectivityOutcome {
 }
 
 impl ConnectivityOrchestrator {
-    pub fn new(docker: Arc<DockerManager>) -> Self {
+    pub fn new(docker: Arc<Docker>) -> Self {
         Self {
             docker,
             cache: Arc::new(DashMap::new()),

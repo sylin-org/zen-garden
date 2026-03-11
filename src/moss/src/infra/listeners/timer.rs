@@ -594,10 +594,10 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let call_count = Arc::new(AtomicUsize::new(0));
-        let count_clone = call_count.clone();
+        let counter = call_count.clone();
 
         let callback: TimerCallback = Arc::new(move |_action| {
-            count_clone.fetch_add(1, Ordering::SeqCst);
+            counter.fetch_add(1, Ordering::SeqCst);
         });
 
         let listener = TimerListener::with_test_callback(callback);

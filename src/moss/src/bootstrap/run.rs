@@ -39,8 +39,8 @@ use crate::{
     JobStatus,
     NetworkEvent,
     // Network monitoring
-    NetworkMonitor,
-    NetworkMonitorConfig,
+    Network,
+    NetworkConfig,
     ServerConfig,
 };
 use garden_common::console;
@@ -258,13 +258,13 @@ pub async fn run(
     }
 
     // Phase 2: Network monitoring
-    // Create subsystems early so network_ready flag is available for NetworkMonitor
+    // Create subsystems early so network_ready flag is available for Network
     let subsystems = crate::app_state::SubSystems::default();
 
     // Runs in background, polls every 5s when disconnected, 30s when connected
-    // NetworkMonitor manages the subsystems.network.ready flag
-    let network_monitor = NetworkMonitor::start_with_config(
-        NetworkMonitorConfig::default()
+    // Network manages the subsystems.network.ready flag
+    let network = Network::start_with_config(
+        NetworkConfig::default()
             .with_disconnect_retry(5)
             .with_connected_poll(30),
         subsystems.network.ready.clone(),
@@ -285,7 +285,7 @@ pub async fn run(
             .parse()
             .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
     } else {
-        network_monitor
+        network
             .get_ip()
             .await
             .parse()
@@ -462,7 +462,7 @@ pub async fn run(
     // Phase 4.1: mDNS announcement — includes stone_id and MAC in TXT records
     // Must happen before IP change handler so we can pass the handle
     // Note: If current IP is loopback, registration is deferred until valid IP is available
-    let current_ip = network_monitor.get_ip().await;
+    let current_ip = network.get_ip().await;
     let (_, mac_for_mdns) = garden_common::infra::network::get_local_ip_and_mac();
     let mdns_handle: Option<Arc<mdns::MdnsHandle>> = match mdns::announce_moss(
         koi_handle.clone(),
@@ -505,7 +505,7 @@ pub async fn run(
         &api_endpoint,
         port,
         use_static_host.is_some(),
-        &network_monitor,
+        &network,
         Some(&console_printer),
         shutdown_token.child_token(),
     )
@@ -620,7 +620,7 @@ pub async fn run(
     // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
     // Note: No longer async - no socket binding (uses p2p transport)
     let election_service_placeholder =
-        Arc::new(crate::tasks::election_service::ElectionService::new(
+        Arc::new(crate::tasks::election_service::Elections::new(
             stone_id.clone(),
             stone_name.clone(),
             Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
@@ -641,7 +641,7 @@ pub async fn run(
         console: console_printer.clone(),
         runtime: runtime.clone(),
         capabilities: capabilities_arc.clone(),
-        network_monitor: Arc::new(network_monitor),
+        network: Arc::new(network),
         api_port: port,
         topology_cache: topology_cache.clone(),
         topology_dirty: topology_dirty.clone(),
@@ -662,7 +662,7 @@ pub async fn run(
         harvest_store,
         nurturing_store,
         nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),
-        election_service: election_service_placeholder,
+        elections: election_service_placeholder,
         system_resources: Arc::new(RwLock::new(None)),
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
         infrastructure_handlers: infrastructure_handlers.clone(),
@@ -674,7 +674,7 @@ pub async fn run(
         notifications: Arc::new(garden_common::NotificationRegistry::new()),
         // Log broadcast channel (for live SSE log streaming)
         log: log.clone(),
-        // Subsystem readiness (network_ready managed by NetworkMonitor)
+        // Subsystem readiness (network_ready managed by Network)
         subsystems: subsystems.clone(),
         // Storage replication tick channel — raw (STORAGE-0006 Phase 4)
         storage_tick: {
@@ -707,7 +707,7 @@ pub async fn run(
     // Phase 11.post: Update election service with proper state provider now that AppState exists
     // Note: No longer async - no socket binding (uses p2p transport)
     let state_for_election = Arc::new(state.clone());
-    let election_service_final = Arc::new(crate::tasks::election_service::ElectionService::new(
+    let election_service_final = Arc::new(crate::tasks::election_service::Elections::new(
         stone_id.clone(),
         stone_name.clone(),
         Box::new(crate::tasks::state_provider::MossStateProvider::new(
@@ -715,9 +715,9 @@ pub async fn run(
         )),
     ));
 
-    // Update the state's election_service
+    // Update the state's elections
     let state = AppState {
-        election_service: election_service_final.clone(),
+        elections: election_service_final.clone(),
         ..state
     };
 
@@ -727,7 +727,7 @@ pub async fn run(
     {
         let state_for_fitness = Arc::new(state.clone());
         state
-            .election_service
+            .elections
             .set_fitness_provider(Box::new(
                 crate::tasks::state_provider::MossFitnessProvider::new(state_for_fitness),
             ))
@@ -878,7 +878,7 @@ pub async fn run(
     // Uses AppState.announce_resolution_change() for proper SoC
     if use_static_host.is_none() {
         let state_for_ip = state.clone();
-        let mut network_rx = state.network_monitor.subscribe();
+        let mut network_rx = state.network.subscribe();
 
         tokio::spawn(async move {
             while let Ok(event) = network_rx.recv().await {
@@ -1545,7 +1545,7 @@ pub async fn run(
     });
 
     // Prepare boot banner info
-    let current_ip = state.network_monitor.get_ip().await;
+    let current_ip = state.network.get_ip().await;
     let manifests_count = state.manifest_registry.sw.entries.len();
     let boot_banner = Some(console::BootBannerInfo {
         stone_name: stone_name.clone(),

@@ -4,7 +4,7 @@
 //! and label information needed to synthesize a deployment spec without
 //! a curated manifest.
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ pub struct ImageHealthcheck {
 /// Pull an image (if not present) and inspect its OCI config.
 ///
 /// Returns structured metadata extracted from the image's config layer.
-pub async fn inspect_image(docker: &DockerManager, image_ref: &str) -> Result<ImageInspection> {
+pub async fn inspect_image(docker: &Docker, image_ref: &str) -> Result<ImageInspection> {
     // Pull image first (no-op if already present, updates if tag changed)
     docker
         .pull_image(image_ref, None)

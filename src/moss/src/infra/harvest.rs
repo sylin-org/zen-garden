@@ -5,7 +5,7 @@
 //! - Archive module (centralized compression/checksum)
 //! - Manifest persistence (HarvestStore)
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use crate::domain::harvest::{HarvestManifest, VolumeArchive};
 use crate::infra::HarvestStore;
 use anyhow::{Context, Result};
@@ -30,7 +30,7 @@ use std::path::Path;
 /// # Returns
 /// The created harvest manifest
 pub async fn create_harvest(
-    docker: &DockerManager,
+    docker: &Docker,
     store: &HarvestStore,
     offering: &str,
     source_stone: &str,
@@ -146,7 +146,7 @@ pub async fn create_harvest(
 /// This function does NOT restore the container image - that should be handled
 /// by the ceremony orchestrator which may want to use a different image.
 pub async fn restore_harvest(
-    docker: &DockerManager,
+    docker: &Docker,
     store: &HarvestStore,
     harvest_id: &str,
 ) -> Result<()> {

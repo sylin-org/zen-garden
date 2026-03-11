@@ -3,22 +3,22 @@
 //! Wraps Podman/Docker operations for service management.
 //! Currently uses bollard (Docker API) - could support Podman in future.
 
-use crate::docker::DockerManager;
+use crate::docker::Docker;
 use anyhow::{Context, Result};
 use garden_common::{ContainerResources, ServiceHealthStatus, ServiceStatus};
 
 /// Container runtime for service management
 ///
 /// Abstracts away Docker/Podman specifics from domain layer.
-/// For v0.1.0, delegates to existing DockerManager.
+/// For v0.1.0, delegates to existing Docker.
 pub struct ContainerRuntime {
-    docker: DockerManager,
+    docker: Docker,
 }
 
 impl ContainerRuntime {
     /// Create a new container runtime
     pub fn new() -> Result<Self> {
-        let docker = DockerManager::new().context("Failed to initialize container runtime")?;
+        let docker = Docker::new().context("Failed to initialize container runtime")?;
 
         Ok(Self { docker })
     }

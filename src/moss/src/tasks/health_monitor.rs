@@ -266,7 +266,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     ServiceHealthStatus::Degraded | ServiceHealthStatus::Offline
                 )
             });
-            state.notifications.set_if(
+            state.presence.notifications.set_if(
                 NOTIF_SOURCE_OFFERINGS_DEGRADED,
                 NotificationTag::Attention,
                 has_degraded,

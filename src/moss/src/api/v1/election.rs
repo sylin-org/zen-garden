@@ -54,7 +54,7 @@ pub async fn start_election(
     let election_id = generate_guidv7();
 
     // Get election service from app state (it's Arc, no lock needed)
-    let elections = state.elections.clone();
+    let elections = state.presence.elections.clone();
 
     // Start election
     match elections

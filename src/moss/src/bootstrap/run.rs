@@ -683,7 +683,10 @@ pub async fn run(
             stone_client: Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
             https: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }),
-        elections: election_service_placeholder,
+        presence: Arc::new(crate::domain::Presence {
+            elections: election_service_placeholder,
+            notifications: Arc::new(garden_common::NotificationRegistry::new()),
+        }),
         system_resources: Arc::new(RwLock::new(None)),
         companion: Arc::new(crate::domain::Companion {
             registry: Arc::new(infra::CompanionRegistry::new().await),
@@ -692,8 +695,6 @@ pub async fn run(
         network_metrics_cache: Arc::new(RwLock::new(None)),
         // FIREFLY-0003: GPU utilization cache
         gpu_utilization: Arc::new(RwLock::new(None)),
-        // Notification registry - subsystems set/clear, chirp compiles to tags
-        notifications: Arc::new(garden_common::NotificationRegistry::new()),
         // Log broadcast channel (for live SSE log streaming)
         log: log.clone(),
         // Subsystem readiness (network_ready managed by Network)
@@ -735,9 +736,12 @@ pub async fn run(
         )),
     ));
 
-    // Update the state's elections
+    // Update the state's election service (presence domain re-wrap)
     let state = AppState {
-        elections: election_service_final.clone(),
+        presence: Arc::new(crate::domain::Presence {
+            elections: election_service_final.clone(),
+            notifications: Arc::clone(&state.presence.notifications),
+        }),
         ..state
     };
 
@@ -747,7 +751,7 @@ pub async fn run(
     {
         let state_for_fitness = Arc::new(state.clone());
         state
-            .elections
+            .presence.elections
             .set_fitness_provider(Box::new(
                 crate::tasks::state_provider::MossFitnessProvider::new(state_for_fitness),
             ))
@@ -1189,7 +1193,7 @@ pub async fn run(
         let volumes_for_watcher = state.storage.volumes.clone();
         let pulse_tx_for_watcher = state.pulse.clone();
         let storage_changed_tx_for_watcher = state.storage.changed.clone();
-        let notifications = state.notifications.clone();
+        let notifications = state.presence.notifications.clone();
         let watcher_token = shutdown_token.child_token();
         let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
         tokio::spawn(async move {

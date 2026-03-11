@@ -230,7 +230,7 @@ async fn pin_recovery(state: &AppState) {
 
         let election_id = generate_guidv7();
         if let Err(e) = state
-            .elections
+            .presence.elections
             .start_election(
                 election_id,
                 ElectionType::OfferingPrimary(fqn.clone()),
@@ -415,7 +415,7 @@ async fn dispatch_dormant(
 
             let election_id = generate_guidv7();
             match state
-                .elections
+                .presence.elections
                 .start_election(
                     election_id,
                     ElectionType::OfferingPrimary(fqn.to_string()),
@@ -448,7 +448,7 @@ async fn dispatch_dormant(
 
         let election_id = generate_guidv7();
         match state
-            .elections
+            .presence.elections
             .start_election(
                 election_id,
                 ElectionType::OfferingPrimary(fqn.to_string()),

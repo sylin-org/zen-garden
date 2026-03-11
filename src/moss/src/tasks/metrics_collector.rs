@@ -79,7 +79,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 .filter(|v| !v.is_managed() && v.removable && v.online)
                 .count()
         };
-        state.notifications.set_if(
+        state.presence.notifications.set_if(
             NOTIF_SOURCE_CANDIDATES,
             NotificationTag::Opportunity,
             count > 0,
@@ -105,7 +105,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                                 .filter(|v| !v.is_managed() && v.removable && v.online)
                                 .count()
                         };
-                        state.notifications.set_if(
+                        state.presence.notifications.set_if(
                             NOTIF_SOURCE_CANDIDATES,
                             NotificationTag::Opportunity,
                             count > 0,
@@ -199,7 +199,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                             .filter(|v| !v.is_managed() && v.removable && v.online)
                             .count()
                     };
-                    state.notifications.set_if(
+                    state.presence.notifications.set_if(
                         NOTIF_SOURCE_CANDIDATES,
                         NotificationTag::Opportunity,
                         count > 0,

@@ -49,6 +49,7 @@ pub mod service_manager;
 pub mod services;
 pub mod fqn_handler;
 pub mod platform;
+pub mod presence;
 pub mod security;
 pub mod tool;
 pub mod tools;
@@ -116,6 +117,7 @@ pub use garden_registry::{
 pub use companion::Companion;
 pub use discovery::Discovery;
 pub use platform::Platform;
+pub use presence::Presence;
 pub use fqn_handler::{FqnHandler, FqnHandlerEntry, FqnHandlerRegistry};
 pub use security::{Pond, Security};
 pub use tool::Tool;

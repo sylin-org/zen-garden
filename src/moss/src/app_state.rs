@@ -18,7 +18,7 @@ use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
-use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
+use garden_common::{HardwareCapabilities, StoneResources};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -139,8 +139,8 @@ pub struct AppState {
     pub discovery: Arc<crate::domain::Discovery>,
 
 
-    /// Election service for distributed elections (testing)
-    pub elections: Arc<crate::tasks::election_service::Elections>,
+    /// Presence domain — election service and notification registry.
+    pub presence: Arc<crate::domain::Presence>,
 
     /// System metrics cache (CPU/memory/disk usage, updated every 5s)
     pub system_resources: Arc<RwLock<Option<StoneResources>>>,
@@ -161,14 +161,6 @@ pub struct AppState {
     /// Cached GPU utilization percentage (FIREFLY-0003)
     /// Updated every 5s by metrics_collector. None = no GPU or query failed.
     pub gpu_utilization: Arc<RwLock<Option<f32>>>,
-
-    // === Notification Registry ===
-    // Subsystems register their state (opportunity/attention) here.
-    // Tags are compiled and included in topology chirps for cross-stone awareness.
-    /// Notification registry for cross-stone awareness tags
-    /// Background tasks set/clear notifications, chirp task compiles to tags.
-    /// See: garden_common::notifications for source keys and tag types.
-    pub notifications: Arc<NotificationRegistry>,
 
     /// Log broadcast channel (for live SSE log streaming)
     pub log: tokio::sync::broadcast::Sender<String>,
@@ -368,7 +360,7 @@ impl AppState {
         }
 
         // Compile notification tags for cross-stone awareness
-        let tags = self.notifications.compile();
+        let tags = self.presence.notifications.compile();
 
         // TOOLS-0003: Gateways are no longer carried in chirps.
         // They propagate via the tools beacon / registry path exclusively.

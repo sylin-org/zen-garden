@@ -6,22 +6,22 @@ use garden_companion_sdk::{async_trait, CommandHandler, CommandResponse, Compani
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::animation::AnimationContext;
+use crate::animation::Animation;
 use crate::serial::{parse_color, FireflyConnection};
 
 /// Firefly command handler
-pub struct FireflyHandler {
+pub struct FireflyCommands {
     connection: Arc<FireflyConnection>,
     state: Arc<CompanionState>,
-    animation: Arc<RwLock<AnimationContext>>,
+    animation: Arc<RwLock<Animation>>,
 }
 
-impl FireflyHandler {
+impl FireflyCommands {
     /// Create a new Firefly command handler
     pub fn new(
         connection: Arc<FireflyConnection>,
         state: Arc<CompanionState>,
-        animation: Arc<RwLock<AnimationContext>>,
+        animation: Arc<RwLock<Animation>>,
     ) -> Self {
         Self {
             connection,
@@ -32,7 +32,7 @@ impl FireflyHandler {
 }
 
 #[async_trait]
-impl CommandHandler for FireflyHandler {
+impl CommandHandler for FireflyCommands {
     async fn handle(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {
             return CommandResponse::error("No command provided").with_suggestions([
@@ -85,7 +85,7 @@ impl CommandHandler for FireflyHandler {
     }
 }
 
-impl FireflyHandler {
+impl FireflyCommands {
     /// Handle status command
     async fn handle_status(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {

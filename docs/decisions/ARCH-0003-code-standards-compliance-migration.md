@@ -64,6 +64,7 @@ Within each wave, changes are applied in a fixed sequence:
 | e | State machine enums, typestate | Replaces bool flags and `Option` in long-lived structs |
 | f | Typed domain error enums | Domain logic only; application boundaries keep `anyhow` |
 | g | `FromRef` + `#[must_use]` | Axum handlers; enforces minimal dependency surfaces |
+| h | Domain event API (`on_X()` / `X_stream()`) | Encapsulates channels; SSE handlers use domain API, not raw `.subscribe()` |
 
 ### Wave 0 — garden-build-utils
 

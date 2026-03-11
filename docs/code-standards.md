@@ -276,6 +276,82 @@ let replication_feed = state.storage.orchestration.tick.subscribe();
 
 ---
 
+## 13. Domain event subscription API
+
+Domains expose events through two distinct method patterns. The pattern encodes the cardinality; the return type enforces it.
+
+**`on_{event}()`** — lifecycle events that happen once or rarely per run. Returns a `watch::Receiver<T>` so the caller can read current state or await a transition.
+
+```rust
+// Bad — caller subscribes to a raw channel with no semantic name
+let rx = state.security.pond_status.subscribe();
+
+// Good — method names the lifecycle moment; type encodes watch semantics
+pub fn on_pond_joined(&self) -> watch::Receiver<PondStatus> {
+    self.pond.status.subscribe()
+}
+
+// Call site
+let pond_ready = state.security.on_pond_joined();
+```
+
+**`{noun}_stream()`** — continuous event streams that fire repeatedly. Returns a `broadcast::Receiver<T>`.
+
+```rust
+// Bad — caller navigates internal channel path
+let rx = state.communication.topology.chirp.subscribe();
+
+// Good — method names the stream; broadcast semantics are implicit
+pub fn chirp_stream(&self) -> broadcast::Receiver<StoneChirp> {
+    self.chirp.subscribe()
+}
+
+// Call site — name the consumer's purpose, not the type
+let discovery_feed = state.communication.topology.chirp_stream();
+let sse_feed       = state.communication.topology.chirp_stream();
+```
+
+The internal channel fields (`self.chirp`, `self.pond.status`) remain private to the domain. External code never calls `.subscribe()` directly on a domain's channel fields.
+
+**Lagged receiver handling** is always: warn and continue — never break the stream on lag.
+
+```rust
+match feed.recv().await {
+    Ok(event)                 => handle(event),
+    Err(RecvError::Lagged(n)) => tracing::warn!(skipped = n, "consumer lagged"),
+    Err(RecvError::Closed)    => break,
+}
+```
+
+**SSE emitters** are the canonical cross-cutting consumer: subscribe via the domain API, loop, map to wire format, yield.
+
+```rust
+async fn storage_stream(
+    State(storage): State<Arc<Storage>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut feed = storage.on_device_connected();
+
+    Sse::new(async_stream::stream! {
+        loop {
+            match feed.recv().await {
+                Ok(event)                 => yield Ok(Event::default().json_data(&event).unwrap()),
+                Err(RecvError::Lagged(n)) => tracing::warn!(skipped = n, "SSE lagged"),
+                Err(RecvError::Closed)    => break,
+            }
+        }
+    }).keep_alive(KeepAlive::default())
+}
+```
+
+Domain event types always `#[derive(Clone, Serialize)]` — `Clone` is required by `broadcast`; `Serialize` makes the type the wire format contract with no intermediate mapping step.
+
+| Pattern | Semantics | Return type | Channel kind |
+|---------|-----------|-------------|--------------|
+| `on_{event}()` | Lifecycle — once or rarely | `watch::Receiver<T>` | `watch` |
+| `{noun}_stream()` | Continuous — every occurrence | `broadcast::Receiver<T>` | `broadcast` |
+
+---
+
 ## Summary
 
 | Smell | Fix |
@@ -290,3 +366,5 @@ let replication_feed = state.storage.orchestration.tick.subscribe();
 | `anyhow` inside domain logic | Typed error enum |
 | Handler takes full `AppState` | `FromRef` with minimal context |
 | `let x_clone = x.clone()` | Shadow: `let x = x.clone()` |
+| `.subscribe()` called outside domain | Expose `on_X()` / `X_stream()` instead |
+| SSE handler navigates internal channels | Subscribe via domain event API |

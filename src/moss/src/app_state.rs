@@ -22,6 +22,7 @@ use crate::infra::{
 use crate::mdns::MdnsHandle;
 use crate::tasks::NetworkMonitor;
 use garden_common::console::ConsolePrinter;
+use garden_common::PlatformRuntime;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
 use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
@@ -114,6 +115,10 @@ pub struct AppState {
 
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
+
+    /// Platform runtime — console/ribbon output and lifecycle signals (ARCH-0002).
+    /// Single injection point; no `#[cfg]` above bootstrap/run.rs.
+    pub runtime: Arc<dyn PlatformRuntime>,
 
     /// Hardware capabilities cache (detected at startup, cached to disk)
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,

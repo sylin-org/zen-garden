@@ -222,9 +222,14 @@ impl<'a> StorageService<'a> {
     ///
     /// Matches on `replica_set_name` (the user-facing identity).
     /// Falls back to DEFAULT_REPLICA_SET_DISPLAY for empty replica set names.
+    /// Only returns volumes that are currently online — offline volumes are
+    /// not routable; callers fall back to remote replicas.
     async fn find_local(&self, name: &str) -> Option<LocalStorage> {
         let map = self.volumes.read().await;
         map.values().find_map(|vol| {
+            if !vol.online {
+                return None;
+            }
             let mgmt = vol.management.as_ref()?;
             let display_name = if mgmt.replica_set_name.is_empty() {
                 garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY

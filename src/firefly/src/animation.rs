@@ -392,6 +392,12 @@ impl AnimationEngine {
 
     /// Update and render baseline firefly animation
     async fn update_baseline(&mut self) {
+        // The pixel animation is RP2040-Matrix only. T-Display and OLED manage
+        // their own display state; the host only pushes state updates via events.rs.
+        if self.connection.device_type() != crate::serial::FireflyDeviceType::Rp2040Matrix {
+            return;
+        }
+
         let ctx = self.context.read().await;
         let activity = ctx.effective_activity();
         let tempo = Tempo::from_load(activity);
@@ -562,6 +568,11 @@ impl AnimationEngine {
 
     /// Render a single frame of override animation
     fn render_override_frame(&mut self, override_type: &Override) {
+        // Override animations use RP2040-Matrix pixel/animate commands.
+        // T-Display and OLED handle their own visuals via events.rs.
+        if self.connection.device_type() != crate::serial::FireflyDeviceType::Rp2040Matrix {
+            return;
+        }
         match override_type {
             Override::Tended => {
                 // Use firmware sparkle animation (only send once at start)

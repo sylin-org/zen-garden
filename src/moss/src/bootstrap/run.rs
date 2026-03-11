@@ -123,6 +123,9 @@ pub async fn run(
         config.event_dedup_ttl_secs,
     ));
 
+    // Create platform runtime for physical console output (ARCH-0002)
+    let runtime = crate::infra::platform::create_runtime();
+
     // Load ManifestRegistry early - needed for infrastructure handlers
     // Uses overlay pattern: embedded assets first, filesystem overlays on top
     let manifests_dir = std::path::PathBuf::from(infra::runtime_manifests_dir());
@@ -237,7 +240,7 @@ pub async fn run(
     // Windows: Uses hardware-id cache existence, sets DNS hostname via registry
     #[cfg(target_os = "linux")]
     if console::is_first_run() {
-        start_first_boot_task(&stone_name, port, config.docker_retry_delay_secs());
+        start_first_boot_task(&stone_name, port, config.docker_retry_delay_secs(), runtime.clone());
     }
 
     #[cfg(target_os = "windows")]
@@ -511,7 +514,7 @@ pub async fn run(
     emit_startup_events(&console_printer, &config);
 
     // Phase 7: Docker connection
-    let docker = connect_docker(&console_printer, DockerConfig::default()).await?;
+    let docker = connect_docker(&console_printer, &*runtime, DockerConfig::default()).await?;
 
     // Phase 7.1: Configure systemd-resolved for container DNS
     // resolved owns port 53; Koi DNS serves .zengarden on port 5642.
@@ -636,6 +639,7 @@ pub async fn run(
         start_time: std::time::Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
+        runtime: runtime.clone(),
         capabilities: capabilities_arc.clone(),
         network_monitor: Arc::new(network_monitor),
         api_port: port,
@@ -1164,6 +1168,7 @@ pub async fn run(
 
         let volumes_for_watcher = state.volumes.clone();
         let pulse_tx_for_watcher = state.pulse_tx.clone();
+        let storage_changed_tx_for_watcher = state.storage_changed_tx.clone();
         let notifications = state.notifications.clone();
         let watcher_token = shutdown_token.child_token();
         let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
@@ -1173,6 +1178,7 @@ pub async fn run(
                 ev: VolumeEvent,
                 volumes: &crate::domain::Volumes,
                 pulse_tx: &tokio::sync::broadcast::Sender<infra::PulseEvent>,
+                storage_changed_tx: &tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
                 notifications: &garden_common::NotificationRegistry,
             ) {
                 // Build pulse before ingest consumes the event info
@@ -1204,12 +1210,20 @@ pub async fn run(
                     }
                 };
 
-                // Ingest into Volumes domain
-                crate::domain::storage::ingest_event(volumes, ev).await;
+                // Ingest into Volumes domain; returns domain events to broadcast
+                let storage_events = crate::domain::storage::ingest_event(volumes, ev).await;
 
                 // Emit pulse for presence SSE / ribbon notifications
                 if let Some(p) = pulse {
                     let _ = pulse_tx.send(infra::PulseEvent::Domain(p));
+                }
+
+                // Broadcast all domain events immediately so cloud filter,
+                // WebDAV router, and TTY ribbon display react without waiting
+                // for the next heartbeat.
+                for event in storage_events {
+                    tracing::debug!(event = ?event, "storage watcher: broadcasting domain event");
+                    let _ = storage_changed_tx.send(event);
                 }
 
                 // Update candidates notification
@@ -1235,6 +1249,7 @@ pub async fn run(
                             ev,
                             &volumes_for_watcher,
                             &pulse_tx_for_watcher,
+                            &storage_changed_tx_for_watcher,
                             &notifications,
                         ).await;
                     }
@@ -1551,6 +1566,7 @@ pub async fn run(
         app,
         &api_endpoint,
         console_printer,
+        runtime,
         shutdown_token,
         ServerConfig::default(),
         Some(shutdown_callback),
@@ -1668,7 +1684,12 @@ async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<(
 /// Waits for filesystem to become writable, then runs initialization.
 /// Exits process after completion so systemd restarts with new config.
 #[cfg(target_os = "linux")]
-fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
+fn start_first_boot_task(
+    stone_name: &str,
+    port: u16,
+    retry_delay_secs: u64,
+    runtime: std::sync::Arc<dyn garden_common::PlatformRuntime>,
+) {
     tracing::info!("First run detected on Linux, spawning background initialization task");
     tracing::info!("First boot detected - will initialize console after Docker connection");
 
@@ -1678,9 +1699,8 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
     tokio::spawn(async move {
         const MAX_ATTEMPTS: u32 = 20;
 
-        let _ = console::tty_write("");
-        let _ =
-            console::display_wait("First-boot setup: Waiting for filesystem to become writable");
+        runtime.write_line("");
+        runtime.display_wait("First-boot setup: Waiting for filesystem to become writable");
 
         for attempt in 1..=MAX_ATTEMPTS {
             match console::ensure_etc_writable().await {
@@ -1689,30 +1709,29 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
                         attempt,
                         "Filesystem is writable, proceeding with first boot initialization"
                     );
-                    let _ = console::display_success("Filesystem ready, starting configuration");
+                    runtime.display_success("Filesystem ready, starting configuration");
 
-                    match run_first_boot_initialization(&init_stone_name, init_port).await {
+                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
                         Ok(new_name) => {
                             if let Err(e) = console::mark_first_run_complete().await {
                                 tracing::error!(error = ?e, "Failed to mark first-run complete");
                             }
 
                             tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
-                            let _ = console::tty_write("");
-                            let _ = console::display_success(&format!(
-                                "? Stone configured as: {}",
+                            runtime.write_line("");
+                            runtime.display_success(&format!(
+                                "Stone configured as: {}",
                                 new_name
                             ));
-                            let _ =
-                                console::display_wait("Restarting to apply new configuration...");
-                            let _ = console::tty_write("");
+                            runtime.display_wait("Restarting to apply new configuration...");
+                            runtime.write_line("");
 
                             // Exit so systemd restarts us with the new configuration
                             std::process::exit(0);
                         }
                         Err(e) => {
                             tracing::error!(error = ?e, "First boot initialization failed");
-                            let _ = console::display_error(&format!("Setup failed: {}", e));
+                            runtime.display_error(&format!("Setup failed: {}", e));
                             if attempt < MAX_ATTEMPTS {
                                 tokio::time::sleep(tokio::time::Duration::from_secs(
                                     retry_delay_secs,
@@ -1728,7 +1747,7 @@ fn start_first_boot_task(stone_name: &str, port: u16, retry_delay_secs: u64) {
                             .await;
                     } else {
                         tracing::error!("First boot initialization abandoned - filesystem never became writable");
-                        let _ = console::display_error(
+                        runtime.display_error(
                             "Setup abandoned - filesystem remained read-only",
                         );
                     }

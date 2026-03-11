@@ -786,14 +786,10 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
 
 /// Subscribe to `StorageChanged` and render storage ribbons to the physical console.
 ///
-/// Linux-only: ribbons target `/dev/tty1` (physical stone display). On other
-/// platforms the event variants are still emitted — this task simply does not
-/// start, so no output is produced.
-///
-/// Single callsite for all storage ribbon rendering — no other code calls
-/// `print_storage_*_ribbon` directly.
-#[cfg(target_os = "linux")]
+/// Delegates to `PlatformRuntime` so output goes to the appropriate destination
+/// on each platform (TTY1 on Linux, stdout on Windows).
 pub fn start_storage_console_task(
+    runtime: Arc<dyn garden_common::PlatformRuntime>,
     rx: tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged>,
     token: CancellationToken,
 ) {
@@ -806,16 +802,10 @@ pub fn start_storage_console_task(
                 _ = token.cancelled() => break,
                 result = rx.recv() => match result {
                     Ok(StorageChanged::Connected { name, roles, used_bytes }) => {
-                        if let Err(e) = garden_common::console::print_storage_connected_ribbon(
-                            &name, &roles, used_bytes,
-                        ) {
-                            tracing::warn!("storage ribbon: {e}");
-                        }
+                        runtime.print_storage_connected(&name, &roles, used_bytes);
                     }
                     Ok(StorageChanged::Released { name }) => {
-                        if let Err(e) = garden_common::console::print_storage_released_ribbon(&name) {
-                            tracing::warn!("storage ribbon: {e}");
-                        }
+                        runtime.print_storage_released(&name);
                     }
                     Ok(_) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -824,14 +814,6 @@ pub fn start_storage_console_task(
             }
         }
     });
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn start_storage_console_task(
-    _rx: tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged>,
-    _token: CancellationToken,
-) {
-    // Ribbons are a Linux TTY1 feature — no-op on other platforms.
 }
 
 /// Start all background tasks
@@ -860,7 +842,7 @@ pub async fn start_all_background_tasks(
     start_storage_lifecycle(state.clone(), token.child_token());
 
     // Start storage console task — sole renderer of storage ribbons
-    start_storage_console_task(state.subscribe_storage_changed(), token.child_token());
+    start_storage_console_task(state.runtime.clone(), state.subscribe_storage_changed(), token.child_token());
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(

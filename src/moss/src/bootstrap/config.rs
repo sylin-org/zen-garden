@@ -266,7 +266,10 @@ pub async fn ensure_windows_stone_name_config() {
     // First boot and no stone_name anywhere - generate one now
     eprintln!("[first-boot] Generating stone name for Windows...");
 
-    let new_name = match console::generate_unique_name_windows().await {
+    // Use a local runtime — called before the daemon runtime is created
+    let local_runtime = crate::infra::platform::windows::WindowsRuntime::new();
+
+    let new_name = match console::generate_unique_name_windows(&local_runtime).await {
         Ok(name) => name,
         Err(e) => {
             eprintln!("[first-boot] Failed to generate stone name: {}", e);
@@ -284,7 +287,7 @@ pub async fn ensure_windows_stone_name_config() {
     }
 
     // Also write to config file (creates if needed)
-    if let Err(e) = console::update_moss_config(&new_name).await {
+    if let Err(e) = console::update_moss_config(&local_runtime, &new_name).await {
         eprintln!("[first-boot] Failed to save config: {}", e);
     } else {
         eprintln!("[first-boot] Saved stone name to config");

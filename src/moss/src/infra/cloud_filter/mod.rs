@@ -75,6 +75,9 @@ pub(crate) async fn enumerate_storage_names(
     {
         let map = volumes.read().await;
         for vol in map.values() {
+            if !vol.online {
+                continue;
+            }
             if let Some(ref mgmt) = vol.management {
                 let rs_name = if mgmt.replica_set_name.is_empty() {
                     DEFAULT_REPLICA_SET_DISPLAY.to_string()

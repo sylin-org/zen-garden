@@ -631,13 +631,11 @@ pub async fn deploy_stone_v1(
             "Update staged, restarting for upgrade".to_string(),
         ));
 
-        // Show update banner on TTY (Linux) for visual feedback
-        garden_common::console::try_update_banner(Some(
-            &garden_common::console::UpdateBannerInfo {
-                stone_name: state.stone_name.clone(),
-                new_version: None, // Version extracted earlier but not easily accessible here
-            },
-        ));
+        // Show update banner on physical console (platform-appropriate output)
+        state.runtime.print_update_banner(&garden_common::console::UpdateBannerInfo {
+            stone_name: state.stone_name.clone(),
+            new_version: None, // Version extracted earlier but not easily accessible here
+        });
 
         #[cfg(target_os = "windows")]
         {

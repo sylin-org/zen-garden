@@ -700,7 +700,18 @@ pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
 ///
 /// Uses manifest-based identity dedup: if a managed volume appears at a new
 /// device path, the old (offline) entry is removed and replaced.
-pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
+///
+/// Returns domain events to broadcast immediately:
+/// - `Appeared` on a new managed volume → `[Connected { name, roles, used_bytes }]`
+/// - `Appeared` on a re-appeared managed volume → `[Connected { … }]`
+/// - `Disappeared` on a managed volume → `[Released { name }, Reclassified]`
+///
+/// The caller broadcasts all returned events so the cloud filter, WebDAV
+/// router, and TTY ribbon display all react without waiting for the heartbeat.
+pub async fn ingest_event(
+    volumes: &Volumes,
+    event: platform::VolumeEvent,
+) -> Vec<garden_common::storage::StorageChanged> {
     match event {
         platform::VolumeEvent::Appeared(snap) => {
             let mut map = volumes.write().await;
@@ -712,10 +723,12 @@ pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
                 vol.classify().await;
 
                 let mut map = volumes.write().await;
-                if vol.is_managed() {
+                let connected_event = if vol.is_managed() {
                     let name = vol.display_name().to_string();
+                    let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
+                    let used_bytes = vol.used_bytes;
                     let manifest_id =
-                        vol.management.as_ref().map(|m| m.id.as_str()).unwrap_or("");
+                        vol.management.as_ref().map(|m| m.id.clone()).unwrap_or_default();
 
                     // Manifest-based dedup
                     let stale_key = map
@@ -724,7 +737,7 @@ pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
                             *k != &snap.path
                                 && v.management
                                     .as_ref()
-                                    .map(|m| m.id.as_str() == manifest_id)
+                                    .map(|m| m.id == manifest_id)
                                     .unwrap_or(false)
                         })
                         .map(|(k, _)| k.clone());
@@ -740,28 +753,51 @@ pub async fn ingest_event(volumes: &Volumes, event: platform::VolumeEvent) {
                     } else {
                         info!(path = %snap.path, name = %name, "Managed volume appeared");
                     }
+                    Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes })
                 } else {
                     debug!(path = %snap.path, "Unmanaged volume appeared");
-                }
+                    None
+                };
                 map.insert(snap.path, vol);
+                connected_event.into_iter().collect()
             } else {
                 // Re-appeared — mark online
-                if let Some(vol) = map.get_mut(&snap.path) {
+                let connected_event = if let Some(vol) = map.get_mut(&snap.path) {
                     vol.online = true;
                     vol.health = VolumeHealth::Healthy;
                     vol.capacity_bytes = snap.capacity_bytes;
                     vol.mount_path = PathBuf::from(&snap.mount_path);
                     info!(path = %snap.path, name = %vol.display_name(), "Volume came back online");
-                }
+                    if vol.is_managed() {
+                        let name = vol.display_name().to_string();
+                        let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
+                        let used_bytes = vol.used_bytes;
+                        Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                connected_event.into_iter().collect()
             }
         }
         platform::VolumeEvent::Disappeared { path } => {
             let mut map = volumes.write().await;
             if let Some(vol) = map.get_mut(&path) {
                 info!(path = %path, name = %vol.display_name(), "Volume disappeared");
+                let name = vol.display_name().to_string();
+                let was_managed = vol.is_managed();
                 vol.online = false;
                 vol.health = VolumeHealth::Lost;
+                if was_managed {
+                    return vec![
+                        garden_common::storage::StorageChanged::Released { name },
+                        garden_common::storage::StorageChanged::Reclassified,
+                    ];
+                }
             }
+            vec![]
         }
     }
 }

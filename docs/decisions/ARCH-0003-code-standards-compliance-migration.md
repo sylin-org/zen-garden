@@ -178,6 +178,17 @@ For changes that cascade across call sites (newtypes, domain context structs):
 
 This avoids a single uncommittable diff spanning hundreds of files.
 
+### Acceptance Criteria
+
+A pass is complete only when every change within it fully adheres to `docs/code-standards.md`. Partial compliance is not accepted — a pass that fixes 80% of the `_tx` suffixes in a file leaves the file in a worse state than either the old form or the fully-migrated form, because it creates inconsistency within the same scope.
+
+Concretely, a pass is accepted when:
+1. Every instance of the targeted smell in the files touched by the pass is resolved — no exceptions, no deferred items within those files
+2. The build gate below passes clean
+3. No new violations of any rule in `docs/code-standards.md` are introduced anywhere in the diff
+
+If a file has violations across multiple passes (e.g., both naming and channel issues), those passes are applied sequentially to that file before moving on. A file is not revisited after its wave is complete.
+
 ### Build Gate
 
 Every commit in this migration must pass:

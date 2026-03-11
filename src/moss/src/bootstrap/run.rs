@@ -564,12 +564,12 @@ pub async fn run(
     tracing::debug!("Domain event bus and pulse channel initialized");
 
     // Phase 9: Capabilities loading
-    let capabilities_arc = init_capabilities(&stone_id, &stone_name, &console_printer).await;
+    let capabilities = init_capabilities(&stone_id, &stone_name, &console_printer).await;
 
     // Phase 9.5: Update self entry with capabilities and set health to thriving
     {
         let mut entry = self_entry.write().await;
-        entry.capabilities = capabilities_arc.read().await.clone();
+        entry.capabilities = capabilities.read().await.clone();
         entry.health = garden_common::constants::STONE_THRIVING.to_string();
         entry.last_seen = chrono::Utc::now();
     }
@@ -640,7 +640,7 @@ pub async fn run(
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
         runtime: runtime.clone(),
-        capabilities: capabilities_arc.clone(),
+        capabilities: capabilities.clone(),
         network: Arc::new(network),
         api_port: port,
         topology_cache: topology_cache.clone(),
@@ -815,7 +815,7 @@ pub async fn run(
     // ManifestRegistry already loaded in Phase 10
     start_hardware_detection(
         stone_name.clone(),
-        capabilities_arc.clone(),
+        capabilities.clone(),
         console_printer.clone(),
         state.clone(),
     );

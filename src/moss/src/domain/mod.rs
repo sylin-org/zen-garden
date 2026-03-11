@@ -73,7 +73,7 @@ pub use registry::Registry;
 pub use storage::{
     new_media, new_volumes, Management, Media, Medium, Volume, VolumeHealth, Volumes,
 };
-pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute, StorageService};
+pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 pub use service_discovery::{
     find_local_services, find_services, get_offering_port, list_all_local_services, FoundService,
     ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,

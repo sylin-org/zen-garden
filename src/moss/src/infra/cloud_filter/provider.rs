@@ -65,16 +65,6 @@ pub(crate) struct DirEntry {
 // ============================================================================
 
 impl ZenGardenProvider {
-    /// Build a `StorageService` from our shared state.
-    fn storage_service(&self) -> crate::domain::StorageService<'_> {
-        crate::domain::StorageService::new(
-            &self.volumes,
-            &self.registry,
-            &self.stone_id,
-            Some(&self.tick),
-        )
-    }
-
     /// Resolve the storage name and relative path from a Cloud Filter request.
     ///
     /// Layout: `{sync_root}/{storage_name}/{relative_path}`.
@@ -124,8 +114,7 @@ impl ZenGardenProvider {
         ticket: &ticket::FetchData,
         info: &info::FetchData,
     ) -> CResult<()> {
-        let svc = self.storage_service();
-        let route = svc.resolve_read(storage_name).await.map_err(|e| {
+        let route = StorageRoute::for_read(storage_name, &self.volumes, &self.registry, &self.stone_id).await.map_err(|e| {
             warn!(storage = %storage_name, error = %e, "storage not found for fetch");
             CloudErrorKind::NotInSync
         })?;
@@ -180,8 +169,7 @@ impl ZenGardenProvider {
         rel_path: &str,
         ticket: &ticket::FetchPlaceholders,
     ) -> CResult<()> {
-        let svc = self.storage_service();
-        let route = svc.resolve_read(storage_name).await.map_err(|e| {
+        let route = StorageRoute::for_read(storage_name, &self.volumes, &self.registry, &self.stone_id).await.map_err(|e| {
             warn!(storage = %storage_name, error = %e, "storage not found for placeholders");
             CloudErrorKind::NotInSync
         })?;
@@ -232,8 +220,7 @@ impl ZenGardenProvider {
 
     /// Delete a file/directory from the storage mount (or proxy to remote).
     async fn do_delete(&self, storage_name: &str, rel_path: &str, is_dir: bool) -> CResult<()> {
-        let svc = self.storage_service();
-        let route = svc.resolve_write(storage_name).await.map_err(|e| {
+        let route = StorageRoute::for_write(storage_name, &self.volumes, &self.registry, &self.stone_id).await.map_err(|e| {
             warn!(storage = %storage_name, error = %e, "storage not found for delete");
             CloudErrorKind::NotInSync
         })?;
@@ -290,8 +277,7 @@ impl ZenGardenProvider {
         old_rel: &str,
         new_rel: &str,
     ) -> CResult<()> {
-        let svc = self.storage_service();
-        if let Some(local) = svc.resolve_local(storage_name).await {
+        if let Some(local) = StorageRoute::find_local(storage_name, &self.volumes).await {
             let src = local.mount_path.join(old_rel);
             let dst = local.mount_path.join(new_rel);
 
@@ -333,10 +319,8 @@ impl ZenGardenProvider {
     /// Updates `replica_set_name` on both the in-memory volume and the on-disk
     /// manifest.  The individual device name (`mgmt.name`) is unchanged.
     async fn do_rename_storage(&self, old_name: &str, new_name: &str) -> CResult<()> {
-        let svc = self.storage_service();
-
         // Verify the old name exists locally (find_local matches on replica_set_name)
-        if svc.resolve_local(old_name).await.is_none() {
+        if StorageRoute::find_local(old_name, &self.volumes).await.is_none() {
             warn!(
                 old = %old_name,
                 new = %new_name,

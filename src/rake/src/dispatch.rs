@@ -18,7 +18,7 @@ use garden_rake::commands::Command;
 use garden_rake::context::{CommandContext, OutputFormat};
 use garden_rake::discovery;
 use garden_rake::stone_bag::StoneBag;
-use garden_rake::stone_cache::GLOBAL_CACHE;
+use garden_rake::stone_cache::STONE;
 use garden_rake::tending;
 
 // ============================================================================
@@ -68,7 +68,7 @@ impl CommandInvocation {
 ///
 /// Built once in `main()`, replaces the 7-argument `dispatch()` calls
 /// that threaded `client`, `global.quiet`, `global.fresh`, `global.verbose`,
-/// `GLOBAL_CACHE` to every handler (107 occurrences of `global.quiet` alone).
+/// `STONE` to every handler (107 occurrences of `global.quiet` alone).
 pub struct Runtime {
     pub client: reqwest::Client,
     pub global: GlobalFlags,
@@ -105,7 +105,7 @@ impl Runtime {
 
         if cmd.requires_endpoint() {
             let endpoint =
-                resolve_endpoint(&self.client, inv.at, Some(&*GLOBAL_CACHE)).await?;
+                resolve_endpoint(&self.client, inv.at, Some(&*STONE)).await?;
 
             // Build bag — seeded from tending cache when the endpoint matches,
             // so stone_name() is free.  Cold path (--at, env, discovery) does

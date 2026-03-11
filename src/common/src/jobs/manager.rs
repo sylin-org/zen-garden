@@ -90,9 +90,9 @@ impl JobManager {
 
         // Execute asynchronously
         let manager = self.clone();
-        let job_id_clone = job_id.clone();
+        let task_job_id = job_id.clone();
         tokio::spawn(async move {
-            if let Err(e) = manager.execute_job(&job_id_clone).await {
+            if let Err(e) = manager.execute_job(&task_job_id).await {
                 eprintln!("Job execution failed: {}", e);
             }
         });

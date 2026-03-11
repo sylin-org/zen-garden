@@ -223,8 +223,7 @@ pub async fn put_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let svc = state.storage_service();
-    let route = match svc.resolve_write(&selected).await {
+    let route = match StorageRoute::for_write(&selected, &state.volumes, &state.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
@@ -236,7 +235,7 @@ pub async fn put_object(
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("application/octet-stream");
 
-            let store = svc.notifying_object_store(&local);
+            let store = local.notifying_object_store(Some(&state.storage_tick));
             match store.put_object(&bucket, key, content_type, &body).await {
                 Ok(result) => {
                     debug!(bucket = %bucket, key = %key, size = body.len(), "PUT object success");
@@ -303,15 +302,14 @@ pub async fn get_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let svc = state.storage_service();
-    let route = match svc.resolve_read(&selected).await {
+    let route = match StorageRoute::for_read(&selected, &state.volumes, &state.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     match route {
         StorageRoute::Local(local) => {
-            let store = svc.object_store(&local);
+            let store = local.object_store();
             match store.get_object(&bucket, key).await {
                 Ok(Some((data, meta))) => {
                     debug!(bucket = %bucket, key = %key, size = data.len(), "GET object success");
@@ -385,8 +383,7 @@ pub async fn head_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let svc = state.storage_service();
-    let route = match svc.resolve_read(&selected).await {
+    let route = match StorageRoute::for_read(&selected, &state.volumes, &state.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(_) => {
             return Response::builder()
@@ -398,7 +395,7 @@ pub async fn head_object(
 
     match route {
         StorageRoute::Local(local) => {
-            let store = svc.object_store(&local);
+            let store = local.object_store();
             match store.head_object(&bucket, key).await {
                 Ok(Some(meta)) => {
                     debug!(bucket = %bucket, key = %key, "HEAD object success");
@@ -461,15 +458,14 @@ pub async fn delete_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let svc = state.storage_service();
-    let route = match svc.resolve_write(&selected).await {
+    let route = match StorageRoute::for_write(&selected, &state.volumes, &state.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     match route {
         StorageRoute::Local(local) => {
-            let store = svc.notifying_object_store(&local);
+            let store = local.notifying_object_store(Some(&state.storage_tick));
             match store.delete_object(&bucket, key).await {
                 Ok(_) => {
                     debug!(bucket = %bucket, key = %key, "DELETE object success");
@@ -519,15 +515,14 @@ pub async fn list_buckets(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let svc = state.storage_service();
-    let route = match svc.resolve_read(&selected).await {
+    let route = match StorageRoute::for_read(&selected, &state.volumes, &state.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     match route {
         StorageRoute::Local(local) => {
-            let store = svc.object_store(&local);
+            let store = local.object_store();
             match store.list_buckets().await {
                 Ok(buckets) => {
                     debug!(count = buckets.len(), "LIST buckets success");
@@ -600,8 +595,7 @@ pub async fn list_objects(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let svc = state.storage_service();
-    let route = match svc.resolve_read(&selected).await {
+    let route = match StorageRoute::for_read(&selected, &state.volumes, &state.registry, &state.stone_id).await {
         Ok(route) => route,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
@@ -610,7 +604,7 @@ pub async fn list_objects(
 
     match route {
         StorageRoute::Local(local) => {
-            let store = svc.object_store(&local);
+            let store = local.object_store();
             match store
                 .list_objects(
                     &bucket,

@@ -86,11 +86,10 @@ pub async fn handle_webdav(
     let is_mutation = is_write_method(&method);
 
     // Resolve storage routing
-    let svc = state.storage_service();
     let route = if is_mutation {
-        svc.resolve_write(storage_name).await
+        StorageRoute::for_write(storage_name, &state.volumes, &state.registry, &state.stone_id).await
     } else {
-        svc.resolve_read(storage_name).await
+        StorageRoute::for_read(storage_name, &state.volumes, &state.registry, &state.stone_id).await
     };
 
     let route = match route {
@@ -149,7 +148,7 @@ async fn serve_local(
 
     // Record changelog for successful mutations
     if is_write_method(method) && status.is_success() {
-        let content_store = state.storage_service().notifying_content_store(local);
+        let content_store = local.notifying_content_store(Some(&state.storage_tick));
         record_changelog(&content_store, method, rel_path).await;
     }
 

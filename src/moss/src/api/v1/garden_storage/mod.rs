@@ -51,7 +51,7 @@ use garden_common::storage::StorageRole;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::domain::storage_service::ProxyTarget;
+use crate::domain::storage_service::{ProxyTarget, StorageRoute};
 use crate::{error_response, AppState};
 
 // ============================================================================
@@ -276,8 +276,7 @@ pub async fn list_storages_v1(
         std::collections::HashMap::new();
 
     // Local storages
-    let svc = state.storage_service();
-    for local in svc.list_local().await {
+    for local in StorageRoute::list_local(&state.volumes).await {
         let entry = by_name
             .entry(local.name.clone())
             .or_insert_with(|| GardenStorageSummary {
@@ -335,10 +334,9 @@ pub async fn discover_v1(
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> Result<Json<ApiResponse<StorageDiscovery>>, (StatusCode, Json<ApiErrorResponse>)> {
     let mut instances = Vec::new();
-    let svc = state.storage_service();
 
     // Check local storages
-    if let Some(local) = svc.resolve_local(&name).await {
+    if let Some(local) = StorageRoute::find_local(&name, &state.volumes).await {
         let map = state.volumes.read().await;
         let (pin_id, roles) = map
             .values()

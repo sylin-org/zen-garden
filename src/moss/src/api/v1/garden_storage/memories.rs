@@ -20,7 +20,7 @@ use garden_common::storage::MemoriesOfferingManifest;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::nurturing::{RemoteNurturingIndex, RemoteSnapshot};
-use crate::domain::{LocalStorage, ProxyTarget, StorageRoute};
+use crate::domain::storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 use crate::AppState;
 
 use super::{err, error_response_raw, has_path_traversal};
@@ -188,13 +188,14 @@ async fn resolve_route(
     state: &AppState,
     name: &str,
 ) -> Result<StorageRoute, (StatusCode, String)> {
-    let svc = state.storage_service();
-    svc.resolve_read(name).await.map_err(|e| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("Storage '{}' not available: {}", name, e),
-        )
-    })
+    StorageRoute::for_read(name, &state.volumes, &state.registry, &state.stone_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("Storage '{}' not available: {}", name, e),
+            )
+        })
 }
 
 // ============================================================================
@@ -216,8 +217,7 @@ pub async fn list_memories_v1(
             if let Err(msg) = validate_storage_layout(&local.mount_path) {
                 return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
             }
-            let svc = state.storage_service();
-            let store = svc.content_store(&local);
+            let store = local.content_store();
             match state
                 .nurturing_store
                 .list_remote_snapshots(&store, &local.id)
@@ -299,8 +299,7 @@ pub async fn list_offering_snapshots_v1(
             if let Err(msg) = validate_storage_layout(&local.mount_path) {
                 return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
             }
-            let svc = state.storage_service();
-            let store = svc.content_store(&local);
+            let store = local.content_store();
             let index = state
                 .nurturing_store
                 .list_remote_snapshots(&store, &local.id)

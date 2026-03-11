@@ -922,23 +922,6 @@ impl AppState {
     }
 
     // ========================================================================
-    // Storage Service
-    // ========================================================================
-
-    /// Create a `StorageService` scoped to this stone's state.
-    ///
-    /// Cheap to construct (borrows only). Use per-request in handlers
-    /// instead of reimplementing resolution/routing logic.
-    pub fn storage_service(&self) -> crate::domain::StorageService<'_> {
-        crate::domain::StorageService::new(
-            &self.volumes,
-            &self.registry,
-            &self.stone_id,
-            Some(&self.storage_tick),
-        )
-    }
-
-    // ========================================================================
     // Storage Events (STORAGE-0013)
     // ========================================================================
 

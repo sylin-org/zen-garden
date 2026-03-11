@@ -147,9 +147,9 @@ mod tests {
         let call_count = Arc::new(AtomicU32::new(0));
         let policy = RetryPolicy::fixed(3, Duration::from_millis(10));
 
-        let count_clone = call_count.clone();
+        let call_count = call_count.clone();
         let result = retry_with_policy(&policy, || {
-            let count = count_clone.clone();
+            let count = call_count.clone();
             async move {
                 let current = count.fetch_add(1, Ordering::SeqCst) + 1;
                 if current < 2 {
@@ -173,9 +173,9 @@ mod tests {
         let call_count = Arc::new(AtomicU32::new(0));
         let policy = RetryPolicy::fixed(3, Duration::from_millis(10));
 
-        let count_clone = call_count.clone();
+        let call_count = call_count.clone();
         let result = retry_with_policy(&policy, || {
-            let count = count_clone.clone();
+            let count = call_count.clone();
             async move {
                 count.fetch_add(1, Ordering::SeqCst);
                 Err::<(), &str>("always fail")

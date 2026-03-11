@@ -25,5 +25,6 @@ pub use config::{init_tracing, DaemonConfig};
 pub use first_boot::run_first_boot_initialization;
 pub use preinstall::{load_preinstall_manifest, PreInstallManifest};
 pub use run::run as run_daemon;
+pub(crate) use run::BuildArtifacts;
 pub use server::{bind as bind_server, run as run_server, ServerConfig};
 pub use startup::{connect_docker, init_capabilities, DockerConfig};

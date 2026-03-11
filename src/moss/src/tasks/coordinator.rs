@@ -20,7 +20,7 @@ use crate::tasks::network_monitor::{NetworkEvent, Network};
 use crate::tasks::task_scheduler::{backfill_missing_tasks, start_task_scheduler};
 use crate::{
     adopt_existing_containers, auto_adoption_task, detect_capabilities_background,
-    ensure_offerings_index, health_monitor_task, infra, lantern_registration_loop, AppState,
+    ensure_offerings_index, health_monitor_task, infra, lantern_registration_loop, mdns, AppState,
 };
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
@@ -901,4 +901,804 @@ pub async fn start_all_background_tasks(
             "Auto-adoption (no config)",
         ));
     }
+}
+
+// ============================================================================
+// Task supervisor
+// ============================================================================
+
+/// Spawn all background tasks.
+///
+/// Called once after `build_state` completes. Takes ownership of
+/// `BuildArtifacts` (consuming `volume_rescan_rx`) and returns the API
+/// endpoint string for `serve`.
+pub(crate) async fn start_background_tasks(
+    state: AppState,
+    artifacts: crate::bootstrap::BuildArtifacts,
+    config: Option<infra::MossConfig>,
+) -> String {
+    use garden_common::console;
+    // Rebind Stage-1 locals from AppState so the task-wiring body is verbatim.
+    let stone_id         = state.current.stone.id.clone();
+    let stone_name       = state.current.stone.name.clone();
+    let shutdown_token   = state.shutdown_token.clone();
+    let capabilities     = state.current.capabilities.clone();
+    let console_printer  = state.console.clone();
+    let event_bus        = state.event_bus.clone();
+    let pulse            = state.pulse.clone();
+    let koi_handle       = state.discovery.koi.clone();
+    let election_service_final = state.presence.elections.clone();
+    let api_endpoint     = artifacts.api_endpoint;
+    let volume_rescan_rx = artifacts.volume_rescan_rx;
+    // bool: true when ZG_STONE_HOST was set (gates IP-change handler variant)
+    let use_static_host  = artifacts.use_static_host;
+
+    // Phase 11.post2: Start election service listener (subscribes to p2p events)
+    tokio::spawn(async move {
+        if let Err(e) = election_service_final.run_listener().await {
+            tracing::error!(error = ?e, "Election service listener failed");
+        }
+    });
+
+    // Phase 11.post3: Start discovery handler (responds to discovery requests)
+    let self_entry_for_discovery = state.current.topology.self_entry.clone();
+    tokio::spawn(async move {
+        if let Err(e) =
+            crate::tasks::discovery_handler::start_discovery_handler(self_entry_for_discovery).await
+        {
+            tracing::error!(error = ?e, "Discovery handler failed");
+        }
+    });
+    tracing::info!("Discovery handler initialized (using p2p transport)");
+
+    // Phase 11.post4a: Initial volume scan (STORAGE-0011)
+    // Populates the unified Volumes map with all currently attached volumes.
+    // Cross-platform: uses platform::scan_volumes() (Linux: /proc/mounts, Windows: GetLogicalDrives).
+    {
+        let volumes = state.current.storage.volumes.clone();
+        crate::domain::storage::initial_scan(&volumes).await;
+    }
+
+    // Phase 11.post4b: Initial media scan (STORAGE-0011)
+    // Detects physical disks including those without partitions or drive letters.
+    // Uses PowerShell Get-Disk (Windows) or lsblk (Linux).
+    {
+        let media = state.current.storage.media.clone();
+        let snapshots = tokio::task::spawn_blocking(crate::infra::storage::platform::scan_media)
+            .await
+            .unwrap_or_default();
+        crate::domain::storage::reconcile_media(&media, &snapshots).await;
+    }
+
+    // Phase 11.post4: Start offering lifecycle event listeners
+    {
+        // ChirpListener: Broadcasts topology changes via UDP
+        let self_entry_for_chirp = state.current.topology.self_entry.clone();
+        let chirp_listener = Arc::new(infra::ChirpListener::new(Arc::new(move || {
+            let entry = self_entry_for_chirp.clone();
+            tokio::spawn(async move {
+                let topology_entry = entry.read().await.clone();
+                if let Err(e) = crate::announcement::announce(&topology_entry).await {
+                    tracing::warn!(error = ?e, "Failed to chirp from event listener");
+                }
+            });
+        })));
+        let _chirp_handle = infra::spawn_listener(&event_bus, chirp_listener);
+
+        // PulseDomainBridge: Bridges domain events into the unified pulse channel
+        // Replaces former SseListener — presence.rs and pulse.rs subscribe to pulse
+        let pulse_bridge = infra::PulseDomainBridge::new(pulse.clone());
+        let _pulse_handle = infra::spawn_listener(&event_bus, Arc::new(pulse_bridge));
+
+        // Transport tap: Bridges raw UDP announcements into pulse channel
+        let _transport_tap_handle =
+            infra::spawn_transport_tap(pulse.clone(), shutdown_token.clone());
+
+        // TimerListener: Manages nurturing schedule timers (stub - no callback yet)
+        let timer_listener = Arc::new(infra::TimerListener::new());
+        let _timer_handle = infra::spawn_listener(&event_bus, timer_listener);
+
+        tracing::info!("Domain event listeners started (chirp, pulse, timer)");
+    }
+
+    // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
+    match state.recover_ceremonies().await {
+        Ok(0) => tracing::debug!("No incomplete ceremonies to recover"),
+        Ok(n) => tracing::warn!(count = n, "Recovered incomplete ceremonies"),
+        Err(e) => tracing::error!(error = ?e, "Failed to recover ceremonies"),
+    }
+
+    // Phase 12: Start background tasks
+    // UDP listener already started in Phase 1
+    // ManifestRegistry already loaded in Phase 10
+    start_hardware_detection(
+        stone_name.clone(),
+        capabilities.clone(),
+        console_printer.clone(),
+        state.clone(),
+    );
+    start_registry_loader(state.clone());
+    start_catalog_builder(state.clone(), console_printer.clone());
+
+    // System metrics collector (feeds presence protocol and health monitors)
+    tracing::info!("Starting system metrics collector");
+    let metrics_collector_state = state.clone();
+    let metrics_token = shutdown_token.child_token();
+    tokio::spawn(async move {
+        crate::tasks::run_metrics_collector(metrics_collector_state, metrics_token).await;
+    });
+
+    // Companion registry scan and auto-start (discover and start Companions)
+    tracing::info!("Scanning Companion registry");
+    let companion_scan_state = state.clone();
+    tokio::spawn(async move {
+        // Get endpoint for Companion communication
+        let endpoint = companion_scan_state
+            .current.topology.self_entry
+            .read()
+            .await
+            .address
+            .http_base();
+        match companion_scan_state
+            .companion.registry
+            .scan_and_autostart(&endpoint)
+            .await
+        {
+            Ok((registered, started)) => tracing::info!(
+                registered = registered,
+                started = started,
+                "Companion scan and auto-start complete"
+            ),
+            Err(e) => tracing::warn!(error = ?e, "Companion scan failed"),
+        }
+    });
+
+    // Presence monitoring (PRESENCE-0001)
+    tracing::info!("Starting presence load monitor");
+    let load_monitor_state = state.clone();
+    let load_token = shutdown_token.child_token();
+    tokio::spawn(async move {
+        crate::tasks::presence_monitor::run_load_monitor_task(load_monitor_state, load_token).await;
+    });
+
+    tracing::info!("Starting presence health monitor");
+    let health_monitor_state = state.clone();
+    let health_presence_token = shutdown_token.child_token();
+    tokio::spawn(async move {
+        crate::tasks::presence_monitor::run_health_monitor_task(
+            health_monitor_state,
+            health_presence_token,
+        )
+        .await;
+    });
+
+    // Phase 11.1: IP change handler (resolution announcements)
+    // Uses AppState.announce_resolution_change() for proper SoC
+    if !use_static_host {
+        let state_for_ip = state.clone();
+        let mut network_rx = state.platform.network.subscribe();
+
+        tokio::spawn(async move {
+            while let Ok(event) = network_rx.recv().await {
+                let new_ip = match &event {
+                    NetworkEvent::IpChanged { new, .. } => Some(new.clone()),
+                    NetworkEvent::Reconnected { new } => Some(new.clone()),
+                    NetworkEvent::Disconnected { .. } => None,
+                };
+
+                if let Some(ip) = new_ip {
+                    // Reinitialize P2P sender sockets when network becomes available
+                    // This is critical on Linux where interfaces may not be ready at boot
+                    if matches!(event, NetworkEvent::Reconnected { .. }) {
+                        tracing::info!("Network reconnected, reinitializing P2P senders");
+                        garden_common::infra::communications::p2p::reinit_senders().await;
+                    }
+
+                    // Delegate all resolution change handling to AppState
+                    state_for_ip.announce_resolution_change(&ip).await;
+                }
+            }
+        });
+        tracing::debug!("IP change handler spawned (uses AppState.announce_resolution_change)");
+    }
+
+    // Phase 11.2: mDNS health-change listener
+    // Re-registers mDNS TXT record when stone health transitions (ARCH-0066)
+    if let Some(ref mdns) = state.discovery.mdns {
+        let mdns_for_health = mdns.clone();
+        let mut health_rx = state.event_bus.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match health_rx.recv().await {
+                    Ok(crate::domain::DomainEvent::Stone(
+                        crate::domain::StoneEvent::HealthChanged { ref health, .. },
+                    )) => {
+                        mdns_for_health.update_health(health).await;
+                    }
+                    Ok(_) => {} // Ignore non-health events
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "mDNS health listener: missed events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("mDNS health listener: event bus closed");
+                        break;
+                    }
+                }
+            }
+        });
+        tracing::debug!("mDNS health-change listener spawned (ARCH-0066)");
+    }
+
+    // Phase 11.3: Enrollment-change listener (Pond domain event)
+    // Reacts to PondEvent::EnrollmentChanged by starting/stopping HTTPS + chirp signing.
+    // This eliminates the need for handlers to manage HTTPS directly.
+    {
+        let state_for_pond = state.clone();
+        let console_for_pond = console_printer.clone();
+        let mut pond_rx = state.event_bus.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match pond_rx.recv().await {
+                    Ok(crate::domain::DomainEvent::Pond(
+                        crate::domain::PondEvent::EnrollmentChanged { enrolled, .. },
+                    )) => {
+                        // Reload inter-stone TLS client with fresh cert material
+                        state_for_pond.security.stone_client.reload_tls();
+
+                        if enrolled {
+                            crate::bootstrap::run::activate_pond_security(&state_for_pond, &console_for_pond).await;
+                        } else {
+                            // HTTPS shutdown is not implemented yet (Phase 3+).
+                            // For now, just update the flag so new connections see the change.
+                            state_for_pond
+                                .security.https
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            tracing::info!("Pond unenrolled — HTTPS deactivated (flag cleared)");
+                        }
+                    }
+                    Ok(_) => {} // Ignore non-pond events
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "Pond enrollment listener: missed events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("Pond enrollment listener: event bus closed");
+                        break;
+                    }
+                }
+            }
+        });
+        tracing::debug!("Pond enrollment-change listener spawned");
+    }
+
+    // Phase 11.4: Sync self_entry services after registry loads
+    let state_for_sync = state.clone();
+    tokio::spawn(async move {
+        // Wait for registry to load
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Use helper method to sync and chirp
+        state_for_sync.sync_self_services(true).await;
+        tracing::debug!("Initial service sync complete");
+    });
+
+    // Phase 11.5: mDNS lurk-listener (passive topology discovery)
+    // Listens for mDNS announcements from neighbor stones to populate topology cache
+    let topology_cache_for_mdns = state.current.topology.cache.clone();
+    let topology_dirty_for_mdns = state.current.topology.dirty.clone();
+    let self_stone_name_for_mdns = stone_name.clone();
+    let mdns_result = mdns::start_mdns_lurk_listener(koi_handle.clone(), stone_name.clone()).await;
+    if let Ok(mut mdns_rx) = mdns_result
+    {
+        console_printer.emit(console::ConsoleEvent::new(
+            console::EventCategory::Discovery,
+            console::EventStatus::MdnsActive,
+            "Lurk-listener active (passive topology discovery)".to_string(),
+        ));
+        tokio::spawn(async move {
+            loop {
+                match mdns_rx.recv().await {
+                    Ok(discovered) => {
+                        // Skip self-announcements (common parser no longer filters these)
+                        if discovered.stone_name == self_stone_name_for_mdns {
+                            continue;
+                        }
+
+                        tracing::debug!(
+                            stone_id = ?discovered.stone_id,
+                            stone_name = %discovered.stone_name,
+                            address = %discovered.address,
+                            mac = ?discovered.mac,
+                            "mDNS: Neighbor stone discovered and cached"
+                        );
+                        // Add to topology cache (only if stone_id is present)
+                        if let Some(sid) = discovered.stone_id {
+                            let entry = crate::domain::TopologyEntry {
+                                stone_id: sid,
+                                stone_name: discovered.stone_name,
+                                address: discovered.address,
+                                moss_version: discovered
+                                    .version
+                                    .unwrap_or_else(|| "unknown".to_string()),
+                                services: vec![], // mDNS doesn't provide services
+                                mac: discovered.mac,
+                                health: discovered.health.unwrap_or_else(|| {
+                                    garden_common::constants::STONE_INITIALIZING.to_string()
+                                }),
+                                capabilities: None, // mDNS doesn't provide capabilities
+                                status: garden_common::StoneStatus::Online,
+                                discovered_at: chrono::Utc::now(),
+                                last_seen: chrono::Utc::now(),
+                                tags: vec![], // mDNS doesn't provide tags
+                                gateways: vec![], // mDNS doesn't provide gateways
+                            };
+                            crate::domain::topology::upsert_from_chirp_dirty(
+                                &topology_cache_for_mdns,
+                                entry,
+                                &topology_dirty_for_mdns,
+                            )
+                            .await;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "mDNS lurk-listener: missed events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("mDNS lurk-listener channel closed");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    // Phase 12: Active peer discovery (send discovery request at startup)
+    tracing::info!("Discovering peer stones...");
+
+    // Subscribe to discovery responses before sending request
+    if let Ok(mut discovery_rx) =
+        garden_common::infra::communications::p2p::subscribe_to_announcement(
+            garden_common::infra::communications::announcement_types::DISCOVERY_RESPONSE,
+        )
+        .await
+    {
+        // Send discovery request
+        let request = garden_common::DiscoveryRequest {
+            discover: "moss".to_string(),
+            request_id: garden_common::ids::generate_guidv7(),
+            requester: stone_id.clone(),
+        };
+
+        if let Err(e) = garden_common::infra::communications::p2p::send_announcement(
+            garden_common::infra::communications::announcement_types::DISCOVERY_REQUEST,
+            &request,
+        )
+        .await
+        {
+            tracing::warn!(error = ?e, "Failed to send discovery request");
+        } else {
+            // Collect responses for 3 seconds
+            let timeout_fut = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                let mut responses = Vec::new();
+                while let Some((payload, _from_addr)) = discovery_rx.recv().await {
+                    if let Ok(response) =
+                        serde_json::from_value::<garden_common::DiscoveryResponse>(payload)
+                    {
+                        responses.push(response);
+                    }
+                }
+                responses
+            });
+
+            let discovered_peers = timeout_fut.await.unwrap_or_else(|_| Vec::new());
+
+            for peer in discovered_peers {
+                if let Some(peer_id) = peer.stone_id {
+                    let entry = crate::domain::TopologyEntry {
+                        stone_id: peer_id,
+                        stone_name: peer.stone_name,
+                        address: peer.address,
+                        moss_version: peer.moss_version,
+                        services: vec![],
+                        mac: None,
+                        health: garden_common::constants::STONE_INITIALIZING.to_string(),
+                        capabilities: None,
+                        status: garden_common::StoneStatus::Online,
+                        discovered_at: chrono::Utc::now(),
+                        last_seen: chrono::Utc::now(),
+                        tags: vec![],
+                        gateways: vec![],
+                    };
+                    crate::domain::topology::upsert_from_chirp_dirty(
+                        &state.current.topology.cache,
+                        entry,
+                        &state.current.topology.dirty,
+                    )
+                    .await;
+                }
+            }
+        }
+    } else {
+        tracing::warn!("Failed to subscribe to discovery responses");
+    }
+
+    // Phase 13: Initial announcement (announce ourselves)
+    tracing::info!("Sending initial announcement...");
+    let entry = state.current.topology.self_entry.read().await.clone();
+    if let Err(e) = crate::announcement::announce(&entry).await {
+        tracing::warn!(error = ?e, "Initial announcement failed");
+    }
+
+    // Phase 14: Start periodic announcer (30s background task)
+    crate::tasks::start_periodic_announcer(state.clone(), shutdown_token.child_token());
+
+    // Phase 16: Pre-install manifest handling
+    crate::bootstrap::run::start_preinstall_handler(&state).await;
+
+    // Phase 17: Health monitoring and auto-adoption
+    start_health_monitor(state.clone(), shutdown_token.child_token());
+    if let Some(cfg) = config {
+        start_auto_adoption(
+            state.clone(),
+            cfg,
+            &console_printer,
+            shutdown_token.child_token(),
+        );
+    } else {
+        // No config file - use default adoption config (profile-aware)
+        start_auto_adoption_with_config(
+            state.clone(),
+            infra::AdoptionConfig::default(),
+            &console_printer,
+            shutdown_token.child_token(),
+        );
+    }
+
+    // Phase 17.5: Cross-platform volume watcher (STORAGE-0011)
+    // Detects volume hotplug/removal events and feeds them into the Volumes domain.
+    // Also emits DomainPulse events so presence SSE (ribbon notifications) and
+    // the candidates notification stay current.
+    {
+        use crate::infra::storage::platform::VolumeEvent;
+        use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
+
+        let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel(32);
+        crate::infra::storage::platform::start_volume_watcher(vol_tx);
+
+        let volumes_for_watcher = state.current.storage.volumes.clone();
+        let pulse_tx_for_watcher = state.pulse.clone();
+        let storage_changed_tx_for_watcher = state.current.storage.changed.clone();
+        let notifications = state.presence.notifications.clone();
+        let watcher_token = shutdown_token.child_token();
+        let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
+        tokio::spawn(async move {
+            /// Process a single volume event: classify, emit pulse, update notifications.
+            async fn handle_volume_event(
+                ev: VolumeEvent,
+                volumes: &crate::domain::Volumes,
+                pulse: &tokio::sync::broadcast::Sender<infra::PulseEvent>,
+                storage_changed: &tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
+                notifications: &garden_common::NotificationRegistry,
+            ) {
+                // Build pulse before ingest consumes the event info
+                let event_pulse = match &ev {
+                    VolumeEvent::Appeared(snap) => {
+                        let capacity_gb = snap.capacity_bytes / 1_000_000_000;
+                        Some(infra::DomainPulse::storage_event(
+                            "storage_detected",
+                            format!("Volume appeared: {} ({})", snap.mount_path, snap.label.as_deref().unwrap_or("unlabeled")),
+                            "info",
+                            None,
+                            Some(serde_json::json!({
+                                "device": snap.path,
+                                "mount_path": snap.mount_path,
+                                "label": snap.label,
+                                "capacity_gb": capacity_gb,
+                                "removable": snap.removable,
+                            })),
+                        ))
+                    }
+                    VolumeEvent::Disappeared { path } => {
+                        Some(infra::DomainPulse::storage_event(
+                            "storage_removed",
+                            format!("Volume disappeared: {}", path),
+                            "info",
+                            None,
+                            Some(serde_json::json!({ "device": path })),
+                        ))
+                    }
+                };
+
+                // Ingest into Volumes domain; returns domain events to broadcast
+                let storage_events = crate::domain::storage::ingest_event(volumes, ev).await;
+
+                // Emit pulse for presence SSE / ribbon notifications
+                if let Some(p) = event_pulse {
+                    let _ = pulse.send(infra::PulseEvent::Domain(p));
+                }
+
+                // Broadcast all domain events immediately so cloud filter,
+                // WebDAV router, and TTY ribbon display react without waiting
+                // for the next heartbeat.
+                for event in storage_events {
+                    tracing::debug!(event = ?event, "storage watcher: broadcasting domain event");
+                    let _ = storage_changed.send(event);
+                }
+
+                // Update candidates notification
+                let candidate_count = {
+                    let map = volumes.read().await;
+                    map.values()
+                        .filter(|v| !v.is_managed() && v.removable && v.online)
+                        .count()
+                };
+                notifications.set_if(
+                    NOTIF_SOURCE_CANDIDATES,
+                    NotificationTag::Opportunity,
+                    candidate_count > 0,
+                );
+            }
+
+            loop {
+                tokio::select! {
+                    _ = watcher_token.cancelled() => break,
+                    event = vol_rx.recv() => {
+                        let Some(ev) = event else { break };
+                        handle_volume_event(
+                            ev,
+                            &volumes_for_watcher,
+                            &pulse_tx_for_watcher,
+                            &storage_changed_tx_for_watcher,
+                            &notifications,
+                        ).await;
+                    }
+                    _ = rescan_rx.recv() => {
+                        // Ad-hoc rescan requested (e.g. after `storage add` wrote a manifest).
+                        // Re-scan all volumes through the standard pipeline.
+                        let snaps = tokio::task::spawn_blocking(
+                            crate::infra::storage::platform::scan_volumes
+                        )
+                        .await
+                        .unwrap_or_default();
+                        crate::domain::storage::reconcile(&volumes_for_watcher, &snaps).await;
+                        crate::domain::storage::health_tick_all(&volumes_for_watcher).await;
+
+                        // Update candidates notification after rescan
+                        let candidate_count = {
+                            let map = volumes_for_watcher.read().await;
+                            map.values()
+                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .count()
+                        };
+                        notifications.set_if(
+                            NOTIF_SOURCE_CANDIDATES,
+                            NotificationTag::Opportunity,
+                            candidate_count > 0,
+                        );
+                        tracing::debug!("Ad-hoc volume rescan complete");
+                    }
+                }
+            }
+        });
+        tracing::info!("Volume watcher started (STORAGE-0011)");
+    }
+
+    // Phase 17.5.2: Physical media watcher (STORAGE-0011)
+    // Polls physical disks (PowerShell/lsblk) to detect media without partitions.
+    // Lower cadence than the volume watcher since physical changes are rarer.
+    {
+        let media = state.current.storage.media.clone();
+        let media_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            interval.tick().await; // skip first immediate tick (initial scan already done)
+            loop {
+                tokio::select! {
+                    _ = media_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        let snapshots = tokio::task::spawn_blocking(
+                            crate::infra::storage::platform::scan_media
+                        )
+                        .await
+                        .unwrap_or_default();
+                        crate::domain::storage::reconcile_media(&media, &snapshots).await;
+                    }
+                }
+            }
+        });
+        tracing::info!("Media watcher started (STORAGE-0011)");
+    }
+
+    // Phase 17.6: Topology + storage cache maintenance
+    // Topology: mark stale stones offline, evict old, persist dirty cache to disk
+    crate::tasks::start_topology_maintenance(
+        state.current.topology.cache.clone(),
+        state.current.topology.dirty.clone(),
+        state.current.topology.self_entry.clone(),
+        shutdown_token.child_token(),
+    );
+
+    // Registry maintenance: reap expired gateway entries and broadcast removals
+    crate::tasks::start_registry_maintenance(
+        state.clone(),
+        shutdown_token.child_token(),
+    );
+
+    // Storage lifecycle (STORAGE-0011): auto-mount, health, beacon — all platforms.
+    // Replaces legacy seed bank resilience + hot-plug detection.
+    crate::tasks::coordinator::start_storage_lifecycle(
+        state.clone(),
+        shutdown_token.child_token(),
+    );
+    // Storage console task: renders connected/released ribbons to physical console.
+    crate::tasks::coordinator::start_storage_console_task(
+        state.platform.runtime.clone(),
+        state.subscribe_storage_changed(),
+        shutdown_token.child_token(),
+    );
+    // Phase 17.7: Offering orchestration (ORCH-0001)
+    // Manages Primary/Dormant/Joining/Degraded lifecycle for replicated offerings.
+    // Must run after registry loader, health monitor, and catalog builder are ready.
+    {
+        let orch_state = state.clone();
+        let orch_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            if let Err(e) = crate::tasks::offering_orchestration::offering_orchestration_task(
+                orch_state, orch_token,
+            )
+            .await
+            {
+                tracing::error!(error = ?e, "Offering orchestration task failed");
+            }
+        });
+        tracing::info!("Offering orchestration task started (ORCH-0001)");
+    }
+
+    // Phase 17.8: Seed bank orchestration (STORAGE-0006)
+    // Assigns Primary/Dormant roles for replicated seed banks.
+    {
+        let sb_state = state.clone();
+        let sb_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            if let Err(e) = crate::tasks::storage_orchestration::storage_orchestration_task(
+                sb_state, sb_token,
+            )
+            .await
+            {
+                tracing::error!(error = ?e, "Seed bank orchestration task failed");
+            }
+        });
+        tracing::info!("Seed bank orchestration task started (STORAGE-0006)");
+    }
+
+    // Phase 17.8b: Storage beacon subscriber (STORAGE-0013)
+    // Reacts to StorageChanged domain events by broadcasting beacons.
+    // Replaces manual beacon spawns from individual handlers.
+    {
+        let beacon_state = state.clone();
+        let beacon_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            crate::tasks::storage_orchestration::storage_beacon_subscriber(
+                beacon_state, beacon_token,
+            )
+            .await;
+        });
+        tracing::info!("Storage beacon subscriber started (STORAGE-0013)");
+    }
+
+    // Phase 17.9: Seed bank storage tick aggregator (STORAGE-0006 Phase 4f)
+    // Quantizes raw per-write ticks into per-seed-bank aggregated ticks
+    // (2s quiet threshold / 10s deadline cap).
+    {
+        let raw_rx = state.orchestration.storage.tick.raw.subscribe();
+        let agg_tx = state.orchestration.storage.tick.debounced.clone();
+        let agg_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            crate::tasks::storage_tick_aggregator::storage_tick_aggregator_task(
+                raw_rx, agg_tx, agg_token,
+            )
+            .await;
+        });
+        tracing::info!("Storage tick aggregator task started (STORAGE-0006)");
+    }
+
+    // Phase 17.9b: Seed bank replication (STORAGE-0006 Phase 4e)
+    // Syncs Dormant seed banks from their Primaries.
+    {
+        let repl_state = state.clone();
+        let repl_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            if let Err(e) = crate::tasks::storage_replication::storage_replication_task(
+                repl_state, repl_token,
+            )
+            .await
+            {
+                tracing::error!(error = ?e, "Seed bank replication task failed");
+            }
+        });
+        tracing::info!("Seed bank replication task started (STORAGE-0006)");
+    }
+
+    // Phase 17.9b2: Shell integration (Windows only)
+    // Registers "Zen Garden" context menu on drives for storage adoption.
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = crate::infra::shell_integration::register() {
+            tracing::warn!(error = %e, "Shell integration failed to register (non-fatal)");
+        } else {
+            tracing::info!("Shell integration: drive context menu registered");
+        }
+    }
+
+    // Phase 17.9c: Cloud Filter sync provider (STORAGE-0009 Phase 4, Windows only)
+    // Registers a "Zen Garden" sync root in Explorer so storages appear natively.
+    #[cfg(target_os = "windows")]
+    {
+        let cf_endpoint = {
+            let entry = state.current.topology.self_entry.read().await;
+            Arc::new(RwLock::new(entry.address.http_base()))
+        };
+        if let Err(e) = crate::infra::cloud_filter::start(
+            state.current.storage.volumes.clone(),
+            state.tool.registry.clone(),
+            state.current.stone.id.clone(),
+            state.orchestration.storage.tick.raw.clone(),
+            state.subscribe_storage_changed(),
+            cf_endpoint,
+            shutdown_token.child_token(),
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "Cloud Filter provider failed to start (non-fatal)");
+        } else {
+            tracing::info!("Cloud Filter sync provider started (STORAGE-0009 Phase 4)");
+        }
+    }
+
+    // Phase 17.9d: Filesystem watcher (STORAGE-0009 Phase 5, event-driven per STORAGE-0013)
+    // Detects external writes to managed storage mounts and records changelog
+    // entries so replication stays coherent.
+    {
+        let watcher_set = crate::infra::storage::StorageWatcherSet::new(
+            state.current.storage.volumes.clone(),
+            state.orchestration.storage.tick.raw.clone(),
+            shutdown_token.child_token(),
+        );
+        // Initial reconciliation — start watchers for already-mounted storages
+        watcher_set.reconcile().await;
+
+        // Event-driven + heartbeat reconciliation — react to StorageChanged
+        // events immediately, with a 60s fallback heartbeat.
+        let watcher_token = shutdown_token.child_token();
+        let mut storage_rx = state.subscribe_storage_changed();
+        tokio::spawn(async move {
+            let heartbeat = tokio::time::Duration::from_secs(60);
+            loop {
+                tokio::select! {
+                    _ = watcher_token.cancelled() => break,
+                    result = storage_rx.recv() => {
+                        match result {
+                            Ok(event) => {
+                                tracing::debug!(event = ?event, "fs watcher: storage event");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::debug!(skipped = n, "fs watcher: lagged, reconciling");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                        watcher_set.reconcile().await;
+                    }
+                    _ = tokio::time::sleep(heartbeat) => {
+                        watcher_set.reconcile().await;
+                    }
+                }
+            }
+        });
+        tracing::info!("Filesystem watcher started (event-driven, STORAGE-0013)");
+    }
+
+    // Initialize tools projection from restored offerings + local seed-banks.
+    // This emits initial tool.upsert deltas and announces them garden-wide.
+    state.refresh_local_tools_projection().await;
+
+    api_endpoint
 }

@@ -36,19 +36,19 @@ const COL_AI: usize = 16;
 pub struct ObserveCommand {
     pub stone_filter: Option<String>,
     pub offering_filter: Option<String>,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl ObserveCommand {
     pub fn new(
         stone_filter: Option<String>,
         offering_filter: Option<String>,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> Self {
         Self {
             stone_filter,
             offering_filter,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -59,7 +59,7 @@ impl Command for ObserveCommand {
         observe_garden(ctx, self.stone_filter.clone(), self.offering_filter.clone()).await?;
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::OBSERVE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::OBSERVE, self.quiet);
 
         Ok(())
     }
@@ -122,7 +122,7 @@ async fn observe_garden(
         }
         layout
             .field("Fresh mode")
-            .value(if ctx.fresh_mode {
+            .value(if ctx.fresh {
                 "enabled"
             } else {
                 "disabled"
@@ -136,7 +136,7 @@ async fn observe_garden(
 
     // Fresh mode: For detailed stone info with resource metrics
     // Requires UDP discovery + HTTP fetches per stone (not yet implemented)
-    if ctx.fresh_mode {
+    if ctx.fresh {
         layout
             .status("Fresh mode not yet supported, using topology cache")
             .level(IndentLevel::Card)

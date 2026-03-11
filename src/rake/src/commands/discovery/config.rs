@@ -76,7 +76,7 @@ pub struct ConfigCommand {
     /// Service name to query
     pub service: String,
     /// Quiet mode (suppress hints)
-    pub quiet_mode: bool,
+    pub quiet: bool,
     /// Field extraction path (e.g., "connection.uri")
     pub field: Option<String>,
     /// Output JSON instead of human-readable
@@ -86,13 +86,13 @@ pub struct ConfigCommand {
 impl ConfigCommand {
     pub fn new(
         service: String,
-        quiet_mode: bool,
+        quiet: bool,
         json_output: bool,
         field: Option<String>,
     ) -> Self {
         Self {
             service,
-            quiet_mode,
+            quiet,
             json_output,
             field,
         }
@@ -281,7 +281,7 @@ impl ConfigCommand {
             config.connection.protocol
         );
 
-        if !self.quiet_mode {
+        if !self.quiet {
             println!();
             println!(
                 "{}Hint: Use --output json for machine-readable output",

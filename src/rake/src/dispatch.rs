@@ -251,8 +251,8 @@ pub async fn resolve_endpoint(
         // Notify stone of tending for visual feedback (glow/pulse)
         let notify_ctx = CommandContext::without_endpoint(
             client.clone(),
-            false, // quiet_mode
-            false, // fresh_mode
+            false, // quiet
+            false, // fresh
             0,     // verbose
         );
         let _ = tend::notify_tending(&notify_ctx, &endpoint).await;

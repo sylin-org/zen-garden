@@ -49,12 +49,12 @@ const WIRE_MIN_COLS: usize = 50;
 
 /// Pulse monitor command
 pub struct PulseCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl PulseCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 

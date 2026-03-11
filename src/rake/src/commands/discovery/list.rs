@@ -38,12 +38,12 @@ use garden_common::api_utils::ApiResponse;
 
 /// List services on a stone
 pub struct ListCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl ListCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
@@ -75,7 +75,7 @@ impl Command for ListCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIST, self.quiet_mode);
+        suggestions::print_suggestions(cmd::LIST, self.quiet);
 
         Ok(())
     }

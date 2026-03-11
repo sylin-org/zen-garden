@@ -29,30 +29,30 @@ pub enum WatchTargetType {
 /// Watch command for event/log streaming
 pub struct WatchCommand {
     pub target: WatchTargetType,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl WatchCommand {
-    pub fn new(target: WatchTargetType, quiet_mode: bool) -> Self {
-        Self { target, quiet_mode }
+    pub fn new(target: WatchTargetType, quiet: bool) -> Self {
+        Self { target, quiet }
     }
 
     /// Create for event watching
-    pub fn events(until: Option<String>, quiet_mode: bool) -> Self {
-        Self::new(WatchTargetType::Events { until }, quiet_mode)
+    pub fn events(until: Option<String>, quiet: bool) -> Self {
+        Self::new(WatchTargetType::Events { until }, quiet)
     }
 
     /// Create for offering log watching
-    pub fn offering_logs(name: String, timestamps: bool, quiet_mode: bool) -> Self {
+    pub fn offering_logs(name: String, timestamps: bool, quiet: bool) -> Self {
         Self::new(
             WatchTargetType::OfferingLogs { name, timestamps },
-            quiet_mode,
+            quiet,
         )
     }
 
     /// Create for stone log watching
-    pub fn stone_logs(name: String, timestamps: bool, quiet_mode: bool) -> Self {
-        Self::new(WatchTargetType::StoneLogs { name, timestamps }, quiet_mode)
+    pub fn stone_logs(name: String, timestamps: bool, quiet: bool) -> Self {
+        Self::new(WatchTargetType::StoneLogs { name, timestamps }, quiet)
     }
 }
 
@@ -76,7 +76,7 @@ impl Command for WatchCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::WATCH, self.quiet_mode);
+        suggestions::print_suggestions(cmd::WATCH, self.quiet);
 
         Ok(())
     }

@@ -13,15 +13,15 @@ use garden_common::ui::rendering as ui;
 pub struct BorrowCommand {
     pub name: String,
     pub from_url: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl BorrowCommand {
-    pub fn new(name: String, from_url: String, quiet_mode: bool) -> Self {
+    pub fn new(name: String, from_url: String, quiet: bool) -> Self {
         Self {
             name,
             from_url,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -78,7 +78,7 @@ impl Command for BorrowCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::BORROW, self.quiet_mode);
+        suggestions::print_suggestions(cmd::BORROW, self.quiet);
 
         Ok(())
     }

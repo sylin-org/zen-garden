@@ -22,19 +22,19 @@ pub enum LiftTarget {
 /// Lift command for removing pond elements
 pub struct LiftCommand {
     pub target: LiftTarget,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl LiftCommand {
-    pub fn new(target: LiftTarget, quiet_mode: bool) -> Self {
-        Self { target, quiet_mode }
+    pub fn new(target: LiftTarget, quiet: bool) -> Self {
+        Self { target, quiet }
     }
 
     /// Create from CLI args
     pub fn from_args(
         target_type: String,
         stone_name: Option<String>,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> anyhow::Result<Self> {
         let target = match target_type.as_str() {
             "keystone" => LiftTarget::Keystone,
@@ -48,7 +48,7 @@ impl LiftCommand {
                 target_type
             ),
         };
-        Ok(Self::new(target, quiet_mode))
+        Ok(Self::new(target, quiet))
     }
 }
 
@@ -67,7 +67,7 @@ impl Command for LiftCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIFT, self.quiet_mode);
+        suggestions::print_suggestions(cmd::LIFT, self.quiet);
 
         Ok(())
     }

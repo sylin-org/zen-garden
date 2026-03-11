@@ -22,12 +22,12 @@ pub enum PlaceTarget {
 /// Place command for pond zen syntax operations
 pub struct PlaceCommand {
     pub target: PlaceTarget,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl PlaceCommand {
-    pub fn new(target: PlaceTarget, quiet_mode: bool) -> Self {
-        Self { target, quiet_mode }
+    pub fn new(target: PlaceTarget, quiet: bool) -> Self {
+        Self { target, quiet }
     }
 
     /// Create from CLI args
@@ -35,7 +35,7 @@ impl PlaceCommand {
         target_type: String,
         code: Option<String>,
         passphrase: Option<String>,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> anyhow::Result<Self> {
         let target = match target_type.as_str() {
             "keystone" => PlaceTarget::Keystone { passphrase },
@@ -50,7 +50,7 @@ impl PlaceCommand {
                 target_type
             ),
         };
-        Ok(Self::new(target, quiet_mode))
+        Ok(Self::new(target, quiet))
     }
 }
 
@@ -69,7 +69,7 @@ impl Command for PlaceCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::PLACE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::PLACE, self.quiet);
 
         Ok(())
     }

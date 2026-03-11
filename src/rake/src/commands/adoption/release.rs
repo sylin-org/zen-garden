@@ -12,14 +12,14 @@ use garden_common::ui::rendering as ui;
 /// Release an adopted service
 pub struct ReleaseCommand {
     pub service: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl ReleaseCommand {
-    pub fn new(service: String, quiet_mode: bool) -> Self {
+    pub fn new(service: String, quiet: bool) -> Self {
         Self {
             service,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -60,7 +60,7 @@ impl Command for ReleaseCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::RELEASE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::RELEASE, self.quiet);
 
         Ok(())
     }

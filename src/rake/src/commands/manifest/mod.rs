@@ -43,7 +43,7 @@ pub enum ManifestAction {
 
 pub struct ManifestCommand {
     pub action: ManifestAction,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 // ============================================================================
@@ -65,21 +65,21 @@ impl ManifestCommand {
                 name,
                 category,
             },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
     pub fn validate(path: String, quiet: bool) -> Self {
         Self {
             action: ManifestAction::Validate { path },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
     pub fn test(path: String, quiet: bool) -> Self {
         Self {
             action: ManifestAction::Test { path },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
@@ -89,14 +89,14 @@ impl ManifestCommand {
                 offering,
                 output_dir,
             },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
     pub fn enrich(path: String, auto: bool, quiet: bool) -> Self {
         Self {
             action: ManifestAction::Enrich { path, auto },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 }
@@ -157,7 +157,7 @@ async fn execute_init(
     let endpoint = ctx.endpoint.as_ref().context("endpoint required for init")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!("{}Inspecting image '{}'...", indent, image_ref);
     }
@@ -219,7 +219,7 @@ async fn execute_init(
         written.push(filename.clone());
     }
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!(
             "{}{}  Manifest scaffolded for '{}'",
@@ -487,7 +487,7 @@ async fn execute_export(
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!("{}Exporting manifest for '{}'...", indent, offering);
     }
@@ -539,7 +539,7 @@ async fn execute_export(
         }
     }
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!(
             "{}{}  Exported {} file(s) for '{}'",

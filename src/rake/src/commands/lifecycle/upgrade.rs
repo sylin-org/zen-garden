@@ -13,15 +13,15 @@ use garden_common::ui::rendering as ui;
 pub struct UpgradeCommand {
     pub service: Option<String>,
     pub all: bool,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl UpgradeCommand {
-    pub fn new(service: Option<String>, all: bool, quiet_mode: bool) -> Self {
+    pub fn new(service: Option<String>, all: bool, quiet: bool) -> Self {
         Self {
             service,
             all,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -141,7 +141,7 @@ impl Command for UpgradeCommand {
                         }
 
                         // Display suggestions if present and not in quiet mode
-                        if !self.quiet_mode {
+                        if !self.quiet {
                             if let Some(suggestions) =
                                 body.get("suggestions").and_then(|v| v.as_array())
                             {
@@ -191,7 +191,7 @@ impl Command for UpgradeCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::NOURISH, self.quiet_mode);
+        suggestions::print_suggestions(cmd::NOURISH, self.quiet);
 
         Ok(())
     }

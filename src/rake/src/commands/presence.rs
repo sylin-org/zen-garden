@@ -12,12 +12,12 @@ pub async fn presence_command(
     _stone: Option<String>,
     at: Option<String>,
     client: &reqwest::Client,
-    quiet_mode: bool,
-    _fresh_mode: bool,
+    quiet: bool,
+    _fresh: bool,
     _verbose: u8,
     cache: Option<&garden_common::client::stone_cache::StoneCache>,
 ) -> Result<()> {
-    if quiet_mode {
+    if quiet {
         anyhow::bail!("Presence streaming requires interactive mode (cannot use --quiet)");
     }
 

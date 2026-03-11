@@ -34,12 +34,12 @@ pub enum TemplateAction {
 /// Template command for browsing service templates
 pub struct TemplateCommand {
     pub action: TemplateAction,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl TemplateCommand {
-    pub fn new(action: TemplateAction, quiet_mode: bool) -> Self {
-        Self { action, quiet_mode }
+    pub fn new(action: TemplateAction, quiet: bool) -> Self {
+        Self { action, quiet }
     }
 }
 
@@ -58,7 +58,7 @@ impl Command for TemplateCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::TEMPLATE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::TEMPLATE, self.quiet);
 
         Ok(())
     }

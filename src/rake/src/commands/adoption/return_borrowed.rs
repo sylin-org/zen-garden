@@ -12,12 +12,12 @@ use garden_common::ui::rendering as ui;
 /// Return (unregister) a borrowed service
 pub struct ReturnCommand {
     pub name: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl ReturnCommand {
-    pub fn new(name: String, quiet_mode: bool) -> Self {
-        Self { name, quiet_mode }
+    pub fn new(name: String, quiet: bool) -> Self {
+        Self { name, quiet }
     }
 }
 
@@ -57,7 +57,7 @@ impl Command for ReturnCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::RETURN, self.quiet_mode);
+        suggestions::print_suggestions(cmd::RETURN, self.quiet);
 
         Ok(())
     }

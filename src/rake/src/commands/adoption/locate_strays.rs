@@ -11,12 +11,12 @@ use garden_common::ui::rendering as ui;
 
 /// Locate stray (adoptable) containers
 pub struct LocateStraysCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl LocateStraysCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
@@ -84,7 +84,7 @@ impl Command for LocateStraysCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LOCATE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::LOCATE, self.quiet);
 
         Ok(())
     }

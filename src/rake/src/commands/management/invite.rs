@@ -12,12 +12,12 @@ use garden_common::ui::rendering as ui;
 
 /// Invite command for pond zen syntax operations
 pub struct InviteCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl InviteCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
@@ -88,7 +88,7 @@ impl Command for InviteCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::INVITE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::INVITE, self.quiet);
 
         Ok(())
     }

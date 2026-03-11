@@ -58,12 +58,12 @@ pub enum PondActionType {
 /// Pond command for security management
 pub struct PondCommand {
     pub action: PondActionType,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl PondCommand {
-    pub fn new(action: PondActionType, quiet_mode: bool) -> Self {
-        Self { action, quiet_mode }
+    pub fn new(action: PondActionType, quiet: bool) -> Self {
+        Self { action, quiet }
     }
 }
 
@@ -76,14 +76,14 @@ impl Command for PondCommand {
             PondActionType::Enroll => {
                 execute_pond_enroll(ctx).await?;
                 if !ctx.wants_json() {
-                    suggestions::print_suggestions(cmd::POND, self.quiet_mode);
+                    suggestions::print_suggestions(cmd::POND, self.quiet);
                 }
                 return Ok(());
             }
             PondActionType::Trust => {
                 execute_pond_trust(ctx).await?;
                 if !ctx.wants_json() {
-                    suggestions::print_suggestions(cmd::POND, self.quiet_mode);
+                    suggestions::print_suggestions(cmd::POND, self.quiet);
                 }
                 return Ok(());
             }
@@ -131,7 +131,7 @@ impl Command for PondCommand {
 
         // Self-teaching suggestions (suppress in JSON mode)
         if !ctx.wants_json() {
-            suggestions::print_suggestions(cmd::POND, self.quiet_mode);
+            suggestions::print_suggestions(cmd::POND, self.quiet);
         }
 
         Ok(())

@@ -28,12 +28,12 @@ pub enum MakeActionType {
 /// Make command for configuring console mode
 pub struct MakeCommand {
     pub action: MakeActionType,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl MakeCommand {
-    pub fn new(action: MakeActionType, quiet_mode: bool) -> Self {
-        Self { action, quiet_mode }
+    pub fn new(action: MakeActionType, quiet: bool) -> Self {
+        Self { action, quiet }
     }
 }
 
@@ -59,7 +59,7 @@ impl Command for MakeCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::MAKE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::MAKE, self.quiet);
 
         Ok(())
     }

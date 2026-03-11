@@ -13,14 +13,14 @@ use std::time::Duration;
 /// Reconcile offerings with actual container state
 pub struct ReconcileCommand {
     pub drop_invalid: bool,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl ReconcileCommand {
-    pub fn new(drop_invalid: bool, quiet_mode: bool) -> Self {
+    pub fn new(drop_invalid: bool, quiet: bool) -> Self {
         Self {
             drop_invalid,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -64,7 +64,7 @@ impl Command for ReconcileCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::RECONCILE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::RECONCILE, self.quiet);
 
         Ok(())
     }

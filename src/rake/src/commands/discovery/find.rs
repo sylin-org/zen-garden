@@ -55,7 +55,7 @@ pub struct FindCommand {
     /// Output format
     pub format: FindOutputFormat,
     /// Quiet mode (suppress hints)
-    pub quiet_mode: bool,
+    pub quiet: bool,
     /// Fresh discovery (bypass cache)
     pub fresh: bool,
     /// Wishfully mode (auto-provision if not found)
@@ -68,14 +68,14 @@ impl FindCommand {
     pub fn new(
         query: String,
         format: FindOutputFormat,
-        quiet_mode: bool,
+        quiet: bool,
         fresh: bool,
         wishfully: bool,
     ) -> Self {
         Self {
             query,
             format,
-            quiet_mode,
+            quiet,
             fresh,
             wishfully,
             field: None,
@@ -86,7 +86,7 @@ impl FindCommand {
     pub fn with_field(
         query: String,
         format: FindOutputFormat,
-        quiet_mode: bool,
+        quiet: bool,
         fresh: bool,
         wishfully: bool,
         field: Option<String>,
@@ -94,7 +94,7 @@ impl FindCommand {
         Self {
             query,
             format,
-            quiet_mode,
+            quiet,
             fresh,
             wishfully,
             field,
@@ -196,7 +196,7 @@ impl Command for FindCommand {
 
         // Self-teaching suggestions (unless quiet or non-human format)
         if self.format == FindOutputFormat::Human {
-            suggestions::print_suggestions(cmd::FIND, self.quiet_mode);
+            suggestions::print_suggestions(cmd::FIND, self.quiet);
         }
 
         Ok(())
@@ -531,7 +531,7 @@ impl FindCommand {
         }
 
         if self.format == FindOutputFormat::Human {
-            suggestions::print_suggestions(cmd::FIND, self.quiet_mode);
+            suggestions::print_suggestions(cmd::FIND, self.quiet);
         }
 
         Ok(true)
@@ -835,7 +835,7 @@ impl FindCommand {
                                 }
 
                                 if self.format == FindOutputFormat::Human {
-                                    suggestions::print_suggestions(cmd::FIND, self.quiet_mode);
+                                    suggestions::print_suggestions(cmd::FIND, self.quiet);
                                 }
 
                                 return Ok(());
@@ -982,7 +982,7 @@ impl FindCommand {
         }
 
         // Hint for JSON output
-        if !self.quiet_mode && self.format == FindOutputFormat::Human {
+        if !self.quiet && self.format == FindOutputFormat::Human {
             println!();
             println!(
                 "{}Hint: Use `garden-rake find {} --format json` for machine-readable output",

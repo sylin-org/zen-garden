@@ -11,12 +11,12 @@ use garden_common::ui::rendering as ui;
 
 /// List adopted services
 pub struct AdoptedCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl AdoptedCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
@@ -70,7 +70,7 @@ impl Command for AdoptedCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::ADOPTED, self.quiet_mode);
+        suggestions::print_suggestions(cmd::ADOPTED, self.quiet);
 
         Ok(())
     }

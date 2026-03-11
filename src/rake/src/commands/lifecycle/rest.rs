@@ -12,14 +12,14 @@ use garden_common::ui::rendering as ui;
 /// Stop (rest) a service
 pub struct RestCommand {
     pub service: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl RestCommand {
-    pub fn new(service: String, quiet_mode: bool) -> Self {
+    pub fn new(service: String, quiet: bool) -> Self {
         Self {
             service,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -57,7 +57,7 @@ impl Command for RestCommand {
                     }
 
                     // Display suggestions if present and not in quiet mode
-                    if !self.quiet_mode {
+                    if !self.quiet {
                         if let Some(suggestions) =
                             body.get("suggestions").and_then(|v| v.as_array())
                         {
@@ -116,7 +116,7 @@ impl Command for RestCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::REST, self.quiet_mode);
+        suggestions::print_suggestions(cmd::REST, self.quiet);
 
         Ok(())
     }

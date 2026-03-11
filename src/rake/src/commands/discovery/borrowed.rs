@@ -11,12 +11,12 @@ use garden_common::ui::rendering as ui;
 
 /// List borrowed services
 pub struct BorrowedCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl BorrowedCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
@@ -73,7 +73,7 @@ impl Command for BorrowedCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::BORROWED, self.quiet_mode);
+        suggestions::print_suggestions(cmd::BORROWED, self.quiet);
 
         Ok(())
     }

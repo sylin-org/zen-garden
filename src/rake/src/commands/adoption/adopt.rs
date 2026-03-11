@@ -12,14 +12,14 @@ use garden_common::ui::rendering as ui;
 /// Adopt an existing container
 pub struct AdoptCommand {
     pub container: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl AdoptCommand {
-    pub fn new(container: String, quiet_mode: bool) -> Self {
+    pub fn new(container: String, quiet: bool) -> Self {
         Self {
             container,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -81,7 +81,7 @@ impl Command for AdoptCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::ADOPT, self.quiet_mode);
+        suggestions::print_suggestions(cmd::ADOPT, self.quiet);
 
         Ok(())
     }

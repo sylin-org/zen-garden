@@ -21,14 +21,14 @@ use std::time::Duration;
 pub struct RouseCommand {
     /// Stone name to wake
     pub stone_name: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl RouseCommand {
-    pub fn new(stone_name: String, quiet_mode: bool) -> Self {
+    pub fn new(stone_name: String, quiet: bool) -> Self {
         Self {
             stone_name,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -168,7 +168,7 @@ impl Command for RouseCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::ROUSE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::ROUSE, self.quiet);
 
         Ok(())
     }
@@ -184,12 +184,12 @@ impl Command for RouseCommand {
 
 /// Shut down a stone (power off)
 pub struct SlumberCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl SlumberCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
@@ -245,7 +245,7 @@ impl Command for SlumberCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::SLUMBER, self.quiet_mode);
+        suggestions::print_suggestions(cmd::SLUMBER, self.quiet);
 
         Ok(())
     }
@@ -261,12 +261,12 @@ impl Command for SlumberCommand {
 
 /// Reboot a stone
 pub struct StirCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl StirCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
@@ -322,7 +322,7 @@ impl Command for StirCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::STIR, self.quiet_mode);
+        suggestions::print_suggestions(cmd::STIR, self.quiet);
 
         Ok(())
     }

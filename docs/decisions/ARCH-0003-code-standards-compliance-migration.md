@@ -198,11 +198,24 @@ Target structs and their current flat-field mappings:
 For changes that cascade across call sites (value objects, domain context structs):
 
 1. **Add** the new type alongside the old representation
-2. **Migrate** call sites incrementally within the same wave
-3. **Remove** the old representation when all call sites are updated
-4. Commit at each stage — the build must pass between add, migrate, and remove
+2. **Deprecate** the old representation immediately — mark it `#[deprecated = "ARCH-0003: use <NewType>"]` so every remaining call site becomes a compiler warning
+3. **Migrate** call sites incrementally within the same wave
+4. **Remove** the old representation when all call sites are updated — the deprecation attribute and the type itself are deleted together
+5. Commit at each stage — the build must pass between add, deprecate, migrate, and remove
 
 This avoids a single uncommittable diff spanning hundreds of files.
+
+### Deprecation Tracking
+
+Old representations that survive across commits are deprecated artifacts. Every deprecated artifact is:
+
+- Marked `#[deprecated = "ARCH-0003: use <replacement>"]` — this converts remaining call sites into compiler warnings, making the migration surface visible
+- Listed in the commit message that introduces the deprecation, as `Deprecated: OldType → NewType` so `git log` is a migration ledger
+- **Required to be removed** before the wave is declared complete
+
+No wave is finished while any `#[deprecated]` attribute introduced by this migration remains in the changed crate. Deprecation is a transit state, not a resting state. A `#[deprecated]` item that outlives its wave is a migration defect.
+
+**Rust limitation**: `#[deprecated]` does not apply to struct fields or local variables — only to types, functions, methods, modules, and constants. For renamed fields (e.g. `stone_id → id`), the old struct itself is deprecated, not the field. For renamed local variables, the rename is in-place with no intermediate state needed.
 
 ### File Reorganization
 
@@ -217,7 +230,14 @@ Git blame continuity is secondary to architectural correctness — the migration
 
 ### Acceptance Criteria
 
-A module is not considered finished until it fully adheres to `docs/code-standards.md`. The build gate must pass clean and no new violations may be introduced anywhere in the diff.
+A wave is not considered finished until:
+
+1. The changed crate fully adheres to `docs/code-standards.md` — no partial compliance
+2. The build gate passes clean with zero warnings in the changed crate
+3. No `#[deprecated]` attribute introduced by this migration remains anywhere in the changed crate — all deprecated artifacts have been removed
+4. No new violations are introduced anywhere in the diff
+
+Deprecated artifacts are transit states. A `#[deprecated]` that outlives its wave is a migration defect and blocks completion.
 
 ### Build Gate
 

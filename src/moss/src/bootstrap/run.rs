@@ -659,6 +659,7 @@ pub async fn run(
         topology_cache: topology_cache.clone(),
         topology_dirty: topology_dirty.clone(),
         tool: tool.clone(),
+        fqn_handler: Arc::new(crate::domain::FqnHandler::new()),
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),

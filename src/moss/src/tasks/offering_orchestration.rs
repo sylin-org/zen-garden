@@ -273,11 +273,8 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     // A service registering handler_for suppresses elections for that offering.
     // Read from the unified registry (category=orchestrator entries).
     let gateway_handled: std::collections::HashSet<String> = {
-        let reg = state.tool.registry.read().await;
-        reg.gateway_entries()
-            .iter()
-            .map(|e| e.tool.tool.tool_type.clone())
-            .collect()
+        let reg = state.fqn_handler.registry.read().await;
+        reg.handled_offerings()
     };
 
     let offerings = state.get_offerings().await;

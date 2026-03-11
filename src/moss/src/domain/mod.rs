@@ -45,6 +45,7 @@ pub mod storage_service;
 pub mod service_discovery;
 pub mod service_manager;
 pub mod services;
+pub mod fqn_handler;
 pub mod tool;
 pub mod tools;
 pub mod topology;
@@ -108,6 +109,7 @@ pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
 pub use garden_registry::{
     new_registry, EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery,
 };
+pub use fqn_handler::{FqnHandler, FqnHandlerEntry, FqnHandlerRegistry};
 pub use tool::Tool;
 pub use tools::{
     stream_event_type_for_delta, ToolsSnapshotPayload,

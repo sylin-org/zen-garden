@@ -14,7 +14,7 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::Client;
-use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry, Orchestration, Storage, Tool};
+use crate::domain::{CeremonyRegistry, FqnHandler, InfrastructureHandlerRegistry, Orchestration, Storage, Tool};
 use crate::infra::{
     stone_client::StoneClient, CeremonyJournal, EventBus, ManifestRegistry, PulseEvent,
 };
@@ -137,6 +137,10 @@ pub struct AppState {
 
     /// Garden-wide tool registry and delta stream (ARCH-0004).
     pub tool: Arc<Tool>,
+
+    /// FQN handler registry — processes registered to handle FIND requests for a given FQN
+    /// (ARCH-0004). Ephemeral, TTL-based; handlers refresh every 30 seconds.
+    pub fqn_handler: Arc<FqnHandler>,
 
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,

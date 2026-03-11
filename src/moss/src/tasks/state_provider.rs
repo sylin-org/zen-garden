@@ -104,11 +104,8 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // type, this stone is ineligible — the handler owns the lifecycle.
             // Check if an orchestrator handles this offering (suppress elections)
             {
-                let reg = self.state.tool.registry.read().await;
-                let handled = reg
-                    .gateway_entries()
-                    .iter()
-                    .any(|e| e.tool.tool.tool_type.eq_ignore_ascii_case(&offering.offering));
+                let reg = self.state.fqn_handler.registry.read().await;
+                let handled = reg.handles_offering(&offering.offering);
                 if handled {
                     return None;
                 }

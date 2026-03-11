@@ -4,7 +4,6 @@
 //! PUT upserts (idempotent), DELETE removes. Both trigger auto-chirp
 //! so the gateway entry propagates through topology.
 
-use crate::domain::garden_registry::EntryOrigin;
 use crate::AppState;
 use axum::{
     extract::{Path, State},
@@ -13,7 +12,7 @@ use axum::{
 };
 use chrono::Utc;
 use garden_common::offerings::OfferingFqn;
-use garden_common::tools::{build_tool_key, GardenTool, ServiceInfo, Stone, ToolIdentity};
+use garden_common::tools::{GardenTool, ServiceInfo, Stone, ToolIdentity};
 use garden_common::GatewayRegistration;
 use serde::{Deserialize, Serialize};
 
@@ -142,15 +141,13 @@ pub async fn put_gateway(
     };
 
     let delta = {
-        let mut reg = state.tool.registry.write().await;
-        reg.upsert(tool, EntryOrigin::Registered)
+        let mut reg = state.fqn_handler.registry.write().await;
+        reg.upsert(&offering, tool, registration.handler_for.clone())
     };
 
     // Broadcast via tools beacon so remote registries get the entry
     if let Some(delta) = delta {
-        state
-            .publish_tool_deltas(vec![delta], true)
-            .await;
+        state.publish_tool_deltas(vec![delta], true).await;
     }
 
     Ok(Json(PutGatewayResponse {
@@ -166,10 +163,9 @@ pub async fn delete_gateway(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> StatusCode {
-    let key = build_tool_key(&state.stone_id, &offering, "orchestrator");
     let delta = {
-        let mut reg = state.tool.registry.write().await;
-        reg.remove(&key)
+        let mut reg = state.fqn_handler.registry.write().await;
+        reg.remove(&offering, &state.stone_id)
     };
 
     if let Some(delta) = delta {

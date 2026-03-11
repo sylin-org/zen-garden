@@ -91,13 +91,13 @@ pub fn start_registry_maintenance(
                 }
             }
             let reaped = {
-                let mut reg = state.tool.registry.write().await;
-                reg.reap_expired()
+                let mut reg = state.fqn_handler.registry.write().await;
+                reg.reap_expired(&state.stone_id)
             };
             if !reaped.is_empty() {
                 tracing::debug!(
                     count = reaped.len(),
-                    "Registry maintenance: reaped expired gateway entries"
+                    "Registry maintenance: reaped expired fqn_handler entries"
                 );
                 // Notify SSE subscribers AND broadcast beacon so remote
                 // registries drop the reaped entries.

@@ -387,18 +387,18 @@ pub async fn add_offering_capability_v1(
     state.jobs.write().await.insert(job_id.clone(), job);
 
     // Spawn background task
-    let state_clone = state.clone();
-    let job_id_clone = job_id.clone();
-    let offering_clone = service.name.clone();
-    let cap_name_clone = request.name.clone();
-    let cap_type_clone = cap_type.clone();
+    let state = state.clone();
+    let task_job_id = job_id.clone();
+    let task_offering = service.name.clone();
+    let task_cap_name = request.name.clone();
+    let task_cap_type = cap_type.clone();
     tokio::spawn(async move {
         crate::tasks::add_capability_task(
-            &state_clone,
-            &job_id_clone,
-            &offering_clone,
-            &cap_type_clone,
-            &cap_name_clone,
+            &state,
+            &task_job_id,
+            &task_offering,
+            &task_cap_type,
+            &task_cap_name,
         )
         .await;
     });
@@ -841,15 +841,15 @@ pub async fn refresh_offering_capabilities_v1(
     state.jobs.write().await.insert(job_id.clone(), job);
 
     // Spawn background task
-    let state_clone = state.clone();
-    let job_id_clone = job_id.clone();
-    let offering_clone = service.name.clone();
+    let state = state.clone();
+    let task_job_id = job_id.clone();
+    let task_offering = service.name.clone();
     let cap_type_filter = request.cap_type.clone();
     tokio::spawn(async move {
         crate::tasks::refresh_capabilities_task(
-            &state_clone,
-            &job_id_clone,
-            &offering_clone,
+            &state,
+            &task_job_id,
+            &task_offering,
             cap_type_filter.as_deref(),
         )
         .await;

@@ -339,18 +339,18 @@ pub async fn create_service_v1(
         let _ = state.persist_offerings().await;
 
         // Spawn async image-direct installation
-        let state_clone = state.clone();
-        let fqn_clone = offering_fqn.clone();
-        let image_clone = image_ref.clone();
-        let job_id_clone = job_id.clone();
-        let svc_name_clone = service_name.clone();
+        let state = state.clone();
+        let task_fqn = offering_fqn.clone();
+        let task_image = image_ref.clone();
+        let task_job_id = job_id.clone();
+        let task_svc_name = service_name.clone();
         tokio::spawn(async move {
             crate::install_image_direct_task(
-                &state_clone,
-                &job_id_clone,
-                &fqn_clone,
-                &image_clone,
-                &svc_name_clone,
+                &state,
+                &task_job_id,
+                &task_fqn,
+                &task_image,
+                &task_svc_name,
             )
             .await;
         });
@@ -549,16 +549,16 @@ pub async fn create_service_v1(
     let _ = state.persist_offerings().await;
 
     // Spawn async installation task
-    let state_clone = state.clone();
-    let offering_clone = offering_type.clone();
-    let service_name_clone = service_name.clone();
-    let job_id_clone = job_id.clone();
+    let state = state.clone();
+    let task_offering = offering_type.clone();
+    let task_svc_name = service_name.clone();
+    let task_job_id = job_id.clone();
     tokio::spawn(async move {
         crate::install_service_task(
-            &state_clone,
-            &job_id_clone,
-            &offering_clone,
-            &service_name_clone,
+            &state,
+            &task_job_id,
+            &task_offering,
+            &task_svc_name,
         )
         .await;
     });
@@ -834,10 +834,10 @@ pub async fn nourish_service_v1(
     })?;
     let template = entry.parse_template().map_err(|e| {
         // Restore status on error via gateway (syncs self_entry)
-        let state_clone = state.clone();
-        let id_clone = offering_id.clone();
+        let recovery_state = state.clone();
+        let recovery_id = offering_id.clone();
         tokio::spawn(async move {
-            state_clone.update_offering(&id_clone, true, |o| {
+            recovery_state.update_offering(&recovery_id, true, |o| {
                 o.status = OfferingStatus::Running;
                 true
             }).await;

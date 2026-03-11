@@ -860,8 +860,8 @@ pub async fn add_storage_v1(
                 preparing.insert(target.to_string());
             }
 
-            let job_id_clone = job_id.clone();
-            let name_clone = name.clone();
+            let task_job_id = job_id.clone();
+            let task_name = name.clone();
             let device = target.to_string();
             let filesystem = request.filesystem.clone();
             let encrypted = request.encrypted;
@@ -875,13 +875,13 @@ pub async fn add_storage_v1(
                 let _guard = PrepareGuard { device: guard_device };
 
                 match run_format_and_add(
-                    &job_id_clone, &device, &name_clone, &filesystem,
+                    &task_job_id, &device, &task_name, &filesystem,
                     encrypted, &roles, &stone_name, pulse.clone(),
                 ).await {
                     Ok(()) => {
                         tools_state.emit_storage_changed(
                             garden_common::storage::StorageChanged::Connected {
-                                name: name_clone.clone(),
+                                name: task_name.clone(),
                                 roles: roles.clone(),
                                 used_bytes: 0,
                             },
@@ -892,15 +892,15 @@ pub async fn add_storage_v1(
                     }
                     Err(e) => {
                         tracing::error!(
-                            job_id = %job_id_clone, device = %device, name = %name_clone,
+                            job_id = %task_job_id, device = %device, name = %task_name,
                             error = %e, error_chain = ?e, "Storage add (format) FAILED"
                         );
                         let failure_pulse = DomainPulse::storage_event(
                             event_types::STORAGE_ADD_PROGRESS,
-                            format!("Add failed: {} - {}", name_clone, e),
+                            format!("Add failed: {} - {}", task_name, e),
                             "error",
-                            Some(job_id_clone.clone()),
-                            Some(serde_json::json!({ "name": name_clone, "error": e.to_string() })),
+                            Some(task_job_id.clone()),
+                            Some(serde_json::json!({ "name": task_name, "error": e.to_string() })),
                         );
                         let _ = pulse.send(PulseEvent::Domain(failure_pulse));
                     }

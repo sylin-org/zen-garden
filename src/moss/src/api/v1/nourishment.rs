@@ -486,15 +486,15 @@ pub async fn execute_stone(
     drop(caps_guard);
 
     // Spawn background task
-    let state_clone = state.clone();
-    let job_id_clone = job_id.clone();
+    let state = state.clone();
+    let task_job_id = job_id.clone();
 
     tokio::spawn(async move {
         execute_updates_background(
-            state_clone,
+            state,
             pending_offerings,
             pending_firmware,
-            job_id_clone,
+            task_job_id,
             tx,
         )
         .await;

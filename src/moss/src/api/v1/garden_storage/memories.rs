@@ -219,7 +219,7 @@ pub async fn list_memories_v1(
             }
             let store = local.content_store();
             match state
-                .nurturing_store
+                .orchestration.nurturing.store
                 .list_remote_snapshots(&store, &local.id)
                 .await
             {
@@ -301,7 +301,7 @@ pub async fn list_offering_snapshots_v1(
             }
             let store = local.content_store();
             let index = state
-                .nurturing_store
+                .orchestration.nurturing.store
                 .list_remote_snapshots(&store, &local.id)
                 .await
                 .map_err(|e| {

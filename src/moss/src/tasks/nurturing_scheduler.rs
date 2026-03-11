@@ -219,7 +219,7 @@ impl NurturingScheduler {
         offering_name: &str,
     ) -> Result<NurturingResult> {
         self.state
-            .nurturing_store
+            .orchestration.nurturing.store
             .create_snapshot(
                 &self.state.docker,
                 offering_id,
@@ -400,7 +400,7 @@ impl NurturingScheduler {
 
         let result = self
             .state
-            .nurturing_store
+            .orchestration.nurturing.store
             .replicate_to_seed_bank(
                 &offering.offering_id,
                 &store,

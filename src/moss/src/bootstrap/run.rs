@@ -617,11 +617,10 @@ pub async fn run(
         infra::HarvestStore::default_store(),
     ));
 
-    // Storage channels (ARCH-0004) — created here so they can be shared between
-    // state.storage (domain context) and the flat AppState fields being migrated.
-    let (storage_tick_tx, _) =
+    // Storage and orchestration channels (ARCH-0004)
+    let (storage_tick_raw_tx, _) =
         tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
-    let (storage_agg_tx, _) =
+    let (storage_tick_debounced_tx, _) =
         tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
     let (storage_changed_tx, _) =
         tokio::sync::broadcast::channel::<garden_common::storage::StorageChanged>(64);
@@ -629,10 +628,6 @@ pub async fn run(
         HashMap::<String, tokio::sync::broadcast::Sender<String>>::new(),
     ));
     let media = crate::domain::storage::new_media();
-
-    // Pre-clone for storage context (values are moved into flat fields earlier in the literal)
-    let harvest_for_storage = Arc::clone(&harvest_store);
-    let nurturing_for_storage = Arc::clone(&nurturing_store);
 
     // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
     // Note: No longer async - no socket binding (uses p2p transport)
@@ -676,9 +671,6 @@ pub async fn run(
         pond_ceremony_host: Arc::new(koi_common::ceremony::CeremonyHost::new(
             koi_certmesh::pond_ceremony::PondCeremonyRules,
         )),
-        harvest_store,
-        nurturing_store,
-        nourishment_jobs: Arc::new(RwLock::new(HashMap::new())),
         elections: election_service_placeholder,
         system_resources: Arc::new(RwLock::new(None)),
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
@@ -693,21 +685,29 @@ pub async fn run(
         log: log.clone(),
         // Subsystem readiness (network_ready managed by Network)
         subsystems: subsystems.clone(),
-        // Storage domain context (ARCH-0004) — groups all storage runtime state.
-        // Flat fields below are being migrated here incrementally.
+        // Storage data plane (ARCH-0004) — volumes, media, domain event channel.
         storage: Arc::new(crate::domain::Storage {
-            orchestration: crate::domain::storage::Orchestration {
-                tick: storage_tick_tx.clone(),
-                agg: storage_agg_tx.clone(),
-                nudge: orchestration_nudge.clone(),
-                rescan: volume_rescan.clone(),
-            },
             volumes: volumes.clone(),
             media: media.clone(),
             changed: storage_changed_tx.clone(),
-            harvest: harvest_for_storage,
-            nurturing: nurturing_for_storage,
-            nourishment: nourishment_map.clone(),
+        }),
+        // Orchestration coordination plane (ARCH-0004) — coordination primitives.
+        orchestration: Arc::new(crate::domain::Orchestration {
+            storage: crate::domain::StorageOrchestration {
+                tick: crate::domain::orchestration::storage::Tick {
+                    raw:       storage_tick_raw_tx.clone(),
+                    debounced: storage_tick_debounced_tx.clone(),
+                },
+                nudge:  orchestration_nudge.clone(),
+                rescan: volume_rescan.clone(),
+            },
+            nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
+                harvest: Arc::clone(&harvest_store),
+                store:   Arc::clone(&nurturing_store),
+            },
+            nourishment: crate::domain::orchestration::nourishment::NourishmentOrchestration {
+                jobs: nourishment_map.clone(),
+            },
         }),
     };
 
@@ -1392,8 +1392,8 @@ pub async fn run(
     // Quantizes raw per-write ticks into per-seed-bank aggregated ticks
     // (2s quiet threshold / 10s deadline cap).
     {
-        let raw_rx = state.storage.orchestration.tick.subscribe();
-        let agg_tx = state.storage.orchestration.agg.clone();
+        let raw_rx = state.orchestration.storage.tick.raw.subscribe();
+        let agg_tx = state.orchestration.storage.tick.debounced.clone();
         let agg_token = shutdown_token.child_token();
         tokio::spawn(async move {
             crate::tasks::storage_tick_aggregator::storage_tick_aggregator_task(
@@ -1444,7 +1444,7 @@ pub async fn run(
             state.storage.volumes.clone(),
             state.registry.clone(),
             state.stone_id.clone(),
-            state.storage.orchestration.tick.clone(),
+            state.orchestration.storage.tick.raw.clone(),
             state.subscribe_storage_changed(),
             cf_endpoint,
             shutdown_token.child_token(),
@@ -1463,7 +1463,7 @@ pub async fn run(
     {
         let watcher_set = crate::infra::storage::StorageWatcherSet::new(
             state.storage.volumes.clone(),
-            state.storage.orchestration.tick.clone(),
+            state.orchestration.storage.tick.raw.clone(),
             shutdown_token.child_token(),
         );
         // Initial reconciliation — start watchers for already-mounted storages

@@ -199,7 +199,7 @@ pub async fn put_object_v1(
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("application/octet-stream");
 
-            let store = local.notifying_object_store(Some(&state.storage.orchestration.tick));
+            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
 
             let result = store
                 .put_object(&bucket, &key, content_type, &body)
@@ -301,7 +301,7 @@ pub async fn delete_object_v1(
 
     match route {
         StorageRoute::Local(local) => {
-            let store = local.notifying_object_store(Some(&state.storage.orchestration.tick));
+            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
             store.delete_object(&bucket, &key).await.map_err(|e| {
                 err(
                     StatusCode::INTERNAL_SERVER_ERROR,

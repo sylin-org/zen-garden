@@ -85,7 +85,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
     // Subscribe to aggregated storage ticks — the aggregator quantizes raw
     // per-write events into per-seed-bank batches (2s quiet / 10s deadline).
     // For remote Primaries we still rely on polling as a fallback.
-    let mut tick_rx = state.storage.orchestration.agg.subscribe();
+    let mut tick_rx = state.orchestration.storage.tick.debounced.subscribe();
 
     loop {
         // Wait for either the poll interval or a storage tick

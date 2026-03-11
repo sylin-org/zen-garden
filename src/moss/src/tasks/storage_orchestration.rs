@@ -60,7 +60,7 @@ pub async fn storage_orchestration_task(state: AppState, token: CancellationToke
                     warn!(error = ?e, "Seed bank orchestration tick failed");
                 }
             }
-            _ = state.storage.orchestration.nudge.notified() => {
+            _ = state.orchestration.storage.nudge.notified() => {
                 debug!("Orchestration nudge received — running immediate tick");
                 if let Err(e) = orchestration_tick(&state).await {
                     warn!(error = ?e, "Seed bank orchestration tick (nudge) failed");

@@ -16,6 +16,7 @@
 pub mod adoption;
 pub mod capabilities;
 pub mod ceremony;
+pub mod orchestration;
 pub mod config_compose;
 pub mod compatibility;
 pub mod connection;
@@ -70,8 +71,11 @@ pub use offerings::{
 };
 pub use reconciliation::{reconcile_services, ReconciliationResult};
 pub use registry::Registry;
+pub use orchestration::{
+    NourishmentOrchestration, NurturingOrchestration, Orchestration, StorageOrchestration,
+};
 pub use storage::{
-    new_media, new_volumes, Management, Media, Medium, Orchestration, Storage, Volume,
+    new_media, new_volumes, Management, Media, Medium, Storage, Volume,
     VolumeHealth, Volumes,
 };
 pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};

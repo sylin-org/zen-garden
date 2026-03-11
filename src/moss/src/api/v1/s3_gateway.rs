@@ -235,7 +235,7 @@ pub async fn put_object(
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("application/octet-stream");
 
-            let store = local.notifying_object_store(Some(&state.storage.orchestration.tick));
+            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
             match store.put_object(&bucket, key, content_type, &body).await {
                 Ok(result) => {
                     debug!(bucket = %bucket, key = %key, size = body.len(), "PUT object success");
@@ -465,7 +465,7 @@ pub async fn delete_object(
 
     match route {
         StorageRoute::Local(local) => {
-            let store = local.notifying_object_store(Some(&state.storage.orchestration.tick));
+            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
             match store.delete_object(&bucket, key).await {
                 Ok(_) => {
                     debug!(bucket = %bucket, key = %key, "DELETE object success");

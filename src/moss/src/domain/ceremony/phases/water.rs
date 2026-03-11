@@ -62,7 +62,7 @@ pub async fn execute(
             .await;
 
         // Restore volumes from harvest
-        restore_harvest(&state.docker, &state.harvest_store, harvest_id)
+        restore_harvest(&state.docker, &state.orchestration.nurturing.harvest, harvest_id)
             .await
             .context("Failed to restore from harvest during rollback")?;
 

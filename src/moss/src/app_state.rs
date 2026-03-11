@@ -14,10 +14,9 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::Client;
-use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry, Storage};
+use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry, Orchestration, Storage};
 use crate::infra::{
-    stone_client::StoneClient, CeremonyJournal, EventBus, HarvestStore, ManifestRegistry,
-    NurturingStore, PulseEvent,
+    stone_client::StoneClient, CeremonyJournal, EventBus, ManifestRegistry, PulseEvent,
 };
 use crate::mdns::MdnsHandle;
 use crate::tasks::Network;
@@ -184,15 +183,6 @@ pub struct AppState {
     pub pond_ceremony_host:
         Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>,
 
-    /// Harvest store (backup manifests and archives)
-    pub harvest_store: Arc<HarvestStore>,
-
-    /// Nurturing store (A/B local backup slots)
-    pub nurturing_store: Arc<NurturingStore>,
-
-    /// Nourishment job status channels (for SSE streaming)
-    pub nourishment_jobs: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,
-
     /// Election service for distributed elections (testing)
     pub elections: Arc<crate::tasks::election_service::Elections>,
 
@@ -234,12 +224,12 @@ pub struct AppState {
     pub subsystems: SubSystems,
 
 
-    /// Storage domain context (ARCH-0004).
-    ///
-    /// Groups all storage runtime state: orchestration channels, volume
-    /// and media collections, backing stores, and the domain event channel.
-    /// Flat fields are being migrated here incrementally — see ARCH-0004.
+    /// Storage data plane — volumes, media, and domain event channel (ARCH-0004).
     pub storage: Arc<Storage>,
+
+    /// Orchestration coordination plane — tick signals, nudge, rescan,
+    /// nurturing stores, nourishment job channels (ARCH-0004).
+    pub orchestration: Arc<Orchestration>,
 
 }
 
@@ -303,7 +293,7 @@ impl AppState {
     /// Non-blocking. If the channel is full (a rescan is already pending),
     /// the request is silently dropped — one rescan is sufficient.
     pub fn request_volume_rescan(&self) {
-        let _ = self.storage.orchestration.rescan.try_send(());
+        let _ = self.orchestration.storage.rescan.try_send(());
     }
 
     /// Get stone ID (GUID v7)

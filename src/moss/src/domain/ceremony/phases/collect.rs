@@ -41,7 +41,7 @@ pub async fn execute(
     // Create the harvest
     let manifest = create_harvest(
         &state.docker,
-        &state.harvest_store,
+        &state.orchestration.nurturing.harvest,
         offering,
         &state.stone_id,
         commit_image,

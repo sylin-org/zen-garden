@@ -148,7 +148,7 @@ async fn serve_local(
 
     // Record changelog for successful mutations
     if is_write_method(method) && status.is_success() {
-        let content_store = local.notifying_content_store(Some(&state.storage.orchestration.tick));
+        let content_store = local.notifying_content_store(Some(&state.orchestration.storage.tick.raw));
         record_changelog(&content_store, method, rel_path).await;
     }
 

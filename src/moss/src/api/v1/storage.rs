@@ -675,7 +675,7 @@ pub async fn rename_bank_v1(
         replica_set_id,
         new_name: request.new_name.clone(),
     }).await;
-    state.storage.orchestration.nudge.notify_one();
+    state.orchestration.storage.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(updated.clone())))
 }
@@ -1607,7 +1607,7 @@ pub async fn pin_bank_v1(
         device_id,
         replica_set_id,
     }).await;
-    state.storage.orchestration.nudge.notify_one();
+    state.orchestration.storage.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),
@@ -1670,7 +1670,7 @@ pub async fn unpin_bank_v1(
         device_id,
         replica_set_id,
     }).await;
-    state.storage.orchestration.nudge.notify_one();
+    state.orchestration.storage.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),
@@ -1760,7 +1760,7 @@ pub async fn stream_storage_v1(
     use tokio_stream::StreamExt;
 
     let token = state.shutdown_token.child_token();
-    let rx = state.storage.orchestration.agg.subscribe();
+    let rx = state.orchestration.storage.tick.debounced.subscribe();
     let filter_name = query.storage.clone();
 
     info!(

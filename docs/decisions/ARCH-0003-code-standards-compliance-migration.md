@@ -29,6 +29,10 @@ The Zen Garden codebase accumulated a structural debt over several development p
 
 7. **`anyhow` inside domain logic** — stringly-typed errors lose structure, are not matchable by callers, and allocate on the heap. Typed `thiserror` enums are the correct model for domain boundaries.
 
+8. **Transport copies** — `StoneResponse`, `StoneEntry`, `StoneRecord` and similar structs duplicate fields from the canonical `Stone` type. Each copy drifts independently and must be kept in sync manually. The canonical type, defined once in `garden-common`, is the wire format contract.
+
+9. **File/concept mismatch** — `app_state.rs` contains all domains; `coordinator.rs` contains startup logic for all domains; catch-all files (`helpers.rs`) contain whatever didn't fit elsewhere. Files do not reflect the domain model; the module tree is not navigable by domain concept.
+
 These are not stylistic preferences. They mean the compiler does not understand the domain model. Structural invariants that could be enforced at compile time are instead enforced (or not) at runtime.
 
 The authoritative standard is documented in `docs/code-standards.md`.
@@ -65,6 +69,7 @@ Within each wave, changes are applied in a fixed sequence:
 | f | Typed domain error enums | Domain logic only; application boundaries keep `anyhow` |
 | g | `FromRef` + `#[must_use]` | Axum handlers; enforces minimal dependency surfaces |
 | h | Domain event API (`on_X()` / `X_stream()`) | Encapsulates channels; SSE handlers use domain API, not raw `.subscribe()` |
+| i | File/module reorganization | 1:1 coupling between file name, contained types, and domain concept; rename commit then content commit |
 
 ### Wave 0 — garden-build-utils
 
@@ -148,20 +153,24 @@ Primary targets:
 
 **6b — infra layer**: Apply passes `a`–`e`. Infra types (Docker client wrappers, platform adapters) renamed; any local `_clone` shadows fixed.
 
-**6c — AppState restructure**: The highest-risk step; intentionally one commit. Introduce 8 domain context structs (`Storage`, `Security`, `Companions`, `Presence`, `Discovery`, `Identity`, `Infra`, `Offerings`), migrate all 64 flat fields into them, add `FromRef` impls for all handler dependencies, update every handler. A partially-restructured `AppState` is worse than either the old or new form — the commit is the atomic unit of change.
+**6c — AppState restructure**: The highest-risk step; intentionally one commit. Introduce 7 domain context structs, migrate all 64 flat fields, add `FromRef` impls for all handler dependencies, update every handler, and reorganize into per-domain files. A partially-restructured `AppState` is worse than either the old or new form — the commit is the atomic unit of change.
 
-The 8 target structs and their current flat-field mappings:
+`app_state.rs` becomes a thin re-export after this step. Each domain context lives in its own file. `coordinator.rs` is dissolved — background task startup moves into each domain context's `start()` method.
 
-| Domain struct | Current flat fields |
-|---|---|
-| `Storage` | `storage_tick_tx`, `storage_agg_tx`, `storage_changed_tx`, `orchestration_nudge`, `volumes`, `storage_health`, … |
-| `Security` | `pond_active`, `pond_ceremony_host`, `https_started`, `ca_cert`, … |
-| `Companions` | `companions`, `companion_ports`, … |
-| `Presence` | `presence_*` fields |
-| `Discovery` | `topology`, `discovered_stones`, … |
-| `Identity` | `stone_id`, `stone_name`, `stone_host`, … |
-| `Infra` | `docker`, `runtime`, … |
-| `Offerings` | `manifests`, `taxonomy`, … |
+Target structs and their current flat-field mappings:
+
+| AppState field | Type | Current flat fields |
+|---|---|---|
+| `stone` | `Stone` | `stone_id`, `stone_name`, `stone_host` — the canonical value object, not a domain context |
+| `storage` | `Arc<Storage>` | `storage_tick_tx`, `storage_agg_tx`, `storage_changed_tx`, `orchestration_nudge`, `volumes`, `storage_health`, … |
+| `security` | `Arc<Security>` | `pond_active`, `pond_ceremony_host`, `https_started`, `ca_cert`, … |
+| `companions` | `Arc<Companions>` | `companions`, `companion_ports`, … |
+| `presence` | `Arc<Presence>` | `presence_*` fields |
+| `discovery` | `Arc<Discovery>` | `topology`, `discovered_stones`, … |
+| `infra` | `Arc<Infra>` | `docker`, `runtime`, … |
+| `offerings` | `Arc<Offerings>` | `manifests`, `taxonomy`, … |
+
+`Identity` is eliminated — `stone_id`, `stone_name`, `stone_host` collapse into the canonical `Stone` value object defined in Wave 1.
 
 **6d — api layer**: Handler cleanup after 6c. Each handler's `State(...)` extractor now names its actual dependency (`State(storage): State<Arc<Storage>>`) rather than the full `AppState`. Pass `g`.
 
@@ -169,7 +178,7 @@ The 8 target structs and their current flat-field mappings:
 
 ### Additive-Then-Prune
 
-For changes that cascade across call sites (newtypes, domain context structs):
+For changes that cascade across call sites (value objects, domain context structs):
 
 1. **Add** the new type alongside the old representation
 2. **Migrate** call sites incrementally within the same wave
@@ -177,6 +186,17 @@ For changes that cascade across call sites (newtypes, domain context structs):
 4. Commit at each stage — the build must pass between add, migrate, and remove
 
 This avoids a single uncommittable diff spanning hundreds of files.
+
+### File Reorganization
+
+Pass `i` within each wave reorganizes files to match their domain concept. Each reorganization is two commits:
+
+1. **Rename commit** — pure `git mv`, no content changes. Git detects the rename; `git log --follow <file>` traces history across it.
+2. **Content commit** — edits to the moved file in a separate commit.
+
+Mixing rename and content in one commit breaks `git log --follow`. The rename commit must be content-free.
+
+Git blame continuity is secondary to architectural correctness — the migration is the priority. The two-commit discipline captures as much history as the tooling supports.
 
 ### Acceptance Criteria
 

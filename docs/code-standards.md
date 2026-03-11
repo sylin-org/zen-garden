@@ -369,6 +369,63 @@ Domain event types always `#[derive(Clone, Serialize)]` — `Clone` is required 
 
 ---
 
+## 14. Canonical types and file coupling
+
+### One type per concept, used everywhere
+
+Define each domain type once in `garden-common`. Use it directly in API responses, storage, business logic, and SSE payloads. Domain types derive `Serialize`/`Deserialize` from the start — they are the wire format contract.
+
+```rust
+// Bad — Stone fields duplicated into a transport copy
+#[derive(Serialize)]
+pub struct StoneResponse {
+    pub id:        String,  // copy of Stone::id
+    pub name:      String,  // copy of Stone::name
+    pub is_online: bool,
+}
+
+// Good — embed the canonical type; only add what genuinely differs
+#[derive(Serialize)]
+pub struct StoneResponse {
+    #[serde(flatten)]
+    pub stone:     Stone,
+    pub is_online: bool,    // computed — not a copy
+}
+
+// Better — if nothing extra is needed, return the canonical type directly
+async fn get_stone(...) -> Json<Stone> { ... }
+```
+
+**Rule**: enrich or embed, never duplicate fields. A new struct is only justified when the shape genuinely differs from the domain type.
+
+### One file per concept
+
+File names and their contents must have a 1:1 coupling. A file named `stone.rs` contains stone types and stone logic — nothing else. A file named `storage.rs` contains storage domain code — not coordination helpers, not unrelated API types.
+
+```
+// Bad
+app_state.rs      — 64-field flat struct mixing all domains
+coordinator.rs    — background task coordination for all domains
+
+// Good
+stone.rs          — Stone value object and stone domain logic
+storage/mod.rs    — Storage domain context
+storage/volume.rs — Volume types and volume logic
+```
+
+`app_state.rs` becomes a thin re-export after domain contexts are extracted to their own files. Catch-all files (`helpers.rs`, `utils.rs`, `common.rs`) are not permitted — every item finds its home in a file named for its concept.
+
+### Renaming files without losing history
+
+File reorganization commits are split in two:
+
+1. **Rename commit** — pure `git mv`, no content changes. Git detects the rename; `git log --follow` traces history across it.
+2. **Content commit** — changes to the moved file's content, in a separate commit.
+
+Never mix renaming and content edits in a single commit.
+
+---
+
 ## Summary
 
 | Smell | Fix |
@@ -384,5 +441,8 @@ Domain event types always `#[derive(Clone, Serialize)]` — `Clone` is required 
 | Handler takes full `AppState` | `FromRef` with minimal context |
 | `let x_clone = x.clone()` | Shadow: `let x = x.clone()` |
 | `fn f(stone_id: String, stone_name: String)` | Domain value object: `fn f(stone: &Stone)` |
+| Duplicated struct fields across types | Embed canonical type; enrich with `#[serde(flatten)]` |
+| `app_state.rs` containing all domains | One file per concept; `app_state.rs` becomes thin re-export |
+| `helpers.rs` / `utils.rs` catch-alls | Each item moves to its concept's file |
 | `.subscribe()` called outside domain | Expose `on_X()` / `X_stream()` instead |
 | SSE handler navigates internal channels | Subscribe via domain event API |

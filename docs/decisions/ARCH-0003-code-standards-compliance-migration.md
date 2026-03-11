@@ -80,9 +80,26 @@ Build-time helper only (proc macros, build script utilities). No runtime types, 
 The root everyone depends on. Changes here cascade to all other crates, so they must be complete and stable before Wave 2 begins.
 
 Primary targets:
-- **Introduce domain value objects** for concepts currently passed as flat primitives: `Stone { id, name, host }`, `Volume { name, … }`, `Companion { id, name, port }`, `Job { id, … }`. Functions that take `stone_id: String, stone_name: String` are replaced with `stone: &Stone`. Plain `&str` is retained at pure key boundaries (lookups, deletes).
+- **Introduce domain value objects**:
+  - `Stone { id, name, host }` — `id` is permanent; `name` and `host` are mutable at runtime
+  - `Current { stone: Arc<RwLock<Stone>>, environment: Environment }` — the node's mutable self-description; replaces flat `stone_id`, `stone_name`, `stone_host` fields
+  - `Environment { os: OsKind }` — static after startup
+  - `Volume { name, … }` — canonical storage volume, replaces `VolumeName: String` patterns
+  - `Companion { id, name, port, manifest: Manifest }` — replaces `CompanionManifest`; `manifest` is a nested field, not a peer type
+  - `Manifest { version, description, commands }` — nested inside `Companion`
+  - `Job { id, … }` — replaces bare `job_id: String` parameters
+  - Plain `&str` is retained at pure key boundaries (lookups, deletes)
 - **Channel naming audit** across any shared channel types — remove `_tx`/`_rx` from any long-lived struct fields in shared types.
 - **Shared error enums** — introduce `thiserror`-based enums for error kinds that cross crate boundaries (e.g. nourishment errors, discovery errors). Application-boundary types keep `anyhow`.
+
+**Serde loci for breaking field renames** — these JSON field names change when the canonical types are defined. All consumers must be updated in their respective waves with no backward-compat shims:
+
+| Old JSON field | New JSON field | Consumers to update |
+|---|---|---|
+| `stone_id` | `id` | `garden-rake`, `koan-framework/Koan.ZenGarden` |
+| `stone_name` | `name` | `garden-rake`, `koan-framework/Koan.ZenGarden` |
+| `stone_host` | `host` | `garden-rake`, `koan-framework/Koan.ZenGarden` |
+| `companion_id`, `companion_name` | `id`, `name` | `garden-rake`, `garden-moss` API |
 
 Waves 2–6 adopt the value objects introduced here, replacing flat `String` parameters at call sites.
 
@@ -161,7 +178,7 @@ Target structs and their current flat-field mappings:
 
 | AppState field | Type | Current flat fields |
 |---|---|---|
-| `stone` | `Stone` | `stone_id`, `stone_name`, `stone_host` — the canonical value object, not a domain context |
+| `current` | `Current` | `stone_id` → `current.stone.id`; `stone_name` → `current.stone.name`; `stone_host` → `current.stone.host`; platform config → `current.environment` |
 | `storage` | `Arc<Storage>` | `storage_tick_tx`, `storage_agg_tx`, `storage_changed_tx`, `orchestration_nudge`, `volumes`, `storage_health`, … |
 | `security` | `Arc<Security>` | `pond_active`, `pond_ceremony_host`, `https_started`, `ca_cert`, … |
 | `companions` | `Arc<Companions>` | `companions`, `companion_ports`, … |
@@ -170,7 +187,7 @@ Target structs and their current flat-field mappings:
 | `infra` | `Arc<Infra>` | `docker`, `runtime`, … |
 | `offerings` | `Arc<Offerings>` | `manifests`, `taxonomy`, … |
 
-`Identity` is eliminated — `stone_id`, `stone_name`, `stone_host` collapse into the canonical `Stone` value object defined in Wave 1.
+`Identity` is eliminated. `stone_id`/`stone_name`/`stone_host` collapse into `current.stone` (`Arc<RwLock<Stone>>`). `stone.id` is permanent; `stone.name` and `stone.host` are mutable at runtime (user rename, DHCP renewal). `CompanionManifest` is dissolved into `Companion.manifest`.
 
 **6d — api layer**: Handler cleanup after 6c. Each handler's `State(...)` extractor now names its actual dependency (`State(storage): State<Arc<Storage>>`) rather than the full `AppState`. Pass `g`.
 

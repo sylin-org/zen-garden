@@ -128,14 +128,15 @@ let sse_feed         = state.storage.orchestration.tick.subscribe();
 ```rust
 #[derive(Clone)]
 pub struct AppState {
+    // This node's mutable self-description
+    pub current: Current,
+
     // Cross-cutting — no single domain owner
     pub shutdown_token: CancellationToken,
     pub event_bus:      EventBus,
     pub console:        Arc<ConsolePrinter>,
-    pub pulse_tx:       broadcast::Sender<PulseEvent>,
 
     // Domain contexts — each domain owns its state
-    pub identity:   Arc<Identity>,
     pub infra:      Arc<Infra>,
     pub discovery:  Arc<Discovery>,
     pub security:   Arc<Security>,
@@ -147,6 +148,38 @@ pub struct AppState {
 ```
 
 A field that crosses domain boundaries in its name (e.g. `storage_orchestration_nudge` in a flat struct) signals that the domain boundary is missing from the type system.
+
+### The `current` namespace
+
+`current` is the node's self-description — what this running instance *is* right now. It is not a domain context (it holds no operational state); it is the node's own identity and runtime environment.
+
+```rust
+pub struct Current {
+    pub stone:       Arc<RwLock<Stone>>,  // mutable: name and host can change
+    pub environment: Environment,          // static after startup
+}
+
+pub struct Stone {
+    pub id:   String,   // permanent — cryptographic/install identity, never changes
+    pub name: String,   // user-assigned display name — changeable at runtime
+    pub host: String,   // network address — changes on DHCP renewal or reconnect
+}
+
+pub struct Environment {
+    pub os: OsKind,   // Linux | Windows — static after startup
+}
+```
+
+`stone.id` is permanent; `stone.name` and `stone.host` are mutable. The whole `Stone` is wrapped in `Arc<RwLock<>>` so updates are atomic. `Environment` needs no lock — it does not change after startup.
+
+The `current` namespace extends to any other node-level mutable state that cuts across domains:
+
+```rust
+state.current.stone.read().id         // who am I — permanent
+state.current.stone.read().name       // my display name — may change
+state.current.stone.read().host       // my network address — may change
+state.current.environment.os          // Linux or Windows — static
+```
 
 ---
 
@@ -426,6 +459,27 @@ Never mix renaming and content edits in a single commit.
 
 ---
 
+## 15. Module visibility
+
+Domain internals are `pub(crate)` by default. Only types and methods that genuinely cross a crate boundary are `pub`.
+
+```rust
+// Bad — everything pub; no boundary enforcement
+pub struct Volume { ... }
+pub fn mount(&self, path: &Path) -> Result<()> { ... }
+
+// Good — internal types stay internal; only the event API and value objects cross the boundary
+pub(crate) struct VolumeMount { ... }          // internal to storage domain
+pub(crate) fn mount(&self, path: &Path) -> Result<()> { ... }
+
+pub struct Volume { pub name: String, ... }    // value object — crosses crate boundary
+pub fn device_stream(&self) -> broadcast::Receiver<StorageChanged> { ... }  // event API
+```
+
+The rule applies within a crate too: infra types used only by the infra layer are `pub(crate)` or `pub(super)`. A type that leaks into the domain layer through a `pub` declaration is an architecture violation, not just a visibility preference.
+
+---
+
 ## Summary
 
 | Smell | Fix |
@@ -446,3 +500,5 @@ Never mix renaming and content edits in a single commit.
 | `helpers.rs` / `utils.rs` catch-alls | Each item moves to its concept's file |
 | `.subscribe()` called outside domain | Expose `on_X()` / `X_stream()` instead |
 | SSE handler navigates internal channels | Subscribe via domain event API |
+| Domain internals declared `pub` | `pub(crate)` or `pub(super)`; only boundary types are `pub` |
+| Mutable node identity as flat fields | `current.stone: Arc<RwLock<Stone>>`; `current.environment` |

@@ -33,7 +33,7 @@ pub use probe::{probe_ip_conflict, ProbeConfig};
 pub use state::{load_network_state, save_network_state};
 
 #[cfg(target_os = "linux")]
-pub use linux::{detect_linux_platform, LinuxNetplan, LinuxNetworkManager};
+pub use linux::{detect_linux_platform, LinuxNetplan, LinuxNetwork};
 
 /// Platform-specific network configuration trait
 ///

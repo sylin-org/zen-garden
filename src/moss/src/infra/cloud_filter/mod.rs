@@ -148,7 +148,7 @@ pub async fn start(
         volumes: volumes.clone(),
         registry: registry.clone(),
         stone_id: stone_id.clone(),
-        tick_tx,
+        tick: tick_tx,
         sync_root_path: sync_root_path.clone(),
         local_endpoint,
     };

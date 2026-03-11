@@ -33,11 +33,11 @@ pub trait SecretBackend: Send + Sync {
 }
 
 /// Secrets manager with automatic backend selection
-pub struct SecretsManager {
+pub struct Secrets {
     backend: Box<dyn SecretBackend>,
 }
 
-impl SecretsManager {
+impl Secrets {
     /// Create secrets manager with best available backend
     pub fn new() -> Result<Self> {
         // Try backends in priority order

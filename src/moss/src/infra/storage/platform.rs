@@ -652,9 +652,9 @@ mod linux {
 
     pub fn start_volume_watcher(tx: tokio::sync::mpsc::Sender<VolumeEvent>) {
         // Try udev first, fall back to polling
-        let tx_clone = tx.clone();
+        let udev_tx = tx.clone();
         std::thread::spawn(move || {
-            if let Err(e) = run_udev_watcher(tx_clone) {
+            if let Err(e) = run_udev_watcher(udev_tx) {
                 warn!(error = %e, "udev watcher failed, falling back to polling");
             }
         });

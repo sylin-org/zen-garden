@@ -58,7 +58,7 @@ Within each wave, changes are applied in a fixed sequence:
 | Pass | Rules | Rationale |
 |------|-------|-----------|
 | a | Naming — types, fields, locals | Mechanical; no API surface change |
-| b | Newtypes for domain identifiers | Additive; old `String` sites still compile until migrated |
+| b | Domain value objects (`Stone`, `Volume`, `Job`, …) | Additive; old `String` call sites still compile until migrated |
 | c | Channel field naming conventions | Struct fields only; local `tx`/`rx` destructuring is idiomatic and unchanged |
 | d | Namespace extraction (nested structs) | Structural; cascades to dependents |
 | e | State machine enums, typestate | Replaces bool flags and `Option` in long-lived structs |
@@ -75,11 +75,11 @@ Build-time helper only (proc macros, build script utilities). No runtime types, 
 The root everyone depends on. Changes here cascade to all other crates, so they must be complete and stable before Wave 2 begins.
 
 Primary targets:
-- **Introduce newtypes** for all domain identifiers currently typed as primitives: `StoneId(String)`, `StoneName(String)`, `VolumeName(String)`, `CompanionId(String)`, `JobId(String)`. Each gets `#[repr(transparent)]`, `From<String>`, `Display`, and serde passthrough.
+- **Introduce domain value objects** for concepts currently passed as flat primitives: `Stone { id, name, host }`, `Volume { name, … }`, `Companion { id, name, port }`, `Job { id, … }`. Functions that take `stone_id: String, stone_name: String` are replaced with `stone: &Stone`. Plain `&str` is retained at pure key boundaries (lookups, deletes).
 - **Channel naming audit** across any shared channel types — remove `_tx`/`_rx` from any long-lived struct fields in shared types.
 - **Shared error enums** — introduce `thiserror`-based enums for error kinds that cross crate boundaries (e.g. nourishment errors, discovery errors). Application-boundary types keep `anyhow`.
 
-Waves 2–6 consume these newtypes as they swap out raw `String` parameters.
+Waves 2–6 adopt the value objects introduced here, replacing flat `String` parameters at call sites.
 
 ### Wave 2 — garden-companion-sdk
 
@@ -89,7 +89,7 @@ Primary targets:
 - `shutdown_tx: watch::Sender<bool>` in `server.rs` → rename to `shutdown` (type declares direction)
 - `CommandHandler` is a trait name — the suffix is acceptable for traits; no change needed
 - Local variable naming: shadow `connection` and `context` clones rather than `_clone` suffixes
-- Adopt `CompanionId` newtype from Wave 1
+- Adopt `Companion` value object from Wave 1
 
 ### Wave 3 — garden-lantern
 
@@ -98,7 +98,7 @@ Service registry daemon. Small codebase, limited debt.
 Primary targets:
 - `AppState` type name: acceptable (it is the application root); no rename needed
 - `sse_tx: broadcast::Sender<SseEvent>` → rename to `sse` (type declares it is a sender)
-- Any `String`-typed stone or service identifiers → adopt newtypes from Wave 1
+- Any flat `String`-typed stone or service identifiers → adopt value objects from Wave 1
 
 **garden-probe**: Diagnostic/health probe. Passes `a` only. Minimal expected violations.
 
@@ -118,7 +118,7 @@ Companion binaries. Use the companion SDK from Wave 2.
   ```
 - `AnimationContext` type name: drop the `Context` suffix → `Animation` (position in hierarchy provides context)
 - `_for_retry` / `_for_shutdown` local variable suffixes in `main.rs` — shadow the original binding within a scoped block instead
-- Adopt `StoneName` newtype from Wave 1 in `AnimationContext`
+- Adopt `Stone` value object from Wave 1; use `stone.name` in place of bare `String`
 
 ### Wave 5 — garden-rake
 
@@ -127,7 +127,7 @@ CLI client. Generally cleaner than moss; primary debt is in connection state and
 Primary targets:
 - Audit `context.rs` state struct — already relatively clean; verify no `Context`/`State` suffixes remain
 - Command dispatch: verify handlers declare minimal state rather than a full connection bag
-- Adopt `StoneId`, `StoneName`, `VolumeName` newtypes from Wave 1 across all API call sites
+- Adopt `Stone`, `Volume` value objects from Wave 1 across all API call sites
 - Any `_clone` local variable patterns → shadow
 - Error handling: CLI boundary is `anyhow` (correct); verify no `anyhow::anyhow!` inside domain logic if any exists
 
@@ -197,15 +197,15 @@ The CI gate on the `dev` branch enforces this automatically.
 
 **Positive**:
 - `AppState` becomes a thin facade over 8 typed domain contexts; handler dependency surfaces become explicit and compiler-enforced
-- `StoneId`, `StoneName`, `VolumeName` and similar newtypes eliminate a class of transposition bugs
+- Domain value objects (`Stone`, `Volume`, `Companion`) eliminate transposition bugs — `stone.id` and `stone.name` are unambiguous by position, not by wrapper type
 - Domain errors become matchable; callers can handle specific failure modes rather than parsing strings
 - New contributors can read the type hierarchy and understand domain boundaries without reading implementation files
 - Each domain context is independently testable — no whole-`AppState` setup required
 
 **Negative / Trade-offs**:
 - Wave 6c is the highest-risk commit: all handlers, all `AppState` field accesses, all `FromRef` impls change simultaneously. It cannot be made smaller without leaving the codebase in a worse inconsistent state
-- Newtypes require `From<String>` / `Into<String>` conversions at boundaries (serialization, HTTP response formatting). This is mechanical but adds boilerplate at those sites
-- Some existing code is correct-by-convention (e.g. `_tx` fields that are always senders). The migration makes the convention redundant — `broadcast::Sender<T>` carries the direction. The removal of the suffix is not a loss of information
+- Value objects require serde derives and field-level serialization at API boundaries. Flat `String` parameters at pure key boundaries (lookups, deletes) remain as-is — they are honest about what they are
+- `_tx` / `_rx` suffixes in existing code are correct-by-convention. The migration makes the convention redundant — `broadcast::Sender<T>` carries the direction. Removing the suffix is not a loss of information
 
 ## Out of Scope
 

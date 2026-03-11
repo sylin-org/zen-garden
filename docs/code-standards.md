@@ -168,20 +168,37 @@ async fn list_volumes(State(state): State<AppState>) -> impl IntoResponse { ... 
 
 ---
 
-## 7. Newtypes over primitives for domain identifiers
+## 7. Domain value objects over primitive identifiers
+
+If a function takes `id: String, name: String`, those parameters have no namespace — the function accepts any string for either argument. Transpositions are silent runtime bugs.
+
+The fix is not a newtype — `StoneId` is just an underscore in a different coat, violating rule 1. The fix is a value object: a struct whose position in the hierarchy makes its fields unambiguous.
 
 ```rust
-// Bad — any String is accepted; transpositions are runtime bugs
-fn register(id: String, name: String) { ... }
+// Bad — flat primitives; transpositions are runtime bugs
+fn register(stone_id: String, stone_name: String) { ... }
 
-// Good — transpositions are compile errors
-pub struct StoneId(String);
-pub struct StoneName(String);
-
+// Also bad — StoneId is StoneId(String): still name-encoded, not namespace-encoded
 fn register(id: StoneId, name: StoneName) { ... }
+
+// Good — struct is the namespace; fields are plain, unambiguous names
+pub struct Stone {
+    pub id:   String,
+    pub name: String,
+    pub host: String,
+}
+
+fn register(stone: &Stone) { ... }
 ```
 
-Newtypes are `#[repr(transparent)]` — zero runtime cost.
+At the call site: `stone.id` and `stone.name` — the struct carries the namespace. No `StoneId`, no `StoneName`.
+
+For boundaries where only a key is passed (lookup, delete), a plain `&str` is honest and correct — it is just a key, not a domain concept requiring a wrapper.
+
+```rust
+fn find(id: &str) -> Option<Stone> { ... }      // fine — just a key
+fn delete(stone: &Stone) -> Result<()> { ... }  // full object where identity matters
+```
 
 ---
 
@@ -366,5 +383,6 @@ Domain event types always `#[derive(Clone, Serialize)]` — `Clone` is required 
 | `anyhow` inside domain logic | Typed error enum |
 | Handler takes full `AppState` | `FromRef` with minimal context |
 | `let x_clone = x.clone()` | Shadow: `let x = x.clone()` |
+| `fn f(stone_id: String, stone_name: String)` | Domain value object: `fn f(stone: &Stone)` |
 | `.subscribe()` called outside domain | Expose `on_X()` / `X_stream()` instead |
 | SSE handler navigates internal channels | Subscribe via domain event API |

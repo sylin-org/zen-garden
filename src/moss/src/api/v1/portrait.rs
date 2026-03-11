@@ -665,13 +665,13 @@ pub async fn get_portrait_data(
 
     // === Pond ===
     let pond = {
-        let active = state.pond_active.load(std::sync::atomic::Ordering::Relaxed);
-        let name = state.pond.name().await;
+        let active = state.security.pond.active.load(std::sync::atomic::Ordering::Relaxed);
+        let name = state.security.pond.state.name().await;
         // Stone count from horizon (discovered peers + self if enrolled)
         let stone_count = if active { horizon.count.max(1) } else { 0 };
         PortraitPond {
             active,
-            locked: !active && state.pond.enrolled(),
+            locked: !active && state.security.pond.state.enrolled(),
             name,
             stone_count,
             profile: None, // requires certmesh I/O, omitted for portrait

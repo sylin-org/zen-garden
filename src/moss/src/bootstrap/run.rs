@@ -663,15 +663,21 @@ pub async fn run(
         self_entry: self_entry.clone(),
         mdns_handle: mdns_handle.clone(),
         koi_handle: koi_handle.clone(),
-        pond: pond_state,
-        pond_active: pond_active.clone(),
-        https_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        stone_client: Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
-        ceremony_registry,
-        ceremony_journal,
-        pond_ceremony_host: Arc::new(koi_common::ceremony::CeremonyHost::new(
-            koi_certmesh::pond_ceremony::PondCeremonyRules,
-        )),
+        security: Arc::new(crate::domain::Security {
+            pond: crate::domain::Pond {
+                state: pond_state,
+                active: pond_active.clone(),
+                ceremony: crate::domain::security::ceremony::Ceremony {
+                    host: Arc::new(koi_common::ceremony::CeremonyHost::new(
+                        koi_certmesh::pond_ceremony::PondCeremonyRules,
+                    )),
+                    registry: ceremony_registry,
+                    journal: ceremony_journal,
+                },
+            },
+            stone_client: Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
+            https: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }),
         elections: election_service_placeholder,
         system_resources: Arc::new(RwLock::new(None)),
         companion_registry: Arc::new(infra::CompanionRegistry::new().await),
@@ -953,7 +959,7 @@ pub async fn run(
                         crate::domain::PondEvent::EnrollmentChanged { enrolled, .. },
                     )) => {
                         // Reload inter-stone TLS client with fresh cert material
-                        state_for_pond.stone_client.reload_tls();
+                        state_for_pond.security.stone_client.reload_tls();
 
                         if enrolled {
                             activate_pond_security(&state_for_pond, &console_for_pond).await;
@@ -961,7 +967,7 @@ pub async fn run(
                             // HTTPS shutdown is not implemented yet (Phase 3+).
                             // For now, just update the flag so new connections see the change.
                             state_for_pond
-                                .https_started
+                                .security.https
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             tracing::info!("Pond unenrolled — HTTPS deactivated (flag cleared)");
                         }
@@ -1510,7 +1516,7 @@ pub async fn run(
     // When pond security is active, split routes across two listeners:
     // - HTTP :7185 → public lobby (health, discovery, pond join/status)
     // - HTTPS :7183 → all routes (authenticated, full API)
-    let pond_is_active = state.pond_active.load(std::sync::atomic::Ordering::Relaxed);
+    let pond_is_active = state.security.pond.active.load(std::sync::atomic::Ordering::Relaxed);
 
     // If already enrolled at boot, activate HTTPS + chirp signing/verification
     if pond_is_active {
@@ -1519,7 +1525,7 @@ pub async fn run(
 
     let app = if pond_is_active
         && state
-            .https_started
+            .security.https
             .load(std::sync::atomic::Ordering::Relaxed)
     {
         tracing::info!(
@@ -2073,7 +2079,7 @@ async fn activate_pond_security(
 
     // --- HTTPS listener ---
     if state
-        .https_started
+        .security.https
         .compare_exchange(
             false,
             true,
@@ -2093,7 +2099,7 @@ async fn activate_pond_security(
 
         if handle.is_none() {
             state
-                .https_started
+                .security.https
                 .store(false, std::sync::atomic::Ordering::Relaxed);
             tracing::warn!("HTTPS listener not started (certs may not be ready)");
         } else {

@@ -301,7 +301,7 @@ async fn refresh_pond_active(state: &AppState) {
         if let Ok(core) = handle.core() {
             let status = core.certmesh_status().await;
             if status.ca_initialized && !status.ca_locked {
-                state.pond_active.store(true, Ordering::Relaxed);
+                state.security.pond.active.store(true, Ordering::Relaxed);
                 return;
             }
         }
@@ -313,7 +313,7 @@ async fn refresh_pond_active(state: &AppState) {
         .join("certs")
         .join(&state.stone_name);
     if certs_dir.join("cert.pem").exists() && certs_dir.join("key.pem").exists() {
-        state.pond_active.store(true, Ordering::Relaxed);
+        state.security.pond.active.store(true, Ordering::Relaxed);
     }
 }
 
@@ -324,11 +324,11 @@ async fn refresh_pond_active(state: &AppState) {
 /// (spawned at boot) reacts by starting/stopping HTTPS + chirp signing.
 async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone: Option<String>) {
     // Update flags
-    state.pond_active.store(enrolled, Ordering::Relaxed);
+    state.security.pond.active.store(enrolled, Ordering::Relaxed);
     if enrolled {
-        state.pond.set_enrolled(cornerstone.clone()).await;
+        state.security.pond.state.set_enrolled(cornerstone.clone()).await;
     } else {
-        state.pond.set_unenrolled().await;
+        state.security.pond.state.set_unenrolled().await;
     }
 
     // Emit domain event — listener handles HTTPS + chirps
@@ -508,7 +508,7 @@ pub async fn pond_init_v1(
     };
 
     // Persist pond metadata and update state
-    state.pond.set_name(pond_name.clone()).await;
+    state.security.pond.state.set_name(pond_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(pond_name.clone()),
     };
@@ -565,7 +565,7 @@ pub async fn pond_status_v1(State(state): State<AppState>) -> PondResult<PondSta
     Ok(Json(ApiResponse::new(PondStatusResponse {
         active,
         locked: status.ca_initialized && status.ca_locked,
-        name: state.pond.name().await,
+        name: state.security.pond.state.name().await,
         cornerstone,
         stones,
         profile: format!("{:?}", status.profile),
@@ -677,7 +677,7 @@ async fn proxy_enrollment(
     );
 
     let resp = state
-        .stone_client
+        .security.stone_client
         .post(&cornerstone_addr, "/api/v1/pond/join")
         .timeout(std::time::Duration::from_secs(15))
         .json(&proxy_payload)
@@ -807,7 +807,7 @@ async fn discover_cornerstone(
 
     for entry in &candidates {
         let resp = match state
-            .stone_client
+            .security.stone_client
             .get(&entry.address, "/api/v1/pond/status")
             .timeout(std::time::Duration::from_secs(5))
             .send()
@@ -1125,7 +1125,7 @@ pub async fn pond_rename_v1(
     State(state): State<AppState>,
     Json(payload): Json<PondRenameRequest>,
 ) -> PondResult<serde_json::Value> {
-    if !state.pond.enrolled() {
+    if !state.security.pond.state.enrolled() {
         return Err(error_response(
             StatusCode::CONFLICT,
             "POND_NOT_INITIALIZED",
@@ -1147,7 +1147,7 @@ pub async fn pond_rename_v1(
         _ => garden_common::naming::generate_pond_name(),
     };
 
-    state.pond.set_name(new_name.clone()).await;
+    state.security.pond.state.set_name(new_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(new_name.clone()),
     };
@@ -1263,7 +1263,7 @@ pub async fn pond_ceremony_v1(
     State(state): State<AppState>,
     Json(request): Json<koi_common::ceremony::CeremonyRequest>,
 ) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
-    let host = &state.pond_ceremony_host;
+    let host = &state.security.pond.ceremony.host;
 
     // Pre-fill hostname for TOTP personalization
     let mut req = request;
@@ -1576,7 +1576,7 @@ async fn execute_pond_init_from_ceremony(
     }
 
     let pond_name = garden_common::naming::generate_pond_name();
-    state.pond.set_name(pond_name.clone()).await;
+    state.security.pond.state.set_name(pond_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(pond_name.clone()),
     };

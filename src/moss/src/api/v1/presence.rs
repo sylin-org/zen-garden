@@ -227,7 +227,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             disk_percent,
             uptime_seconds: uptime,
             pond_active: state
-                .pond_active
+                .security.pond.active
                 .load(std::sync::atomic::Ordering::Relaxed),
             // FIREFLY-0003 fields
             io_percent: 0.0, // Placeholder until I/O collection is implemented

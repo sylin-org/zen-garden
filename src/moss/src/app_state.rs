@@ -14,10 +14,8 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::docker::Client;
-use crate::domain::{CeremonyRegistry, FqnHandler, InfrastructureHandlerRegistry, Orchestration, Storage, Tool};
-use crate::infra::{
-    stone_client::StoneClient, CeremonyJournal, EventBus, ManifestRegistry, PulseEvent,
-};
+use crate::domain::{FqnHandler, InfrastructureHandlerRegistry, Orchestration, Security, Storage, Tool};
+use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use crate::mdns::MdnsHandle;
 use crate::tasks::Network;
 use garden_common::console::ConsolePrinter;
@@ -142,6 +140,9 @@ pub struct AppState {
     /// (ARCH-0004). Ephemeral, TTL-based; handlers refresh every 30 seconds.
     pub fqn_handler: Arc<FqnHandler>,
 
+    /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
+    pub security: Arc<Security>,
+
     /// Self topology entry (this stone's current state)
     pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
 
@@ -153,35 +154,6 @@ pub struct AppState {
     /// Shared across all subsystems; sub-handles accessed via `koi_handle.mdns()`, `.dns()`, etc.
     pub koi_handle: Arc<koi_embedded::KoiHandle>,
 
-    /// Pond domain surface — enrollment state and cornerstone identity.
-    /// Properties: `enrolled()`, `cornerstone()`.
-    /// Mutations trigger `PondEvent::EnrollmentChanged` on the EventBus.
-    pub pond: crate::domain::PondState,
-
-    /// Pond active flag — true when certmesh CA is initialized and unlocked.
-    /// Cached for fast checks (chirp signing, HTTPS routing). Updated by pond handlers.
-    pub pond_active: Arc<std::sync::atomic::AtomicBool>,
-
-    /// HTTPS listener started flag — guards against double-binding :7183.
-    /// Set true after the first successful HTTPS bind (boot or dynamic).
-    pub https_started: Arc<std::sync::atomic::AtomicBool>,
-
-    /// Stone-to-stone HTTP client gateway.
-    /// Automatically upgrades to HTTPS+mTLS when pond certs are available.
-    /// Call `stone_client.reload_tls()` after enrollment changes.
-    pub stone_client: Arc<StoneClient>,
-
-    // === Ceremony Infrastructure ===
-    /// Active ceremony registry (in-memory state)
-    pub ceremony_registry: Arc<CeremonyRegistry>,
-
-    /// Ceremony journal (persistent state for crash recovery)
-    pub ceremony_journal: Arc<CeremonyJournal>,
-
-    /// Pond ceremony host — drives pond init/join/unlock ceremonies
-    /// using the koi-common ceremony protocol.
-    pub pond_ceremony_host:
-        Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>,
 
     /// Election service for distributed elections (testing)
     pub elections: Arc<crate::tasks::election_service::Elections>,
@@ -852,7 +824,7 @@ impl AppState {
     /// Called on startup to detect ceremonies that were interrupted
     /// (e.g., by crash or restart). Returns count of recovered ceremonies.
     pub async fn recover_ceremonies(&self) -> anyhow::Result<usize> {
-        let incomplete = self.ceremony_journal.load_active().await?;
+        let incomplete = self.security.pond.ceremony.journal.load_active().await?;
         let count = incomplete.len();
 
         for ceremony in incomplete {
@@ -862,7 +834,7 @@ impl AppState {
                 state = ?ceremony.state,
                 "Found incomplete ceremony from previous run"
             );
-            self.ceremony_registry.insert(ceremony).await;
+            self.security.pond.ceremony.registry.insert(ceremony).await;
         }
 
         if count > 0 {

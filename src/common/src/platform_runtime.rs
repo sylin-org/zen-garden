@@ -97,21 +97,19 @@ pub trait PlatformRuntime: Send + Sync {
             roles.join(", ")
         };
         self.print_ribbon(&[
-            &format!("{}🌱  ✓       Storage \"{}\" connected", ribbon_art::USB_TOP, name),
+            &format!("{}🌱  ✓       Storage \"{}\" connected", ribbon_art::USB_TOP_ACTIVE, name),
             &format!(
                 "{}            {}, {} used",
                 ribbon_art::USB_BODY_ACTIVE, role_display, used
             ),
-            ribbon_art::USB_BOTTOM_CONN,
         ]);
     }
 
     /// Storage bank released — safe to remove.
     fn print_storage_released(&self, name: &str) {
         self.print_ribbon(&[
-            &format!("{}↓           Storage released: {}", ribbon_art::USB_TOP, name),
+            &format!("{}↓           Storage released: {}", ribbon_art::USB_TOP_EMPTY, name),
             &format!("{}            Safe to remove device", ribbon_art::USB_BODY_EMPTY),
-            ribbon_art::USB_BOTTOM,
         ]);
     }
 

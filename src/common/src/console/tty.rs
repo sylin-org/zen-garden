@@ -1,7 +1,7 @@
 //! TTY and first-boot console infrastructure
 
-use anyhow::{Context, Result};
 use crate::PlatformRuntime;
+use anyhow::{Context, Result};
 
 /// Ensure /etc is writable with retries for early-boot timing issues
 /// Returns Ok(true) if writeable, Ok(false) if permanently read-only
@@ -79,25 +79,15 @@ pub const RIBBON_DIVIDER: &str = "━━━━━━━━━━━━━━━�
 
 /// ASCII art line prefixes for cat (waking/sleeping share line 1)
 pub mod ribbon_art {
-    /// Cat head line: `    _|\_/|    ` (14 chars)
-    pub const CAT_HEAD: &str = "    _|\\_/|    ";
-    /// Cat body waking: `  c(>(^-^)    ` (14 chars)
-    pub const CAT_WAKING: &str = "  c(>(^-^)    ";
-    /// Cat body sleeping: `  c(-(-.-)    ` (14 chars)
-    pub const CAT_SLEEPING: &str = "  c(-(-.-)    ";
-    /// Cat body updating/working: `  c(>(o.O)    ` (14 chars) - wide eyes, alert
-    pub const CAT_UPDATING: &str = "  c(>(o.O)    ";
+    pub const CAT_HEAD: &str = "    _|\\_/|  ";
+    pub const CAT_WAKING: &str = "  c(>(^-^)  ";
+    pub const CAT_SLEEPING: &str = "  c(-(-.-)  ";
+    pub const CAT_UPDATING: &str = "  c(>(o.O)  ";
 
-    /// USB drive line 1: `    ┌──┐      ` (14 chars)
-    pub const USB_TOP: &str = "    ┌──┐      ";
-    /// USB drive line 2 (active): `    │▓▓│      ` (14 chars)
-    pub const USB_BODY_ACTIVE: &str = "    │▓▓│      ";
-    /// USB drive line 2 (empty): `    │  │      ` (14 chars)
-    pub const USB_BODY_EMPTY: &str = "    │  │      ";
-    /// USB drive line 3 (with connector): `    └┬─┘      ` (14 chars)
-    pub const USB_BOTTOM_CONN: &str = "    └┬─┘      ";
-    /// USB drive line 3 (no connector): `    └──┘      ` (14 chars)
-    pub const USB_BOTTOM: &str = "    └──┘      ";
+    pub const USB_TOP_ACTIVE: &str = "   ╭───╮ // ";
+    pub const USB_BODY_ACTIVE: &str = "   ╰───╯ \\\\ ";
+    pub const USB_TOP_EMPTY: &str = "   ╭───╮ \\\\ ";
+    pub const USB_BODY_EMPTY: &str = "   ╰───╯ // ";
 }
 
 // ================================================================================================
@@ -244,8 +234,8 @@ pub async fn generate_unique_name_linux(runtime: &dyn PlatformRuntime) -> Result
         "river", "harbor", "glacier", "delta", "stream", "shore", "brook", "lagoon", "spring",
         "cascade", "rapids", "estuary", "inlet", "cove", "fjord", "atoll",
         // Vegetation zones (16)
-        "forest", "prairie", "desert", "grove", "thicket", "copse", "glade", "heath", "fen",
-        "moor", "marsh", "swamp", "taiga", "tundra", "steppe", "savanna",
+        "forest", "prairie", "desert", "grove", "thicket", "copse", "glade", "heath", "fen", "moor",
+        "marsh", "swamp", "taiga", "tundra", "steppe", "savanna",
         // Natural spaces (16)
         "clearing", "alcove", "grotto", "cavern", "ravine", "gorge", "chasm", "vale", "dell",
         "glen", "pass", "garden", "terrace", "oasis", "refuge", "haven",
@@ -572,7 +562,9 @@ pub async fn update_hosts_file(
                 .map(|(i, &part)| {
                     if i == 0 {
                         part.to_string()
-                    } else if part == old_name || part.starts_with("stone-new-") {
+                    } else if part == old_name {
+                        new_name.to_string()
+                    } else if part.starts_with("stone-new-") {
                         new_name.to_string()
                     } else {
                         part.to_string()
@@ -655,7 +647,7 @@ pub fn write_motd(runtime: &dyn PlatformRuntime, stone_name: &str, url: &str) ->
   Stone Name: {}
   Management URL: {}
   Username: stone
-  Password: garden
+  Password: stone
 
   Run 'systemctl status garden-moss' to check service status
   Visit {} to manage services

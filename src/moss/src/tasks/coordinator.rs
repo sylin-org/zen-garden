@@ -95,10 +95,17 @@ pub fn start_registry_maintenance(
                 reg.reap_expired(&state.current.stone.id)
             };
             if !reaped.is_empty() {
-                tracing::debug!(
+                tracing::info!(
                     count = reaped.len(),
-                    "Registry maintenance: reaped expired fqn_handler entries"
+                    "Registry maintenance: reaped expired FQN handler entries"
                 );
+                for r in &reaped {
+                    tracing::info!(
+                        fqid = %r.fqid,
+                        "{} FQN handler entry expired (stale)",
+                        r.fqid,
+                    );
+                }
                 // Notify SSE subscribers AND broadcast beacon so remote
                 // registries drop the reaped entries.
                 state.publish_tool_deltas(reaped, true).await;
@@ -339,11 +346,12 @@ pub async fn start_discovery_listener(
                         continue;
                     }
 
-                    tracing::debug!(
+                    tracing::info!(
                         stone = %beacon.stone_name,
                         deltas = beacon.deltas.len(),
                         from = %from_addr,
-                        "Tools beacon received, updating tools cache"
+                        "Tools beacon received from stone {}",
+                        beacon.stone_name,
                     );
 
                     // TOOLS-0003: Apply to unified registry
@@ -352,6 +360,27 @@ pub async fn start_discovery_listener(
                         reg.apply_remote_beacon(&beacon)
                     };
                     for delta in &applied {
+                        if let Some(tool) = &delta.tool {
+                            if tool.tool.category == "orchestrator" {
+                                tracing::info!(
+                                    stone = %beacon.stone_name,
+                                    offering = %tool.tool.tool_type,
+                                    fqid = %tool.fqid,
+                                    "Stone {} announces {} FQN handler registration for {}",
+                                    beacon.stone_name,
+                                    tool.fqid,
+                                    tool.tool.tool_type,
+                                );
+                            }
+                        } else if matches!(delta.kind, garden_common::tools::ToolDeltaKind::Remove) {
+                            tracing::info!(
+                                stone = %beacon.stone_name,
+                                fqid = %delta.fqid,
+                                "Stone {} announces FQN handler removal for {}",
+                                beacon.stone_name,
+                                delta.fqid,
+                            );
+                        }
                         let _ = tools.send(delta.clone());
                     }
 
@@ -801,6 +830,7 @@ pub fn start_storage_console_task(
             tokio::select! {
                 _ = token.cancelled() => break,
                 result = rx.recv() => match result {
+                    Ok(StorageChanged::Sensed { .. }) => {}
                     Ok(StorageChanged::Connected { name, roles, used_bytes }) => {
                         runtime.print_storage_connected(&name, &roles, used_bytes);
                     }

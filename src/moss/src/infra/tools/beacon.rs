@@ -48,11 +48,12 @@ async fn broadcast_tools_beacon_inner(
         snapshot,
     };
 
-    debug!(
+    info!(
         stone = %stone_name,
         deltas = beacon.deltas.len(),
         snapshot = snapshot,
-        "Broadcasting tools beacon"
+        "Broadcasting tools beacon ({} deltas)",
+        beacon.deltas.len(),
     );
 
     p2p::send_announcement(announcement_types::TOOLS_BEACON, &beacon)

@@ -880,10 +880,9 @@ pub async fn add_storage_v1(
                 ).await {
                     Ok(()) => {
                         tools_state.emit_storage_changed(
-                            garden_common::storage::StorageChanged::Connected {
+                            garden_common::storage::StorageChanged::Sensed {
                                 name: task_name.clone(),
                                 roles: roles.clone(),
-                                used_bytes: 0,
                             },
                         ).await;
                         tools_state.emit_storage_changed(
@@ -1054,10 +1053,9 @@ async fn add_at_path(
         replica_set_id: manifest.replica_set_id.clone(),
     }).await;
 
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Connected {
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Sensed {
         name: manifest.name.clone(),
         roles: manifest.roles.clone(),
-        used_bytes: 0,
     }).await;
 
     let storages = crate::domain::storage::name_id_pairs(&state.current.storage.volumes).await;

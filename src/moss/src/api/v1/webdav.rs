@@ -65,9 +65,9 @@ pub async fn handle_webdav(
             .into_response();
     };
 
-    // Block access to .zen-garden internals (safety net)
+    // Block access to restricted paths (managed metadata, OS internals)
     let rel_path = extract_rel_path(&uri_path, storage_name);
-    if is_dotfolder_access(&rel_path) {
+    if garden_common::constants::is_blocked_path(&rel_path) {
         return (
             StatusCode::FORBIDDEN,
             "Access to managed storage internals is not allowed",
@@ -261,8 +261,8 @@ async fn record_changelog(
         return;
     }
 
-    // Skip changelog for .zen-garden/ paths (shouldn't reach here, but safety)
-    if rel_path.starts_with(".zen-garden") {
+    // Skip changelog for blocked paths (shouldn't reach here, but safety)
+    if garden_common::constants::is_blocked_path(rel_path) {
         return;
     }
 
@@ -310,13 +310,6 @@ fn extract_rel_path(uri_path: &str, storage_name: &str) -> String {
         .to_string()
 }
 
-/// Check if the path accesses `.zen-garden/` internals.
-fn is_dotfolder_access(rel_path: &str) -> bool {
-    let normalized = rel_path.trim_start_matches('/');
-    normalized.starts_with(".zen-garden")
-        || normalized.contains("/.zen-garden")
-        || normalized.contains("\\.zen-garden")
-}
 
 /// Whether the HTTP method is a mutation (write) operation.
 fn is_write_method(method: &Method) -> bool {
@@ -363,13 +356,17 @@ mod tests {
     }
 
     #[test]
-    fn test_is_dotfolder_access() {
-        assert!(is_dotfolder_access(".zen-garden/manifest.json"));
-        assert!(is_dotfolder_access("/.zen-garden/"));
-        assert!(is_dotfolder_access("foo/.zen-garden/bar"));
-        assert!(!is_dotfolder_access("Photos/vacation.jpg"));
-        assert!(!is_dotfolder_access("Zen Garden/manifest.json")); // Symlink access is OK
-        assert!(!is_dotfolder_access(""));
+    fn test_is_blocked_path() {
+        use garden_common::constants::is_blocked_path;
+        assert!(is_blocked_path(".zen-garden/manifest.json"));
+        assert!(is_blocked_path("/.zen-garden/"));
+        assert!(is_blocked_path("foo/.zen-garden/bar"));
+        assert!(is_blocked_path("$RECYCLE.BIN/file.txt"));
+        assert!(is_blocked_path("/$RECYCLE.BIN"));
+        assert!(is_blocked_path("System Volume Information/WPSettings.dat"));
+        assert!(is_blocked_path("Zen Garden/manifest.json"));
+        assert!(!is_blocked_path("Photos/vacation.jpg"));
+        assert!(!is_blocked_path(""));
     }
 
     #[test]

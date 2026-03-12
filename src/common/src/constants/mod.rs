@@ -260,6 +260,46 @@ pub const CATEGORY_STORAGE: &str = "storage";
 pub const CATEGORY_COMPANION: &str = "companion";
 
 // ============================================================================
+// Storage Access Control
+// ============================================================================
+
+/// Directory names that must never appear in cloud drive listings or be
+/// writable through any storage access path (WebDAV, cloud filter, file API).
+///
+/// Applies to both reads and writes at any depth.
+pub const STORAGE_BLOCKED_NAMES: &[&str] = &[
+    ".zen-garden",           // Zen Garden metadata / manifest
+    "Zen Garden",            // Windows display alias for .zen-garden
+    "$RECYCLE.BIN",          // Windows recycle bin
+    "System Volume Information", // Windows volume metadata
+];
+
+/// Returns `true` if the given directory or file name is on the blocked list.
+///
+/// Use this when you have an individual path component (e.g. a `DirEntry` name).
+pub fn is_blocked_name(name: &str) -> bool {
+    STORAGE_BLOCKED_NAMES.iter().any(|&b| b == name)
+}
+
+/// Returns `true` if any component of `rel_path` is on the blocked list.
+///
+/// `rel_path` is relative to the storage root, with either `/` or `\`
+/// separators. Use this for full-path checks (e.g. WebDAV request paths).
+pub fn is_blocked_path(rel_path: &str) -> bool {
+    let normalized = rel_path.trim_start_matches('/').trim_start_matches('\\');
+    STORAGE_BLOCKED_NAMES.iter().any(|&blocked| {
+        normalized == blocked
+            || normalized.starts_with(&format!("{}/", blocked))
+            || normalized.starts_with(&format!("{}\\", blocked))
+            || normalized.contains(&format!("/{}/", blocked))
+            || normalized.contains(&format!("\\{}/", blocked))
+            || normalized.contains(&format!("/{}", blocked))
+            || normalized.ends_with(&format!("/{}", blocked))
+            || normalized.ends_with(&format!("\\{}", blocked))
+    })
+}
+
+// ============================================================================
 // Storage Role & Visibility Constants
 // ============================================================================
 

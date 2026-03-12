@@ -191,7 +191,7 @@ impl ZenGardenProvider {
 
         let filtered: Vec<&DirEntry> = entries
             .iter()
-            .filter(|e| e.name != ".zen-garden" && e.name != "Zen Garden")
+            .filter(|e| !garden_common::constants::is_blocked_name(&e.name))
             .collect();
 
         let mut phs: Vec<PlaceholderFile> = filtered

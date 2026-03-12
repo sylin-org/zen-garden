@@ -754,6 +754,7 @@ pub async fn ingest_event(
                     let name = vol.display_name().to_string();
                     let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
                     let used_bytes = vol.used_bytes;
+                    let capacity_bytes = vol.capacity_bytes;
                     let manifest_id =
                         vol.management.as_ref().map(|m| m.id.clone()).unwrap_or_default();
 
@@ -780,7 +781,7 @@ pub async fn ingest_event(
                     } else {
                         info!(path = %snap.path, name = %name, "Managed volume appeared");
                     }
-                    Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes })
+                    Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes, capacity_bytes })
                 } else {
                     debug!(path = %snap.path, "Unmanaged volume appeared");
                     None
@@ -799,7 +800,8 @@ pub async fn ingest_event(
                         let name = vol.display_name().to_string();
                         let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
                         let used_bytes = vol.used_bytes;
-                        Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes })
+                        let capacity_bytes = vol.capacity_bytes;
+                        Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes, capacity_bytes })
                     } else {
                         None
                     }
@@ -923,6 +925,7 @@ pub async fn auto_mount_unmounted(
             name: manifest.name.clone(),
             roles: manifest.roles.clone(),
             used_bytes: 0,
+            capacity_bytes: device.capacity_bytes,
         });
     }
 

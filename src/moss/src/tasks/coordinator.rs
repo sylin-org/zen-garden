@@ -831,8 +831,8 @@ pub fn start_storage_console_task(
                 _ = token.cancelled() => break,
                 result = rx.recv() => match result {
                     Ok(StorageChanged::Sensed { .. }) => {}
-                    Ok(StorageChanged::Connected { name, roles, used_bytes }) => {
-                        runtime.print_storage_connected(&name, &roles, used_bytes);
+                    Ok(StorageChanged::Connected { name, roles, used_bytes, capacity_bytes }) => {
+                        runtime.print_storage_connected(&name, &roles, used_bytes, capacity_bytes);
                     }
                     Ok(StorageChanged::Released { name }) => {
                         runtime.print_storage_released(&name);

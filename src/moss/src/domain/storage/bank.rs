@@ -107,6 +107,7 @@ impl StorageBank {
                     name,
                     roles,
                     used_bytes,
+                    capacity_bytes,
                 });
             } else {
                 debug!(path = %snap.path, "Unmanaged volume appeared");
@@ -132,6 +133,7 @@ impl StorageBank {
                         name,
                         roles,
                         used_bytes,
+                        capacity_bytes,
                     });
                 }
             }

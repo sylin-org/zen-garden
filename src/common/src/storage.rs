@@ -1195,6 +1195,7 @@ pub enum StorageChanged {
         name: String,
         roles: Vec<String>,
         used_bytes: u64,
+        capacity_bytes: u64,
     },
     /// Storage released — triggers released ribbon.
     Released {

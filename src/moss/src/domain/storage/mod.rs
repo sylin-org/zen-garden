@@ -18,6 +18,9 @@
 //!
 //! [`Volumes`] is the single collection, keyed by device path.
 
+pub mod bank;
+pub use bank::StorageBank;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

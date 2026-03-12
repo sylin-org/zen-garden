@@ -15,6 +15,7 @@
 pub mod adapter;
 mod beacon;
 pub mod layout;
+pub mod monitor;
 mod objects;
 pub mod platform;
 mod signpost;

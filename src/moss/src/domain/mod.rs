@@ -83,7 +83,7 @@ pub use orchestration::{
     NourishmentOrchestration, NurturingOrchestration, Orchestration, StorageOrchestration,
 };
 pub use storage::{
-    new_media, new_volumes, Management, Media, Medium, Storage, Volume,
+    new_media, new_volumes, Management, Media, Medium, Storage, StorageBank, Volume,
     VolumeHealth, Volumes,
 };
 pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};

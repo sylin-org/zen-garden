@@ -1383,118 +1383,89 @@ pub(crate) async fn start_background_tasks(
         );
     }
 
-    // Phase 17.5: Cross-platform volume watcher (STORAGE-0011)
-    // Detects volume hotplug/removal events and feeds them into the Volumes domain.
-    // Also emits DomainPulse events so presence SSE (ribbon notifications) and
-    // the candidates notification stay current.
+    // Phase 17.5: Cross-platform volume monitor (STORAGE-0014)
+    // VolumeMonitor measures disk usage before emitting events — no more "0 B used" on connect.
+    // StorageBank classifies volumes and emits StorageChanged; coordinator handles pulse + notifications.
     {
-        use crate::infra::storage::platform::VolumeEvent;
+        use crate::infra::storage::monitor::PhysicalStorageEvent;
         use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 
-        let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel(32);
-        crate::infra::storage::platform::start_volume_watcher(vol_tx);
+        let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel::<PhysicalStorageEvent>(32);
+        let monitor_token = shutdown_token.child_token();
+        let bank = crate::domain::StorageBank::new(
+            state.current.storage.volumes.clone(),
+            state.current.storage.changed.clone(),
+        );
+        crate::infra::storage::monitor::build_monitor().start(vol_tx, monitor_token.clone());
 
-        let volumes_for_watcher = state.current.storage.volumes.clone();
-        let pulse_tx_for_watcher = state.pulse.clone();
-        let storage_changed_tx_for_watcher = state.current.storage.changed.clone();
+        let volumes = state.current.storage.volumes.clone();
+        let pulse = state.pulse.clone();
         let notifications = state.presence.notifications.clone();
-        let watcher_token = shutdown_token.child_token();
-        let mut rescan_rx = volume_rescan_rx; // move rx into the watcher task
+        let mut rescan_rx = volume_rescan_rx;
         tokio::spawn(async move {
-            /// Process a single volume event: classify, emit pulse, update notifications.
-            async fn handle_volume_event(
-                ev: VolumeEvent,
-                volumes: &crate::domain::Volumes,
-                pulse: &tokio::sync::broadcast::Sender<infra::PulseEvent>,
-                storage_changed: &tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
-                notifications: &garden_common::NotificationRegistry,
-            ) {
-                // Build pulse before ingest consumes the event info
-                let event_pulse = match &ev {
-                    VolumeEvent::Appeared(snap) => {
-                        let capacity_gb = snap.capacity_bytes / 1_000_000_000;
-                        Some(infra::DomainPulse::storage_event(
-                            "storage_detected",
-                            format!("Volume appeared: {} ({})", snap.mount_path, snap.label.as_deref().unwrap_or("unlabeled")),
-                            "info",
-                            None,
-                            Some(serde_json::json!({
-                                "device": snap.path,
-                                "mount_path": snap.mount_path,
-                                "label": snap.label,
-                                "capacity_gb": capacity_gb,
-                                "removable": snap.removable,
-                            })),
-                        ))
-                    }
-                    VolumeEvent::Disappeared { path } => {
-                        Some(infra::DomainPulse::storage_event(
-                            "storage_removed",
-                            format!("Volume disappeared: {}", path),
-                            "info",
-                            None,
-                            Some(serde_json::json!({ "device": path })),
-                        ))
-                    }
-                };
-
-                // Ingest into Volumes domain; returns domain events to broadcast
-                let storage_events = crate::domain::storage::ingest_event(volumes, ev).await;
-
-                // Emit pulse for presence SSE / ribbon notifications
-                if let Some(p) = event_pulse {
-                    let _ = pulse.send(infra::PulseEvent::Domain(p));
-                }
-
-                // Broadcast all domain events immediately so cloud filter,
-                // WebDAV router, and TTY ribbon display react without waiting
-                // for the next heartbeat.
-                for event in storage_events {
-                    tracing::debug!(event = ?event, "storage watcher: broadcasting domain event");
-                    let _ = storage_changed.send(event);
-                }
-
-                // Update candidates notification
-                let candidate_count = {
-                    let map = volumes.read().await;
-                    map.values()
-                        .filter(|v| !v.is_managed() && v.removable && v.online)
-                        .count()
-                };
-                notifications.set_if(
-                    NOTIF_SOURCE_CANDIDATES,
-                    NotificationTag::Opportunity,
-                    candidate_count > 0,
-                );
-            }
-
             loop {
                 tokio::select! {
-                    _ = watcher_token.cancelled() => break,
+                    _ = monitor_token.cancelled() => break,
                     event = vol_rx.recv() => {
                         let Some(ev) = event else { break };
-                        handle_volume_event(
-                            ev,
-                            &volumes_for_watcher,
-                            &pulse_tx_for_watcher,
-                            &storage_changed_tx_for_watcher,
-                            &notifications,
-                        ).await;
+                        match ev {
+                            PhysicalStorageEvent::Connected { mount_path, label, capacity_bytes, used_bytes, removable } => {
+                                let capacity_gb = capacity_bytes / 1_000_000_000;
+                                let _ = pulse.send(infra::PulseEvent::Domain(
+                                    infra::DomainPulse::storage_event(
+                                        "storage_detected",
+                                        format!("Volume appeared: {} ({})", mount_path.display(), label.as_deref().unwrap_or("unlabeled")),
+                                        "info",
+                                        None,
+                                        Some(serde_json::json!({
+                                            "mount_path": mount_path,
+                                            "label": label,
+                                            "capacity_gb": capacity_gb,
+                                            "removable": removable,
+                                        })),
+                                    )
+                                ));
+                                bank.on_appeared(mount_path, label, capacity_bytes, used_bytes, removable).await;
+                            }
+                            PhysicalStorageEvent::Disconnected { path } => {
+                                let _ = pulse.send(infra::PulseEvent::Domain(
+                                    infra::DomainPulse::storage_event(
+                                        "storage_removed",
+                                        format!("Volume disappeared: {}", path),
+                                        "info",
+                                        None,
+                                        Some(serde_json::json!({ "path": path })),
+                                    )
+                                ));
+                                bank.on_vanished(path).await;
+                            }
+                        }
+
+                        // Update candidates notification
+                        let candidate_count = {
+                            let map = volumes.read().await;
+                            map.values()
+                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .count()
+                        };
+                        notifications.set_if(
+                            NOTIF_SOURCE_CANDIDATES,
+                            NotificationTag::Opportunity,
+                            candidate_count > 0,
+                        );
                     }
                     _ = rescan_rx.recv() => {
                         // Ad-hoc rescan requested (e.g. after `storage add` wrote a manifest).
-                        // Re-scan all volumes through the standard pipeline.
                         let snaps = tokio::task::spawn_blocking(
                             crate::infra::storage::platform::scan_volumes
                         )
                         .await
                         .unwrap_or_default();
-                        crate::domain::storage::reconcile(&volumes_for_watcher, &snaps).await;
-                        crate::domain::storage::health_tick_all(&volumes_for_watcher).await;
+                        crate::domain::storage::reconcile(&volumes, &snaps).await;
+                        crate::domain::storage::health_tick_all(&volumes).await;
 
-                        // Update candidates notification after rescan
                         let candidate_count = {
-                            let map = volumes_for_watcher.read().await;
+                            let map = volumes.read().await;
                             map.values()
                                 .filter(|v| !v.is_managed() && v.removable && v.online)
                                 .count()
@@ -1509,7 +1480,7 @@ pub(crate) async fn start_background_tasks(
                 }
             }
         });
-        tracing::info!("Volume watcher started (STORAGE-0011)");
+        tracing::info!("Volume monitor started (STORAGE-0014)");
     }
 
     // Phase 17.5.2: Physical media watcher (STORAGE-0011)

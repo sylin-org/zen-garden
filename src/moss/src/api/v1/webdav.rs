@@ -67,7 +67,7 @@ pub async fn handle_webdav(
 
     // Block access to restricted paths (managed metadata, OS internals)
     let rel_path = extract_rel_path(&uri_path, storage_name);
-    if garden_common::constants::is_blocked_path(&rel_path) {
+    if garden_common::constants::storage::share::is_blocked_path(&rel_path) {
         return (
             StatusCode::FORBIDDEN,
             "Access to managed storage internals is not allowed",
@@ -262,7 +262,7 @@ async fn record_changelog(
     }
 
     // Skip changelog for blocked paths (shouldn't reach here, but safety)
-    if garden_common::constants::is_blocked_path(rel_path) {
+    if garden_common::constants::storage::share::is_blocked_path(rel_path) {
         return;
     }
 
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_is_blocked_path() {
-        use garden_common::constants::is_blocked_path;
+        use garden_common::constants::storage::share::is_blocked_path;
         assert!(is_blocked_path(".zen-garden/manifest.json"));
         assert!(is_blocked_path("/.zen-garden/"));
         assert!(is_blocked_path("foo/.zen-garden/bar"));

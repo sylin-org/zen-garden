@@ -144,7 +144,7 @@ fn should_ingest(path: &Path, sync_root_path: &Path) -> bool {
     for c in rel.components() {
         if let std::path::Component::Normal(s) = c {
             let s = s.to_string_lossy();
-            if garden_common::constants::is_blocked_name(&s) {
+            if garden_common::constants::storage::share::is_blocked_name(&s) {
                 return false;
             }
         }
@@ -269,7 +269,7 @@ async fn initial_scan(volumes: &Volumes, sync_root_path: &Path) {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
 
-            if garden_common::constants::is_blocked_name(&name_str) {
+            if garden_common::constants::storage::share::is_blocked_name(&name_str) {
                 continue;
             }
 

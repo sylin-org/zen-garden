@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
-use garden_common::constants::paths;
+use garden_common::constants::storage::share;
 use garden_common::storage::StorageRole;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -28,20 +28,18 @@ use super::{
 // Path validation
 // ============================================================================
 
-/// Reject paths that access the `.zen-garden/` dotfolder or use traversal.
-fn validate_file_path(path: &str) -> Result<(), &'static str> {
+/// Reject paths that use traversal or access managed storage internals.
+///
+/// Returns `Err((status, message))` on rejection.
+fn validate_file_path(path: &str) -> Result<(), (StatusCode, &'static str)> {
     if has_path_traversal(path) {
-        return Err("Path contains invalid segments");
+        return Err((StatusCode::BAD_REQUEST, "Path contains invalid segments"));
     }
-    let normalized = path.trim_start_matches('/');
-    if normalized.starts_with(paths::STORAGE_DOTFOLDER)
-        || normalized.starts_with(&format!("{}\\", paths::STORAGE_DOTFOLDER))
-    {
-        return Err("Access to managed storage internals is not allowed");
-    }
-    // Also block the symlink name
-    if normalized.starts_with("Zen Garden") {
-        return Err("Access to managed storage internals is not allowed");
+    if share::is_blocked_path(path) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Access to managed storage internals is not allowed",
+        ));
     }
     Ok(())
 }
@@ -77,8 +75,8 @@ async fn list_directory(mount_path: &std::path::Path, rel_path: &str) -> Respons
     while let Ok(Some(entry)) = dir.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Hide .zen-garden and its symlink from listings
-        if name == paths::STORAGE_DOTFOLDER || name == "Zen Garden" {
+        // Hide managed storage internals from listings
+        if share::is_blocked_name(&name) {
             continue;
         }
 
@@ -146,8 +144,8 @@ pub async fn get_file_v1(
     headers: HeaderMap,
 ) -> Response {
     let path = path.trim_start_matches('/');
-    if let Err(msg) = validate_file_path(path) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_PATH", msg);
+    if let Err((status, msg)) = validate_file_path(path) {
+        return error_response_raw(status, "INVALID_PATH", msg);
     }
 
     if is_proxied(&headers) {
@@ -239,8 +237,8 @@ pub async fn put_file_v1(
             "File path is required",
         ));
     }
-    if let Err(msg) = validate_file_path(path) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", msg));
+    if let Err((status, msg)) = validate_file_path(path) {
+        return Err(err(status, "INVALID_PATH", msg));
     }
 
     if is_proxied(&headers) {
@@ -335,8 +333,8 @@ pub async fn delete_file_v1(
             "File path is required",
         ));
     }
-    if let Err(msg) = validate_file_path(path) {
-        return Err(err(StatusCode::BAD_REQUEST, "INVALID_PATH", msg));
+    if let Err((status, msg)) = validate_file_path(path) {
+        return Err(err(status, "INVALID_PATH", msg));
     }
 
     if is_proxied(&headers) {
@@ -417,8 +415,8 @@ pub async fn head_file_v1(
     headers: HeaderMap,
 ) -> Response {
     let path = path.trim_start_matches('/');
-    if let Err(msg) = validate_file_path(path) {
-        return error_response_raw(StatusCode::BAD_REQUEST, "INVALID_PATH", msg);
+    if let Err((status, msg)) = validate_file_path(path) {
+        return error_response_raw(status, "INVALID_PATH", msg);
     }
 
     if is_proxied(&headers) {

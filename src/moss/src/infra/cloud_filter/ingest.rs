@@ -1,14 +1,15 @@
-//! Sync root ingest — write-back path for Cloud Filter (STORAGE-0012)
+﻿//! Sync root ingest — write-back path for Cloud Filter (STORAGE-0012)
 //!
 //! When a user pastes, drags, or saves a file into the Explorer "Zen Garden"
 //! sync root, this module detects the new file, copies it to the actual
-//! storage mount, and marks it as in-sync (clearing the overlay icon).
+//! storage mount (or proxies to the remote Primary), and marks it as in-sync
+//! (clearing the overlay icon).
 //!
 //! ## Pipeline
 //!
 //! 1. **Monitor** — `notify` crate watches the sync root for Create/Modify
 //! 2. **Filter** — skip placeholders, metadata dirs, top-level storage folders
-//! 3. **Transfer** — copy file from sync root to storage mount
+//! 3. **Transfer** — copy file from sync root to storage via `StorageRouter`
 //! 4. **Sync state** — `CfConvertToPlaceholder` marks the file in-sync
 //!
 //! The storage mount watcher (`infra/storage/watcher.rs`) independently detects
@@ -23,8 +24,10 @@ use notify::Watcher;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
-use garden_common::storage::{StorageChanged, DEFAULT_REPLICA_SET_DISPLAY};
+use crate::infra::storage::router::StorageRouter;
+use garden_common::storage::StorageChanged;
 
 // ============================================================================
 // Constants
@@ -40,12 +43,15 @@ const DEBOUNCE_SECS: u64 = 2;
 /// Run the sync root ingest watcher until shutdown.
 ///
 /// Monitors the sync root for user-created files and copies them to the
-/// corresponding storage mount.  Runs as a long-lived task.
+/// corresponding storage mount (or proxies to remote Primary via
+/// `StorageRouter`).  Runs as a long-lived task.
 ///
 /// Listens on `storage_changed_rx` so that files pasted while a storage was
 /// offline are retried as soon as the storage comes back online.
 pub(crate) async fn run(
     volumes: Volumes,
+    registry: GardenRegistry,
+    stone_id: String,
     sync_root_path: PathBuf,
     mut storage_changed_rx: tokio::sync::broadcast::Receiver<StorageChanged>,
     shutdown_token: CancellationToken,
@@ -63,7 +69,7 @@ pub(crate) async fn run(
     info!("sync root ingest watcher started");
 
     // Catch files pasted before the watcher started
-    initial_scan(&volumes, &sync_root_path).await;
+    initial_scan(&volumes, &registry, &stone_id, &sync_root_path).await;
 
     let debounce = tokio::time::Duration::from_secs(DEBOUNCE_SECS);
     let mut pending: HashMap<PathBuf, ()> = HashMap::new();
@@ -100,13 +106,13 @@ pub(crate) async fn run(
                 };
                 if should_rescan {
                     debug!("storage came online — re-scanning sync root for pending files");
-                    initial_scan(&volumes, &sync_root_path).await;
+                    initial_scan(&volumes, &registry, &stone_id, &sync_root_path).await;
                 }
             }
             _ = tokio::time::sleep_until(debounce_deadline) => {
                 if !pending.is_empty() {
                     let batch: Vec<PathBuf> = pending.drain().map(|(p, _)| p).collect();
-                    transfer_batch(&volumes, &sync_root_path, &batch).await;
+                    transfer_batch(&volumes, &registry, &stone_id, &sync_root_path, &batch).await;
                 }
 
                 debounce_deadline = tokio::time::Instant::now() + debounce;
@@ -169,9 +175,11 @@ fn should_ingest(path: &Path, sync_root_path: &Path) -> bool {
 // File transfer
 // ============================================================================
 
-/// Copy a batch of files from the sync root to their storage mounts.
+/// Copy a batch of files from the sync root to their storage via `StorageRouter`.
 async fn transfer_batch(
     volumes: &Volumes,
+    registry: &GardenRegistry,
+    stone_id: &str,
     sync_root_path: &Path,
     paths: &[PathBuf],
 ) {
@@ -184,29 +192,36 @@ async fn transfer_batch(
                 _ => continue,
             };
 
-        let mount_path = match resolve_mount(volumes, &storage_name).await {
-            Some(mp) => mp,
-            None => {
-                debug!(storage = %storage_name, "no local mount for ingest");
+        let router = match StorageRouter::for_write(&storage_name, volumes, registry, stone_id)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                debug!(storage = %storage_name, "no writable route for ingest");
                 continue;
             }
         };
 
-        let target = mount_path.join(&remainder);
+        let rel_path = remainder.to_string_lossy().replace('\\', "/");
 
-        if target.exists() && files_match(path, &target).await {
-            // Content identical — just ensure sync state is correct
-            mark_in_sync(path);
-            continue;
+        // For local storages, check if content is already identical
+        if router.is_local() {
+            if let Some(mp) = router.mount_path() {
+                let target = mp.join(&remainder);
+                if target.exists() && files_match(path, &target).await {
+                    mark_in_sync(path);
+                    continue;
+                }
+            }
         }
-        // Target missing or content differs — transfer
 
+        // Transfer via router (handles both local and remote)
         if path.is_dir() {
-            match tokio::fs::create_dir_all(&target).await {
+            match router.mkdir(&rel_path).await {
                 Ok(()) => {
                     debug!(
                         storage = %storage_name,
-                        path = %remainder.display(),
+                        path = %rel_path,
                         "ingest: directory created"
                     );
                     mark_in_sync(path);
@@ -215,33 +230,40 @@ async fn transfer_batch(
                 Err(e) => {
                     warn!(
                         storage = %storage_name,
-                        path = %remainder.display(),
+                        path = %rel_path,
                         error = %e,
                         "ingest: mkdir failed"
                     );
                 }
             }
         } else if path.is_file() {
-            if let Some(parent) = target.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            match tokio::fs::copy(path, &target).await {
-                Ok(bytes) => {
-                    debug!(
-                        storage = %storage_name,
-                        path = %remainder.display(),
-                        bytes,
-                        "ingest: file copied"
-                    );
-                    mark_in_sync(path);
-                    ingested += 1;
-                }
+            match tokio::fs::read(path).await {
+                Ok(data) => match router.write(&rel_path, &data).await {
+                    Ok(()) => {
+                        debug!(
+                            storage = %storage_name,
+                            path = %rel_path,
+                            bytes = data.len(),
+                            "ingest: file written"
+                        );
+                        mark_in_sync(path);
+                        ingested += 1;
+                    }
+                    Err(e) => {
+                        warn!(
+                            storage = %storage_name,
+                            path = %rel_path,
+                            error = %e,
+                            "ingest: write failed"
+                        );
+                    }
+                },
                 Err(e) => {
                     warn!(
                         storage = %storage_name,
-                        path = %remainder.display(),
+                        path = %rel_path,
                         error = %e,
-                        "ingest: copy failed"
+                        "ingest: read source failed"
                     );
                 }
             }
@@ -254,7 +276,12 @@ async fn transfer_batch(
 }
 
 /// Initial scan: catch files created before the watcher started.
-async fn initial_scan(volumes: &Volumes, sync_root_path: &Path) {
+async fn initial_scan(
+    volumes: &Volumes,
+    registry: &GardenRegistry,
+    stone_id: &str,
+    sync_root_path: &Path,
+) {
     let mut pending = Vec::new();
     let mut stack = vec![sync_root_path.to_path_buf()];
 
@@ -291,7 +318,7 @@ async fn initial_scan(volumes: &Volumes, sync_root_path: &Path) {
 
     if !pending.is_empty() {
         debug!(count = pending.len(), "initial ingest scan found files");
-        transfer_batch(volumes, sync_root_path, &pending).await;
+        transfer_batch(volumes, registry, stone_id, sync_root_path, &pending).await;
     }
 }
 
@@ -342,28 +369,6 @@ async fn files_match(a: &Path, b: &Path) -> bool {
             return true;
         }
     }
-}
-
-// ============================================================================
-// Storage resolution
-// ============================================================================
-
-/// Find the local mount path for a storage by its replica set name.
-async fn resolve_mount(volumes: &Volumes, storage_name: &str) -> Option<PathBuf> {
-    let map = volumes.read().await;
-    map.values().find_map(|v| {
-        let mgmt = v.management.as_ref()?;
-        let rs_name = if mgmt.replica_set_name.is_empty() {
-            DEFAULT_REPLICA_SET_DISPLAY
-        } else {
-            &mgmt.replica_set_name
-        };
-        if rs_name == storage_name {
-            Some(v.mount_path.clone())
-        } else {
-            None
-        }
-    })
 }
 
 // ============================================================================

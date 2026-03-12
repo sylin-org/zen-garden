@@ -175,6 +175,8 @@ pub async fn start(
     let ingest_volumes = volumes.clone();
     let ingest_sync_root = sync_root_path.clone();
     let ingest_storage_rx = storage_changed_rx.resubscribe();
+    let ingest_registry = registry.clone();
+    let ingest_stone_id = stone_id.clone();
     tokio::spawn(async move {
         let _connection = connection; // kept alive until shutdown
 
@@ -193,7 +195,15 @@ pub async fn start(
     // Step 4: Spawn ingest watcher (write-back from Explorer)
     let ingest_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        ingest::run(ingest_volumes, ingest_sync_root, ingest_storage_rx, ingest_token).await;
+        ingest::run(
+            ingest_volumes,
+            ingest_registry,
+            ingest_stone_id,
+            ingest_sync_root,
+            ingest_storage_rx,
+            ingest_token,
+        )
+        .await;
         info!("Cloud Filter ingest watcher stopped");
     });
 
@@ -270,7 +280,15 @@ async fn reconcile_placeholders(
     sync_root_path: &Path,
     known: &mut HashSet<String>,
 ) {
+    // Remove blocked-name placeholders left over from previous runs
+    purge_blocked_placeholders(sync_root_path).await;
+
     let current = enumerate_storage_names(volumes, registry).await;
+
+    // Phase 3: purge stray files/folders at the sync root level that
+    // aren't known storage names (user-pasted items that can't be prevented
+    // via CfApi — there is no CREATE callback).
+    purge_stray_root_items(sync_root_path, &current).await;
 
     if current == *known {
         debug!(total = current.len(), "no storage changes");
@@ -297,6 +315,78 @@ async fn reconcile_placeholders(
     *known = current;
 }
 
+/// Remove blocked-name placeholders from inside each storage subdirectory.
+///
+/// Cleans up placeholders for system folders (`$RECYCLE.BIN`, etc.) that were
+/// created by previous versions before the blocked-name filter existed.
+/// Scans `{sync_root}/{storage}/*` — a no-op once all stale entries are gone.
+async fn purge_blocked_placeholders(sync_root_path: &Path) {
+    let blocked = garden_common::constants::storage::share::blocked_paths();
+
+    let mut rd = match tokio::fs::read_dir(sync_root_path).await {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let Ok(ft) = entry.file_type().await else { continue };
+        if !ft.is_dir() { continue; }
+        let storage_dir = entry.path();
+        for &name in blocked {
+            let target = storage_dir.join(name);
+            if target.exists() {
+                match tokio::fs::remove_dir_all(&target).await {
+                    Ok(()) => info!(
+                        storage = %entry.file_name().to_string_lossy(),
+                        name,
+                        "purged blocked placeholder from storage"
+                    ),
+                    Err(e) => debug!(name, error = %e, "could not purge blocked placeholder"),
+                }
+            }
+        }
+    }
+}
+
+/// Remove stray files and directories at the sync root level.
+///
+/// CfApi has no CREATE callback, so we cannot prevent users from pasting
+/// items directly under the sync root.  This function cleans them up.
+/// Only items that are NOT in `known_storages` and NOT a blocked name
+/// (already handled by `purge_blocked_placeholders`) are removed.
+async fn purge_stray_root_items(sync_root_path: &Path, known_storages: &HashSet<String>) {
+    let mut rd = match tokio::fs::read_dir(sync_root_path).await {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip known storages — those are legitimate placeholders
+        if known_storages.contains(&name) {
+            continue;
+        }
+
+        // Skip blocked names — handled by purge_blocked_placeholders
+        if garden_common::constants::storage::share::is_blocked_name(&name) {
+            continue;
+        }
+
+        let Ok(ft) = entry.file_type().await else { continue };
+        let path = entry.path();
+
+        let result = if ft.is_dir() {
+            tokio::fs::remove_dir_all(&path).await
+        } else {
+            tokio::fs::remove_file(&path).await
+        };
+
+        match result {
+            Ok(()) => info!(name = %name, "purged stray item from sync root"),
+            Err(e) => debug!(name = %name, error = %e, "could not purge stray root item"),
+        }
+    }
+}
+
 /// Scan existing subdirectories under the sync root to seed `known`.
 ///
 /// Without this, a restart would leave stale placeholder directories from
@@ -316,7 +406,9 @@ async fn scan_existing_placeholders(sync_root_path: &Path) -> HashSet<String> {
         if let Ok(ft) = entry.file_type().await {
             if ft.is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                names.insert(name);
+                if !garden_common::constants::storage::share::is_blocked_name(&name) {
+                    names.insert(name);
+                }
             }
         }
     }

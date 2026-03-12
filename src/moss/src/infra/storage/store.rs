@@ -242,6 +242,131 @@ impl ContentStore {
         self.mount_root.join(rel)
     }
 
+    // ========================================================================
+    // File operations (STORAGE-0015 — used by StorageRouter)
+    // ========================================================================
+
+    /// List entries in a directory under the mount root.
+    ///
+    /// Returns `(name, is_dir, size, modified)` tuples. Filters out `.zen-garden` internals.
+    pub async fn list_dir(
+        &self,
+        rel: &str,
+    ) -> Result<Vec<(String, bool, u64, Option<chrono::DateTime<chrono::Utc>>)>> {
+        let full = if rel.is_empty() {
+            self.mount_root.clone()
+        } else {
+            self.mount_root.join(rel)
+        };
+
+        let mut entries = Vec::new();
+        let mut rd = tokio::fs::read_dir(&full)
+            .await
+            .with_context(|| format!("Failed to read_dir {}", full.display()))?;
+
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if garden_common::constants::storage::share::is_blocked_name(&name) {
+                continue;
+            }
+            let meta = entry.metadata().await.ok();
+            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .map(chrono::DateTime::<chrono::Utc>::from);
+            entries.push((name, is_dir, size, modified));
+        }
+
+        Ok(entries)
+    }
+
+    /// Rename or move a file/directory within the storage.
+    ///
+    /// Appends changelog entries for the delete (old) and create (new).
+    pub async fn rename_path(&self, old_rel: &str, new_rel: &str) -> Result<()> {
+        let src = self.mount_root.join(old_rel);
+        let dst = self.mount_root.join(new_rel);
+
+        if !src.exists() {
+            return Ok(()); // source doesn't exist on mount (placeholder-only)
+        }
+
+        if let Some(parent) = dst.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+
+        tokio::fs::rename(&src, &dst)
+            .await
+            .with_context(|| format!("Failed to rename {} → {}", src.display(), dst.display()))?;
+
+        // Changelog: old path deleted, new path created
+        if !old_rel.starts_with(".zen-garden/") {
+            self.append_changelog(&ChangelogEntry::deleted(old_rel)).await;
+        }
+        if !new_rel.starts_with(".zen-garden/") {
+            let size = tokio::fs::metadata(&dst).await.map(|m| m.len()).unwrap_or(0);
+            self.append_changelog(&ChangelogEntry::created(new_rel, size)).await;
+        }
+
+        debug!(old = %old_rel, new = %new_rel, "renamed on mount");
+        Ok(())
+    }
+
+    /// Create a directory under the mount root.
+    pub async fn mkdir(&self, rel: &str) -> Result<()> {
+        let full = self.mount_root.join(rel);
+        tokio::fs::create_dir_all(&full)
+            .await
+            .with_context(|| format!("Failed to mkdir {}", full.display()))?;
+        Ok(())
+    }
+
+    /// Delete a directory tree from the storage. Appends a changelog entry.
+    pub async fn delete_dir(&self, rel: &str) -> Result<()> {
+        let full = self.mount_root.join(rel);
+        if !full.exists() {
+            return Ok(());
+        }
+        tokio::fs::remove_dir_all(&full)
+            .await
+            .with_context(|| format!("Failed to delete_dir {}", full.display()))?;
+
+        if !rel.starts_with(".zen-garden/") {
+            self.append_changelog(&ChangelogEntry::deleted(rel)).await;
+        }
+
+        debug!(path = %rel, "deleted directory from mount");
+        Ok(())
+    }
+
+    /// Delete a single file from the storage (user content path).
+    ///
+    /// Like `delete` but takes a `&str` instead of `&Path` for consistency
+    /// with the other STORAGE-0015 methods.
+    pub async fn delete_file(&self, rel: &str) -> Result<()> {
+        self.delete(Path::new(rel)).await?;
+        Ok(())
+    }
+
+    /// Read a file from the storage (user content path, &str).
+    pub async fn read_file(&self, rel: &str) -> Result<Vec<u8>> {
+        self.read(Path::new(rel)).await
+    }
+
+    /// Write a file to the storage (user content path, &str).
+    pub async fn write_file(&self, rel: &str, data: &[u8]) -> Result<()> {
+        self.write(Path::new(rel), data).await
+    }
+
+    /// Get metadata for a file under the mount root.
+    pub async fn file_metadata(&self, rel: &str) -> Result<std::fs::Metadata> {
+        let full = self.mount_root.join(rel);
+        tokio::fs::metadata(&full)
+            .await
+            .with_context(|| format!("Failed to stat {}", full.display()))
+    }
+
     /// Derive the DEK for a seed bank from the pond data key and the seed bank name.
     ///
     /// All replicas of the same logical seed bank share this key.

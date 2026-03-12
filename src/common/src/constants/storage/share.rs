@@ -16,7 +16,7 @@ pub const BLOCKED: &[&str] = &[
 
 /// Returns `true` if `name` (a single path component) is blocked.
 pub fn is_blocked_name(name: &str) -> bool {
-    BLOCKED.iter().any(|&b| b == name)
+    BLOCKED.contains(&name)
 }
 
 /// Returns `true` if any component of `rel_path` matches a blocked name.

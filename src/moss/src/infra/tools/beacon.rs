@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use garden_common::infra::communications::{announcement_types, p2p};
 use garden_common::tools::{ToolDelta, ToolsBeacon};
-use tracing::{debug, info};
+use tracing::info;
 
 pub async fn broadcast_tools_beacon(
     stone_id: &str,

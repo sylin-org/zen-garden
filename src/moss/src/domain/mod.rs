@@ -16,6 +16,7 @@
 pub mod adoption;
 pub mod capabilities;
 pub mod ceremony;
+pub mod cloud_drive;
 pub mod companion;
 pub mod current;
 pub mod discovery;
@@ -92,6 +93,7 @@ pub use service_discovery::{
     ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,
 };
 pub use service_manager::ServiceLifecycle;
+pub use cloud_drive::{classify_rename, DriveAction};
 // Re-export TopologyEntry from common (now shared type)
 pub use capabilities::{CapabilityExecutor, CapabilityMutationResult, Executor};
 pub use ceremony::{

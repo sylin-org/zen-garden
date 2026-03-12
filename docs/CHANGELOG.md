@@ -2,6 +2,10 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-09
+
+- **STORAGE-0015**: Cloud Drive DDD/SoC refactor. StorageRouter unifies local/remote I/O dispatch. CloudDrive policy module extracts rename decision tree. Rebuilt provider.rs, ingest.rs, files.rs to use StorageRouter. See [STORAGE-0015](decisions/STORAGE-0015-cloud-drive-storage-router.md).
+
 ## 2026-03-08
 
 - **STORAGE-0010**: Unified `storage add` command replaces `prepare` and `adopt`. Single CLI entry point (`garden-rake storage add <device-or-path>`) with zen keywords (`as <name>`, `role <role>`, `with` noise word). Single API endpoint `POST /api/v1/stone/storage/add` replaces `/prepare` and `/adopt`. Three-way hotplug banners (connected, has_data, empty) with distinct domain events (`StorageConnected` vs `StorageDetected`). See [STORAGE-0010](decisions/STORAGE-0010-unified-storage-add-command.md).

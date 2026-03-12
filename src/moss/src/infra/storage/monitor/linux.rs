@@ -51,7 +51,7 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                 for v in &current {
                     if !known.contains(&v.path) {
                         debug!(path = %v.path, "Volume appeared (polling)");
-                        let (used_bytes, available_bytes) =
+                        let (used_bytes, _) =
                             measure_usage(&v.mount_path, v.capacity_bytes);
 
                         let event = PhysicalStorageEvent::Connected {

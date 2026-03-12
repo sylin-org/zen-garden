@@ -723,135 +723,21 @@ pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
     }
 }
 
-/// Ingest a single volume event (from the watcher).
-///
-/// Uses manifest-based identity dedup: if a managed volume appears at a new
-/// device path, the old (offline) entry is removed and replaced.
-///
-/// Returns domain events to broadcast immediately:
-/// - `Appeared` on a new managed volume → `[Connected { name, roles, used_bytes }]`
-/// - `Appeared` on a re-appeared managed volume → `[Connected { … }]`
-/// - `Disappeared` on a managed volume → `[Released { name }, Reclassified]`
-///
-/// The caller broadcasts all returned events so the cloud filter, WebDAV
-/// router, and TTY ribbon display all react without waiting for the heartbeat.
-pub async fn ingest_event(
-    volumes: &Volumes,
-    event: platform::VolumeEvent,
-) -> Vec<garden_common::storage::StorageChanged> {
-    match event {
-        platform::VolumeEvent::Appeared(snap) => {
-            let mut map = volumes.write().await;
-            if !map.contains_key(&snap.path) {
-                let mut vol = Volume::from_snapshot(&snap);
-                // Drop the lock before async classify
-                drop(map);
-
-                vol.classify().await;
-
-                let mut map = volumes.write().await;
-                let connected_event = if vol.is_managed() {
-                    let name = vol.display_name().to_string();
-                    let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
-                    let used_bytes = vol.used_bytes;
-                    let capacity_bytes = vol.capacity_bytes;
-                    let manifest_id =
-                        vol.management.as_ref().map(|m| m.id.clone()).unwrap_or_default();
-
-                    // Manifest-based dedup
-                    let stale_key = map
-                        .iter()
-                        .find(|(k, v)| {
-                            *k != &snap.path
-                                && v.management
-                                    .as_ref()
-                                    .map(|m| m.id == manifest_id)
-                                    .unwrap_or(false)
-                        })
-                        .map(|(k, _)| k.clone());
-
-                    if let Some(old_key) = stale_key {
-                        info!(
-                            old_path = %old_key,
-                            new_path = %snap.path,
-                            name = %name,
-                            "Volume re-keyed on appear (device path changed)"
-                        );
-                        map.remove(&old_key);
-                    } else {
-                        info!(path = %snap.path, name = %name, "Managed volume appeared");
-                    }
-                    Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes, capacity_bytes })
-                } else {
-                    debug!(path = %snap.path, "Unmanaged volume appeared");
-                    None
-                };
-                map.insert(snap.path, vol);
-                connected_event.into_iter().collect()
-            } else {
-                // Re-appeared — mark online
-                let connected_event = if let Some(vol) = map.get_mut(&snap.path) {
-                    vol.online = true;
-                    vol.health = VolumeHealth::Healthy;
-                    vol.capacity_bytes = snap.capacity_bytes;
-                    vol.mount_path = PathBuf::from(&snap.mount_path);
-                    info!(path = %snap.path, name = %vol.display_name(), "Volume came back online");
-                    if vol.is_managed() {
-                        let name = vol.display_name().to_string();
-                        let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
-                        let used_bytes = vol.used_bytes;
-                        let capacity_bytes = vol.capacity_bytes;
-                        Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes, capacity_bytes })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                connected_event.into_iter().collect()
-            }
-        }
-        platform::VolumeEvent::Disappeared { path } => {
-            let mut map = volumes.write().await;
-            if let Some(vol) = map.get_mut(&path) {
-                info!(path = %path, name = %vol.display_name(), "Volume disappeared");
-                let name = vol.display_name().to_string();
-                let was_managed = vol.is_managed();
-                vol.online = false;
-                vol.health = VolumeHealth::Lost;
-                if was_managed {
-                    return vec![
-                        garden_common::storage::StorageChanged::Released { name },
-                        garden_common::storage::StorageChanged::Reclassified,
-                    ];
-                }
-            }
-            vec![]
-        }
-    }
-}
-
 /// Auto-mount unmounted removable devices that have a Zen Garden manifest.
 ///
-/// This replaces the legacy `auto_mount_seed_banks_with_tracker()`. The flow:
-/// 1. List unmounted removable devices (from platform adapter)
-/// 2. Probe each for `.zen-garden/manifest.json`
-/// 3. Mount to the canonical path derived from the manifest
-/// 4. Reconcile into the Volumes map
-///
-/// Returns the number of devices successfully auto-mounted.
-pub async fn auto_mount_unmounted(
-    volumes: &Volumes,
-) -> Vec<garden_common::storage::StorageChanged> {
+/// Scans for unmounted removable devices, probes each for a manifest, and mounts
+/// to the canonical path. Returns the count mounted.
+/// Emits no StorageChanged events — VolumeMonitor detects the mount and calls StorageBank.
+pub async fn auto_mount_unmounted() -> usize {
     let unmounted = platform::list_unmounted_removable();
     if unmounted.is_empty() {
-        return vec![];
+        return 0;
     }
 
     debug!(count = unmounted.len(), "Checking unmounted removable devices for manifests");
 
     let data_dir = garden_common::constants::paths::data_dir();
-    let mut events = Vec::new();
+    let mut mounted = 0usize;
 
     for device in &unmounted {
         // Probe for manifest
@@ -910,29 +796,14 @@ pub async fn auto_mount_unmounted(
             continue;
         }
 
-        // Build snapshot and reconcile into Volumes
-        let snap = VolumeSnapshot {
-            path: device.device.clone(),
-            mount_path: mount_path.clone(),
-            label: device.label.clone(),
-            capacity_bytes: device.capacity_bytes,
-            removable: true,
-        };
-        // Use ingest_event which handles manifest-based dedup
-        ingest_event(volumes, platform::VolumeEvent::Appeared(snap)).await;
-
-        events.push(garden_common::storage::StorageChanged::Connected {
-            name: manifest.name.clone(),
-            roles: manifest.roles.clone(),
-            used_bytes: 0,
-            capacity_bytes: device.capacity_bytes,
-        });
+        // StorageBank will detect the new mount via VolumeMonitor and emit Connected.
+        mounted += 1;
     }
 
-    if !events.is_empty() {
-        info!(count = events.len(), "Auto-mounted managed storage devices");
+    if mounted > 0 {
+        info!(count = mounted, "Auto-mounted managed storage devices");
     }
-    events
+    mounted
 }
 
 /// Run health ticks on all volumes.

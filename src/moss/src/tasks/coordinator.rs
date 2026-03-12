@@ -792,12 +792,10 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
                 }
             }
 
-            // Auto-mount any unmounted managed devices (replaces legacy auto_mount_seed_banks)
-            let connected = crate::domain::storage::auto_mount_unmounted(&state.current.storage.volumes).await;
-            if !connected.is_empty() {
-                for event in connected {
-                    state.emit_storage_changed(event).await;
-                }
+            // Auto-mount any unmounted managed devices.
+            // Connected ribbons come from the VolumeMonitor — no events emitted here.
+            let mounted = crate::domain::storage::auto_mount_unmounted().await;
+            if mounted > 0 {
                 state.emit_storage_changed(
                     garden_common::storage::StorageChanged::Reclassified,
                 ).await;

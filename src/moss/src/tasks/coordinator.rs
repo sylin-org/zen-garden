@@ -1444,7 +1444,7 @@ pub(crate) async fn start_background_tasks(
                         let candidate_count = {
                             let map = volumes.read().await;
                             map.values()
-                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
                                 .count()
                         };
                         notifications.set_if(
@@ -1466,7 +1466,7 @@ pub(crate) async fn start_background_tasks(
                         let candidate_count = {
                             let map = volumes.read().await;
                             map.values()
-                                .filter(|v| !v.is_managed() && v.removable && v.online)
+                                .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
                                 .count()
                         };
                         notifications.set_if(

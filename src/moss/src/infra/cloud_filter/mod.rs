@@ -143,7 +143,7 @@ async fn snapshot_storage(
             if let Some(ref mgmt) = vol.management {
                 let fqid = mgmt.display_name().to_string();
                 all_set_names.insert(fqid.clone());
-                if vol.online {
+                if vol.state.is_online() {
                     available_sets
                         .entry(fqid.clone())
                         .or_insert_with(|| StorageAvailability::online("this device", true));

@@ -5,7 +5,7 @@
 //! Seed-banks are projected directly from the seed bank lifecycle objects.
 
 use crate::domain::service_discovery::{self, FoundService};
-use crate::domain::storage::VolumeHealth;
+use crate::domain::storage::VolumeState;
 use crate::AppState;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
@@ -41,7 +41,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
 
     for vol in &managed_vols {
         let mgmt = vol.management.as_ref().unwrap(); // safe: filtered above
-        let (status, ready) = volume_health_to_readiness(&vol.health);
+        let (status, ready) = volume_state_to_readiness(&vol.state);
         let visibility_str = mgmt.visibility.to_string();
 
         // fqid = replica set display name (used for grouping replicas and Explorer folders).
@@ -197,12 +197,12 @@ fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     })
 }
 
-/// Map `VolumeHealth` to `(status, ready)` for tool projection.
-fn volume_health_to_readiness(health: &VolumeHealth) -> (&'static str, bool) {
-    match health {
-        VolumeHealth::Healthy => ("running", true),
-        VolumeHealth::Degraded(_) => ("degraded", false),
-        VolumeHealth::Unmounted | VolumeHealth::Lost => ("stopped", false),
+/// Map `VolumeState` to `(status, ready)` for tool projection.
+fn volume_state_to_readiness(state: &VolumeState) -> (&'static str, bool) {
+    match state {
+        VolumeState::Online => ("running", true),
+        VolumeState::Degraded(_) => ("degraded", false),
+        VolumeState::Offline => ("stopped", false),
     }
 }
 

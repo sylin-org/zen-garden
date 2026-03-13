@@ -9,7 +9,7 @@ use std::sync::Arc;
 use garden_common::storage::StorageChanged;
 use tracing::{debug, info};
 
-use super::{Volume, VolumeHealth, Volumes};
+use super::{Volume, VolumeState, Volumes};
 use crate::infra::storage::platform::VolumeSnapshot;
 
 /// Domain bridge for physical storage events.
@@ -110,8 +110,7 @@ impl StorageBank {
         } else {
             // Re-appeared — mark online, update metrics
             if let Some(vol) = map.get_mut(&snap.path) {
-                vol.online = true;
-                vol.health = VolumeHealth::Healthy;
+                vol.state = VolumeState::Online;
                 vol.capacity_bytes = capacity_bytes;
                 vol.used_bytes = used_bytes;
                 vol.mount_path = mount_path;
@@ -141,8 +140,7 @@ impl StorageBank {
             info!(path = %path, name = %vol.display_name(), "Volume disappeared");
             let was_managed = vol.is_managed();
             let name = vol.display_name().to_string();
-            vol.online = false;
-            vol.health = VolumeHealth::Lost;
+            vol.state = VolumeState::Offline;
             if was_managed {
                 let _ = self.changed.send(StorageChanged::Released {
                     name,

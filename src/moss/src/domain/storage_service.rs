@@ -216,7 +216,7 @@ impl LocalStorage {
 async fn find_local(name: &str, volumes: &Volumes) -> Option<LocalStorage> {
     let map = volumes.read().await;
     map.values().find_map(|vol| {
-        if !vol.online {
+        if !vol.state.is_online() {
             return None;
         }
         let mgmt = vol.management.as_ref()?;
@@ -326,7 +326,7 @@ pub async fn rename_replica_set(
 mod tests {
     use super::*;
     use crate::domain::garden_registry::new_registry;
-    use crate::domain::storage::{new_volumes, Management, Volume, VolumeHealth};
+    use crate::domain::storage::{new_volumes, Management, Volume, VolumeState};
     use crate::infra::storage::ContentStore;
     use garden_common::storage::{StorageRole, StorageVisibility};
     use std::path::PathBuf;
@@ -340,8 +340,7 @@ mod tests {
             capacity_bytes: 100_000_000_000,
             used_bytes: 10_000_000_000,
             removable: true,
-            online: true,
-            health: VolumeHealth::Healthy,
+            state: VolumeState::Online,
             management: Some(Management {
                 id: id.to_string(),
                 short_id: id[..8.min(id.len())].to_string(),

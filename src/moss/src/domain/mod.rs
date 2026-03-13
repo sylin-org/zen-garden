@@ -85,7 +85,7 @@ pub use orchestration::{
 };
 pub use storage::{
     new_media, new_volumes, Management, Media, Medium, Storage, StorageBank, Volume,
-    VolumeHealth, Volumes,
+    VolumeState, Volumes,
 };
 pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 pub use service_discovery::{

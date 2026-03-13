@@ -446,7 +446,7 @@ pub async fn delete_bank_v1(
     // Check if still mounted (managed volume present = still mounted)
     {
         let map = state.current.storage.volumes.read().await;
-        if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.online) {
+        if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.state.is_online()) {
             return Err(err(
                 StatusCode::CONFLICT,
                 "BANK_MOUNTED",
@@ -680,7 +680,7 @@ pub async fn list_candidates_v1(
     let volumes_map = state.current.storage.volumes.read().await;
     let spaces: Vec<StorageDetectedInfo> = volumes_map
         .values()
-        .filter(|v| !v.is_managed() && v.removable && v.online)
+        .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
         .map(|v| StorageDetectedInfo {
             device: v.path.clone(),
             mount_path: Some(v.mount_path.to_string_lossy().to_string()),

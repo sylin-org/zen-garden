@@ -560,7 +560,7 @@ pub async fn get_portrait_data(
                     pinned: vol.is_pinned(),
                     encrypted: mgmt.encrypted,
                     roaming: mgmt.roaming,
-                    online: vol.health.is_usable(),
+                    online: vol.state.is_online(),
                 })
             })
             .collect();

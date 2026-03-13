@@ -60,6 +60,7 @@ impl VolumeMonitor for WindowsVolumeMonitor {
                         );
 
                         let event = PhysicalStorageEvent::Connected {
+                            device_path: v.path.clone(),
                             mount_path: PathBuf::from(&v.mount_path),
                             label: v.label.clone(),
                             capacity_bytes: v.capacity_bytes,

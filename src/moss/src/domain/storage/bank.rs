@@ -34,22 +34,16 @@ impl StorageBank {
     /// Classifies via manifest, upserts into volumes map, emits BankConnected.
     pub async fn on_appeared(
         &self,
+        device_path: String,
         mount_path: PathBuf,
         label: Option<String>,
         capacity_bytes: u64,
         used_bytes: u64,
         removable: bool,
     ) {
-        // The mount_path is the key for the volume on the domain side.
-        // On Linux, the device path (/dev/sdb1) is the key. On Windows,
-        // the drive letter (E:\) doubles as both path and mount_path.
-        // For the snapshot, we use mount_path as the path key since that's
-        // what the monitor provides.
-        let path_str = mount_path.to_string_lossy().to_string();
-
         let snap = VolumeSnapshot {
-            path: path_str.clone(),
-            mount_path: path_str.clone(),
+            path: device_path,
+            mount_path: mount_path.to_string_lossy().to_string(),
             label,
             capacity_bytes,
             removable,

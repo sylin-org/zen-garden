@@ -19,6 +19,9 @@ pub struct StorageMetrics {
 pub enum PhysicalStorageEvent {
     /// A volume became accessible. Metrics are measured before emission.
     Connected {
+        /// Device identifier: `/dev/sdb1` on Linux, `E:\` on Windows.
+        device_path: String,
+        /// Where the volume's content is accessible.
         mount_path: PathBuf,
         label: Option<String>,
         capacity_bytes: u64,
@@ -26,6 +29,8 @@ pub enum PhysicalStorageEvent {
         removable: bool,
     },
     /// A volume is no longer accessible.
+    ///
+    /// `path` is the device identifier: `/dev/sdb1` on Linux, `E:\` on Windows.
     Disconnected {
         path: String,
     },

@@ -7,7 +7,7 @@
 use super::{PhysicalStorageEvent, StorageMetrics, VolumeMonitor};
 use crate::infra::storage::platform;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 /// Linux volume monitor using udev + polling fallback.
@@ -55,6 +55,7 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                             measure_usage(&v.mount_path, v.capacity_bytes);
 
                         let event = PhysicalStorageEvent::Connected {
+                            device_path: v.path.clone(),
                             mount_path: PathBuf::from(&v.mount_path),
                             label: v.label.clone(),
                             capacity_bytes: v.capacity_bytes,
@@ -67,9 +68,13 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                     }
                 }
 
-                // Departed volumes
+                // Departed volumes.  Also catches NTFS-3G stale FUSE mounts:
+                // after USB removal the mount may linger in /proc/mounts, but
+                // the block device node (/dev/sdbN) disappears immediately.
                 for path in &known {
-                    if !current_paths.contains(path) {
+                    let in_proc = current_paths.contains(path);
+                    let dev_present = !path.starts_with("/dev/") || Path::new(path).exists();
+                    if !in_proc || !dev_present {
                         debug!(path = %path, "Volume disappeared (polling)");
                         if tx
                             .send(PhysicalStorageEvent::Disconnected {
@@ -165,6 +170,7 @@ fn run_udev_watcher(
                     if let Some(snap) = build_snapshot_for_device(&devnode) {
                         let metrics = metrics_for_device(&snap.mount_path, snap.capacity_bytes);
                         let event = PhysicalStorageEvent::Connected {
+                            device_path: snap.path.clone(),
                             mount_path: PathBuf::from(&snap.mount_path),
                             label: snap.label,
                             capacity_bytes: metrics.capacity_bytes,

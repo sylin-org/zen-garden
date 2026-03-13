@@ -1,4 +1,5 @@
-//! Cloud Filter integration (STORAGE-0009 Phase 4, rebuilt per STORAGE-0012)
+//! Cloud Filter integration (STORAGE-0009 Phase 4, rebuilt per STORAGE-0012,
+//! availability signalling per STORAGE-0016)
 //!
 //! Registers a Windows Cloud Sync Provider so managed storages appear
 //! natively in Explorer under "Zen Garden".  Files are fetched on demand
@@ -9,7 +10,8 @@
 //! - `registration.rs` — sync root registration lifecycle
 //! - `provider.rs`     — CfApi `Filter` trait callbacks (download path)
 //! - `ingest.rs`       — write-back from Explorer (upload path)
-//! - `placeholders.rs` — shared placeholder helpers (valid timestamps)
+//! - `placeholders.rs` — placeholder helpers + `StorageAvailability`
+//! - `signaling.rs`    — Explorer info bar + toast notifications (STORAGE-0016)
 //!
 //! ## Lifecycle
 //!
@@ -18,14 +20,26 @@
 //! 3. Spawns a storage watcher that creates/removes placeholder dirs
 //! 4. Spawns an ingest watcher that copies user-pasted files to storage
 //! 5. On shutdown, the connection drops (disconnects the provider)
+//!
+//! ## Availability signalling (STORAGE-0016)
+//!
+//! The storage watcher tracks per-replica-set availability (online/offline)
+//! and updates the IN_SYNC flag on each placeholder directory.  On each
+//! state transition it fires:
+//!
+//! - `CfReportSyncStatus` — Explorer info bar listing offline storages
+//! - WinRT `ToastNotification` — one-shot desktop alert (suppressed during
+//!   the 120 s startup window to avoid cold-boot noise)
 
 mod ingest;
-mod placeholders;
+pub(crate) mod placeholders;
 mod provider;
 mod registration;
+mod signaling;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use cloud_filter::root::Session;
@@ -36,6 +50,7 @@ use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
 use garden_common::storage::{StorageChanged, StorageTick};
 
+use self::placeholders::StorageAvailability;
 use self::provider::ZenGardenProvider;
 
 // ============================================================================
@@ -60,15 +75,19 @@ pub(crate) fn decompose_sync_root_path(
     Some((storage_name, remainder))
 }
 
-/// Enumerate all known storage replica set names (local + remote).
+/// Enumerate online storages with availability metadata.
 ///
-/// Used by both the placeholder reconciler and the provider's
-/// `fetch_placeholders` callback.
-pub(crate) async fn enumerate_storage_names(
+/// - Local volumes (`online = true`) → `local = true`, `stone_name = "this device"`
+/// - Registry entries (remote stones) → `local = false`, stone name from beacon
+///
+/// Local entries take precedence when both sources report the same name
+/// (this stone broadcasts its own storages).
+pub(crate) async fn enumerate_storage_availability(
     volumes: &Volumes,
     registry: &GardenRegistry,
-) -> HashSet<String> {
-    let mut names = HashSet::new();
+    local_stone_id: &str,
+) -> HashMap<String, StorageAvailability> {
+    let mut avail: HashMap<String, StorageAvailability> = HashMap::new();
 
     {
         let map = volumes.read().await;
@@ -77,7 +96,8 @@ pub(crate) async fn enumerate_storage_names(
                 continue;
             }
             if let Some(ref mgmt) = vol.management {
-                names.insert(mgmt.display_name().to_string());
+                let name = mgmt.display_name().to_string();
+                avail.insert(name, StorageAvailability::online("this device", true));
             }
         }
     }
@@ -86,8 +106,54 @@ pub(crate) async fn enumerate_storage_names(
         let reg = registry.read().await;
         for entry in reg.storage_entries() {
             let name = &entry.tool.fqid;
-            if !name.is_empty() {
-                names.insert(name.clone());
+            if name.is_empty() {
+                continue;
+            }
+            // Don't override a local entry with a remote one
+            if !avail.contains_key(name.as_str()) {
+                let local = entry.tool.stone.id == local_stone_id;
+                avail.insert(
+                    name.clone(),
+                    StorageAvailability::online(entry.tool.stone.name.clone(), local),
+                );
+            }
+        }
+    }
+
+    avail
+}
+
+/// Enumerate ALL storage names — online AND offline local volumes.
+///
+/// Used by the reconciler to distinguish "storage went offline" (local volume
+/// ejected — keep placeholder, mark not-in-sync) from "storage deprovisioned"
+/// (volume released and gone from the map — remove placeholder).
+///
+/// Remote storages that are offline (stone unreachable) are NOT included here
+/// because they have no registry entry.  Their placeholders are removed on
+/// the next reconcile and recreated when the stone returns.
+async fn enumerate_all_storage_names(
+    volumes: &Volumes,
+    registry: &GardenRegistry,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+
+    // All local volumes regardless of online state
+    {
+        let map = volumes.read().await;
+        for vol in map.values() {
+            if let Some(ref mgmt) = vol.management {
+                names.insert(mgmt.display_name().to_string());
+            }
+        }
+    }
+
+    // Online registry entries (remote stones)
+    {
+        let reg = registry.read().await;
+        for entry in reg.storage_entries() {
+            if !entry.tool.fqid.is_empty() {
+                names.insert(entry.tool.fqid.clone());
             }
         }
     }
@@ -164,6 +230,7 @@ pub async fn start(
 
     // Step 3: Spawn storage watcher (keeps connection alive)
     let watcher_token = shutdown_token.child_token();
+    let watcher_stone_id = stone_id.clone();
     let ingest_volumes = volumes.clone();
     let ingest_sync_root = sync_root_path.clone();
     let ingest_storage_rx = storage_changed_rx.resubscribe();
@@ -176,6 +243,7 @@ pub async fn start(
             volumes,
             registry,
             &sync_root_path,
+            watcher_stone_id,
             storage_changed_rx,
             watcher_token,
         )
@@ -222,13 +290,21 @@ async fn storage_watcher(
     volumes: Volumes,
     registry: GardenRegistry,
     sync_root_path: &Path,
+    stone_id: String,
     mut storage_changed_rx: tokio::sync::broadcast::Receiver<StorageChanged>,
     shutdown_token: CancellationToken,
 ) {
     // Seed `known` from existing placeholder directories so we detect and
     // remove stale entries from previous sessions on the first reconcile pass.
     let mut known = scan_existing_placeholders(sync_root_path).await;
+
+    // Track per-storage availability state to detect transitions.
+    // Seeded as "unknown" (treated as online) so the first reconcile applies
+    // the correct state without firing transition notifications.
+    let mut prev_avail: HashMap<String, bool> = HashMap::new();
+
     let heartbeat = tokio::time::Duration::from_secs(60);
+    let startup_at = Instant::now();
 
     debug!(
         existing = known.len(),
@@ -240,7 +316,17 @@ async fn storage_watcher(
     // delete legitimate remote-storage placeholders that the heartbeat will
     // rediscover ~60 s later.  The first heartbeat handles stray cleanup once
     // the registry is populated.
-    reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, false).await;
+    reconcile_placeholders(
+        &volumes,
+        &registry,
+        sync_root_path,
+        &stone_id,
+        &mut known,
+        &mut prev_avail,
+        startup_at,
+        false,
+    )
+    .await;
 
     loop {
         tokio::select! {
@@ -263,26 +349,63 @@ async fn storage_watcher(
                 }
                 // Event-driven: fast path — skip stray purge to avoid racing
                 // with ingest (files pasted by the user are still being processed).
-                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, false).await;
+                reconcile_placeholders(
+                    &volumes,
+                    &registry,
+                    sync_root_path,
+                    &stone_id,
+                    &mut known,
+                    &mut prev_avail,
+                    startup_at,
+                    false,
+                )
+                .await;
             }
             _ = tokio::time::sleep(heartbeat) => {
                 // Heartbeat: full reconciliation including stray purge
-                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, true).await;
+                reconcile_placeholders(
+                    &volumes,
+                    &registry,
+                    sync_root_path,
+                    &stone_id,
+                    &mut known,
+                    &mut prev_avail,
+                    startup_at,
+                    true,
+                )
+                .await;
             }
         }
     }
 }
 
-/// Reconcile placeholder directories with current storage names.
+// ============================================================================
+// Reconciliation
+// ============================================================================
+
+/// Reconcile placeholder directories with current storage availability.
+///
+/// - **New** storages (not yet in `known`): create placeholder with correct
+///   IN_SYNC state.
+/// - **Deprovisioned** storages (gone from both local volumes and registry):
+///   remove placeholder.
+/// - **Offline local volumes** (ejected USB — still in volumes map but
+///   `online = false`): placeholder kept, IN_SYNC cleared.
+/// - **State transitions** (online ↔ offline): update IN_SYNC flag, update
+///   Explorer info bar via `CfReportSyncStatus`, fire toast notification.
 ///
 /// `purge_strays` controls whether stray root items and blocked placeholders
 /// are cleaned up. Set to `true` on heartbeat, `false` on event-driven passes
 /// to avoid racing with the ingest watcher (A11c).
+#[allow(clippy::too_many_arguments)]
 async fn reconcile_placeholders(
     volumes: &Volumes,
     registry: &GardenRegistry,
     sync_root_path: &Path,
+    stone_id: &str,
     known: &mut HashSet<String>,
+    prev_avail: &mut HashMap<String, bool>,
+    startup_at: Instant,
     purge_strays: bool,
 ) {
     if purge_strays {
@@ -290,39 +413,115 @@ async fn reconcile_placeholders(
         purge_blocked_placeholders(sync_root_path).await;
     }
 
-    let current = enumerate_storage_names(volumes, registry).await;
+    // Current online storages (with stone metadata for blob / notifications)
+    let current_avail = enumerate_storage_availability(volumes, registry, stone_id).await;
+    let current_online: HashSet<String> = current_avail.keys().cloned().collect();
+
+    // All storage names regardless of online state (local volumes online + offline)
+    let all_names = enumerate_all_storage_names(volumes, registry).await;
 
     if purge_strays {
-        // Phase 3: purge stray files/folders at the sync root level that
-        // aren't known storage names (user-pasted items that can't be prevented
-        // via CfApi — there is no CREATE callback).
-        purge_stray_root_items(sync_root_path, &current).await;
+        // Stray purge uses `known` (includes offline local volumes) rather
+        // than `current_online` so we don't accidentally purge a legitimate
+        // placeholder for an ejected USB drive.
+        purge_stray_root_items(sync_root_path, known).await;
     }
 
-    if current == *known {
-        debug!(total = current.len(), "no storage changes");
-        return;
-    }
+    // ── Add new storages ────────────────────────────────────────────────────
 
-    let added: Vec<_> = current.difference(known).cloned().collect();
-    let removed: Vec<_> = known.difference(&current).cloned().collect();
-
+    let added: Vec<String> = current_online.difference(known).cloned().collect();
     for name in &added {
-        placeholders::create_storage_placeholder(sync_root_path, name);
+        let avail = &current_avail[name];
+        placeholders::create_storage_placeholder(sync_root_path, name, avail);
+        known.insert(name.clone());
+        prev_avail.insert(name.clone(), true);
     }
     if !added.is_empty() {
         info!(storages = ?added, "new storages visible in Explorer");
     }
 
+    // ── Remove deprovisioned storages ───────────────────────────────────────
+    //
+    // A storage is deprovisioned when it disappears from ALL sources: not in
+    // local volumes (even offline ones) and not in the registry.  Remote
+    // storages that are merely offline are transiently absent from the
+    // registry; their placeholders are removed and recreated on reconnect.
+
+    let removed: Vec<String> = known
+        .iter()
+        .filter(|n| !all_names.contains(*n))
+        .cloned()
+        .collect();
     for name in &removed {
         placeholders::remove_storage_placeholder(sync_root_path, name).await;
+        known.remove(name);
+        prev_avail.remove(name);
     }
     if !removed.is_empty() {
         info!(storages = ?removed, "storages removed from Explorer");
     }
 
-    *known = current;
+    // ── Update IN_SYNC for all known storages, detect transitions ───────────
+
+    let mut went_offline: Vec<String> = Vec::new();
+    let mut came_online: Vec<(String, String)> = Vec::new(); // (name, stone_name)
+
+    for name in known.iter() {
+        let online = current_online.contains(name);
+        // Default to `true` so the first pass treats all seeded-from-disk
+        // storages as previously online — only genuine offline states at
+        // startup update the placeholder without firing notifications.
+        let was_online = prev_avail.get(name).copied().unwrap_or(true);
+
+        if online != was_online {
+            placeholders::update_storage_placeholder_state(sync_root_path, name, online);
+            prev_avail.insert(name.clone(), online);
+
+            if online {
+                let stone = current_avail
+                    .get(name)
+                    .map(|a| a.stone_name.as_str())
+                    .unwrap_or("unknown stone");
+                came_online.push((name.clone(), stone.to_string()));
+            } else {
+                went_offline.push(name.clone());
+            }
+        }
+    }
+
+    // ── Phase 3: info bar ───────────────────────────────────────────────────
+
+    let all_offline: Vec<&str> = known
+        .iter()
+        .filter(|n| !current_online.contains(*n))
+        .map(|n| n.as_str())
+        .collect();
+
+    if !all_offline.is_empty() {
+        signaling::report_sync_status(sync_root_path, &all_offline);
+    } else if !went_offline.is_empty() || !came_online.is_empty() {
+        // All storages back online — clear the info bar
+        signaling::clear_sync_status(sync_root_path);
+    }
+
+    // ── Phase 4: toast notifications ────────────────────────────────────────
+
+    for name in &went_offline {
+        signaling::notify_offline(name, startup_at);
+    }
+    for (name, stone_name) in &came_online {
+        signaling::notify_online(name, stone_name, startup_at);
+    }
+
+    if went_offline.is_empty() && came_online.is_empty() && added.is_empty() && removed.is_empty()
+    {
+        debug!(total = known.len(), "no storage changes");
+    }
 }
+
+// ============================================================================
+// Maintenance helpers
+// ============================================================================
 
 /// Remove blocked-name placeholders from inside each storage subdirectory.
 ///
@@ -360,8 +559,9 @@ async fn purge_blocked_placeholders(sync_root_path: &Path) {
 ///
 /// CfApi has no CREATE callback, so we cannot prevent users from pasting
 /// items directly under the sync root.  This function cleans them up.
-/// Only items that are NOT in `known_storages` and NOT a blocked name
-/// (already handled by `purge_blocked_placeholders`) are removed.
+///
+/// `known_storages` includes both online AND offline local-volume storages so
+/// we don't accidentally delete an ejected-USB placeholder.
 async fn purge_stray_root_items(sync_root_path: &Path, known_storages: &HashSet<String>) {
     let mut rd = match tokio::fs::read_dir(sync_root_path).await {
         Ok(d) => d,
@@ -370,12 +570,10 @@ async fn purge_stray_root_items(sync_root_path: &Path, known_storages: &HashSet<
     while let Ok(Some(entry)) = rd.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip known storages — those are legitimate placeholders
         if known_storages.contains(&name) {
             continue;
         }
 
-        // Skip blocked names — handled by purge_blocked_placeholders
         if garden_common::constants::storage::share::is_blocked_name(&name) {
             continue;
         }

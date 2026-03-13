@@ -81,7 +81,12 @@ windows-sys = { version = "0.52", features = [
 ] }
 windows = { version = "0.52", features = [
     "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common"
+    "Win32_Graphics_Dxgi_Common",
+    # Phase 3: CfReportSyncStatus for Explorer info bar
+    "Win32_Storage_CloudFilters",
+    # Phase 4: WinRT toast notifications
+    "UI_Notifications",
+    "Data_Xml_Dom",
 ] }
 winreg = "0.52"
 

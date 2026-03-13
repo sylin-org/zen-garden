@@ -67,13 +67,23 @@ impl ZenGardenProvider {
         Some((storage_name, rel_path))
     }
 
-    /// List all known storage names (local + remote), sorted.
-    pub(crate) async fn list_storage_names(&self) -> Vec<String> {
-        let names = super::enumerate_storage_names(&self.volumes, &self.registry).await;
-        debug!(total = names.len(), "storage enumeration complete");
-        let mut sorted: Vec<String> = names.into_iter().collect();
+    /// List all online storages with availability metadata, sorted by name.
+    pub(crate) async fn list_storage_availability(
+        &self,
+    ) -> Vec<(String, placeholders::StorageAvailability)> {
+        let mut avail =
+            super::enumerate_storage_availability(&self.volumes, &self.registry, &self.stone_id)
+                .await;
+        debug!(total = avail.len(), "storage enumeration complete");
+        let mut sorted: Vec<String> = avail.keys().cloned().collect();
         sorted.sort();
         sorted
+            .into_iter()
+            .map(|name| {
+                let a = avail.remove(&name).unwrap();
+                (name, a)
+            })
+            .collect()
     }
 
     /// Check whether a name corresponds to a known storage (local or remote).
@@ -213,7 +223,8 @@ impl Filter for ZenGardenProvider {
 
         // Sync root itself — list known storages as directories
         if storage_name.is_empty() {
-            let names = self.list_storage_names().await;
+            let entries = self.list_storage_availability().await;
+            let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
 
             info!(
                 storages = ?names,
@@ -221,9 +232,9 @@ impl Filter for ZenGardenProvider {
                 "fetch_placeholders: enumerating storages for sync root"
             );
 
-            let mut phs: Vec<PlaceholderFile> = names
+            let mut phs: Vec<PlaceholderFile> = entries
                 .iter()
-                .map(|n| placeholders::build_placeholder(n, true, 0))
+                .map(|(n, avail)| placeholders::build_storage_dir_placeholder(n, avail))
                 .collect();
 
             if phs.is_empty() {

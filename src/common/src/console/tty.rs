@@ -562,9 +562,7 @@ pub async fn update_hosts_file(
                 .map(|(i, &part)| {
                     if i == 0 {
                         part.to_string()
-                    } else if part == old_name {
-                        new_name.to_string()
-                    } else if part.starts_with("stone-new-") {
+                    } else if part == old_name || part.starts_with("stone-new-") {
                         new_name.to_string()
                     } else {
                         part.to_string()

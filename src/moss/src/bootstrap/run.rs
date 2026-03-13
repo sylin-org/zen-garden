@@ -883,7 +883,7 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     run_server(
         listener,
         app,
-        &api_endpoint,
+        api_endpoint,
         console_printer,
         runtime,
         shutdown_token,

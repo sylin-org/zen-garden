@@ -180,9 +180,9 @@ mod tests {
         let bus = EventBus::new(10);
         let counter = Arc::new(AtomicUsize::new(0));
 
-        let counter = counter.clone();
+        let counter_handler = counter.clone();
         bus.register_handler(move |_event| {
-            counter.fetch_add(1, Ordering::SeqCst);
+            counter_handler.fetch_add(1, Ordering::SeqCst);
         })
         .await;
 
@@ -223,17 +223,17 @@ mod tests {
         let service_counter = Arc::new(AtomicUsize::new(0));
         let job_counter = Arc::new(AtomicUsize::new(0));
 
-        let service_counter = service_counter.clone();
-        let job_counter = job_counter.clone();
+        let sc = service_counter.clone();
+        let jc = job_counter.clone();
 
         tokio::spawn(async move {
             while let Ok(event) = rx.recv().await {
                 match event {
                     DomainEvent::Service(_) => {
-                        service_counter.fetch_add(1, Ordering::SeqCst);
+                        sc.fetch_add(1, Ordering::SeqCst);
                     }
                     DomainEvent::Job(_) => {
-                        job_counter.fetch_add(1, Ordering::SeqCst);
+                        jc.fetch_add(1, Ordering::SeqCst);
                     }
                     _ => {}
                 }

@@ -335,8 +335,8 @@ impl GardenRegistryInner {
         removed
     }
 
-    /// Reap expired gateway entries. Returns deltas for each removal.
-    ///
+    // Reap expired gateway entries. Returns deltas for each removal.
+
     // ── Beacon Support ──────────────────────────────────────────────────
 
     /// Build a snapshot of local entries as deltas for beacon broadcast.

@@ -168,6 +168,12 @@ pub struct FqnHandler {
     pub registry: Arc<RwLock<FqnHandlerRegistry>>,
 }
 
+impl Default for FqnHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FqnHandler {
     pub fn new() -> Self {
         Self {

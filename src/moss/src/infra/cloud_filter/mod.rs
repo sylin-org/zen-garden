@@ -198,8 +198,9 @@ pub async fn start(
         "Cloud Filter: process context"
     );
 
-    // Step 1: Ensure sync root is registered
+    // Step 1: Ensure sync root is registered + AUMID for toast notifications
     let sync_root_path = registration::ensure_registered().await?;
+    signaling::init();
 
     // Step 2: Connect the provider
     let ingest_tick = tick_tx.clone();

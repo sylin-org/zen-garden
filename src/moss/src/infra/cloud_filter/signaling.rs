@@ -12,18 +12,46 @@
 //! offline, offline → online).  Notifications are suppressed for the first
 //! 120 s after Moss starts to avoid alerting on cold-boot.
 //!
-//! ### Service context note
+//! ### AUMID registration
 //!
-//! WinRT toasts from a Windows service (Session 0) require the app to have
-//! a registered AppUserModelID (AUMID).  Until the Moss installer registers
-//! one, toasts are best-effort: they compile and function when Moss runs
-//! interactively (dev / debugging), and are silently skipped if the WinRT
-//! stack returns an error in service context.
+//! WinRT toasts require a registered AppUserModelID (AUMID).  `init()`
+//! writes the `garden-moss` AUMID to `HKCU\Software\Classes\AppUserModelId`
+//! at cloud-filter startup — no installer needed.  The write is idempotent.
 
 use std::path::Path;
 use std::time::Instant;
 
 use tracing::{debug, warn};
+
+// ============================================================================
+// Bootstrap
+// ============================================================================
+
+const AUMID: &str = "garden-moss";
+
+/// Register the AUMID in the current user's registry so WinRT toasts work.
+///
+/// Must be called once at cloud-filter startup.  Idempotent.
+pub(crate) fn init() {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+        use winreg::RegKey;
+
+        let path = format!(r"Software\Classes\AppUserModelId\{AUMID}");
+        match RegKey::predef(HKEY_CURRENT_USER)
+            .create_subkey_with_flags(&path, KEY_SET_VALUE)
+        {
+            Ok((key, _)) => {
+                let _ = key.set_value("DisplayName", &"Zen Garden");
+                debug!(aumid = AUMID, "AUMID registered for toast notifications");
+            }
+            Err(e) => {
+                warn!(aumid = AUMID, error = %e, "failed to register AUMID (toasts may not appear)");
+            }
+        }
+    }
+}
 
 // ============================================================================
 // Phase 3 — CfReportSyncStatus info bar
@@ -211,10 +239,8 @@ fn try_send_toast(title: &str, body: &str) -> windows::core::Result<()> {
 
     let notification = ToastNotification::CreateToastNotification(&doc)?;
 
-    // "garden-moss" is the AUMID.  Must be registered in the Start menu
-    // for toasts to appear from a service context — see STORAGE-0016 §Phase 4.
     let notifier = ToastNotificationManager::CreateToastNotifierWithId(
-        &windows::core::HSTRING::from("garden-moss"),
+        &windows::core::HSTRING::from(AUMID),
     )?;
     notifier.Show(&notification)?;
 

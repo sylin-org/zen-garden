@@ -235,8 +235,12 @@ async fn storage_watcher(
         "storage watcher started (event-driven + 60s heartbeat)"
     );
 
-    // Run initial reconciliation immediately (with stray purge)
-    reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, true).await;
+    // Run initial reconciliation without stray purge — the registry is still
+    // empty at startup (tools beacons haven't arrived yet).  Purging now would
+    // delete legitimate remote-storage placeholders that the heartbeat will
+    // rediscover ~60 s later.  The first heartbeat handles stray cleanup once
+    // the registry is populated.
+    reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, false).await;
 
     loop {
         tokio::select! {

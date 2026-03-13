@@ -550,22 +550,19 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/garden/storage/{name}",
             get(api::v1::garden_storage::discover_v1),
         )
-        // Garden storage: /files/ namespace (user content at mount root)
+        // Garden storage: /fs namespace (user content at mount root)
+        // Exact /fs — directory listing via ?path=&depth=N (S3/GCS model)
+        // Wildcard /fs/{*path} — file content GET/PUT/DELETE/HEAD
         .route(
-            "/api/v1/garden/storage/{name}/files/{*path}",
-            get(api::v1::garden_storage::get_file_v1),
+            "/api/v1/garden/storage/{name}/fs",
+            get(api::v1::garden_storage::list_fs_v1),
         )
         .route(
-            "/api/v1/garden/storage/{name}/files/{*path}",
-            put(api::v1::garden_storage::put_file_v1),
-        )
-        .route(
-            "/api/v1/garden/storage/{name}/files/{*path}",
-            delete(api::v1::garden_storage::delete_file_v1),
-        )
-        .route(
-            "/api/v1/garden/storage/{name}/files/{*path}",
-            head(api::v1::garden_storage::head_file_v1),
+            "/api/v1/garden/storage/{name}/fs/{*path}",
+            get(api::v1::garden_storage::get_file_v1)
+                .put(api::v1::garden_storage::put_file_v1)
+                .delete(api::v1::garden_storage::delete_file_v1)
+                .head(api::v1::garden_storage::head_file_v1),
         )
         // Garden storage: /objects/ namespace (S3 objects under .zen-garden/storage/)
         .route(
@@ -907,11 +904,83 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/admin/stone/{name}/wake",
             post(api::v1::admin::stone_wake),
         )
-        // ══════════════════════════════════════════════════════════════════
+        // ══════════════════════════════════════════════════════════════════════
         // Middleware
-        // ══════════════════════════════════════════════════════════════════
+        // ══════════════════════════════════════════════════════════════════════
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(state.clone(), inject_stone_identity))
         .with_state(state)
+}
+
+// ============================================================================
+// Routing tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    /// Verify that `/fs` (exact, listing) and `/fs/{*path}` (wildcard, content)
+    /// coexist without conflict in Axum's matchit router.
+    #[tokio::test]
+    async fn fs_exact_and_wildcard_coexist() {
+        async fn listing(axum::extract::Path(name): axum::extract::Path<String>) -> String {
+            format!("list:{name}")
+        }
+        async fn content(
+            axum::extract::Path((name, path)): axum::extract::Path<(String, String)>,
+        ) -> String {
+            format!("content:{name}:{path}")
+        }
+
+        let app: Router<()> = Router::new()
+            .route("/storage/{name}/fs", get(listing))
+            .route(
+                "/storage/{name}/fs/{*path}",
+                get(content).put(content).delete(content).head(content),
+            );
+
+        // Exact route → listing handler
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/storage/mystore/fs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp: axum::http::Response<Body> = resp;
+        assert_eq!(resp.status(), 200, "exact /fs should match listing");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), b"list:mystore");
+
+        // Wildcard route → content handler
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/storage/mystore/fs/photos/sunset.jpg")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "wildcard /fs/path should match content");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.starts_with("content:mystore:"),
+            "body={body_str}"
+        );
+    }
 }

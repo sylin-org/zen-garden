@@ -6,7 +6,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::Response,
     Json,
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::domain::storage_service::StorageRoute;
-use crate::infra::storage::handle::{FileEntry, RouterError, StorageResolver};
+use crate::infra::storage::handle::{FileEntry, RouterError, StorageHandle, StorageResolver};
 use crate::AppState;
 
 use super::{err, error_response_raw, has_path_traversal, is_proxied, DirectoryEntry, DirectoryListResponse};
@@ -41,6 +41,40 @@ fn validate_file_path(path: &str) -> Result<(), (StatusCode, &'static str)> {
         ));
     }
     Ok(())
+}
+
+// ============================================================================
+// Query parameters
+// ============================================================================
+
+/// Query parameters for directory listing (`GET /fs`).
+#[derive(Debug, Deserialize)]
+pub struct FsListQuery {
+    /// Subdirectory to list (empty or absent = root).
+    #[serde(default)]
+    path: Option<String>,
+    /// Listing depth: `1` (default), `2`, `3`, … or `all`/`max` for full tree.
+    #[serde(default = "default_depth_str")]
+    depth: String,
+}
+
+/// Query parameters for GET on a file/directory path.
+#[derive(Debug, Deserialize)]
+pub struct FsQuery {
+    /// Listing depth when path is a directory.
+    #[serde(default = "default_depth_str")]
+    depth: String,
+}
+
+fn default_depth_str() -> String {
+    "1".to_string()
+}
+
+fn parse_depth(s: &str) -> usize {
+    match s.trim() {
+        "all" | "max" => usize::MAX,
+        n => n.parse().unwrap_or(1),
+    }
 }
 
 // ============================================================================
@@ -90,6 +124,56 @@ fn dir_list_response(rel_path: &str, entries: Vec<FileEntry>) -> Response {
 }
 
 // ============================================================================
+// Recursive listing
+// ============================================================================
+
+/// List entries recursively up to `depth` levels.
+///
+/// Returns a flat list.  For depth > 1, each entry's `name` is its full
+/// relative path from the listing root (e.g. `photos/vacation/beach.jpg`).
+fn list_recursive<'a>(
+    handle: &'a StorageHandle,
+    base: &'a str,
+    depth: usize,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Vec<FileEntry>>> + Send + 'a>>
+{
+    Box::pin(async move {
+        let entries = handle.list(base).await?;
+        if depth <= 1 {
+            return Ok(entries);
+        }
+
+        let mut result = Vec::new();
+        for entry in entries {
+            let full_path = if base.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{}/{}", base, entry.name)
+            };
+
+            if entry.is_dir {
+                result.push(FileEntry {
+                    name: full_path.clone(),
+                    ..entry
+                });
+                match list_recursive(handle, &full_path, depth - 1).await {
+                    Ok(sub) => result.extend(sub),
+                    Err(e) => {
+                        debug!(path = %full_path, error = %e, "skipping unreadable subdirectory");
+                    }
+                }
+            } else {
+                result.push(FileEntry {
+                    name: full_path,
+                    ..entry
+                });
+            }
+        }
+        Ok(result)
+    })
+}
+
+// ============================================================================
 // Proxy loop guard
 // ============================================================================
 
@@ -126,21 +210,57 @@ pub struct FileWriteResult {
 }
 
 // ============================================================================
-// GET /api/v1/garden/storage/{name}/files/{*path}
+// GET /api/v1/garden/storage/{name}/fs  — directory listing
+// ============================================================================
+
+/// List a directory in the storage.
+///
+/// Query parameters:
+/// - `path` — subdirectory to list (absent or empty = root)
+/// - `depth` — `1` (default), `2`, `3`, … or `all` for full recursive tree
+///
+/// This is a dedicated listing endpoint (S3/GCS model).  Listing is a metadata
+/// query, not a resource fetch, so it lives on the exact `/fs` route while
+/// content operations use the `/fs/{*path}` wildcard.
+pub async fn list_fs_v1(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(query): Query<FsListQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let path = query.path.as_deref().unwrap_or("");
+    let depth = parse_depth(&query.depth);
+    get_file_v1_inner(&state, &name, path, &headers, depth).await
+}
+
+// ============================================================================
+// GET /api/v1/garden/storage/{name}/fs/{*path}
 // ============================================================================
 
 /// Read a user file or list a directory from the storage root.
 pub async fn get_file_v1(
     State(state): State<AppState>,
     Path((name, path)): Path<(String, String)>,
+    Query(query): Query<FsQuery>,
     headers: HeaderMap,
 ) -> Response {
     let path = path.trim_start_matches('/');
+    let depth = parse_depth(&query.depth);
+    get_file_v1_inner(&state, &name, path, &headers, depth).await
+}
+
+async fn get_file_v1_inner(
+    state: &AppState,
+    name: &str,
+    path: &str,
+    headers: &HeaderMap,
+    depth: usize,
+) -> Response {
     if let Err((status, msg)) = validate_file_path(path) {
         return error_response_raw(status, "INVALID_PATH", msg);
     }
 
-    if let Err(resp) = check_proxy_loop_guard(&name, &state, &headers).await {
+    if let Err(resp) = check_proxy_loop_guard(name, state, headers).await {
         return resp;
     }
 
@@ -150,7 +270,7 @@ pub async fn get_file_v1(
         stone_id: &state.current.stone.id,
         tick: None, // reads don't need tick
     };
-    let handle = match resolver.for_read(&name).await {
+    let handle = match resolver.for_read(name).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(
@@ -163,8 +283,9 @@ pub async fn get_file_v1(
 
     // Explicit directory paths → list
     if path.is_empty() || path.ends_with('/') {
-        return match handle.list(path.trim_end_matches('/')).await {
-            Ok(entries) => dir_list_response(path, entries),
+        let dir = path.trim_end_matches('/');
+        return match list_recursive(&handle, dir, depth).await {
+            Ok(entries) => dir_list_response(dir, entries),
             Err(e) => {
                 error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string())
             }
@@ -174,7 +295,7 @@ pub async fn get_file_v1(
     // Check if path points to a directory
     if let Ok(meta) = handle.metadata(path).await {
         if meta.is_dir {
-            return match handle.list(path).await {
+            return match list_recursive(&handle, path, depth).await {
                 Ok(entries) => dir_list_response(path, entries),
                 Err(e) => {
                     error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string())
@@ -227,7 +348,7 @@ pub async fn get_file_v1(
 }
 
 // ============================================================================
-// PUT /api/v1/garden/storage/{name}/files/{*path}
+// PUT /api/v1/garden/storage/{name}/fs/{*path}
 // ============================================================================
 
 /// Write a user file to the storage root.
@@ -288,7 +409,7 @@ pub async fn put_file_v1(
 }
 
 // ============================================================================
-// DELETE /api/v1/garden/storage/{name}/files/{*path}
+// DELETE /api/v1/garden/storage/{name}/fs/{*path}
 // ============================================================================
 
 /// Delete a user file from the storage root.
@@ -359,7 +480,7 @@ pub async fn delete_file_v1(
 }
 
 // ============================================================================
-// HEAD /api/v1/garden/storage/{name}/files/{*path}
+// HEAD /api/v1/garden/storage/{name}/fs/{*path}
 // ============================================================================
 
 /// Get file metadata from the storage root.

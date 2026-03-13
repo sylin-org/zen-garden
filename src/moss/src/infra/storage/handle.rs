@@ -647,11 +647,26 @@ impl StorageHandle {
 
     fn file_url(&self, target: &ProxyTarget, path: &str) -> String {
         format!(
-            "{}/api/v1/garden/storage/{}/files/{}",
+            "{}/api/v1/garden/storage/{}/fs/{}",
             target.endpoint.trim_end_matches('/'),
             self.storage_name,
             path,
         )
+    }
+
+    /// URL for directory listing — uses the dedicated listing endpoint with
+    /// query parameters (S3/GCS model) to avoid the Axum wildcard gap.
+    fn list_url(&self, target: &ProxyTarget, path: &str) -> String {
+        let base = format!(
+            "{}/api/v1/garden/storage/{}/fs",
+            target.endpoint.trim_end_matches('/'),
+            self.storage_name,
+        );
+        if path.is_empty() {
+            base
+        } else {
+            format!("{}?path={}", base, urlencoding::encode(path))
+        }
     }
 
     async fn remote_delete(&self, target: &ProxyTarget, path: &str) -> Result<(), RouterError> {
@@ -668,7 +683,7 @@ impl StorageHandle {
     }
 
     async fn remote_list(&self, target: &ProxyTarget, path: &str) -> Result<Vec<FileEntry>> {
-        let url = self.file_url(target, path);
+        let url = self.list_url(target, path);
         let resp = http_client()
             .get(&url)
             .timeout(METADATA_TIMEOUT)

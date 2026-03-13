@@ -5,7 +5,7 @@
 //! locally; otherwise proxy to the stone hosting the Primary.
 //!
 //! Three content namespaces:
-//! - `/files/`    — user content at storage root
+//! - `/fs/`       — user content at storage root
 //! - `/objects/`  — S3 objects under `.zen-garden/storage/`
 //! - `/memories/` — harvest artifacts under `.zen-garden/memories/`
 //!
@@ -14,10 +14,11 @@
 //! ```text
 //! GET    /api/v1/garden/storage                                      → list all storages
 //! GET    /api/v1/garden/storage/{name}                               → discovery (all replicas)
-//! GET    /api/v1/garden/storage/{name}/files/{*path}                 → read user file
-//! PUT    /api/v1/garden/storage/{name}/files/{*path}                 → write user file
-//! DELETE /api/v1/garden/storage/{name}/files/{*path}                 → delete user file
-//! HEAD   /api/v1/garden/storage/{name}/files/{*path}                 → file metadata
+//! GET    /api/v1/garden/storage/{name}/fs                            → directory listing (?path=&depth=N)
+//! GET    /api/v1/garden/storage/{name}/fs/{*path}                    → read user file
+//! PUT    /api/v1/garden/storage/{name}/fs/{*path}                    → write user file
+//! DELETE /api/v1/garden/storage/{name}/fs/{*path}                    → delete user file
+//! HEAD   /api/v1/garden/storage/{name}/fs/{*path}                    → file metadata
 //! GET    /api/v1/garden/storage/{name}/objects/{*path}               → read S3 object
 //! PUT    /api/v1/garden/storage/{name}/objects/{*path}               → write S3 object
 //! DELETE /api/v1/garden/storage/{name}/objects/{*path}               → delete S3 object
@@ -27,12 +28,16 @@
 //! GET    /api/v1/garden/storage/{name}/memories/{offering}/manifest  → offering manifest
 //! GET    /api/v1/garden/storage/{name}/memories/{offering}/{harvest} → download snapshot
 //! ```
+//!
+//! Directory listing uses query parameters: `?path=subdir&depth=N` (default depth 1,
+//! or `all` for recursive).  Listing is a metadata query on `/fs`, while content
+//! operations use the `/fs/{*path}` wildcard.
 
 pub mod files;
 pub mod memories;
 pub mod objects;
 
-pub use files::{delete_file_v1, get_file_v1, head_file_v1, put_file_v1};
+pub use files::{delete_file_v1, get_file_v1, head_file_v1, list_fs_v1, put_file_v1};
 pub use memories::{
     download_snapshot_v1, get_offering_manifest_v1, list_memories_v1,
     list_offering_snapshots_v1,

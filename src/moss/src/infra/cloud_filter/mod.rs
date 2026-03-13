@@ -26,17 +26,15 @@ mod registration;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use cloud_filter::root::Session;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
-use garden_common::storage::{StorageChanged, StorageTick, DEFAULT_REPLICA_SET_DISPLAY};
+use garden_common::storage::{StorageChanged, StorageTick};
 
 use self::provider::ZenGardenProvider;
 
@@ -79,12 +77,7 @@ pub(crate) async fn enumerate_storage_names(
                 continue;
             }
             if let Some(ref mgmt) = vol.management {
-                let rs_name = if mgmt.replica_set_name.is_empty() {
-                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
-                } else {
-                    mgmt.replica_set_name.clone()
-                };
-                names.insert(rs_name);
+                names.insert(mgmt.display_name().to_string());
             }
         }
     }
@@ -116,7 +109,6 @@ pub async fn start(
     stone_id: String,
     tick_tx: tokio::sync::broadcast::Sender<StorageTick>,
     storage_changed_rx: tokio::sync::broadcast::Receiver<StorageChanged>,
-    local_endpoint: Arc<RwLock<String>>,
     shutdown_token: CancellationToken,
 ) -> Result<()> {
     // Check platform support
@@ -144,13 +136,13 @@ pub async fn start(
     let sync_root_path = registration::ensure_registered().await?;
 
     // Step 2: Connect the provider
+    let ingest_tick = tick_tx.clone();
     let provider = ZenGardenProvider {
         volumes: volumes.clone(),
         registry: registry.clone(),
         stone_id: stone_id.clone(),
         tick: tick_tx,
         sync_root_path: sync_root_path.clone(),
-        local_endpoint,
     };
 
     // CfApi callbacks fire on Windows threadpool threads (not inside a tokio
@@ -199,6 +191,7 @@ pub async fn start(
             ingest_volumes,
             ingest_registry,
             ingest_stone_id,
+            ingest_tick,
             ingest_sync_root,
             ingest_storage_rx,
             ingest_token,
@@ -242,8 +235,8 @@ async fn storage_watcher(
         "storage watcher started (event-driven + 60s heartbeat)"
     );
 
-    // Run initial reconciliation immediately
-    reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known).await;
+    // Run initial reconciliation immediately (with stray purge)
+    reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, true).await;
 
     loop {
         tokio::select! {
@@ -264,31 +257,43 @@ async fn storage_watcher(
                         break;
                     }
                 }
-                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known).await;
+                // Event-driven: fast path — skip stray purge to avoid racing
+                // with ingest (files pasted by the user are still being processed).
+                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, false).await;
             }
             _ = tokio::time::sleep(heartbeat) => {
-                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known).await;
+                // Heartbeat: full reconciliation including stray purge
+                reconcile_placeholders(&volumes, &registry, sync_root_path, &mut known, true).await;
             }
         }
     }
 }
 
 /// Reconcile placeholder directories with current storage names.
+///
+/// `purge_strays` controls whether stray root items and blocked placeholders
+/// are cleaned up. Set to `true` on heartbeat, `false` on event-driven passes
+/// to avoid racing with the ingest watcher (A11c).
 async fn reconcile_placeholders(
     volumes: &Volumes,
     registry: &GardenRegistry,
     sync_root_path: &Path,
     known: &mut HashSet<String>,
+    purge_strays: bool,
 ) {
-    // Remove blocked-name placeholders left over from previous runs
-    purge_blocked_placeholders(sync_root_path).await;
+    if purge_strays {
+        // Remove blocked-name placeholders left over from previous runs
+        purge_blocked_placeholders(sync_root_path).await;
+    }
 
     let current = enumerate_storage_names(volumes, registry).await;
 
-    // Phase 3: purge stray files/folders at the sync root level that
-    // aren't known storage names (user-pasted items that can't be prevented
-    // via CfApi — there is no CREATE callback).
-    purge_stray_root_items(sync_root_path, &current).await;
+    if purge_strays {
+        // Phase 3: purge stray files/folders at the sync root level that
+        // aren't known storage names (user-pasted items that can't be prevented
+        // via CfApi — there is no CREATE callback).
+        purge_stray_root_items(sync_root_path, &current).await;
+    }
 
     if current == *known {
         debug!(total = current.len(), "no storage changes");

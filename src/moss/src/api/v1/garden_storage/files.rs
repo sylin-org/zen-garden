@@ -1,7 +1,7 @@
 //! User file operations on managed storage
 //!
 //! Exposes the storage mount root as user-accessible content.
-//! All I/O dispatch goes through `StorageRouter` — no `match Local/Proxy`.
+//! All I/O dispatch goes through `StorageHandle` — no `match Local/Proxy`.
 //! Path validation prevents access into `.zen-garden/`.
 
 use axum::{
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::domain::storage_service::StorageRoute;
-use crate::infra::storage::router::{FileEntry, StorageRouter};
+use crate::infra::storage::handle::{FileEntry, RouterError, StorageResolver};
 use crate::AppState;
 
 use super::{err, error_response_raw, has_path_traversal, is_proxied, DirectoryEntry, DirectoryListResponse};
@@ -144,14 +144,13 @@ pub async fn get_file_v1(
         return resp;
     }
 
-    let router = match StorageRouter::for_read(
-        &name,
-        &state.current.storage.volumes,
-        &state.tool.registry,
-        &state.current.stone.id,
-    )
-    .await
-    {
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None, // reads don't need tick
+    };
+    let handle = match resolver.for_read(&name).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(
@@ -164,7 +163,7 @@ pub async fn get_file_v1(
 
     // Explicit directory paths → list
     if path.is_empty() || path.ends_with('/') {
-        return match router.list(path.trim_end_matches('/')).await {
+        return match handle.list(path.trim_end_matches('/')).await {
             Ok(entries) => dir_list_response(path, entries),
             Err(e) => {
                 error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string())
@@ -173,9 +172,9 @@ pub async fn get_file_v1(
     }
 
     // Check if path points to a directory
-    if let Ok(meta) = router.metadata(path).await {
+    if let Ok(meta) = handle.metadata(path).await {
         if meta.is_dir {
-            return match router.list(path).await {
+            return match handle.list(path).await {
                 Ok(entries) => dir_list_response(path, entries),
                 Err(e) => {
                     error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string())
@@ -185,7 +184,7 @@ pub async fn get_file_v1(
     }
 
     // File read
-    match router.read(path).await {
+    match handle.read(path).await {
         Ok(data) => {
             let content_type = mime_guess::from_path(path)
                 .first_or_octet_stream()
@@ -198,17 +197,15 @@ pub async fn get_file_v1(
                 .body(data.into())
                 .unwrap()
         }
+        Err(RouterError::NotFound(_)) => {
+            error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
+        }
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("not found") || msg.contains("NotFound") || msg.contains("404") {
-                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
-            } else {
-                error_response_raw(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "READ_FAILED",
-                    &msg,
-                )
-            }
+            error_response_raw(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "READ_FAILED",
+                &e.to_string(),
+            )
         }
     }
 }
@@ -250,17 +247,19 @@ pub async fn put_file_v1(
         }
     }
 
-    let router = StorageRouter::for_write(
-        &name,
-        &state.current.storage.volumes,
-        &state.tool.registry,
-        &state.current.stone.id,
-    )
-    .await
-    .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.orchestration.storage.tick.raw.clone()),
+    };
+    let handle = resolver
+        .for_write(&name)
+        .await
+        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
     let size = body.len() as u64;
-    router
+    handle
         .write(path, &body)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "WRITE_FAILED", &e.to_string()))?;
@@ -308,34 +307,34 @@ pub async fn delete_file_v1(
         }
     }
 
-    let router = StorageRouter::for_write(
-        &name,
-        &state.current.storage.volumes,
-        &state.tool.registry,
-        &state.current.stone.id,
-    )
-    .await
-    .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.orchestration.storage.tick.raw.clone()),
+    };
+    let handle = resolver
+        .for_write(&name)
+        .await
+        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
     // Determine if path is a directory or file
-    let is_dir = router
+    let is_dir = handle
         .metadata(path)
         .await
         .map(|m| m.is_dir)
         .unwrap_or(false);
 
     let result = if is_dir {
-        router.delete_dir(path).await
+        handle.delete_dir(path).await
     } else {
-        router.delete_file(path).await
+        handle.delete_file(path).await
     };
 
-    result.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") || msg.contains("NotFound") || msg.contains("404") {
-            err(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
-        } else {
-            err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &msg)
+    result.map_err(|e| match e {
+        RouterError::NotFound(_) => err(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found"),
+        RouterError::Other(inner) => {
+            err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &inner.to_string())
         }
     })?;
 
@@ -362,14 +361,13 @@ pub async fn head_file_v1(
         return resp;
     }
 
-    let router = match StorageRouter::for_read(
-        &name,
-        &state.current.storage.volumes,
-        &state.tool.registry,
-        &state.current.stone.id,
-    )
-    .await
-    {
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+    let handle = match resolver.for_read(&name).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(
@@ -380,7 +378,7 @@ pub async fn head_file_v1(
         }
     };
 
-    match router.metadata(path).await {
+    match handle.metadata(path).await {
         Ok(meta) => {
             let content_type = mime_guess::from_path(path)
                 .first_or_octet_stream()
@@ -397,17 +395,15 @@ pub async fn head_file_v1(
                 .body("".into())
                 .unwrap()
         }
+        Err(RouterError::NotFound(_)) => {
+            error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
+        }
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("not found") || msg.contains("NotFound") || msg.contains("404") {
-                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
-            } else {
-                error_response_raw(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "HEAD_FAILED",
-                    &msg,
-                )
-            }
+            error_response_raw(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "HEAD_FAILED",
+                &e.to_string(),
+            )
         }
     }
 }

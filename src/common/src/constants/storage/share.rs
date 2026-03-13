@@ -24,19 +24,31 @@ pub fn is_blocked_name(name: &str) -> bool {
 /// `rel_path` is relative to the storage root; both `/` and `\` separators
 /// are accepted.
 pub fn is_blocked_path(rel_path: &str) -> bool {
-    let normalized = rel_path.trim_start_matches('/').trim_start_matches('\\');
-    BLOCKED.iter().any(|&blocked| {
-        normalized == blocked
-            || normalized.starts_with(&format!("{}/", blocked))
-            || normalized.starts_with(&format!("{}\\", blocked))
-            || normalized.contains(&format!("/{}/", blocked))
-            || normalized.contains(&format!("\\{}/", blocked))
-            || normalized.ends_with(&format!("/{}", blocked))
-            || normalized.ends_with(&format!("\\{}", blocked))
-    })
+    rel_path
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .any(|component| BLOCKED.contains(&component))
 }
 
 /// Returns the full blocked-name list.
 pub fn blocked_paths() -> &'static [&'static str] {
     BLOCKED
+}
+
+/// Returns `true` if `value` contains path traversal segments.
+///
+/// Rejects `..`, root dirs, Windows prefixes, and backslash separators.
+/// Shared across all storage access paths (file API, S3 gateway, WebDAV).
+pub fn has_path_traversal(value: &str) -> bool {
+    if value.contains('\\') {
+        return true;
+    }
+    std::path::Path::new(value).components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    })
 }

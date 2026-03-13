@@ -354,6 +354,57 @@ impl ContentStore {
         self.read(Path::new(rel)).await
     }
 
+    /// Read a byte range from a file (A11j — ranged read for CfApi hydration).
+    ///
+    /// For unencrypted stores: seeks directly, reads only the requested range.
+    /// For encrypted stores: reads + decrypts entire file, then slices (AEAD
+    /// constraint — ChaCha20-Poly1305 requires whole-file decrypt).
+    pub async fn read_range(&self, rel: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        let full_path = self.mount_root.join(rel);
+
+        match &self.dek {
+            None => {
+                // Unencrypted — seek + read only what's needed
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                let mut file = tokio::fs::File::open(&full_path)
+                    .await
+                    .with_context(|| format!("Failed to open {}", full_path.display()))?;
+
+                let file_len = file.metadata().await?.len();
+                let start = std::cmp::min(offset, file_len);
+                let end = std::cmp::min(offset + length, file_len);
+                let to_read = (end - start) as usize;
+                if to_read == 0 {
+                    return Ok(Vec::new());
+                }
+
+                file.seek(std::io::SeekFrom::Start(start)).await?;
+                let mut buf = vec![0u8; to_read];
+                file.read_exact(&mut buf).await.with_context(|| {
+                    format!(
+                        "Failed to read range {}..{} from {}",
+                        start,
+                        end,
+                        full_path.display()
+                    )
+                })?;
+                Ok(buf)
+            }
+            Some(dek) => {
+                // Encrypted — must decrypt whole file, then slice
+                let raw = tokio::fs::read(&full_path)
+                    .await
+                    .with_context(|| format!("Failed to read {}", full_path.display()))?;
+                let plaintext = decrypt(dek, &raw)
+                    .with_context(|| format!("Failed to decrypt {}", full_path.display()))?;
+
+                let start = std::cmp::min(offset as usize, plaintext.len());
+                let end = std::cmp::min((offset + length) as usize, plaintext.len());
+                Ok(plaintext[start..end].to_vec())
+            }
+        }
+    }
+
     /// Write a file to the storage (user content path, &str).
     pub async fn write_file(&self, rel: &str, data: &[u8]) -> Result<()> {
         self.write(Path::new(rel), data).await

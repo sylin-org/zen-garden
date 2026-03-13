@@ -2,18 +2,18 @@
 //! (STORAGE-0012, refactored per STORAGE-0015)
 //!
 //! Thin CfApi adapter — converts callback arguments to domain types and
-//! delegates actual I/O to `StorageRouter`.  No business logic, no
-//! duplicated dispatch — every `match Local/Proxy` lives in the router.
+//! delegates actual I/O to `StorageHandle`.  No business logic, no
+//! duplicated dispatch — every `match Local/Proxy` lives in the handle.
 //!
 //! ## Callback coverage
 //!
 //! | Callback              | Status    | Behavior                                   |
 //! |-----------------------|-----------|--------------------------------------------|
-//! | `fetch_data`          | Active    | Hydrate placeholder via router             |
-//! | `fetch_placeholders`  | Active    | Populate directory via router               |
-//! | `rename`              | Active    | Classify → dispatch via router              |
+//! | `fetch_data`          | Active    | Hydrate placeholder via handle             |
+//! | `fetch_placeholders`  | Active    | Populate directory via handle               |
+//! | `rename`              | Active    | Classify → dispatch via handle              |
 //! | `renamed`             | Logging   | Post-rename confirmation                   |
-//! | `delete`              | Active    | Propagate via router, approve              |
+//! | `delete`              | Active    | Propagate via handle, approve              |
 //! | `deleted`             | Logging   | Post-delete confirmation                   |
 //! | `dehydrate`           | Active    | Approve (free disk space)                  |
 //! | `dehydrated`          | Logging   | Post-dehydration confirmation              |
@@ -24,20 +24,18 @@
 //! | `validate_data`       | Default   | Not required (no ValidationRequired policy)|
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use cloud_filter::error::{CResult, CloudErrorKind};
 use cloud_filter::filter::{info, ticket, Filter, Request};
 use cloud_filter::placeholder_file::PlaceholderFile;
 use cloud_filter::utility::WriteAt;
-use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::domain::cloud_drive::{classify_rename, DriveAction};
 use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
 use crate::domain::storage_service::StorageRoute;
-use crate::infra::storage::router::{self, FileEntry, StorageRouter};
+use crate::infra::storage::handle::{self as router, FileEntry, StorageHandle, StorageResolver};
 use garden_common::storage::StorageTick;
 
 use super::placeholders;
@@ -50,11 +48,8 @@ pub struct ZenGardenProvider {
     pub(crate) volumes: Volumes,
     pub(crate) registry: GardenRegistry,
     pub(crate) stone_id: String,
-    #[allow(dead_code)]
     pub(crate) tick: tokio::sync::broadcast::Sender<StorageTick>,
     pub(crate) sync_root_path: PathBuf,
-    #[allow(dead_code)]
-    pub(crate) local_endpoint: Arc<RwLock<String>>,
 }
 
 // ============================================================================
@@ -82,71 +77,54 @@ impl ZenGardenProvider {
     }
 
     /// Check whether a name corresponds to a known storage (local or remote).
+    ///
+    /// Short-circuits on local match to avoid full enumeration (A11e).
     async fn is_known_storage(&self, name: &str) -> bool {
-        super::enumerate_storage_names(&self.volumes, &self.registry)
-            .await
-            .contains(name)
+        if StorageRoute::find_local(name, &self.volumes).await.is_some() {
+            return true;
+        }
+        let reg = self.registry.read().await;
+        reg.storage_entries().iter().any(|e| e.tool.fqid == name)
     }
 
-    /// Build a read-capable router for a storage.
-    async fn router_read(&self, name: &str) -> CResult<StorageRouter> {
-        StorageRouter::for_read(name, &self.volumes, &self.registry, &self.stone_id)
-            .await
-            .map_err(|e| {
-                warn!(storage = %name, error = %e, "storage not found for read");
-                CloudErrorKind::NotInSync
-            })
+    /// Build a resolver pre-loaded with this provider's shared state.
+    fn resolver(&self) -> StorageResolver<'_> {
+        StorageResolver {
+            volumes: &self.volumes,
+            registry: &self.registry,
+            stone_id: &self.stone_id,
+            tick: Some(self.tick.clone()),
+        }
     }
 
-    /// Build a write-capable router for a storage.
-    async fn router_write(&self, name: &str) -> CResult<StorageRouter> {
-        StorageRouter::for_write(name, &self.volumes, &self.registry, &self.stone_id)
-            .await
-            .map_err(|e| {
-                warn!(storage = %name, error = %e, "storage not found for write");
-                CloudErrorKind::NotInSync
-            })
+    /// Resolve a read-capable handle for a storage.
+    async fn handle_read(&self, name: &str) -> CResult<StorageHandle> {
+        self.resolver().for_read(name).await.map_err(|e| {
+            warn!(storage = %name, error = %e, "storage not found for read");
+            CloudErrorKind::NotInSync
+        })
+    }
+
+    /// Resolve a write-capable handle for a storage.
+    async fn handle_write(&self, name: &str) -> CResult<StorageHandle> {
+        self.resolver().for_write(name).await.map_err(|e| {
+            warn!(storage = %name, error = %e, "storage not found for write");
+            CloudErrorKind::NotInSync
+        })
     }
 
     /// Rename a top-level storage folder (replica set name) via Explorer.
     ///
-    /// Updates `replica_set_name` on both the in-memory volume and the on-disk
-    /// manifest.  The individual device name (`mgmt.name`) is unchanged.
+    /// Domain mutation via `rename_replica_set`; disk persistence via infra.
     async fn do_rename_storage(&self, old_name: &str, new_name: &str) -> CResult<()> {
-        if StorageRoute::find_local(old_name, &self.volumes).await.is_none() {
-            warn!(
-                old = %old_name,
-                new = %new_name,
-                "rename rejected: storage not found locally"
-            );
-            return Err(CloudErrorKind::NotInSync);
-        }
+        use crate::domain::storage_service::rename_replica_set;
 
-        let mut map = self.volumes.write().await;
-        let mut mount_paths = Vec::new();
-        for vol in map.values_mut() {
-            let matches = vol.management.as_ref().is_some_and(|m| {
-                let rs_display = if m.replica_set_name.is_empty() {
-                    garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY
-                } else {
-                    &m.replica_set_name
-                };
-                rs_display == old_name
-            });
-            if matches {
-                mount_paths.push(vol.mount_path.to_string_lossy().to_string());
-                if let Some(ref mut mgmt) = vol.management {
-                    mgmt.replica_set_name = new_name.to_string();
-                    mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
-                }
-            }
-        }
-        drop(map);
-
-        if mount_paths.is_empty() {
-            warn!(storage = %old_name, "rename: no volumes found");
-            return Err(CloudErrorKind::NotInSync);
-        }
+        let mount_paths = rename_replica_set(old_name, new_name, &self.volumes)
+            .await
+            .map_err(|e| {
+                warn!(old = %old_name, new = %new_name, error = %e, "rename rejected");
+                CloudErrorKind::NotInSync
+            })?;
 
         for mp in &mount_paths {
             if let Err(e) =
@@ -196,22 +174,28 @@ impl Filter for ZenGardenProvider {
             return Ok(());
         }
 
-        let router = self.router_read(&storage_name).await?;
-        let data = router.read(&rel_path).await.map_err(cfail)?;
+        let router = self.handle_read(&storage_name).await?;
 
+        // Ranged read (A11j): only fetch the bytes CfApi actually needs,
+        // avoiding full-file load into memory for large files.
         let range = info.required_file_range();
-        let start = range.start as usize;
-        let end = std::cmp::min(range.end as usize, data.len());
-        if start < end {
-            ticket
-                .write_at(&data[start..end], range.start)
-                .map_err(|e| {
-                    warn!(error = %e, "write_at failed");
-                    CloudErrorKind::NotInSync
-                })?;
+        let length = range.end.saturating_sub(range.start);
+        if length > 0 {
+            let data = router
+                .read_range(&rel_path, range.start, length)
+                .await
+                .map_err(cfail)?;
+            if !data.is_empty() {
+                ticket
+                    .write_at(&data, range.start)
+                    .map_err(|e| {
+                        warn!(error = %e, "write_at failed");
+                        CloudErrorKind::NotInSync
+                    })?;
+            }
         }
 
-        debug!(storage = %storage_name, path = %rel_path, bytes = data.len(), "hydrated file");
+        debug!(storage = %storage_name, path = %rel_path, offset = range.start, length, "hydrated file range");
         Ok(())
     }
 
@@ -272,7 +256,7 @@ impl Filter for ZenGardenProvider {
         // Storage subdirectory
         debug!(storage = %storage_name, path = %rel_path, "fetch_placeholders");
 
-        let router = self.router_read(&storage_name).await?;
+        let router = self.handle_read(&storage_name).await?;
         let entries = router.list(&rel_path).await.map_err(cfail)?;
 
         let filtered: Vec<&FileEntry> = entries
@@ -380,7 +364,7 @@ impl Filter for ZenGardenProvider {
             return Err(CloudErrorKind::NotSupported);
         }
 
-        let router = self.router_write(&storage_name).await?;
+        let router = self.handle_write(&storage_name).await?;
         if delete_info.is_directory() {
             router.delete_dir(&rel_path).await.map_err(cfail)?;
         } else {
@@ -456,7 +440,7 @@ impl Filter for ZenGardenProvider {
                 path,
                 is_dir,
             } => {
-                let dst = self.router_write(&storage).await?;
+                let dst = self.handle_write(&storage).await?;
                 router::ingest(&source, &dst, &path, is_dir)
                     .await
                     .map_err(cfail)?;
@@ -470,7 +454,7 @@ impl Filter for ZenGardenProvider {
             } => {
                 // Best-effort: user moved item out of sync root
                 let result = async {
-                    let r = self.router_write(&storage).await?;
+                    let r = self.handle_write(&storage).await?;
                     if is_dir {
                         r.delete_dir(&path).await.map_err(cfail)
                     } else {
@@ -489,10 +473,10 @@ impl Filter for ZenGardenProvider {
                 info!(storage = %storage, path = %path, "file moved out of sync root");
             }
 
-            DriveAction::RenameInStorage { storage, old, new } => {
-                let r = self.router_write(&storage).await?;
-                r.rename(&old, &new).await.map_err(cfail)?;
-                debug!(storage = %storage, old = %old, new = %new, "renamed within storage");
+            DriveAction::RenameInStorage { storage, old, new, is_dir } => {
+                let r = self.handle_write(&storage).await?;
+                r.rename(&old, &new, is_dir).await.map_err(cfail)?;
+                debug!(storage = %storage, old = %old, new = %new, is_dir, "renamed within storage");
             }
 
             DriveAction::CrossStorageMove {
@@ -502,8 +486,8 @@ impl Filter for ZenGardenProvider {
                 dst,
                 is_dir,
             } => {
-                let src_r = self.router_read(&src_storage).await?;
-                let dst_r = self.router_write(&dst_storage).await?;
+                let src_r = self.handle_read(&src_storage).await?;
+                let dst_r = self.handle_write(&dst_storage).await?;
                 if is_dir {
                     router::transfer_tree(&src_r, &src, &dst_r, &dst)
                         .await
@@ -514,7 +498,7 @@ impl Filter for ZenGardenProvider {
                         .map_err(cfail)?;
                 }
                 // Delete source after successful copy
-                let src_w = self.router_write(&src_storage).await?;
+                let src_w = self.handle_write(&src_storage).await?;
                 if is_dir {
                     src_w.delete_dir(&src).await.map_err(cfail)?;
                 } else {
@@ -537,7 +521,7 @@ impl Filter for ZenGardenProvider {
                 path,
                 is_dir,
             } => {
-                let dst = self.router_write(&storage).await?;
+                let dst = self.handle_write(&storage).await?;
                 router::ingest(&stray_path, &dst, &path, is_dir)
                     .await
                     .map_err(cfail)?;
@@ -581,8 +565,8 @@ impl Filter for ZenGardenProvider {
 // Error mapping
 // ============================================================================
 
-/// Map an anyhow error to a Cloud Filter error.
-fn cfail(e: anyhow::Error) -> CloudErrorKind {
+/// Map any displayable error to a Cloud Filter error.
+fn cfail(e: impl std::fmt::Display) -> CloudErrorKind {
     warn!(error = %e, "cloud filter operation failed");
     CloudErrorKind::NotInSync
 }

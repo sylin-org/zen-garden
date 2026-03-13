@@ -26,6 +26,7 @@ pub enum DriveAction {
         storage: String,
         old: String,
         new: String,
+        is_dir: bool,
     },
     /// Move between two known storages (copy + delete).
     CrossStorageMove {
@@ -162,6 +163,7 @@ pub fn classify_rename(
             storage: old_storage.to_string(),
             old: old_rel.to_string(),
             new: new_rel.to_string(),
+            is_dir,
         };
     }
 
@@ -279,7 +281,7 @@ mod tests {
             &src, &sr(),
         );
         assert!(matches!(action, DriveAction::RenameInStorage {
-            ref storage, ref old, ref new
+            ref storage, ref old, ref new, is_dir: false
         } if storage == "photos" && old == "old.jpg" && new == "new.jpg"));
     }
 

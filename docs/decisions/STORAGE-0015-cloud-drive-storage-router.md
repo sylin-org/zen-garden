@@ -759,17 +759,18 @@ callers distinguish exactly two failure modes:
 
 ```rust
 pub enum RouterError {
-    NotFound,
+    NotFound(String),      // carries the path for diagnostics
     Other(anyhow::Error),
 }
 ```
 
 The remote path maps HTTP 404 to `NotFound`; all other failures to `Other`. The local
-path maps `io::ErrorKind::NotFound` to `NotFound`. No other variants — callers don't
-match on anything else today, and speculative variants violate YAGNI.
+path maps `io::ErrorKind::NotFound` to `NotFound`. `NotFound` carries the path string
+for structured logging. No other variants — callers don't match on anything else today,
+and speculative variants violate YAGNI.
 
-**Scope**: Implemented as part of `StorageHandle` (A10). Until then, the substring
-matching remains (acceptable — wrong 404 vs 500 is a cosmetic issue, not data loss).
+**Scope**: Implemented on `StorageRouter` now. Absorbed by `StorageHandle` (A10) when
+that consolidation lands.
 
 #### A11b. `is_blocked_path` String Surgery → Split-and-Check (Correctness)
 
@@ -866,7 +867,7 @@ async fn is_known_storage(&self, name: &str) -> bool {
         return true;
     }
     let reg = self.registry.read().await;
-    reg.storage_entries().any(|e| e.tool.fqid == name)
+    reg.storage_entries().iter().any(|e| e.tool.fqid == name)
 }
 ```
 
@@ -1117,9 +1118,9 @@ with no depth limit. A deeply nested directory structure (malicious or accidenta
 e.g., symlink loops on the source, or filesystem corruption) causes unbounded recursion.
 Each level adds a future + stack frame. At ~1000 levels, the task overflows.
 
-**Fix**: Add a `max_depth` parameter (default 256 — matches common filesystem limits).
-Return error at depth limit. For `ingest_tree` (reads from arbitrary filesystem paths),
-also skip symlinks to prevent loops.
+**Fix**: Add a `max_depth` constant (`MAX_TREE_DEPTH = 64`). Return error at depth
+limit. For `ingest_tree` (reads from arbitrary filesystem paths), also skip symlinks
+to prevent loops.
 
 **Priority**: Fix if touching the file. Unlikely in practice (user-facing storage
 rarely exceeds 20 levels), but a robustness gap.
@@ -1143,27 +1144,27 @@ This is a future enhancement, not a prerequisite.
 
 ### Resolution Priority
 
-| # | Issue | Severity | Fix |
-|---|-------|----------|-----|
-| A1 | Replication ticks lost | **Functional** — delayed replication | Fixed by A10 design (tick wired at construction) |
-| A2 | Remote directory rename | **Correctness** — data corruption | Add is_dir to RenameInStorage + handle.rename |
-| A11j | Buffered I/O everywhere | **Correctness** — OOM on large files | Three-mechanism model: ranged read, streaming, buffered (see A11j) |
-| A11k | No HTTP timeout | **Reliability** — Explorer freeze | Interim: `.connect_timeout(10s)` now; full layered model with A10 |
-| A7/A11b | Fragile `is_blocked_path` | **Correctness** — edge case bypass | Split-and-check rewrite |
-| A11a | String-based error detection | **Correctness** — wrong HTTP status | `RouterError` with 2 variants (absorbed by A10) |
-| A11f | `has_path_traversal` duplicated | **Security** — fix drift | Extract to `garden_common` |
-| A11c | Stray purge races with ingest | **Data loss** window | Reduce purge frequency (option B) |
-| A11d | Display name fallback scattered | Divergence risk | `Management::display_name()` method |
-| A3 | `do_rename_storage` in adapter | Architectural | Extract to domain service |
-| A10 | StorageHandle consolidation | Architectural | Replaces StorageRouter, absorbs A5, A6, A9, A11a, A11h, A11j streaming, A11k layered timeouts |
-| A11i | Identical `find_remote*` functions | Clarity | Collapse to one |
-| A4 | Missing copy operations | Feature gap | ContentStore + handle methods |
-| A5 | Per-call HTTP client | Performance | Absorbed by A10 (shared client with layered timeouts) |
-| A6 | Dead provider fields | Cleanup | Absorbed by A10 |
-| A8 | Blocking I/O in ingest | Known constraint | Document only |
-| A9 | 15 remaining dispatch sites | Architectural | Absorbed by A10 |
-| A11e | `is_known_storage` full enumeration | Minor performance | Short-circuit check |
-| A11g | Magic hex constants | Readability | Named constants if touching file |
-| A11h | Remote list silent empty | Resilience | Improve logging now; structural fix in A10 |
-| A11l | Recursive tree ops without depth limit | Robustness | Add max_depth, skip symlinks |
-| A11m | Cross-storage move non-atomic | Known constraint | Document only; journal as future enhancement |
+| # | Issue | Severity | Fix | Status |
+|---|-------|----------|-----|--------|
+| A2 | Remote directory rename | **Correctness** | `is_dir` on `RenameInStorage` + `router.rename` | **Done** |
+| A7/A11b | Fragile `is_blocked_path` | **Correctness** | Split-and-check rewrite | **Done** |
+| A11a | String-based error detection | **Correctness** | `RouterError` with 2 variants | **Done** |
+| A11f | `has_path_traversal` duplicated | **Security** | Extract to `garden_common` | **Done** |
+| A11c | Stray purge races with ingest | **Data loss** window | Reduce purge to heartbeat-only (option B) | **Done** |
+| A11d | Display name fallback scattered | Divergence risk | `Management::display_name()` method | **Done** |
+| A11i | Identical `find_remote*` functions | Clarity | Collapse to one | **Done** |
+| A11j | Buffered I/O everywhere | **Correctness** — OOM | `read_range` for CfApi `fetch_data`; streaming deferred | **Done** (ranged read) |
+| A11k | No HTTP timeout | **Reliability** | Connect 10s + per-call metadata 30s + pool tuning | **Done** |
+| A11l | Recursive tree ops without depth limit | Robustness | `MAX_TREE_DEPTH = 64`, skip symlinks | **Done** |
+| A11e | `is_known_storage` full enumeration | Minor performance | Short-circuit via `find_local` | **Done** |
+| A11g | Magic hex constants | Readability | Named constants in `ingest.rs` | **Done** |
+| A11h | Remote list silent empty | Resilience | Structured `error!` logging per parse stage | **Done** |
+| A5 | Per-call HTTP client | Performance | `OnceLock` singleton, `pool_max_idle_per_host(4)` | **Done** |
+| A1 | Replication ticks lost | **Functional** | `StorageHandle` carries tick, writes use `notifying_content_store` | **Done** |
+| A3 | `do_rename_storage` in adapter | Architectural | `rename_replica_set()` extracted to `storage_service.rs` | **Done** |
+| A4 | Missing copy operations | Feature gap | `copy_file`, `copy_tree` on `StorageHandle` | **Done** |
+| A6 | Dead provider fields | Cleanup | `tick` wired via resolver; `local_endpoint` removed | **Done** |
+| A9 | 15 remaining dispatch sites | Architectural | All migrated to `StorageHandle` via `StorageResolver` | **Done** |
+| A10 | StorageHandle consolidation | Architectural | `StorageHandle` + `StorageResolver` replace `StorageRouter`. Absorbs A1, A3–A6, A9. Streaming I/O (A11j) deferred to separate effort. | **Done** |
+| A8 | Blocking I/O in ingest | Known constraint | Accepted limitation | N/A |
+| A11m | Cross-storage move non-atomic | Known constraint | Document only; journal as future enhancement | N/A |

@@ -124,7 +124,7 @@ impl StorageRoute {
         }
 
         // Local is absent or Dormant — find remote Primary
-        find_remote_primary(name, registry, stone_id)
+        find_remote(name, registry, stone_id)
             .await
             .context(format!("No Primary replica for storage '{}'", name))
     }
@@ -220,12 +220,7 @@ async fn find_local(name: &str, volumes: &Volumes) -> Option<LocalStorage> {
             return None;
         }
         let mgmt = vol.management.as_ref()?;
-        let display_name = if mgmt.replica_set_name.is_empty() {
-            garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY
-        } else {
-            &mgmt.replica_set_name
-        };
-        if display_name != name {
+        if mgmt.display_name() != name {
             return None;
         }
         Some(LocalStorage {
@@ -262,7 +257,10 @@ async fn find_local_by_id(id: &str, volumes: &Volumes) -> Option<LocalStorage> {
     })
 }
 
-/// Find any remote replica (Primary preferred) via the GardenRegistry.
+/// Find a remote replica (Primary preferred) via the GardenRegistry.
+///
+/// `route_to_primary` already prefers the Primary role and falls back to any
+/// available replica, so a single function serves both read and write routing.
 async fn find_remote(
     name: &str,
     registry: &GardenRegistry,
@@ -278,22 +276,46 @@ async fn find_remote(
         })
 }
 
-/// Find specifically the remote Primary replica.
-async fn find_remote_primary(
-    name: &str,
-    registry: &GardenRegistry,
-    stone_id: &str,
-) -> Option<StorageRoute> {
-    let reg = registry.read().await;
+// ============================================================================
+// Replica set rename (domain: in-memory mutation)
+// ============================================================================
 
-    // route_to_primary already prefers Primary role, falls back to any
-    reg.route_to_primary(name, stone_id)
-        .map(|(stone_id, endpoint, _bank_id)| {
-            StorageRoute::Proxy(ProxyTarget {
-                endpoint,
-                stone_id,
-            })
-        })
+/// Rename a replica set in the local volumes map.
+///
+/// Returns the mount paths of affected volumes so the caller can persist
+/// the change to disk (infra concern).  Returns `Err` if no local volumes
+/// matched `old_name`.
+pub async fn rename_replica_set(
+    old_name: &str,
+    new_name: &str,
+    volumes: &Volumes,
+) -> Result<Vec<String>> {
+    if find_local(old_name, volumes).await.is_none() {
+        anyhow::bail!("storage '{}' not found locally", old_name);
+    }
+
+    let mut map = volumes.write().await;
+    let mut mount_paths = Vec::new();
+    for vol in map.values_mut() {
+        let matches = vol
+            .management
+            .as_ref()
+            .is_some_and(|m| m.display_name() == old_name);
+        if matches {
+            mount_paths.push(vol.mount_path.to_string_lossy().to_string());
+            if let Some(ref mut mgmt) = vol.management {
+                mgmt.replica_set_name = new_name.to_string();
+                mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
+            }
+        }
+    }
+    drop(map);
+
+    if mount_paths.is_empty() {
+        anyhow::bail!("no volumes found for storage '{}'", old_name);
+    }
+
+    Ok(mount_paths)
 }
 
 // ============================================================================

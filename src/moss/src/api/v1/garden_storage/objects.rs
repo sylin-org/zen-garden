@@ -1,7 +1,7 @@
 //! S3 object operations on managed storage
 //!
 //! Objects live under `.zen-garden/storage/{bucket}/{key}`.
-//! All I/O flows through ObjectStore → ContentStore.
+//! Resolution via `StorageResolver`; local I/O via `ObjectStore` accessors.
 
 use axum::{
     body::Bytes,
@@ -15,6 +15,7 @@ use garden_common::storage::StorageRole;
 use tracing::debug;
 
 use crate::domain::storage_service::StorageRoute;
+use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
 
 use super::{
@@ -60,7 +61,13 @@ pub async fn get_object_v1(
         }
     }
 
-    let route = match StorageRoute::for_read(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None, // reads don't need tick
+    };
+    let handle = match resolver.for_read(&name).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(
@@ -71,74 +78,72 @@ pub async fn get_object_v1(
         }
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.object_store();
-            let (bucket, key) = parse_object_path(&path);
+    if let Some(store) = handle.object_store_for_read() {
+        let (bucket, key) = parse_object_path(&path);
 
-            if bucket.is_empty() {
-                return handle_bucket_listing(&store).await;
-            }
-
-            if has_path_traversal(&bucket) {
-                return error_response_raw(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_PATH",
-                    "Bucket contains invalid path segments",
-                );
-            }
-            if !key.is_empty() && has_path_traversal(&key) {
-                return error_response_raw(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_PATH",
-                    "Object key contains invalid path segments",
-                );
-            }
-
-            // Directory listing
-            if path.ends_with('/') || key.is_empty() {
-                return handle_directory_listing(&store, &local.name, &bucket, &key, &params)
-                    .await;
-            }
-
-            // Object retrieval
-            match store.get_object(&bucket, &key).await {
-                Ok(Some((data, meta))) => {
-                    debug!(storage = %local.name, key = %key, size = data.len(), "garden GET object");
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, &meta.content_type)
-                        .header(header::CONTENT_LENGTH, data.len())
-                        .header(header::ETAG, &meta.etag)
-                        .body(data.into())
-                        .unwrap()
-                }
-                Ok(None) => {
-                    error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
-                }
-                Err(e) => error_response_raw(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "GET_FAILED",
-                    &e.to_string(),
-                ),
-            }
+        if bucket.is_empty() {
+            return handle_bucket_listing(&store).await;
         }
-        StorageRoute::Proxy(target) => {
-            let query_str = if let Some(ref d) = params.depth {
-                format!("depth={}", d)
-            } else {
-                String::new()
-            };
-            proxy_request(
-                reqwest::Method::GET,
-                &target,
-                &format!("api/v1/garden/storage/{}/objects/{}", name, path),
-                &query_str,
-                &headers,
-                None,
-            )
-            .await
+
+        if has_path_traversal(&bucket) {
+            return error_response_raw(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PATH",
+                "Bucket contains invalid path segments",
+            );
         }
+        if !key.is_empty() && has_path_traversal(&key) {
+            return error_response_raw(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PATH",
+                "Object key contains invalid path segments",
+            );
+        }
+
+        // Directory listing
+        if path.ends_with('/') || key.is_empty() {
+            return handle_directory_listing(&store, handle.storage_name(), &bucket, &key, &params)
+                .await;
+        }
+
+        // Object retrieval
+        match store.get_object(&bucket, &key).await {
+            Ok(Some((data, meta))) => {
+                debug!(storage = %handle.storage_name(), key = %key, size = data.len(), "garden GET object");
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, &meta.content_type)
+                    .header(header::CONTENT_LENGTH, data.len())
+                    .header(header::ETAG, &meta.etag)
+                    .body(data.into())
+                    .unwrap()
+            }
+            Ok(None) => {
+                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
+            }
+            Err(e) => error_response_raw(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "GET_FAILED",
+                &e.to_string(),
+            ),
+        }
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        let query_str = if let Some(ref d) = params.depth {
+            format!("depth={}", d)
+        } else {
+            String::new()
+        };
+        proxy_request(
+            reqwest::Method::GET,
+            target,
+            &format!("api/v1/garden/storage/{}/objects/{}", name, path),
+            &query_str,
+            &headers,
+            None,
+        )
+        .await
     }
 }
 
@@ -165,7 +170,14 @@ pub async fn put_object_v1(
         }
     }
 
-    let route = StorageRoute::for_write(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id)
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.orchestration.storage.tick.raw.clone()),
+    };
+    let handle = resolver
+        .for_write(&name)
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
@@ -192,61 +204,58 @@ pub async fn put_object_v1(
         ));
     }
 
-    match route {
-        StorageRoute::Local(local) => {
-            let content_type = headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream");
+    if let Some(store) = handle.object_store_for_write() {
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream");
 
-            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
+        let result = store
+            .put_object(&bucket, &key, content_type, &body)
+            .await
+            .map_err(|e| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "PUT_FAILED",
+                    &e.to_string(),
+                )
+            })?;
 
-            let result = store
-                .put_object(&bucket, &key, content_type, &body)
-                .await
-                .map_err(|e| {
-                    err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "PUT_FAILED",
-                        &e.to_string(),
-                    )
-                })?;
+        debug!(storage = %handle.storage_name(), key = %key, size = body.len(), "garden PUT object");
 
-            debug!(storage = %local.name, key = %key, size = body.len(), "garden PUT object");
+        Ok(Json(ApiResponse::new(ObjectMeta {
+            key,
+            size: body.len() as u64,
+            content_type: content_type.to_string(),
+            etag: result.etag,
+            last_modified: chrono::Utc::now().to_rfc3339(),
+        })))
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        let response = proxy_request(
+            reqwest::Method::PUT,
+            target,
+            &format!("api/v1/garden/storage/{}/objects/{}", name, path),
+            "",
+            &headers,
+            Some(body),
+        )
+        .await;
 
-            Ok(Json(ApiResponse::new(ObjectMeta {
-                key,
-                size: body.len() as u64,
-                content_type: content_type.to_string(),
-                etag: result.etag,
-                last_modified: chrono::Utc::now().to_rfc3339(),
-            })))
+        if response.status() != StatusCode::OK && response.status() != StatusCode::CREATED {
+            return Err(err(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_ERROR",
+                "Failed to store object on primary",
+            ));
         }
-        StorageRoute::Proxy(target) => {
-            let response = proxy_request(
-                reqwest::Method::PUT,
-                &target,
-                &format!("api/v1/garden/storage/{}/objects/{}", name, path),
-                "",
-                &headers,
-                Some(body),
-            )
-            .await;
-
-            if response.status() != StatusCode::OK && response.status() != StatusCode::CREATED {
-                return Err(err(
-                    StatusCode::BAD_GATEWAY,
-                    "UPSTREAM_ERROR",
-                    "Failed to store object on primary",
-                ));
-            }
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            let data: ApiResponse<ObjectMeta> = serde_json::from_slice(&bytes)
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            Ok(Json(data))
-        }
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        let data: ApiResponse<ObjectMeta> = serde_json::from_slice(&bytes)
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        Ok(Json(data))
     }
 }
 
@@ -272,7 +281,14 @@ pub async fn delete_object_v1(
         }
     }
 
-    let route = StorageRoute::for_write(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id)
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.orchestration.storage.tick.raw.clone()),
+    };
+    let handle = resolver
+        .for_write(&name)
         .await
         .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
@@ -299,39 +315,37 @@ pub async fn delete_object_v1(
         ));
     }
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
-            store.delete_object(&bucket, &key).await.map_err(|e| {
-                err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "DELETE_FAILED",
-                    &e.to_string(),
-                )
-            })?;
-            debug!(storage = %local.name, key = %key, "garden DELETE object");
-            Ok(StatusCode::NO_CONTENT)
-        }
-        StorageRoute::Proxy(target) => {
-            let response = proxy_request(
-                reqwest::Method::DELETE,
-                &target,
-                &format!("api/v1/garden/storage/{}/objects/{}", name, path),
-                "",
-                &headers,
-                None,
+    if let Some(store) = handle.object_store_for_write() {
+        store.delete_object(&bucket, &key).await.map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DELETE_FAILED",
+                &e.to_string(),
             )
-            .await;
+        })?;
+        debug!(storage = %handle.storage_name(), key = %key, "garden DELETE object");
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        let response = proxy_request(
+            reqwest::Method::DELETE,
+            target,
+            &format!("api/v1/garden/storage/{}/objects/{}", name, path),
+            "",
+            &headers,
+            None,
+        )
+        .await;
 
-            if response.status() != StatusCode::NO_CONTENT && response.status() != StatusCode::OK {
-                return Err(err(
-                    StatusCode::BAD_GATEWAY,
-                    "UPSTREAM_ERROR",
-                    "Failed to delete object on primary",
-                ));
-            }
-            Ok(StatusCode::NO_CONTENT)
+        if response.status() != StatusCode::NO_CONTENT && response.status() != StatusCode::OK {
+            return Err(err(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_ERROR",
+                "Failed to delete object on primary",
+            ));
         }
+        Ok(StatusCode::NO_CONTENT)
     }
 }
 
@@ -357,7 +371,13 @@ pub async fn head_object_v1(
         }
     }
 
-    let route = match StorageRoute::for_read(&name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+    let handle = match resolver.for_read(&name).await {
         Ok(r) => r,
         Err(e) => {
             return error_response_raw(
@@ -391,39 +411,37 @@ pub async fn head_object_v1(
         );
     }
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.object_store();
-            match store.head_object(&bucket, &key).await {
-                Ok(Some(meta)) => Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, &meta.content_type)
-                    .header(header::CONTENT_LENGTH, meta.size)
-                    .header(header::ETAG, &meta.etag)
-                    .header(header::LAST_MODIFIED, &meta.last_modified)
-                    .body("".into())
-                    .unwrap(),
-                Ok(None) => {
-                    error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
-                }
-                Err(e) => error_response_raw(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "HEAD_FAILED",
-                    &e.to_string(),
-                ),
+    if let Some(store) = handle.object_store_for_read() {
+        match store.head_object(&bucket, &key).await {
+            Ok(Some(meta)) => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, &meta.content_type)
+                .header(header::CONTENT_LENGTH, meta.size)
+                .header(header::ETAG, &meta.etag)
+                .header(header::LAST_MODIFIED, &meta.last_modified)
+                .body("".into())
+                .unwrap(),
+            Ok(None) => {
+                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
             }
+            Err(e) => error_response_raw(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "HEAD_FAILED",
+                &e.to_string(),
+            ),
         }
-        StorageRoute::Proxy(target) => {
-            proxy_request(
-                reqwest::Method::HEAD,
-                &target,
-                &format!("api/v1/garden/storage/{}/objects/{}", name, path),
-                "",
-                &headers,
-                None,
-            )
-            .await
-        }
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        proxy_request(
+            reqwest::Method::HEAD,
+            target,
+            &format!("api/v1/garden/storage/{}/objects/{}", name, path),
+            "",
+            &headers,
+            None,
+        )
+        .await
     }
 }
 

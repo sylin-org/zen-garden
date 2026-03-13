@@ -172,17 +172,7 @@ pub(crate) fn error_response_raw(status: StatusCode, code: &str, message: &str) 
 }
 
 pub(crate) fn has_path_traversal(value: &str) -> bool {
-    if value.contains('\\') {
-        return true;
-    }
-    std::path::Path::new(value).components().any(|c| {
-        matches!(
-            c,
-            std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_)
-        )
-    })
+    garden_common::constants::storage::share::has_path_traversal(value)
 }
 
 /// Check if the incoming request was already proxied (loop guard).

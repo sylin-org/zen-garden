@@ -36,7 +36,7 @@ use dav_server::{fakels::FakeLs, localfs::LocalFs, DavHandler};
 use garden_common::storage::ChangelogEntry;
 use tracing::{debug, warn};
 
-use crate::domain::storage_service::{LocalStorage, StorageRoute};
+use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
 
 use super::garden_storage::HEADER_ZEN_PROXIED;
@@ -86,14 +86,25 @@ pub async fn handle_webdav(
     let is_mutation = is_write_method(&method);
 
     // Resolve storage routing
-    let route = if is_mutation {
-        StorageRoute::for_write(storage_name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await
-    } else {
-        StorageRoute::for_read(storage_name, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: if is_mutation {
+            Some(state.orchestration.storage.tick.raw.clone())
+        } else {
+            None
+        },
     };
 
-    let route = match route {
-        Ok(r) => r,
+    let handle = if is_mutation {
+        resolver.for_write(storage_name).await
+    } else {
+        resolver.for_read(storage_name).await
+    };
+
+    let handle = match handle {
+        Ok(h) => h,
         Err(e) => {
             return (
                 StatusCode::NOT_FOUND,
@@ -103,24 +114,32 @@ pub async fn handle_webdav(
         }
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            if is_proxied && local.role != garden_common::storage::StorageRole::Primary {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Proxied request reached a non-primary stone",
-                )
-                    .into_response();
+    if handle.is_local() {
+        if is_proxied && handle.mount_path().is_some() {
+            // Check role via local storage lookup
+            if let Some(local) = crate::domain::storage_service::StorageRoute::find_local(
+                storage_name,
+                &state.current.storage.volumes,
+            )
+            .await
+            {
+                if local.role != garden_common::storage::StorageRole::Primary {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Proxied request reached a non-primary stone",
+                    )
+                        .into_response();
+                }
             }
+        }
 
-            serve_local(&state, &local, storage_name, &method, &rel_path, request).await
+        serve_local(&handle, storage_name, &method, &rel_path, request).await
+    } else {
+        if is_proxied {
+            return (StatusCode::BAD_GATEWAY, "Proxy loop detected").into_response();
         }
-        StorageRoute::Proxy(target) => {
-            if is_proxied {
-                return (StatusCode::BAD_GATEWAY, "Proxy loop detected").into_response();
-            }
-            proxy_webdav(&target.endpoint, storage_name, request).await
-        }
+        let endpoint = handle.remote_endpoint().unwrap();
+        proxy_webdav(endpoint, storage_name, request).await
     }
 }
 
@@ -130,15 +149,15 @@ pub async fn handle_webdav(
 
 /// Serve a WebDAV request from local storage via `dav-server`.
 async fn serve_local(
-    state: &AppState,
-    local: &LocalStorage,
+    handle: &crate::infra::storage::handle::StorageHandle,
     storage_name: &str,
     method: &Method,
     rel_path: &str,
     request: Request,
 ) -> Response {
+    let mount_path = handle.mount_path().unwrap();
     let dav = DavHandler::builder()
-        .filesystem(LocalFs::new(&local.mount_path, false, false, false))
+        .filesystem(LocalFs::new(mount_path, false, false, false))
         .locksystem(FakeLs::new())
         .strip_prefix(format!("/dav/{}", storage_name))
         .build_handler();
@@ -148,8 +167,9 @@ async fn serve_local(
 
     // Record changelog for successful mutations
     if is_write_method(method) && status.is_success() {
-        let content_store = local.notifying_content_store(Some(&state.orchestration.storage.tick.raw));
-        record_changelog(&content_store, method, rel_path).await;
+        if let Some(content_store) = handle.content_store_for_write() {
+            record_changelog(&content_store, method, rel_path).await;
+        }
     }
 
     if status.is_success() {

@@ -47,11 +47,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
         // fqid = replica set display name (used for grouping replicas and Explorer folders).
         // Users see replica set names, not individual volume names.
         // The stable GUID lives in StorageMetadata.replica_set_id.
-        let fqid = if mgmt.replica_set_name.is_empty() {
-            garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY.to_string()
-        } else {
-            mgmt.replica_set_name.clone()
-        };
+        let fqid = mgmt.display_name().to_string();
 
         // Local storages always support s3 + storage protocols
         let protocols = vec![garden_common::constants::PROTOCOL_S3.to_string(), garden_common::constants::PROTOCOL_STORAGE.to_string()];

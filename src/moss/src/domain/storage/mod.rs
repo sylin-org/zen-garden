@@ -153,6 +153,17 @@ pub struct Management {
     pub store: ContentStore,
 }
 
+impl Management {
+    /// Replica set display name, falling back to the default when empty.
+    pub fn display_name(&self) -> &str {
+        if self.replica_set_name.is_empty() {
+            DEFAULT_REPLICA_SET_DISPLAY
+        } else {
+            &self.replica_set_name
+        }
+    }
+}
+
 // ============================================================================
 // Volume — the universal entity
 // ============================================================================
@@ -901,12 +912,7 @@ pub async fn roles_snapshot(volumes: &Volumes) -> HashMap<String, StorageRole> {
     map.values()
         .filter_map(|v| {
             v.management.as_ref().map(|m| {
-                let key = if m.replica_set_name.is_empty() {
-                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
-                } else {
-                    m.replica_set_name.clone()
-                };
-                (key, m.role)
+                (m.display_name().to_string(), m.role)
             })
         })
         .collect()
@@ -918,12 +924,7 @@ pub async fn pins_snapshot(volumes: &Volumes) -> HashMap<String, String> {
     map.values()
         .filter_map(|v| {
             v.management.as_ref().and_then(|m| {
-                let key = if m.replica_set_name.is_empty() {
-                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
-                } else {
-                    m.replica_set_name.clone()
-                };
-                m.pin.as_ref().map(|p| (key, p.pin_id.clone()))
+                m.pin.as_ref().map(|p| (m.display_name().to_string(), p.pin_id.clone()))
             })
         })
         .collect()

@@ -32,7 +32,7 @@ use axum::{
 use serde::Deserialize;
 use tracing::{debug, warn};
 
-use crate::domain::storage_service::StorageRoute;
+use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
 use garden_common::constants::headers::HEADER_SEED_BANK;
 use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
@@ -75,17 +75,7 @@ fn get_storage_name(headers: &HeaderMap, selector: &SeedBankSelector) -> Option<
 }
 
 fn has_path_traversal(value: &str) -> bool {
-    if value.contains('\\') {
-        return true;
-    }
-    std::path::Path::new(value).components().any(|c| {
-        matches!(
-            c,
-            std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_)
-        )
-    })
+    garden_common::constants::storage::share::has_path_traversal(value)
 }
 
 fn validate_bucket(bucket: &str) -> Option<Response> {
@@ -223,53 +213,57 @@ pub async fn put_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_write(&selected, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
-        Ok(route) => route,
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.orchestration.storage.tick.raw.clone()),
+    };
+
+    let handle = match resolver.for_write(&selected).await {
+        Ok(handle) => handle,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            let content_type = headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream");
+    if let Some(store) = handle.object_store_for_write() {
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream");
 
-            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
-            match store.put_object(&bucket, key, content_type, &body).await {
-                Ok(result) => {
-                    debug!(bucket = %bucket, key = %key, size = body.len(), "PUT object success");
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::ETAG, &result.etag)
-                        .body("".into())
-                        .unwrap()
-                }
-                Err(e) => {
-                    warn!(error = %e, "PUT object failed");
-                    xml_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                    )
-                }
+        match store.put_object(&bucket, key, content_type, &body).await {
+            Ok(result) => {
+                debug!(storage = %handle.storage_name(), bucket = %bucket, key = %key, size = body.len(), "PUT object success");
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::ETAG, &result.etag)
+                    .body("".into())
+                    .unwrap()
+            }
+            Err(e) => {
+                warn!(error = %e, "PUT object failed");
+                xml_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                )
             }
         }
-        StorageRoute::Proxy(target) => {
-            let mut query = Vec::new();
-            if selected != DEFAULT_REPLICA_SET_DISPLAY {
-                query.push(("seed-bank".to_string(), selected));
-            }
-            proxy_s3_request(
-                reqwest::Method::PUT,
-                &target.endpoint,
-                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
-                query,
-                &headers,
-                Some(body),
-            )
-            .await
+    } else {
+        let target = handle.proxy_target().unwrap();
+        let mut query = Vec::new();
+        if selected != DEFAULT_REPLICA_SET_DISPLAY {
+            query.push(("seed-bank".to_string(), selected));
         }
+        proxy_s3_request(
+            reqwest::Method::PUT,
+            &target.endpoint,
+            &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+            query,
+            &headers,
+            Some(body),
+        )
+        .await
     }
 }
 
@@ -302,56 +296,60 @@ pub async fn get_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
-        Ok(route) => route,
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+
+    let handle = match resolver.for_read(&selected).await {
+        Ok(handle) => handle,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.object_store();
-            match store.get_object(&bucket, key).await {
-                Ok(Some((data, meta))) => {
-                    debug!(bucket = %bucket, key = %key, size = data.len(), "GET object success");
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, &meta.content_type)
-                        .header(header::CONTENT_LENGTH, data.len())
-                        .header(header::ETAG, &meta.etag)
-                        .header(header::LAST_MODIFIED, &meta.last_modified)
-                        .body(data.into())
-                        .unwrap()
-                }
-                Ok(None) => xml_error(
-                    StatusCode::NOT_FOUND,
-                    "NoSuchKey",
-                    &format!("Key '{}' not found", key),
-                ),
-                Err(e) => {
-                    warn!(error = %e, "GET object failed");
-                    xml_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                    )
-                }
+    if let Some(store) = handle.object_store_for_read() {
+        match store.get_object(&bucket, key).await {
+            Ok(Some((data, meta))) => {
+                debug!(storage = %handle.storage_name(), bucket = %bucket, key = %key, size = data.len(), "GET object success");
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, &meta.content_type)
+                    .header(header::CONTENT_LENGTH, data.len())
+                    .header(header::ETAG, &meta.etag)
+                    .header(header::LAST_MODIFIED, &meta.last_modified)
+                    .body(data.into())
+                    .unwrap()
+            }
+            Ok(None) => xml_error(
+                StatusCode::NOT_FOUND,
+                "NoSuchKey",
+                &format!("Key '{}' not found", key),
+            ),
+            Err(e) => {
+                warn!(error = %e, "GET object failed");
+                xml_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                )
             }
         }
-        StorageRoute::Proxy(target) => {
-            let mut query = Vec::new();
-            if selected != DEFAULT_REPLICA_SET_DISPLAY {
-                query.push(("seed-bank".to_string(), selected));
-            }
-            proxy_s3_request(
-                reqwest::Method::GET,
-                &target.endpoint,
-                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
-                query,
-                &headers,
-                None,
-            )
-            .await
+    } else {
+        let target = handle.proxy_target().unwrap();
+        let mut query = Vec::new();
+        if selected != DEFAULT_REPLICA_SET_DISPLAY {
+            query.push(("seed-bank".to_string(), selected));
         }
+        proxy_s3_request(
+            reqwest::Method::GET,
+            &target.endpoint,
+            &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+            query,
+            &headers,
+            None,
+        )
+        .await
     }
 }
 
@@ -383,8 +381,15 @@ pub async fn head_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
-        Ok(route) => route,
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+
+    let handle = match resolver.for_read(&selected).await {
+        Ok(handle) => handle,
         Err(_) => {
             return Response::builder()
                 .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -393,46 +398,43 @@ pub async fn head_object(
         }
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.object_store();
-            match store.head_object(&bucket, key).await {
-                Ok(Some(meta)) => {
-                    debug!(bucket = %bucket, key = %key, "HEAD object success");
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, &meta.content_type)
-                        .header(header::CONTENT_LENGTH, meta.size)
-                        .header(header::ETAG, &meta.etag)
-                        .header(header::LAST_MODIFIED, &meta.last_modified)
-                        .body("".into())
-                        .unwrap()
-                }
-                Ok(None) => Response::builder()
-                    .status(StatusCode::NOT_FOUND)
+    if let Some(store) = handle.object_store_for_read() {
+        match store.head_object(&bucket, key).await {
+            Ok(Some(meta)) => {
+                debug!(storage = %handle.storage_name(), bucket = %bucket, key = %key, "HEAD object success");
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, &meta.content_type)
+                    .header(header::CONTENT_LENGTH, meta.size)
+                    .header(header::ETAG, &meta.etag)
+                    .header(header::LAST_MODIFIED, &meta.last_modified)
                     .body("".into())
-                    .unwrap(),
-                Err(_) => Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body("".into())
-                    .unwrap(),
+                    .unwrap()
             }
+            Ok(None) => Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body("".into())
+                .unwrap(),
+            Err(_) => Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("".into())
+                .unwrap(),
         }
-        StorageRoute::Proxy(target) => {
-            let mut query = Vec::new();
-            if selected != DEFAULT_REPLICA_SET_DISPLAY {
-                query.push(("seed-bank".to_string(), selected));
-            }
-            proxy_s3_request(
-                reqwest::Method::HEAD,
-                &target.endpoint,
-                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
-                query,
-                &headers,
-                None,
-            )
-            .await
+    } else {
+        let target = handle.proxy_target().unwrap();
+        let mut query = Vec::new();
+        if selected != DEFAULT_REPLICA_SET_DISPLAY {
+            query.push(("seed-bank".to_string(), selected));
         }
+        proxy_s3_request(
+            reqwest::Method::HEAD,
+            &target.endpoint,
+            &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+            query,
+            &headers,
+            None,
+        )
+        .await
     }
 }
 
@@ -458,47 +460,51 @@ pub async fn delete_object(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_write(&selected, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
-        Ok(route) => route,
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.orchestration.storage.tick.raw.clone()),
+    };
+
+    let handle = match resolver.for_write(&selected).await {
+        Ok(handle) => handle,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.notifying_object_store(Some(&state.orchestration.storage.tick.raw));
-            match store.delete_object(&bucket, key).await {
-                Ok(_) => {
-                    debug!(bucket = %bucket, key = %key, "DELETE object success");
-                    Response::builder()
-                        .status(StatusCode::NO_CONTENT)
-                        .body("".into())
-                        .unwrap()
-                }
-                Err(e) => {
-                    warn!(error = %e, "DELETE object failed");
-                    xml_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                    )
-                }
+    if let Some(store) = handle.object_store_for_write() {
+        match store.delete_object(&bucket, key).await {
+            Ok(_) => {
+                debug!(storage = %handle.storage_name(), bucket = %bucket, key = %key, "DELETE object success");
+                Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body("".into())
+                    .unwrap()
+            }
+            Err(e) => {
+                warn!(error = %e, "DELETE object failed");
+                xml_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                )
             }
         }
-        StorageRoute::Proxy(target) => {
-            let mut query = Vec::new();
-            if selected != DEFAULT_REPLICA_SET_DISPLAY {
-                query.push(("seed-bank".to_string(), selected));
-            }
-            proxy_s3_request(
-                reqwest::Method::DELETE,
-                &target.endpoint,
-                &format!("/api/v1/storage/s3/{}/{}", bucket, key),
-                query,
-                &headers,
-                None,
-            )
-            .await
+    } else {
+        let target = handle.proxy_target().unwrap();
+        let mut query = Vec::new();
+        if selected != DEFAULT_REPLICA_SET_DISPLAY {
+            query.push(("seed-bank".to_string(), selected));
         }
+        proxy_s3_request(
+            reqwest::Method::DELETE,
+            &target.endpoint,
+            &format!("/api/v1/storage/s3/{}/{}", bucket, key),
+            query,
+            &headers,
+            None,
+        )
+        .await
     }
 }
 
@@ -515,49 +521,53 @@ pub async fn list_buckets(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
-        Ok(route) => route,
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+
+    let handle = match resolver.for_read(&selected).await {
+        Ok(handle) => handle,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.object_store();
-            match store.list_buckets().await {
-                Ok(buckets) => {
-                    debug!(count = buckets.len(), "LIST buckets success");
-                    let xml = build_list_all_buckets_result(&buckets);
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, "application/xml")
-                        .body(xml.into())
-                        .unwrap()
-                }
-                Err(e) => {
-                    warn!(error = %e, "LIST buckets failed");
-                    xml_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                    )
-                }
+    if let Some(store) = handle.object_store_for_read() {
+        match store.list_buckets().await {
+            Ok(buckets) => {
+                debug!(storage = %handle.storage_name(), count = buckets.len(), "LIST buckets success");
+                let xml = build_list_all_buckets_result(&buckets);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/xml")
+                    .body(xml.into())
+                    .unwrap()
+            }
+            Err(e) => {
+                warn!(error = %e, "LIST buckets failed");
+                xml_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                )
             }
         }
-        StorageRoute::Proxy(target) => {
-            let mut query = Vec::new();
-            if selected != DEFAULT_REPLICA_SET_DISPLAY {
-                query.push(("seed-bank".to_string(), selected));
-            }
-            proxy_s3_request(
-                reqwest::Method::GET,
-                &target.endpoint,
-                "/api/v1/storage/s3",
-                query,
-                &headers,
-                None,
-            )
-            .await
+    } else {
+        let target = handle.proxy_target().unwrap();
+        let mut query = Vec::new();
+        if selected != DEFAULT_REPLICA_SET_DISPLAY {
+            query.push(("seed-bank".to_string(), selected));
         }
+        proxy_s3_request(
+            reqwest::Method::GET,
+            &target.endpoint,
+            "/api/v1/storage/s3",
+            query,
+            &headers,
+            None,
+        )
+        .await
     }
 }
 
@@ -595,80 +605,84 @@ pub async fn list_objects(
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
-    let route = match StorageRoute::for_read(&selected, &state.current.storage.volumes, &state.tool.registry, &state.current.stone.id).await {
-        Ok(route) => route,
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+
+    let handle = match resolver.for_read(&selected).await {
+        Ok(handle) => handle,
         Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
     };
 
     let max_keys = query.max_keys.unwrap_or(DEFAULT_MAX_KEYS).min(MAX_MAX_KEYS);
 
-    match route {
-        StorageRoute::Local(local) => {
-            let store = local.object_store();
-            match store
-                .list_objects(
-                    &bucket,
-                    query.prefix.as_deref(),
-                    query.delimiter.as_deref(),
-                    query.marker.as_deref(),
-                    max_keys,
-                )
-                .await
-            {
-                Ok(result) => {
-                    debug!(bucket = %bucket, count = result.contents.len(), truncated = result.is_truncated, "LIST objects success");
-
-                    let xml = build_list_bucket_result(
-                        &bucket,
-                        query.prefix.as_deref().unwrap_or(""),
-                        query.marker.as_deref().unwrap_or(""),
-                        max_keys,
-                        query.delimiter.as_deref().unwrap_or(""),
-                        &result,
-                    );
-
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, "application/xml")
-                        .body(xml.into())
-                        .unwrap()
-                }
-                Err(e) => {
-                    warn!(error = %e, "LIST objects failed");
-                    xml_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                    )
-                }
-            }
-        }
-        StorageRoute::Proxy(target) => {
-            let mut query_params = Vec::new();
-            if let Some(prefix) = &query.prefix {
-                query_params.push(("prefix".to_string(), prefix.clone()));
-            }
-            if let Some(delimiter) = &query.delimiter {
-                query_params.push(("delimiter".to_string(), delimiter.clone()));
-            }
-            if let Some(marker) = &query.marker {
-                query_params.push(("marker".to_string(), marker.clone()));
-            }
-            query_params.push(("max-keys".to_string(), max_keys.to_string()));
-            if selected != DEFAULT_REPLICA_SET_DISPLAY {
-                query_params.push(("seed-bank".to_string(), selected));
-            }
-
-            proxy_s3_request(
-                reqwest::Method::GET,
-                &target.endpoint,
-                &format!("/api/v1/storage/s3/{}", bucket),
-                query_params,
-                &headers,
-                None,
+    if let Some(store) = handle.object_store_for_read() {
+        match store
+            .list_objects(
+                &bucket,
+                query.prefix.as_deref(),
+                query.delimiter.as_deref(),
+                query.marker.as_deref(),
+                max_keys,
             )
             .await
+        {
+            Ok(result) => {
+                debug!(storage = %handle.storage_name(), bucket = %bucket, count = result.contents.len(), truncated = result.is_truncated, "LIST objects success");
+
+                let xml = build_list_bucket_result(
+                    &bucket,
+                    query.prefix.as_deref().unwrap_or(""),
+                    query.marker.as_deref().unwrap_or(""),
+                    max_keys,
+                    query.delimiter.as_deref().unwrap_or(""),
+                    &result,
+                );
+
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/xml")
+                    .body(xml.into())
+                    .unwrap()
+            }
+            Err(e) => {
+                warn!(error = %e, "LIST objects failed");
+                xml_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                )
+            }
         }
+    } else {
+        let target = handle.proxy_target().unwrap();
+        let mut query_params = Vec::new();
+        if let Some(prefix) = &query.prefix {
+            query_params.push(("prefix".to_string(), prefix.clone()));
+        }
+        if let Some(delimiter) = &query.delimiter {
+            query_params.push(("delimiter".to_string(), delimiter.clone()));
+        }
+        if let Some(marker) = &query.marker {
+            query_params.push(("marker".to_string(), marker.clone()));
+        }
+        query_params.push(("max-keys".to_string(), max_keys.to_string()));
+        if selected != DEFAULT_REPLICA_SET_DISPLAY {
+            query_params.push(("seed-bank".to_string(), selected));
+        }
+
+        proxy_s3_request(
+            reqwest::Method::GET,
+            &target.endpoint,
+            &format!("/api/v1/storage/s3/{}", bucket),
+            query_params,
+            &headers,
+            None,
+        )
+        .await
     }
 }
 

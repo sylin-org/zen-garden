@@ -9,7 +9,7 @@
 //!
 //! 1. **Monitor** — `notify` crate watches the sync root for Create/Modify
 //! 2. **Filter** — skip placeholders, metadata dirs, top-level storage folders
-//! 3. **Transfer** — copy file from sync root to storage via `StorageRouter`
+//! 3. **Transfer** — copy file from sync root to storage via `StorageHandle`
 //! 4. **Sync state** — `CfConvertToPlaceholder` marks the file in-sync
 //!
 //! The storage mount watcher (`infra/storage/watcher.rs`) independently detects
@@ -24,10 +24,12 @@ use notify::Watcher;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use tokio::sync::broadcast;
+
 use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
-use crate::infra::storage::router::StorageRouter;
-use garden_common::storage::StorageChanged;
+use crate::infra::storage::handle::StorageResolver;
+use garden_common::storage::{StorageChanged, StorageTick};
 
 // ============================================================================
 // Constants
@@ -44,7 +46,7 @@ const DEBOUNCE_SECS: u64 = 2;
 ///
 /// Monitors the sync root for user-created files and copies them to the
 /// corresponding storage mount (or proxies to remote Primary via
-/// `StorageRouter`).  Runs as a long-lived task.
+/// `StorageHandle` with tick notifications).  Runs as a long-lived task.
 ///
 /// Listens on `storage_changed_rx` so that files pasted while a storage was
 /// offline are retried as soon as the storage comes back online.
@@ -52,6 +54,7 @@ pub(crate) async fn run(
     volumes: Volumes,
     registry: GardenRegistry,
     stone_id: String,
+    tick: broadcast::Sender<StorageTick>,
     sync_root_path: PathBuf,
     mut storage_changed_rx: tokio::sync::broadcast::Receiver<StorageChanged>,
     shutdown_token: CancellationToken,
@@ -69,7 +72,7 @@ pub(crate) async fn run(
     info!("sync root ingest watcher started");
 
     // Catch files pasted before the watcher started
-    initial_scan(&volumes, &registry, &stone_id, &sync_root_path).await;
+    initial_scan(&volumes, &registry, &stone_id, &tick, &sync_root_path).await;
 
     let debounce = tokio::time::Duration::from_secs(DEBOUNCE_SECS);
     let mut pending: HashMap<PathBuf, ()> = HashMap::new();
@@ -106,13 +109,13 @@ pub(crate) async fn run(
                 };
                 if should_rescan {
                     debug!("storage came online — re-scanning sync root for pending files");
-                    initial_scan(&volumes, &registry, &stone_id, &sync_root_path).await;
+                    initial_scan(&volumes, &registry, &stone_id, &tick, &sync_root_path).await;
                 }
             }
             _ = tokio::time::sleep_until(debounce_deadline) => {
                 if !pending.is_empty() {
                     let batch: Vec<PathBuf> = pending.drain().map(|(p, _)| p).collect();
-                    transfer_batch(&volumes, &registry, &stone_id, &sync_root_path, &batch).await;
+                    transfer_batch(&volumes, &registry, &stone_id, &tick, &sync_root_path, &batch).await;
                 }
 
                 debounce_deadline = tokio::time::Instant::now() + debounce;
@@ -175,11 +178,12 @@ fn should_ingest(path: &Path, sync_root_path: &Path) -> bool {
 // File transfer
 // ============================================================================
 
-/// Copy a batch of files from the sync root to their storage via `StorageRouter`.
+/// Copy a batch of files from the sync root to their storage via `StorageHandle`.
 async fn transfer_batch(
     volumes: &Volumes,
     registry: &GardenRegistry,
     stone_id: &str,
+    tick: &broadcast::Sender<StorageTick>,
     sync_root_path: &Path,
     paths: &[PathBuf],
 ) {
@@ -192,9 +196,13 @@ async fn transfer_batch(
                 _ => continue,
             };
 
-        let router = match StorageRouter::for_write(&storage_name, volumes, registry, stone_id)
-            .await
-        {
+        let resolver = StorageResolver {
+            volumes,
+            registry,
+            stone_id,
+            tick: Some(tick.clone()),
+        };
+        let handle = match resolver.for_write(&storage_name).await {
             Ok(r) => r,
             Err(_) => {
                 debug!(storage = %storage_name, "no writable route for ingest");
@@ -205,8 +213,8 @@ async fn transfer_batch(
         let rel_path = remainder.to_string_lossy().replace('\\', "/");
 
         // For local storages, check if content is already identical
-        if router.is_local() {
-            if let Some(mp) = router.mount_path() {
+        if handle.is_local() {
+            if let Some(mp) = handle.mount_path() {
                 let target = mp.join(&remainder);
                 if target.exists() && files_match(path, &target).await {
                     mark_in_sync(path);
@@ -215,9 +223,9 @@ async fn transfer_batch(
             }
         }
 
-        // Transfer via router (handles both local and remote)
+        // Transfer via handle (handles both local and remote)
         if path.is_dir() {
-            match router.mkdir(&rel_path).await {
+            match handle.mkdir(&rel_path).await {
                 Ok(()) => {
                     debug!(
                         storage = %storage_name,
@@ -238,7 +246,7 @@ async fn transfer_batch(
             }
         } else if path.is_file() {
             match tokio::fs::read(path).await {
-                Ok(data) => match router.write(&rel_path, &data).await {
+                Ok(data) => match handle.write(&rel_path, &data).await {
                     Ok(()) => {
                         debug!(
                             storage = %storage_name,
@@ -280,6 +288,7 @@ async fn initial_scan(
     volumes: &Volumes,
     registry: &GardenRegistry,
     stone_id: &str,
+    tick: &broadcast::Sender<StorageTick>,
     sync_root_path: &Path,
 ) {
     let mut pending = Vec::new();
@@ -318,7 +327,7 @@ async fn initial_scan(
 
     if !pending.is_empty() {
         debug!(count = pending.len(), "initial ingest scan found files");
-        transfer_batch(volumes, registry, stone_id, sync_root_path, &pending).await;
+        transfer_batch(volumes, registry, stone_id, tick, sync_root_path, &pending).await;
     }
 }
 
@@ -384,13 +393,16 @@ fn mark_in_sync(path: &Path) {
         use cloud_filter::placeholder::{ConvertOptions, Placeholder};
         use std::os::windows::fs::OpenOptionsExt;
 
+        // Win32 access rights for directory handles (open as directory placeholder).
+        const DIR_ACCESS: u32 = 0x0012_0003; // FILE_LIST_DIRECTORY | FILE_ADD_FILE | SYNCHRONIZE | READ_CONTROL
+        const DIR_SHARE_ALL: u32 = 7; // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+        const BACKUP_SEMANTICS: u32 = 0x0200_0000; // FILE_FLAG_BACKUP_SEMANTICS
+
         let open_result = if path.is_dir() {
-            // Directories require FILE_FLAG_BACKUP_SEMANTICS to open.
-            // access_mode: FILE_LIST_DIRECTORY | FILE_ADD_FILE | SYNCHRONIZE | READ_CONTROL
             std::fs::OpenOptions::new()
-                .access_mode(0x0012_0003)
-                .share_mode(7)
-                .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+                .access_mode(DIR_ACCESS)
+                .share_mode(DIR_SHARE_ALL)
+                .custom_flags(BACKUP_SEMANTICS)
                 .open(path)
         } else {
             std::fs::OpenOptions::new()

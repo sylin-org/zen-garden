@@ -605,14 +605,7 @@ pub async fn rename_bank_v1(
         let map = state.current.storage.volumes.read().await;
         map.values()
             .filter(|v| {
-                v.management.as_ref().is_some_and(|m| {
-                    let display = if m.replica_set_name.is_empty() {
-                        DEFAULT_REPLICA_SET_DISPLAY
-                    } else {
-                        &m.replica_set_name
-                    };
-                    display == name
-                })
+                v.management.as_ref().is_some_and(|m| m.display_name() == name)
             })
             .map(|v| v.mount_path.to_string_lossy().to_string())
             .collect()
@@ -640,14 +633,7 @@ pub async fn rename_bank_v1(
         let mut map = state.current.storage.volumes.write().await;
         let mut rsid = String::new();
         for vol in map.values_mut() {
-            let matches = vol.management.as_ref().is_some_and(|m| {
-                let display = if m.replica_set_name.is_empty() {
-                    DEFAULT_REPLICA_SET_DISPLAY
-                } else {
-                    &m.replica_set_name
-                };
-                display == name
-            });
+            let matches = vol.management.as_ref().is_some_and(|m| m.display_name() == name);
             if matches {
                 if let Some(ref mut mgmt) = vol.management {
                     rsid = mgmt.replica_set_id.clone();

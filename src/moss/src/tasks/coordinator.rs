@@ -1632,17 +1632,12 @@ pub(crate) async fn start_background_tasks(
     // Registers a "Zen Garden" sync root in Explorer so storages appear natively.
     #[cfg(target_os = "windows")]
     {
-        let cf_endpoint = {
-            let entry = state.current.topology.self_entry.read().await;
-            Arc::new(RwLock::new(entry.address.http_base()))
-        };
         if let Err(e) = crate::infra::cloud_filter::start(
             state.current.storage.volumes.clone(),
             state.tool.registry.clone(),
             state.current.stone.id.clone(),
             state.orchestration.storage.tick.raw.clone(),
             state.subscribe_storage_changed(),
-            cf_endpoint,
             shutdown_token.child_token(),
         )
         .await

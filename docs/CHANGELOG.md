@@ -2,6 +2,12 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-12
+
+- **STORAGE-0015 A10**: StorageHandle consolidation. `StorageHandle` replaces `StorageRouter` as the unified dispatch type — callers never match on Local vs Proxy. `StorageResolver` eliminates the repeated 4-arg resolution pattern across 15+ handler sites. Write operations now emit replication tick events (A1). `rename_replica_set()` extracted from CfApi adapter to domain service (A3). `copy_file`/`copy_tree` within-storage operations added (A4). Dead `local_endpoint` field removed; `StorageRouter` type alias retired (A6). HTTP client upgraded with per-call metadata timeouts (30s) and connection pooling (A11k). See [STORAGE-0015](decisions/STORAGE-0015-cloud-drive-storage-router.md).
+
+- **STORAGE-0015 hardening**: Robustness audit fixes across the Cloud Filter + StorageRouter stack. `RouterError` typed error enum replaces string-based 404 detection (code standard #10). Ranged read for CfApi hydration avoids full-file OOM. Depth-limited recursive tree operations. `OnceLock` HTTP client singleton. `Management::display_name()` centralizes replica set name fallback. Named Win32 constants in `mark_in_sync`. Stray purge limited to heartbeat passes to avoid racing ingest. `is_blocked_path` rewritten with proper path splitting. `has_path_traversal` shared between garden and S3 handlers.
+
 ## 2026-03-09
 
 - **STORAGE-0015**: Cloud Drive DDD/SoC refactor. StorageRouter unifies local/remote I/O dispatch. CloudDrive policy module extracts rename decision tree. Rebuilt provider.rs, ingest.rs, files.rs to use StorageRouter. See [STORAGE-0015](decisions/STORAGE-0015-cloud-drive-storage-router.md).

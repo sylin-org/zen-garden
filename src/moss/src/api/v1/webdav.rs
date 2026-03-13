@@ -33,6 +33,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dav_server::{fakels::FakeLs, localfs::LocalFs, DavHandler};
+use futures_util::StreamExt;
 use garden_common::storage::ChangelogEntry;
 use tracing::{debug, warn};
 
@@ -246,10 +247,9 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
         }
     };
 
-    // Convert reqwest response → axum response
+    // Convert reqwest response → axum response (streaming — A11j Wave 3)
     let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let resp_headers = response.headers().clone();
-    let resp_body = response.bytes().await.unwrap_or_default();
 
     let mut builder = Response::builder().status(status);
 
@@ -260,9 +260,15 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
         }
     }
 
-    builder.body(Body::from(resp_body)).unwrap_or_else(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build proxy response").into_response()
-    })
+    // Stream the response body instead of buffering the entire payload
+    let stream = response
+        .bytes_stream()
+        .map(|r| r.map_err(std::io::Error::other));
+    builder
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build proxy response").into_response()
+        })
 }
 
 // ============================================================================

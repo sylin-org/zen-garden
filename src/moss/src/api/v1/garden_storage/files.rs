@@ -183,31 +183,47 @@ pub async fn get_file_v1(
         }
     }
 
-    // File read
-    match handle.read(path).await {
-        Ok(data) => {
-            let content_type = mime_guess::from_path(path)
-                .first_or_octet_stream()
-                .to_string();
-            debug!(storage = %name, path = %path, size = data.len(), "garden GET file");
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type)
-                .header(header::CONTENT_LENGTH, data.len())
-                .body(data.into())
-                .unwrap()
-        }
+    // File read — streaming response (A11j)
+    let size = match handle.file_size(path).await {
+        Ok(s) => s,
         Err(RouterError::NotFound(_)) => {
-            error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
+            return error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found");
         }
         Err(e) => {
-            error_response_raw(
+            return error_response_raw(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "READ_FAILED",
                 &e.to_string(),
-            )
+            );
         }
-    }
+    };
+
+    let reader = match handle.open_read(path).await {
+        Ok(r) => r,
+        Err(RouterError::NotFound(_)) => {
+            return error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found");
+        }
+        Err(e) => {
+            return error_response_raw(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "READ_FAILED",
+                &e.to_string(),
+            );
+        }
+    };
+
+    let content_type = mime_guess::from_path(path)
+        .first_or_octet_stream()
+        .to_string();
+    debug!(storage = %name, path = %path, size, "garden GET file (streaming)");
+
+    let stream = tokio_util::io::ReaderStream::new(reader);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, size)
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap()
 }
 
 // ============================================================================

@@ -418,6 +418,125 @@ impl ContentStore {
             .with_context(|| format!("Failed to stat {}", full.display()))
     }
 
+    /// Plaintext file size (A11j).
+    ///
+    /// Unencrypted: filesystem metadata size.
+    /// Encrypted: filesystem size minus AEAD overhead (version + nonce + tag = 29 bytes).
+    pub async fn file_size(&self, rel: &str) -> Result<u64> {
+        let meta = self.file_metadata(rel).await?;
+        let disk_size = meta.len();
+        if self.dek.is_some() {
+            Ok(disk_size.saturating_sub(ENCRYPTION_OVERHEAD as u64))
+        } else {
+            Ok(disk_size)
+        }
+    }
+
+    /// Open a file for streaming read (A11j).
+    ///
+    /// Unencrypted: returns the `tokio::fs::File` directly (zero-copy streaming).
+    /// Encrypted: decrypts the entire file (AEAD constraint), returns a `Cursor`
+    /// over the plaintext. Callers get `Box<dyn AsyncRead>` either way.
+    pub async fn open_read(
+        &self,
+        rel: &str,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Unpin + Send>> {
+        let full_path = self.mount_root.join(rel);
+        match &self.dek {
+            None => {
+                let file = tokio::fs::File::open(&full_path)
+                    .await
+                    .with_context(|| format!("open {}", full_path.display()))?;
+                Ok(Box::new(file))
+            }
+            Some(dek) => {
+                let raw = tokio::fs::read(&full_path)
+                    .await
+                    .with_context(|| format!("read {}", full_path.display()))?;
+                let plaintext = decrypt(dek, &raw)
+                    .with_context(|| format!("decrypt {}", full_path.display()))?;
+                Ok(Box::new(std::io::Cursor::new(plaintext)))
+            }
+        }
+    }
+
+    /// Streaming write from an `AsyncRead` source (A11j Wave 2).
+    ///
+    /// Streams data through an atomic tmp→fsync→rename write. Appends a
+    /// changelog entry and emits a tick notification on success.
+    ///
+    /// **Unencrypted stores only.** Encrypted stores require the full
+    /// plaintext upfront for AEAD — callers must use `write_file()` instead.
+    ///
+    /// Returns the number of bytes written.
+    pub async fn write_from_reader(
+        &self,
+        rel: &str,
+        reader: &mut (dyn tokio::io::AsyncRead + Unpin + Send),
+    ) -> Result<u64> {
+        assert!(
+            self.dek.is_none(),
+            "write_from_reader called on encrypted store — use write_file()"
+        );
+
+        let full_path = self.mount_root.join(rel);
+        let existed = full_path.exists();
+
+        // Ensure parent directories exist
+        if let Some(parent) = full_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create dirs for {}", full_path.display()))?;
+        }
+
+        // Atomic write: tmp → fsync → rename
+        let tmp_path = full_path.with_extension("tmp");
+        let mut tmp_file = tokio::fs::File::create(&tmp_path)
+            .await
+            .with_context(|| format!("create tmp {}", tmp_path.display()))?;
+
+        let bytes_written = tokio::io::copy(reader, &mut tmp_file)
+            .await
+            .with_context(|| format!("stream into {}", tmp_path.display()))?;
+
+        tmp_file.flush().await?;
+
+        // Best-effort fsync
+        if let Ok(file) = std::fs::File::open(&tmp_path) {
+            let _ = file.sync_all();
+        }
+
+        // Windows doesn't allow rename over existing file
+        #[cfg(windows)]
+        if full_path.exists() {
+            let _ = tokio::fs::remove_file(&full_path).await;
+        }
+
+        tokio::fs::rename(&tmp_path, &full_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "rename {} → {}",
+                    tmp_path.display(),
+                    full_path.display()
+                )
+            })?;
+
+        debug!(path = %rel, size = bytes_written, "streaming write complete");
+
+        // Append changelog entry (best-effort)
+        if !rel.starts_with(".zen-garden/") {
+            let entry = if existed {
+                ChangelogEntry::modified(rel, bytes_written)
+            } else {
+                ChangelogEntry::created(rel, bytes_written)
+            };
+            self.append_changelog(&entry).await;
+        }
+
+        Ok(bytes_written)
+    }
+
     /// Derive the DEK for a seed bank from the pond data key and the seed bank name.
     ///
     /// All replicas of the same logical seed bank share this key.
@@ -961,6 +1080,9 @@ fn walk_content_files(root: &Path) -> Result<Vec<ChangelogEntry>> {
 
 /// On-disk format version. Allows future format changes without breaking existing data.
 const ENCRYPTION_VERSION: u8 = 1;
+
+/// Byte overhead added by encryption: version(1) + nonce(12) + tag(16).
+const ENCRYPTION_OVERHEAD: usize = 1 + 12 + 16; // = 29
 
 /// Encrypt plaintext with ChaCha20-Poly1305.
 ///

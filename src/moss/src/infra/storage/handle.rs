@@ -354,6 +354,82 @@ impl StorageHandle {
         }
     }
 
+    /// Streaming read — returns an async reader (A11j).
+    ///
+    /// Local unencrypted: streams directly from `tokio::fs::File`.
+    /// Local encrypted: decrypts entire file (AEAD), returns `Cursor`.
+    /// Remote: streams the `reqwest` response body.
+    ///
+    /// Callers never branch on encryption — the handle falls back internally.
+    pub async fn open_read(
+        &self,
+        path: &str,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Unpin + Send>, RouterError> {
+        match &self.inner {
+            HandleInner::Local(local) => {
+                let store = local.content_store();
+                store
+                    .open_read(path)
+                    .await
+                    .map_err(|e| classify_error(e, path))
+            }
+            HandleInner::Remote(target) => {
+                let url = self.file_url(target, path);
+                let resp = http_client()
+                    .get(&url)
+                    .send()
+                    .await
+                    .with_context(|| format!("GET {url}"))
+                    .map_err(RouterError::Other)?;
+
+                classify_http_response(resp.status(), &url, path)?;
+
+                // Stream the response body via StreamReader
+                use futures_util::StreamExt;
+                let byte_stream = resp.bytes_stream().map(|result| {
+                    result.map_err(std::io::Error::other)
+                });
+                let reader = tokio_util::io::StreamReader::new(byte_stream);
+                Ok(Box::new(reader))
+            }
+        }
+    }
+
+    /// Plaintext file size (A11j — needed for Content-Length on streaming responses).
+    pub async fn file_size(&self, path: &str) -> Result<u64, RouterError> {
+        match &self.inner {
+            HandleInner::Local(local) => {
+                let store = local.content_store();
+                store
+                    .file_size(path)
+                    .await
+                    .map_err(|e| classify_error(e, path))
+            }
+            HandleInner::Remote(target) => {
+                // HEAD to get Content-Length
+                let url = self.file_url(target, path);
+                let resp = http_client()
+                    .head(&url)
+                    .timeout(METADATA_TIMEOUT)
+                    .send()
+                    .await
+                    .with_context(|| format!("HEAD {url}"))
+                    .map_err(RouterError::Other)?;
+
+                classify_http_response(resp.status(), &url, path)?;
+
+                let size = resp
+                    .headers()
+                    .get(reqwest::header::CONTENT_LENGTH)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0);
+
+                Ok(size)
+            }
+        }
+    }
+
     /// Write a file (creates parent dirs automatically).
     pub async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         match &self.inner {
@@ -664,12 +740,48 @@ impl StorageHandle {
 // ============================================================================
 
 /// Copy a single file between two storages.
+///
+/// Fast path (A11j Wave 2): when both src and dst are local and the dst
+/// is unencrypted, streams via `open_read()` → `write_from_reader()` —
+/// no full-file `Vec<u8>` allocation.
+///
+/// Fallback: buffered `read()` + `write()` (encrypted dst, remote, or mixed).
 pub async fn transfer(
     src: &StorageHandle,
     src_path: &str,
     dst: &StorageHandle,
     dst_path: &str,
 ) -> Result<()> {
+    // Fast path: both local, dst unencrypted → streaming copy
+    if let (HandleInner::Local(src_local), HandleInner::Local(dst_local)) =
+        (&src.inner, &dst.inner)
+    {
+        let dst_store = if dst.tick.is_some() {
+            dst_local.notifying_content_store(dst.tick.as_ref())
+        } else {
+            dst_local.content_store()
+        };
+
+        if !dst_store.is_encrypted() {
+            let src_store = src_local.content_store();
+            let mut reader = src_store
+                .open_read(src_path)
+                .await
+                .with_context(|| format!("open_read {src_path}"))?;
+            let bytes = dst_store.write_from_reader(dst_path, &mut *reader).await?;
+            debug!(
+                src_storage = %src.storage_name(),
+                src_path,
+                dst_storage = %dst.storage_name(),
+                dst_path,
+                bytes,
+                "transferred file (streaming)"
+            );
+            return Ok(());
+        }
+    }
+
+    // Fallback: buffered
     let data = src.read(src_path).await.map_err(anyhow::Error::from)?;
     dst.write(dst_path, &data).await?;
     debug!(
@@ -737,6 +849,9 @@ async fn transfer_tree_inner(
 /// Ingest a file or directory from an arbitrary filesystem path into a storage.
 ///
 /// Used for drag-from-outside-sync-root and stray root item recovery.
+///
+/// Fast path (A11j Wave 2): when dst is local and unencrypted, streams
+/// the source file via `write_from_reader()` — no full-file buffer.
 pub async fn ingest(
     source: &Path,
     dst: &StorageHandle,
@@ -746,10 +861,7 @@ pub async fn ingest(
     if is_dir {
         ingest_tree(source, dst, dst_path).await?;
     } else {
-        let data = tokio::fs::read(source)
-            .await
-            .with_context(|| format!("read {}", source.display()))?;
-        dst.write(dst_path, &data).await?;
+        ingest_file(source, dst, dst_path).await?;
     }
 
     debug!(
@@ -758,6 +870,32 @@ pub async fn ingest(
         path = %dst_path,
         "ingested from outside"
     );
+    Ok(())
+}
+
+/// Ingest a single file — streaming when possible.
+async fn ingest_file(source: &Path, dst: &StorageHandle, dst_path: &str) -> Result<()> {
+    // Fast path: local unencrypted dst → streaming write
+    if let HandleInner::Local(local) = &dst.inner {
+        let store = if dst.tick.is_some() {
+            local.notifying_content_store(dst.tick.as_ref())
+        } else {
+            local.content_store()
+        };
+        if !store.is_encrypted() {
+            let mut file = tokio::fs::File::open(source)
+                .await
+                .with_context(|| format!("open {}", source.display()))?;
+            store.write_from_reader(dst_path, &mut file).await?;
+            return Ok(());
+        }
+    }
+
+    // Fallback: buffered
+    let data = tokio::fs::read(source)
+        .await
+        .with_context(|| format!("read {}", source.display()))?;
+    dst.write(dst_path, &data).await?;
     Ok(())
 }
 
@@ -798,10 +936,7 @@ async fn ingest_tree_inner(
         if ft.is_dir() {
             Box::pin(ingest_tree_inner(&child_src, dst, &child_dst, depth + 1)).await?;
         } else {
-            let data = tokio::fs::read(&child_src)
-                .await
-                .with_context(|| format!("read {}", child_src.display()))?;
-            dst.write(&child_dst, &data).await?;
+            ingest_file(&child_src, dst, &child_dst).await?;
         }
     }
 

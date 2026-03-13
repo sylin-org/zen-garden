@@ -1153,7 +1153,7 @@ This is a future enhancement, not a prerequisite.
 | A11c | Stray purge races with ingest | **Data loss** window | Reduce purge to heartbeat-only (option B) | **Done** |
 | A11d | Display name fallback scattered | Divergence risk | `Management::display_name()` method | **Done** |
 | A11i | Identical `find_remote*` functions | Clarity | Collapse to one | **Done** |
-| A11j | Buffered I/O everywhere | **Correctness** — OOM | `read_range` for CfApi `fetch_data`; streaming deferred | **Done** (ranged read) |
+| A11j | Buffered I/O everywhere | **Correctness** — OOM | Three-mechanism I/O: `read_range` (CfApi), streaming read/write (`open_read`, `write_from_reader`), buffered fallback (encrypted). REST GET, WebDAV proxy, `transfer`, and `ingest` all stream. | **Done** |
 | A11k | No HTTP timeout | **Reliability** | Connect 10s + per-call metadata 30s + pool tuning | **Done** |
 | A11l | Recursive tree ops without depth limit | Robustness | `MAX_TREE_DEPTH = 64`, skip symlinks | **Done** |
 | A11e | `is_known_storage` full enumeration | Minor performance | Short-circuit via `find_local` | **Done** |

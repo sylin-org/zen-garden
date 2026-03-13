@@ -1407,7 +1407,7 @@ pub(crate) async fn start_background_tasks(
                     event = vol_rx.recv() => {
                         let Some(ev) = event else { break };
                         match ev {
-                            PhysicalStorageEvent::Connected { mount_path, label, capacity_bytes, used_bytes, removable } => {
+                            PhysicalStorageEvent::Connected { device_path, mount_path, label, capacity_bytes, used_bytes, removable } => {
                                 let capacity_gb = capacity_bytes / 1_000_000_000;
                                 let _ = pulse.send(infra::PulseEvent::Domain(
                                     infra::DomainPulse::storage_event(
@@ -1416,6 +1416,7 @@ pub(crate) async fn start_background_tasks(
                                         "info",
                                         None,
                                         Some(serde_json::json!({
+                                            "device_path": device_path,
                                             "mount_path": mount_path,
                                             "label": label,
                                             "capacity_gb": capacity_gb,
@@ -1423,7 +1424,7 @@ pub(crate) async fn start_background_tasks(
                                         })),
                                     )
                                 ));
-                                bank.on_appeared(mount_path, label, capacity_bytes, used_bytes, removable).await;
+                                bank.on_appeared(device_path, mount_path, label, capacity_bytes, used_bytes, removable).await;
                             }
                             PhysicalStorageEvent::Disconnected { path } => {
                                 let _ = pulse.send(infra::PulseEvent::Domain(
@@ -1638,6 +1639,8 @@ pub(crate) async fn start_background_tasks(
             state.current.stone.id.clone(),
             state.orchestration.storage.tick.raw.clone(),
             state.subscribe_storage_changed(),
+            state.tool.delta.subscribe(),
+            state.console.clone(),
             shutdown_token.child_token(),
         )
         .await

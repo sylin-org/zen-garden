@@ -1,27 +1,42 @@
 //! Explorer integration signals — info bar and toast notifications (STORAGE-0016)
 //!
+//! ## Signal tiers
+//!
+//! **Set-level (WinRT toast)** — fires only when a replica set crosses the
+//! available ↔ offline boundary.  A set is *available* when it has ≥1 ready
+//! member; *offline* when it has none.  Adding a second replica to a set that
+//! already has one member is silent.
+//!
+//! | Function        | Condition                          |
+//! |-----------------|------------------------------------|
+//! | `set_connected` | Set gained its first ready member  |
+//! | `set_returned`  | Set came back after being offline  |
+//! | `set_offline`   | Set lost its last ready member     |
+//!
+//! **Per-storage (console)** — fires on every individual managed storage
+//! appearing or disappearing in the garden, regardless of replica-set state.
+//!
+//! | Function              | Condition                             |
+//! |-----------------------|---------------------------------------|
+//! | `storage_available`   | One managed storage became ready      |
+//! | `storage_unavailable` | One managed storage departed          |
+//!
 //! ## Phase 3 — Explorer info bar
 //!
 //! `CfReportSyncStatus` sets a per-sync-root status message that Explorer
-//! displays in a blue info bar above the file list when any storage is
-//! offline.  Passing `None` clears the bar.
+//! displays in a blue info bar above the file list when any set is offline.
 //!
 //! ## Phase 4 — Toast notifications
 //!
-//! WinRT `ToastNotification` fires once per state *transition* (online →
-//! offline, offline → online).  Notifications are suppressed for the first
-//! 120 s after Moss starts to avoid alerting on cold-boot.
-//!
-//! ### AUMID registration
-//!
-//! WinRT toasts require a registered AppUserModelID (AUMID).  `init()`
-//! writes the `garden-moss` AUMID to `HKCU\Software\Classes\AppUserModelId`
-//! at cloud-filter startup — no installer needed.  The write is idempotent.
+//! WinRT `ToastNotification` fires on set-level boundary crossings.  The AUMID
+//! `garden-moss` is registered in HKCU at cloud-filter startup — no installer
+//! needed.
 
 use std::path::Path;
-use std::time::Instant;
+use std::sync::Arc;
 
-use tracing::{debug, warn};
+use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
+use tracing::warn;
 
 // ============================================================================
 // Bootstrap
@@ -44,7 +59,6 @@ pub(crate) fn init() {
         {
             Ok((key, _)) => {
                 let _ = key.set_value("DisplayName", &"Zen Garden");
-                debug!(aumid = AUMID, "AUMID registered for toast notifications");
             }
             Err(e) => {
                 warn!(aumid = AUMID, error = %e, "failed to register AUMID (toasts may not appear)");
@@ -54,20 +68,89 @@ pub(crate) fn init() {
 }
 
 // ============================================================================
+// Set-level toast notifications
+// ============================================================================
+
+/// A set gained its first ready member (was previously absent or at zero).
+pub(crate) fn set_connected(set_name: &str) {
+    let body = format!("'{set_name}' is connected.");
+    tracing::info!(set = %set_name, "storage set connected");
+
+    #[cfg(target_os = "windows")]
+    send_toast("Zen Garden", &body);
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = body;
+}
+
+/// A set that was fully offline came back — at least one member is ready again.
+pub(crate) fn set_returned(set_name: &str) {
+    let body = format!("'{set_name}' is back online.");
+    tracing::info!(set = %set_name, "storage set back online");
+
+    #[cfg(target_os = "windows")]
+    send_toast("Zen Garden", &body);
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = body;
+}
+
+/// A set lost its last ready member — all replicas are now offline.
+pub(crate) fn set_offline(set_name: &str) {
+    let body = format!("'{set_name}' is offline.");
+    tracing::info!(set = %set_name, "storage set offline");
+
+    #[cfg(target_os = "windows")]
+    send_toast("Zen Garden", &body);
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = body;
+}
+
+// ============================================================================
+// Per-storage console events
+// ============================================================================
+
+/// One individual managed storage became available to the garden.
+pub(crate) fn storage_available(
+    storage_name: &str,
+    stone_name: &str,
+    console: &Arc<ConsolePrinter>,
+) {
+    console.emit(ConsoleEvent::new(
+        EventCategory::Storage,
+        EventStatus::Connected,
+        format!("'{storage_name}' available on {stone_name}"),
+    ));
+}
+
+/// One individual managed storage departed the garden.
+pub(crate) fn storage_unavailable(
+    storage_name: &str,
+    stone_name: &str,
+    console: &Arc<ConsolePrinter>,
+) {
+    console.emit(ConsoleEvent::new(
+        EventCategory::Storage,
+        EventStatus::Disconnected,
+        format!("'{storage_name}' unavailable (was on {stone_name})"),
+    ));
+}
+
+// ============================================================================
 // Phase 3 — CfReportSyncStatus info bar
 // ============================================================================
 
-/// Show the Explorer info bar for the sync root listing offline storages.
+/// Show the Explorer info bar listing offline sets.
 ///
-/// If the bar is already showing, this overwrites it with the current list.
-/// Silently no-ops on non-Windows or if the Win32 call fails.
-pub(crate) fn report_sync_status(sync_root_path: &Path, offline_storages: &[&str]) {
-    if offline_storages.is_empty() {
+/// Overwrites any previous message.  Silently no-ops on non-Windows.
+pub(crate) fn report_sync_status(sync_root_path: &Path, offline_sets: &[&str]) {
+    if offline_sets.is_empty() {
         return;
     }
 
-    let names = offline_storages.join(", ");
-    let message = if offline_storages.len() == 1 {
+    let names = offline_sets.join(", ");
+    let message = if offline_sets.len() == 1 {
         format!(
             "'{names}' is not reachable. Check that the stone hosting it is powered on and connected to your network."
         )
@@ -80,7 +163,7 @@ pub(crate) fn report_sync_status(sync_root_path: &Path, offline_storages: &[&str
     #[cfg(target_os = "windows")]
     {
         if let Err(e) = set_sync_status(sync_root_path, Some(&message)) {
-            debug!(error = %e, "CfReportSyncStatus failed (non-fatal)");
+            tracing::debug!(error = %e, "CfReportSyncStatus failed (non-fatal)");
         }
     }
 
@@ -88,12 +171,12 @@ pub(crate) fn report_sync_status(sync_root_path: &Path, offline_storages: &[&str
     let _ = (sync_root_path, message);
 }
 
-/// Clear the Explorer info bar (all storages are back online).
+/// Clear the Explorer info bar (all sets are back online).
 pub(crate) fn clear_sync_status(sync_root_path: &Path) {
     #[cfg(target_os = "windows")]
     {
         if let Err(e) = set_sync_status(sync_root_path, None) {
-            debug!(error = %e, "CfReportSyncStatus clear failed (non-fatal)");
+            tracing::debug!(error = %e, "CfReportSyncStatus clear failed (non-fatal)");
         }
     }
 
@@ -116,7 +199,6 @@ fn set_sync_status(sync_root_path: &Path, message: Option<&str>) -> windows::cor
 
     match message {
         None => {
-            // Passing null clears the status bar
             unsafe { CfReportSyncStatus(PCWSTR::from_raw(path_wide.as_ptr()), None) }
         }
         Some(msg) => {
@@ -152,61 +234,9 @@ fn set_sync_status(sync_root_path: &Path, message: Option<&str>) -> windows::cor
 }
 
 // ============================================================================
-// Phase 4 — Toast notifications
-// ============================================================================
-
-const STARTUP_SUPPRESS_SECS: u64 = 120;
-
-/// Notify the user that a storage went offline.
-///
-/// Suppressed during the startup window to avoid alerting on cold-boot.
-pub(crate) fn notify_offline(storage_name: &str, startup_at: Instant) {
-    if startup_at.elapsed().as_secs() < STARTUP_SUPPRESS_SECS {
-        debug!(storage = %storage_name, "suppressing offline notification (startup window)");
-        return;
-    }
-
-    let title = "Zen Garden";
-    let body = format!("'{storage_name}' is offline — check that its stone is reachable.");
-
-    tracing::info!(storage = %storage_name, "storage went offline");
-
-    #[cfg(target_os = "windows")]
-    send_toast(title, &body);
-
-    #[cfg(not(target_os = "windows"))]
-    let _ = (title, body);
-}
-
-/// Notify the user that a storage came back online.
-///
-/// Suppressed during the startup window.
-pub(crate) fn notify_online(storage_name: &str, stone_name: &str, startup_at: Instant) {
-    if startup_at.elapsed().as_secs() < STARTUP_SUPPRESS_SECS {
-        debug!(storage = %storage_name, "suppressing online notification (startup window)");
-        return;
-    }
-
-    let title = "Zen Garden";
-    let body = format!("'{storage_name}' is back online on {stone_name}.");
-
-    tracing::info!(storage = %storage_name, stone = %stone_name, "storage came back online");
-
-    #[cfg(target_os = "windows")]
-    send_toast(title, &body);
-
-    #[cfg(not(target_os = "windows"))]
-    let _ = (title, body);
-}
-
-// ============================================================================
 // WinRT toast helper
 // ============================================================================
 
-/// Fire a WinRT toast notification.
-///
-/// Best-effort: logs a warning if the WinRT stack is unavailable (e.g.
-/// running under Session 0 without a registered AUMID) and continues.
 #[cfg(target_os = "windows")]
 fn send_toast(title: &str, body: &str) {
     if let Err(e) = try_send_toast(title, body) {
@@ -219,7 +249,6 @@ fn try_send_toast(title: &str, body: &str) -> windows::core::Result<()> {
     use windows::Data::Xml::Dom::XmlDocument;
     use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 
-    // Escape XML special characters in user-visible strings
     let title_escaped = xml_escape(title);
     let body_escaped = xml_escape(body);
 

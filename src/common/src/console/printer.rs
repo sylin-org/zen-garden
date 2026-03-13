@@ -155,10 +155,11 @@ impl ConsolePrinter {
                     )
             }
             ConsoleMode::Informative => {
-                // All high-level lifecycle events (exclude verbose-only)
-                // Special case: Docker | CONNECTED is visible, Services | CONNECTED is not
-                if event.status == EventStatus::Connected {
-                    matches!(event.category, EventCategory::Docker)
+                // All high-level lifecycle events (exclude verbose-only).
+                // Connected/Disconnected are gated by category: Docker and Storage
+                // are user-visible; Services connections are not.
+                if matches!(event.status, EventStatus::Connected | EventStatus::Disconnected) {
+                    matches!(event.category, EventCategory::Docker | EventCategory::Storage)
                 } else {
                     !matches!(
                         event.status,
@@ -213,6 +214,13 @@ impl ConsolePrinter {
         // Docker connection (critical for understanding service readiness)
         if matches!(event.category, EventCategory::Docker)
             && matches!(event.status, EventStatus::Connected)
+        {
+            return true;
+        }
+
+        // Storage availability changes (managed storage plug/unplug)
+        if matches!(event.category, EventCategory::Storage)
+            && matches!(event.status, EventStatus::Connected | EventStatus::Disconnected)
         {
             return true;
         }

@@ -142,7 +142,7 @@ impl StorageRouter {
 Each method dispatched in a single match:
 
 - `Local` → `ContentStore` methods (extended — see below)
-- `Proxy` → HTTP to `{endpoint}/api/v1/garden/storage/{name}/files/{path}`
+- `Proxy` → HTTP to `{endpoint}/api/v1/garden/storage/{name}/fs/{path}`
   using existing REST endpoints that already handled these operations
 
 Cross-storage operations composed two routers:
@@ -624,7 +624,7 @@ impl StorageHandle {
     pub async fn metadata(&self, path: &str) -> Result<FileMeta>;
     pub async fn exists(&self, path: &str) -> Result<bool>;
 }
-// Local: ContentStore. Remote: /api/v1/garden/storage/{name}/files/{path}
+// Local: ContentStore. Remote: /api/v1/garden/storage/{name}/fs/{path}
 // Encrypted stores: open_read/open_write fall back to buffered internally.
 // See A11j for the three-mechanism I/O model and encryption constraint.
 ```

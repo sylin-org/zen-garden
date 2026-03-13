@@ -128,10 +128,11 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 |--------|----------|----------|
 | GET | `/api/v1/garden/storage` | List all storages across garden |
 | GET | `/api/v1/garden/storage/{name}` | Discover replicas |
-| GET | `/api/v1/garden/storage/{name}/files/*path` | Read user file (Primary-or-proxy) |
-| PUT | `/api/v1/garden/storage/{name}/files/*path` | Write user file |
-| DELETE | `/api/v1/garden/storage/{name}/files/*path` | Delete user file |
-| HEAD | `/api/v1/garden/storage/{name}/files/*path` | File metadata |
+| GET | `/api/v1/garden/storage/{name}/fs` | Directory listing (`?path=&depth=N`) |
+| GET | `/api/v1/garden/storage/{name}/fs/*path` | Read user file |
+| PUT | `/api/v1/garden/storage/{name}/fs/*path` | Write user file |
+| DELETE | `/api/v1/garden/storage/{name}/fs/*path` | Delete user file/dir |
+| HEAD | `/api/v1/garden/storage/{name}/fs/*path` | File metadata |
 | GET | `/api/v1/garden/storage/{name}/objects/*path` | Read S3 object |
 | PUT | `/api/v1/garden/storage/{name}/objects/*path` | Write S3 object |
 | DELETE | `/api/v1/garden/storage/{name}/objects/*path` | Delete S3 object |

@@ -4,6 +4,8 @@ All notable changes to Zen Garden will be documented in this file.
 
 ## 2026-03-12
 
+- **Garden storage API**: `/files/` namespace renamed to `/fs/`. Directory listing separated from content access (S3/GCS model): `GET /fs?path=&depth=N` for listing, `GET /fs/{*path}` for file content. Proxy `handle.list()` uses the listing endpoint with query parameters, avoiding the Axum wildcard gap for root/empty paths. CfApi startup purge race fixed — initial reconciliation no longer deletes remote-storage placeholders before registry beacons arrive.
+
 - **STORAGE-0015 A11j**: Streaming I/O. REST GET, WebDAV proxy, cross-storage `transfer`, and filesystem `ingest` now stream via `AsyncRead`/`AsyncWrite` instead of buffering entire files in memory. Encrypted stores fall back to buffered internally (AEAD constraint) — callers get a uniform `Box<dyn AsyncRead>` without branching. New `ContentStore` methods: `open_read()`, `file_size()`, `write_from_reader()`. See [STORAGE-0015](decisions/STORAGE-0015-cloud-drive-storage-router.md).
 
 - **STORAGE-0015 A10**: StorageHandle consolidation. `StorageHandle` replaces `StorageRouter` as the unified dispatch type — callers never match on Local vs Proxy. `StorageResolver` eliminates the repeated 4-arg resolution pattern across 15+ handler sites. Write operations now emit replication tick events (A1). `rename_replica_set()` extracted from CfApi adapter to domain service (A3). `copy_file`/`copy_tree` within-storage operations added (A4). Dead `local_endpoint` field removed; `StorageRouter` type alias retired (A6). HTTP client upgraded with per-call metadata timeouts (30s) and connection pooling (A11k). See [STORAGE-0015](decisions/STORAGE-0015-cloud-drive-storage-router.md).

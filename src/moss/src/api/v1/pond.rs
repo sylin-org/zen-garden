@@ -499,12 +499,12 @@ pub async fn pond_init_v1(
 
     // Generate or use provided pond name
     let pond_name = match payload.name {
-        Some(ref name) if garden_common::naming::is_valid_pond_name(name) => name.clone(),
+        Some(ref name) if crate::domain::naming::is_valid_pond_name(name) => name.clone(),
         Some(ref name) if !name.is_empty() => {
             // User gave a name but not in pond-x-y format — prefix it
             format!("pond-{}", name.to_lowercase().replace(' ', "-"))
         }
-        _ => garden_common::naming::generate_pond_name(),
+        _ => crate::domain::naming::generate_pond_name(),
     };
 
     // Persist pond metadata and update state
@@ -1135,7 +1135,7 @@ pub async fn pond_rename_v1(
     }
 
     let new_name = match payload.name {
-        Some(ref name) if garden_common::naming::is_valid_pond_name(name) => name.clone(),
+        Some(ref name) if crate::domain::naming::is_valid_pond_name(name) => name.clone(),
         Some(ref name) if !name.is_empty() => {
             return Err(error_response(
                 StatusCode::BAD_REQUEST,
@@ -1144,7 +1144,7 @@ pub async fn pond_rename_v1(
                 None,
             ));
         }
-        _ => garden_common::naming::generate_pond_name(),
+        _ => crate::domain::naming::generate_pond_name(),
     };
 
     state.security.pond.state.set_name(new_name.clone()).await;
@@ -1575,7 +1575,7 @@ async fn execute_pond_init_from_ceremony(
         }
     }
 
-    let pond_name = garden_common::naming::generate_pond_name();
+    let pond_name = crate::domain::naming::generate_pond_name();
     state.security.pond.state.set_name(pond_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(pond_name.clone()),

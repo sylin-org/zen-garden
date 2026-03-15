@@ -30,7 +30,7 @@ pub struct AuditAccessEntry {
 
 /// Append an audit entry to the local audit log (best effort).
 pub async fn log_access(entry: &AuditAccessEntry) {
-    let path = crate::constants::paths::audit_log_path();
+    let path = garden_common::constants::paths::audit_log_path();
     if let Some(parent) = std::path::Path::new(&path).parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
             tracing::warn!(path = %path, error = ?e, "Failed to create audit log directory");

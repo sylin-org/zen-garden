@@ -33,6 +33,7 @@
 //! or `all` for recursive).  Listing is a metadata query on `/fs`, while content
 //! operations use the `/fs/{*path}` wildcard.
 
+pub mod audit;
 pub mod files;
 pub mod memories;
 pub mod objects;

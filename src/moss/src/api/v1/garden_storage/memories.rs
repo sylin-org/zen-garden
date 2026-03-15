@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
-use garden_common::audit::{log_access, AuditAccessEntry};
+use super::audit::{log_access, AuditAccessEntry};
 use garden_common::constants::headers::{
     HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME,
 };

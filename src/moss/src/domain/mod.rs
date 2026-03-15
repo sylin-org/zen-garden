@@ -35,6 +35,7 @@ pub mod infrastructure;
 pub mod maintenance;
 pub mod metrics_collection;
 pub mod modes;
+pub mod naming;
 pub mod network;
 pub mod nurturing;
 pub mod offering_resolution;

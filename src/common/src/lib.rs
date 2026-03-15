@@ -3,7 +3,6 @@
 
 pub mod api_manifest;
 pub mod api_utils;
-pub mod audit;
 pub mod cli;
 pub mod cli_colors;
 pub mod client;
@@ -20,8 +19,6 @@ pub mod jobs;
 pub mod manifests;
 pub mod mdns;
 pub mod metrics;
-pub mod naming;
-pub mod net;
 pub mod notifications;
 pub mod nourishment;
 pub mod offerings;
@@ -46,7 +43,6 @@ pub use stone::{Current, Environment, OsKind, Stone};
 pub use companion::{Companion, Manifest};
 
 // Re-export commonly used items
-pub use audit::{log_access, AuditAccessEntry};
 pub use cli_colors::{AnsiColor, CliFormatter, ColorSupport};
 pub use client::{GardenApiResponse, GardenHttpClient};
 pub use jobs::*;

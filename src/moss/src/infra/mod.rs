@@ -102,7 +102,7 @@ pub use persistence::{
 pub use process::{
     check_moss_processes_exist, kill_existing_moss_processes, kill_existing_moss_processes_graceful,
 };
-pub use secrets::SecretsManager;
+pub use secrets::Secrets;
 #[cfg(target_os = "windows")]
 pub use service::{
     cleanup_after_service_update, cleanup_updater_process, finalize_service_update,

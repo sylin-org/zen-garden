@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -14,22 +14,22 @@ use std::io::Write;
 pub struct UprootCommand {
     pub service: String,
     pub force: bool,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl UprootCommand {
-    pub fn new(service: String, force: bool, quiet_mode: bool) -> Self {
+    pub fn new(service: String, force: bool, quiet: bool) -> Self {
         Self {
             service,
             force,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for UprootCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let service_path = urlencoding::encode(&self.service);
         // First check if the service exists before prompting
         let check_url = ctx.api_v1_url(&format!("stone/services/{}", service_path))?;
@@ -42,12 +42,12 @@ impl Command for UprootCommand {
                 ui::status_indicator("error", ctx.term.supports_color),
                 self.service
             );
-            suggestions::print_suggestions(cmd::UPROOT, self.quiet_mode);
+            suggestions::print_suggestions(cmd::UPROOT, self.quiet);
             return Ok(());
         }
 
         // Confirmation prompt (unless --force or quiet mode)
-        if !self.force && !self.quiet_mode {
+        if !self.force && !self.quiet {
             println!(
                 "{}⚠️  WARNING: This will PERMANENTLY DESTROY service '{}' and its container",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -119,7 +119,7 @@ impl Command for UprootCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::UPROOT, self.quiet_mode);
+        suggestions::print_suggestions(cmd::UPROOT, self.quiet);
 
         Ok(())
     }

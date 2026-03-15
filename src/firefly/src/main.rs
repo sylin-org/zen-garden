@@ -18,9 +18,9 @@ mod oled;
 mod serial;
 mod tdisplay;
 
-use animation::{start_animation, AnimationContext};
-use events::FireflyEventHandler;
-use handler::FireflyHandler;
+use animation::{start_animation, Animation};
+use events::FireflyEvents;
+use handler::FireflyCommands;
 use serial::{
     detect_device_type, find_firefly_device, DetectedDevice, FireflyConnection, FireflyDeviceType,
     FireflySerial,
@@ -196,7 +196,7 @@ async fn main() -> Result<()> {
     let companion_state = Arc::new(CompanionState::new(state_dir.clone()));
 
     // Create animation context (handles brightness persistence)
-    let animation_context = Arc::new(RwLock::new(AnimationContext::new(state_dir)));
+    let animation = Arc::new(RwLock::new(Animation::new(state_dir)));
 
     // Create connection manager (doesn't require device to be present)
     let connection = Arc::new(FireflyConnection::new(cli.serial_port));
@@ -222,7 +222,7 @@ async fn main() -> Result<()> {
 
     // Spawn background task to monitor connection and retry every 5 seconds
     let conn_for_retry = Arc::clone(&connection);
-    let ctx_for_retry = Arc::clone(&animation_context);
+    let ctx_for_retry = Arc::clone(&animation);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
@@ -312,25 +312,25 @@ async fn main() -> Result<()> {
 
     // Start the animation engine (runs the baseline firefly animation)
     let _animation_handle =
-        start_animation(Arc::clone(&connection), Arc::clone(&animation_context));
+        start_animation(Arc::clone(&connection), Arc::clone(&animation));
     tracing::info!("Animation engine started");
 
     // Start SSE client to receive presence events from Moss
     // Path defaults to PRESENCE_STREAM_PATH from garden_common
     let sse_config = SseClientConfig::new(&stone);
-    let event_handler = Arc::new(FireflyEventHandler::new(
-        Arc::clone(&animation_context),
+    let events = Arc::new(FireflyEvents::new(
+        Arc::clone(&animation),
         Arc::clone(&connection),
         Arc::clone(&companion_state),
     ));
-    let _sse_handle = SseClient::start(sse_config, event_handler);
+    let _sse_handle = SseClient::start(sse_config, events);
     tracing::info!(endpoint = %stone, "SSE client started for presence events");
 
     // Create command handler
-    let handler = FireflyHandler::new(
+    let commands = FireflyCommands::new(
         Arc::clone(&connection),
         Arc::clone(&companion_state),
-        Arc::clone(&animation_context),
+        Arc::clone(&animation),
     );
 
     // Build and run Companion
@@ -346,7 +346,7 @@ async fn main() -> Result<()> {
     // Run Companion with graceful shutdown
     tokio::select! {
         result = CompanionRuntime::new(config, "firefly")
-            .command_handler(handler)
+            .command_handler(commands)
             .run() => {
             // Companion stopped normally - clear display
             tracing::info!("Companion stopped, clearing display");

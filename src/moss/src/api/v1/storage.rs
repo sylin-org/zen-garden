@@ -249,7 +249,7 @@ pub async fn storage_overview_v1(
 ) -> Result<Json<ApiResponse<StorageOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Get local banks from the unified Volumes domain (STORAGE-0011)
     let local_banks: Vec<StorageInfo> = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .filter_map(|v| v.to_storage_info())
             .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
@@ -259,13 +259,13 @@ pub async fn storage_overview_v1(
     let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
 
     // Get garden-wide view from unified registry
-    let reg = state.registry.read().await;
-    let local_roles = crate::domain::storage::roles_snapshot(&state.volumes).await;
-    let local_pins = crate::domain::storage::pins_snapshot(&state.volumes).await;
+    let reg = state.tool.registry.read().await;
+    let local_roles = crate::domain::storage::roles_snapshot(&state.current.storage.volumes).await;
+    let local_pins = crate::domain::storage::pins_snapshot(&state.current.storage.volumes).await;
     let mut garden_banks = Vec::new();
 
     for entry in reg.storage_entries() {
-        let is_local = entry.tool.stone.id == state.stone_id;
+        let is_local = entry.tool.stone.id == state.current.stone.id;
         let sm = entry.tool.storage.as_ref();
 
         let role = if is_local {
@@ -332,7 +332,7 @@ pub async fn storage_health_v1(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<StorageHealth>>, (StatusCode, Json<ApiErrorResponse>)> {
     let managed: Vec<StorageInfo> = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values().filter_map(|v| v.to_storage_info()).collect()
     };
 
@@ -401,7 +401,7 @@ pub async fn list_banks_v1(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<StorageInfo>>>, (StatusCode, Json<ApiErrorResponse>)> {
     let banks: Vec<StorageInfo> = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .filter_map(|v| v.to_storage_info())
             .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
@@ -420,7 +420,7 @@ pub async fn get_bank_v1(
     Path(name): Path<String>,
 ) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
     let bank = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
@@ -445,8 +445,8 @@ pub async fn delete_bank_v1(
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
     // Check if still mounted (managed volume present = still mounted)
     {
-        let map = state.volumes.read().await;
-        if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.online) {
+        let map = state.current.storage.volumes.read().await;
+        if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.state.is_online()) {
             return Err(err(
                 StatusCode::CONFLICT,
                 "BANK_MOUNTED",
@@ -498,7 +498,7 @@ pub async fn delete_bank_v1(
         None,
         Some(serde_json::json!({ "name": name })),
     );
-    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     info!(name = %name, "Bank mount directory removed");
     Ok(StatusCode::NO_CONTENT)
@@ -514,7 +514,7 @@ pub async fn release_bank_v1(
     Path(name): Path<String>,
 ) -> Result<Json<ApiResponse<ReleaseResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     let _mount_path = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         let vol = map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
@@ -537,12 +537,12 @@ pub async fn release_bank_v1(
         None,
         Some(serde_json::json!({ "name": name })),
     );
-    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     // STORAGE-0011: Remove management from the released volume
     // Capture identity before clearing management.
     let (device_id, replica_set_id) = {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
         let ids = map.values().find(|v| {
             v.management.as_ref().is_some_and(|m| m.name == name)
         }).and_then(|v| {
@@ -602,17 +602,10 @@ pub async fn rename_bank_v1(
 
     // Find all local volumes matching this replica set name
     let mount_paths: Vec<String> = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .filter(|v| {
-                v.management.as_ref().is_some_and(|m| {
-                    let display = if m.replica_set_name.is_empty() {
-                        DEFAULT_REPLICA_SET_DISPLAY
-                    } else {
-                        &m.replica_set_name
-                    };
-                    display == name
-                })
+                v.management.as_ref().is_some_and(|m| m.display_name() == name)
             })
             .map(|v| v.mount_path.to_string_lossy().to_string())
             .collect()
@@ -637,17 +630,10 @@ pub async fn rename_bank_v1(
 
     // Sync replica_set_name to volume management and capture replica_set_id
     let replica_set_id = {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
         let mut rsid = String::new();
         for vol in map.values_mut() {
-            let matches = vol.management.as_ref().is_some_and(|m| {
-                let display = if m.replica_set_name.is_empty() {
-                    DEFAULT_REPLICA_SET_DISPLAY
-                } else {
-                    &m.replica_set_name
-                };
-                display == name
-            });
+            let matches = vol.management.as_ref().is_some_and(|m| m.display_name() == name);
             if matches {
                 if let Some(ref mut mgmt) = vol.management {
                     rsid = mgmt.replica_set_id.clone();
@@ -661,7 +647,7 @@ pub async fn rename_bank_v1(
 
     // Re-read updated info from volumes (return first matching volume's info)
     let updated = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.replica_set_name == request.new_name))
             .and_then(|v| v.to_storage_info())
@@ -675,7 +661,7 @@ pub async fn rename_bank_v1(
         replica_set_id,
         new_name: request.new_name.clone(),
     }).await;
-    state.orchestration_nudge.notify_one();
+    state.orchestration.storage.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(updated.clone())))
 }
@@ -691,10 +677,10 @@ pub async fn list_candidates_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<CandidatesResponse>), (StatusCode, Json<ApiErrorResponse>)> {
     // Space candidates: mounted volumes that are unmanaged, removable, and online.
-    let volumes_map = state.volumes.read().await;
+    let volumes_map = state.current.storage.volumes.read().await;
     let spaces: Vec<StorageDetectedInfo> = volumes_map
         .values()
-        .filter(|v| !v.is_managed() && v.removable && v.online)
+        .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
         .map(|v| StorageDetectedInfo {
             device: v.path.clone(),
             mount_path: Some(v.mount_path.to_string_lossy().to_string()),
@@ -708,7 +694,7 @@ pub async fn list_candidates_v1(
         .collect();
 
     // Medium candidates: physical disks (USB/external only).
-    let media_map = state.media.read().await;
+    let media_map = state.current.storage.media.read().await;
     let media: Vec<MediumInfo> = media_map
         .values()
         .filter(|m| m.removable)
@@ -844,7 +830,7 @@ pub async fn add_storage_v1(
 
         // Same-name replicas are fine (STORAGE-0006)
         {
-            let map = state.volumes.read().await;
+            let map = state.current.storage.volumes.read().await;
             if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name)) {
                 info!(name = %name, "Same-name storage exists — new device will be a replica");
             }
@@ -860,14 +846,14 @@ pub async fn add_storage_v1(
                 preparing.insert(target.to_string());
             }
 
-            let job_id_clone = job_id.clone();
-            let name_clone = name.clone();
+            let task_job_id = job_id.clone();
+            let task_name = name.clone();
             let device = target.to_string();
             let filesystem = request.filesystem.clone();
             let encrypted = request.encrypted;
             let roles = request.roles.clone();
-            let stone_name = state.stone_name.clone();
-            let pulse_tx = state.pulse_tx.clone();
+            let stone_name = state.current.stone.name.clone();
+            let pulse = state.pulse.clone();
             let tools_state = state.clone();
             let guard_device = target.to_string();
 
@@ -875,15 +861,14 @@ pub async fn add_storage_v1(
                 let _guard = PrepareGuard { device: guard_device };
 
                 match run_format_and_add(
-                    &job_id_clone, &device, &name_clone, &filesystem,
-                    encrypted, &roles, &stone_name, pulse_tx.clone(),
+                    &task_job_id, &device, &task_name, &filesystem,
+                    encrypted, &roles, &stone_name, pulse.clone(),
                 ).await {
                     Ok(()) => {
                         tools_state.emit_storage_changed(
-                            garden_common::storage::StorageChanged::Connected {
-                                name: name_clone.clone(),
+                            garden_common::storage::StorageChanged::Sensed {
+                                name: task_name.clone(),
                                 roles: roles.clone(),
-                                used_bytes: 0,
                             },
                         ).await;
                         tools_state.emit_storage_changed(
@@ -892,17 +877,17 @@ pub async fn add_storage_v1(
                     }
                     Err(e) => {
                         tracing::error!(
-                            job_id = %job_id_clone, device = %device, name = %name_clone,
+                            job_id = %task_job_id, device = %device, name = %task_name,
                             error = %e, error_chain = ?e, "Storage add (format) FAILED"
                         );
-                        let pulse = DomainPulse::storage_event(
+                        let failure_pulse = DomainPulse::storage_event(
                             event_types::STORAGE_ADD_PROGRESS,
-                            format!("Add failed: {} - {}", name_clone, e),
+                            format!("Add failed: {} - {}", task_name, e),
                             "error",
-                            Some(job_id_clone.clone()),
-                            Some(serde_json::json!({ "name": name_clone, "error": e.to_string() })),
+                            Some(task_job_id.clone()),
+                            Some(serde_json::json!({ "name": task_name, "error": e.to_string() })),
                         );
-                        let _ = pulse_tx.send(PulseEvent::Domain(pulse));
+                        let _ = pulse.send(PulseEvent::Domain(failure_pulse));
                     }
                 }
             });
@@ -928,7 +913,7 @@ pub async fn add_storage_v1(
         };
 
         let manifest = StorageManifest::with_roles(
-            &name, &state.stone_name, "unknown", visibility, request.roles.clone(),
+            &name, &state.current.stone.name, "unknown", visibility, request.roles.clone(),
         );
 
         let data_dir = garden_common::constants::paths::data_dir();
@@ -984,7 +969,7 @@ pub async fn add_storage_v1(
     };
 
     let manifest = StorageManifest::with_roles(
-        &name, &state.stone_name, "unknown", visibility, request.roles.clone(),
+        &name, &state.current.stone.name, "unknown", visibility, request.roles.clone(),
     );
 
     add_at_path(state, target_path, manifest, false).await
@@ -1054,15 +1039,14 @@ async fn add_at_path(
         replica_set_id: manifest.replica_set_id.clone(),
     }).await;
 
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Connected {
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Sensed {
         name: manifest.name.clone(),
         roles: manifest.roles.clone(),
-        used_bytes: 0,
     }).await;
 
-    let storages = crate::domain::storage::name_id_pairs(&state.volumes).await;
+    let storages = crate::domain::storage::name_id_pairs(&state.current.storage.volumes).await;
     if let Err(e) = crate::infra::storage::refresh_signpost(
-        &state.stone_name, state.api_port, &storages,
+        &state.current.stone.name, state.current.api_port, &storages,
     ).await {
         warn!(error = %e, "Failed to refresh signpost after add");
     }
@@ -1080,12 +1064,12 @@ async fn run_format_and_add(
     encrypted: bool,
     roles: &[String],
     stone_name: &str,
-    pulse_tx: tokio::sync::broadcast::Sender<PulseEvent>,
+    pulse: tokio::sync::broadcast::Sender<PulseEvent>,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
     info!(job_id, device, name, encrypted, "Starting storage add (format)");
-    emit_progress(&pulse_tx, job_id, name, "analyzing", "Analyzing device...");
+    emit_progress(&pulse, job_id, name, "analyzing", "Analyzing device...");
 
     let actual_fs = if filesystem == "btrfs" && check_btrfs_support().await {
         "btrfs"
@@ -1126,13 +1110,13 @@ async fn run_format_and_add(
     tokio::fs::create_dir_all(&mount_dir).await
         .context("Failed to create mount directory")?;
 
-    emit_progress(&pulse_tx, job_id, name, "formatting", &format!("Formatting as {}...", actual_fs));
+    emit_progress(&pulse, job_id, name, "formatting", &format!("Formatting as {}...", actual_fs));
 
     #[cfg(target_os = "linux")]
     format_device(device, actual_fs).await
         .context("Failed to format device")?;
 
-    emit_progress(&pulse_tx, job_id, name, "mounting", "Mounting filesystem...");
+    emit_progress(&pulse, job_id, name, "mounting", "Mounting filesystem...");
 
     #[cfg(target_os = "linux")]
     mount_device(device, &mount_dir).await
@@ -1149,7 +1133,7 @@ async fn run_format_and_add(
         }
     }
 
-    emit_progress(&pulse_tx, job_id, name, "creating", "Creating storage structure...");
+    emit_progress(&pulse, job_id, name, "creating", "Creating storage structure...");
 
     // Initialize canonical layout
     layout::initialize_layout(&mount_dir).await
@@ -1165,14 +1149,14 @@ async fn run_format_and_add(
     let _ = tokio::process::Command::new("sync").output().await;
 
     // Emit completion
-    let pulse = DomainPulse::storage_event(
+    let connected_pulse = DomainPulse::storage_event(
         event_types::STORAGE_CONNECTED,
         format!("Storage '{}' added at {}", name, mount_dir.display()),
         "info",
         Some(job_id.to_string()),
         Some(serde_json::json!({ "name": name, "mount_path": mount_dir.to_string_lossy() })),
     );
-    let _ = pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = pulse.send(PulseEvent::Domain(connected_pulse));
 
     info!(name, "Storage add completed");
     Ok(())
@@ -1281,7 +1265,7 @@ pub async fn set_visibility_v1(
     Json(request): Json<SetVisibilityRequest>,
 ) -> Result<(StatusCode, Json<StorageInfo>), (StatusCode, Json<ApiErrorResponse>)> {
     let mount_path = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         let vol = map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", &format!("Seed bank '{}' not found", name)))?;
@@ -1300,7 +1284,7 @@ pub async fn set_visibility_v1(
 
     // Sync visibility to volume management
     {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
         if let Some(vol) = map.values_mut().find(|v| {
             v.management.as_ref().is_some_and(|m| m.name == name)
         }) {
@@ -1312,7 +1296,7 @@ pub async fn set_visibility_v1(
 
     // Re-read updated info
     let updated = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
@@ -1407,7 +1391,7 @@ pub async fn set_roles_v1(
     Json(request): Json<SetRolesRequest>,
 ) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
     let mount_path = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         let vol = map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
@@ -1426,7 +1410,7 @@ pub async fn set_roles_v1(
 
     // Sync roles to volume management
     {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
         if let Some(vol) = map.values_mut().find(|v| {
             v.management.as_ref().is_some_and(|m| m.name == name)
         }) {
@@ -1438,7 +1422,7 @@ pub async fn set_roles_v1(
 
     // Re-read updated info
     let updated = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
@@ -1463,7 +1447,7 @@ pub async fn release_all_seed_banks_v1(
 ) -> Result<(StatusCode, Json<Vec<ReleaseResponse>>), (StatusCode, Json<ApiErrorResponse>)> {
     // Collect managed bank info before mutating
     let managed: Vec<(String, String)> = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .filter_map(|v| {
                 let mgmt = v.management.as_ref()?;
@@ -1510,11 +1494,11 @@ pub async fn release_all_seed_banks_v1(
         None,
         Some(serde_json::json!({ "count": results.len() })),
     );
-    let _ = state.pulse_tx.send(PulseEvent::Domain(pulse));
+    let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     // STORAGE-0011: Clear management from all volumes (all banks released)
     {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
         for vol in map.values_mut() {
             vol.management = None;
         }
@@ -1571,7 +1555,7 @@ pub async fn pin_bank_v1(
 
     // STORAGE-0011: Pin via Volume — writes pin.json, sets role to Primary.
     let pin_id = {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
         let vol = map
             .values_mut()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
@@ -1594,7 +1578,7 @@ pub async fn pin_bank_v1(
 
     // STORAGE-0013: Emit pin change event. Capture identity from volumes.
     let (device_id, replica_set_id) = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| {
@@ -1607,7 +1591,7 @@ pub async fn pin_bank_v1(
         device_id,
         replica_set_id,
     }).await;
-    state.orchestration_nudge.notify_one();
+    state.orchestration.storage.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),
@@ -1638,7 +1622,7 @@ pub async fn unpin_bank_v1(
 
     // STORAGE-0011: Unpin via Volume — clears pin + deletes disk file.
     let _was_pinned = {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
         if let Some(vol) = map.values_mut().find(|v| {
             v.management.as_ref().is_some_and(|m| m.name == name)
         }) {
@@ -1657,7 +1641,7 @@ pub async fn unpin_bank_v1(
 
     // STORAGE-0013: Emit pin change event
     let (device_id, replica_set_id) = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| {
@@ -1670,7 +1654,7 @@ pub async fn unpin_bank_v1(
         device_id,
         replica_set_id,
     }).await;
-    state.orchestration_nudge.notify_one();
+    state.orchestration.storage.nudge.notify_one();
 
     Ok(Json(ApiResponse::new(PinSeedBankResponse {
         name: name.clone(),
@@ -1698,7 +1682,7 @@ pub async fn bank_changes_v1(
     (StatusCode, Json<ApiErrorResponse>),
 > {
     let mount_path = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         let vol = map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
@@ -1760,7 +1744,7 @@ pub async fn stream_storage_v1(
     use tokio_stream::StreamExt;
 
     let token = state.shutdown_token.child_token();
-    let rx = state.storage_agg_tx.subscribe();
+    let rx = state.orchestration.storage.tick.debounced.subscribe();
     let filter_name = query.storage.clone();
 
     info!(

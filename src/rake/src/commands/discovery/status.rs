@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -12,20 +12,20 @@ use garden_common::{DetectionStatus, GardenApiResponse, HardwareCapabilities};
 
 /// Display stone system status
 pub struct StatusCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl StatusCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
 #[async_trait]
 impl Command for StatusCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         // Info notice (unless quiet mode)
-        if !self.quiet_mode {
+        if !self.quiet {
             eprintln!(
                 "{}ℹ️  Tip: Use 'observe' for garden overview or 'tend' to set default stone",
                 " ".repeat(ui::constants::DEFAULT_INDENT)
@@ -293,7 +293,7 @@ impl Command for StatusCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::STATUS, self.quiet_mode);
+        suggestions::print_suggestions(cmd::STATUS, self.quiet);
 
         Ok(())
     }

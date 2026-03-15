@@ -15,10 +15,10 @@ use garden_rake::cli_build::GlobalFlags;
 use garden_rake::client::{resolve_target_endpoint, CachedStoneOps};
 use garden_rake::commands::management::tend;
 use garden_rake::commands::Command;
-use garden_rake::context::{CommandContext, OutputFormat};
+use garden_rake::context::{Runtime as CommandCtx, OutputFormat};
 use garden_rake::discovery;
 use garden_rake::stone_bag::StoneBag;
-use garden_rake::stone_cache::GLOBAL_CACHE;
+use garden_rake::stone_cache::STONE;
 use garden_rake::tending;
 
 // ============================================================================
@@ -68,7 +68,7 @@ impl CommandInvocation {
 ///
 /// Built once in `main()`, replaces the 7-argument `dispatch()` calls
 /// that threaded `client`, `global.quiet`, `global.fresh`, `global.verbose`,
-/// `GLOBAL_CACHE` to every handler (107 occurrences of `global.quiet` alone).
+/// `STONE` to every handler (107 occurrences of `global.quiet` alone).
 pub struct Runtime {
     pub client: reqwest::Client,
     pub global: GlobalFlags,
@@ -89,7 +89,7 @@ impl Runtime {
     /// 1. Resolve endpoint optimistically (no pre-flight health check)
     /// 2. Create [`StoneBag`] seeded from tending cache when available
     /// 3. Print stone header from cached bag data (if requested)
-    /// 4. Build `CommandContext` and call `cmd.execute()`
+    /// 4. Build `Command` and call `cmd.execute()`
     ///
     /// If the actual command fails with a connection error the caller is
     /// responsible for retry/discovery.  We intentionally do NOT pre-check
@@ -105,7 +105,7 @@ impl Runtime {
 
         if cmd.requires_endpoint() {
             let endpoint =
-                resolve_endpoint(&self.client, inv.at, Some(&*GLOBAL_CACHE)).await?;
+                resolve_endpoint(&self.client, inv.at, Some(&*STONE)).await?;
 
             // Build bag — seeded from tending cache when the endpoint matches,
             // so stone_name() is free.  Cold path (--at, env, discovery) does
@@ -122,7 +122,7 @@ impl Runtime {
             }
 
             let stone_name = bag.stone_name().await.map(|s| s.to_string());
-            let ctx = CommandContext::with_automation(
+            let ctx = CommandCtx::with_automation(
                 self.client.clone(),
                 Some(bag.endpoint().to_string()),
                 stone_name,
@@ -134,7 +134,7 @@ impl Runtime {
             );
             cmd.execute(&ctx).await
         } else {
-            let ctx = CommandContext::with_automation(
+            let ctx = CommandCtx::with_automation(
                 self.client.clone(),
                 None,
                 None,
@@ -249,10 +249,10 @@ pub async fn resolve_endpoint(
         );
 
         // Notify stone of tending for visual feedback (glow/pulse)
-        let notify_ctx = CommandContext::without_endpoint(
+        let notify_ctx = CommandCtx::without_endpoint(
             client.clone(),
-            false, // quiet_mode
-            false, // fresh_mode
+            false, // quiet
+            false, // fresh
             0,     // verbose
         );
         let _ = tend::notify_tending(&notify_ctx, &endpoint).await;

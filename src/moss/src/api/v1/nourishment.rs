@@ -45,7 +45,7 @@ pub async fn check_stone(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     // Get hardware capabilities for constraint checking
-    let caps_guard = state.capabilities.read().await;
+    let caps_guard = state.current.capabilities.read().await;
     let capabilities = caps_guard.as_ref().ok_or_else(|| {
         crate::infra::error_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -98,7 +98,7 @@ pub async fn check_stone(
     }
 
     let response = NourishmentCheckResponse {
-        stone_name: state.stone_name.clone(),
+        stone_name: state.current.stone.name.clone(),
         updates: Updates { available, blocked },
     };
 
@@ -122,7 +122,7 @@ pub async fn check_garden(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     // Get topology from this stone's cache
-    let entries = crate::domain::topology::get_all_stones(&state.topology_cache).await;
+    let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
 
     // Query all stones in parallel
     let tasks: Vec<_> = entries
@@ -208,7 +208,7 @@ pub async fn execute_garden(
     use garden_common::utils::ids::generate_guidv7;
 
     // Step 1: Query all stones for their pending updates
-    let entries = crate::domain::topology::get_all_stones(&state.topology_cache).await;
+    let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -380,7 +380,7 @@ pub async fn execute_stone(
     use garden_common::utils::ids::generate_guidv7;
 
     // Get this stone's pending updates
-    let caps_guard = state.capabilities.read().await;
+    let caps_guard = state.current.capabilities.read().await;
     let capabilities = caps_guard.as_ref().ok_or_else(|| {
         crate::infra::error_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -478,7 +478,7 @@ pub async fn execute_stone(
 
     // Store channel in state
     {
-        let mut jobs = state.nourishment_jobs.write().await;
+        let mut jobs = state.orchestration.nourishment.jobs.write().await;
         jobs.insert(job_id.clone(), tx.clone());
     }
 
@@ -486,15 +486,15 @@ pub async fn execute_stone(
     drop(caps_guard);
 
     // Spawn background task
-    let state_clone = state.clone();
-    let job_id_clone = job_id.clone();
+    let state = state.clone();
+    let task_job_id = job_id.clone();
 
     tokio::spawn(async move {
         execute_updates_background(
-            state_clone,
+            state,
             pending_offerings,
             pending_firmware,
-            job_id_clone,
+            task_job_id,
             tx,
         )
         .await;
@@ -584,7 +584,7 @@ async fn execute_updates_background(
 
     // Cleanup job from state before potential reboot
     {
-        let mut jobs = state.nourishment_jobs.write().await;
+        let mut jobs = state.orchestration.nourishment.jobs.write().await;
         jobs.remove(&job_id);
     }
 
@@ -647,7 +647,7 @@ async fn execute_offering_update(
 
     // Get the target image from the Docker service
     let target_image = state
-        .docker
+        .platform.docker
         .get_service_image(name)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to get image for service '{}': {}", name, e))?;
@@ -655,7 +655,7 @@ async fn execute_offering_update(
     // Step 1: Pull the latest image
     let _ = tx.send(format!("    Pulling image: {}", target_image));
     state
-        .docker
+        .platform.docker
         .pull_image(&target_image, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to pull image '{}': {}", target_image, e))?;
@@ -663,14 +663,14 @@ async fn execute_offering_update(
     // Step 2: Stop and remove the existing container
     let _ = tx.send(format!("    Stopping service: {}", name));
     state
-        .docker
+        .platform.docker
         .stop_service(name, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to stop service '{}': {}", name, e))?;
 
     let _ = tx.send(format!("    Removing old container: {}", name));
     state
-        .docker
+        .platform.docker
         .remove_service(name, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to remove service '{}': {}", name, e))?;
@@ -730,14 +730,14 @@ async fn execute_offering_update(
     };
 
     state
-        .docker
+        .platform.docker
         .install_service(name, &spec, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to recreate service '{}': {}", name, e))?;
 
     // Step 4: Verify service health
     tokio::time::sleep(Duration::from_secs(2)).await; // Allow startup
-    match state.docker.get_service_status(name).await {
+    match state.platform.docker.get_service_status(name).await {
         Ok(garden_common::ServiceStatus::Running) => {
             let _ = tx.send(format!("    ✅ Service {} updated and running", name));
         }
@@ -819,7 +819,7 @@ pub async fn stream_status(
 > {
     // Get broadcast receiver for this job
     let rx = {
-        let jobs = state.nourishment_jobs.read().await;
+        let jobs = state.orchestration.nourishment.jobs.read().await;
         jobs.get(&job_id).map(|tx| tx.subscribe()).ok_or_else(|| {
             crate::infra::error_response(
                 StatusCode::NOT_FOUND,
@@ -865,7 +865,7 @@ async fn check_offering_updates(
     for offering in offerings.iter().filter(|o| o.is_managed()) {
         // Get the template image reference (e.g., "redis:latest")
         let offering_name_str = offering.name.to_string();
-        let template_image = match state.docker.get_service_image(&offering_name_str).await {
+        let template_image = match state.platform.docker.get_service_image(&offering_name_str).await {
             Ok(img) => img,
             Err(_) => continue,
         };

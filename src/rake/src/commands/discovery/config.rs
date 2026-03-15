@@ -10,7 +10,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::{extract_json_field, CommandContext};
+use crate::context::{extract_json_field, Runtime};
 use anyhow::Context;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -76,7 +76,7 @@ pub struct ConfigCommand {
     /// Service name to query
     pub service: String,
     /// Quiet mode (suppress hints)
-    pub quiet_mode: bool,
+    pub quiet: bool,
     /// Field extraction path (e.g., "connection.uri")
     pub field: Option<String>,
     /// Output JSON instead of human-readable
@@ -86,13 +86,13 @@ pub struct ConfigCommand {
 impl ConfigCommand {
     pub fn new(
         service: String,
-        quiet_mode: bool,
+        quiet: bool,
         json_output: bool,
         field: Option<String>,
     ) -> Self {
         Self {
             service,
-            quiet_mode,
+            quiet,
             json_output,
             field,
         }
@@ -104,7 +104,7 @@ use super::find::{FoundService, ServiceDiscoveryResponse};
 
 #[async_trait]
 impl Command for ConfigCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::api_utils::{is_suspicious, sanitize_fqn_input, ApiResponse};
 
         // Validate service name
@@ -196,7 +196,7 @@ impl Command for ConfigCommand {
 
 impl ConfigCommand {
     /// Build config response from found service
-    fn build_config(&self, svc: &FoundService, _ctx: &CommandContext) -> ServiceConfigResponse {
+    fn build_config(&self, svc: &FoundService, _ctx: &Runtime) -> ServiceConfigResponse {
         ServiceConfigResponse {
             name: svc.name.clone(),
             offering: svc.offering.clone(),
@@ -223,7 +223,7 @@ impl ConfigCommand {
     }
 
     /// Render human-readable output
-    fn render_human(&self, config: &ServiceConfigResponse, _ctx: &CommandContext) {
+    fn render_human(&self, config: &ServiceConfigResponse, _ctx: &Runtime) {
         println!();
         println!(
             "{}Configuration for {}",
@@ -281,7 +281,7 @@ impl ConfigCommand {
             config.connection.protocol
         );
 
-        if !self.quiet_mode {
+        if !self.quiet {
             println!();
             println!(
                 "{}Hint: Use --output json for machine-readable output",

@@ -1184,11 +1184,18 @@ pub enum StorageChanged {
     },
     /// Volumes were reclassified (broad change, re-pull everything).
     Reclassified,
-    /// Managed storage connected or reconnected — triggers connected ribbon.
+    /// Storage device sensed — recognised and being measured. Triggers a brief
+    /// "checking..." line before size data is available.
+    Sensed {
+        name: String,
+        roles: Vec<String>,
+    },
+    /// Managed storage connected or reconnected — size confirmed, triggers ribbon.
     Connected {
         name: String,
         roles: Vec<String>,
         used_bytes: u64,
+        capacity_bytes: u64,
     },
     /// Storage released — triggers released ribbon.
     Released {

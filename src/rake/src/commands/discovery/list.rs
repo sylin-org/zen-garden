@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -38,18 +38,18 @@ use garden_common::api_utils::ApiResponse;
 
 /// List services on a stone
 pub struct ListCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl ListCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
 #[async_trait]
 impl Command for ListCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let url = ctx.api_v1_url("stone/services")?;
         let response = ctx.client.get(&url).send().await?;
 
@@ -75,7 +75,7 @@ impl Command for ListCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIST, self.quiet_mode);
+        suggestions::print_suggestions(cmd::LIST, self.quiet);
 
         Ok(())
     }

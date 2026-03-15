@@ -42,7 +42,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         }
 
         // Reap any terminated Companion processes to prevent zombies
-        let reaped = state.companion_registry.reap_terminated().await;
+        let reaped = state.companion.registry.reap_terminated().await;
         if reaped > 0 {
             tracing::debug!(reaped = reaped, "Reaped terminated Companion processes");
         }
@@ -86,10 +86,10 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
 
             // Check container status (convert ServiceStatus → OfferingStatus)
-            let (new_status, new_health) = match state.docker.get_service_status(&name).await {
+            let (new_status, new_health) = match state.platform.docker.get_service_status(&name).await {
                 Ok(service_status) => {
                     let health = state
-                        .docker
+                        .platform.docker
                         .get_service_health(&name)
                         .await
                         .unwrap_or(ServiceHealthStatus::Offline);
@@ -125,7 +125,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
 
             // Update container resource metrics (detail-only, no chirp impact)
-            if let Ok(resources) = state.docker.get_container_stats(&name).await {
+            if let Ok(resources) = state.platform.docker.get_container_stats(&name).await {
                 state.update_offering(&offering_id, false, |o| {
                     if let Some(ref mut managed) = o.managed_data_mut() {
                         managed.resources = Some(resources);
@@ -138,7 +138,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             // Prefer the port matching the existing registry port (the manifest's primary
             // port), so multi-port services don't randomly switch to a secondary port.
             if new_status == OfferingStatus::Running {
-                if let Ok(docker_ports) = state.docker.get_container_ports(&name).await {
+                if let Ok(docker_ports) = state.platform.docker.get_container_ports(&name).await {
                     let current_port = {
                         let offerings = state.offerings.read().await;
                         offerings.iter().find(|o| o.offering_id == offering_id)
@@ -220,21 +220,21 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             };
 
             for name in &running_snapshot {
-                match state.docker.has_topology_mount(name).await {
+                match state.platform.docker.has_topology_mount(name).await {
                     Ok(true) => {} // mount present, nothing to do
                     Ok(false) => {
                         tracing::warn!(
                             offering = %name,
                             "Container missing topology mount, recreating"
                         );
-                        match state.docker.inspect_container_spec(name).await {
+                        match state.platform.docker.inspect_container_spec(name).await {
                             Ok(spec) => {
-                                if let Err(e) = state.docker.remove_service(name, None).await {
+                                if let Err(e) = state.platform.docker.remove_service(name, None).await {
                                     tracing::error!(offering = %name, error = ?e, "Failed to remove container for mount remediation");
                                     continue;
                                 }
                                 if let Err(e) = state
-                                    .docker
+                                    .platform.docker
                                     .install_service(name, &spec, None)
                                     .await
                                 {
@@ -266,7 +266,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     ServiceHealthStatus::Degraded | ServiceHealthStatus::Offline
                 )
             });
-            state.notifications.set_if(
+            state.presence.notifications.set_if(
                 NOTIF_SOURCE_OFFERINGS_DEGRADED,
                 NotificationTag::Attention,
                 has_degraded,
@@ -276,9 +276,9 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         // Check for containers not in offerings (external changes)
         // This provides self-heal: if someone manually starts a zen-offering container,
         // moss will adopt it into the offerings registry
-        let cached_caps = state.capabilities.read().await.clone();
+        let cached_caps = state.current.capabilities.read().await.clone();
         let cached_caps_ref = cached_caps.as_ref();
-        match state.docker.list_zen_containers().await {
+        match state.platform.docker.list_zen_containers().await {
             Ok(container_names) => {
                 for container_name in &container_names {
                     // Check if already in offerings (acquire read lock briefly)
@@ -290,10 +290,10 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     if !exists {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
                         match adopt_offering_container(
-                            &state.docker,
+                            &state.platform.docker,
                             &state.manifest_registry,
                             container_name,
-                            &state.stone_name,
+                            &state.current.stone.name,
                             cached_caps_ref,
                         )
                         .await

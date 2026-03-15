@@ -332,19 +332,31 @@ The garden-tier REST API provides file and object access with automatic Primary 
 
 ```bash
 # Read a file
-curl http://stone-name:7185/api/v1/garden/storage/family-photos/files/Photos/sunset.jpg
+curl http://stone-name:7185/api/v1/garden/storage/family-photos/fs/Photos/sunset.jpg
 
 # Write a file
 curl -X PUT \
   --data-binary @sunset.jpg \
-  http://stone-name:7185/api/v1/garden/storage/family-photos/files/Photos/sunset.jpg
+  http://stone-name:7185/api/v1/garden/storage/family-photos/fs/Photos/sunset.jpg
 
 # Delete a file
 curl -X DELETE \
-  http://stone-name:7185/api/v1/garden/storage/family-photos/files/Photos/sunset.jpg
+  http://stone-name:7185/api/v1/garden/storage/family-photos/fs/Photos/sunset.jpg
 
 # Check if a file exists (metadata only)
-curl -I http://stone-name:7185/api/v1/garden/storage/family-photos/files/Photos/sunset.jpg
+curl -I http://stone-name:7185/api/v1/garden/storage/family-photos/fs/Photos/sunset.jpg
+
+# List root directory
+curl http://stone-name:7185/api/v1/garden/storage/family-photos/fs
+
+# List subdirectory
+curl "http://stone-name:7185/api/v1/garden/storage/family-photos/fs?path=Photos"
+
+# List subdirectory recursively (3 levels deep)
+curl "http://stone-name:7185/api/v1/garden/storage/family-photos/fs?path=Photos&depth=3"
+
+# Full recursive listing from root
+curl "http://stone-name:7185/api/v1/garden/storage/family-photos/fs?depth=all"
 ```
 
 The REST API also handles objects (S3-style) and memories (offering harvests):
@@ -464,7 +476,7 @@ You should see a `C` (create) entry for `test.txt`.
 **3. Read from the Dormant replica:**
 
 ```bash
-curl http://stone-b:7185/api/v1/garden/storage/shared-docs/files/test.txt
+curl http://stone-b:7185/api/v1/garden/storage/shared-docs/fs/test.txt
 ```
 
 If replication is working, you'll get "Hello from Stone A" back.
@@ -843,7 +855,8 @@ The signpost share appears in network browsers as a read-only folder containing 
 |--------|----------|---------|
 | GET | `/api/v1/garden/storage` | All storages across garden |
 | GET | `/api/v1/garden/storage/{name}` | Discover replicas |
-| GET/PUT/DELETE/HEAD | `/api/v1/garden/storage/{name}/files/*path` | User file operations |
+| GET | `/api/v1/garden/storage/{name}/fs` | Directory listing (`?path=&depth=N`) |
+| GET/PUT/DELETE/HEAD | `/api/v1/garden/storage/{name}/fs/*path` | User file operations |
 | GET/PUT/DELETE/HEAD | `/api/v1/garden/storage/{name}/objects/*path` | S3 object operations |
 | GET | `/api/v1/garden/storage/{name}/memories` | List offerings with harvests |
 | GET | `/api/v1/garden/storage/{name}/memories/{offering}` | List snapshots |

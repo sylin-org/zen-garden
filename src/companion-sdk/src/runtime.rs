@@ -26,7 +26,7 @@ use crate::sse::{EventHandler, SseClient, SseClientConfig};
 /// ```
 pub struct CompanionRuntime<H: CommandHandler> {
     config: CompanionConfig,
-    companion_name: String,
+    name: String,
     handler: Option<Arc<H>>,
     event_handler: Option<Box<dyn FnOnce(SseClientConfig) -> JoinHandle<()> + Send>>,
 }
@@ -41,7 +41,7 @@ impl<H: CommandHandler> CompanionRuntime<H> {
     pub fn new(config: CompanionConfig, companion_name: impl Into<String>) -> Self {
         Self {
             config,
-            companion_name: companion_name.into(),
+            name: companion_name.into(),
             handler: None,
             event_handler: None,
         }
@@ -82,7 +82,7 @@ impl<H: CommandHandler> CompanionRuntime<H> {
             .ok_or_else(|| anyhow::anyhow!("Command handler not set"))?;
 
         tracing::info!(
-            Companion = %self.companion_name,
+            companion = %self.name,
             stone = %stone,
             port = port,
             "Starting Companion"
@@ -90,7 +90,7 @@ impl<H: CommandHandler> CompanionRuntime<H> {
 
         // Start command server
         let (server_handle, mut shutdown_rx) =
-            server::start_server(port, Arc::clone(&handler), &self.companion_name).await?;
+            server::start_server(port, Arc::clone(&handler), &self.name).await?;
 
         // Start SSE client if handler provided
         let sse_handle = if let Some(start_sse) = self.event_handler {
@@ -101,24 +101,24 @@ impl<H: CommandHandler> CompanionRuntime<H> {
         };
 
         tracing::info!(
-            Companion = %self.companion_name,
+            companion = %self.name,
             "Companion running. Press Ctrl+C to stop."
         );
 
         // Wait for shutdown signal
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                tracing::info!(Companion = %self.companion_name, "Ctrl+C received, shutting down");
+                tracing::info!(companion = %self.name, "Ctrl+C received, shutting down");
             }
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
-                    tracing::info!(Companion = %self.companion_name, "Shutdown signal received");
+                    tracing::info!(companion = %self.name, "Shutdown signal received");
                 }
             }
         }
 
         // Cleanup
-        tracing::info!(Companion = %self.companion_name, "Shutting down Companion");
+        tracing::info!(companion = %self.name, "Shutting down Companion");
 
         // Notify handler
         handler.on_shutdown().await;
@@ -129,7 +129,7 @@ impl<H: CommandHandler> CompanionRuntime<H> {
             handle.abort();
         }
 
-        tracing::info!(Companion = %self.companion_name, "Companion stopped");
+        tracing::info!(companion = %self.name, "Companion stopped");
         Ok(())
     }
 }

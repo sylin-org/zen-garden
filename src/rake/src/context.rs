@@ -41,17 +41,17 @@ impl OutputFormat {
 /// - Output formatting utilities
 /// - Mode flags (quiet, fresh, verbose)
 /// - Automation: output_format, field extraction
-pub struct CommandContext {
+pub struct Runtime {
     /// HTTP client with connection pooling
     pub client: reqwest::Client,
     /// Resolved stone endpoint (e.g., "http://10.0.0.5:7185")
     pub endpoint: Option<String>,
     /// Stone name (e.g., "stone-01")
-    pub stone_name: Option<String>,
+    pub stone: Option<String>,
     /// Whether to suppress non-essential output
-    pub quiet_mode: bool,
+    pub quiet: bool,
     /// Whether to bypass cache
-    pub fresh_mode: bool,
+    pub fresh: bool,
     /// Verbose level (0=off, 1=-v, 2=-vv, etc.)
     pub verbose: u8,
     /// Terminal info for formatting
@@ -64,14 +64,14 @@ pub struct CommandContext {
     pub field: Option<String>,
 }
 
-impl CommandContext {
+impl Runtime {
     /// Create context with resolved endpoint
     pub fn with_endpoint(
         client: reqwest::Client,
         endpoint: String,
-        stone_name: Option<String>,
-        quiet_mode: bool,
-        fresh_mode: bool,
+        stone: Option<String>,
+        quiet: bool,
+        fresh: bool,
         verbose: u8,
     ) -> Self {
         let term = TerminalInfo::detect();
@@ -79,9 +79,9 @@ impl CommandContext {
         Self {
             client,
             endpoint: Some(endpoint),
-            stone_name,
-            quiet_mode,
-            fresh_mode,
+        stone,
+            quiet,
+            fresh,
             verbose,
             term,
             output,
@@ -95,9 +95,9 @@ impl CommandContext {
     pub fn with_automation(
         client: reqwest::Client,
         endpoint: Option<String>,
-        stone_name: Option<String>,
-        quiet_mode: bool,
-        fresh_mode: bool,
+        stone: Option<String>,
+        quiet: bool,
+        fresh: bool,
         verbose: u8,
         output_format: OutputFormat,
         field: Option<String>,
@@ -107,9 +107,9 @@ impl CommandContext {
         Self {
             client,
             endpoint,
-            stone_name,
-            quiet_mode,
-            fresh_mode,
+        stone,
+            quiet,
+            fresh,
             verbose,
             term,
             output,
@@ -121,8 +121,8 @@ impl CommandContext {
     /// Create context without endpoint (for local-only commands)
     pub fn without_endpoint(
         client: reqwest::Client,
-        quiet_mode: bool,
-        fresh_mode: bool,
+        quiet: bool,
+        fresh: bool,
         verbose: u8,
     ) -> Self {
         let term = TerminalInfo::detect();
@@ -130,9 +130,9 @@ impl CommandContext {
         Self {
             client,
             endpoint: None,
-            stone_name: None,
-            quiet_mode,
-            fresh_mode,
+            stone: None,
+            quiet,
+            fresh,
             verbose,
             term,
             output,
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_api_url_building() {
-        let ctx = CommandContext::with_endpoint(
+        let ctx = Runtime::with_endpoint(
             reqwest::Client::new(),
             "http://10.0.0.5:7185".to_string(),
             Some("stone-01".to_string()),
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_endpoint_without_resolution() {
-        let ctx = CommandContext::without_endpoint(reqwest::Client::new(), false, false, 0);
+        let ctx = Runtime::without_endpoint(reqwest::Client::new(), false, false, 0);
 
         assert!(ctx.endpoint().is_err());
         assert!(ctx.api_url("health").is_err());

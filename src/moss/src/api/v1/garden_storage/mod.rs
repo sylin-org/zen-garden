@@ -5,7 +5,7 @@
 //! locally; otherwise proxy to the stone hosting the Primary.
 //!
 //! Three content namespaces:
-//! - `/files/`    — user content at storage root
+//! - `/fs/`       — user content at storage root
 //! - `/objects/`  — S3 objects under `.zen-garden/storage/`
 //! - `/memories/` — harvest artifacts under `.zen-garden/memories/`
 //!
@@ -14,10 +14,11 @@
 //! ```text
 //! GET    /api/v1/garden/storage                                      → list all storages
 //! GET    /api/v1/garden/storage/{name}                               → discovery (all replicas)
-//! GET    /api/v1/garden/storage/{name}/files/{*path}                 → read user file
-//! PUT    /api/v1/garden/storage/{name}/files/{*path}                 → write user file
-//! DELETE /api/v1/garden/storage/{name}/files/{*path}                 → delete user file
-//! HEAD   /api/v1/garden/storage/{name}/files/{*path}                 → file metadata
+//! GET    /api/v1/garden/storage/{name}/fs                            → directory listing (?path=&depth=N)
+//! GET    /api/v1/garden/storage/{name}/fs/{*path}                    → read user file
+//! PUT    /api/v1/garden/storage/{name}/fs/{*path}                    → write user file
+//! DELETE /api/v1/garden/storage/{name}/fs/{*path}                    → delete user file
+//! HEAD   /api/v1/garden/storage/{name}/fs/{*path}                    → file metadata
 //! GET    /api/v1/garden/storage/{name}/objects/{*path}               → read S3 object
 //! PUT    /api/v1/garden/storage/{name}/objects/{*path}               → write S3 object
 //! DELETE /api/v1/garden/storage/{name}/objects/{*path}               → delete S3 object
@@ -27,12 +28,16 @@
 //! GET    /api/v1/garden/storage/{name}/memories/{offering}/manifest  → offering manifest
 //! GET    /api/v1/garden/storage/{name}/memories/{offering}/{harvest} → download snapshot
 //! ```
+//!
+//! Directory listing uses query parameters: `?path=subdir&depth=N` (default depth 1,
+//! or `all` for recursive).  Listing is a metadata query on `/fs`, while content
+//! operations use the `/fs/{*path}` wildcard.
 
 pub mod files;
 pub mod memories;
 pub mod objects;
 
-pub use files::{delete_file_v1, get_file_v1, head_file_v1, put_file_v1};
+pub use files::{delete_file_v1, get_file_v1, head_file_v1, list_fs_v1, put_file_v1};
 pub use memories::{
     download_snapshot_v1, get_offering_manifest_v1, list_memories_v1,
     list_offering_snapshots_v1,
@@ -51,7 +56,7 @@ use garden_common::storage::StorageRole;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::domain::storage_service::ProxyTarget;
+use crate::domain::storage_service::{ProxyTarget, StorageRoute};
 use crate::{error_response, AppState};
 
 // ============================================================================
@@ -172,17 +177,7 @@ pub(crate) fn error_response_raw(status: StatusCode, code: &str, message: &str) 
 }
 
 pub(crate) fn has_path_traversal(value: &str) -> bool {
-    if value.contains('\\') {
-        return true;
-    }
-    std::path::Path::new(value).components().any(|c| {
-        matches!(
-            c,
-            std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_)
-        )
-    })
+    garden_common::constants::storage::share::has_path_traversal(value)
 }
 
 /// Check if the incoming request was already proxied (loop guard).
@@ -276,8 +271,7 @@ pub async fn list_storages_v1(
         std::collections::HashMap::new();
 
     // Local storages
-    let svc = state.storage_service();
-    for local in svc.list_local().await {
+    for local in StorageRoute::list_local(&state.current.storage.volumes).await {
         let entry = by_name
             .entry(local.name.clone())
             .or_insert_with(|| GardenStorageSummary {
@@ -288,14 +282,14 @@ pub async fn list_storages_v1(
             });
         entry.replica_count += 1;
         if local.role == StorageRole::Primary {
-            entry.primary_stone = Some(state.stone_name.clone());
+            entry.primary_stone = Some(state.current.stone.name.clone());
         }
     }
 
     // Remote storages from registry beacons
-    let reg = state.registry.read().await;
+    let reg = state.tool.registry.read().await;
     for storage_entry in reg.storage_entries() {
-        if storage_entry.tool.stone.id == state.stone_id {
+        if storage_entry.tool.stone.id == state.current.stone.id {
             continue; // Already counted above
         }
         let sm = storage_entry.tool.storage.as_ref();
@@ -335,11 +329,10 @@ pub async fn discover_v1(
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> Result<Json<ApiResponse<StorageDiscovery>>, (StatusCode, Json<ApiErrorResponse>)> {
     let mut instances = Vec::new();
-    let svc = state.storage_service();
 
     // Check local storages
-    if let Some(local) = svc.resolve_local(&name).await {
-        let map = state.volumes.read().await;
+    if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
+        let map = state.current.storage.volumes.read().await;
         let (pin_id, roles) = map
             .values()
             .find_map(|v| {
@@ -356,11 +349,11 @@ pub async fn discover_v1(
             .unwrap_or_default();
         drop(map);
 
-        let local_endpoint = state.self_entry.read().await.address.http_base();
+        let local_endpoint = state.current.topology.self_entry.read().await.address.http_base();
 
         instances.push(StorageInstance {
-            stone_id: state.stone_id.clone(),
-            stone_name: state.stone_name.clone(),
+            stone_id: state.current.stone.id.clone(),
+            stone_name: state.current.stone.name.clone(),
             storage_id: local.id.clone(),
             role: local.role,
             pinned: pin_id.is_some(),
@@ -373,9 +366,9 @@ pub async fn discover_v1(
     }
 
     // Add remote instances from registry beacons
-    let reg = state.registry.read().await;
+    let reg = state.tool.registry.read().await;
     for entry in reg.storage_by_name(&name) {
-        if entry.tool.stone.id == state.stone_id {
+        if entry.tool.stone.id == state.current.stone.id {
             continue;
         }
         let sm = entry.tool.storage.as_ref();

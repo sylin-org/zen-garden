@@ -5,7 +5,7 @@
 //! each one, aggregates results, and delegates persistence to infra.
 //!
 //! ## Contract
-//! Each sweeper: `async fn sweep_X(ctx: &SweepContext) -> SweepReport`
+//! Each sweeper: `async fn sweep_X(ctx: &Sweep) -> SweepReport`
 //! Reports: status (Healthy/Degraded/Unhealthy/Failed) + notes[]
 //!
 //! ## Sweepers
@@ -61,7 +61,7 @@ pub struct SweepRun {
 }
 
 /// Everything a sweeper needs — thin wrapper around AppState
-pub struct SweepContext<'a> {
+pub struct Sweep<'a> {
     pub state: &'a AppState,
 }
 
@@ -71,7 +71,7 @@ pub struct SweepContext<'a> {
 
 /// Run all sweepers sequentially, collect results
 pub async fn run_sweep(state: &AppState) -> SweepRun {
-    let ctx = SweepContext { state };
+    let ctx = Sweep { state };
     let start = std::time::Instant::now();
 
     let reports = vec![
@@ -94,9 +94,9 @@ pub async fn run_sweep(state: &AppState) -> SweepRun {
 }
 
 /// Run a single sweeper with timing
-async fn run_one_sweeper<'a, F, Fut>(sweeper: F, ctx: &'a SweepContext<'a>) -> SweepReport
+async fn run_one_sweeper<'a, F, Fut>(sweeper: F, ctx: &'a Sweep<'a>) -> SweepReport
 where
-    F: FnOnce(&'a SweepContext<'a>) -> Fut,
+    F: FnOnce(&'a Sweep<'a>) -> Fut,
     Fut: std::future::Future<Output = SweepReport>,
 {
     let start = std::time::Instant::now();
@@ -120,7 +120,7 @@ fn worst_status(reports: &[SweepReport]) -> SweepStatus {
 // ============================================================================
 
 /// Sweep staging directory: delete .staged files older than 24 hours
-async fn sweep_staging(_ctx: &SweepContext<'_>) -> SweepReport {
+async fn sweep_staging(_ctx: &Sweep<'_>) -> SweepReport {
     let staging = garden_common::constants::paths::staging_dir();
     let staging_path = std::path::Path::new(&staging);
 
@@ -210,7 +210,7 @@ async fn sweep_staging(_ctx: &SweepContext<'_>) -> SweepReport {
 }
 
 /// Sweep Docker: prune dangling images
-async fn sweep_docker(ctx: &SweepContext<'_>) -> SweepReport {
+async fn sweep_docker(ctx: &Sweep<'_>) -> SweepReport {
     if !ctx.state.subsystems.docker.ready.load(Ordering::Relaxed) {
         return SweepReport {
             domain: "docker".into(),
@@ -220,7 +220,7 @@ async fn sweep_docker(ctx: &SweepContext<'_>) -> SweepReport {
         };
     }
 
-    match ctx.state.docker.prune_dangling_images().await {
+    match ctx.state.platform.docker.prune_dangling_images().await {
         Ok((count, bytes)) => {
             let mut notes = Vec::new();
             if count > 0 {
@@ -249,7 +249,7 @@ async fn sweep_docker(ctx: &SweepContext<'_>) -> SweepReport {
 }
 
 /// Sweep binaries: delete .backup files older than 7 days
-async fn sweep_binaries(_ctx: &SweepContext<'_>) -> SweepReport {
+async fn sweep_binaries(_ctx: &Sweep<'_>) -> SweepReport {
     // Binaries live alongside the running binary
     let binary_dir = match std::env::current_exe() {
         Ok(exe) => exe
@@ -335,7 +335,7 @@ async fn sweep_binaries(_ctx: &SweepContext<'_>) -> SweepReport {
 /// A task is orphaned when:
 /// - Its offering no longer exists in the registry, AND
 /// - Its last_run is older than 30 days
-async fn sweep_task_history(ctx: &SweepContext<'_>) -> SweepReport {
+async fn sweep_task_history(ctx: &Sweep<'_>) -> SweepReport {
     let task_store = crate::infra::TaskStore::new();
 
     let mut registry = match task_store.load_registry().await {
@@ -413,7 +413,7 @@ async fn sweep_task_history(ctx: &SweepContext<'_>) -> SweepReport {
 }
 
 /// Sweep logs: delete rotated log files older than 7 days
-async fn sweep_logs(_ctx: &SweepContext<'_>) -> SweepReport {
+async fn sweep_logs(_ctx: &Sweep<'_>) -> SweepReport {
     let logs_dir = garden_common::constants::paths::logs_dir();
     let logs_path = std::path::Path::new(&logs_dir);
 

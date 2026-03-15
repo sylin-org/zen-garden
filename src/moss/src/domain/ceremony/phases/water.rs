@@ -28,7 +28,7 @@ pub async fn execute(
 
     // Step 1: Start the container
     state
-        .docker
+        .platform.docker
         .start_service(offering, Some(&state.console))
         .await
         .context("Failed to start container")?;
@@ -57,18 +57,18 @@ pub async fn execute(
 
         // Stop the unhealthy container
         let _ = state
-            .docker
+            .platform.docker
             .stop_service(offering, Some(&state.console))
             .await;
 
         // Restore volumes from harvest
-        restore_harvest(&state.docker, &state.harvest_store, harvest_id)
+        restore_harvest(&state.platform.docker, &state.orchestration.nurturing.harvest, harvest_id)
             .await
             .context("Failed to restore from harvest during rollback")?;
 
         // Start the container again (now with original volumes)
         state
-            .docker
+            .platform.docker
             .start_service(offering, Some(&state.console))
             .await
             .context("Failed to start container after rollback")?;
@@ -100,7 +100,7 @@ async fn wait_for_health(state: &AppState, offering: &str, timeout: Duration) ->
     let poll_interval = Duration::from_secs(HEALTH_POLL_INTERVAL_SECS);
 
     while start.elapsed() < timeout {
-        match state.docker.get_service_health(offering).await {
+        match state.platform.docker.get_service_health(offering).await {
             Ok(health) => {
                 if health == garden_common::ServiceHealthStatus::Healthy {
                     return true;

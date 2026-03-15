@@ -18,6 +18,9 @@
 //!
 //! [`Volumes`] is the single collection, keyed by device path.
 
+pub mod bank;
+pub use bank::StorageBank;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,35 +38,60 @@ use crate::infra::storage::platform::{self, VolumeSnapshot};
 use crate::infra::storage::ContentStore;
 
 // ============================================================================
-// Volume health
+// Storage domain context (ARCH-0004)
 // ============================================================================
 
-/// Physical health of a volume.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VolumeHealth {
-    /// Mounted and responsive (capacity > 0).
-    Healthy,
-    /// Mounted but showing issues.
-    Degraded(String),
-    /// Mount point exists but device detached.
-    Unmounted,
-    /// Device is no longer visible.
-    Lost,
+/// Storage data plane — what physically exists on this stone (ARCH-0004).
+///
+/// Holds only the collections that describe physical storage: volumes, media,
+/// and the domain event channel. Coordination primitives (tick, nudge, rescan,
+/// nurturing, nourishment) live in `state.orchestration.*`.
+///
+/// Field path: `state.current.storage.*`
+#[derive(Clone)]
+pub struct Storage {
+    /// Unified volume collection — keyed by device path.
+    pub volumes: Volumes,
+
+    /// Physical storage media — keyed by OS device ID.
+    pub media: Media,
+
+    /// Storage domain event channel (STORAGE-0013).
+    /// Emitted on add, remove, rename, role change, health change, rescan.
+    pub changed: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
 }
 
-impl VolumeHealth {
-    pub fn is_usable(&self) -> bool {
-        matches!(self, Self::Healthy | Self::Degraded(_))
+// ============================================================================
+// Volume state
+// ============================================================================
+
+/// Lifecycle state of a volume.
+///
+/// The monitor (via [`StorageBank`]) is the sole authority for `Offline → Online`
+/// transitions. [`Volume::probe_health`] can only move between `Online` and
+/// `Degraded` — it never resurrects an offline volume.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VolumeState {
+    /// Mounted, accessible, disk_usage valid.
+    Online,
+    /// Accessible but with issues (zero capacity, probe error).
+    Degraded(String),
+    /// Device gone. Only the monitor (via StorageBank) can revive.
+    Offline,
+}
+
+impl VolumeState {
+    pub fn is_online(&self) -> bool {
+        matches!(self, Self::Online | Self::Degraded(_))
     }
 }
 
-impl std::fmt::Display for VolumeHealth {
+impl std::fmt::Display for VolumeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Healthy => write!(f, "{}", garden_common::constants::HEALTH_HEALTHY),
+            Self::Online => write!(f, "{}", garden_common::constants::HEALTH_HEALTHY),
             Self::Degraded(r) => write!(f, "{}: {}", garden_common::constants::HEALTH_DEGRADED, r),
-            Self::Unmounted => write!(f, "unmounted"),
-            Self::Lost => write!(f, "lost"),
+            Self::Offline => write!(f, "offline"),
         }
     }
 }
@@ -126,6 +154,17 @@ pub struct Management {
     pub store: ContentStore,
 }
 
+impl Management {
+    /// Replica set display name, falling back to the default when empty.
+    pub fn display_name(&self) -> &str {
+        if self.replica_set_name.is_empty() {
+            DEFAULT_REPLICA_SET_DISPLAY
+        } else {
+            &self.replica_set_name
+        }
+    }
+}
+
 // ============================================================================
 // Volume — the universal entity
 // ============================================================================
@@ -149,10 +188,8 @@ pub struct Volume {
     pub used_bytes: u64,
     /// Whether the OS considers this removable.
     pub removable: bool,
-    /// Whether the volume is currently accessible.
-    pub online: bool,
-    /// Physical health.
-    pub health: VolumeHealth,
+    /// Lifecycle state — Online, Degraded, or Offline.
+    pub state: VolumeState,
 
     // --- Domain enrichment ---
     /// Management state. `Some` = Zen Garden manages this volume.
@@ -185,8 +222,7 @@ impl Volume {
             capacity_bytes: snap.capacity_bytes,
             used_bytes: 0,
             removable: snap.removable,
-            online: true,
-            health: VolumeHealth::Healthy,
+            state: VolumeState::Online,
             management: None,
         }
     }
@@ -251,34 +287,35 @@ impl Volume {
         });
     }
 
-    /// Run a health tick — probe capacity and mount liveness.
-    pub fn health_tick(&mut self) {
+    /// Probe capacity and update Online/Degraded state.
+    ///
+    /// No-op for Offline volumes — the monitor (via [`StorageBank`]) is the sole
+    /// authority for `Offline → Online` transitions. This prevents a statvfs
+    /// call on an unmounted directory from silently reviving a lost volume.
+    pub fn probe_health(&mut self) {
+        if self.state == VolumeState::Offline {
+            return;
+        }
+
         let mount_str = self.mount_path.to_string_lossy().to_string();
 
         match platform::disk_usage(&mount_str) {
             Some(usage) => {
                 if usage.total() == 0 {
-                    self.health = VolumeHealth::Degraded("zero capacity".into());
+                    self.state = VolumeState::Degraded("zero capacity".into());
                 } else {
                     self.capacity_bytes = usage.total();
                     self.used_bytes = usage.used_bytes;
-                    self.online = true;
-                    self.health = VolumeHealth::Healthy;
+                    self.state = VolumeState::Online;
                 }
             }
             None => {
-                // Check if mount path still exists
-                if self.mount_path.exists() {
-                    self.health = VolumeHealth::Degraded("capacity probe failed".into());
-                } else {
-                    self.health = VolumeHealth::Lost;
-                    self.online = false;
-                }
+                self.state = VolumeState::Degraded("capacity probe failed".into());
             }
         }
 
         // Reconcile pin state from disk (detect external changes)
-        if self.health.is_usable() {
+        if self.state.is_online() {
             if let Some(ref mut mgmt) = self.management {
                 // We can't do async here, so we do a blocking pin read.
                 // Pin files are tiny (<100 bytes), blocking is acceptable.
@@ -393,7 +430,7 @@ impl Volume {
     /// by the stones that host them.
     pub fn to_announcement(&self) -> Option<StorageAnnouncement> {
         let mgmt = self.management.as_ref()?;
-        if !self.online {
+        if !self.state.is_online() {
             return None;
         }
         Some(StorageAnnouncement {
@@ -406,7 +443,7 @@ impl Volume {
             protocols: vec![garden_common::constants::PROTOCOL_STORAGE.to_string(), garden_common::constants::PROTOCOL_S3.to_string()],
             access: StorageAccess::Direct,
             visibility: mgmt.visibility.to_string(),
-            health: if self.health.is_usable() {
+            health: if self.state == VolumeState::Online {
                 garden_common::constants::HEALTH_HEALTHY.to_string()
             } else {
                 garden_common::constants::HEALTH_DEGRADED.to_string()
@@ -424,7 +461,7 @@ impl Volume {
     /// Returns `None` for unmanaged or offline volumes.
     pub fn to_storage_info(&self) -> Option<StorageInfo> {
         let mgmt = self.management.as_ref()?;
-        if !self.online {
+        if !self.state.is_online() {
             return None;
         }
         Some(StorageInfo::new(
@@ -441,7 +478,7 @@ impl Volume {
             mgmt.origin_stone.clone(),
             mgmt.created_at,
             mgmt.roaming,
-            self.health.is_usable(),
+            self.state.is_online(),
             mgmt.encrypted,
             mgmt.roles.clone(),
         ))
@@ -624,10 +661,7 @@ pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
             vol.capacity_bytes = snap.capacity_bytes;
             vol.label = snap.label.clone();
             vol.mount_path = PathBuf::from(&snap.mount_path);
-            vol.online = true;
-            if vol.health == VolumeHealth::Lost || vol.health == VolumeHealth::Unmounted {
-                vol.health = VolumeHealth::Healthy;
-            }
+            vol.state = VolumeState::Online;
             // Re-classify unmanaged volumes — they may have gained a manifest
             // since last scan (e.g. `storage add` wrote one).
             if !vol.is_managed() {
@@ -687,142 +721,29 @@ pub async fn reconcile(volumes: &Volumes, snapshots: &[VolumeSnapshot]) {
 
     for path in departed {
         if let Some(vol) = map.get_mut(&path) {
-            if vol.online {
+            if vol.state != VolumeState::Offline {
                 info!(path = %path, name = %vol.display_name(), "Volume went offline");
-                vol.online = false;
-                vol.health = VolumeHealth::Lost;
+                vol.state = VolumeState::Offline;
             }
-        }
-    }
-}
-
-/// Ingest a single volume event (from the watcher).
-///
-/// Uses manifest-based identity dedup: if a managed volume appears at a new
-/// device path, the old (offline) entry is removed and replaced.
-///
-/// Returns domain events to broadcast immediately:
-/// - `Appeared` on a new managed volume → `[Connected { name, roles, used_bytes }]`
-/// - `Appeared` on a re-appeared managed volume → `[Connected { … }]`
-/// - `Disappeared` on a managed volume → `[Released { name }, Reclassified]`
-///
-/// The caller broadcasts all returned events so the cloud filter, WebDAV
-/// router, and TTY ribbon display all react without waiting for the heartbeat.
-pub async fn ingest_event(
-    volumes: &Volumes,
-    event: platform::VolumeEvent,
-) -> Vec<garden_common::storage::StorageChanged> {
-    match event {
-        platform::VolumeEvent::Appeared(snap) => {
-            let mut map = volumes.write().await;
-            if !map.contains_key(&snap.path) {
-                let mut vol = Volume::from_snapshot(&snap);
-                // Drop the lock before async classify
-                drop(map);
-
-                vol.classify().await;
-
-                let mut map = volumes.write().await;
-                let connected_event = if vol.is_managed() {
-                    let name = vol.display_name().to_string();
-                    let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
-                    let used_bytes = vol.used_bytes;
-                    let manifest_id =
-                        vol.management.as_ref().map(|m| m.id.clone()).unwrap_or_default();
-
-                    // Manifest-based dedup
-                    let stale_key = map
-                        .iter()
-                        .find(|(k, v)| {
-                            *k != &snap.path
-                                && v.management
-                                    .as_ref()
-                                    .map(|m| m.id == manifest_id)
-                                    .unwrap_or(false)
-                        })
-                        .map(|(k, _)| k.clone());
-
-                    if let Some(old_key) = stale_key {
-                        info!(
-                            old_path = %old_key,
-                            new_path = %snap.path,
-                            name = %name,
-                            "Volume re-keyed on appear (device path changed)"
-                        );
-                        map.remove(&old_key);
-                    } else {
-                        info!(path = %snap.path, name = %name, "Managed volume appeared");
-                    }
-                    Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes })
-                } else {
-                    debug!(path = %snap.path, "Unmanaged volume appeared");
-                    None
-                };
-                map.insert(snap.path, vol);
-                connected_event.into_iter().collect()
-            } else {
-                // Re-appeared — mark online
-                let connected_event = if let Some(vol) = map.get_mut(&snap.path) {
-                    vol.online = true;
-                    vol.health = VolumeHealth::Healthy;
-                    vol.capacity_bytes = snap.capacity_bytes;
-                    vol.mount_path = PathBuf::from(&snap.mount_path);
-                    info!(path = %snap.path, name = %vol.display_name(), "Volume came back online");
-                    if vol.is_managed() {
-                        let name = vol.display_name().to_string();
-                        let roles = vol.management.as_ref().map(|m| m.roles.clone()).unwrap_or_default();
-                        let used_bytes = vol.used_bytes;
-                        Some(garden_common::storage::StorageChanged::Connected { name, roles, used_bytes })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                connected_event.into_iter().collect()
-            }
-        }
-        platform::VolumeEvent::Disappeared { path } => {
-            let mut map = volumes.write().await;
-            if let Some(vol) = map.get_mut(&path) {
-                info!(path = %path, name = %vol.display_name(), "Volume disappeared");
-                let name = vol.display_name().to_string();
-                let was_managed = vol.is_managed();
-                vol.online = false;
-                vol.health = VolumeHealth::Lost;
-                if was_managed {
-                    return vec![
-                        garden_common::storage::StorageChanged::Released { name },
-                        garden_common::storage::StorageChanged::Reclassified,
-                    ];
-                }
-            }
-            vec![]
         }
     }
 }
 
 /// Auto-mount unmounted removable devices that have a Zen Garden manifest.
 ///
-/// This replaces the legacy `auto_mount_seed_banks_with_tracker()`. The flow:
-/// 1. List unmounted removable devices (from platform adapter)
-/// 2. Probe each for `.zen-garden/manifest.json`
-/// 3. Mount to the canonical path derived from the manifest
-/// 4. Reconcile into the Volumes map
-///
-/// Returns the number of devices successfully auto-mounted.
-pub async fn auto_mount_unmounted(
-    volumes: &Volumes,
-) -> Vec<garden_common::storage::StorageChanged> {
+/// Scans for unmounted removable devices, probes each for a manifest, and mounts
+/// to the canonical path. Returns the count mounted.
+/// Emits no StorageChanged events — VolumeMonitor detects the mount and calls StorageBank.
+pub async fn auto_mount_unmounted() -> usize {
     let unmounted = platform::list_unmounted_removable();
     if unmounted.is_empty() {
-        return vec![];
+        return 0;
     }
 
     debug!(count = unmounted.len(), "Checking unmounted removable devices for manifests");
 
     let data_dir = garden_common::constants::paths::data_dir();
-    let mut events = Vec::new();
+    let mut mounted = 0usize;
 
     for device in &unmounted {
         // Probe for manifest
@@ -881,37 +802,21 @@ pub async fn auto_mount_unmounted(
             continue;
         }
 
-        // Build snapshot and reconcile into Volumes
-        let snap = VolumeSnapshot {
-            path: device.device.clone(),
-            mount_path: mount_path.clone(),
-            label: device.label.clone(),
-            capacity_bytes: device.capacity_bytes,
-            removable: true,
-        };
-        // Use ingest_event which handles manifest-based dedup
-        ingest_event(volumes, platform::VolumeEvent::Appeared(snap)).await;
-
-        events.push(garden_common::storage::StorageChanged::Connected {
-            name: manifest.name.clone(),
-            roles: manifest.roles.clone(),
-            used_bytes: 0,
-        });
+        // StorageBank will detect the new mount via VolumeMonitor and emit Connected.
+        mounted += 1;
     }
 
-    if !events.is_empty() {
-        info!(count = events.len(), "Auto-mounted managed storage devices");
+    if mounted > 0 {
+        info!(count = mounted, "Auto-mounted managed storage devices");
     }
-    events
+    mounted
 }
 
-/// Run health ticks on all volumes.
+/// Probe health on all volumes. Offline volumes are skipped by [`Volume::probe_health`].
 pub async fn health_tick_all(volumes: &Volumes) {
     let mut map = volumes.write().await;
     for vol in map.values_mut() {
-        if vol.online {
-            vol.health_tick();
-        }
+        vol.probe_health();
     }
 }
 
@@ -943,7 +848,7 @@ pub async fn initial_scan(volumes: &Volumes) {
             name = %vol.display_name(),
             removable = vol.removable,
             managed = vol.is_managed(),
-            online = vol.online,
+            state = %vol.state,
             "  volume"
         );
     }
@@ -963,7 +868,7 @@ pub async fn list_managed(volumes: &Volumes) -> Vec<Volume> {
 pub async fn list_candidates(volumes: &Volumes) -> Vec<Volume> {
     let map = volumes.read().await;
     map.values()
-        .filter(|v| !v.is_managed() && v.removable && v.online)
+        .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
         .cloned()
         .collect()
 }
@@ -1000,12 +905,7 @@ pub async fn roles_snapshot(volumes: &Volumes) -> HashMap<String, StorageRole> {
     map.values()
         .filter_map(|v| {
             v.management.as_ref().map(|m| {
-                let key = if m.replica_set_name.is_empty() {
-                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
-                } else {
-                    m.replica_set_name.clone()
-                };
-                (key, m.role)
+                (m.display_name().to_string(), m.role)
             })
         })
         .collect()
@@ -1017,12 +917,7 @@ pub async fn pins_snapshot(volumes: &Volumes) -> HashMap<String, String> {
     map.values()
         .filter_map(|v| {
             v.management.as_ref().and_then(|m| {
-                let key = if m.replica_set_name.is_empty() {
-                    DEFAULT_REPLICA_SET_DISPLAY.to_string()
-                } else {
-                    m.replica_set_name.clone()
-                };
-                m.pin.as_ref().map(|p| (key, p.pin_id.clone()))
+                m.pin.as_ref().map(|p| (m.display_name().to_string(), p.pin_id.clone()))
             })
         })
         .collect()
@@ -1154,17 +1049,16 @@ mod tests {
 
         assert_eq!(vol.path, "/dev/sdb1");
         assert!(vol.removable);
-        assert!(vol.online);
+        assert_eq!(vol.state, VolumeState::Online);
         assert!(!vol.is_managed());
         assert_eq!(vol.display_name(), "TEST"); // label takes priority over path
     }
 
     #[test]
-    fn test_volume_health() {
-        assert!(VolumeHealth::Healthy.is_usable());
-        assert!(VolumeHealth::Degraded("test".into()).is_usable());
-        assert!(!VolumeHealth::Unmounted.is_usable());
-        assert!(!VolumeHealth::Lost.is_usable());
+    fn test_volume_state() {
+        assert!(VolumeState::Online.is_online());
+        assert!(VolumeState::Degraded("test".into()).is_online());
+        assert!(!VolumeState::Offline.is_online());
     }
 
     #[tokio::test]
@@ -1192,8 +1086,7 @@ mod tests {
 
         let map = volumes.read().await;
         let vol = map.get("/dev/sdb1").unwrap();
-        assert!(!vol.online);
-        assert_eq!(vol.health, VolumeHealth::Lost);
+        assert_eq!(vol.state, VolumeState::Offline);
     }
 
     #[tokio::test]

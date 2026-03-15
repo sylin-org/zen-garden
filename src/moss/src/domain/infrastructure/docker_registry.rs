@@ -36,9 +36,9 @@ const DEFAULT_REGISTRY_PORT: u16 = 5000;
 ///
 /// Configures local Docker daemon to trust garden container registries.
 /// Matching is based purely on manifest tags - no hardcoded offering names.
-pub struct DockerRegistryHandler;
+pub struct DockerRegistry;
 
-impl DockerRegistryHandler {
+impl DockerRegistry {
     /// Create a new Docker registry handler
     pub fn new() -> Self {
         Self
@@ -55,14 +55,14 @@ impl DockerRegistryHandler {
     }
 }
 
-impl Default for DockerRegistryHandler {
+impl Default for DockerRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl InfrastructureHandler for DockerRegistryHandler {
+impl InfrastructureHandler for DockerRegistry {
     fn name(&self) -> &'static str {
         "docker-registry"
     }
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_matches_by_tag() {
-        let handler = DockerRegistryHandler::new();
+        let handler = DockerRegistry::new();
 
         // Matches: devops category with container-registry tag
         assert!(handler.matches("registry", "devops", &["container-registry".to_string()]));
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_build_endpoint_with_port_from_manifest() {
-        let handler = DockerRegistryHandler::new();
+        let handler = DockerRegistry::new();
 
         // Port comes from frontmatter
         let instance = OfferingInstance {

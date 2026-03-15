@@ -7,7 +7,7 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::docker::DockerManager;
+use crate::docker::Client;
 use crate::domain::{
     connection, evaluate_compatibility, get_current_compat_capabilities, CompatibilityDecision,
 };
@@ -30,7 +30,7 @@ use garden_common::{
 /// # Returns
 /// - `Ok(Some(Offering))`: Container successfully adopted
 /// - `Ok(None)`: No template found for offering (container left alone)
-/// - `Err(_)`: Adoption failed (Docker API error)
+/// - `Err(_)`: Adoption failed (Client API error)
 ///
 /// # Composability
 /// This function is pure domain logic - it doesn't modify state directly.
@@ -39,7 +39,7 @@ use garden_common::{
 /// - Persisting registry changes
 /// - Emitting events
 pub async fn adopt_offering_container(
-    docker: &DockerManager,
+    docker: &Client,
     manifest_registry: &ManifestRegistry,
     offering: &str,
     stone_name: &str,
@@ -106,7 +106,7 @@ pub async fn adopt_offering_container(
         .unwrap_or("latest")
         .to_string();
 
-    // Query Docker for actual port bindings (may differ from manifest if remapped)
+    // Query Client for actual port bindings (may differ from manifest if remapped)
     let docker_ports = docker
         .get_container_ports(&offering_name)
         .await
@@ -119,7 +119,7 @@ pub async fn adopt_offering_container(
 
     // Build guidance with template substitution (if guidance template exists)
     let guidance = guidance_template.map(|tmpl| {
-        // Substitute named ports using actual Docker bindings (fall back to manifest)
+        // Substitute named ports using actual Client bindings (fall back to manifest)
         let mut content = tmpl.clone();
         for (port_name, (template_host, container_port)) in &template.ports {
             let host_port = docker_port_map
@@ -138,7 +138,7 @@ pub async fn adopt_offering_container(
             .replace("{{offering}}", &offering_type)
             .replace("{{name}}", &offering_name);
 
-        // Build variables map for API consumers (using actual Docker ports)
+        // Build variables map for API consumers (using actual Client ports)
         let mut variables = std::collections::HashMap::new();
         variables.insert("port".to_string(), actual_port.to_string());
         for (port_name, (template_host, container_port)) in &template.ports {
@@ -226,7 +226,7 @@ pub async fn adopt_offering_container(
 /// - Emitting events
 /// - Logging warnings for failed adoptions
 pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
-    let existing = match state.docker.list_zen_containers().await {
+    let existing = match state.platform.docker.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {
             tracing::warn!(error = ?e, "Failed to list zen containers for adoption");
@@ -235,7 +235,7 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
     };
 
     // Snapshot cached capabilities once for all adoptions (avoids N subprocess calls)
-    let cached_caps = state.capabilities.read().await.clone();
+    let cached_caps = state.current.capabilities.read().await.clone();
     let cached_caps_ref = cached_caps.as_ref();
 
     let mut adopted = Vec::new();
@@ -252,10 +252,10 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
         }
 
         match adopt_offering_container(
-            &state.docker,
+            &state.platform.docker,
             &state.manifest_registry,
             &offering,
-            &state.stone_name,
+            &state.current.stone.name,
             cached_caps_ref,
         )
         .await

@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -13,22 +13,22 @@ use garden_common::ui::rendering as ui;
 pub struct BorrowCommand {
     pub name: String,
     pub from_url: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl BorrowCommand {
-    pub fn new(name: String, from_url: String, quiet_mode: bool) -> Self {
+    pub fn new(name: String, from_url: String, quiet: bool) -> Self {
         Self {
             name,
             from_url,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for BorrowCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let url = ctx.api_v1_url("stone/offerings/borrow")?;
         let response = ctx
             .client
@@ -78,7 +78,7 @@ impl Command for BorrowCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::BORROW, self.quiet_mode);
+        suggestions::print_suggestions(cmd::BORROW, self.quiet);
 
         Ok(())
     }

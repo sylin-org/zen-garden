@@ -10,9 +10,9 @@
 //! ## Example
 //!
 //! ```rust
-//! use garden_common::templates::{TemplateContext, render_template};
+//! use garden_common::templates::{Template, render_template};
 //!
-//! let mut ctx = TemplateContext::new();
+//! let mut ctx = Template::new();
 //! ctx.set("name", "pihole");
 //! ctx.set("static-ip", "192.168.1.240");
 //!
@@ -32,11 +32,11 @@ use std::collections::HashMap;
 
 /// Template rendering context with variable values
 #[derive(Debug, Clone, Default)]
-pub struct TemplateContext {
+pub struct Template {
     variables: HashMap<String, String>,
 }
 
-impl TemplateContext {
+impl Template {
     /// Create a new empty context
     pub fn new() -> Self {
         Self::default()
@@ -83,7 +83,7 @@ impl TemplateContext {
 /// - `{{#if var=value}}...{{/if}}` - Equality check
 /// - `{{#if var}}...{{#else}}...{{/if}}` - If-else
 /// - Nested conditionals
-pub fn render_template(template: &str, ctx: &TemplateContext) -> String {
+pub fn render_template(template: &str, ctx: &Template) -> String {
     let mut result = String::with_capacity(template.len());
     let mut pos = 0;
 
@@ -151,7 +151,7 @@ pub fn render_template(template: &str, ctx: &TemplateContext) -> String {
 /// - `var` - truthy check
 /// - `!var` - negated truthy check
 /// - `var=value` - equality check
-fn evaluate_condition(expr: &str, ctx: &TemplateContext) -> bool {
+fn evaluate_condition(expr: &str, ctx: &Template) -> bool {
     let expr = expr.trim();
 
     if let Some(var) = expr.strip_prefix('!') {
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_simple_substitution() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
         ctx.set("name", "pihole");
         ctx.set("port", "53");
 
@@ -255,21 +255,21 @@ mod tests {
 
     #[test]
     fn test_missing_variable() {
-        let ctx = TemplateContext::new();
+        let ctx = Template::new();
         let result = render_template("Value: {{missing}}", &ctx);
         assert_eq!(result, "Value: ");
     }
 
     #[test]
     fn test_default_value() {
-        let ctx = TemplateContext::new();
+        let ctx = Template::new();
         let result = render_template("Value: {{missing|default_value}}", &ctx);
         assert_eq!(result, "Value: default_value");
     }
 
     #[test]
     fn test_default_not_used_when_set() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
         ctx.set("var", "actual");
         let result = render_template("Value: {{var|default}}", &ctx);
         assert_eq!(result, "Value: actual");
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_if_truthy() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
         ctx.set("static-ip", "192.168.1.100");
 
         let template = "{{#if static-ip}}IP: {{static-ip}}{{/if}}";
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_if_falsy() {
-        let ctx = TemplateContext::new();
+        let ctx = Template::new();
 
         let template = "{{#if static-ip}}IP: {{static-ip}}{{/if}}";
         let result = render_template(template, &ctx);
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_if_negated() {
-        let ctx = TemplateContext::new();
+        let ctx = Template::new();
 
         let template = "{{#if !static-ip}}No static IP{{/if}}";
         let result = render_template(template, &ctx);
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_if_else() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
 
         let template = "{{#if static-ip}}Static{{#else}}DHCP{{/if}}";
 
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_if_equality() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
         ctx.set("os", "linux");
 
         let template = "{{#if os=linux}}Linux{{/if}}{{#if os=windows}}Windows{{/if}}";
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_nested_if() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
         ctx.set("static-ip", "192.168.1.100");
         ctx.set("os", "linux");
 
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_multiline_template() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
         ctx.set("name", "pihole");
         ctx.set("static-ip", "192.168.1.100");
 
@@ -360,7 +360,7 @@ Run: ping {{name}}
 
     #[test]
     fn test_is_truthy() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
 
         assert!(!ctx.is_truthy("missing"));
 
@@ -373,7 +373,7 @@ Run: ping {{name}}
 
     #[test]
     fn test_set_opt() {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
 
         ctx.set_opt("none", None::<String>);
         assert!(!ctx.is_truthy("none"));

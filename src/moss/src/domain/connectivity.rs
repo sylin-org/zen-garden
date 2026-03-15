@@ -10,18 +10,18 @@ use garden_common::manifests::{
     CommandDetection, DetectionConfig, DetectionMethod, DetectionRule, HttpProbeDetection,
     Offering as OfferingManifest,
 };
-use garden_common::templates::{render_template, TemplateContext};
+use garden_common::templates::{render_template, Template};
 use garden_common::OfferingLocation;
 use regex::Regex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::docker::DockerManager;
+use crate::docker::Client;
 use crate::infra::detection::{detect_by_container_inspect, detect_by_http_probe, DetectionResult};
 
 /// Connectivity orchestration with caching and enforcement cooldowns
 pub struct ConnectivityOrchestrator {
-    docker: Arc<DockerManager>,
+    docker: Arc<Client>,
     cache: Arc<DashMap<String, CachedCheck>>,
     last_enforced: Arc<DashMap<String, Instant>>,
     attempts: Arc<DashMap<String, EnforceState>>,
@@ -94,7 +94,7 @@ impl ConnectivityOutcome {
 }
 
 impl ConnectivityOrchestrator {
-    pub fn new(docker: Arc<DockerManager>) -> Self {
+    pub fn new(docker: Arc<Client>) -> Self {
         Self {
             docker,
             cache: Arc::new(DashMap::new()),
@@ -434,7 +434,7 @@ impl ConnectivityContext {
     }
 
     fn template_command(&self, template: &str) -> String {
-        let mut ctx = TemplateContext::new();
+        let mut ctx = Template::new();
         ctx.set("offering", &self.offering);
         ctx.set("host", &self.host);
         ctx.set("port", self.port.to_string());

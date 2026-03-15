@@ -6,7 +6,7 @@
 //! Uses execute_on_stone pattern to work across tended/discovered stones
 
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::tending;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
@@ -32,7 +32,7 @@ impl NourishCommand {
 
 #[async_trait]
 impl Command for NourishCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         // Query garden for updates using execute_on_stone pattern
         let (nourishment_response, responding_stone) = tending::execute_on_stone(
             Duration::from_secs(3),
@@ -377,7 +377,7 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
 
 /// Execute all updates (offerings + firmware)
 async fn execute_all_updates(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     _response: &GardenNourishmentResponse,
 ) -> anyhow::Result<()> {
     println!("\n🚀 Applying all updates...\n");
@@ -386,7 +386,7 @@ async fn execute_all_updates(
 
 /// Execute offering updates only
 async fn execute_offering_updates(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     _response: &GardenNourishmentResponse,
 ) -> anyhow::Result<()> {
     println!("\n🚀 Applying offering updates...\n");
@@ -395,7 +395,7 @@ async fn execute_offering_updates(
 
 /// Execute firmware updates only
 async fn execute_firmware_updates(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     _response: &GardenNourishmentResponse,
 ) -> anyhow::Result<()> {
     println!("\n🚀 Applying firmware updates...\n");
@@ -403,7 +403,7 @@ async fn execute_firmware_updates(
 }
 
 /// Send scope to tended stone, which orchestrates to all affected stones
-async fn execute_with_scope(ctx: &CommandContext, scope: UpdateScope) -> anyhow::Result<()> {
+async fn execute_with_scope(ctx: &Runtime, scope: UpdateScope) -> anyhow::Result<()> {
     // Build request payload
     let request = ExecuteRequest {
         scope,

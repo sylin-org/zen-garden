@@ -4,25 +4,25 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
 
 /// List adopted services
 pub struct AdoptedCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl AdoptedCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
 #[async_trait]
 impl Command for AdoptedCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let url = ctx.api_v1_url("stone/offerings/adopted")?;
         let response = ctx.client.get(&url).send().await?;
 
@@ -70,7 +70,7 @@ impl Command for AdoptedCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::ADOPTED, self.quiet_mode);
+        suggestions::print_suggestions(cmd::ADOPTED, self.quiet);
 
         Ok(())
     }

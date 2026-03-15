@@ -6,7 +6,7 @@
 //! ## Problem
 //!
 //! A single `PUT /object` writes two files (content + `.meta.json` sidecar),
-//! each producing a raw `StorageTick` on the `storage_tick_tx` broadcast
+//! each producing a raw `StorageTick` on the `storage_tick` broadcast
 //! channel.  A batch of N objects therefore fires 2N raw events.  Without
 //! aggregation, the SSE stream would spam subscribers and the replication
 //! task would kick off 2N sync cycles — most of which are redundant.
@@ -22,7 +22,7 @@
 //!                                  └────────────────────┘             └───────────┘
 //! ```
 //!
-//! The aggregator subscribes to the raw `storage_tick_tx` channel and
+//! The aggregator subscribes to the raw `storage_tick` channel and
 //! maintains **independent** quantization state per seed bank name.
 //!
 //! ### Flush policy (per seed bank)
@@ -33,7 +33,7 @@
 //! | **Deadline cap** (10 s) | Time since first unconsumed tick exceeds 10 seconds → flush |
 //!
 //! Whichever fires first emits a single aggregated `StorageTick` on the
-//! cooked `storage_agg_tx` channel with cumulative `C`/`M`/`D` counts and
+//! cooked `storage_agg` channel with cumulative `C`/`M`/`D` counts and
 //! the latest cursor.  The per-bank state is then reset.
 //!
 //! ### Timing
@@ -45,12 +45,12 @@
 //! ## Channel wiring
 //!
 //! ```text
-//! storage_tick_tx  ──►  [aggregator task]  ──►  storage_agg_tx
+//! storage_tick  ──►  [aggregator task]  ──►  storage_agg
 //!                                                  ├──► SSE /api/v1/stone/storage/stream
 //!                                                  └──► storage_replication_task
 //! ```
 //!
-//! Raw channel (`storage_tick_tx`) is **internal-only** — downstream
+//! Raw channel (`storage_tick`) is **internal-only** — downstream
 //! consumers must subscribe to the aggregated channel.
 
 use std::collections::HashMap;
@@ -147,7 +147,7 @@ impl BankWindow {
 
 /// Background task — spawned at daemon startup.
 ///
-/// Subscribes to the raw `storage_tick_tx` channel and emits quantized
+/// Subscribes to the raw `storage_tick` channel and emits quantized
 /// aggregated ticks on `agg_tx`.  Runs for the daemon's entire lifetime.
 pub async fn storage_tick_aggregator_task(
     mut raw_rx: broadcast::Receiver<StorageTick>,

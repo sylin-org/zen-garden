@@ -219,12 +219,12 @@ impl NurturingScheduler {
         offering_name: &str,
     ) -> Result<NurturingResult> {
         self.state
-            .nurturing_store
+            .orchestration.nurturing.store
             .create_snapshot(
-                &self.state.docker,
+                &self.state.platform.docker,
                 offering_id,
                 offering_name,
-                &self.state.stone_id,
+                &self.state.current.stone.id,
                 self.config.commit_image,
             )
             .await
@@ -272,8 +272,8 @@ impl NurturingScheduler {
         let hydration_manifest = build_memories_manifest(
             offering,
             manifest,
-            &self.state.stone_id,
-            &self.state.stone_name,
+            &self.state.current.stone.id,
+            &self.state.current.stone.name,
         );
 
         // Attempt replication to each target
@@ -305,10 +305,10 @@ impl NurturingScheduler {
     ///
     /// Returns managed volumes that are online and healthy.
     async fn find_available_seed_banks(&self) -> Result<Vec<StorageInfo>> {
-        let map = self.state.volumes.read().await;
+        let map = self.state.current.storage.volumes.read().await;
         let seed_banks: Vec<StorageInfo> = map
             .values()
-            .filter(|v| v.is_managed() && v.online)
+            .filter(|v| v.is_managed() && v.state.is_online())
             .filter_map(|v| v.to_storage_info())
             .collect();
 
@@ -324,7 +324,7 @@ impl NurturingScheduler {
     ///
     /// STORAGE-0007: Uses lifecycle objects for role lookup.
     async fn select_targets(&self, seed_banks: &[StorageInfo]) -> Vec<StorageInfo> {
-        let volumes_map = self.state.volumes.read().await;
+        let volumes_map = self.state.current.storage.volumes.read().await;
 
         let primary_banks: Vec<StorageInfo> = seed_banks
             .iter()
@@ -387,7 +387,7 @@ impl NurturingScheduler {
 
         // STORAGE-0011: prefer store from Volume management; fall back to ad-hoc
         let store = {
-            let map = self.state.volumes.read().await;
+            let map = self.state.current.storage.volumes.read().await;
             map.values()
                 .find_map(|v| {
                     let m = v.management.as_ref()?;
@@ -400,13 +400,13 @@ impl NurturingScheduler {
 
         let result = self
             .state
-            .nurturing_store
+            .orchestration.nurturing.store
             .replicate_to_seed_bank(
                 &offering.offering_id,
                 &store,
                 &seed_bank.id,
                 &seed_bank.name,
-                &self.state.stone_id,
+                &self.state.current.stone.id,
                 Some(hydration_manifest.clone()),
             )
             .await;

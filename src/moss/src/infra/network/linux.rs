@@ -63,7 +63,7 @@ pub fn detect_linux_platform() -> Option<Box<dyn NetworkPlatform>> {
     // Check for NetworkManager
     if std::path::Path::new(NMCLI_BINARY).exists() {
         tracing::debug!("Detected NetworkManager network stack");
-        return Some(Box::new(LinuxNetworkManager));
+        return Some(Box::new(LinuxNetwork));
     }
 
     tracing::warn!(
@@ -441,10 +441,10 @@ network:
 ///
 /// Uses nmcli to configure static IP.
 /// This is a stub implementation for Phase 4.
-pub struct LinuxNetworkManager;
+pub struct LinuxNetwork;
 
 #[async_trait::async_trait]
-impl NetworkPlatform for LinuxNetworkManager {
+impl NetworkPlatform for LinuxNetwork {
     fn name(&self) -> &'static str {
         "NetworkManager"
     }

@@ -12,7 +12,7 @@ use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-use crate::animation::{AnimationContext, Health, Override};
+use crate::animation::{Animation, Health, Override};
 use crate::oled;
 use crate::serial::{FireflyConnection, FireflyDeviceType};
 use crate::tdisplay;
@@ -94,15 +94,15 @@ struct TendedEvent {
 }
 
 /// Firefly event handler - updates animation context and sends OLED commands
-pub struct FireflyEventHandler {
-    context: Arc<RwLock<AnimationContext>>,
+pub struct FireflyEvents {
+    context: Arc<RwLock<Animation>>,
     connection: Arc<FireflyConnection>,
     state: Arc<CompanionState>,
 }
 
-impl FireflyEventHandler {
+impl FireflyEvents {
     pub fn new(
-        context: Arc<RwLock<AnimationContext>>,
+        context: Arc<RwLock<Animation>>,
         connection: Arc<FireflyConnection>,
         state: Arc<CompanionState>,
     ) -> Self {
@@ -182,7 +182,7 @@ impl FireflyEventHandler {
 }
 
 #[async_trait]
-impl EventHandler for FireflyEventHandler {
+impl EventHandler for FireflyEvents {
     async fn on_event(&self, event: SseEvent) {
         // Update enabled state in animation context
         {

@@ -15,7 +15,7 @@ pub async fn get_health(State(state): State<AppState>) -> Json<Value> {
 
     Json(json!({
         "status": "healthy",
-        "lantern_name": state.lantern_name,
+        "lantern_name": state.name,
         "port": state.api_port,
         "stones_online": stones_online,
         "stones_total": stones_total,

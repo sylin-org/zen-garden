@@ -25,7 +25,7 @@ pub mod app_state;
 
 // Re-export AppState and related types
 pub use app_state::{
-    AppState, CompiledOffering, Job, JobStatus, OfferingsFingerprint, OfferingsIndexCache,
+    AppState, CompiledOffering, Job, JobStatus, OfferingsFingerprint, OfferingsIndex,
 };
 
 // Re-export API helpers from infra
@@ -68,8 +68,8 @@ pub use tasks::{
     DockerMonitor,
     DockerMonitorConfig,
     NetworkEvent,
-    NetworkMonitor,
-    NetworkMonitorConfig,
+    Network,
+    NetworkConfig,
 };
 
 // Re-export bootstrap utilities

@@ -55,19 +55,19 @@ pub async fn get_stone_info_v1(
 ) -> Result<Json<ApiResponse<StoneInfoResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Get capabilities from cached state
     let capabilities = {
-        let caps_guard = state.capabilities.read().await;
+        let caps_guard = state.current.capabilities.read().await;
         caps_guard
             .as_ref()
             .cloned()
-            .unwrap_or_else(|| crate::infra::hardware::create_skeleton(state.stone_name.clone()))
+            .unwrap_or_else(|| crate::infra::hardware::create_skeleton(state.current.stone.name.clone()))
     };
 
     // Get offerings from registry
     let offerings = state.get_offerings().await;
 
     // Build endpoint
-    let current_ip = state.network_monitor.get_ip().await;
-    let endpoint = format!("http://{}:{}", current_ip, state.api_port);
+    let current_ip = state.platform.network.get_ip().await;
+    let endpoint = format!("http://{}:{}", current_ip, state.current.api_port);
 
     let response = StoneInfoResponse {
         capabilities,
@@ -632,8 +632,8 @@ pub async fn deploy_stone_v1(
         ));
 
         // Show update banner on physical console (platform-appropriate output)
-        state.runtime.print_update_banner(&garden_common::console::UpdateBannerInfo {
-            stone_name: state.stone_name.clone(),
+        state.platform.runtime.print_update_banner(&garden_common::console::UpdateBannerInfo {
+            stone_name: state.current.stone.name.clone(),
             new_version: None, // Version extracted earlier but not easily accessible here
         });
 
@@ -669,7 +669,7 @@ pub async fn deploy_stone_v1(
                 );
             }
 
-            let stop_results = state.companion_registry.stop_all().await;
+            let stop_results = state.companion.registry.stop_all().await;
             for (id, result) in &stop_results {
                 match result {
                     Ok(()) => {

@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -22,12 +22,12 @@ pub enum PlaceTarget {
 /// Place command for pond zen syntax operations
 pub struct PlaceCommand {
     pub target: PlaceTarget,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl PlaceCommand {
-    pub fn new(target: PlaceTarget, quiet_mode: bool) -> Self {
-        Self { target, quiet_mode }
+    pub fn new(target: PlaceTarget, quiet: bool) -> Self {
+        Self { target, quiet }
     }
 
     /// Create from CLI args
@@ -35,7 +35,7 @@ impl PlaceCommand {
         target_type: String,
         code: Option<String>,
         passphrase: Option<String>,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> anyhow::Result<Self> {
         let target = match target_type.as_str() {
             "keystone" => PlaceTarget::Keystone { passphrase },
@@ -50,13 +50,13 @@ impl PlaceCommand {
                 target_type
             ),
         };
-        Ok(Self::new(target, quiet_mode))
+        Ok(Self::new(target, quiet))
     }
 }
 
 #[async_trait]
 impl Command for PlaceCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
 
         match &self.target {
@@ -69,7 +69,7 @@ impl Command for PlaceCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::PLACE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::PLACE, self.quiet);
 
         Ok(())
     }
@@ -80,7 +80,7 @@ impl Command for PlaceCommand {
 }
 
 async fn execute_place_keystone(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
@@ -138,7 +138,7 @@ async fn execute_place_keystone(
 }
 
 async fn execute_place_stone(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     code: &str,
 ) -> anyhow::Result<()> {

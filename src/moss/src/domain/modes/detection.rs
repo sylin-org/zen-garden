@@ -6,7 +6,7 @@
 //! - Stability tracking (consecutive successes required before adoption)
 //! - Proactive cache refresh
 
-use crate::docker::DockerManager;
+use crate::docker::Client;
 use crate::infra::detection::{
     detect_by_command, detect_by_container_inspect, detect_by_http_probe, DetectionResult,
 };
@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 /// Detection orchestrator with caching and stability tracking
 pub struct DetectionOrchestrator {
     /// Docker manager for container detection
-    docker: Arc<DockerManager>,
+    docker: Arc<Client>,
 
     /// Detection result cache
     cache: Arc<DashMap<String, CachedDetection>>,
@@ -51,7 +51,7 @@ struct StabilityState {
 
 impl DetectionOrchestrator {
     /// Create new detection orchestrator
-    pub fn new(docker: Arc<DockerManager>) -> Self {
+    pub fn new(docker: Arc<Client>) -> Self {
         Self {
             docker,
             cache: Arc::new(DashMap::new()),
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_stability_tracking() {
-        let docker = Arc::new(DockerManager::new().unwrap());
+        let docker = Arc::new(Client::new().unwrap());
         let orchestrator = DetectionOrchestrator::new(docker);
 
         let rule = DetectionRule {
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_cache_invalidation() {
-        let docker = Arc::new(DockerManager::new().unwrap());
+        let docker = Arc::new(Client::new().unwrap());
         let orchestrator = DetectionOrchestrator::new(docker);
 
         orchestrator.cache.insert(

@@ -8,8 +8,8 @@
 //! - `manifest enrich` — add compatibility/guidance templates
 
 use crate::command_manifest::cmd;
+use crate::context::Runtime;
 use crate::commands::Command;
-use crate::context::CommandContext;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -43,7 +43,7 @@ pub enum ManifestAction {
 
 pub struct ManifestCommand {
     pub action: ManifestAction,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 // ============================================================================
@@ -65,21 +65,21 @@ impl ManifestCommand {
                 name,
                 category,
             },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
     pub fn validate(path: String, quiet: bool) -> Self {
         Self {
             action: ManifestAction::Validate { path },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
     pub fn test(path: String, quiet: bool) -> Self {
         Self {
             action: ManifestAction::Test { path },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
@@ -89,20 +89,20 @@ impl ManifestCommand {
                 offering,
                 output_dir,
             },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
     pub fn enrich(path: String, auto: bool, quiet: bool) -> Self {
         Self {
             action: ManifestAction::Enrich { path, auto },
-            quiet_mode: quiet,
+            quiet,
         }
     }
 }
 
 // ============================================================================
-// Command trait
+// Runtime trait
 // ============================================================================
 
 #[async_trait]
@@ -122,7 +122,7 @@ impl Command for ManifestCommand {
         false
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> Result<()> {
+    async fn execute(&self, ctx: &Runtime) -> Result<()> {
         match &self.action {
             ManifestAction::Init {
                 image_ref,
@@ -148,7 +148,7 @@ impl Command for ManifestCommand {
 // ============================================================================
 
 async fn execute_init(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     image_ref: &str,
     output_dir: Option<&str>,
     name: Option<&str>,
@@ -157,7 +157,7 @@ async fn execute_init(
     let endpoint = ctx.endpoint.as_ref().context("endpoint required for init")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!("{}Inspecting image '{}'...", indent, image_ref);
     }
@@ -219,7 +219,7 @@ async fn execute_init(
         written.push(filename.clone());
     }
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!(
             "{}{}  Manifest scaffolded for '{}'",
@@ -369,7 +369,7 @@ async fn execute_validate(path: &str) -> Result<()> {
 // Test — deploy manifest on a stone
 // ============================================================================
 
-async fn execute_test(ctx: &CommandContext, path: &str) -> Result<()> {
+async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
     let endpoint = ctx.endpoint.as_ref().context("endpoint required for test")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
@@ -476,7 +476,7 @@ async fn execute_test(ctx: &CommandContext, path: &str) -> Result<()> {
 // ============================================================================
 
 async fn execute_export(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     offering: &str,
     output_dir: Option<&str>,
 ) -> Result<()> {
@@ -487,7 +487,7 @@ async fn execute_export(
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!("{}Exporting manifest for '{}'...", indent, offering);
     }
@@ -539,7 +539,7 @@ async fn execute_export(
         }
     }
 
-    if !ctx.quiet_mode {
+    if !ctx.quiet {
         println!();
         println!(
             "{}{}  Exported {} file(s) for '{}'",

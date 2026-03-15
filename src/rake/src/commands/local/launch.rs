@@ -5,7 +5,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use async_trait::async_trait;
 
 /// Launch stone UI in browser
@@ -22,7 +22,7 @@ impl LaunchCommand {
 
 #[async_trait]
 impl Command for LaunchCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         // Determine the endpoint to use
         let endpoint = if let Some(ref ep) = self.endpoint {
             ep.clone()

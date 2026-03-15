@@ -242,6 +242,301 @@ impl ContentStore {
         self.mount_root.join(rel)
     }
 
+    // ========================================================================
+    // File operations (STORAGE-0015 — used by StorageRouter)
+    // ========================================================================
+
+    /// List entries in a directory under the mount root.
+    ///
+    /// Returns `(name, is_dir, size, modified)` tuples. Filters out `.zen-garden` internals.
+    pub async fn list_dir(
+        &self,
+        rel: &str,
+    ) -> Result<Vec<(String, bool, u64, Option<chrono::DateTime<chrono::Utc>>)>> {
+        let full = if rel.is_empty() {
+            self.mount_root.clone()
+        } else {
+            self.mount_root.join(rel)
+        };
+
+        let mut entries = Vec::new();
+        let mut rd = tokio::fs::read_dir(&full)
+            .await
+            .with_context(|| format!("Failed to read_dir {}", full.display()))?;
+
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if garden_common::constants::storage::share::is_blocked_name(&name) {
+                continue;
+            }
+            let meta = entry.metadata().await.ok();
+            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .map(chrono::DateTime::<chrono::Utc>::from);
+            entries.push((name, is_dir, size, modified));
+        }
+
+        Ok(entries)
+    }
+
+    /// Rename or move a file/directory within the storage.
+    ///
+    /// Appends changelog entries for the delete (old) and create (new).
+    pub async fn rename_path(&self, old_rel: &str, new_rel: &str) -> Result<()> {
+        let src = self.mount_root.join(old_rel);
+        let dst = self.mount_root.join(new_rel);
+
+        if !src.exists() {
+            return Ok(()); // source doesn't exist on mount (placeholder-only)
+        }
+
+        if let Some(parent) = dst.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+
+        tokio::fs::rename(&src, &dst)
+            .await
+            .with_context(|| format!("Failed to rename {} → {}", src.display(), dst.display()))?;
+
+        // Changelog: old path deleted, new path created
+        if !old_rel.starts_with(".zen-garden/") {
+            self.append_changelog(&ChangelogEntry::deleted(old_rel)).await;
+        }
+        if !new_rel.starts_with(".zen-garden/") {
+            let size = tokio::fs::metadata(&dst).await.map(|m| m.len()).unwrap_or(0);
+            self.append_changelog(&ChangelogEntry::created(new_rel, size)).await;
+        }
+
+        debug!(old = %old_rel, new = %new_rel, "renamed on mount");
+        Ok(())
+    }
+
+    /// Create a directory under the mount root.
+    pub async fn mkdir(&self, rel: &str) -> Result<()> {
+        let full = self.mount_root.join(rel);
+        tokio::fs::create_dir_all(&full)
+            .await
+            .with_context(|| format!("Failed to mkdir {}", full.display()))?;
+        Ok(())
+    }
+
+    /// Delete a directory tree from the storage. Appends a changelog entry.
+    pub async fn delete_dir(&self, rel: &str) -> Result<()> {
+        let full = self.mount_root.join(rel);
+        if !full.exists() {
+            return Ok(());
+        }
+        tokio::fs::remove_dir_all(&full)
+            .await
+            .with_context(|| format!("Failed to delete_dir {}", full.display()))?;
+
+        if !rel.starts_with(".zen-garden/") {
+            self.append_changelog(&ChangelogEntry::deleted(rel)).await;
+        }
+
+        debug!(path = %rel, "deleted directory from mount");
+        Ok(())
+    }
+
+    /// Delete a single file from the storage (user content path).
+    ///
+    /// Like `delete` but takes a `&str` instead of `&Path` for consistency
+    /// with the other STORAGE-0015 methods.
+    pub async fn delete_file(&self, rel: &str) -> Result<()> {
+        self.delete(Path::new(rel)).await?;
+        Ok(())
+    }
+
+    /// Read a file from the storage (user content path, &str).
+    pub async fn read_file(&self, rel: &str) -> Result<Vec<u8>> {
+        self.read(Path::new(rel)).await
+    }
+
+    /// Read a byte range from a file (A11j — ranged read for CfApi hydration).
+    ///
+    /// For unencrypted stores: seeks directly, reads only the requested range.
+    /// For encrypted stores: reads + decrypts entire file, then slices (AEAD
+    /// constraint — ChaCha20-Poly1305 requires whole-file decrypt).
+    pub async fn read_range(&self, rel: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        let full_path = self.mount_root.join(rel);
+
+        match &self.dek {
+            None => {
+                // Unencrypted — seek + read only what's needed
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                let mut file = tokio::fs::File::open(&full_path)
+                    .await
+                    .with_context(|| format!("Failed to open {}", full_path.display()))?;
+
+                let file_len = file.metadata().await?.len();
+                let start = std::cmp::min(offset, file_len);
+                let end = std::cmp::min(offset + length, file_len);
+                let to_read = (end - start) as usize;
+                if to_read == 0 {
+                    return Ok(Vec::new());
+                }
+
+                file.seek(std::io::SeekFrom::Start(start)).await?;
+                let mut buf = vec![0u8; to_read];
+                file.read_exact(&mut buf).await.with_context(|| {
+                    format!(
+                        "Failed to read range {}..{} from {}",
+                        start,
+                        end,
+                        full_path.display()
+                    )
+                })?;
+                Ok(buf)
+            }
+            Some(dek) => {
+                // Encrypted — must decrypt whole file, then slice
+                let raw = tokio::fs::read(&full_path)
+                    .await
+                    .with_context(|| format!("Failed to read {}", full_path.display()))?;
+                let plaintext = decrypt(dek, &raw)
+                    .with_context(|| format!("Failed to decrypt {}", full_path.display()))?;
+
+                let start = std::cmp::min(offset as usize, plaintext.len());
+                let end = std::cmp::min((offset + length) as usize, plaintext.len());
+                Ok(plaintext[start..end].to_vec())
+            }
+        }
+    }
+
+    /// Write a file to the storage (user content path, &str).
+    pub async fn write_file(&self, rel: &str, data: &[u8]) -> Result<()> {
+        self.write(Path::new(rel), data).await
+    }
+
+    /// Get metadata for a file under the mount root.
+    pub async fn file_metadata(&self, rel: &str) -> Result<std::fs::Metadata> {
+        let full = self.mount_root.join(rel);
+        tokio::fs::metadata(&full)
+            .await
+            .with_context(|| format!("Failed to stat {}", full.display()))
+    }
+
+    /// Plaintext file size (A11j).
+    ///
+    /// Unencrypted: filesystem metadata size.
+    /// Encrypted: filesystem size minus AEAD overhead (version + nonce + tag = 29 bytes).
+    pub async fn file_size(&self, rel: &str) -> Result<u64> {
+        let meta = self.file_metadata(rel).await?;
+        let disk_size = meta.len();
+        if self.dek.is_some() {
+            Ok(disk_size.saturating_sub(ENCRYPTION_OVERHEAD as u64))
+        } else {
+            Ok(disk_size)
+        }
+    }
+
+    /// Open a file for streaming read (A11j).
+    ///
+    /// Unencrypted: returns the `tokio::fs::File` directly (zero-copy streaming).
+    /// Encrypted: decrypts the entire file (AEAD constraint), returns a `Cursor`
+    /// over the plaintext. Callers get `Box<dyn AsyncRead>` either way.
+    pub async fn open_read(
+        &self,
+        rel: &str,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Unpin + Send>> {
+        let full_path = self.mount_root.join(rel);
+        match &self.dek {
+            None => {
+                let file = tokio::fs::File::open(&full_path)
+                    .await
+                    .with_context(|| format!("open {}", full_path.display()))?;
+                Ok(Box::new(file))
+            }
+            Some(dek) => {
+                let raw = tokio::fs::read(&full_path)
+                    .await
+                    .with_context(|| format!("read {}", full_path.display()))?;
+                let plaintext = decrypt(dek, &raw)
+                    .with_context(|| format!("decrypt {}", full_path.display()))?;
+                Ok(Box::new(std::io::Cursor::new(plaintext)))
+            }
+        }
+    }
+
+    /// Streaming write from an `AsyncRead` source (A11j Wave 2).
+    ///
+    /// Streams data through an atomic tmp→fsync→rename write. Appends a
+    /// changelog entry and emits a tick notification on success.
+    ///
+    /// **Unencrypted stores only.** Encrypted stores require the full
+    /// plaintext upfront for AEAD — callers must use `write_file()` instead.
+    ///
+    /// Returns the number of bytes written.
+    pub async fn write_from_reader(
+        &self,
+        rel: &str,
+        reader: &mut (dyn tokio::io::AsyncRead + Unpin + Send),
+    ) -> Result<u64> {
+        assert!(
+            self.dek.is_none(),
+            "write_from_reader called on encrypted store — use write_file()"
+        );
+
+        let full_path = self.mount_root.join(rel);
+        let existed = full_path.exists();
+
+        // Ensure parent directories exist
+        if let Some(parent) = full_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create dirs for {}", full_path.display()))?;
+        }
+
+        // Atomic write: tmp → fsync → rename
+        let tmp_path = full_path.with_extension("tmp");
+        let mut tmp_file = tokio::fs::File::create(&tmp_path)
+            .await
+            .with_context(|| format!("create tmp {}", tmp_path.display()))?;
+
+        let bytes_written = tokio::io::copy(reader, &mut tmp_file)
+            .await
+            .with_context(|| format!("stream into {}", tmp_path.display()))?;
+
+        tmp_file.flush().await?;
+
+        // Best-effort fsync
+        if let Ok(file) = std::fs::File::open(&tmp_path) {
+            let _ = file.sync_all();
+        }
+
+        // Windows doesn't allow rename over existing file
+        #[cfg(windows)]
+        if full_path.exists() {
+            let _ = tokio::fs::remove_file(&full_path).await;
+        }
+
+        tokio::fs::rename(&tmp_path, &full_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "rename {} → {}",
+                    tmp_path.display(),
+                    full_path.display()
+                )
+            })?;
+
+        debug!(path = %rel, size = bytes_written, "streaming write complete");
+
+        // Append changelog entry (best-effort)
+        if !rel.starts_with(".zen-garden/") {
+            let entry = if existed {
+                ChangelogEntry::modified(rel, bytes_written)
+            } else {
+                ChangelogEntry::created(rel, bytes_written)
+            };
+            self.append_changelog(&entry).await;
+        }
+
+        Ok(bytes_written)
+    }
+
     /// Derive the DEK for a seed bank from the pond data key and the seed bank name.
     ///
     /// All replicas of the same logical seed bank share this key.
@@ -785,6 +1080,9 @@ fn walk_content_files(root: &Path) -> Result<Vec<ChangelogEntry>> {
 
 /// On-disk format version. Allows future format changes without breaking existing data.
 const ENCRYPTION_VERSION: u8 = 1;
+
+/// Byte overhead added by encryption: version(1) + nonce(12) + tag(16).
+const ENCRYPTION_OVERHEAD: usize = 1 + 12 + 16; // = 29
 
 /// Encrypt plaintext with ChaCha20-Poly1305.
 ///

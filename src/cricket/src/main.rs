@@ -15,9 +15,9 @@ mod manifest;
 mod mixer;
 mod test_mode;
 
-use events::CricketEventHandler;
-use handler::CricketHandler;
-use manifest::TuneManager;
+use events::CricketEvents;
+use handler::CricketCommands;
+use manifest::Tunes;
 use mixer::Mixer;
 
 /// Build Cricket's command manifest
@@ -198,10 +198,10 @@ async fn main() -> Result<()> {
 
     // Initialize domain components
     let mixer = Arc::new(Mixer::new(cli.volume as f32 / 100.0)?);
-    let tune_manager = Arc::new(TuneManager::new(Some(&tunes_dir))?);
+    let tunes = Arc::new(Tunes::new(Some(&tunes_dir))?);
 
     // Select initial tune
-    tune_manager.select(&cli.tune)?;
+    tunes.select(&cli.tune)?;
 
     tracing::info!(
         stone = %stone,
@@ -212,14 +212,14 @@ async fn main() -> Result<()> {
     );
 
     // Create handlers
-    let command_handler = CricketHandler::new(
+    let commands = CricketCommands::new(
         Arc::clone(&mixer),
-        Arc::clone(&tune_manager),
+        Arc::clone(&tunes),
         Arc::clone(&companion_state),
     );
-    let event_handler = CricketEventHandler::new(
+    let events = CricketEvents::new(
         Arc::clone(&mixer),
-        Arc::clone(&tune_manager),
+        Arc::clone(&tunes),
         Arc::clone(&companion_state),
     );
 
@@ -231,8 +231,8 @@ async fn main() -> Result<()> {
     };
 
     CompanionRuntime::new(config, "cricket")
-        .command_handler(command_handler)
-        .event_handler(event_handler)
+        .command_handler(commands)
+        .event_handler(events)
         .run()
         .await
 }
@@ -262,8 +262,7 @@ fn resolve_tunes_dir(override_path: Option<&str>) -> String {
 
 /// List available tunes
 fn list_tunes(tunes_dir: &str) -> Result<()> {
-    let manager = TuneManager::new(Some(tunes_dir))?;
-    let tunes = manager.list_tunes();
+    let tunes = Tunes::new(Some(tunes_dir))?.list_tunes();
 
     if tunes.is_empty() {
         println!("No tunes found in {}", tunes_dir);
@@ -293,8 +292,7 @@ fn list_tunes(tunes_dir: &str) -> Result<()> {
 
 /// Show tune details
 fn show_tune(name: &str, tunes_dir: &str) -> Result<()> {
-    let manager = TuneManager::new(Some(tunes_dir))?;
-    let tune = manager
+    let tune = Tunes::new(Some(tunes_dir))?
         .get_tune(name)
         .ok_or_else(|| anyhow::anyhow!("Tune '{}' not found", name))?;
 

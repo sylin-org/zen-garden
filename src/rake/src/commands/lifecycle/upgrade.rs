@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -13,22 +13,22 @@ use garden_common::ui::rendering as ui;
 pub struct UpgradeCommand {
     pub service: Option<String>,
     pub all: bool,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl UpgradeCommand {
-    pub fn new(service: Option<String>, all: bool, quiet_mode: bool) -> Self {
+    pub fn new(service: Option<String>, all: bool, quiet: bool) -> Self {
         Self {
             service,
             all,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for UpgradeCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
 
         if self.all || self.service.is_none() {
@@ -141,7 +141,7 @@ impl Command for UpgradeCommand {
                         }
 
                         // Display suggestions if present and not in quiet mode
-                        if !self.quiet_mode {
+                        if !self.quiet {
                             if let Some(suggestions) =
                                 body.get("suggestions").and_then(|v| v.as_array())
                             {
@@ -191,7 +191,7 @@ impl Command for UpgradeCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::NOURISH, self.quiet_mode);
+        suggestions::print_suggestions(cmd::NOURISH, self.quiet);
 
         Ok(())
     }

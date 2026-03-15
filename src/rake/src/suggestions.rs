@@ -23,8 +23,8 @@ pub fn get_suggestions(command_name: &str) -> Vec<String> {
 }
 
 /// Format and print suggestions (unless quiet mode)
-pub fn print_suggestions(command_name: &str, quiet_mode: bool) {
-    if quiet_mode {
+pub fn print_suggestions(command_name: &str, quiet: bool) {
+    if quiet {
         return;
     }
 

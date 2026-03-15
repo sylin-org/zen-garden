@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-use crate::manifest::TuneManager;
+use crate::manifest::Tunes;
 use crate::mixer::{Channel, Mixer};
 
 /// Debounce tracker for events
@@ -46,23 +46,23 @@ impl DebounceState {
 /// Cricket's SSE event handler
 ///
 /// Receives presence events from Moss and plays corresponding audio.
-pub struct CricketEventHandler {
+pub struct CricketEvents {
     mixer: Arc<Mixer>,
-    tune_manager: Arc<TuneManager>,
+    tunes: Arc<Tunes>,
     state: Arc<CompanionState>,
     debounce: Arc<RwLock<DebounceState>>,
 }
 
-impl CricketEventHandler {
+impl CricketEvents {
     /// Create a new event handler
     pub fn new(
         mixer: Arc<Mixer>,
-        tune_manager: Arc<TuneManager>,
+        tunes: Arc<Tunes>,
         state: Arc<CompanionState>,
     ) -> Self {
         Self {
             mixer,
-            tune_manager,
+            tunes,
             state,
             debounce: Arc::new(RwLock::new(DebounceState::new())),
         }
@@ -70,7 +70,7 @@ impl CricketEventHandler {
 }
 
 #[async_trait]
-impl EventHandler for CricketEventHandler {
+impl EventHandler for CricketEvents {
     async fn on_event(&self, event: SseEvent) {
         // Skip processing if disabled (user ran "off" command)
         if !self.state.is_enabled() {
@@ -82,7 +82,7 @@ impl EventHandler for CricketEventHandler {
         }
 
         // Get mapping from active tune
-        let Some(mapping) = self.tune_manager.get_event_mapping(&event.event_type) else {
+        let Some(mapping) = self.tunes.get_event_mapping(&event.event_type) else {
             tracing::trace!(event = %event.event_type, "No mapping for event");
             return;
         };
@@ -103,9 +103,9 @@ impl EventHandler for CricketEventHandler {
         };
 
         // Resolve resource (works for both embedded and filesystem, with fallback)
-        let active_name = self.tune_manager.active_name().unwrap_or_default();
+        let active_name = self.tunes.active_name().unwrap_or_default();
         let Some(audio_data) = self
-            .tune_manager
+            .tunes
             .resolve_resource_bytes_with_fallback(&active_name, &mapping.resource)
         else {
             tracing::warn!(

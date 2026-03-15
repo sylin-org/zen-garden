@@ -29,4 +29,4 @@
 
 pub mod executor;
 
-pub use executor::{CapabilityExecutor, CapabilityMutationResult, ExecutorContext};
+pub use executor::{CapabilityExecutor, CapabilityMutationResult, Executor};

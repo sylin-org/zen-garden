@@ -108,10 +108,10 @@ mod tests {
     #[tokio::test]
     async fn test_chirp_on_deploy() {
         let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
+        let counter = count.clone();
 
         let listener = ChirpListener::new(Arc::new(move || {
-            count_clone.fetch_add(1, Ordering::SeqCst);
+            counter.fetch_add(1, Ordering::SeqCst);
         }));
 
         let event = DomainEvent::Offering(OfferingEvent::deployed(
@@ -125,10 +125,10 @@ mod tests {
     #[tokio::test]
     async fn test_no_chirp_on_start() {
         let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
+        let counter = count.clone();
 
         let listener = ChirpListener::new(Arc::new(move || {
-            count_clone.fetch_add(1, Ordering::SeqCst);
+            counter.fetch_add(1, Ordering::SeqCst);
         }));
 
         // Start/stop don't trigger chirps (by design - topology doesn't change)
@@ -141,10 +141,10 @@ mod tests {
     #[tokio::test]
     async fn test_no_chirp_on_storage_events() {
         let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
+        let counter = count.clone();
 
         let listener = ChirpListener::new(Arc::new(move || {
-            count_clone.fetch_add(1, Ordering::SeqCst);
+            counter.fetch_add(1, Ordering::SeqCst);
         }));
 
         // Storage events don't trigger chirps
@@ -163,11 +163,11 @@ mod tests {
     #[tokio::test]
     async fn test_debounce_same_event_same_offering() {
         let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
+        let counter = count.clone();
 
         let listener = ChirpListener::with_debounce(
             Arc::new(move || {
-                count_clone.fetch_add(1, Ordering::SeqCst);
+                counter.fetch_add(1, Ordering::SeqCst);
             }),
             Duration::from_millis(100),
         );
@@ -196,11 +196,11 @@ mod tests {
     #[tokio::test]
     async fn test_different_event_types_not_debounced() {
         let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
+        let counter = count.clone();
 
         let listener = ChirpListener::with_debounce(
             Arc::new(move || {
-                count_clone.fetch_add(1, Ordering::SeqCst);
+                counter.fetch_add(1, Ordering::SeqCst);
             }),
             Duration::from_millis(100),
         );
@@ -229,11 +229,11 @@ mod tests {
     #[tokio::test]
     async fn test_different_offerings_not_debounced() {
         let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
+        let counter = count.clone();
 
         let listener = ChirpListener::with_debounce(
             Arc::new(move || {
-                count_clone.fetch_add(1, Ordering::SeqCst);
+                counter.fetch_add(1, Ordering::SeqCst);
             }),
             Duration::from_millis(100),
         );
@@ -262,11 +262,11 @@ mod tests {
     #[tokio::test]
     async fn test_debounce_window_expires() {
         let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
+        let counter = count.clone();
 
         let listener = ChirpListener::with_debounce(
             Arc::new(move || {
-                count_clone.fetch_add(1, Ordering::SeqCst);
+                counter.fetch_add(1, Ordering::SeqCst);
             }),
             Duration::from_millis(50),
         );

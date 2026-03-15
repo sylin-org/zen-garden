@@ -30,7 +30,7 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
 
         // Get real system metrics from shared cache
         let (cpu_percent, memory_percent, disk_percent) = {
-            let resources = state.system_resources.read().await;
+            let resources = state.current.system_resources.read().await;
             if let Some(ref res) = *resources {
                 let primary_disk = res
                     .storage
@@ -103,7 +103,7 @@ pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::C
 
         // Get real metrics from shared cache
         let (cpu, memory) = {
-            let resources = state.system_resources.read().await;
+            let resources = state.current.system_resources.read().await;
             if let Some(ref res) = *resources {
                 (res.cpu.usage_percent as f64, res.memory.used_percent as f64)
             } else {

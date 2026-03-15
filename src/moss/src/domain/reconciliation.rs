@@ -37,7 +37,7 @@ use garden_common::console;
 /// - Emitting events
 /// - HTTP response formatting
 pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> ReconciliationResult {
-    let existing = match state.docker.list_zen_containers().await {
+    let existing = match state.platform.docker.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {
             tracing::error!(error = ?e, "Failed to list zen containers during reconciliation");
@@ -49,7 +49,7 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
     };
 
     // Snapshot cached capabilities once for all adoptions
-    let cached_caps = state.capabilities.read().await.clone();
+    let cached_caps = state.current.capabilities.read().await.clone();
     let cached_caps_ref = cached_caps.as_ref();
 
     let mut adopted = Vec::new();
@@ -69,10 +69,10 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
 
         // Attempt adoption outside the lock (I/O-heavy)
         match adopt_offering_container(
-            &state.docker,
+            &state.platform.docker,
             &state.manifest_registry,
             &offering,
-            &state.stone_name,
+            &state.current.stone.name,
             cached_caps_ref,
         )
         .await
@@ -89,7 +89,7 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
                 if drop_invalid {
                     tracing::warn!(offering = %offering, "Reconciliation: dropping invalid container (no matching template)");
                     match state
-                        .docker
+                        .platform.docker
                         .remove_service(&offering, Some(&state.console))
                         .await
                     {

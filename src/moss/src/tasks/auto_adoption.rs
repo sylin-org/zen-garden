@@ -57,8 +57,8 @@ use tokio_util::sync::CancellationToken;
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
-    let orchestrator = DetectionOrchestrator::new(state.docker.clone());
-    let connectivity = ConnectivityOrchestrator::new(state.docker.clone());
+    let orchestrator = DetectionOrchestrator::new(state.platform.docker.clone());
+    let connectivity = ConnectivityOrchestrator::new(state.platform.docker.clone());
 
     // Track elapsed time for schedule phases
     let start_time = Instant::now();
@@ -133,7 +133,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         .ensure_connectivity(
                             manifest,
                             Some(&location),
-                            &state.stone_name,
+                            &state.current.stone.name,
                         )
                         .await
                         .unwrap_or_else(|e| {
@@ -235,7 +235,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     // Check hardware compatibility rules before adopting.
                     // e.g. ollama-cpu must NOT be adopted on GPU-equipped stones.
                     if let Some(rules) = &manifest.compatibility {
-                        let cached_caps = state.capabilities.read().await;
+                        let cached_caps = state.current.capabilities.read().await;
                         let caps = get_current_compat_capabilities(cached_caps.as_ref());
                         if let CompatibilityDecision::Fail { reason, .. } =
                             evaluate_compatibility(rules, &caps)
@@ -280,7 +280,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     let control = manifest.get_control_config();
 
                     let connectivity_outcome = connectivity
-                        .ensure_connectivity(manifest, Some(&location), &state.stone_name)
+                        .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
                         .await
                         .unwrap_or_else(|e| {
                             tracing::warn!(

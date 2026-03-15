@@ -33,10 +33,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dav_server::{fakels::FakeLs, localfs::LocalFs, DavHandler};
+use futures_util::StreamExt;
 use garden_common::storage::ChangelogEntry;
 use tracing::{debug, warn};
 
-use crate::domain::storage_service::{LocalStorage, StorageRoute};
+use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
 
 use super::garden_storage::HEADER_ZEN_PROXIED;
@@ -65,9 +66,9 @@ pub async fn handle_webdav(
             .into_response();
     };
 
-    // Block access to .zen-garden internals (safety net)
+    // Block access to restricted paths (managed metadata, OS internals)
     let rel_path = extract_rel_path(&uri_path, storage_name);
-    if is_dotfolder_access(&rel_path) {
+    if garden_common::constants::storage::share::is_blocked_path(&rel_path) {
         return (
             StatusCode::FORBIDDEN,
             "Access to managed storage internals is not allowed",
@@ -86,15 +87,25 @@ pub async fn handle_webdav(
     let is_mutation = is_write_method(&method);
 
     // Resolve storage routing
-    let svc = state.storage_service();
-    let route = if is_mutation {
-        svc.resolve_write(storage_name).await
-    } else {
-        svc.resolve_read(storage_name).await
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: if is_mutation {
+            Some(state.orchestration.storage.tick.raw.clone())
+        } else {
+            None
+        },
     };
 
-    let route = match route {
-        Ok(r) => r,
+    let handle = if is_mutation {
+        resolver.for_write(storage_name).await
+    } else {
+        resolver.for_read(storage_name).await
+    };
+
+    let handle = match handle {
+        Ok(h) => h,
         Err(e) => {
             return (
                 StatusCode::NOT_FOUND,
@@ -104,24 +115,32 @@ pub async fn handle_webdav(
         }
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            if is_proxied && local.role != garden_common::storage::StorageRole::Primary {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Proxied request reached a non-primary stone",
-                )
-                    .into_response();
+    if handle.is_local() {
+        if is_proxied && handle.mount_path().is_some() {
+            // Check role via local storage lookup
+            if let Some(local) = crate::domain::storage_service::StorageRoute::find_local(
+                storage_name,
+                &state.current.storage.volumes,
+            )
+            .await
+            {
+                if local.role != garden_common::storage::StorageRole::Primary {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Proxied request reached a non-primary stone",
+                    )
+                        .into_response();
+                }
             }
+        }
 
-            serve_local(&state, &local, storage_name, &method, &rel_path, request).await
+        serve_local(&handle, storage_name, &method, &rel_path, request).await
+    } else {
+        if is_proxied {
+            return (StatusCode::BAD_GATEWAY, "Proxy loop detected").into_response();
         }
-        StorageRoute::Proxy(target) => {
-            if is_proxied {
-                return (StatusCode::BAD_GATEWAY, "Proxy loop detected").into_response();
-            }
-            proxy_webdav(&target.endpoint, storage_name, request).await
-        }
+        let endpoint = handle.remote_endpoint().unwrap();
+        proxy_webdav(endpoint, storage_name, request).await
     }
 }
 
@@ -131,15 +150,15 @@ pub async fn handle_webdav(
 
 /// Serve a WebDAV request from local storage via `dav-server`.
 async fn serve_local(
-    state: &AppState,
-    local: &LocalStorage,
+    handle: &crate::infra::storage::handle::StorageHandle,
     storage_name: &str,
     method: &Method,
     rel_path: &str,
     request: Request,
 ) -> Response {
+    let mount_path = handle.mount_path().unwrap();
     let dav = DavHandler::builder()
-        .filesystem(LocalFs::new(&local.mount_path, false, false, false))
+        .filesystem(LocalFs::new(mount_path, false, false, false))
         .locksystem(FakeLs::new())
         .strip_prefix(format!("/dav/{}", storage_name))
         .build_handler();
@@ -149,8 +168,9 @@ async fn serve_local(
 
     // Record changelog for successful mutations
     if is_write_method(method) && status.is_success() {
-        let content_store = state.storage_service().notifying_content_store(local);
-        record_changelog(&content_store, method, rel_path).await;
+        if let Some(content_store) = handle.content_store_for_write() {
+            record_changelog(&content_store, method, rel_path).await;
+        }
     }
 
     if status.is_success() {
@@ -227,10 +247,9 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
         }
     };
 
-    // Convert reqwest response → axum response
+    // Convert reqwest response → axum response (streaming — A11j Wave 3)
     let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let resp_headers = response.headers().clone();
-    let resp_body = response.bytes().await.unwrap_or_default();
 
     let mut builder = Response::builder().status(status);
 
@@ -241,9 +260,15 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
         }
     }
 
-    builder.body(Body::from(resp_body)).unwrap_or_else(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build proxy response").into_response()
-    })
+    // Stream the response body instead of buffering the entire payload
+    let stream = response
+        .bytes_stream()
+        .map(|r| r.map_err(std::io::Error::other));
+    builder
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build proxy response").into_response()
+        })
 }
 
 // ============================================================================
@@ -262,8 +287,8 @@ async fn record_changelog(
         return;
     }
 
-    // Skip changelog for .zen-garden/ paths (shouldn't reach here, but safety)
-    if rel_path.starts_with(".zen-garden") {
+    // Skip changelog for blocked paths (shouldn't reach here, but safety)
+    if garden_common::constants::storage::share::is_blocked_path(rel_path) {
         return;
     }
 
@@ -311,13 +336,6 @@ fn extract_rel_path(uri_path: &str, storage_name: &str) -> String {
         .to_string()
 }
 
-/// Check if the path accesses `.zen-garden/` internals.
-fn is_dotfolder_access(rel_path: &str) -> bool {
-    let normalized = rel_path.trim_start_matches('/');
-    normalized.starts_with(".zen-garden")
-        || normalized.contains("/.zen-garden")
-        || normalized.contains("\\.zen-garden")
-}
 
 /// Whether the HTTP method is a mutation (write) operation.
 fn is_write_method(method: &Method) -> bool {
@@ -364,13 +382,17 @@ mod tests {
     }
 
     #[test]
-    fn test_is_dotfolder_access() {
-        assert!(is_dotfolder_access(".zen-garden/manifest.json"));
-        assert!(is_dotfolder_access("/.zen-garden/"));
-        assert!(is_dotfolder_access("foo/.zen-garden/bar"));
-        assert!(!is_dotfolder_access("Photos/vacation.jpg"));
-        assert!(!is_dotfolder_access("Zen Garden/manifest.json")); // Symlink access is OK
-        assert!(!is_dotfolder_access(""));
+    fn test_is_blocked_path() {
+        use garden_common::constants::storage::share::is_blocked_path;
+        assert!(is_blocked_path(".zen-garden/manifest.json"));
+        assert!(is_blocked_path("/.zen-garden/"));
+        assert!(is_blocked_path("foo/.zen-garden/bar"));
+        assert!(is_blocked_path("$RECYCLE.BIN/file.txt"));
+        assert!(is_blocked_path("/$RECYCLE.BIN"));
+        assert!(is_blocked_path("System Volume Information/WPSettings.dat"));
+        assert!(is_blocked_path("Zen Garden/manifest.json"));
+        assert!(!is_blocked_path("Photos/vacation.jpg"));
+        assert!(!is_blocked_path(""));
     }
 
     #[test]

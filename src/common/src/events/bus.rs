@@ -39,7 +39,7 @@ pub type EventHandler = Arc<dyn Fn(DomainEvent) + Send + Sync>;
 /// ```
 #[derive(Clone)]
 pub struct EventBus {
-    tx: broadcast::Sender<DomainEvent>,
+    channel: broadcast::Sender<DomainEvent>,
     handlers: Arc<RwLock<Vec<EventHandler>>>,
 }
 
@@ -51,7 +51,7 @@ impl EventBus {
     pub fn new(capacity: usize) -> Self {
         let (tx, _rx) = broadcast::channel(capacity);
         Self {
-            tx,
+            channel: tx,
             handlers: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -61,7 +61,7 @@ impl EventBus {
     /// Returns a receiver that gets a copy of every published event.
     /// Filter events in your handler logic.
     pub fn subscribe(&self) -> broadcast::Receiver<DomainEvent> {
-        self.tx.subscribe()
+        self.channel.subscribe()
     }
 
     /// Publish an event to all subscribers
@@ -78,7 +78,7 @@ impl EventBus {
         drop(handlers); // Release lock before broadcast
 
         // Then broadcast to subscribers
-        match self.tx.send(event) {
+        match self.channel.send(event) {
             Ok(subscriber_count) => Ok(subscriber_count),
             Err(_) => {
                 // If no subscribers but handlers exist, that's still ok
@@ -106,7 +106,7 @@ impl EventBus {
 
     /// Get current subscriber count
     pub fn subscriber_count(&self) -> usize {
-        self.tx.receiver_count()
+        self.channel.receiver_count()
     }
 }
 
@@ -180,9 +180,9 @@ mod tests {
         let bus = EventBus::new(10);
         let counter = Arc::new(AtomicUsize::new(0));
 
-        let counter_clone = counter.clone();
+        let counter_handler = counter.clone();
         bus.register_handler(move |_event| {
-            counter_clone.fetch_add(1, Ordering::SeqCst);
+            counter_handler.fetch_add(1, Ordering::SeqCst);
         })
         .await;
 
@@ -223,17 +223,17 @@ mod tests {
         let service_counter = Arc::new(AtomicUsize::new(0));
         let job_counter = Arc::new(AtomicUsize::new(0));
 
-        let service_clone = service_counter.clone();
-        let job_clone = job_counter.clone();
+        let sc = service_counter.clone();
+        let jc = job_counter.clone();
 
         tokio::spawn(async move {
             while let Ok(event) = rx.recv().await {
                 match event {
                     DomainEvent::Service(_) => {
-                        service_clone.fetch_add(1, Ordering::SeqCst);
+                        sc.fetch_add(1, Ordering::SeqCst);
                     }
                     DomainEvent::Job(_) => {
-                        job_clone.fetch_add(1, Ordering::SeqCst);
+                        jc.fetch_add(1, Ordering::SeqCst);
                     }
                     _ => {}
                 }

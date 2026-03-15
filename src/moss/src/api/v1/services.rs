@@ -1,5 +1,5 @@
 use crate::api::responses::{ApiResponse, CreateServiceRequest, ServiceActionResponse};
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::connection;
 use crate::domain::events::OfferingEvent;
 use crate::infra::network::{load_network_state, revert_to_dhcp};
@@ -117,7 +117,7 @@ pub async fn list_services_v1(
 
     let response = list_all_local_services(&state).await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "list_services");
+    let ctx = Suggestion::from_headers(&headers, "list_services");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -196,7 +196,7 @@ pub async fn find_services_v1(
         list_all_local_services(&state).await
     };
 
-    let ctx = SuggestionContext::from_headers(&headers, "find_services");
+    let ctx = Suggestion::from_headers(&headers, "find_services");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -236,7 +236,7 @@ pub async fn get_service_v1(
         })?;
     drop(offerings);
 
-    let ctx = SuggestionContext::from_headers(&headers, "get_service");
+    let ctx = Suggestion::from_headers(&headers, "get_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -277,7 +277,7 @@ pub async fn create_service_v1(
                 .find(|o| o.name.to_string() == service_name && o.is_managed())
             {
                 if existing.status == OfferingStatus::Maintenance {
-                    let ctx = SuggestionContext::from_headers(&headers, "create_service");
+                    let ctx = Suggestion::from_headers(&headers, "create_service");
                     let suggestions = generate_suggestions(&ctx);
                     return Ok(Json(ApiResponse {
                         data: ServiceActionResponse {
@@ -339,23 +339,23 @@ pub async fn create_service_v1(
         let _ = state.persist_offerings().await;
 
         // Spawn async image-direct installation
-        let state_clone = state.clone();
-        let fqn_clone = offering_fqn.clone();
-        let image_clone = image_ref.clone();
-        let job_id_clone = job_id.clone();
-        let svc_name_clone = service_name.clone();
+        let state = state.clone();
+        let task_fqn = offering_fqn.clone();
+        let task_image = image_ref.clone();
+        let task_job_id = job_id.clone();
+        let task_svc_name = service_name.clone();
         tokio::spawn(async move {
             crate::install_image_direct_task(
-                &state_clone,
-                &job_id_clone,
-                &fqn_clone,
-                &image_clone,
-                &svc_name_clone,
+                &state,
+                &task_job_id,
+                &task_fqn,
+                &task_image,
+                &task_svc_name,
             )
             .await;
         });
 
-        let ctx = SuggestionContext::from_headers(&headers, "create_service");
+        let ctx = Suggestion::from_headers(&headers, "create_service");
         let suggestions = generate_suggestions(&ctx);
         return Ok(Json(ApiResponse {
             data: ServiceActionResponse {
@@ -373,7 +373,7 @@ pub async fn create_service_v1(
 
     // Self-heal: if the container exists but registry forgot it (e.g. after restart), adopt it.
     if state
-        .docker
+        .platform.docker
         .zen_container_exists(&service_name)
         .await
         .unwrap_or(false)
@@ -384,12 +384,12 @@ pub async fn create_service_v1(
         };
 
         if !in_registry {
-            let cached_caps = state.capabilities.read().await.clone();
+            let cached_caps = state.current.capabilities.read().await.clone();
             if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
-                &state.docker,
+                &state.platform.docker,
                 &state.manifest_registry,
                 &service_name,
-                &state.stone_name,
+                &state.current.stone.name,
                 cached_caps.as_ref(),
             )
             .await
@@ -397,7 +397,7 @@ pub async fn create_service_v1(
                 state.upsert_offering(adopted_offering, true).await;
                 let _ = state.persist_offerings().await;
 
-                let ctx = SuggestionContext::from_headers(&headers, "create_service");
+                let ctx = Suggestion::from_headers(&headers, "create_service");
                 let suggestions = generate_suggestions(&ctx);
 
                 return Ok(Json(ApiResponse {
@@ -472,7 +472,7 @@ pub async fn create_service_v1(
     {
         if existing.status == OfferingStatus::Maintenance {
             drop(offerings);
-            let ctx = SuggestionContext::from_headers(&headers, "create_service");
+            let ctx = Suggestion::from_headers(&headers, "create_service");
             let suggestions = generate_suggestions(&ctx);
             return Ok(Json(ApiResponse {
                 data: ServiceActionResponse {
@@ -549,21 +549,21 @@ pub async fn create_service_v1(
     let _ = state.persist_offerings().await;
 
     // Spawn async installation task
-    let state_clone = state.clone();
-    let offering_clone = offering_type.clone();
-    let service_name_clone = service_name.clone();
-    let job_id_clone = job_id.clone();
+    let state = state.clone();
+    let task_offering = offering_type.clone();
+    let task_svc_name = service_name.clone();
+    let task_job_id = job_id.clone();
     tokio::spawn(async move {
         crate::install_service_task(
-            &state_clone,
-            &job_id_clone,
-            &offering_clone,
-            &service_name_clone,
+            &state,
+            &task_job_id,
+            &task_offering,
+            &task_svc_name,
         )
         .await;
     });
 
-    let ctx = SuggestionContext::from_headers(&headers, "create_service");
+    let ctx = Suggestion::from_headers(&headers, "create_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -606,7 +606,7 @@ pub async fn rest_service_v1(
 
     // Stop the Docker container
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&service_name, Some(&state.console))
         .await
     {
@@ -636,7 +636,7 @@ pub async fn rest_service_v1(
         state.stone_name(),
     ));
 
-    let ctx = SuggestionContext::from_headers(&headers, "rest_service");
+    let ctx = Suggestion::from_headers(&headers, "rest_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -678,7 +678,7 @@ pub async fn wake_service_v1(
     // but the container was removed (pruned, failed upgrade, etc.), transparently
     // reinstall it from the manifest — preserving data in named volumes/mounts.
     let container_exists = state
-        .docker
+        .platform.docker
         .zen_container_exists(&service_name)
         .await
         .unwrap_or(false);
@@ -732,7 +732,7 @@ pub async fn wake_service_v1(
 
         // Start the Docker container
         if let Err(e) = state
-            .docker
+            .platform.docker
             .start_service(&service_name, Some(&state.console))
             .await
         {
@@ -763,7 +763,7 @@ pub async fn wake_service_v1(
         state.stone_name(),
     ));
 
-    let ctx = SuggestionContext::from_headers(&headers, "wake_service");
+    let ctx = Suggestion::from_headers(&headers, "wake_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -801,7 +801,7 @@ pub async fn nourish_service_v1(
             })?;
 
         if o.status == OfferingStatus::Maintenance {
-            let ctx = SuggestionContext::from_headers(&headers, "nourish_service");
+            let ctx = Suggestion::from_headers(&headers, "nourish_service");
             let suggestions = generate_suggestions(&ctx);
             return Ok(Json(ApiResponse {
                 data: ServiceActionResponse {
@@ -834,10 +834,10 @@ pub async fn nourish_service_v1(
     })?;
     let template = entry.parse_template().map_err(|e| {
         // Restore status on error via gateway (syncs self_entry)
-        let state_clone = state.clone();
-        let id_clone = offering_id.clone();
+        let recovery_state = state.clone();
+        let recovery_id = offering_id.clone();
         tokio::spawn(async move {
-            state_clone.update_offering(&id_clone, true, |o| {
+            recovery_state.update_offering(&recovery_id, true, |o| {
                 o.status = OfferingStatus::Running;
                 true
             }).await;
@@ -861,7 +861,7 @@ pub async fn nourish_service_v1(
         config_files: template.config_files,
     };
     if let Err(e) = state
-        .docker
+        .platform.docker
         .upgrade_service(&service_name, &spec, Some(&state.console))
         .await
     {
@@ -913,7 +913,7 @@ pub async fn nourish_service_v1(
         &new_image,
     ));
 
-    let ctx = SuggestionContext::from_headers(&headers, "nourish_service");
+    let ctx = Suggestion::from_headers(&headers, "nourish_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -955,7 +955,7 @@ pub async fn delete_service_v1(
 
     // Remove container first (preserves volumes by default)
     if let Err(e) = state
-        .docker
+        .platform.docker
         .remove_service(&service_name, Some(&state.console))
         .await
     {
@@ -1012,7 +1012,7 @@ pub async fn delete_service_v1(
         }
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "delete_service");
+    let ctx = Suggestion::from_headers(&headers, "delete_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -1055,7 +1055,7 @@ pub async fn destroy_service_v1(
     // If the container doesn't exist (already removed, failed install, etc.),
     // continue with registry cleanup — the goal is to fully remove the offering.
     if let Err(e) = state
-        .docker
+        .platform.docker
         .remove_service(&service_name, Some(&state.console))
         .await
     {
@@ -1114,7 +1114,7 @@ pub async fn destroy_service_v1(
         }
     }
 
-    let ctx = SuggestionContext::from_headers(&headers, "destroy_service");
+    let ctx = Suggestion::from_headers(&headers, "destroy_service");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -1253,7 +1253,7 @@ pub async fn get_service_env_v1(
 
     // For Docker-managed containers, inspect to get env vars
     if offering.is_managed() {
-        match state.docker.inspect_container_spec(&service_name).await {
+        match state.platform.docker.inspect_container_spec(&service_name).await {
             Ok(spec) => {
                 let env_map: std::collections::HashMap<String, String> = spec
                     .environment
@@ -1381,7 +1381,7 @@ pub async fn restart_service_v1(
     let service_name = normalize_service_name(&service)?;
     // Stop then start
     state
-        .docker
+        .platform.docker
         .stop_service(&service_name, Some(&state.console))
         .await
         .map_err(|e| {
@@ -1394,7 +1394,7 @@ pub async fn restart_service_v1(
         })?;
 
     state
-        .docker
+        .platform.docker
         .start_service(&service_name, Some(&state.console))
         .await
         .map_err(|e| {
@@ -1798,7 +1798,7 @@ async fn rebuild_missing_container(
         .context("Failed to build container spec from manifest")?;
 
     state
-        .docker
+        .platform.docker
         .install_service(service_name, &spec, Some(&state.console))
         .await
         .context("Failed to install container")?;
@@ -1835,14 +1835,14 @@ async fn compose_on_start(state: &crate::AppState, service_name: &str) -> anyhow
         .context("Failed to build spec for compose-on-start")?;
 
     // Check if container needs cycling
-    match state.docker.needs_cycle(service_name, &desired_spec).await {
+    match state.platform.docker.needs_cycle(service_name, &desired_spec).await {
         Ok(true) => {
             tracing::info!(
                 service = %service_name,
                 "Compose-on-start: container spec mismatch, cycling"
             );
             state
-                .docker
+                .platform.docker
                 .recreate_service(service_name, &desired_spec)
                 .await
                 .context("Failed to recreate container for compose-on-start")?;
@@ -1940,7 +1940,7 @@ pub async fn reassign_service_v1(
 
     // Step 1: Stop the container
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&old_name, Some(&state.console))
         .await
     {
@@ -1949,10 +1949,10 @@ pub async fn reassign_service_v1(
     }
 
     // Step 2: Rename the Docker container
-    if let Err(e) = state.docker.rename_service(&old_name, &new_name).await {
+    if let Err(e) = state.platform.docker.rename_service(&old_name, &new_name).await {
         // Try to restart the old container on failure
         let _ = state
-            .docker
+            .platform.docker
             .start_service(&old_name, Some(&state.console))
             .await;
         return Err(error_response(
@@ -1977,7 +1977,7 @@ pub async fn reassign_service_v1(
 
     // Step 4: Start the container with its new name
     if let Err(e) = state
-        .docker
+        .platform.docker
         .start_service(&new_name, Some(&state.console))
         .await
     {

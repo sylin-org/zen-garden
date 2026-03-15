@@ -100,7 +100,7 @@ pub async fn recommend_placement(
     let local_candidate = score_local_stone(&request.offering, &local_offering, state).await?;
 
     // 2. Get peer stones from topology cache (online only — offline stones are unreachable)
-    let peer_stones = topology::get_online_stones(&state.topology_cache).await;
+    let peer_stones = topology::get_online_stones(&state.current.topology.cache).await;
     tracing::debug!(
         peer_count = peer_stones.len(),
         "Discovered {} peer stones from topology cache",
@@ -308,8 +308,8 @@ async fn score_local_stone(
         + tended_bonus;
 
     Ok(PlacementRecommendation {
-        stone_id: state.stone_id.clone(),
-        hostname: state.stone_name.clone(),
+        stone_id: state.current.stone.id.clone(),
+        hostname: state.current.stone.name.clone(),
         score: total_score,
         is_local: true,
         compatibility: compat_str.to_string(),

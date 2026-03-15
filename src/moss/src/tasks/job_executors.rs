@@ -21,7 +21,7 @@ use crate::infra::network::{apply_static_from_pool, load_network_state};
 use crate::infra::TaskStore;
 use crate::{AppState, JobStatus};
 use garden_common::console;
-use garden_common::templates::{render_template, TemplateContext};
+use garden_common::templates::{render_template, Template};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
     offerings::OfferingFqn, ManagedData, Offering, OfferingGuidance, OfferingLocation,
@@ -47,7 +47,7 @@ fn substitute_guidance_templates(
     stone_name: &str,
     static_ip: Option<&str>,
 ) -> String {
-    let mut ctx = TemplateContext::new();
+    let mut ctx = Template::new();
 
     // Set basic variables
     ctx.set("server-name", stone_name);
@@ -138,7 +138,7 @@ pub fn build_guidance(
         name,
         offering,
         ports,
-        &state.stone_name,
+        &state.current.stone.name,
         static_ip,
     );
 
@@ -152,7 +152,7 @@ pub fn build_guidance(
             variables.insert(format!("{}-port", port_name), host_port.to_string());
         }
     }
-    variables.insert("server-name".to_string(), state.stone_name.clone());
+    variables.insert("server-name".to_string(), state.current.stone.name.clone());
     variables.insert("offering".to_string(), offering.to_string());
     variables.insert("name".to_string(), name.to_string());
     variables.insert("os".to_string(), std::env::consts::OS.to_string());
@@ -192,13 +192,13 @@ pub fn build_adopted_guidance(
         name,
         offering,
         &ports,
-        &state.stone_name,
+        &state.current.stone.name,
         static_ip,
     );
 
     let mut variables = std::collections::HashMap::new();
     variables.insert("port".to_string(), port.to_string());
-    variables.insert("server-name".to_string(), state.stone_name.clone());
+    variables.insert("server-name".to_string(), state.current.stone.name.clone());
     variables.insert("offering".to_string(), offering.to_string());
     variables.insert("name".to_string(), name.to_string());
     variables.insert("os".to_string(), std::env::consts::OS.to_string());
@@ -738,7 +738,7 @@ pub async fn install_service_task(
         config_files: vec![],
     };
     let actual_ports = match state
-        .docker
+        .platform.docker
         .install_service(offering, &spec, Some(&state.console))
         .await
     {
@@ -805,20 +805,20 @@ pub async fn install_service_task(
 
     // Update existing offering entry (created with Installing status before job started)
     // Change status from Installing to Running and clear job_id (via gateway)
-    let image_version_clone = image_version.clone();
-    let offering_protocol_clone = offering_protocol.clone();
-    let guidance_clone = guidance.clone();
-    let port_map_clone = port_map.clone();
+    let update_version = image_version.clone();
+    let update_protocol = offering_protocol.clone();
+    let update_guidance = guidance.clone();
+    let update_port_map = port_map.clone();
     let updated = state.update_offering_by_name(offering, false, |o| {
         o.status = OfferingStatus::Running;
         o.health = ServiceHealthStatus::Healthy;
-        o.version = image_version_clone;
+        o.version = update_version;
         o.location.port = actual_port;
-        o.location.protocol = offering_protocol_clone;
-        o.location.port_map = port_map_clone;
+        o.location.protocol = update_protocol;
+        o.location.port_map = update_port_map;
         if let Some(ref mut managed) = o.managed_data_mut() {
             managed.job_id = None;
-            managed.guidance = guidance_clone;
+            managed.guidance = update_guidance;
         }
         true
     }).await;
@@ -873,7 +873,7 @@ pub async fn install_service_task(
     state.event_bus.emit(OfferingEvent::deployed(
         &offering_id,
         offering,
-        state.stone_name(),
+        &state.current.stone.name,
         &image_full,
     ));
 
@@ -976,7 +976,7 @@ pub async fn install_image_direct_task(
         service_name,
     );
 
-    let inspection = match image_inspect::inspect_image(&state.docker, image_ref).await {
+    let inspection = match image_inspect::inspect_image(&state.platform.docker, image_ref).await {
         Ok(i) => i,
         Err(e) => {
             let msg = format!("Image inspection failed: {}", e);
@@ -1037,7 +1037,7 @@ pub async fn install_image_direct_task(
     );
 
     let actual_ports = match state
-        .docker
+        .platform.docker
         .install_service(service_name, &spec, Some(&state.console))
         .await
     {
@@ -1121,7 +1121,7 @@ pub async fn install_image_direct_task(
     state.event_bus.emit(OfferingEvent::deployed(
         service_name,
         &fqn.offering,
-        state.stone_name(),
+        &state.current.stone.name,
         image_ref,
     ));
 
@@ -1312,7 +1312,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             config_files: vec![],
         };
         let actual_ports = match state
-            .docker
+            .platform.docker
             .install_service(&service_name, &spec, Some(&state.console))
             .await
         {
@@ -1394,7 +1394,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         state.event_bus.emit(OfferingEvent::deployed(
             &offering_id,
             &service_name,
-            state.stone_name(),
+            &state.current.stone.name,
             &image_full,
         ));
 

@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -22,19 +22,19 @@ pub enum LiftTarget {
 /// Lift command for removing pond elements
 pub struct LiftCommand {
     pub target: LiftTarget,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl LiftCommand {
-    pub fn new(target: LiftTarget, quiet_mode: bool) -> Self {
-        Self { target, quiet_mode }
+    pub fn new(target: LiftTarget, quiet: bool) -> Self {
+        Self { target, quiet }
     }
 
     /// Create from CLI args
     pub fn from_args(
         target_type: String,
         stone_name: Option<String>,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> anyhow::Result<Self> {
         let target = match target_type.as_str() {
             "keystone" => LiftTarget::Keystone,
@@ -48,13 +48,13 @@ impl LiftCommand {
                 target_type
             ),
         };
-        Ok(Self::new(target, quiet_mode))
+        Ok(Self::new(target, quiet))
     }
 }
 
 #[async_trait]
 impl Command for LiftCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
 
         match &self.target {
@@ -67,7 +67,7 @@ impl Command for LiftCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIFT, self.quiet_mode);
+        suggestions::print_suggestions(cmd::LIFT, self.quiet);
 
         Ok(())
     }
@@ -77,7 +77,7 @@ impl Command for LiftCommand {
     }
 }
 
-async fn execute_lift_keystone(ctx: &CommandContext, endpoint: &str) -> anyhow::Result<()> {
+async fn execute_lift_keystone(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond", endpoint.trim_end_matches('/'));
 
     match ctx.client.delete(&url).send().await {
@@ -121,7 +121,7 @@ async fn execute_lift_keystone(ctx: &CommandContext, endpoint: &str) -> anyhow::
 }
 
 async fn execute_lift_stone(
-    ctx: &CommandContext,
+    ctx: &Runtime,
     endpoint: &str,
     stone_name: &str,
 ) -> anyhow::Result<()> {

@@ -156,7 +156,7 @@ impl Override {
 const OFFERING_ACTIVITY_BONUS: f32 = 0.05;
 
 /// Shared animation state updated by SSE events
-pub struct AnimationContext {
+pub struct Animation {
     /// System load (0.0 to 1.0) - base CPU/memory load
     pub load: f32,
     /// Number of installed offerings (adds activity bonus)
@@ -200,7 +200,7 @@ pub enum Health {
 /// Default brightness (fairly dim for ambient use)
 const DEFAULT_BRIGHTNESS: u8 = 30;
 
-impl AnimationContext {
+impl Animation {
     pub fn new(state_dir: Option<std::path::PathBuf>) -> Self {
         // Load persisted brightness
         let brightness = state_dir
@@ -304,7 +304,7 @@ impl Tempo {
 /// The animation engine
 pub struct AnimationEngine {
     connection: Arc<FireflyConnection>,
-    context: Arc<RwLock<AnimationContext>>,
+    context: Arc<RwLock<Animation>>,
     fireflies: Vec<Firefly>,
     last_spawn: Instant,
     /// Track which pixels are occupied (for spawning logic)
@@ -319,7 +319,7 @@ pub struct AnimationEngine {
 }
 
 impl AnimationEngine {
-    pub fn new(connection: Arc<FireflyConnection>, context: Arc<RwLock<AnimationContext>>) -> Self {
+    pub fn new(connection: Arc<FireflyConnection>, context: Arc<RwLock<Animation>>) -> Self {
         Self {
             connection,
             context,
@@ -789,7 +789,7 @@ impl AnimationEngine {
 /// Start the animation engine as a background task
 pub fn start_animation(
     connection: Arc<FireflyConnection>,
-    context: Arc<RwLock<AnimationContext>>,
+    context: Arc<RwLock<Animation>>,
 ) -> tokio::task::JoinHandle<()> {
     let engine = AnimationEngine::new(connection, context);
     tokio::spawn(async move {

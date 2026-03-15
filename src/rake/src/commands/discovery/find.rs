@@ -7,7 +7,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::{extract_json_field, CommandContext};
+use crate::context::{extract_json_field, Runtime};
 use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -55,7 +55,7 @@ pub struct FindCommand {
     /// Output format
     pub format: FindOutputFormat,
     /// Quiet mode (suppress hints)
-    pub quiet_mode: bool,
+    pub quiet: bool,
     /// Fresh discovery (bypass cache)
     pub fresh: bool,
     /// Wishfully mode (auto-provision if not found)
@@ -68,14 +68,14 @@ impl FindCommand {
     pub fn new(
         query: String,
         format: FindOutputFormat,
-        quiet_mode: bool,
+        quiet: bool,
         fresh: bool,
         wishfully: bool,
     ) -> Self {
         Self {
             query,
             format,
-            quiet_mode,
+            quiet,
             fresh,
             wishfully,
             field: None,
@@ -86,7 +86,7 @@ impl FindCommand {
     pub fn with_field(
         query: String,
         format: FindOutputFormat,
-        quiet_mode: bool,
+        quiet: bool,
         fresh: bool,
         wishfully: bool,
         field: Option<String>,
@@ -94,7 +94,7 @@ impl FindCommand {
         Self {
             query,
             format,
-            quiet_mode,
+            quiet,
             fresh,
             wishfully,
             field,
@@ -154,7 +154,7 @@ use garden_common::api_utils::ApiResponse;
 
 #[async_trait]
 impl Command for FindCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::api_utils::{is_suspicious, sanitize_query};
 
         // Reject suspicious patterns client-side
@@ -196,7 +196,7 @@ impl Command for FindCommand {
 
         // Self-teaching suggestions (unless quiet or non-human format)
         if self.format == FindOutputFormat::Human {
-            suggestions::print_suggestions(cmd::FIND, self.quiet_mode);
+            suggestions::print_suggestions(cmd::FIND, self.quiet);
         }
 
         Ok(())
@@ -236,7 +236,7 @@ struct CapabilityTypeInfo {
 impl FindCommand {
     async fn query_services(
         &self,
-        ctx: &CommandContext,
+        ctx: &Runtime,
         query: &str,
         fresh: bool,
     ) -> anyhow::Result<ServiceDiscoveryResponse> {
@@ -292,7 +292,7 @@ impl FindCommand {
     /// Check if the query matches a known offering
     async fn check_offering_exists_for(
         &self,
-        ctx: &CommandContext,
+        ctx: &Runtime,
         query: &str,
     ) -> Option<OfferingInfo> {
         let endpoint = ctx.endpoint.as_ref()?;
@@ -326,7 +326,7 @@ impl FindCommand {
     }
 
     /// Install an offering and wait for completion
-    async fn install_offering(&self, ctx: &CommandContext, offering: &str) -> anyhow::Result<()> {
+    async fn install_offering(&self, ctx: &Runtime, offering: &str) -> anyhow::Result<()> {
         let endpoint = ctx
             .endpoint
             .as_ref()
@@ -408,13 +408,13 @@ impl FindCommand {
     }
 
     /// Re-run find query after provisioning
-    async fn retry_find(&self, ctx: &CommandContext) -> anyhow::Result<ServiceDiscoveryResponse> {
+    async fn retry_find(&self, ctx: &Runtime) -> anyhow::Result<ServiceDiscoveryResponse> {
         self.retry_find_with_query(ctx, &self.query).await
     }
 
     async fn retry_find_with_query(
         &self,
-        ctx: &CommandContext,
+        ctx: &Runtime,
         query: &str,
     ) -> anyhow::Result<ServiceDiscoveryResponse> {
         use garden_common::api_utils::sanitize_query;
@@ -424,7 +424,7 @@ impl FindCommand {
         self.query_services(ctx, &sanitized_query, true).await
     }
 
-    async fn handle_capability_wishfully(&self, ctx: &CommandContext) -> anyhow::Result<bool> {
+    async fn handle_capability_wishfully(&self, ctx: &Runtime) -> anyhow::Result<bool> {
         let query = self.query.trim();
         if !query.contains(':') && !query.contains('[') {
             return Ok(false);
@@ -531,7 +531,7 @@ impl FindCommand {
         }
 
         if self.format == FindOutputFormat::Human {
-            suggestions::print_suggestions(cmd::FIND, self.quiet_mode);
+            suggestions::print_suggestions(cmd::FIND, self.quiet);
         }
 
         Ok(true)
@@ -539,7 +539,7 @@ impl FindCommand {
 
     async fn fetch_capability_types(
         &self,
-        ctx: &CommandContext,
+        ctx: &Runtime,
         offering_fqn: &str,
     ) -> anyhow::Result<Vec<String>> {
         let endpoint = ctx
@@ -590,7 +590,7 @@ impl FindCommand {
 
     async fn ensure_capabilities(
         &self,
-        ctx: &CommandContext,
+        ctx: &Runtime,
         wish: &garden_common::tools::CapabilityWish,
     ) -> anyhow::Result<()> {
         let endpoint = ctx
@@ -671,7 +671,7 @@ impl FindCommand {
 
     async fn wait_for_tool_ready(
         &self,
-        ctx: &CommandContext,
+        ctx: &Runtime,
         fqid: &str,
         requirements: &[CapabilitySelector],
         timeout: Duration,
@@ -775,7 +775,7 @@ impl FindCommand {
     }
 
     /// Handle not found case
-    async fn handle_not_found(&self, ctx: &CommandContext) -> CommandResult {
+    async fn handle_not_found(&self, ctx: &Runtime) -> CommandResult {
         if self.wishfully && self.is_name_search() {
             if self.query.contains(':') || self.query.contains('[') {
                 match self.handle_capability_wishfully(ctx).await {
@@ -835,7 +835,7 @@ impl FindCommand {
                                 }
 
                                 if self.format == FindOutputFormat::Human {
-                                    suggestions::print_suggestions(cmd::FIND, self.quiet_mode);
+                                    suggestions::print_suggestions(cmd::FIND, self.quiet);
                                 }
 
                                 return Ok(());
@@ -944,7 +944,7 @@ impl FindCommand {
     }
 
     /// Render human-readable output
-    fn render_human(&self, discovery: &ServiceDiscoveryResponse, _ctx: &CommandContext) {
+    fn render_human(&self, discovery: &ServiceDiscoveryResponse, _ctx: &Runtime) {
         let services = &discovery.services;
 
         for svc in services {
@@ -982,7 +982,7 @@ impl FindCommand {
         }
 
         // Hint for JSON output
-        if !self.quiet_mode && self.format == FindOutputFormat::Human {
+        if !self.quiet && self.format == FindOutputFormat::Human {
             println!();
             println!(
                 "{}Hint: Use `garden-rake find {} --format json` for machine-readable output",

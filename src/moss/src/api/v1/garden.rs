@@ -1,5 +1,5 @@
 use crate::api::responses::{ApiResponse, GardenOverview, StoneInfo};
-use crate::api::suggestions::{generate_suggestions, SuggestionContext};
+use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::{
     placement::{PlacementRequest, PlacementResponse},
     topology, TopologyEntry,
@@ -22,8 +22,8 @@ pub async fn get_garden_v1(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<GardenOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Build stone list: self entry + all cached peers
-    let self_entry = state.self_entry.read().await.clone();
-    let cache_entries = topology::get_all_stones(&state.topology_cache).await;
+    let self_entry = state.current.topology.self_entry.read().await.clone();
+    let cache_entries = topology::get_all_stones(&state.current.topology.cache).await;
 
     let mut stones = Vec::new();
     let mut total_services: u32 = 0;
@@ -48,7 +48,7 @@ pub async fn get_garden_v1(
 
     // Add all cached peers (skip self if present in cache)
     for entry in cache_entries {
-        if entry.stone_id == state.stone_id {
+        if entry.stone_id == state.current.stone.id {
             continue;
         }
         let info = topology_entry_to_stone_info(&entry);
@@ -69,7 +69,7 @@ pub async fn get_garden_v1(
         pond_status: None, // Phase 3
     };
 
-    let ctx = SuggestionContext::from_headers(&headers, "observe_garden");
+    let ctx = Suggestion::from_headers(&headers, "observe_garden");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -106,7 +106,7 @@ pub async fn get_stone_v1(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<HardwareCapabilities>>, (StatusCode, Json<ApiErrorResponse>)> {
     // For now, only support local stone
-    if state.stone_name != stone_name {
+    if state.current.stone.name != stone_name {
         return Err(error_response(
             StatusCode::NOT_FOUND,
             "STONE_NOT_FOUND",
@@ -117,7 +117,7 @@ pub async fn get_stone_v1(
 
     let caps = get_capabilities(&state).await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "observe_stone");
+    let ctx = Suggestion::from_headers(&headers, "observe_stone");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -133,7 +133,7 @@ pub async fn get_local_stone_v1(
 ) -> Result<Json<ApiResponse<HardwareCapabilities>>, (StatusCode, Json<ApiErrorResponse>)> {
     let caps = get_capabilities(&state).await;
 
-    let ctx = SuggestionContext::from_headers(&headers, "observe_stone");
+    let ctx = Suggestion::from_headers(&headers, "observe_stone");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {
@@ -149,7 +149,7 @@ pub async fn recommend_placement_v1(
 ) -> Result<Json<ApiResponse<PlacementResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
     match crate::domain::placement::recommend_placement(request.clone(), &state).await {
         Ok(response) => {
-            let ctx = SuggestionContext::from_headers(&headers, "placement_success");
+            let ctx = Suggestion::from_headers(&headers, "placement_success");
             let suggestions = generate_suggestions(&ctx);
 
             Ok(Json(ApiResponse {
@@ -217,11 +217,11 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
     let os_version = metrics::detect_os_version();
     let kernel_version = metrics::detect_kernel_version();
     let swap_mb = metrics::detect_swap();
-    let docker_version = state.docker.get_docker_version().await.ok();
+    let docker_version = state.platform.docker.get_docker_version().await.ok();
 
     HardwareCapabilities {
-        stone_id: Some(state.stone_id.clone()),
-        stone_name: state.stone_name.clone(),
+        stone_id: Some(state.current.stone.id.clone()),
+        stone_name: state.current.stone.name.clone(),
         hardware: HardwareInventory {
             cpu: CpuCapabilities {
                 model: if cpu_model == "Unknown" {
@@ -272,7 +272,7 @@ pub async fn get_topology_v1(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Vec<TopologyEntry>>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Step 1: Read self entry (single source of truth for local stone)
-    let self_entry = state.self_entry.read().await.clone();
+    let self_entry = state.current.topology.self_entry.read().await.clone();
 
     tracing::debug!(
         stone_id = %self_entry.stone_id,
@@ -286,10 +286,10 @@ pub async fn get_topology_v1(
     let mut stones = vec![self_entry.clone()];
 
     // Step 3: Add all cached peer stones (skipping self if present)
-    let cache_entries = topology::get_all_stones(&state.topology_cache).await;
+    let cache_entries = topology::get_all_stones(&state.current.topology.cache).await;
 
     for entry in cache_entries {
-        if entry.stone_id == state.stone_id {
+        if entry.stone_id == state.current.stone.id {
             tracing::debug!(
                 cached_stone_id = %entry.stone_id,
                 "Topology: skipping self from cache"
@@ -302,7 +302,7 @@ pub async fn get_topology_v1(
 
     tracing::debug!(total_stones = stones.len(), "Topology: response built");
 
-    let ctx = SuggestionContext::from_headers(&headers, "topology_query");
+    let ctx = Suggestion::from_headers(&headers, "topology_query");
     let suggestions = generate_suggestions(&ctx);
 
     Ok(Json(ApiResponse {

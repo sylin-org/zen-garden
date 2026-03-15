@@ -5,6 +5,7 @@ pub mod headers;
 pub mod limits;
 pub mod orchestration;
 pub mod paths;
+pub mod storage;
 pub mod timeouts;
 
 /// Configuration directory path (platform-specific)

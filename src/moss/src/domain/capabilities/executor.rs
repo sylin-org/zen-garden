@@ -19,7 +19,7 @@ use tokio::process::Command;
 /// Context for capability execution
 ///
 /// Contains all the variables needed to template and execute commands.
-pub struct ExecutorContext {
+pub struct Executor {
     /// Service mode (managed vs adopted)
     pub mode: OfferingMode,
 
@@ -73,13 +73,13 @@ impl CapabilityExecutor {
         Self
     }
 
-    fn build_context(&self, service: &ServiceInfo, mode: OfferingMode) -> Result<ExecutorContext> {
+    fn build_context(&self, service: &ServiceInfo, mode: OfferingMode) -> Result<Executor> {
         let container_name = match mode {
             OfferingMode::Managed => Some(zen_offering_container_name(&service.name)?),
             _ => None,
         };
 
-        Ok(ExecutorContext {
+        Ok(Executor {
             mode,
             container_name,
             port: service.ports.native,
@@ -678,7 +678,7 @@ impl CapabilityExecutor {
     fn template_command_with_item(
         &self,
         command: &str,
-        context: &ExecutorContext,
+        context: &Executor,
         item: &str,
     ) -> Result<String> {
         // Replace {{item}} placeholder FIRST, before template_command validates
@@ -695,7 +695,7 @@ impl CapabilityExecutor {
         &self,
         service: &ServiceInfo,
         config: &CapabilityTypeConfig,
-        context: &ExecutorContext,
+        context: &Executor,
     ) -> Result<CapabilityCollection> {
         let list_config = &config.list;
 
@@ -733,7 +733,7 @@ impl CapabilityExecutor {
     }
 
     /// Get command string for current mode and platform
-    fn get_command(&self, commands: &ModeCommands, context: &ExecutorContext) -> Result<String> {
+    fn get_command(&self, commands: &ModeCommands, context: &Executor) -> Result<String> {
         let platform_commands = match context.mode {
             OfferingMode::Managed => commands.managed.as_ref(),
             OfferingMode::Adopted => commands.adopted.as_ref(),
@@ -751,7 +751,7 @@ impl CapabilityExecutor {
     }
 
     /// Template command with context variables
-    fn template_command(&self, command: &str, context: &ExecutorContext) -> Result<String> {
+    fn template_command(&self, command: &str, context: &Executor) -> Result<String> {
         let mut result = command.to_string();
 
         // Replace {{container_name}}
@@ -781,7 +781,7 @@ impl CapabilityExecutor {
         &self,
         command: &str,
         timeout_secs: u64,
-        _context: &ExecutorContext,
+        _context: &Executor,
     ) -> Result<String> {
         // Use shell to execute command
         #[cfg(target_os = "windows")]
@@ -1021,7 +1021,7 @@ mod tests {
     #[test]
     fn test_template_command() {
         let executor = CapabilityExecutor::new();
-        let context = ExecutorContext {
+        let context = Executor {
             mode: OfferingMode::Adopted,
             container_name: Some("zen-offering-ollama".to_string()),
             port: 11434,
@@ -1035,7 +1035,7 @@ mod tests {
     #[test]
     fn test_template_command_container() {
         let executor = CapabilityExecutor::new();
-        let context = ExecutorContext {
+        let context = Executor {
             mode: OfferingMode::Managed,
             container_name: Some("zen-offering-ollama".to_string()),
             port: 11434,

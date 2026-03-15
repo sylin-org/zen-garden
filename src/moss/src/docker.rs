@@ -6,7 +6,7 @@ use bollard::container::{
 };
 use bollard::image::{CreateImageOptions, PruneImagesOptions};
 use bollard::models::{ContainerCreateResponse, HealthStatusEnum, HostConfig, PortBinding};
-use bollard::Docker;
+use bollard::Docker as BollardDocker;
 use futures_util::stream::{Stream, StreamExt, TryStreamExt};
 use garden_common::console::{self, ConsolePrinter};
 use garden_common::constants::{OFFERING_CONTAINER_PREFIX, OFFERING_FQN_CONTAINER_SEPARATOR};
@@ -398,16 +398,16 @@ pub async fn check_and_remediate_ports(
     Ok(resolved_ports)
 }
 
-pub struct DockerManager {
-    docker: Docker,
+pub struct Client {
+    docker: BollardDocker,
 }
 
-impl DockerManager {
+impl Client {
     pub fn new() -> Result<Self> {
         #[cfg(target_os = "windows")]
         let docker = {
             tracing::debug!("Connecting to Docker via Windows named pipe");
-            Docker::connect_with_named_pipe_defaults().context(
+            BollardDocker::connect_with_named_pipe_defaults().context(
                 "Failed to connect to Docker daemon via named pipe (is Docker Desktop running?)",
             )?
         };
@@ -415,7 +415,7 @@ impl DockerManager {
         #[cfg(not(target_os = "windows"))]
         let docker = {
             tracing::debug!("Connecting to Docker via Unix socket");
-            Docker::connect_with_socket_defaults()
+            BollardDocker::connect_with_socket_defaults()
                 .context("Failed to connect to Docker daemon via Unix socket")?
         };
 

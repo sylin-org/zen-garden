@@ -2,7 +2,7 @@
 //!
 //! Holds all dependencies for moss daemon:
 //! - Offerings registry (Vec<Offering>)
-//! - Docker manager
+//! - Client manager
 //! - Manifest registry (unified software/hardware manifests)
 //! - Job tracking
 //! - Event broadcasting
@@ -13,19 +13,11 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::docker::DockerManager;
-use crate::domain::{CeremonyRegistry, InfrastructureHandlerRegistry};
-use crate::infra::{
-    stone_client::StoneClient, CeremonyJournal, EventBus, HarvestStore, ManifestRegistry,
-    NurturingStore, PulseEvent,
-};
-use crate::mdns::MdnsHandle;
-use crate::tasks::NetworkMonitor;
+use crate::domain::{FqnHandler, Orchestration, Security, Tool};
+use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
-use garden_common::PlatformRuntime;
 use garden_common::tools::ToolDelta;
 use garden_common::NetworkMetrics;
-use garden_common::{HardwareCapabilities, NotificationRegistry, StoneResources};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -55,7 +47,7 @@ pub struct Job {
 }
 
 // Offerings types moved to domain/offerings.rs
-pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndexCache};
+pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndex};
 
 // Offering types (unified)
 pub use garden_common::{
@@ -69,11 +61,8 @@ pub use garden_common::{
 /// All fields are wrapped in Arc for cheap cloning across tasks.
 #[derive(Clone)]
 pub struct AppState {
-    /// Unique stone identifier (GUID v7, immutable once generated)
-    pub stone_id: String,
-
-    /// Stone identity (e.g., "stone-01", hostname)
-    pub stone_name: String,
+    /// Current domain — this stone's identity, local storage, topology, capabilities, metrics.
+    pub current: Arc<crate::domain::Current>,
 
     /// Unified offerings registry (all modes: managed, adopted, borrowed).
     ///
@@ -88,15 +77,15 @@ pub struct AppState {
     /// Contains both software (sw) and hardware (hw) manifests
     pub manifest_registry: Arc<ManifestRegistry>,
 
-    /// Docker daemon manager
-    pub docker: Arc<DockerManager>,
+    /// Platform domain — Docker, runtime, network monitor, infrastructure handlers.
+    pub platform: Arc<crate::domain::Platform>,
 
     /// Background job tracker
     pub jobs: Arc<RwLock<HashMap<String, Job>>>,
 
     /// Unified pulse event channel (domain + transport events).
     /// Consumers: pulse stream (full firehose), presence stream (domain-only, translated).
-    pub pulse_tx: tokio::sync::broadcast::Sender<PulseEvent>,
+    pub pulse: tokio::sync::broadcast::Sender<PulseEvent>,
 
     /// Domain event bus (unified event dispatch for offerings, storage, stone events)
     pub event_bus: EventBus,
@@ -111,100 +100,31 @@ pub struct AppState {
     pub start_time: Instant,
 
     /// Compiled offerings index (with compatibility checks)
-    pub offerings_index: Arc<RwLock<Option<OfferingsIndexCache>>>,
+    pub offerings_index: Arc<RwLock<Option<OfferingsIndex>>>,
 
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
 
-    /// Platform runtime — console/ribbon output and lifecycle signals (ARCH-0002).
-    /// Single injection point; no `#[cfg]` above bootstrap/run.rs.
-    pub runtime: Arc<dyn PlatformRuntime>,
 
-    /// Hardware capabilities cache (detected at startup, cached to disk)
-    pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
+    /// Garden-wide tool registry and delta stream (ARCH-0004).
+    pub tool: Arc<Tool>,
 
-    /// Network monitor for IP change detection
-    pub network_monitor: Arc<NetworkMonitor>,
+    /// FQN handler registry — processes registered to handle FIND requests for a given FQN
+    /// (ARCH-0004). Ephemeral, TTL-based; handlers refresh every 30 seconds.
+    pub fqn_handler: Arc<FqnHandler>,
 
-    /// API port for constructing endpoint URLs
-    pub api_port: u16,
+    /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
+    pub security: Arc<Security>,
 
-    /// Topology cache for discovered stones (in-memory, persisted via dirty flag)
-    pub topology_cache: crate::domain::topology::TopologyCache,
+    /// Discovery domain — mDNS re-registration handle and Koi embedded handle.
+    pub discovery: Arc<crate::domain::Discovery>,
 
-    /// Dirty flag for topology persistence (TOPO-0002)
-    /// Set by mutation functions, cleared after flush to disk.
-    pub topology_dirty: crate::domain::topology::TopologyDirtyFlag,
+    /// Presence domain — election service and notification registry.
+    pub presence: Arc<crate::domain::Presence>,
 
-    /// Tools stream broadcast channel (normative automation stream)
-    pub tools_tx: tokio::sync::broadcast::Sender<ToolDelta>,
+    /// Companion domain — registry of external companions (Cricket, Firefly, etc.)
+    pub companion: Arc<crate::domain::Companion>,
 
-    /// Unified garden registry — single source of truth for offerings,
-    /// gateways, and storage (TOOLS-0003).
-    pub registry: crate::domain::garden_registry::GardenRegistry,
-
-    /// Self topology entry (this stone's current state)
-    pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
-
-    /// mDNS handle for re-registration on resolution changes
-    /// Used when IP/MAC changes to update mDNS service advertisement
-    pub mdns_handle: Option<Arc<MdnsHandle>>,
-
-    /// Koi embedded handle — provides mDNS, DNS, certmesh, proxy, and health capabilities
-    /// Shared across all subsystems; sub-handles accessed via `koi_handle.mdns()`, `.dns()`, etc.
-    pub koi_handle: Arc<koi_embedded::KoiHandle>,
-
-    /// Pond domain surface — enrollment state and cornerstone identity.
-    /// Properties: `enrolled()`, `cornerstone()`.
-    /// Mutations trigger `PondEvent::EnrollmentChanged` on the EventBus.
-    pub pond: crate::domain::PondState,
-
-    /// Pond active flag — true when certmesh CA is initialized and unlocked.
-    /// Cached for fast checks (chirp signing, HTTPS routing). Updated by pond handlers.
-    pub pond_active: Arc<std::sync::atomic::AtomicBool>,
-
-    /// HTTPS listener started flag — guards against double-binding :7183.
-    /// Set true after the first successful HTTPS bind (boot or dynamic).
-    pub https_started: Arc<std::sync::atomic::AtomicBool>,
-
-    /// Stone-to-stone HTTP client gateway.
-    /// Automatically upgrades to HTTPS+mTLS when pond certs are available.
-    /// Call `stone_client.reload_tls()` after enrollment changes.
-    pub stone_client: Arc<StoneClient>,
-
-    // === Ceremony Infrastructure ===
-    /// Active ceremony registry (in-memory state)
-    pub ceremony_registry: Arc<CeremonyRegistry>,
-
-    /// Ceremony journal (persistent state for crash recovery)
-    pub ceremony_journal: Arc<CeremonyJournal>,
-
-    /// Pond ceremony host — drives pond init/join/unlock ceremonies
-    /// using the koi-common ceremony protocol.
-    pub pond_ceremony_host:
-        Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>,
-
-    /// Harvest store (backup manifests and archives)
-    pub harvest_store: Arc<HarvestStore>,
-
-    /// Nurturing store (A/B local backup slots)
-    pub nurturing_store: Arc<NurturingStore>,
-
-    /// Nourishment job status channels (for SSE streaming)
-    pub nourishment_jobs: Arc<RwLock<HashMap<String, tokio::sync::broadcast::Sender<String>>>>,
-
-    /// Election service for distributed elections (testing)
-    pub election_service: Arc<crate::tasks::election_service::ElectionService>,
-
-    /// System metrics cache (CPU/memory/disk usage, updated every 5s)
-    pub system_resources: Arc<RwLock<Option<StoneResources>>>,
-
-    /// Companion registry (external Companions like Cricket, Firefly)
-    pub companion_registry: Arc<crate::infra::CompanionRegistry>,
-
-    /// Infrastructure handlers for garden-wide effects (registry trust, DNS, etc.)
-    /// Handlers react to topology changes and configure local infrastructure.
-    pub infrastructure_handlers: Arc<InfrastructureHandlerRegistry>,
 
     // === Cached Metrics (updated by background tasks, read-only for endpoints) ===
     // IMPORTANT: These caches exist to keep API endpoints fast (<10ms).
@@ -219,64 +139,18 @@ pub struct AppState {
     /// Updated every 5s by metrics_collector. None = no GPU or query failed.
     pub gpu_utilization: Arc<RwLock<Option<f32>>>,
 
-    // === Notification Registry ===
-    // Subsystems register their state (opportunity/attention) here.
-    // Tags are compiled and included in topology chirps for cross-stone awareness.
-    /// Notification registry for cross-stone awareness tags
-    /// Background tasks set/clear notifications, chirp task compiles to tags.
-    /// See: garden_common::notifications for source keys and tag types.
-    pub notifications: Arc<NotificationRegistry>,
-
     /// Log broadcast channel (for live SSE log streaming)
-    pub log_tx: tokio::sync::broadcast::Sender<String>,
+    pub log: tokio::sync::broadcast::Sender<String>,
 
     /// Subsystem readiness state
     pub subsystems: SubSystems,
 
 
-    /// Storage replication tick channel — **raw** (STORAGE-0006 Phase 4)
-    /// Primary seed-bank stores emit `StorageTick` on every write/delete.
-    /// Internal only — consumed by the aggregator task, not by downstream consumers.
-    pub storage_tick_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
 
-    /// Storage tick channel — **aggregated** (STORAGE-0006 Phase 4f)
-    /// Per-seed-bank quantized ticks (2 s quiet / 10 s deadline cap).
-    /// Subscribers: SSE `/api/v1/stone/storage/stream`, replication task.
-    pub storage_agg_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+    /// Orchestration coordination plane — tick signals, nudge, rescan,
+    /// nurturing stores, nourishment job channels (ARCH-0004).
+    pub orchestration: Arc<Orchestration>,
 
-    /// Orchestration nudge — wakes the seed-bank orchestration loop immediately.
-    /// Fired when a storage beacon arrives, or after rename/pin/unpin, so role
-    /// resolution doesn't have to wait for the next 3-second tick.
-    pub orchestration_nudge: Arc<tokio::sync::Notify>,
-
-    /// Unified volume collection (STORAGE-0011) — keyed by device path.
-    ///
-    /// Single source of truth for all local storage volumes (Spaces).
-    /// Populated by `initial_scan()` at boot, kept current by the volume watcher.
-    pub volumes: crate::domain::Volumes,
-
-    /// Physical storage media (STORAGE-0011) — keyed by OS device ID.
-    ///
-    /// Host-only. Detects physical disks including those without partitions
-    /// or drive letters. Used for candidate discovery and `storage add`.
-    pub media: crate::domain::Media,
-
-    /// Signal to request a volume rescan (STORAGE-0011).
-    ///
-    /// API handlers send on this after mutating on-disk state (e.g. writing
-    /// a manifest during `storage add`). The volume watcher loop listens and
-    /// triggers a full reconcile through the existing detection pipeline.
-    pub volume_rescan_tx: tokio::sync::mpsc::Sender<()>,
-
-    /// Storage domain event channel (STORAGE-0013).
-    ///
-    /// Emitted by storage mutation operations (add, remove, rename, role change,
-    /// health change, rescan). Subscribers react by pulling fresh state from
-    /// AppState boundary methods — the event is a notification, not data carrier.
-    ///
-    /// Consumers: tools projector, cloud filter, beacon, watcher reconciler,
-    /// coordinator, metrics collector, API SSE streams.
-    pub storage_changed_tx: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
 }
 
 // ============================================================================
@@ -291,7 +165,7 @@ pub struct AppState {
 pub struct SubSystems {
     /// Network subsystem state
     pub network: NetworkSubSystem,
-    /// Docker subsystem state
+    /// Client subsystem state
     pub docker: DockerSubSystem,
 }
 
@@ -301,7 +175,7 @@ pub struct SubSystems {
 #[derive(Clone)]
 pub struct NetworkSubSystem {
     /// True when a valid LAN IP is detected (not loopback).
-    /// Set by NetworkMonitor, read by Announcer/mDNS.
+    /// Set by Network, read by Announcer/mDNS.
     /// Use `ready.load(Ordering::Relaxed)` to check.
     pub ready: Arc<AtomicBool>,
 }
@@ -314,12 +188,12 @@ impl Default for NetworkSubSystem {
     }
 }
 
-/// Docker subsystem state
+/// Client subsystem state
 ///
-/// Tracks whether the Docker daemon is available for container operations.
+/// Tracks whether the Client daemon is available for container operations.
 #[derive(Clone)]
 pub struct DockerSubSystem {
-    /// True when Docker daemon is healthy (ping succeeds).
+    /// True when Client daemon is healthy (ping succeeds).
     /// Set by DockerMonitor, read by API handlers and background tasks.
     /// Use `ready.load(Ordering::Relaxed)` to check.
     pub ready: Arc<AtomicBool>,
@@ -339,17 +213,17 @@ impl AppState {
     /// Non-blocking. If the channel is full (a rescan is already pending),
     /// the request is silently dropped — one rescan is sufficient.
     pub fn request_volume_rescan(&self) {
-        let _ = self.volume_rescan_tx.try_send(());
+        let _ = self.orchestration.storage.rescan.try_send(());
     }
 
     /// Get stone ID (GUID v7)
     pub fn stone_id(&self) -> &str {
-        &self.stone_id
+        &self.current.stone.id
     }
 
     /// Get stone name
     pub fn stone_name(&self) -> &str {
-        &self.stone_name
+        &self.current.stone.name
     }
 
     /// Persist offerings to disk
@@ -377,9 +251,9 @@ impl AppState {
         let projections = crate::domain::tools::projector::project_local_tools(self).await;
 
         let deltas = {
-            let mut reg = self.registry.write().await;
+            let mut reg = self.tool.registry.write().await;
             reg.reconcile_local(
-                &self.stone_id,
+                &self.current.stone.id,
                 projections,
                 crate::domain::garden_registry::EntryOrigin::Local,
             )
@@ -391,7 +265,7 @@ impl AppState {
     /// Ingest remote tools beacon and publish resulting stream deltas locally.
     pub async fn ingest_tools_beacon(&self, beacon: garden_common::tools::ToolsBeacon) {
         let deltas = {
-            let mut reg = self.registry.write().await;
+            let mut reg = self.tool.registry.write().await;
             reg.apply_remote_beacon(&beacon)
         };
 
@@ -401,7 +275,7 @@ impl AppState {
     /// Remove all projected tools for a stone (goodbye/offline path).
     pub async fn remove_tools_for_stone(&self, stone_id: &str) {
         let deltas = {
-            let mut reg = self.registry.write().await;
+            let mut reg = self.tool.registry.write().await;
             reg.remove_stone(stone_id)
         };
 
@@ -416,17 +290,17 @@ impl AppState {
         }
 
         for delta in &deltas {
-            let _ = self.tools_tx.send(delta.clone());
+            let _ = self.tool.delta.send(delta.clone());
         }
 
         if broadcast_beacon {
-            let endpoint = self.self_entry.read().await.address.http_base();
+            let endpoint = self.current.topology.self_entry.read().await.address.http_base();
             if endpoint.trim().is_empty() {
                 return;
             }
             if let Err(e) = crate::infra::broadcast_tools_beacon(
-                &self.stone_id,
-                &self.stone_name,
+                &self.current.stone.id,
+                &self.current.stone.name,
                 &endpoint,
                 deltas,
             )
@@ -461,13 +335,13 @@ impl AppState {
         }
 
         // Compile notification tags for cross-stone awareness
-        let tags = self.notifications.compile();
+        let tags = self.presence.notifications.compile();
 
         // TOOLS-0003: Gateways are no longer carried in chirps.
         // They propagate via the tools beacon / registry path exclusively.
 
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             entry.services = topology_services;
             entry.tags = tags;
             entry.gateways = vec![]; // Empty — registry beacon is the single path
@@ -480,7 +354,7 @@ impl AppState {
         );
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.self_entry.read().await.clone();
+            let entry = self.current.topology.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
             }
@@ -493,10 +367,10 @@ impl AppState {
     /// chirps carry the freshly-detected hardware data instead of the
     /// stale skeleton/cache loaded at boot.
     pub(crate) async fn sync_self_capabilities(&self, auto_chirp: bool) {
-        let caps = self.capabilities.read().await.clone();
+        let caps = self.current.capabilities.read().await.clone();
 
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             entry.capabilities = caps;
             entry.last_seen = chrono::Utc::now();
         }
@@ -504,7 +378,7 @@ impl AppState {
         tracing::info!("Synced self_entry capabilities from background detection");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.self_entry.read().await.clone();
+            let entry = self.current.topology.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after capabilities sync");
             }
@@ -826,7 +700,7 @@ impl AppState {
     /// - `auto_chirp`: If true, broadcasts updated state immediately (if network is ready)
     pub async fn update_stone_health(&self, health: String, auto_chirp: bool) {
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             entry.health = health.clone();
             entry.last_seen = chrono::Utc::now();
         }
@@ -834,7 +708,7 @@ impl AppState {
         tracing::debug!(health = %health, "Updated stone health");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.self_entry.read().await.clone();
+            let entry = self.current.topology.self_entry.read().await.clone();
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after health update");
             }
@@ -851,7 +725,7 @@ impl AppState {
     ///
     /// For service-only changes (no resolution change), use `sync_self_services()` instead.
     pub async fn announce_resolution_change(&self, new_ip: &str) {
-        let new_endpoint = format!("http://{}:{}", new_ip, self.api_port);
+        let new_endpoint = format!("http://{}:{}", new_ip, self.current.api_port);
 
         tracing::info!(
             endpoint = %new_endpoint,
@@ -863,12 +737,12 @@ impl AppState {
 
         // Update self_entry with new endpoint and MAC
         {
-            let mut entry = self.self_entry.write().await;
+            let mut entry = self.current.topology.self_entry.write().await;
             let old_tls_port = entry.address.tls_port;
             let new_ip: std::net::IpAddr = new_ip
                 .parse()
                 .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-            let mut new_addr = garden_common::PeerAddress::new(new_ip, self.api_port);
+            let mut new_addr = garden_common::PeerAddress::new(new_ip, self.current.api_port);
             if let Some(tp) = old_tls_port {
                 new_addr = new_addr.with_tls(tp);
             }
@@ -878,14 +752,14 @@ impl AppState {
         }
 
         // Re-register mDNS with updated IP and MAC
-        if let Some(ref mdns) = self.mdns_handle {
+        if let Some(ref mdns) = self.discovery.mdns {
             if let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await {
                 tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
             }
         }
 
         // Immediately chirp the updated entry via UDP
-        let entry = self.self_entry.read().await.clone();
+        let entry = self.current.topology.self_entry.read().await.clone();
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to chirp after resolution change");
         } else {
@@ -898,7 +772,7 @@ impl AppState {
     /// Called on startup to detect ceremonies that were interrupted
     /// (e.g., by crash or restart). Returns count of recovered ceremonies.
     pub async fn recover_ceremonies(&self) -> anyhow::Result<usize> {
-        let incomplete = self.ceremony_journal.load_active().await?;
+        let incomplete = self.security.pond.ceremony.journal.load_active().await?;
         let count = incomplete.len();
 
         for ceremony in incomplete {
@@ -908,7 +782,7 @@ impl AppState {
                 state = ?ceremony.state,
                 "Found incomplete ceremony from previous run"
             );
-            self.ceremony_registry.insert(ceremony).await;
+            self.security.pond.ceremony.registry.insert(ceremony).await;
         }
 
         if count > 0 {
@@ -919,23 +793,6 @@ impl AppState {
         }
 
         Ok(count)
-    }
-
-    // ========================================================================
-    // Storage Service
-    // ========================================================================
-
-    /// Create a `StorageService` scoped to this stone's state.
-    ///
-    /// Cheap to construct (borrows only). Use per-request in handlers
-    /// instead of reimplementing resolution/routing logic.
-    pub fn storage_service(&self) -> crate::domain::StorageService<'_> {
-        crate::domain::StorageService::new(
-            &self.volumes,
-            &self.registry,
-            &self.stone_id,
-            Some(&self.storage_tick_tx),
-        )
     }
 
     // ========================================================================
@@ -950,7 +807,7 @@ impl AppState {
     /// stays coherent with storage state.
     pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
         tracing::debug!(event = ?event, "Storage domain event");
-        let _ = self.storage_changed_tx.send(event);
+        let _ = self.current.storage.changed.send(event);
 
         // Storage mutations affect the tools projection (seed-bank entries).
         // Refresh immediately so registry consumers see the change without polling.
@@ -965,7 +822,7 @@ impl AppState {
     pub fn subscribe_storage_changed(
         &self,
     ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged> {
-        self.storage_changed_tx.subscribe()
+        self.current.storage.changed.subscribe()
     }
 
     /// Broadcast a storage beacon to the garden.
@@ -974,14 +831,14 @@ impl AppState {
     /// then sends a UDP STORAGE_BEACON announcement. This is the single
     /// codepath for beacon broadcasting — callers should not inline this logic.
     pub async fn broadcast_storage_beacon(&self) {
-        let endpoint = self.self_entry.read().await.address.http_base();
-        let roles = crate::domain::storage::roles_snapshot(&self.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&self.volumes).await;
+        let endpoint = self.current.topology.self_entry.read().await.address.http_base();
+        let roles = crate::domain::storage::roles_snapshot(&self.current.storage.volumes).await;
+        let pins = crate::domain::storage::pins_snapshot(&self.current.storage.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &self.stone_id,
-            &self.stone_name,
+            &self.current.stone.id,
+            &self.current.stone.name,
             &endpoint,
-            &self.volumes,
+            &self.current.storage.volumes,
             Some(&roles),
             Some(&pins),
         )

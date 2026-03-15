@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -12,21 +12,21 @@ use garden_common::ui::rendering as ui;
 /// Stop (rest) a service
 pub struct RestCommand {
     pub service: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl RestCommand {
-    pub fn new(service: String, quiet_mode: bool) -> Self {
+    pub fn new(service: String, quiet: bool) -> Self {
         Self {
             service,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for RestCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let service_path = urlencoding::encode(&self.service);
         let url = ctx.api_v1_url(&format!("stone/services/{}/rest", service_path))?;
         let response = ctx.client.post(&url).send().await?;
@@ -57,7 +57,7 @@ impl Command for RestCommand {
                     }
 
                     // Display suggestions if present and not in quiet mode
-                    if !self.quiet_mode {
+                    if !self.quiet {
                         if let Some(suggestions) =
                             body.get("suggestions").and_then(|v| v.as_array())
                         {
@@ -116,7 +116,7 @@ impl Command for RestCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::REST, self.quiet_mode);
+        suggestions::print_suggestions(cmd::REST, self.quiet);
 
         Ok(())
     }

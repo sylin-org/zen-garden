@@ -40,7 +40,7 @@ pub struct PresenceQuery {
 ///
 /// **Flow:**
 /// 1. Generate snapshot from AppState
-/// 2. Subscribe to pulse_tx (unified pulse channel)
+/// 2. Subscribe to pulse (unified pulse channel)
 /// 3. Filter for Domain events only, apply category filter
 /// 4. Translate to presence vocabulary and emit as SSE
 ///
@@ -68,7 +68,7 @@ pub async fn stream_stone_presence(
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
     // Subscribe to pulse channel (unified domain + transport events)
-    let rx = state.pulse_tx.subscribe();
+    let rx = state.pulse.subscribe();
 
     // Create the inner event stream: snapshot first, then filtered domain events
     let inner = futures_util::stream::once(async move {
@@ -146,7 +146,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // Get real metrics from system monitor (fallback to zeros if not yet collected)
     let (cpu_percent, memory_percent, disk_percent) = {
-        let resources = state.system_resources.read().await;
+        let resources = state.current.system_resources.read().await;
         if let Some(ref res) = *resources {
             // Use primary mount point (root or largest disk) for summary disk %
             let primary_disk_percent = res
@@ -185,21 +185,21 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: Capability flags
     let has_gpu = {
-        let caps = state.capabilities.read().await;
+        let caps = state.current.capabilities.read().await;
         caps.as_ref()
             .map(|c| !c.hardware.gpus.is_empty())
             .unwrap_or(false)
     };
 
     let has_cricket = state
-        .companion_registry
+        .companion.registry
         .get("cricket")
         .await
         .is_some();
 
     // FIREFLY-0003: Seed bank summary (only if one is plugged in)
     let seed_bank = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values().find_map(|v| {
             let mgmt = v.management.as_ref()?;
             Some(StorageSummary {
@@ -220,14 +220,14 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     PresenceSnapshot {
         stone: StoneState {
-            name: state.stone_name.clone(),
+            name: state.current.stone.name.clone(),
             health,
             cpu_percent,
             memory_percent,
             disk_percent,
             uptime_seconds: uptime,
             pond_active: state
-                .pond_active
+                .security.pond.active
                 .load(std::sync::atomic::Ordering::Relaxed),
             // FIREFLY-0003 fields
             io_percent: 0.0, // Placeholder until I/O collection is implemented
@@ -304,7 +304,7 @@ pub async fn notify_presence(
     tracing::info!(
         event_type = event_types::STONE_TENDED,
         "Broadcasted presence notification to {} pulse subscribers",
-        state.pulse_tx.receiver_count()
+        state.pulse.receiver_count()
     );
 
     Ok(StatusCode::ACCEPTED)

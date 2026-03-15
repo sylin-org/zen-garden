@@ -7,8 +7,8 @@
 //! - View offering details
 
 use crate::command_manifest::cmd;
+use crate::context::Runtime;
 use crate::commands::Command;
-use crate::context::CommandContext;
 use crate::discovery;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -119,7 +119,7 @@ pub struct OfferCommand {
     pub action: OfferAction,
     pub prefer: Vec<String>,
     pub anywhere_on_fail: bool,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 // ============================================================================
@@ -727,7 +727,7 @@ async fn stream_job_progress(
     endpoint: &str,
     job_id: &str,
     service_name: &str,
-    quiet_mode: bool,
+    quiet: bool,
 ) -> Result<()> {
     let events_url = format!(
         "{}/api/v1/events?job_id={}",
@@ -744,7 +744,7 @@ async fn stream_job_progress(
 
     if !events_supported {
         // Fallback: show elapsed time without progress details
-        if !quiet_mode {
+        if !quiet {
             println!(
                 "{}{} Installing... (progress endpoint unavailable)",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -782,7 +782,7 @@ async fn stream_job_progress(
                             .unwrap_or_default();
 
                     if services.iter().any(|s| s.name == service_name) {
-                        if !quiet_mode {
+                        if !quiet {
                             println!(
                                 "\n{}{} Installation complete [{}]",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -796,7 +796,7 @@ async fn stream_job_progress(
             }
 
             // Update progress display every 2 seconds
-            if elapsed.as_secs() % 2 == 0 && !quiet_mode {
+            if elapsed.as_secs() % 2 == 0 && !quiet {
                 print!(
                     "\r{}Installing... [{}]",
                     " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -811,7 +811,7 @@ async fn stream_job_progress(
     }
 
     // Full progress streaming from /api/v1/events
-    if !quiet_mode {
+    if !quiet {
         println!(
             "{}{} Installation started",
             " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -852,7 +852,7 @@ async fn stream_job_progress(
                     let progress = event.get("progress").and_then(|v| v.as_u64());
 
                     // Display new status updates
-                    if !message.is_empty() && message != last_message && !quiet_mode {
+                    if !message.is_empty() && message != last_message && !quiet {
                         if let Some(pct) = progress {
                             println!(
                                 "\r{}{}% {} [{}]",
@@ -876,7 +876,7 @@ async fn stream_job_progress(
                     if status == garden_common::STATUS_COMPLETED
                         || status == garden_common::STATUS_SUCCESS
                     {
-                        if !quiet_mode {
+                        if !quiet {
                             println!(
                                 "\n{}{} Installation complete [{}]",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -900,7 +900,7 @@ async fn stream_job_progress(
             }
             Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
                 // Job completed or not found
-                if !quiet_mode {
+                if !quiet {
                     println!(
                         "\n{}{} Installation complete (job finished) [{}]",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -912,7 +912,7 @@ async fn stream_job_progress(
             }
             _ => {
                 // Network error or server issue, continue polling
-                if elapsed.as_secs() % 5 == 0 && !quiet_mode {
+                if elapsed.as_secs() % 5 == 0 && !quiet {
                     print!(
                         "\r{}Checking progress... [{}]",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -1292,7 +1292,7 @@ async fn install_on_stone(
     quiet: bool,
 ) -> Result<()> {
     // Delegate to existing install logic by creating a context
-    let ctx = crate::context::CommandContext::with_endpoint(
+    let ctx = crate::context::Runtime::with_endpoint(
         client.clone(),
         endpoint.to_string(),
         None,
@@ -1307,34 +1307,34 @@ async fn install_on_stone(
 }
 
 // ============================================================================
-// Command Implementation
+// Runtime Implementation
 // ============================================================================
 
 impl OfferCommand {
-    pub fn list(quiet_mode: bool) -> Self {
+    pub fn list(quiet: bool) -> Self {
         Self {
             action: OfferAction::List,
             prefer: vec![],
             anywhere_on_fail: false,
-            quiet_mode,
+            quiet,
         }
     }
 
-    pub fn refresh(quiet_mode: bool) -> Self {
+    pub fn refresh(quiet: bool) -> Self {
         Self {
             action: OfferAction::Refresh,
             prefer: vec![],
             anywhere_on_fail: false,
-            quiet_mode,
+            quiet,
         }
     }
 
-    pub fn info(name: String, quiet_mode: bool) -> Self {
+    pub fn info(name: String, quiet: bool) -> Self {
         Self {
             action: OfferAction::Info { name },
             prefer: vec![],
             anywhere_on_fail: false,
-            quiet_mode,
+            quiet,
         }
     }
 
@@ -1342,31 +1342,31 @@ impl OfferCommand {
         name: String,
         prefer: Vec<String>,
         anywhere_on_fail: bool,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> Self {
         Self {
             action: OfferAction::Install { name },
             prefer,
             anywhere_on_fail,
-            quiet_mode,
+            quiet,
         }
     }
 
-    pub fn query(query: String, prefer: Vec<String>, quiet_mode: bool) -> Self {
+    pub fn query(query: String, prefer: Vec<String>, quiet: bool) -> Self {
         Self {
             action: OfferAction::Query { query },
             prefer,
             anywhere_on_fail: false,
-            quiet_mode,
+            quiet,
         }
     }
 
-    pub fn query_anywhere(query: String, prefer: Vec<String>, quiet_mode: bool) -> Self {
+    pub fn query_anywhere(query: String, prefer: Vec<String>, quiet: bool) -> Self {
         Self {
             action: OfferAction::QueryAnywhere { query },
             prefer,
             anywhere_on_fail: false,
-            quiet_mode,
+            quiet,
         }
     }
 
@@ -1375,11 +1375,11 @@ impl OfferCommand {
             action: OfferAction::PlacementRecommend { name, quiet },
             prefer: vec![],
             anywhere_on_fail: false,
-            quiet_mode: quiet,
+            quiet,
         }
     }
 
-    pub fn image(image_ref: String, instance: Option<String>, info_only: bool, quiet_mode: bool) -> Self {
+    pub fn image(image_ref: String, instance: Option<String>, info_only: bool, quiet: bool) -> Self {
         Self {
             action: OfferAction::Image {
                 image_ref,
@@ -1388,7 +1388,7 @@ impl OfferCommand {
             },
             prefer: vec![],
             anywhere_on_fail: false,
-            quiet_mode,
+            quiet,
         }
     }
 
@@ -1425,7 +1425,7 @@ impl Command for OfferCommand {
         cmd::OFFER
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> Result<()> {
+    async fn execute(&self, ctx: &Runtime) -> Result<()> {
         let term = ui::TerminalInfo::detect();
 
         match &self.action {
@@ -1584,7 +1584,7 @@ impl Command for OfferCommand {
                                     endpoint,
                                     &job_id,
                                     response_service_name,
-                                    self.quiet_mode,
+                                    self.quiet,
                                 )
                                 .await?;
                             } else if message.contains("Adopted") {
@@ -1605,7 +1605,7 @@ impl Command for OfferCommand {
                             }
 
                             // Display suggestions from v1 API (if not quiet)
-                            if !self.quiet_mode {
+                            if !self.quiet {
                                 if let Some(suggestions) =
                                     body.get("suggestions").and_then(|v| v.as_array())
                                 {

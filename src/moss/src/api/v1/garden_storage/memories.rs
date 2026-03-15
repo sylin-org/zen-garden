@@ -20,7 +20,8 @@ use garden_common::storage::MemoriesOfferingManifest;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::nurturing::{RemoteNurturingIndex, RemoteSnapshot};
-use crate::domain::{LocalStorage, ProxyTarget, StorageRoute};
+use crate::domain::storage_service::ProxyTarget;
+use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
 
 use super::{err, error_response_raw, has_path_traversal};
@@ -60,10 +61,6 @@ fn validate_storage_layout(mount_path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-fn mount_str(local: &LocalStorage) -> String {
-    local.mount_path.to_string_lossy().into_owned()
-}
-
 fn log_memories_access(
     state: &AppState,
     headers: &HeaderMap,
@@ -95,8 +92,8 @@ fn log_memories_access(
         category: AUDIT_CATEGORY.to_string(),
         action: action.to_string(),
         status: status.as_u16(),
-        stone_id: state.stone_id.clone(),
-        stone_name: state.stone_name.clone(),
+        stone_id: state.current.stone.id.clone(),
+        stone_name: state.current.stone.name.clone(),
         storage: storage_name.map(|s| s.to_string()),
         offering_id: offering_id.map(|s| s.to_string()),
         harvest_id: harvest_id.map(|s| s.to_string()),
@@ -184,19 +181,6 @@ async fn proxy_memories_request(
     builder.body(body.into()).unwrap()
 }
 
-async fn resolve_route(
-    state: &AppState,
-    name: &str,
-) -> Result<StorageRoute, (StatusCode, String)> {
-    let svc = state.storage_service();
-    svc.resolve_read(name).await.map_err(|e| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("Storage '{}' not available: {}", name, e),
-        )
-    })
-}
-
 // ============================================================================
 // GET /api/v1/garden/storage/{name}/memories
 // ============================================================================
@@ -207,68 +191,74 @@ pub async fn list_memories_v1(
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let route = resolve_route(&state, &name)
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+    let handle = resolver
+        .for_read(&name)
         .await
-        .map_err(|(status, msg)| err(status, "NO_STORAGE", &msg))?;
+        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
-    match route {
-        StorageRoute::Local(local) => {
-            if let Err(msg) = validate_storage_layout(&local.mount_path) {
-                return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
+    if let Some(mount_path) = handle.mount_path() {
+        if let Err(msg) = validate_storage_layout(mount_path) {
+            return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
+        }
+        let store = handle.content_store_for_read().unwrap();
+        let volume_id = handle.volume_id().unwrap();
+        match state
+            .orchestration.nurturing.store
+            .list_remote_snapshots(&store, volume_id)
+            .await
+        {
+            Ok(index) => {
+                log_memories_access(
+                    &state, &headers, StatusCode::OK, ACTION_LIST,
+                    Some(handle.storage_name()), None, None,
+                );
+                Ok(Json(ApiResponse::new(index)))
             }
-            let svc = state.storage_service();
-            let store = svc.content_store(&local);
-            match state
-                .nurturing_store
-                .list_remote_snapshots(&store, &local.id)
-                .await
-            {
-                Ok(index) => {
-                    log_memories_access(
-                        &state, &headers, StatusCode::OK, ACTION_LIST,
-                        Some(&local.name), None, None,
-                    );
-                    Ok(Json(ApiResponse::new(index)))
-                }
-                Err(e) => {
-                    log_memories_access(
-                        &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_LIST,
-                        Some(&local.name), None, None,
-                    );
-                    Err(err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "LIST_FAILED",
-                        &e.to_string(),
-                    ))
-                }
+            Err(e) => {
+                log_memories_access(
+                    &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_LIST,
+                    Some(handle.storage_name()), None, None,
+                );
+                Err(err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "LIST_FAILED",
+                    &e.to_string(),
+                ))
             }
         }
-        StorageRoute::Proxy(target) => {
-            let response = proxy_memories_request(
-                reqwest::Method::GET,
-                &target,
-                &format!("api/v1/garden/storage/{}/memories", name),
-                &headers,
-                &state.stone_id,
-                &state.stone_name,
-            )
-            .await;
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        let response = proxy_memories_request(
+            reqwest::Method::GET,
+            target,
+            &format!("api/v1/garden/storage/{}/memories", name),
+            &headers,
+            &state.current.stone.id,
+            &state.current.stone.name,
+        )
+        .await;
 
-            if response.status() != StatusCode::OK {
-                return Err(err(
-                    StatusCode::BAD_GATEWAY,
-                    "UPSTREAM_ERROR",
-                    "Failed to list memories",
-                ));
-            }
-
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            let data: ApiResponse<RemoteNurturingIndex> = serde_json::from_slice(&bytes)
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            Ok(Json(data))
+        if response.status() != StatusCode::OK {
+            return Err(err(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_ERROR",
+                "Failed to list memories",
+            ));
         }
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        let data: ApiResponse<RemoteNurturingIndex> = serde_json::from_slice(&bytes)
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        Ok(Json(data))
     }
 }
 
@@ -290,75 +280,81 @@ pub async fn list_offering_snapshots_v1(
         ));
     }
 
-    let route = resolve_route(&state, &name)
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+    let handle = resolver
+        .for_read(&name)
         .await
-        .map_err(|(status, msg)| err(status, "NO_STORAGE", &msg))?;
+        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
-    match route {
-        StorageRoute::Local(local) => {
-            if let Err(msg) = validate_storage_layout(&local.mount_path) {
-                return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
-            }
-            let svc = state.storage_service();
-            let store = svc.content_store(&local);
-            let index = state
-                .nurturing_store
-                .list_remote_snapshots(&store, &local.id)
-                .await
-                .map_err(|e| {
-                    log_memories_access(
-                        &state, &headers, StatusCode::INTERNAL_SERVER_ERROR,
-                        ACTION_LIST_OFFERING, Some(&local.name), Some(&offering_id), None,
-                    );
-                    err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "LIST_FAILED",
-                        &e.to_string(),
-                    )
-                })?;
-
-            let snapshots: Vec<RemoteSnapshot> = index
-                .snapshots
-                .into_iter()
-                .filter(|s| s.offering_id == offering_id)
-                .collect();
-
-            log_memories_access(
-                &state, &headers, StatusCode::OK, ACTION_LIST_OFFERING,
-                Some(&local.name), Some(&offering_id), None,
-            );
-
-            Ok(Json(ApiResponse::new(OfferingSnapshotsResponse {
-                offering_id,
-                snapshots,
-            })))
+    if let Some(mount_path) = handle.mount_path() {
+        if let Err(msg) = validate_storage_layout(mount_path) {
+            return Err(err(StatusCode::CONFLICT, "INVALID_LAYOUT", &msg));
         }
-        StorageRoute::Proxy(target) => {
-            let response = proxy_memories_request(
-                reqwest::Method::GET,
-                &target,
-                &format!("api/v1/garden/storage/{}/memories/{}", name, offering_id),
-                &headers,
-                &state.stone_id,
-                &state.stone_name,
-            )
-            .await;
+        let store = handle.content_store_for_read().unwrap();
+        let volume_id = handle.volume_id().unwrap();
+        let index = state
+            .orchestration.nurturing.store
+            .list_remote_snapshots(&store, volume_id)
+            .await
+            .map_err(|e| {
+                log_memories_access(
+                    &state, &headers, StatusCode::INTERNAL_SERVER_ERROR,
+                    ACTION_LIST_OFFERING, Some(handle.storage_name()), Some(&offering_id), None,
+                );
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "LIST_FAILED",
+                    &e.to_string(),
+                )
+            })?;
 
-            if response.status() != StatusCode::OK {
-                return Err(err(
-                    StatusCode::BAD_GATEWAY,
-                    "UPSTREAM_ERROR",
-                    "Failed to list snapshots",
-                ));
-            }
+        let snapshots: Vec<RemoteSnapshot> = index
+            .snapshots
+            .into_iter()
+            .filter(|s| s.offering_id == offering_id)
+            .collect();
 
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            let data: ApiResponse<OfferingSnapshotsResponse> = serde_json::from_slice(&bytes)
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            Ok(Json(data))
+        log_memories_access(
+            &state, &headers, StatusCode::OK, ACTION_LIST_OFFERING,
+            Some(handle.storage_name()), Some(&offering_id), None,
+        );
+
+        Ok(Json(ApiResponse::new(OfferingSnapshotsResponse {
+            offering_id,
+            snapshots,
+        })))
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        let response = proxy_memories_request(
+            reqwest::Method::GET,
+            target,
+            &format!("api/v1/garden/storage/{}/memories/{}", name, offering_id),
+            &headers,
+            &state.current.stone.id,
+            &state.current.stone.name,
+        )
+        .await;
+
+        if response.status() != StatusCode::OK {
+            return Err(err(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_ERROR",
+                "Failed to list snapshots",
+            ));
         }
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        let data: ApiResponse<OfferingSnapshotsResponse> = serde_json::from_slice(&bytes)
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        Ok(Json(data))
     }
 }
 
@@ -380,80 +376,86 @@ pub async fn get_offering_manifest_v1(
         ));
     }
 
-    let route = resolve_route(&state, &name)
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+    let handle = resolver
+        .for_read(&name)
         .await
-        .map_err(|(status, msg)| err(status, "NO_STORAGE", &msg))?;
+        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
 
-    match route {
-        StorageRoute::Local(local) => {
-            let mount = mount_str(&local);
-            let path = paths::storage_memory_offering_manifest_path(&mount, &offering_id);
-            let json = match tokio::fs::read_to_string(&path).await {
-                Ok(json) => json,
-                Err(_) => {
-                    log_memories_access(
-                        &state, &headers, StatusCode::NOT_FOUND, ACTION_MANIFEST,
-                        Some(&local.name), Some(&offering_id), None,
-                    );
-                    return Err(err(
-                        StatusCode::NOT_FOUND,
-                        "NOT_FOUND",
-                        "Offering manifest not found",
-                    ));
-                }
-            };
-
-            let manifest: MemoriesOfferingManifest = match serde_json::from_str(&json) {
-                Ok(m) => m,
-                Err(e) => {
-                    log_memories_access(
-                        &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_MANIFEST,
-                        Some(&local.name), Some(&offering_id), None,
-                    );
-                    return Err(err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "PARSE_FAILED",
-                        &e.to_string(),
-                    ));
-                }
-            };
-
-            log_memories_access(
-                &state, &headers, StatusCode::OK, ACTION_MANIFEST,
-                Some(&local.name), Some(&offering_id), None,
-            );
-
-            Ok(Json(ApiResponse::new(manifest)))
-        }
-        StorageRoute::Proxy(target) => {
-            let response = proxy_memories_request(
-                reqwest::Method::GET,
-                &target,
-                &format!(
-                    "api/v1/garden/storage/{}/memories/{}/manifest",
-                    name, offering_id
-                ),
-                &headers,
-                &state.stone_id,
-                &state.stone_name,
-            )
-            .await;
-
-            if response.status() != StatusCode::OK {
+    if let Some(mount_path) = handle.mount_path() {
+        let mount = mount_path.to_string_lossy().into_owned();
+        let path = paths::storage_memory_offering_manifest_path(&mount, &offering_id);
+        let json = match tokio::fs::read_to_string(&path).await {
+            Ok(json) => json,
+            Err(_) => {
+                log_memories_access(
+                    &state, &headers, StatusCode::NOT_FOUND, ACTION_MANIFEST,
+                    Some(handle.storage_name()), Some(&offering_id), None,
+                );
                 return Err(err(
-                    StatusCode::BAD_GATEWAY,
-                    "UPSTREAM_ERROR",
-                    "Failed to read offering manifest",
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Offering manifest not found",
                 ));
             }
+        };
 
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            let data: ApiResponse<MemoriesOfferingManifest> = serde_json::from_slice(&bytes)
-                .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
-            Ok(Json(data))
+        let manifest: MemoriesOfferingManifest = match serde_json::from_str(&json) {
+            Ok(m) => m,
+            Err(e) => {
+                log_memories_access(
+                    &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_MANIFEST,
+                    Some(handle.storage_name()), Some(&offering_id), None,
+                );
+                return Err(err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "PARSE_FAILED",
+                    &e.to_string(),
+                ));
+            }
+        };
+
+        log_memories_access(
+            &state, &headers, StatusCode::OK, ACTION_MANIFEST,
+            Some(handle.storage_name()), Some(&offering_id), None,
+        );
+
+        Ok(Json(ApiResponse::new(manifest)))
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        let response = proxy_memories_request(
+            reqwest::Method::GET,
+            target,
+            &format!(
+                "api/v1/garden/storage/{}/memories/{}/manifest",
+                name, offering_id
+            ),
+            &headers,
+            &state.current.stone.id,
+            &state.current.stone.name,
+        )
+        .await;
+
+        if response.status() != StatusCode::OK {
+            return Err(err(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_ERROR",
+                "Failed to read offering manifest",
+            ));
         }
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        let data: ApiResponse<MemoriesOfferingManifest> = serde_json::from_slice(&bytes)
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR", &e.to_string()))?;
+        Ok(Json(data))
     }
 }
 
@@ -482,55 +484,66 @@ pub async fn download_snapshot_v1(
         );
     }
 
-    let route = match resolve_route(&state, &name).await {
-        Ok(route) => route,
-        Err((status, msg)) => return error_response_raw(status, "NO_STORAGE", &msg),
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: None,
+    };
+    let handle = match resolver.for_read(&name).await {
+        Ok(h) => h,
+        Err(e) => {
+            return error_response_raw(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NO_STORAGE",
+                &e.to_string(),
+            )
+        }
     };
 
-    match route {
-        StorageRoute::Local(local) => {
-            let mount = mount_str(&local);
-            let path = paths::storage_memory_harvest_path(&mount, &offering_id, &harvest_id);
-            let data = match tokio::fs::read(&path).await {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    log_memories_access(
-                        &state, &headers, StatusCode::NOT_FOUND, ACTION_DOWNLOAD,
-                        Some(&local.name), Some(&offering_id), Some(&harvest_id),
-                    );
-                    return error_response_raw(
-                        StatusCode::NOT_FOUND,
-                        "NOT_FOUND",
-                        "Snapshot not found",
-                    );
-                }
-            };
+    if let Some(mount_path) = handle.mount_path() {
+        let mount = mount_path.to_string_lossy().into_owned();
+        let path = paths::storage_memory_harvest_path(&mount, &offering_id, &harvest_id);
+        let data = match tokio::fs::read(&path).await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                log_memories_access(
+                    &state, &headers, StatusCode::NOT_FOUND, ACTION_DOWNLOAD,
+                    Some(handle.storage_name()), Some(&offering_id), Some(&harvest_id),
+                );
+                return error_response_raw(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Snapshot not found",
+                );
+            }
+        };
 
-            log_memories_access(
-                &state, &headers, StatusCode::OK, ACTION_DOWNLOAD,
-                Some(&local.name), Some(&offering_id), Some(&harvest_id),
-            );
+        log_memories_access(
+            &state, &headers, StatusCode::OK, ACTION_DOWNLOAD,
+            Some(handle.storage_name()), Some(&offering_id), Some(&harvest_id),
+        );
 
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/gzip")
-                .header(header::CONTENT_LENGTH, data.len())
-                .body(Bytes::from(data).into())
-                .unwrap()
-        }
-        StorageRoute::Proxy(target) => {
-            proxy_memories_request(
-                reqwest::Method::GET,
-                &target,
-                &format!(
-                    "api/v1/garden/storage/{}/memories/{}/{}",
-                    name, offering_id, harvest_id
-                ),
-                &headers,
-                &state.stone_id,
-                &state.stone_name,
-            )
-            .await
-        }
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/gzip")
+            .header(header::CONTENT_LENGTH, data.len())
+            .body(Bytes::from(data).into())
+            .unwrap()
+    } else {
+        // Remote — proxy
+        let target = handle.proxy_target().unwrap();
+        proxy_memories_request(
+            reqwest::Method::GET,
+            target,
+            &format!(
+                "api/v1/garden/storage/{}/memories/{}/{}",
+                name, offering_id, harvest_id
+            ),
+            &headers,
+            &state.current.stone.id,
+            &state.current.stone.name,
+        )
+        .await
     }
 }

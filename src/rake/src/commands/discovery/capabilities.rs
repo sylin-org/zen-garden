@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -26,21 +26,21 @@ pub struct CapabilitiesCommand {
     /// Offering name to query
     pub offering: String,
     /// Quiet mode (no suggestions)
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl CapabilitiesCommand {
-    pub fn new(offering: String, quiet_mode: bool) -> Self {
+    pub fn new(offering: String, quiet: bool) -> Self {
         Self {
             offering,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for CapabilitiesCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let offering_path = urlencoding::encode(&self.offering);
         let url = ctx.api_v1_url(&format!("stone/offerings/{}/capabilities", offering_path))?;
         let response = ctx.client.get(&url).send().await?;
@@ -133,7 +133,7 @@ impl Command for CapabilitiesCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet_mode);
+        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet);
 
         Ok(())
     }
@@ -215,7 +215,7 @@ pub struct AddCapabilityCommand {
     /// Dry run mode
     pub dry_run: bool,
     /// Quiet mode
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl AddCapabilityCommand {
@@ -224,21 +224,21 @@ impl AddCapabilityCommand {
         name: String,
         cap_type: Option<String>,
         dry_run: bool,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> Self {
         Self {
             offering,
             name,
             cap_type,
             dry_run,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for AddCapabilityCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let action = if self.dry_run { "Validating" } else { "Adding" };
         println!(
             "{} {} {} to {}...",
@@ -356,7 +356,7 @@ impl Command for AddCapabilityCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet_mode);
+        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet);
         Ok(())
     }
 
@@ -374,23 +374,23 @@ pub struct RemoveCapabilityCommand {
     /// Capability type (optional)
     pub cap_type: Option<String>,
     /// Quiet mode
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl RemoveCapabilityCommand {
-    pub fn new(offering: String, name: String, cap_type: Option<String>, quiet_mode: bool) -> Self {
+    pub fn new(offering: String, name: String, cap_type: Option<String>, quiet: bool) -> Self {
         Self {
             offering,
             name,
             cap_type,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for RemoveCapabilityCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         println!(
             "{} Removing {} from {}...",
             ui::status_indicator("info", ctx.term.supports_color),
@@ -451,7 +451,7 @@ impl Command for RemoveCapabilityCommand {
             );
         }
 
-        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet_mode);
+        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet);
         Ok(())
     }
 
@@ -560,7 +560,7 @@ pub struct RefreshCapabilitiesCommand {
     /// Dry run mode
     pub dry_run: bool,
     /// Quiet mode
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 /// Mirror capabilities from one stone to another
@@ -570,15 +570,15 @@ pub struct MirrorCapabilitiesCommand {
     /// Raw mirror args (from/to pairs)
     pub args: Vec<String>,
     /// Quiet mode
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl MirrorCapabilitiesCommand {
-    pub fn new(offering: String, args: Vec<String>, quiet_mode: bool) -> Self {
+    pub fn new(offering: String, args: Vec<String>, quiet: bool) -> Self {
         Self {
             offering,
             args,
-            quiet_mode,
+            quiet,
         }
     }
 }
@@ -588,20 +588,20 @@ impl RefreshCapabilitiesCommand {
         offering: String,
         cap_type: Option<String>,
         dry_run: bool,
-        quiet_mode: bool,
+        quiet: bool,
     ) -> Self {
         Self {
             offering,
             cap_type,
             dry_run,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for RefreshCapabilitiesCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let action = if self.dry_run {
             "Checking"
         } else {
@@ -756,7 +756,7 @@ impl Command for RefreshCapabilitiesCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet_mode);
+        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet);
         Ok(())
     }
 
@@ -767,9 +767,9 @@ impl Command for RefreshCapabilitiesCommand {
 
 #[async_trait]
 impl Command for MirrorCapabilitiesCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let (from_arg, to_arg) = parse_mirror_targets(&self.args)?;
-        let local_stone = ctx.stone_name.clone();
+        let local_stone = ctx.stone.clone();
 
         let from = match from_arg {
             Some(value) => value,
@@ -860,7 +860,7 @@ impl Command for MirrorCapabilitiesCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet_mode);
+        suggestions::print_suggestions(cmd::CAPABILITIES, self.quiet);
         Ok(())
     }
 

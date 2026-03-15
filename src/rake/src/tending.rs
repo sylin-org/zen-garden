@@ -248,9 +248,9 @@ where
         tracing::debug!(stone = %tended.stone_name, "Trying tended stone with parallel discovery fallback");
 
         // Start tended request immediately
-        let operation_clone = operation.clone();
-        let tended_clone = tended.clone();
-        let tended_future = async move { operation_clone(&tended_clone).await };
+        let tended_op = operation.clone();
+        let tended_stone = tended.clone();
+        let tended_future = async move { tended_op(&tended_stone).await };
 
         // Start discovery after delay
         let discovery_future = async {

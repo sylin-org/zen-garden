@@ -20,13 +20,9 @@ use garden_common::tools::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::RwLock;
 
 const DEFAULT_HISTORY_LIMIT: usize = 4096;
-
-/// Default gateway TTL (60 seconds). Orchestrators refresh every 30s.
-const DEFAULT_GATEWAY_TTL_SECS: u64 = 60;
 
 pub type GardenRegistry = Arc<RwLock<GardenRegistryInner>>;
 
@@ -116,8 +112,6 @@ pub enum EntryOrigin {
     Local,
     /// Received from a remote stone via beacon.
     Announced { stone_id: String },
-    /// Registered via gateway API — ephemeral, TTL-based.
-    Registered,
 }
 
 // ── Registry Entry ──────────────────────────────────────────────────────────
@@ -131,8 +125,6 @@ pub struct RegistryEntry {
     pub version: u64,
     /// Who wrote this entry.
     pub origin: EntryOrigin,
-    /// When this entry expires (gateway entries only).
-    pub expires_at: Option<Instant>,
 }
 
 // ── Registry Core ───────────────────────────────────────────────────────────
@@ -231,19 +223,9 @@ impl GardenRegistryInner {
     /// This is the primary write method. All write adapters call this.
     pub fn upsert(&mut self, tool: GardenTool, origin: EntryOrigin) -> Option<ToolDelta> {
         let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
-        let expires_at = if origin == EntryOrigin::Registered {
-            Some(Instant::now() + std::time::Duration::from_secs(DEFAULT_GATEWAY_TTL_SECS))
-        } else {
-            None
-        };
 
         if let Some(existing) = self.entries.get(&key) {
             if tool_equivalent(&existing.tool, &tool) && existing.origin == origin {
-                // Content unchanged — just refresh TTL for gateways.
-                if expires_at.is_some() {
-                    let entry = self.entries.get_mut(&key).unwrap();
-                    entry.expires_at = expires_at;
-                }
                 return None;
             }
         }
@@ -260,7 +242,6 @@ impl GardenRegistryInner {
                 tool: tool.clone(),
                 version,
                 origin,
-                expires_at,
             },
         );
 
@@ -354,27 +335,7 @@ impl GardenRegistryInner {
         removed
     }
 
-    /// Reap expired gateway entries. Returns deltas for each removal.
-    ///
-    /// Called periodically (every 15s) by a background task.
-    pub fn reap_expired(&mut self) -> Vec<ToolDelta> {
-        let now = Instant::now();
-        let expired: Vec<String> = self
-            .entries
-            .iter()
-            .filter(|(_, e)| e.expires_at.is_some_and(|exp| exp <= now))
-            .map(|(key, _)| key.clone())
-            .collect();
-
-        let mut removed = Vec::new();
-        for key in expired {
-            tracing::debug!(key = %key, "registry: reaping expired gateway entry");
-            if let Some(delta) = self.remove(&key) {
-                removed.push(delta);
-            }
-        }
-        removed
-    }
+    // Reap expired gateway entries. Returns deltas for each removal.
 
     // ── Beacon Support ──────────────────────────────────────────────────
 
@@ -451,7 +412,6 @@ impl GardenRegistryInner {
                             tool: tool.clone(),
                             version,
                             origin: origin.clone(),
-                            expires_at: None,
                         },
                     );
 
@@ -657,24 +617,6 @@ impl GardenRegistryInner {
             .map(|e| e.tool.stone.endpoint.as_str())
     }
 
-    // ── Gateway-Specific Queries ────────────────────────────────────────
-
-    /// Get all gateway (orchestrator) entries.
-    pub fn gateway_entries(&self) -> Vec<&RegistryEntry> {
-        self.entries
-            .values()
-            .filter(|e| e.origin == EntryOrigin::Registered)
-            .collect()
-    }
-
-    /// Get a gateway entry by offering name.
-    pub fn gateway_for_offering(&self, offering: &str) -> Option<&RegistryEntry> {
-        self.entries.values().find(|e| {
-            e.origin == EntryOrigin::Registered
-                && e.tool.tool.tool_type.eq_ignore_ascii_case(offering)
-        })
-    }
-
     // ── Internals ───────────────────────────────────────────────────────
 
     fn append_history(&mut self, mut delta: ToolDelta) -> ToolDelta {
@@ -826,14 +768,14 @@ mod tests {
         let local = sample_tool("ollama", "offering", "stone-a");
         reg.upsert(local, EntryOrigin::Local);
 
-        let gateway = sample_tool("mongodb", "orchestrator", "stone-a");
-        reg.upsert(gateway, EntryOrigin::Registered);
+        let announced = sample_tool("mongodb", "orchestrator", "stone-b");
+        reg.upsert(announced, EntryOrigin::Announced { stone_id: "stone-b".to_string() });
 
-        // Reconcile local with empty → removes offering, keeps gateway
+        // Reconcile local with empty → removes offering, keeps announced
         let deltas = reg.reconcile_local("stone-a", vec![], EntryOrigin::Local);
         assert_eq!(deltas.len(), 1);
         assert_eq!(deltas[0].fqid, "ollama");
-        assert_eq!(reg.entries.len(), 1); // gateway remains
+        assert_eq!(reg.entries.len(), 1); // announced entry remains
     }
 
     #[test]
@@ -843,28 +785,10 @@ mod tests {
         let tool1 = sample_tool("ollama", "offering", "stone-a");
         let tool2 = sample_tool("mongodb", "orchestrator", "stone-a");
         reg.upsert(tool1, EntryOrigin::Local);
-        reg.upsert(tool2, EntryOrigin::Registered);
+        reg.upsert(tool2, EntryOrigin::Announced { stone_id: "stone-a".to_string() });
 
         let deltas = reg.remove_stone("stone-a");
         assert_eq!(deltas.len(), 2);
-        assert!(reg.entries.is_empty());
-    }
-
-    #[test]
-    fn gateway_ttl_reaping() {
-        let mut reg = GardenRegistryInner::default();
-
-        let tool = sample_tool("mongodb", "orchestrator", "stone-a");
-        reg.upsert(tool, EntryOrigin::Registered);
-        assert_eq!(reg.entries.len(), 1);
-
-        // Force expiry
-        let key = build_tool_key("stone-a", "mongodb", "orchestrator");
-        reg.entries.get_mut(&key).unwrap().expires_at =
-            Some(Instant::now() - std::time::Duration::from_secs(1));
-
-        let reaped = reg.reap_expired();
-        assert_eq!(reaped.len(), 1);
         assert!(reg.entries.is_empty());
     }
 
@@ -876,7 +800,7 @@ mod tests {
         let orchestrator = sample_tool("mongodb", "orchestrator", "stone-b");
 
         reg.upsert(offering, EntryOrigin::Local);
-        reg.upsert(orchestrator, EntryOrigin::Registered);
+        reg.upsert(orchestrator, EntryOrigin::Announced { stone_id: "stone-b".to_string() });
 
         let (_, tools) = reg.snapshot(&ToolQuery::default());
         assert_eq!(tools.len(), 2);

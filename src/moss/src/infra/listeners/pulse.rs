@@ -2,9 +2,9 @@
 //!
 //! Unified event channel for real-time observability. Replaces the former
 //! SseListener by consolidating domain events and transport (UDP) events
-//! into a single broadcast channel (`pulse_tx`).
+//! into a single broadcast channel (`pulse`).
 //!
-//! Two event sources feed `pulse_tx`:
+//! Two event sources feed `pulse`:
 //! - **PulseDomainBridge** (EventListener): converts DomainEvent → PulseEvent::Domain
 //! - **TransportTap** (spawned task): converts raw UDP announcements → PulseEvent::Transport
 //!
@@ -463,7 +463,7 @@ fn truncate_payload_preview(payload: &serde_json::Value) -> serde_json::Value {
 }
 
 // ============================================================================
-// PulseDomainBridge — EventListener that feeds pulse_tx
+// PulseDomainBridge — EventListener that feeds pulse
 // ============================================================================
 
 /// Bridges domain events into the pulse channel.
@@ -510,13 +510,13 @@ impl EventListener for PulseDomainBridge {
 }
 
 // ============================================================================
-// Transport tap — spawns a task that bridges UDP → pulse_tx
+// Transport tap — spawns a task that bridges UDP → pulse
 // ============================================================================
 
 /// Spawn the transport tap task.
 ///
 /// Subscribes to ALL raw UDP announcements via the p2p singleton and forwards
-/// them as `PulseEvent::Transport` on `pulse_tx`. Uses `receiver_count() == 0`
+/// them as `PulseEvent::Transport` on `pulse`. Uses `receiver_count() == 0`
 /// guard for zero overhead when nobody is listening.
 ///
 /// Respects the shutdown token (MOSS-0004) for cooperative shutdown.

@@ -19,7 +19,7 @@ pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
 pub mod discovery_handler;
-pub mod docker_monitor;
+pub mod docker;
 pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
@@ -39,12 +39,12 @@ pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;
 pub use coordinator::{
     start_all_background_tasks, start_auto_adoption, start_auto_adoption_with_config,
-    start_catalog_builder, start_discovery_listener, start_hardware_detection,
-    start_health_monitor, start_lantern_registration, start_registry_loader,
-    start_registry_maintenance, start_topology_maintenance,
+    start_catalog_builder, start_discovery_listener,
+    start_hardware_detection, start_health_monitor, start_lantern_registration,
+    start_registry_loader, start_registry_maintenance, start_topology_maintenance,
 };
 pub use discovery::lantern_registration_loop;
-pub use docker_monitor::{DockerEvent, DockerMonitor, DockerMonitorConfig};
+pub use docker::{Event as DockerEvent, Monitor as DockerMonitor, Config as DockerMonitorConfig};
 pub use hardware_detection::detect_capabilities_background;
 pub use health_monitor::health_monitor_task;
 pub use job_executors::{
@@ -52,7 +52,7 @@ pub use job_executors::{
     install_batch_task, install_image_direct_task, install_service_task, refresh_capabilities_task,
 };
 pub use metrics_collector::run_metrics_collector;
-pub use network_monitor::{NetworkEvent, NetworkMonitor, NetworkMonitorConfig};
+pub use network_monitor::{NetworkEvent, Network, NetworkConfig};
 pub use nurturing_scheduler::{
     trigger_all_nurturing, trigger_nurturing, NurturingScheduler, NurturingWorkflowConfig,
     NurturingWorkflowResult, ReplicationAttempt, RoutingStrategy,

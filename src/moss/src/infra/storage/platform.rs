@@ -1,19 +1,15 @@
-//! Cross-platform volume adapter (STORAGE-0011)
+//! Cross-platform volume adapter
 //!
-//! Thin OS-specific layer that answers two questions:
+//! Thin OS-specific layer that answers:
 //! - "What volumes are accessible right now?" → [`scan_volumes()`]
-//! - "What changed?" → [`start_volume_watcher()`]
-//!
-//! Plus utility functions for health probing:
-//! - [`disk_usage()`] — (used, available) in bytes
+//! - "What is the disk usage?" → [`disk_usage()`]
 //!
 //! Adapters never check manifests, never classify managed vs unmanaged,
 //! never emit domain events. They report what the OS sees.
+//! Hotplug detection is handled by the `monitor` module (STORAGE-0014).
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
-#[cfg(target_os = "windows")]
-use tracing::info;
 
 // ============================================================================
 // Types (platform-agnostic)
@@ -40,15 +36,6 @@ pub struct VolumeSnapshot {
 
     /// Whether the OS considers this removable (USB, SD card, etc.).
     pub removable: bool,
-}
-
-/// Volume event emitted by the OS adapter.
-#[derive(Debug, Clone)]
-pub enum VolumeEvent {
-    /// A volume became accessible (plugged in, mounted, drive letter assigned).
-    Appeared(VolumeSnapshot),
-    /// A volume is no longer accessible (unplugged, unmounted).
-    Disappeared { path: String },
 }
 
 /// Disk usage result.
@@ -227,26 +214,6 @@ pub fn disk_usage(path: &str) -> Option<DiskUsage> {
     }
 }
 
-/// Start a volume watcher that emits events on a channel.
-///
-/// Runs until the channel is closed. Platform-specific implementation:
-/// - Linux: udev monitor (blocking thread) + periodic scan fallback
-/// - Windows: polling drive letters every 5 seconds
-pub fn start_volume_watcher(tx: tokio::sync::mpsc::Sender<VolumeEvent>) {
-    #[cfg(target_os = "linux")]
-    {
-        linux::start_volume_watcher(tx);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        windows::start_volume_watcher(tx);
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        let _ = tx;
-        warn!("Volume watcher not supported on this platform");
-    }
-}
 
 /// Scan physical storage media (disks).
 ///
@@ -648,140 +615,6 @@ mod linux {
             used_bytes: used,
             available_bytes: avail,
         })
-    }
-
-    pub fn start_volume_watcher(tx: tokio::sync::mpsc::Sender<VolumeEvent>) {
-        // Try udev first, fall back to polling
-        let tx_clone = tx.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = run_udev_watcher(tx_clone) {
-                warn!(error = %e, "udev watcher failed, falling back to polling");
-            }
-        });
-
-        // Polling fallback (also catches mount changes udev misses)
-        tokio::spawn(async move {
-            let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-            // Initialize with current state
-            for v in scan_volumes() {
-                known.insert(v.path.clone());
-            }
-
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-
-                let current = scan_volumes();
-                let current_paths: std::collections::HashSet<String> =
-                    current.iter().map(|v| v.path.clone()).collect();
-
-                // New volumes
-                for v in &current {
-                    if !known.contains(&v.path) {
-                        debug!(path = %v.path, "Volume appeared (polling)");
-                        if tx.send(VolumeEvent::Appeared(v.clone())).await.is_err() {
-                            return; // channel closed
-                        }
-                    }
-                }
-
-                // Departed volumes
-                for path in &known {
-                    if !current_paths.contains(path) {
-                        debug!(path = %path, "Volume disappeared (polling)");
-                        if tx
-                            .send(VolumeEvent::Disappeared {
-                                path: path.clone(),
-                            })
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-
-                known = current_paths;
-            }
-        });
-    }
-
-    fn run_udev_watcher(tx: tokio::sync::mpsc::Sender<VolumeEvent>) -> anyhow::Result<()> {
-        use std::os::unix::io::AsRawFd;
-
-        let socket = udev::MonitorBuilder::new()
-            .context("Failed to create udev monitor")?
-            .match_subsystem("block")
-            .context("Failed to set subsystem filter")?
-            .listen()
-            .context("Failed to start udev monitor")?;
-
-        tracing::info!("udev volume watcher started");
-
-        loop {
-            let mut pollfd = libc::pollfd {
-                fd: socket.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-
-            let ret = unsafe { libc::poll(&mut pollfd, 1, 5000) };
-            if ret < 0 {
-                let err = std::io::Error::last_os_error();
-                if err.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(err.into());
-            }
-            if ret == 0 {
-                continue;
-            }
-
-            while let Some(event) = socket.iter().next() {
-                let devnode = match event.devnode() {
-                    Some(node) => node.to_string_lossy().to_string(),
-                    None => continue,
-                };
-
-                match event.event_type() {
-                    udev::EventType::Add => {
-                        debug!(device = %devnode, "udev: block device added");
-                        // Wait briefly for the device to settle (mount may not be instant)
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-
-                        // The polling loop will pick up the mounted volume.
-                        // We can also try to build a snapshot directly if it's already mounted.
-                        if let Some(snapshot) = build_snapshot_for_device(&devnode) {
-                            let _ = tx.blocking_send(VolumeEvent::Appeared(snapshot));
-                        }
-                    }
-                    udev::EventType::Remove => {
-                        debug!(device = %devnode, "udev: block device removed");
-                        let _ = tx.blocking_send(VolumeEvent::Disappeared { path: devnode });
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    fn build_snapshot_for_device(device: &str) -> Option<VolumeSnapshot> {
-        // Check if this device is mounted
-        let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
-        for line in mounts.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 && parts[0] == device {
-                let mount_path = parts[1];
-                return Some(VolumeSnapshot {
-                    path: device.to_string(),
-                    mount_path: mount_path.to_string(),
-                    label: label_from_lsblk(device),
-                    capacity_bytes: capacity_from_sysfs(device).unwrap_or(0),
-                    removable: is_removable(device),
-                });
-            }
-        }
-        None
     }
 
     fn base_device_name(device_path: &str) -> String {
@@ -1464,63 +1297,6 @@ mod windows {
             used_bytes: total_bytes.saturating_sub(total_free_bytes),
             available_bytes: free_bytes_available,
         })
-    }
-
-    pub fn start_volume_watcher(tx: tokio::sync::mpsc::Sender<VolumeEvent>) {
-        tokio::spawn(async move {
-            let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-            // Initialize with current state
-            let initial = scan_volumes();
-            info!(
-                count = initial.len(),
-                drives = %initial.iter().map(|v| v.path.as_str()).collect::<Vec<_>>().join(", "),
-                "Volume watcher initialized"
-            );
-            for v in initial {
-                known.insert(v.path.clone());
-            }
-
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-                let current = scan_volumes();
-                let current_paths: std::collections::HashSet<String> =
-                    current.iter().map(|v| v.path.clone()).collect();
-
-                for v in &current {
-                    if !known.contains(&v.path) {
-                        info!(
-                            path = %v.path,
-                            label = ?v.label,
-                            removable = v.removable,
-                            capacity_gb = v.capacity_bytes / 1_000_000_000,
-                            "Volume appeared (watcher)"
-                        );
-                        if tx.send(VolumeEvent::Appeared(v.clone())).await.is_err() {
-                            return;
-                        }
-                    }
-                }
-
-                for path in &known {
-                    if !current_paths.contains(path) {
-                        info!(path = %path, "Volume disappeared (watcher)");
-                        if tx
-                            .send(VolumeEvent::Disappeared {
-                                path: path.clone(),
-                            })
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-
-                known = current_paths;
-            }
-        });
     }
 
     fn get_volume_label(drive_wide: &[u16]) -> Option<String> {

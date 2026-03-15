@@ -5,7 +5,7 @@
 //! Seed-banks are projected directly from the seed bank lifecycle objects.
 
 use crate::domain::service_discovery::{self, FoundService};
-use crate::domain::storage::VolumeHealth;
+use crate::domain::storage::VolumeState;
 use crate::AppState;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
@@ -30,9 +30,9 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     // here — the reconcile_local() call skips Registered entries.
 
     // ── Managed storages from unified volumes ────────────────────
-    let endpoint = state.self_entry.read().await.address.http_base();
+    let endpoint = state.current.topology.self_entry.read().await.address.http_base();
     let managed_vols: Vec<_> = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .filter(|v| v.is_managed())
             .cloned()
@@ -41,17 +41,13 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
 
     for vol in &managed_vols {
         let mgmt = vol.management.as_ref().unwrap(); // safe: filtered above
-        let (status, ready) = volume_health_to_readiness(&vol.health);
+        let (status, ready) = volume_state_to_readiness(&vol.state);
         let visibility_str = mgmt.visibility.to_string();
 
         // fqid = replica set display name (used for grouping replicas and Explorer folders).
         // Users see replica set names, not individual volume names.
         // The stable GUID lives in StorageMetadata.replica_set_id.
-        let fqid = if mgmt.replica_set_name.is_empty() {
-            garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY.to_string()
-        } else {
-            mgmt.replica_set_name.clone()
-        };
+        let fqid = mgmt.display_name().to_string();
 
         // Local storages always support s3 + storage protocols
         let protocols = vec![garden_common::constants::PROTOCOL_S3.to_string(), garden_common::constants::PROTOCOL_STORAGE.to_string()];
@@ -82,8 +78,8 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                 tags: Vec::new(),
             },
             stone: Stone {
-                id: state.stone_id.clone(),
-                name: state.stone_name.clone(),
+                id: state.current.stone.id.clone(),
+                name: state.current.stone.name.clone(),
                 endpoint: endpoint.clone(),
             },
             service: ServiceInfo {
@@ -201,12 +197,12 @@ fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     })
 }
 
-/// Map `VolumeHealth` to `(status, ready)` for tool projection.
-fn volume_health_to_readiness(health: &VolumeHealth) -> (&'static str, bool) {
-    match health {
-        VolumeHealth::Healthy => ("running", true),
-        VolumeHealth::Degraded(_) => ("degraded", false),
-        VolumeHealth::Unmounted | VolumeHealth::Lost => ("stopped", false),
+/// Map `VolumeState` to `(status, ready)` for tool projection.
+fn volume_state_to_readiness(state: &VolumeState) -> (&'static str, bool) {
+    match state {
+        VolumeState::Online => ("running", true),
+        VolumeState::Degraded(_) => ("degraded", false),
+        VolumeState::Offline => ("stopped", false),
     }
 }
 

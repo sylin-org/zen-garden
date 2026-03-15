@@ -7,35 +7,35 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
 use std::time::Duration;
 
 // ============================================================================
-// Rouse Command - Wake-on-LAN
+// Rouse Runtime - Wake-on-LAN
 // ============================================================================
 
 /// Wake a stone via Wake-on-LAN magic packet
 pub struct RouseCommand {
     /// Stone name to wake
     pub stone_name: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl RouseCommand {
-    pub fn new(stone_name: String, quiet_mode: bool) -> Self {
+    pub fn new(stone_name: String, quiet: bool) -> Self {
         Self {
             stone_name,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for RouseCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let stone_path = urlencoding::encode(&self.stone_name);
         let url = ctx.api_v1_url(&format!("admin/stone/{}/wake", stone_path))?;
 
@@ -168,7 +168,7 @@ impl Command for RouseCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::ROUSE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::ROUSE, self.quiet);
 
         Ok(())
     }
@@ -179,23 +179,23 @@ impl Command for RouseCommand {
 }
 
 // ============================================================================
-// Slumber Command - Stone Shutdown
+// Slumber Runtime - Stone Shutdown
 // ============================================================================
 
 /// Shut down a stone (power off)
 pub struct SlumberCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl SlumberCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
 #[async_trait]
 impl Command for SlumberCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let url = ctx.api_v1_url("admin/stone/shutdown")?;
 
         println!(
@@ -245,7 +245,7 @@ impl Command for SlumberCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::SLUMBER, self.quiet_mode);
+        suggestions::print_suggestions(cmd::SLUMBER, self.quiet);
 
         Ok(())
     }
@@ -256,23 +256,23 @@ impl Command for SlumberCommand {
 }
 
 // ============================================================================
-// Stir Command - Stone Reboot
+// Stir Runtime - Stone Reboot
 // ============================================================================
 
 /// Reboot a stone
 pub struct StirCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl StirCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
 #[async_trait]
 impl Command for StirCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let url = ctx.api_v1_url("admin/stone/reboot")?;
 
         println!(
@@ -322,7 +322,7 @@ impl Command for StirCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::STIR, self.quiet_mode);
+        suggestions::print_suggestions(cmd::STIR, self.quiet);
 
         Ok(())
     }

@@ -4,7 +4,7 @@
 //! Phase 2 (v0.2.0+): JWT validation with Pond keystone
 
 use async_trait::async_trait;
-use garden_common::traits::auth::{AuthContext, AuthError, AuthProvider};
+use garden_common::traits::auth::{Auth, AuthError, AuthProvider};
 
 /// No authentication - always succeeds
 ///
@@ -25,16 +25,16 @@ impl NoAuth {
 
 #[async_trait]
 impl AuthProvider for NoAuth {
-    async fn authenticate(&self, _auth_header: Option<&str>) -> Result<AuthContext, AuthError> {
+    async fn authenticate(&self, _auth_header: Option<&str>) -> Result<Auth, AuthError> {
         // Always succeed with default context
-        Ok(AuthContext {
+        Ok(Auth {
             stone_name: self.default_stone.clone(),
             claims: std::collections::HashMap::new(),
             is_admin: false,
         })
     }
 
-    fn is_admin(&self, _context: &AuthContext) -> bool {
+    fn is_admin(&self, _context: &Auth) -> bool {
         // No admin concept in NoAuth
         false
     }
@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn test_no_admin() {
         let auth = NoAuth::new("test-stone");
-        let ctx = AuthContext {
+        let ctx = Auth {
             stone_name: "test".into(),
             claims: std::collections::HashMap::new(),
             is_admin: false,

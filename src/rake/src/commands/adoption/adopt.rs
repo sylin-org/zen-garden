@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -12,21 +12,21 @@ use garden_common::ui::rendering as ui;
 /// Adopt an existing container
 pub struct AdoptCommand {
     pub container: String,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl AdoptCommand {
-    pub fn new(container: String, quiet_mode: bool) -> Self {
+    pub fn new(container: String, quiet: bool) -> Self {
         Self {
             container,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for AdoptCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let container_path = urlencoding::encode(&self.container);
         let url = ctx.api_v1_url(&format!("stone/offerings/{}/adopt", container_path))?;
         let response = ctx
@@ -81,7 +81,7 @@ impl Command for AdoptCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::ADOPT, self.quiet_mode);
+        suggestions::print_suggestions(cmd::ADOPT, self.quiet);
 
         Ok(())
     }

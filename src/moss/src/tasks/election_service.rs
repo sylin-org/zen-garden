@@ -40,7 +40,7 @@ const INITIATED_ELECTION_TTL_SECS: u64 = 60;
 ///
 /// **REFACTORED (COMM-0001 Phase 4)**: Does NOT create/own UDP socket.
 /// Subscribes to UDP events from p2p singleton transport.
-pub struct ElectionService {
+pub struct Elections {
     /// This stone's ID
     stone_id: String,
     /// This stone's name
@@ -55,8 +55,8 @@ pub struct ElectionService {
     fitness_provider: Arc<RwLock<Option<Box<dyn FitnessProvider>>>>,
 }
 
-// Make ElectionService clonable by cloning the Arcs
-impl Clone for ElectionService {
+// Make Elections clonable by cloning the Arcs
+impl Clone for Elections {
     fn clone(&self) -> Self {
         Self {
             stone_id: self.stone_id.clone(),
@@ -84,7 +84,7 @@ pub trait StateProvider: Send + Sync {
 
 /// Trait for computing fitness scores (ORCH-0001).
 ///
-/// Implemented by the domain layer, injected into `ElectionService`.
+/// Implemented by the domain layer, injected into `Elections`.
 /// The election service never knows _how_ scores are computed — only
 /// that it can ask for one given an offering FQN.
 pub trait FitnessProvider: Send + Sync {
@@ -102,7 +102,7 @@ pub trait FitnessProvider: Send + Sync {
     >;
 }
 
-impl ElectionService {
+impl Elections {
     /// Create new election service (no socket binding, no async needed)
     pub fn new(
         stone_id: String,

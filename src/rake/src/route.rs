@@ -23,7 +23,7 @@ use garden_common::ui::rendering as ui;
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::commands;
 use garden_rake::commands::Command;
-use garden_rake::stone_cache::GLOBAL_CACHE;
+use garden_rake::stone_cache::STONE;
 
 use base64::Engine;
 use std::time::Duration;
@@ -635,7 +635,7 @@ pub async fn route(
         "launch" => {
             let at = opt(m, "at");
             let endpoint =
-                dispatch::resolve_endpoint(&rt.client, at, Some(&*GLOBAL_CACHE)).await?;
+                dispatch::resolve_endpoint(&rt.client, at, Some(&*STONE)).await?;
             return Ok(Some(Inv::local(
                 commands::local::LaunchCommand::new(Some(endpoint)),
             )));
@@ -644,7 +644,7 @@ pub async fn route(
         "api" => {
             let at = opt(m, "at");
             let resolved =
-                dispatch::resolve_endpoint(&rt.client, at, Some(&*GLOBAL_CACHE)).await?;
+                dispatch::resolve_endpoint(&rt.client, at, Some(&*STONE)).await?;
             commands::api::execute_api_command(
                 &resolved,
                 opt(m, "category"),
@@ -663,7 +663,7 @@ pub async fn route(
                 g.quiet,
                 g.fresh,
                 g.verbose,
-                Some(&*GLOBAL_CACHE),
+                Some(&*STONE),
             )
             .await?;
             return Ok(None);
@@ -675,7 +675,7 @@ pub async fn route(
             let component = req(m, "component")?;
             let from = req(m, "from")?;
             let endpoint =
-                dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*GLOBAL_CACHE))
+                dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*STONE))
                     .await?;
             println!("Refreshing {}...", component);
             refresh_component(&rt.client, &endpoint, &component, std::path::Path::new(&from))
@@ -770,7 +770,7 @@ async fn route_offer(
         (Some(name), false) => {
             // Is it a known offering? Need pre-resolved endpoint to check.
             let endpoint =
-                dispatch::resolve_endpoint(&rt.client, at.clone(), Some(&*GLOBAL_CACHE))
+                dispatch::resolve_endpoint(&rt.client, at.clone(), Some(&*STONE))
                     .await?;
             let is_known = commands::offering::OfferCommand::is_known_offering(
                 &rt.client, &endpoint, name,
@@ -784,7 +784,7 @@ async fn route_offer(
                     prefer.clone(),
                     g.quiet,
                 );
-                let ctx = garden_rake::CommandContext::with_endpoint(
+                let ctx = garden_rake::Runtime::with_endpoint(
                     rt.client.clone(),
                     endpoint,
                     None,

@@ -5,25 +5,25 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
 
 /// Invite command for pond zen syntax operations
 pub struct InviteCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl InviteCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
 #[async_trait]
 impl Command for InviteCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
         let url = format!("{}/api/v1/pond/invite", endpoint.trim_end_matches('/'));
 
@@ -88,7 +88,7 @@ impl Command for InviteCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::INVITE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::INVITE, self.quiet);
 
         Ok(())
     }

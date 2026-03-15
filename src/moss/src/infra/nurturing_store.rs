@@ -20,7 +20,7 @@
 //!     {harvest_id}.tar.gz                <- Compressed harvest archive
 //! ```
 
-use crate::docker::DockerManager;
+use crate::docker::Client;
 use crate::domain::harvest::HarvestManifest;
 use crate::domain::nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
@@ -120,14 +120,14 @@ impl NurturingStore {
     /// 4. Deletes the old harvest from the slot (if any)
     ///
     /// # Arguments
-    /// * `docker` - Docker manager for container operations
+    /// * `docker` - Client manager for container operations
     /// * `offering_id` - GUIDv7 identifier for the offering
     /// * `offering_name` - Current name of the offering
     /// * `stone_id` - Stone ID creating the snapshot
     /// * `commit_image` - Whether to commit the container image
     pub async fn create_snapshot(
         &self,
-        docker: &DockerManager,
+        docker: &Client,
         offering_id: &str,
         offering_name: &str,
         stone_id: &str,
@@ -238,7 +238,7 @@ impl NurturingStore {
     /// * `slot` - Which slot to restore from (None = current/latest)
     pub async fn restore_snapshot(
         &self,
-        docker: &DockerManager,
+        docker: &Client,
         offering_id: &str,
         slot: Option<NurturingSlot>,
     ) -> Result<HarvestManifest> {
@@ -460,13 +460,13 @@ impl NurturingStore {
     /// Downloads the snapshot from the seed bank, extracts it, and restores.
     ///
     /// # Arguments
-    /// * `docker` - Docker manager for container operations
+    /// * `docker` - Client manager for container operations
     /// * `seed_bank_mount` - Mount path of the seed bank
     /// * `offering_id` - Offering to restore
     /// * `harvest_id` - Optional specific harvest (defaults to latest)
     pub async fn restore_from_seed_bank(
         &self,
-        docker: &DockerManager,
+        docker: &Client,
         store: &ContentStore,
         seed_bank_id: &str,
         offering_id: &str,

@@ -1,15 +1,15 @@
-//! Image inspection — extract OCI metadata from Docker images.
+//! Image inspection — extract OCI metadata from Client images.
 //!
 //! Provides image-direct deployment with the port, volume, environment,
 //! and label information needed to synthesize a deployment spec without
 //! a curated manifest.
 
-use crate::docker::DockerManager;
+use crate::docker::Client;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 
-/// Result of inspecting a Docker image's OCI config.
+/// Result of inspecting a Client image's OCI config.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImageInspection {
     /// Original image reference (e.g., "nginx:latest")
@@ -24,7 +24,7 @@ pub struct ImageInspection {
     pub command: Option<Vec<String>>,
     /// Default ENTRYPOINT from image
     pub entrypoint: Option<Vec<String>>,
-    /// OCI / Docker labels
+    /// OCI / Client labels
     pub labels: HashMap<String, String>,
     /// Embedded HEALTHCHECK (if any)
     pub healthcheck: Option<ImageHealthcheck>,
@@ -44,7 +44,7 @@ pub struct ImageHealthcheck {
 /// Pull an image (if not present) and inspect its OCI config.
 ///
 /// Returns structured metadata extracted from the image's config layer.
-pub async fn inspect_image(docker: &DockerManager, image_ref: &str) -> Result<ImageInspection> {
+pub async fn inspect_image(docker: &Client, image_ref: &str) -> Result<ImageInspection> {
     // Pull image first (no-op if already present, updates if tag changed)
     docker
         .pull_image(image_ref, None)
@@ -123,7 +123,7 @@ pub async fn inspect_image(docker: &DockerManager, image_ref: &str) -> Result<Im
 
 /// Extract a human-readable description from OCI labels.
 pub fn description_from_labels(labels: &HashMap<String, String>) -> Option<String> {
-    // Try standard OCI annotation first, then Docker-specific
+    // Try standard OCI annotation first, then Client-specific
     labels
         .get("org.opencontainers.image.description")
         .or_else(|| labels.get("description"))
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn parse_exposed_port_format() {
-        // Simulate the key format Docker uses: "80/tcp"
+        // Simulate the key format Client uses: "80/tcp"
         let key = "8080/tcp";
         let port: u16 = key.split('/').next().unwrap().parse().unwrap();
         assert_eq!(port, 8080);

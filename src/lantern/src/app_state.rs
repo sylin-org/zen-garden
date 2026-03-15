@@ -16,7 +16,7 @@ const ACTIVITY_BUFFER_SIZE: usize = 200;
 #[derive(Clone)]
 pub struct AppState {
     /// Lantern instance identifier
-    pub lantern_name: String,
+    pub name: String,
 
     /// Process start time (for uptime calculation)
     pub start_time: Instant,
@@ -28,7 +28,7 @@ pub struct AppState {
     pub topology: Arc<RwLock<GardenTopology>>,
 
     /// SSE broadcast channel for real-time presence events
-    pub sse_tx: broadcast::Sender<SseEvent>,
+    pub sse: broadcast::Sender<SseEvent>,
 
     /// Domain event bus
     pub event_bus: EventBus,
@@ -45,18 +45,18 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
-        lantern_name: String,
+        name: String,
         api_port: u16,
         koi_handle: Arc<koi_embedded::KoiHandle>,
     ) -> Self {
-        let (sse_tx, _) = broadcast::channel(256);
+        let (sse, _) = broadcast::channel(256);
 
         Self {
-            lantern_name,
+            name,
             start_time: Instant::now(),
             api_port,
             topology: Arc::new(RwLock::new(GardenTopology::new())),
-            sse_tx,
+            sse,
             event_bus: EventBus::new(),
             activity: Arc::new(RwLock::new(VecDeque::with_capacity(ACTIVITY_BUFFER_SIZE))),
             http_client: MossClient::new(

@@ -15,8 +15,10 @@
 pub mod adapter;
 mod beacon;
 pub mod layout;
+pub mod monitor;
 mod objects;
 pub mod platform;
+pub mod handle;
 mod signpost;
 mod store;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -25,6 +27,7 @@ pub mod watcher;
 
 pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon};
 pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
+pub use handle::{FileEntry, FileMeta, RouterError, StorageHandle, StorageResolver};
 pub use signpost::refresh_signpost;
 pub use store::ContentStore;
 pub use watcher::StorageWatcherSet;

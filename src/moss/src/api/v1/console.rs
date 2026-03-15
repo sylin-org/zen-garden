@@ -60,7 +60,7 @@ pub async fn set_console_mode_v1(
 
     // Spawn timeout task if requested and not forever
     let timeout_opt = if request.timeout_minutes > 0 {
-        let state_clone = state.clone();
+        let timeout_state = state.clone();
         let original_mode = previous_mode;
         let timeout_minutes = request.timeout_minutes;
 
@@ -68,8 +68,8 @@ pub async fn set_console_mode_v1(
             tokio::time::sleep(tokio::time::Duration::from_secs(timeout_minutes * 60)).await;
 
             // Revert to original mode
-            state_clone.console.set_mode(original_mode);
-            state_clone
+            timeout_state.console.set_mode(original_mode);
+            timeout_state
                 .console
                 .emit(garden_common::console::ConsoleEvent::new(
                     garden_common::console::EventCategory::Ops,

@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -13,21 +13,21 @@ use std::time::Duration;
 /// Reconcile offerings with actual container state
 pub struct ReconcileCommand {
     pub drop_invalid: bool,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl ReconcileCommand {
-    pub fn new(drop_invalid: bool, quiet_mode: bool) -> Self {
+    pub fn new(drop_invalid: bool, quiet: bool) -> Self {
         Self {
             drop_invalid,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for ReconcileCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let body = reconcile_system(&ctx.client, ctx.endpoint()?, self.drop_invalid).await?;
 
         let adopted = body
@@ -64,7 +64,7 @@ impl Command for ReconcileCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::RECONCILE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::RECONCILE, self.quiet);
 
         Ok(())
     }

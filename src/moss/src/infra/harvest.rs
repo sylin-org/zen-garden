@@ -1,11 +1,11 @@
 //! Harvest creation and restoration operations
 //!
 //! Orchestrates the backup and restore of offerings, combining:
-//! - Docker operations (image commit, volume inspection)
+//! - Client operations (image commit, volume inspection)
 //! - Archive module (centralized compression/checksum)
 //! - Manifest persistence (HarvestStore)
 
-use crate::docker::DockerManager;
+use crate::docker::Client;
 use crate::domain::harvest::{HarvestManifest, VolumeArchive};
 use crate::infra::HarvestStore;
 use anyhow::{Context, Result};
@@ -21,7 +21,7 @@ use std::path::Path;
 /// 3. Saves the manifest for later restoration
 ///
 /// # Arguments
-/// * `docker` - Docker manager for container operations
+/// * `docker` - Client manager for container operations
 /// * `store` - Harvest store for persistence
 /// * `offering` - Offering name (without zen-offering- prefix)
 /// * `source_stone` - Stone ID where the harvest is created
@@ -30,7 +30,7 @@ use std::path::Path;
 /// # Returns
 /// The created harvest manifest
 pub async fn create_harvest(
-    docker: &DockerManager,
+    docker: &Client,
     store: &HarvestStore,
     offering: &str,
     source_stone: &str,
@@ -138,7 +138,7 @@ pub async fn create_harvest(
 /// before calling this function.
 ///
 /// # Arguments
-/// * `docker` - Docker manager (used to verify volumes)
+/// * `docker` - Client manager (used to verify volumes)
 /// * `store` - Harvest store
 /// * `harvest_id` - ID of the harvest to restore
 ///
@@ -146,7 +146,7 @@ pub async fn create_harvest(
 /// This function does NOT restore the container image - that should be handled
 /// by the ceremony orchestrator which may want to use a different image.
 pub async fn restore_harvest(
-    docker: &DockerManager,
+    docker: &Client,
     store: &HarvestStore,
     harvest_id: &str,
 ) -> Result<()> {
@@ -254,5 +254,5 @@ pub async fn verify_harvest(store: &HarvestStore, harvest_id: &str) -> Result<bo
 
 #[cfg(test)]
 mod tests {
-    // Integration tests require Docker - see tests/harvest_integration.rs
+    // Integration tests require Client - see tests/harvest_integration.rs
 }

@@ -22,7 +22,7 @@ use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, Sto
 /// # Fallback Behavior
 /// If metrics not yet collected, returns a fallback response with zero values.
 pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<MetricsSnapshot>> {
-    let resources_guard = state.system_resources.read().await;
+    let resources_guard = state.current.system_resources.read().await;
     let resources = resources_guard
         .as_ref()
         .cloned()

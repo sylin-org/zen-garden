@@ -17,7 +17,7 @@
 //! - `store head <bucket> <key>` — Get object metadata
 
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
 use garden_common::storage::{
@@ -83,7 +83,7 @@ pub struct ReleaseResponse {
 }
 
 // ============================================================================
-// Add Storage Command (STORAGE-0010)
+// Add Storage Runtime (STORAGE-0010)
 // ============================================================================
 
 pub struct AddStorageCommand {
@@ -130,7 +130,7 @@ impl AddStorageCommand {
 
 #[async_trait]
 impl Command for AddStorageCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -231,7 +231,7 @@ impl Command for AddStorageCommand {
 
 impl AddStorageCommand {
     /// Interactive device selection when no target provided.
-    async fn pick_target(&self, ctx: &CommandContext, base: &str) -> anyhow::Result<String> {
+    async fn pick_target(&self, ctx: &Runtime, base: &str) -> anyhow::Result<String> {
         use garden_common::ui::rendering as ui;
 
         let url = format!("{}/api/v1/stone/storage/candidates", base);
@@ -338,7 +338,7 @@ impl AddStorageCommand {
 }
 
 // ============================================================================
-// Release Storage Command
+// Release Storage Runtime
 // ============================================================================
 
 pub struct ReleaseStorageCommand {
@@ -356,7 +356,7 @@ impl ReleaseStorageCommand {
 
 #[async_trait]
 impl Command for ReleaseStorageCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -454,7 +454,7 @@ impl Command for ReleaseStorageCommand {
 }
 
 // ============================================================================
-// List Storage Command
+// List Storage Runtime
 // ============================================================================
 
 pub struct ListStorageCommand {
@@ -475,7 +475,7 @@ impl ListStorageCommand {
 
 #[async_trait]
 impl Command for ListStorageCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -705,7 +705,7 @@ impl PinStorageCommand {
 
 #[async_trait]
 impl Command for PinStorageCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -765,7 +765,7 @@ impl UnpinStorageCommand {
 
 #[async_trait]
 impl Command for UnpinStorageCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -854,7 +854,7 @@ fn apply_app_prefix_for_list(
 }
 
 // ============================================================================
-// Store Put Command
+// Store Put Runtime
 // ============================================================================
 
 pub struct StorePutCommand {
@@ -879,7 +879,7 @@ impl StorePutCommand {
 
 #[async_trait]
 impl Command for StorePutCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -952,7 +952,7 @@ impl Command for StorePutCommand {
 }
 
 // ============================================================================
-// Store Get Command
+// Store Get Runtime
 // ============================================================================
 
 pub struct StoreGetCommand {
@@ -977,7 +977,7 @@ impl StoreGetCommand {
 
 #[async_trait]
 impl Command for StoreGetCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -1069,7 +1069,7 @@ impl Command for StoreGetCommand {
 }
 
 // ============================================================================
-// Store List Command
+// Store List Runtime
 // ============================================================================
 
 pub struct StoreListCommand {
@@ -1128,7 +1128,7 @@ struct CommonPrefix {
 
 #[async_trait]
 impl Command for StoreListCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -1306,7 +1306,7 @@ fn unescape_xml(s: &str) -> String {
 }
 
 // ============================================================================
-// Store Delete Command
+// Store Delete Runtime
 // ============================================================================
 
 pub struct StoreDeleteCommand {
@@ -1329,7 +1329,7 @@ impl StoreDeleteCommand {
 
 #[async_trait]
 impl Command for StoreDeleteCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -1381,7 +1381,7 @@ impl Command for StoreDeleteCommand {
 }
 
 // ============================================================================
-// Store Head Command
+// Store Head Runtime
 // ============================================================================
 
 pub struct StoreHeadCommand {
@@ -1398,7 +1398,7 @@ impl StoreHeadCommand {
 
 #[async_trait]
 impl Command for StoreHeadCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx
@@ -1473,7 +1473,7 @@ impl Command for StoreHeadCommand {
 }
 
 // ============================================================================
-// Storage Status Command (STORAGE-0009 Phase 6)
+// Storage Status Runtime (STORAGE-0009 Phase 6)
 // ============================================================================
 
 pub struct StorageStatusCommand {
@@ -1494,7 +1494,7 @@ impl Default for StorageStatusCommand {
 
 #[async_trait]
 impl Command for StorageStatusCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         use garden_common::ui::rendering as ui;
 
         let endpoint = ctx

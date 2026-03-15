@@ -63,7 +63,7 @@ pub struct RestoreRequest {
 pub async fn list_nurturing(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<NurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let index = state.nurturing_store.load_index().await.map_err(|e| {
+    let index = state.orchestration.nurturing.store.load_index().await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "NURTURING_ERROR",
@@ -99,7 +99,7 @@ pub async fn get_offering_slots(
 
     let slots = if let Some(id) = offering_id {
         state
-            .nurturing_store
+            .orchestration.nurturing.store
             .get_offering_slots(&id)
             .await
             .map_err(|e| {
@@ -113,7 +113,7 @@ pub async fn get_offering_slots(
     } else {
         // Try looking up directly by offering_id
         state
-            .nurturing_store
+            .orchestration.nurturing.store
             .get_offering_slots(&offering)
             .await
             .map_err(|e| {
@@ -183,12 +183,12 @@ pub async fn create_snapshot(
     );
 
     let result = state
-        .nurturing_store
+        .orchestration.nurturing.store
         .create_snapshot(
-            &state.docker,
+            &state.platform.docker,
             &offering_id,
             &offering_name,
-            &state.stone_id,
+            &state.current.stone.id,
             commit_image,
         )
         .await
@@ -260,7 +260,7 @@ pub async fn restore_snapshot(
 
     // Stop the service first
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&offering_lookup, Some(&state.console))
         .await
     {
@@ -269,8 +269,8 @@ pub async fn restore_snapshot(
 
     // Restore the snapshot
     let manifest = state
-        .nurturing_store
-        .restore_snapshot(&state.docker, &offering_id, slot)
+        .orchestration.nurturing.store
+        .restore_snapshot(&state.platform.docker, &offering_id, slot)
         .await
         .map_err(|e| {
             crate::infra::error_response(
@@ -283,7 +283,7 @@ pub async fn restore_snapshot(
 
     // Start the service
     if let Err(e) = state
-        .docker
+        .platform.docker
         .start_service(&offering_lookup, Some(&state.console))
         .await
     {
@@ -323,7 +323,7 @@ pub async fn delete_nurturing(
     let offering_id = offering_id.unwrap_or(offering.clone());
 
     state
-        .nurturing_store
+        .orchestration.nurturing.store
         .delete_offering(&offering_id)
         .await
         .map_err(|e| {
@@ -395,7 +395,7 @@ pub async fn replicate_to_seed_bank(
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.current.storage.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -417,20 +417,20 @@ pub async fn replicate_to_seed_bank(
     let hydration_manifest = build_memories_manifest(
         &offering_entry,
         manifest,
-        &state.stone_id,
-        &state.stone_name,
+        &state.current.stone.id,
+        &state.current.stone.name,
     );
 
     let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let result = state
-        .nurturing_store
+        .orchestration.nurturing.store
         .replicate_to_seed_bank(
             &offering_id,
             &store,
             &seed_bank.id,
             &seed_bank.name,
-            &state.stone_id,
+            &state.current.stone.id,
             Some(hydration_manifest),
         )
         .await
@@ -458,7 +458,7 @@ pub async fn list_remote_snapshots(
     Path(storage_name): Path<String>,
 ) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.volumes, &storage_name).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.current.storage.volumes, &storage_name).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -470,7 +470,7 @@ pub async fn list_remote_snapshots(
     let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let index = state
-        .nurturing_store
+        .orchestration.nurturing.store
         .list_remote_snapshots(&store, &seed_bank.id)
         .await
         .map_err(|e| {
@@ -518,7 +518,7 @@ pub async fn restore_from_seed_bank(
     };
 
     // Find the seed bank
-    let seed_bank = find_seed_bank(&state.volumes, &request.storage).await.map_err(|e| {
+    let seed_bank = find_seed_bank(&state.current.storage.volumes, &request.storage).await.map_err(|e| {
         crate::infra::error_response(
             StatusCode::NOT_FOUND,
             "SEED_BANK_NOT_FOUND",
@@ -537,7 +537,7 @@ pub async fn restore_from_seed_bank(
 
     // Stop the service first
     if let Err(e) = state
-        .docker
+        .platform.docker
         .stop_service(&offering_name, Some(&state.console))
         .await
     {
@@ -547,9 +547,9 @@ pub async fn restore_from_seed_bank(
     // Restore from seed bank
     let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
     let manifest = state
-        .nurturing_store
+        .orchestration.nurturing.store
         .restore_from_seed_bank(
-            &state.docker,
+            &state.platform.docker,
             &store,
             &seed_bank.id,
             &offering_id,
@@ -567,7 +567,7 @@ pub async fn restore_from_seed_bank(
 
     // Start the service
     if let Err(e) = state
-        .docker
+        .platform.docker
         .start_service(&offering_name, Some(&state.console))
         .await
     {

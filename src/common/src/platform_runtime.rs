@@ -89,29 +89,33 @@ pub trait PlatformRuntime: Send + Sync {
     // ---- Storage ribbons ----
 
     /// Storage bank connected and live.
-    fn print_storage_connected(&self, name: &str, roles: &[String], used_bytes: u64) {
+    fn print_storage_connected(&self, name: &str, roles: &[String], used_bytes: u64, capacity_bytes: u64) {
         let used = crate::utils::format_bytes(used_bytes);
+        let capacity = crate::utils::format_bytes(capacity_bytes);
+        let pct = if capacity_bytes > 0 {
+            format!(" ({}%)", used_bytes * 100 / capacity_bytes)
+        } else {
+            String::new()
+        };
         let role_display = if roles.is_empty() {
             "Primary".to_string()
         } else {
             roles.join(", ")
         };
         self.print_ribbon(&[
-            &format!("{}🌱  ✓       Storage \"{}\" connected", ribbon_art::USB_TOP, name),
+            &format!("{}🌱  ✓       {} connected", ribbon_art::USB_TOP_ACTIVE, name),
             &format!(
-                "{}            {}, {} used",
-                ribbon_art::USB_BODY_ACTIVE, role_display, used
+                "{}            {}, {}/{} used{}",
+                ribbon_art::USB_BODY_ACTIVE, role_display, used, capacity, pct
             ),
-            ribbon_art::USB_BOTTOM_CONN,
         ]);
     }
 
     /// Storage bank released — safe to remove.
     fn print_storage_released(&self, name: &str) {
         self.print_ribbon(&[
-            &format!("{}↓           Storage released: {}", ribbon_art::USB_TOP, name),
-            &format!("{}            Safe to remove device", ribbon_art::USB_BODY_EMPTY),
-            ribbon_art::USB_BOTTOM,
+            &format!("{}↓           {}", ribbon_art::USB_TOP_EMPTY, name),
+            &format!("{}            Storage removed", ribbon_art::USB_BODY_EMPTY),
         ]);
     }
 

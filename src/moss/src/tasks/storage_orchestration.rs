@@ -8,7 +8,7 @@
 //! - Dual-primary resolution: lower stone_id yields to higher
 //! - 6 s stale detection (2 × reconciliation window)
 //!
-//! The task updates roles on `state.volumes` (STORAGE-0011) which the beacon
+//! The task updates roles on `state.current.storage.volumes` (STORAGE-0011) which the beacon
 //! builder reads when constructing `StorageAnnouncement::role`.
 
 use anyhow::Result;
@@ -60,7 +60,7 @@ pub async fn storage_orchestration_task(state: AppState, token: CancellationToke
                     warn!(error = ?e, "Seed bank orchestration tick failed");
                 }
             }
-            _ = state.orchestration_nudge.notified() => {
+            _ = state.orchestration.storage.nudge.notified() => {
                 debug!("Orchestration nudge received — running immediate tick");
                 if let Err(e) = orchestration_tick(&state).await {
                     warn!(error = ?e, "Seed bank orchestration tick (nudge) failed");
@@ -123,7 +123,7 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
 async fn orchestration_tick(state: &AppState) -> Result<()> {
     // Read current managed volumes
     let (current_roles, current_pins, local_names) = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         let mut names = Vec::new();
         let mut roles = std::collections::HashMap::new();
         let mut pins = std::collections::HashMap::new();
@@ -145,8 +145,8 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         return Ok(());
     }
 
-    let my_stone_id = &state.stone_id;
-    let reg = state.registry.read().await;
+    let my_stone_id = &state.current.stone.id;
+    let reg = state.tool.registry.read().await;
 
     let mut new_roles = std::collections::HashMap::new();
     let mut any_changed = false;
@@ -216,7 +216,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
     // Apply auto-unpin and role updates via unified Volumes
     {
-        let mut map = state.volumes.write().await;
+        let mut map = state.current.storage.volumes.write().await;
 
         for name in &auto_unpin {
             if let Some(vol) = map.values_mut().find(|v| {
@@ -271,7 +271,7 @@ async fn compact_primary_changelogs(state: &AppState) {
 
     let cutoff_cursor = build_cutoff_cursor(cutoff_ms);
 
-    let map = state.volumes.read().await;
+    let map = state.current.storage.volumes.read().await;
     for vol in map.values() {
         let mgmt = match vol.management.as_ref() {
             Some(m) if m.role == StorageRole::Primary => m,
@@ -406,7 +406,7 @@ fn find_remote_primary_with_pin(
 /// `StorageChanged` domain events.
 ///
 /// Replaces the old pattern of manually spawning beacon broadcasts from
-/// each API handler / task. The task subscribes to the `storage_changed_tx`
+/// each API handler / task. The task subscribes to the `storage_changed`
 /// channel and calls `state.broadcast_storage_beacon()` on every event.
 ///
 /// Debounces: coalesces rapid events (e.g. release-all emitting per-volume

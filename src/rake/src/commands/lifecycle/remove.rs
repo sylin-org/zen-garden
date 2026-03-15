@@ -5,7 +5,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -15,22 +15,22 @@ use std::io::Write;
 pub struct RemoveCommand {
     pub service: String,
     pub force: bool,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl RemoveCommand {
-    pub fn new(service: String, force: bool, quiet_mode: bool) -> Self {
+    pub fn new(service: String, force: bool, quiet: bool) -> Self {
         Self {
             service,
             force,
-            quiet_mode,
+            quiet,
         }
     }
 }
 
 #[async_trait]
 impl Command for RemoveCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let service_path = urlencoding::encode(&self.service);
         // First check if the service exists before prompting
         let check_url = ctx.api_v1_url(&format!("stone/services/{}", service_path))?;
@@ -43,12 +43,12 @@ impl Command for RemoveCommand {
                 ui::status_indicator("error", ctx.term.supports_color),
                 self.service
             );
-            suggestions::print_suggestions(cmd::REMOVE, self.quiet_mode);
+            suggestions::print_suggestions(cmd::REMOVE, self.quiet);
             return Ok(());
         }
 
         // Confirmation prompt (unless --force or quiet mode)
-        if !self.force && !self.quiet_mode {
+        if !self.force && !self.quiet {
             println!(
                 "{}⚠️  This will remove service '{}' and stop its container",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -102,7 +102,7 @@ impl Command for RemoveCommand {
                     }
 
                     // Display suggestions if present and not in quiet mode
-                    if !self.quiet_mode {
+                    if !self.quiet {
                         if let Some(suggestions) =
                             body.get("suggestions").and_then(|v| v.as_array())
                         {
@@ -144,7 +144,7 @@ impl Command for RemoveCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::REMOVE, self.quiet_mode);
+        suggestions::print_suggestions(cmd::REMOVE, self.quiet);
 
         Ok(())
     }

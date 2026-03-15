@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
 use garden_common::ui::rendering as ui;
@@ -23,28 +23,28 @@ pub enum InstallStyle {
 /// Install service command for system service installation
 pub struct InstallServiceCommand {
     pub style: InstallStyle,
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl InstallServiceCommand {
-    pub fn new(style: InstallStyle, quiet_mode: bool) -> Self {
-        Self { style, quiet_mode }
+    pub fn new(style: InstallStyle, quiet: bool) -> Self {
+        Self { style, quiet }
     }
 
     /// Create for zen syntax (take-root)
-    pub fn take_root(quiet_mode: bool) -> Self {
-        Self::new(InstallStyle::TakeRoot, quiet_mode)
+    pub fn take_root(quiet: bool) -> Self {
+        Self::new(InstallStyle::TakeRoot, quiet)
     }
 
     /// Create for normative syntax (install-service)
-    pub fn install_service(quiet_mode: bool) -> Self {
-        Self::new(InstallStyle::InstallService, quiet_mode)
+    pub fn install_service(quiet: bool) -> Self {
+        Self::new(InstallStyle::InstallService, quiet)
     }
 }
 
 #[async_trait]
 impl Command for InstallServiceCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?;
         let url = format!("{}/admin/take-root", endpoint.trim_end_matches('/'));
 
@@ -127,7 +127,7 @@ impl Command for InstallServiceCommand {
             InstallStyle::TakeRoot => cmd::TAKE_ROOT,
             InstallStyle::InstallService => cmd::INSTALL_SERVICE,
         };
-        suggestions::print_suggestions(cmd_name, self.quiet_mode);
+        suggestions::print_suggestions(cmd_name, self.quiet);
 
         Ok(())
     }
@@ -140,7 +140,7 @@ impl Command for InstallServiceCommand {
     }
 }
 
-fn print_success_message(ctx: &CommandContext, style: &InstallStyle) {
+fn print_success_message(ctx: &Runtime, style: &InstallStyle) {
     let message = match style {
         InstallStyle::TakeRoot => "Stone has taken root as a system service",
         InstallStyle::InstallService => "Service installed successfully",

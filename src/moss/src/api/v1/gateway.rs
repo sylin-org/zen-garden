@@ -13,7 +13,7 @@ use axum::{
 };
 use chrono::Utc;
 use garden_common::offerings::OfferingFqn;
-use garden_common::tools::{build_tool_key, GardenTool, ServiceInfo, Stone, ToolIdentity};
+use garden_common::tools::{GardenTool, ServiceInfo, Stone, ToolIdentity};
 use garden_common::GatewayRegistration;
 use serde::{Deserialize, Serialize};
 
@@ -82,7 +82,9 @@ pub async fn put_gateway(
         fqn = %registration.fqn,
         hostname = %registration.hostname,
         port = registration.port,
-        "Gateway registered"
+        "{} FQN handler registration for {}",
+        offering,
+        registration.fqn,
     );
 
     // Build GardenTool for gateway registration
@@ -107,9 +109,9 @@ pub async fn put_gateway(
             tags: registration.tags.clone(),
         },
         stone: Stone {
-            id: state.stone_id.clone(),
-            name: state.stone_name.clone(),
-            endpoint: state.self_entry.read().await.address.http_base(),
+            id: state.current.stone.id.clone(),
+            name: state.current.stone.name.clone(),
+            endpoint: state.current.topology.self_entry.read().await.address.http_base(),
         },
         service: ServiceInfo {
             status: garden_common::SERVICE_RUNNING.to_string(),
@@ -142,15 +144,35 @@ pub async fn put_gateway(
     };
 
     let delta = {
-        let mut reg = state.registry.write().await;
-        reg.upsert(tool, EntryOrigin::Registered)
+        let mut reg = state.fqn_handler.registry.write().await;
+        reg.upsert(&offering, tool.clone(), registration.handler_for.clone())
     };
+
+    // Mirror into tool.registry so local find_services sees this gateway immediately.
+    // Remote stones receive it via the tools beacon below.
+    if let Some(ref d) = delta {
+        if let Some(t) = &d.tool {
+            let mut reg = state.tool.registry.write().await;
+            reg.upsert(t.clone(), EntryOrigin::Local);
+        }
+        tracing::info!(
+            offering = %offering,
+            fqn = %registration.fqn,
+            "{} FQN handler entry committed (delta → broadcast)",
+            offering,
+        );
+    } else {
+        tracing::debug!(
+            offering = %offering,
+            fqn = %registration.fqn,
+            "{} FQN handler TTL refreshed (no change)",
+            offering,
+        );
+    }
 
     // Broadcast via tools beacon so remote registries get the entry
     if let Some(delta) = delta {
-        state
-            .publish_tool_deltas(vec![delta], true)
-            .await;
+        state.publish_tool_deltas(vec![delta], true).await;
     }
 
     Ok(Json(PutGatewayResponse {
@@ -166,14 +188,22 @@ pub async fn delete_gateway(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> StatusCode {
-    let key = build_tool_key(&state.stone_id, &offering, "orchestrator");
     let delta = {
-        let mut reg = state.registry.write().await;
-        reg.remove(&key)
+        let mut reg = state.fqn_handler.registry.write().await;
+        reg.remove(&offering, &state.current.stone.id)
     };
 
     if let Some(delta) = delta {
-        tracing::info!(offering = %offering, "Gateway deregistered");
+        tracing::info!(
+            offering = %offering,
+            "{} FQN handler deregistered (explicit)",
+            offering,
+        );
+        // Mirror removal into tool.registry so local find_services stops seeing it.
+        {
+            let mut reg = state.tool.registry.write().await;
+            reg.remove(&delta.tool_key);
+        }
         state.publish_tool_deltas(vec![delta], true).await;
     } else {
         tracing::debug!(offering = %offering, "Gateway not found for deregistration");

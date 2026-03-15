@@ -85,7 +85,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
     // Subscribe to aggregated storage ticks — the aggregator quantizes raw
     // per-write events into per-seed-bank batches (2s quiet / 10s deadline).
     // For remote Primaries we still rely on polling as a fallback.
-    let mut tick_rx = state.storage_agg_tx.subscribe();
+    let mut tick_rx = state.orchestration.storage.tick.debounced.subscribe();
 
     loop {
         // Wait for either the poll interval or a storage tick
@@ -122,7 +122,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
 /// Run one replication cycle for all local Dormant seed banks.
 async fn replication_tick(state: &AppState) -> Result<()> {
     // Collect Dormant volumes from unified collection
-    let map = state.volumes.read().await;
+    let map = state.current.storage.volumes.read().await;
     let dormant_banks: Vec<(String, String, std::path::PathBuf)> = map
         .values()
         .filter_map(|vol| {
@@ -173,8 +173,8 @@ async fn sync_dormant_bank(
 ) -> Result<()> {
     // 1. Resolve the Primary stone + endpoint from registry
     let (_primary_stone_id, primary_endpoint, _primary_bank_id) = {
-        let reg = state.registry.read().await;
-        match reg.route_to_primary(name, &state.stone_id) {
+        let reg = state.tool.registry.read().await;
+        match reg.route_to_primary(name, &state.current.stone.id) {
             Some(route) => route,
             None => {
                 debug!(name = %name, "No remote Primary found for seed bank — skipping sync");
@@ -189,7 +189,7 @@ async fn sync_dormant_bank(
     // 3. Read local last_cursor
     // STORAGE-0011: prefer store from Volume management if available
     let lifecycle_store = {
-        let map = state.volumes.read().await;
+        let map = state.current.storage.volumes.read().await;
         map.values()
             .find_map(|vol| {
                 let mgmt = vol.management.as_ref()?;
@@ -215,7 +215,7 @@ async fn sync_dormant_bank(
     );
 
     let resp = state
-        .stone_client
+        .security.stone_client
         .get(&peer, &changes_path)
         .timeout(std::time::Duration::from_secs(PULL_TIMEOUT_SECS))
         .send()
@@ -369,7 +369,7 @@ async fn download_and_write(
     rel_path: &str,
 ) -> Result<()> {
     let resp = state
-        .stone_client
+        .security.stone_client
         .get(peer, remote_path)
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .send()

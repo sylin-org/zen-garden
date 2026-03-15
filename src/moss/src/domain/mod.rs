@@ -16,6 +16,11 @@
 pub mod adoption;
 pub mod capabilities;
 pub mod ceremony;
+pub mod cloud_drive;
+pub mod companion;
+pub mod current;
+pub mod discovery;
+pub mod orchestration;
 pub mod config_compose;
 pub mod compatibility;
 pub mod connection;
@@ -44,6 +49,11 @@ pub mod storage_service;
 pub mod service_discovery;
 pub mod service_manager;
 pub mod services;
+pub mod fqn_handler;
+pub mod platform;
+pub mod presence;
+pub mod security;
+pub mod tool;
 pub mod tools;
 pub mod topology;
 
@@ -66,21 +76,26 @@ pub use modes::{AggregatedDetectionResult, DetectionOrchestrator};
 pub use offerings::{
     current_capabilities_hash, ensure_offerings_index, get_compiled_offering, manifests_hash,
     moss_version_string, rebuild_offerings_index, CompiledOffering, OfferingsFingerprint,
-    OfferingsIndexCache,
+    OfferingsIndex,
 };
 pub use reconciliation::{reconcile_services, ReconciliationResult};
 pub use registry::Registry;
-pub use storage::{
-    new_media, new_volumes, Management, Media, Medium, Volume, VolumeHealth, Volumes,
+pub use orchestration::{
+    NourishmentOrchestration, NurturingOrchestration, Orchestration, StorageOrchestration,
 };
-pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute, StorageService};
+pub use storage::{
+    new_media, new_volumes, Management, Media, Medium, Storage, StorageBank, Volume,
+    VolumeState, Volumes,
+};
+pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 pub use service_discovery::{
     find_local_services, find_services, get_offering_port, list_all_local_services, FoundService,
     ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,
 };
-pub use service_manager::ServiceManager;
+pub use service_manager::ServiceLifecycle;
+pub use cloud_drive::{classify_rename, DriveAction};
 // Re-export TopologyEntry from common (now shared type)
-pub use capabilities::{CapabilityExecutor, CapabilityMutationResult, ExecutorContext};
+pub use capabilities::{CapabilityExecutor, CapabilityMutationResult, Executor};
 pub use ceremony::{
     execute_nourish_offering, Ceremony, CeremonyId, CeremonyInitiator, CeremonyOptions,
     CeremonyRegistry, CeremonyState, CeremonyType, Phase, PhaseState,
@@ -89,7 +104,7 @@ pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent
 pub use garden_common::TopologyEntry;
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
-    DockerRegistryHandler, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
+    DockerRegistry, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
 };
 pub use network::{
     NetworkError, NetworkMode, PoolExhausted, ProbeResult, StaticIpActive, StaticIpDesired,
@@ -102,6 +117,14 @@ pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
 pub use garden_registry::{
     new_registry, EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery,
 };
+pub use companion::Companion;
+pub use current::{Current, Stone as CurrentStone, Topology as CurrentTopology};
+pub use discovery::Discovery;
+pub use platform::Platform;
+pub use presence::Presence;
+pub use fqn_handler::{FqnHandler, FqnHandlerEntry, FqnHandlerRegistry};
+pub use security::{Pond, Security};
+pub use tool::Tool;
 pub use tools::{
     stream_event_type_for_delta, ToolsSnapshotPayload,
 };

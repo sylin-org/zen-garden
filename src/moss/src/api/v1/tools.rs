@@ -50,7 +50,7 @@ pub async fn list_garden_tools_v1(
     let since = query.since.unwrap_or(0);
 
     let (cursor, tools, replay) = {
-        let reg = state.registry.read().await;
+        let reg = state.tool.registry.read().await;
         let (cursor, tools) = reg.snapshot(&filter);
         let replay = if since > 0 {
             reg.deltas_since(since, &filter)
@@ -78,10 +78,10 @@ pub async fn stream_garden_tools_v1(
 
     // MOSS-0004: child token for cooperative shutdown
     let token = state.shutdown_token.child_token();
-    let rx = state.tools_tx.subscribe();
+    let rx = state.tool.delta.subscribe();
 
     let (snapshot_cursor, snapshot_tools, replay) = {
-        let reg = state.registry.read().await;
+        let reg = state.tool.registry.read().await;
         if resume_cursor == 0 {
             if let Some(last_event_id) = extract_last_event_id(&headers) {
                 resume_cursor = parse_resume_cursor(last_event_id, &reg);

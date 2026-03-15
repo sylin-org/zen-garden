@@ -13,7 +13,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use async_trait::async_trait;
 use colored::Colorize;
 use futures_util::StreamExt;
@@ -49,18 +49,18 @@ const WIRE_MIN_COLS: usize = 50;
 
 /// Pulse monitor command
 pub struct PulseCommand {
-    pub quiet_mode: bool,
+    pub quiet: bool,
 }
 
 impl PulseCommand {
-    pub fn new(quiet_mode: bool) -> Self {
-        Self { quiet_mode }
+    pub fn new(quiet: bool) -> Self {
+        Self { quiet }
     }
 }
 
 #[async_trait]
 impl Command for PulseCommand {
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let endpoint = ctx.endpoint()?.to_string();
         run_pulse_monitor(&ctx.client, &endpoint, &ctx.term).await
     }

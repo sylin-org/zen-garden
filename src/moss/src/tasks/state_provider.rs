@@ -22,8 +22,8 @@ impl MossStateProvider {
         let mut fields = HashMap::new();
 
         // Basic identity
-        fields.insert("stone_id".to_string(), json!(self.state.stone_id));
-        fields.insert("stone_name".to_string(), json!(self.state.stone_name));
+        fields.insert("stone_id".to_string(), json!(self.state.current.stone.id));
+        fields.insert("stone_name".to_string(), json!(self.state.current.stone.name));
 
         // Version
         fields.insert("moss_version".to_string(), json!(version_string()));
@@ -33,7 +33,7 @@ impl MossStateProvider {
         fields.insert("uptime".to_string(), json!(uptime_secs));
 
         // Health (from self_entry)
-        let health = self.state.self_entry.read().await.health.clone();
+        let health = self.state.current.topology.self_entry.read().await.health.clone();
         fields.insert("health".to_string(), json!(health));
 
         // Offering count
@@ -49,8 +49,8 @@ impl super::election_service::StateProvider for MossStateProvider {
         // For sync access, return minimal identity
         // Async criteria evaluation should use get_state_async() instead
         let mut fields = HashMap::new();
-        fields.insert("stone_id".to_string(), json!(self.state.stone_id));
-        fields.insert("stone_name".to_string(), json!(self.state.stone_name));
+        fields.insert("stone_id".to_string(), json!(self.state.current.stone.id));
+        fields.insert("stone_name".to_string(), json!(self.state.current.stone.name));
         fields.insert("moss_version".to_string(), json!(version_string()));
         fields
     }
@@ -72,7 +72,7 @@ impl super::election_service::StateProvider for PlaceholderStateProvider {
 
 /// Fitness provider that computes scores from live AppState.
 ///
-/// Injected into `ElectionService` after bootstrap so the election protocol
+/// Injected into `Elections` after bootstrap so the election protocol
 /// can ask "how fit is this stone for offering X?" without knowing the answer
 /// algorithm. SoC between election protocol (infra) and fitness scoring (domain).
 ///
@@ -104,11 +104,8 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // type, this stone is ineligible — the handler owns the lifecycle.
             // Check if an orchestrator handles this offering (suppress elections)
             {
-                let reg = self.state.registry.read().await;
-                let handled = reg
-                    .gateway_entries()
-                    .iter()
-                    .any(|e| e.tool.tool.tool_type.eq_ignore_ascii_case(&offering.offering));
+                let reg = self.state.fqn_handler.registry.read().await;
+                let handled = reg.handles_offering(&offering.offering);
                 if handled {
                     return None;
                 }

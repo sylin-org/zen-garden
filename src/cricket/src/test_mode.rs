@@ -11,7 +11,7 @@ use crossterm::{
 use std::io::{stdout, Write};
 use std::sync::Arc;
 
-use crate::manifest::TuneManager;
+use crate::manifest::Tunes;
 use crate::mixer::Mixer;
 
 /// Key binding for an event
@@ -24,10 +24,10 @@ struct KeyBinding {
 /// Run interactive test mode
 pub async fn run(tune_name: &str, tunes_dir: &str) -> Result<()> {
     // Load tune
-    let tune_manager = TuneManager::new(Some(tunes_dir))?;
-    tune_manager.select(tune_name)?;
+    let tunes = Tunes::new(Some(tunes_dir))?;
+    tunes.select(tune_name)?;
 
-    let tune = tune_manager
+    let tune = tunes
         .active()
         .ok_or_else(|| anyhow::anyhow!("Failed to load tune: {}", tune_name))?;
 
@@ -50,7 +50,7 @@ pub async fn run(tune_name: &str, tunes_dir: &str) -> Result<()> {
     draw_ui(&mut stdout, tune_name, &tune.version, &bindings)?;
 
     // Event loop
-    let result = event_loop(&mixer, &tune_manager, &bindings).await;
+    let result = event_loop(&mixer, &tunes, &bindings).await;
 
     // Cleanup
     disable_raw_mode().context("Failed to disable raw mode")?;
@@ -137,7 +137,7 @@ fn draw_ui(
 /// Main event loop
 async fn event_loop(
     mixer: &Arc<Mixer>,
-    tune_manager: &TuneManager,
+    tunes: &Tunes,
     bindings: &[KeyBinding],
 ) -> Result<()> {
     let mut stdout = stdout();
@@ -197,7 +197,7 @@ async fn event_loop(
                     KeyCode::Char(c) => {
                         // Find matching binding
                         if let Some(binding) = bindings.iter().find(|b| b.key == c) {
-                            play_event(mixer, tune_manager, &binding.event).await;
+                            play_event(mixer, tunes, &binding.event).await;
                             show_status(
                                 &mut stdout,
                                 status_line,
@@ -241,8 +241,8 @@ fn show_status(
 }
 
 /// Play event audio
-async fn play_event(mixer: &Arc<Mixer>, tune_manager: &TuneManager, event: &str) {
-    let Some(mapping) = tune_manager.get_event_mapping(event) else {
+async fn play_event(mixer: &Arc<Mixer>, tunes: &Tunes, event: &str) {
+    let Some(mapping) = tunes.get_event_mapping(event) else {
         return;
     };
 
@@ -250,9 +250,9 @@ async fn play_event(mixer: &Arc<Mixer>, tune_manager: &TuneManager, event: &str)
         return;
     };
 
-    let active_name = tune_manager.active_name().unwrap_or_default();
+    let active_name = tunes.active_name().unwrap_or_default();
     let Some(audio_data) =
-        tune_manager.resolve_resource_bytes_with_fallback(&active_name, &mapping.resource)
+        tunes.resolve_resource_bytes_with_fallback(&active_name, &mapping.resource)
     else {
         return;
     };

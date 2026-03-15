@@ -10,7 +10,7 @@
 use async_trait::async_trait;
 
 use crate::commands::{Command, CommandResult};
-use crate::context::CommandContext;
+use crate::context::Runtime;
 use garden_common::command_manifest::{CommandManifest, CommandResponse, CompanionCommandRequest};
 
 /// Parsed hey command
@@ -139,7 +139,7 @@ impl Command for HeyTellCommand {
         false
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> CommandResult {
+    async fn execute(&self, ctx: &Runtime) -> CommandResult {
         let (cmd, target_stone) = parse_hey_command(&self.args);
 
         // Determine endpoint - use target stone if specified, else tended
@@ -173,7 +173,7 @@ async fn resolve_stone_endpoint(stone: &str) -> anyhow::Result<String> {
 async fn execute_hey_command(
     cmd: HeyCommand,
     endpoint: &str,
-    ctx: &CommandContext,
+    ctx: &Runtime,
 ) -> CommandResult {
     match cmd {
         HeyCommand::Help => {
@@ -255,7 +255,7 @@ fn print_tell_help() {
 // =============================================================================
 
 /// List all registered Companions
-async fn list_companions(endpoint: &str, ctx: &CommandContext) -> CommandResult {
+async fn list_companions(endpoint: &str, ctx: &Runtime) -> CommandResult {
     let url = format!("{}/api/v1/stone/companions", endpoint);
     let response = ctx.client.get(&url).send().await?;
 
@@ -332,7 +332,7 @@ async fn list_companions(endpoint: &str, ctx: &CommandContext) -> CommandResult 
 async fn show_companion_commands(
     endpoint: &str,
     companion: &str,
-    ctx: &CommandContext,
+    ctx: &Runtime,
 ) -> CommandResult {
     let url = format!("{}/api/v1/stone/companions/{}", endpoint, companion);
     let response = ctx.client.get(&url).send().await?;
@@ -392,7 +392,7 @@ async fn companion_lifecycle(
     endpoint: &str,
     companion: &str,
     action: &str,
-    _ctx: &CommandContext,
+    _ctx: &Runtime,
 ) -> CommandResult {
     // Map enable/disable to up/down
     let api_action = match action {
@@ -448,7 +448,7 @@ async fn send_companion_command(
     endpoint: &str,
     companion: &str,
     raw_args: &[String],
-    ctx: &CommandContext,
+    ctx: &Runtime,
 ) -> CommandResult {
     let url = format!("{}/api/v1/stone/companions/{}/command", endpoint, companion);
 

@@ -58,6 +58,7 @@ pub mod security;
 pub mod tool;
 pub mod tools;
 pub mod topology;
+pub mod traits;
 
 pub use adoption::{adopt_existing_containers, adopt_offering_container, AdoptionResult};
 pub use compatibility::{

@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 garden-common = { path = "../../common" }
+orchestrator-common = { path = "../common" }
 
 # Core
 anyhow = "1.0"

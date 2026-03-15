@@ -10,7 +10,6 @@ use crate::domain::lease::LeaseManager;
 use crate::domain::metrics::MetricsEngine;
 use crate::domain::{recommendation, tiering};
 use crate::domain::types::*;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
@@ -18,21 +17,8 @@ use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tokio_util::sync::CancellationToken;
 
-/// Dashboard SSE event.
-#[derive(Debug, Clone)]
-pub struct DashboardEvent {
-    pub event_type: String,
-    pub data: String,
-}
-
-/// Persisted tending state — which stone we're bound to.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TendedStone {
-    pub stone_name: String,
-    pub stone_id: Option<String>,
-    pub endpoint: String,
-    pub last_seen: chrono::DateTime<chrono::Utc>,
-}
+pub use orchestrator_common::events::DashboardEvent;
+pub use orchestrator_common::persistence::TendedStone;
 
 /// Shared state for the Ollama Orchestrator.
 #[derive(Clone)]

@@ -2,7 +2,7 @@
 //!
 //! Handles service operations: install, start, stop, remove, upgrade
 
-use crate::infra::ContainerRuntime;
+use crate::domain::traits::ServiceRuntime;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 /// Service manager handles service lifecycle
 pub struct ServiceLifecycle {
-    container_runtime: Arc<ContainerRuntime>,
+    container_runtime: Arc<dyn ServiceRuntime>,
     event_bus: Arc<EventBus>,
     stone: String,
 }
@@ -21,7 +21,7 @@ pub struct ServiceLifecycle {
 impl ServiceLifecycle {
     /// Create a new service manager
     pub fn new(
-        container_runtime: Arc<ContainerRuntime>,
+        container_runtime: Arc<dyn ServiceRuntime>,
         event_bus: Arc<EventBus>,
         stone: String,
     ) -> Self {

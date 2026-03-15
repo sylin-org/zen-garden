@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use crate::domain::CeremonyRegistry;
-use crate::infra::CeremonyJournal;
+use crate::domain::traits::CeremonyPersistence;
 
 /// Pond ceremony coordination (`state.security.pond.ceremony`).
 #[derive(Clone)]
@@ -12,5 +12,5 @@ pub struct Ceremony {
     /// In-memory active ceremony registry.
     pub registry: Arc<CeremonyRegistry>,
     /// Persistent journal for crash recovery.
-    pub journal: Arc<CeremonyJournal>,
+    pub journal: Arc<dyn CeremonyPersistence>,
 }

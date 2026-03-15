@@ -237,7 +237,9 @@ async fn build_state(
     // Create infrastructure handlers - wired to UDP pipeline from the start
     let infrastructure_handlers =
         Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
-            Box::new(crate::domain::DockerRegistry::new()),
+            Box::new(crate::domain::DockerRegistry::new(
+                std::sync::Arc::new(crate::infra::OsDockerConfig),
+            )),
         ]));
 
     // Create orchestration nudge early â€” shared between discovery listener and AppState

@@ -22,9 +22,10 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use super::{InfrastructureHandler, OfferingInstance};
-use crate::infra::docker_config;
+use crate::domain::traits::DockerConfigOps;
 
 /// Tag that identifies container registries (from frontmatter.json)
 const CONTAINER_REGISTRY_TAG: &str = "container-registry";
@@ -36,12 +37,14 @@ const DEFAULT_REGISTRY_PORT: u16 = 5000;
 ///
 /// Configures local Docker daemon to trust garden container registries.
 /// Matching is based purely on manifest tags - no hardcoded offering names.
-pub struct DockerRegistry;
+pub struct DockerRegistry {
+    config_ops: Arc<dyn DockerConfigOps>,
+}
 
 impl DockerRegistry {
     /// Create a new Docker registry handler
-    pub fn new() -> Self {
-        Self
+    pub fn new(config_ops: Arc<dyn DockerConfigOps>) -> Self {
+        Self { config_ops }
     }
 
     /// Build registry endpoint from offering instance
@@ -55,11 +58,6 @@ impl DockerRegistry {
     }
 }
 
-impl Default for DockerRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[async_trait]
 impl InfrastructureHandler for DockerRegistry {
@@ -93,8 +91,8 @@ impl InfrastructureHandler for DockerRegistry {
         // This preserves user-added registries while allowing garden to manage its own.
 
         // Step 1: Read current state
-        let current_registries = docker_config::read_insecure_registries().await?;
-        let previous_garden = docker_config::read_garden_registries().await;
+        let current_registries = self.config_ops.read_insecure_registries().await?;
+        let previous_garden = self.config_ops.read_garden_registries().await;
 
         // Step 2: Identify user-added registries (anything in daemon.json that wasn't garden-managed)
         let user_registries: Vec<String> = current_registries
@@ -130,7 +128,7 @@ impl InfrastructureHandler for DockerRegistry {
             garden_sorted.sort();
 
             if previous_sorted != garden_sorted {
-                if let Err(e) = docker_config::write_garden_registries(&garden_registries).await {
+                if let Err(e) = self.config_ops.write_garden_registries(&garden_registries).await {
                     tracing::warn!(error = %e, "Failed to update garden registries state file");
                 }
             }
@@ -140,7 +138,7 @@ impl InfrastructureHandler for DockerRegistry {
         }
 
         // Step 4: Update daemon.json with merged list
-        let changed = docker_config::write_insecure_registries(&desired_registries).await?;
+        let changed = self.config_ops.write_insecure_registries(&desired_registries).await?;
 
         if changed {
             tracing::info!(
@@ -151,12 +149,12 @@ impl InfrastructureHandler for DockerRegistry {
             );
 
             // Update state file with current garden registries
-            if let Err(e) = docker_config::write_garden_registries(&garden_registries).await {
+            if let Err(e) = self.config_ops.write_garden_registries(&garden_registries).await {
                 tracing::warn!(error = %e, "Failed to update garden registries state file");
             }
 
             // Restart Docker daemon to apply changes
-            if let Err(e) = docker_config::restart_docker_daemon().await {
+            if let Err(e) = self.config_ops.restart_docker_daemon().await {
                 tracing::warn!(
                     error = %e,
                     "Failed to restart Docker daemon - manual restart may be required"
@@ -174,9 +172,25 @@ impl InfrastructureHandler for DockerRegistry {
 mod tests {
     use super::*;
 
+    /// No-op implementation for unit tests that don't exercise I/O.
+    struct NoopDockerConfig;
+
+    #[async_trait]
+    impl DockerConfigOps for NoopDockerConfig {
+        async fn read_insecure_registries(&self) -> Result<Vec<String>> { Ok(vec![]) }
+        async fn write_insecure_registries(&self, _: &[String]) -> Result<bool> { Ok(false) }
+        async fn read_garden_registries(&self) -> Vec<String> { vec![] }
+        async fn write_garden_registries(&self, _: &[String]) -> Result<()> { Ok(()) }
+        async fn restart_docker_daemon(&self) -> Result<()> { Ok(()) }
+    }
+
+    fn test_handler() -> DockerRegistry {
+        DockerRegistry::new(Arc::new(NoopDockerConfig))
+    }
+
     #[test]
     fn test_matches_by_tag() {
-        let handler = DockerRegistry::new();
+        let handler = test_handler();
 
         // Matches: devops category with container-registry tag
         assert!(handler.matches("registry", "devops", &["container-registry".to_string()]));
@@ -204,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_build_endpoint_with_port_from_manifest() {
-        let handler = DockerRegistry::new();
+        let handler = test_handler();
 
         // Port comes from frontmatter
         let instance = OfferingInstance {

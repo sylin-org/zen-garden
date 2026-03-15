@@ -4,7 +4,9 @@
 //! detected and handled on restart. Uses simple JSON files.
 
 use crate::domain::ceremony::{Ceremony, CeremonyId};
+use crate::domain::traits::CeremonyPersistence;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::path::PathBuf;
 
 /// Persistent journal for ceremony state
@@ -199,6 +201,29 @@ impl CeremonyJournal {
         }
 
         Ok(pruned)
+    }
+}
+
+#[async_trait]
+impl CeremonyPersistence for CeremonyJournal {
+    async fn persist(&self, ceremony: &Ceremony) -> Result<()> {
+        CeremonyJournal::persist(self, ceremony).await
+    }
+
+    async fn load_active(&self) -> Result<Vec<Ceremony>> {
+        CeremonyJournal::load_active(self).await
+    }
+
+    async fn load(&self, id: &CeremonyId) -> Result<Option<Ceremony>> {
+        CeremonyJournal::load(self, id).await
+    }
+
+    async fn remove(&self, id: &CeremonyId) -> Result<()> {
+        CeremonyJournal::remove(self, id).await
+    }
+
+    async fn prune_archive(&self, older_than: chrono::Duration) -> Result<usize> {
+        CeremonyJournal::prune_archive(self, older_than).await
     }
 }
 

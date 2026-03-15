@@ -22,6 +22,7 @@ pub mod config;
 pub mod container;
 pub mod detection;
 pub mod docker_config;
+pub mod docker_config_adapter;
 pub mod embedded;
 pub mod event_bus;
 pub mod filesystem;
@@ -65,6 +66,7 @@ pub use embedded::{
     load_sw_manifests_with_overlay, manifest_exists, read_manifest_overlay, AssetSource,
     EmbeddedCompanions, EmbeddedManifests, EmbeddedSeeds, ManifestSource,
 };
+pub use docker_config_adapter::OsDockerConfig;
 pub use event_bus::{spawn_listener, EventBus, EventListener};
 pub use filesystem::FileSystem;
 pub use garden_common::infra::archive::{

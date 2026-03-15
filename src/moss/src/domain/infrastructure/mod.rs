@@ -42,7 +42,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::domain::topology::TopologyCache;
-use crate::infra::ManifestRegistry;
+use garden_common::manifests::ManifestRegistry;
 
 /// An instance of a matching offering discovered in the garden topology
 #[derive(Debug, Clone)]

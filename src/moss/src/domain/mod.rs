@@ -31,6 +31,7 @@ pub mod fitness;
 pub mod garden_registry;
 pub mod harvest;
 pub mod health;
+pub mod image_types;
 pub mod infrastructure;
 pub mod maintenance;
 pub mod metrics_collection;

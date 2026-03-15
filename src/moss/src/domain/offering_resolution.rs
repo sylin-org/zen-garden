@@ -8,7 +8,7 @@
 //! image-direct deployment first-class rather than a bolt-on.
 
 use crate::docker::ContainerSpec;
-use crate::infra::image_inspect::{
+use crate::domain::image_types::{
     description_from_labels, title_from_labels, ImageHealthcheck, ImageInspection,
 };
 use garden_common::offerings::OfferingFqn;

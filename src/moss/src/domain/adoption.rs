@@ -11,7 +11,7 @@ use crate::docker::Client;
 use crate::domain::{
     connection, evaluate_compatibility, get_current_compat_capabilities, CompatibilityDecision,
 };
-use crate::infra::ManifestRegistry;
+use garden_common::manifests::ManifestRegistry;
 use crate::AppState;
 use garden_common::offerings::OfferingFqn;
 use garden_common::utils::ids::generate_guidv7;

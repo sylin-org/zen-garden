@@ -1,45 +1,21 @@
-//! Image inspection — extract OCI metadata from Client images.
+//! Image inspection — extract OCI metadata from Docker images.
 //!
 //! Provides image-direct deployment with the port, volume, environment,
 //! and label information needed to synthesize a deployment spec without
 //! a curated manifest.
+//!
+//! Value types (`ImageInspection`, `ImageHealthcheck`) and pure label
+//! helpers live in `domain::image_types`; this module provides the I/O
+//! function that populates them.
 
 use crate::docker::Client;
 use anyhow::{Context, Result};
-use serde::Serialize;
-use std::collections::HashMap;
 
-/// Result of inspecting a Client image's OCI config.
-#[derive(Debug, Clone, Serialize)]
-pub struct ImageInspection {
-    /// Original image reference (e.g., "nginx:latest")
-    pub image_ref: String,
-    /// Exposed ports extracted from image config
-    pub exposed_ports: Vec<u16>,
-    /// Volume mount points defined in image
-    pub volumes: Vec<String>,
-    /// Default environment variables from image
-    pub environment: Vec<String>,
-    /// Default CMD from image
-    pub command: Option<Vec<String>>,
-    /// Default ENTRYPOINT from image
-    pub entrypoint: Option<Vec<String>>,
-    /// OCI / Client labels
-    pub labels: HashMap<String, String>,
-    /// Embedded HEALTHCHECK (if any)
-    pub healthcheck: Option<ImageHealthcheck>,
-    /// Image architecture (e.g., "amd64")
-    pub architecture: Option<String>,
-}
-
-/// Embedded healthcheck from the image config.
-#[derive(Debug, Clone, Serialize)]
-pub struct ImageHealthcheck {
-    pub test: Vec<String>,
-    pub interval_ns: Option<i64>,
-    pub timeout_ns: Option<i64>,
-    pub retries: Option<i64>,
-}
+// Re-export domain value types so existing `use crate::infra::image_inspect::*`
+// callers outside domain continue to compile.
+pub use crate::domain::image_types::{
+    description_from_labels, title_from_labels, ImageHealthcheck, ImageInspection,
+};
 
 /// Pull an image (if not present) and inspect its OCI config.
 ///
@@ -121,30 +97,13 @@ pub async fn inspect_image(docker: &Client, image_ref: &str) -> Result<ImageInsp
     })
 }
 
-/// Extract a human-readable description from OCI labels.
-pub fn description_from_labels(labels: &HashMap<String, String>) -> Option<String> {
-    // Try standard OCI annotation first, then Client-specific
-    labels
-        .get("org.opencontainers.image.description")
-        .or_else(|| labels.get("description"))
-        .cloned()
-}
-
-/// Extract a display title from OCI labels.
-pub fn title_from_labels(labels: &HashMap<String, String>) -> Option<String> {
-    labels
-        .get("org.opencontainers.image.title")
-        .or_else(|| labels.get("maintainer"))
-        .cloned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn parse_exposed_port_format() {
-        // Simulate the key format Client uses: "80/tcp"
         let key = "8080/tcp";
         let port: u16 = key.split('/').next().unwrap().parse().unwrap();
         assert_eq!(port, 8080);

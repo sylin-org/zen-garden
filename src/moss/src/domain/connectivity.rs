@@ -17,7 +17,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::docker::Client;
-use crate::infra::detection::{detect_by_container_inspect, detect_by_http_probe, DetectionResult};
+use garden_common::detection::{detect_by_http_probe, DetectionResult};
+use crate::infra::detection::detect_by_container_inspect;
 
 /// Connectivity orchestration with caching and enforcement cooldowns
 pub struct ConnectivityOrchestrator {

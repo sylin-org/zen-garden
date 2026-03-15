@@ -7,9 +7,8 @@
 //! - Proactive cache refresh
 
 use crate::docker::Client;
-use crate::infra::detection::{
-    detect_by_command, detect_by_container_inspect, detect_by_http_probe, DetectionResult,
-};
+use garden_common::detection::{detect_by_command, detect_by_http_probe, DetectionResult};
+use crate::infra::detection::detect_by_container_inspect;
 use anyhow::{Context, Result};
 use dashmap::DashMap;
 use garden_common::manifests::{DetectionMethod, DetectionRule, Offering};

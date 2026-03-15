@@ -1292,7 +1292,7 @@ pub(crate) async fn start_background_tasks(
         // Send discovery request
         let request = garden_common::DiscoveryRequest {
             discover: "moss".to_string(),
-            request_id: garden_common::ids::generate_guidv7(),
+            request_id: garden_common::utils::ids::generate_guidv7(),
             requester: stone_id.clone(),
         };
 

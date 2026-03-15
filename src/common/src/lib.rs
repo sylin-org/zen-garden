@@ -42,43 +42,84 @@ pub use stone::{Current, Environment, OsKind, Stone};
 // Canonical companion value objects (ARCH-0003 Wave 1b)
 pub use companion::{Companion, Manifest};
 
-// Re-export commonly used items
+// ── Explicit re-exports (narrowed from wildcard dumps) ──────────────
+
 pub use cli_colors::{AnsiColor, CliFormatter, ColorSupport};
 pub use client::{GardenApiResponse, GardenHttpClient};
-pub use jobs::*;
-pub use responses::*;
 pub use types::peer_address::PeerAddress;
 pub use types::topology::TopologyEntry;
-pub use types::*;
-pub use utils::*;
+pub use utils::{format_bytes, format_uptime};
 
-// Re-export health and vitality constants for easy access
-pub use constants::{
-    AUTH_BEARER_PREFIX, CHECK_FAIL, CHECK_PASS, CHECK_WARN, COMPAT_FAIL, COMPAT_FALLBACK,
-    COMPAT_PASS, COMPAT_WARNING, DEFAULT_STONE_NAME, ENDPOINT_CAPABILITIES, ENDPOINT_HEALTH,
-    ENV_GARDEN_STONE, ENV_GARDEN_UNICODE, ENV_LANTERN_ENDPOINT, ENV_NO_COLOR, ENV_STONE_HOST,
-    ENV_STONE_NAME, HEADER_AUTHORIZATION, HEALTH_DEGRADED, HEALTH_HEALTHY, HEALTH_UNHEALTHY,
-    SERVICE_DEGRADED, SERVICE_MAINTENANCE, SERVICE_RUNNING, SERVICE_STOPPED, SERVICE_UNKNOWN,
-    STATUS_COMPLETED, STATUS_ERROR, STATUS_FAILED, STATUS_SUCCESS, VALUE_UNKNOWN, VITALITY_DORMANT,
-    VITALITY_NEEDS_ATTENTION, VITALITY_THRIVING, VITALITY_WITHERING,
+// Types — explicit high-frequency re-exports (was: pub use types::*)
+pub use types::{
+    // Service
+    ServiceStatus, ServiceInfo, ServiceHealthStatus, Ports, SubCapability,
+    CapabilityItem, CapabilityCollection, CapabilityDisplay,
+    // Offering
+    Offering, OfferingStatus, OfferingMode, OfferingModeData, OfferingLocation,
+    ManagedData, AdoptedData, BorrowedData, ConfigPatch,
+    AdoptedControlLevel, HealthMethod,
+    OfferingGuidance, GuidanceFrontmatter, GuidanceTrigger,
+    // Orchestration
+    CoordinationMode, OfferingRole, OrchestrationState,
+    // Hardware
+    HardwareCapabilities, HardwareInventory, StoneResources, ContainerResources,
+    GpuInfo, DetectionStatus, NetworkMetrics, DiskType, StorageMetrics,
+    CpuCapabilities, MemoryCapabilities, DiskCapabilities,
+    MetricsSnapshot, CpuMetrics, MemoryMetrics, DiskMetrics, InterfaceMetrics,
+    AiRuntime, AiCapabilitiesSummary, RuntimeInfo,
+    // Discovery
+    DiscoveryRequest, DiscoveryResponse, UdpAnnouncement,
+    TopologyServiceEntry, StoneStatus, GatewayRegistration, StoneGoodbyePayload,
+    // Health
+    DaemonHealthStatus, HealthCheck, ComponentHealth,
+    // Compatibility
+    CompatibilityRules, CompatibilityRule, RuleCondition, FallbackConfig,
+    PostInstallHealthcheck, HealthcheckPattern,
+    // Pond
+    PondConfig, KeystoneRequest, StoneInviteRequest, StoneInviteResponse, PlaceStoneRequest,
+    // Lantern
+    RegisterRequest, RegisterServiceInfo, RegisterResponse,
+    ResolveRequest, ResolveResponse, ResolveServiceInfo,
+    LanternTopology, LanternStoneState, LanternServiceState, GardenEvent,
+    // Ports catalog
+    WellKnownPortsCatalog, WellKnownPort, PortConflictHandler, PortRemediation, RemediationFile,
+    // Task
+    TaskCategory, TaskDefinition, ScheduledTask, TaskResult,
+    // Error
+    ApiError, ErrorDetails,
 };
 
-// Re-export offering lifecycle event constants
+// Constants — explicit high-frequency re-exports (consumers should
+// prefer garden_common::constants::NAME for new code)
+pub use constants::{
+    SERVICE_RUNNING, SERVICE_STOPPED, SERVICE_DEGRADED, SERVICE_MAINTENANCE, SERVICE_UNKNOWN,
+    HEALTH_HEALTHY, HEALTH_DEGRADED, HEALTH_UNHEALTHY,
+    CHECK_PASS, CHECK_FAIL, CHECK_WARN,
+    COMPAT_PASS, COMPAT_FAIL, COMPAT_FALLBACK, COMPAT_WARNING,
+    VITALITY_DORMANT, VITALITY_THRIVING, VITALITY_NEEDS_ATTENTION, VITALITY_WITHERING,
+    STATUS_COMPLETED, STATUS_SUCCESS, STATUS_FAILED, STATUS_ERROR,
+    VALUE_UNKNOWN, DEFAULT_STONE_NAME,
+    AUTH_BEARER_PREFIX, HEADER_AUTHORIZATION,
+    ENDPOINT_CAPABILITIES, ENDPOINT_HEALTH,
+    ENV_GARDEN_STONE, ENV_GARDEN_UNICODE, ENV_LANTERN_ENDPOINT, ENV_NO_COLOR,
+    ENV_STONE_HOST, ENV_STONE_NAME,
+    SSE_LEVEL_DEBUG, SSE_LEVEL_ERROR, SSE_LEVEL_INFO, SSE_LEVEL_WARN,
+};
+
+// Offering lifecycle event constants
 pub use constants::{
     EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED, EVENT_RENAMED,
     EVENT_ROLE_CHANGED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
 };
 
-// Re-export announcement type constants
+// Announcement type constants
 pub use constants::{
     ANNOUNCEMENT_STONE_CHIRP, ANNOUNCEMENT_STONE_GOODBYE, ANNOUNCEMENT_STORAGE_DETECTED,
     ANNOUNCEMENT_STORAGE_REMOVED,
 };
 
-// Re-export SSE event level constants
-pub use constants::{SSE_LEVEL_DEBUG, SSE_LEVEL_ERROR, SSE_LEVEL_INFO, SSE_LEVEL_WARN};
-
-// Re-export notification types and constants
+// Notification types
 pub use notifications::{
     NotificationRegistry, NotificationTag, NOTIF_SOURCE_ADOPTED_OFFLINE, NOTIF_SOURCE_CANDIDATES,
     NOTIF_SOURCE_COMPANION_CRASHED, NOTIF_SOURCE_COMPANION_NEW, NOTIF_SOURCE_NOURISHMENT,

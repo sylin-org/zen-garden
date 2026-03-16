@@ -143,6 +143,40 @@ impl DomainPulse {
                 "name": name,
                 "device": device,
             })),
+            StorageEvent::StorageReleased { name, .. } => Some(serde_json::json!({
+                "name": name,
+            })),
+            StorageEvent::StorageSensed { name, roles, .. } => Some(serde_json::json!({
+                "name": name,
+                "roles": roles,
+            })),
+            StorageEvent::StorageRenamed {
+                replica_set_id,
+                new_name,
+                ..
+            } => Some(serde_json::json!({
+                "replica_set_id": replica_set_id,
+                "new_name": new_name,
+            })),
+            StorageEvent::StorageRoleChanged {
+                device_id,
+                replica_set_id,
+                new_role,
+                ..
+            } => Some(serde_json::json!({
+                "device_id": device_id,
+                "replica_set_id": replica_set_id,
+                "new_role": new_role,
+            })),
+            StorageEvent::StoragePinChanged {
+                device_id,
+                replica_set_id,
+                ..
+            } => Some(serde_json::json!({
+                "device_id": device_id,
+                "replica_set_id": replica_set_id,
+            })),
+            StorageEvent::StorageReclassified { .. } => None,
             StorageEvent::SyncStarted { name, .. } => Some(serde_json::json!({ "name": name })),
             StorageEvent::SyncCompleted { name, success, .. } => {
                 Some(serde_json::json!({ "name": name, "success": success }))

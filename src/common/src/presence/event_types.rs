@@ -65,6 +65,11 @@ pub const STORAGE_POOL_CONFLICT: &str = "storage.pool_conflict";
 pub const STORAGE_READONLY: &str = "storage.readonly_detected";
 pub const STORAGE_ADD_PROGRESS: &str = "storage.add.progress";
 pub const STORAGE_REDISCOVERED: &str = "storage.rediscovered";
+pub const STORAGE_SENSED: &str = "storage.sensed";
+pub const STORAGE_RENAMED: &str = "storage.renamed";
+pub const STORAGE_ROLE_CHANGED: &str = "storage.role_changed";
+pub const STORAGE_PIN_CHANGED: &str = "storage.pin_changed";
+pub const STORAGE_RECLASSIFIED: &str = "storage.reclassified";
 pub const STORAGE_SYNC_STARTED: &str = "storage.sync_started";
 pub const STORAGE_SYNC_COMPLETED: &str = "storage.sync_completed";
 /// Storage beacon received from another stone (STORAGE-0003)

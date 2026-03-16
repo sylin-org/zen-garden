@@ -491,14 +491,8 @@ pub async fn delete_bank_v1(
         })?;
     }
 
-    let pulse = DomainPulse::storage_event(
-        event_types::STORAGE_REMOVED,
-        format!("Seed bank '{}' removed", name),
-        "info",
-        None,
-        Some(serde_json::json!({ "name": name })),
-    );
-    let _ = state.pulse.send(PulseEvent::Domain(pulse));
+    // Emit through EventBus so PulseDomainBridge picks it up for SSE consumers.
+    state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
 
     info!(name = %name, "Bank mount directory removed");
     Ok(StatusCode::NO_CONTENT)
@@ -529,15 +523,6 @@ pub async fn release_bank_v1(
             &e.to_string(),
         )
     })?;
-
-    let pulse = DomainPulse::storage_event(
-        event_types::STORAGE_RELEASED,
-        format!("Seed bank '{}' released", name),
-        "info",
-        None,
-        Some(serde_json::json!({ "name": name })),
-    );
-    let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     // STORAGE-0011: Remove management from the released volume
     // Capture identity before clearing management.

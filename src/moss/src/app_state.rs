@@ -730,10 +730,17 @@ impl AppState {
     ///
     /// Subscribers (beacon, cloud filter, watcher, coordinator, projector)
     /// react by pulling fresh state from AppState boundary methods.
-    /// Also triggers an immediate tools projection refresh so the registry
-    /// stays coherent with storage state.
+    /// Also emits through EventBus so PulseDomainBridge translates the event
+    /// for SSE consumers, and triggers an immediate tools projection refresh
+    /// so the registry stays coherent with storage state.
     pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
         tracing::debug!(event = ?event, "Storage domain event");
+
+        // Bridge to EventBus so PulseDomainBridge sees storage events.
+        let storage_event = crate::domain::events::StorageEvent::from(&event);
+        self.event_bus.emit(storage_event);
+
+        // Dedicated broadcast channel for infra subscribers (beacon, cloud filter, etc.)
         let _ = self.current.storage.changed.send(event);
 
         // Storage mutations affect the tools projection (seed-bank entries).

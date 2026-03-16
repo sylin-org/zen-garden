@@ -81,6 +81,42 @@ pub async fn run(
 // Stage 1: Sequential initialization
 // ============================================================================
 
+/// Build a skeleton `TopologyEntry` from the bootstrap source-of-truth fields.
+///
+/// Used during early boot before `AppState` exists. After AppState construction,
+/// `AppState::build_self_entry()` supersedes this.
+async fn build_boot_entry(
+    stone_id: &str,
+    stone_name: &str,
+    address: &Arc<RwLock<garden_common::PeerAddress>>,
+    health: &Arc<RwLock<String>>,
+    mac: &Arc<RwLock<Option<String>>>,
+    capabilities: Option<&Arc<RwLock<Option<garden_common::HardwareCapabilities>>>>,
+) -> garden_common::TopologyEntry {
+    let address = address.read().await.clone();
+    let health = health.read().await.clone();
+    let mac = mac.read().await.clone();
+    let caps = match capabilities {
+        Some(c) => c.read().await.clone(),
+        None => None,
+    };
+    garden_common::TopologyEntry {
+        stone_id: stone_id.to_string(),
+        stone_name: stone_name.to_string(),
+        address,
+        moss_version: version_string(),
+        services: Vec::new(),
+        mac,
+        health,
+        capabilities: caps,
+        status: garden_common::StoneStatus::Online,
+        discovered_at: chrono::Utc::now(),
+        last_seen: chrono::Utc::now(),
+        tags: Vec::new(),
+        gateways: Vec::new(),
+    }
+}
+
 /// Sequential daemon initialization.
 ///
 /// Builds `AppState` from configuration. Strictly sequential and fallible
@@ -101,26 +137,22 @@ async fn build_state(
     let stone_id = infra::load_or_generate_stone_id().await;
     tracing::info!(stone_id = %stone_id, stone_name = %stone_name, "Stone identity loaded");
 
-    // Phase 0.5: Initialize self topology entry
-    // Create with minimal identity, will be progressively enriched during boot
-    let self_entry = Arc::new(RwLock::new(garden_common::TopologyEntry {
-        stone_id: stone_id.clone(),
-        stone_name: stone_name.clone(),
-        address: garden_common::PeerAddress::new(
+    // Phase 0.5: Source-of-truth fields for this stone's mutable state.
+    //
+    // These are progressively enriched during bootstrap, then shared with
+    // AppState. After construction, `build_self_entry()` reads from them
+    // on demand — no mutable self_entry cache.
+    let current_address: Arc<RwLock<garden_common::PeerAddress>> = Arc::new(RwLock::new(
+        garden_common::PeerAddress::new(
             std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             garden_common::constants::MOSS_HTTP,
-        ), // Will be set in Phase 3
-        moss_version: version_string(),
-        services: Vec::new(),
-        mac: None, // Will be set in Phase 2
-        health: garden_common::constants::STONE_STARTING.to_string(),
-        capabilities: None, // Will be set in Phase 9
-        status: garden_common::StoneStatus::Online,
-        discovered_at: chrono::Utc::now(),
-        last_seen: chrono::Utc::now(),
-        tags: Vec::new(), // Compiled from NotificationRegistry
-        gateways: Vec::new(), // ORCH-0004: populated by gateway API
-    }));
+        ),
+    ));
+    let current_health: Arc<RwLock<String>> = Arc::new(RwLock::new(
+        garden_common::constants::STONE_STARTING.to_string(),
+    ));
+    let current_mac: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
+
     tracing::debug!("Self topology entry initialized (health=starting)");
 
     // Phase 1: Start UDP listener EARLY (can now respond to discovery requests)
@@ -136,8 +168,9 @@ async fn build_state(
     }
 
     // Write initial topology file immediately (self entry only, no peers yet).
-    // Don't wait for the 30s maintenance cycle â€” containers may start before then.
-    if let Err(e) = crate::domain::topology::persist_topology(&topology_cache, &self_entry).await {
+    // Don't wait for the 30s maintenance cycle -- containers may start before then.
+    let boot_entry = build_boot_entry(&stone_id, &stone_name, &current_address, &current_health, &current_mac, None).await;
+    if let Err(e) = crate::domain::topology::persist_topology(&topology_cache, &boot_entry).await {
         tracing::warn!(error = %e, "Failed to write initial topology file");
     } else {
         topology_dirty.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -259,7 +292,7 @@ async fn build_state(
         topology_dirty.clone(),
         tool.delta.clone(),
         tool.registry.clone(),
-        self_entry.clone(),
+        current_address.clone(),
         console_printer.clone(),
         infrastructure_handlers.clone(),
         manifest_registry.clone(),
@@ -327,13 +360,12 @@ async fn build_state(
             .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
     };
 
-    // Phase 3.5: Update self entry with network configuration
+    // Phase 3.5: Update source fields with network configuration
     {
-        let mut entry = self_entry.write().await;
-        entry.address = garden_common::PeerAddress::new(resolved_ip, port);
-        entry.mac = mac_address.clone();
-        entry.health = garden_common::constants::STONE_INITIALIZING.to_string();
-        entry.last_seen = chrono::Utc::now();
+        let new_addr = garden_common::PeerAddress::new(resolved_ip, port);
+        *current_address.write().await = new_addr;
+        *current_mac.write().await = mac_address.clone();
+        *current_health.write().await = garden_common::constants::STONE_INITIALIZING.to_string();
     }
     tracing::debug!(ip = %resolved_ip, port = port, mac = ?mac_address, "Self entry updated (health=initializing)");
 
@@ -342,7 +374,7 @@ async fn build_state(
 
     // Auto-chirp: Network configuration complete
     {
-        let entry = self_entry.read().await.clone();
+        let entry = build_boot_entry(&stone_id, &stone_name, &current_address, &current_health, &current_mac, None).await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to auto-chirp after network config");
         } else {
@@ -477,13 +509,10 @@ async fn build_state(
     let pond_metadata = crate::domain::load_pond_metadata();
     pond_state.seed_name(pond_metadata.name).await;
 
-    // Phase 4.0.1b: Propagate pond state into self topology entry
+    // Phase 4.0.1b: Propagate pond state into address
     if pond_active.load(std::sync::atomic::Ordering::Relaxed) {
-        let mut entry = self_entry.write().await;
-        entry.address = entry
-            .address
-            .clone()
-            .with_tls(garden_common::constants::MOSS_HTTPS);
+        let mut addr = current_address.write().await;
+        *addr = addr.clone().with_tls(garden_common::constants::MOSS_HTTPS);
         tracing::debug!(
             "Self entry updated with TLS port {}",
             garden_common::constants::MOSS_HTTPS
@@ -603,18 +632,13 @@ async fn build_state(
     // Phase 9: Capabilities loading
     let capabilities = init_capabilities(&stone_id, &stone_name, &console_printer).await;
 
-    // Phase 9.5: Update self entry with capabilities and set health to thriving
-    {
-        let mut entry = self_entry.write().await;
-        entry.capabilities = capabilities.read().await.clone();
-        entry.health = garden_common::constants::STONE_THRIVING.to_string();
-        entry.last_seen = chrono::Utc::now();
-    }
+    // Phase 9.5: Set health to thriving (capabilities are already in their Arc<RwLock>)
+    *current_health.write().await = garden_common::constants::STONE_THRIVING.to_string();
     tracing::debug!("Self entry updated with capabilities (health=thriving)");
 
     // Auto-chirp: Capabilities complete
     {
-        let entry = self_entry.read().await.clone();
+        let entry = build_boot_entry(&stone_id, &stone_name, &current_address, &current_health, &current_mac, Some(&capabilities)).await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to auto-chirp after capabilities update");
         } else {
@@ -692,9 +716,11 @@ async fn build_state(
             topology: crate::domain::current::Topology {
                 cache: topology_cache.clone(),
                 dirty: topology_dirty.clone(),
-                self_entry: self_entry.clone(),
             },
             capabilities: capabilities.clone(),
+            address: current_address.clone(),
+            health: current_health.clone(),
+            mac: current_mac.clone(),
             api_port: port,
             metrics: Arc::new(crate::domain::current::Metrics {
                 system: Arc::new(RwLock::new(None)),
@@ -856,10 +882,11 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     let shutdown_callback: crate::bootstrap::server::ShutdownCallback = Box::new(move || {
         Box::pin(async move {
             // TOPO-0002: Flush topology to disk before shutdown
+            let self_entry = goodbye_state.build_self_entry().await;
             crate::domain::topology::flush_topology(
                 &goodbye_state.current.topology.cache,
                 &goodbye_state.current.topology.dirty,
-                &goodbye_state.current.topology.self_entry,
+                &self_entry,
             )
             .await;
 

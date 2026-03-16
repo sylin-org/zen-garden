@@ -350,7 +350,7 @@ pub async fn discover_v1(
                 .unwrap_or_default()
         };
 
-        let local_endpoint = state.current.topology.self_entry.read().await.address.http_base();
+        let local_endpoint = state.current.address.read().await.http_base();
 
         instances.push(StorageInstance {
             stone_id: state.current.stone.id.clone(),

@@ -23,7 +23,7 @@ pub async fn get_garden_v1(
     headers: HeaderMap,
 ) -> crate::api::ApiResult<GardenOverview> {
     // Build stone list: self entry + all cached peers
-    let self_entry = state.current.topology.self_entry.read().await.clone();
+    let self_entry = state.build_self_entry().await;
     let cache_entries = topology::get_all_stones(&state.current.topology.cache).await;
 
     let mut stones = Vec::new();
@@ -256,8 +256,8 @@ pub async fn get_topology_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<Vec<TopologyEntry>> {
-    // Step 1: Read self entry (single source of truth for local stone)
-    let self_entry = state.current.topology.self_entry.read().await.clone();
+    // Step 1: Build self entry on demand from source domains
+    let self_entry = state.build_self_entry().await;
 
     tracing::debug!(
         stone_id = %self_entry.stone_id,

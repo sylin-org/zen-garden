@@ -39,9 +39,7 @@ use crate::infra::storage::{ContentStore, OsPlatform};
 /// and flushes dirty topology cache to disk.
 /// Runs every 30 seconds (aligns with stone chirp interval).
 pub fn start_topology_maintenance(
-    topology_cache: TopologyCache,
-    topology_dirty: TopologyDirtyFlag,
-    self_entry: Arc<RwLock<garden_common::TopologyEntry>>,
+    state: crate::AppState,
     token: CancellationToken,
 ) {
     tokio::spawn(async move {
@@ -56,9 +54,10 @@ pub fn start_topology_maintenance(
                     break;
                 }
             }
+            let self_entry = state.build_self_entry().await;
             let (marked, evicted) = crate::domain::topology::maintain_and_persist(
-                &topology_cache,
-                &topology_dirty,
+                &state.current.topology.cache,
+                &state.current.topology.dirty,
                 &self_entry,
             )
             .await;
@@ -131,7 +130,7 @@ pub async fn start_discovery_listener(
     topology_dirty: TopologyDirtyFlag,
     tools: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
     registry: crate::domain::GardenRegistry,
-    self_entry: Arc<RwLock<garden_common::TopologyEntry>>,
+    address: Arc<tokio::sync::RwLock<garden_common::PeerAddress>>,
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
@@ -216,12 +215,12 @@ pub async fn start_discovery_listener(
                         let local_stone_id = stone_id.clone();
                         let local_stone_name = stone_name.clone();
                         let local_endpoint = api_endpoint.clone();
-                        let local_entry = self_entry.clone();
+                        let local_address = address.clone();
                         let local_registry = registry.clone();
                         let local_volumes = volumes.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
-                                let current = local_entry.read().await.address.http_base();
+                                let current = local_address.read().await.http_base();
                                 if current.contains("0.0.0.0") {
                                     local_endpoint
                                 } else {
@@ -862,9 +861,7 @@ pub async fn start_all_background_tasks(
 
     // Start topology maintenance (mark stale offline, evict old, persist if dirty)
     start_topology_maintenance(
-        state.current.topology.cache.clone(),
-        state.current.topology.dirty.clone(),
-        state.current.topology.self_entry.clone(),
+        state.clone(),
         token.child_token(),
     );
 
@@ -883,7 +880,7 @@ pub async fn start_all_background_tasks(
         state.current.topology.dirty.clone(),
         state.tool.delta.clone(),
         state.tool.registry.clone(),
-        state.current.topology.self_entry.clone(),
+        state.current.address.clone(),
         console.clone(),
         state.platform.handlers.clone(),
         state.manifest_registry.clone(),
@@ -971,10 +968,10 @@ pub(crate) async fn start_background_tasks(
     });
 
     // Phase 11.post3: Start discovery handler (responds to discovery requests)
-    let self_entry_for_discovery = state.current.topology.self_entry.clone();
+    let state_for_discovery = Arc::new(state.clone());
     tokio::spawn(async move {
         if let Err(e) =
-            crate::tasks::discovery_handler::start_discovery_handler(self_entry_for_discovery).await
+            crate::tasks::discovery_handler::start_discovery_handler(state_for_discovery).await
         {
             tracing::error!(error = ?e, "Discovery handler failed");
         }
@@ -1007,11 +1004,11 @@ pub(crate) async fn start_background_tasks(
     // Phase 11.post4: Start offering lifecycle event listeners
     {
         // ChirpListener: Broadcasts topology changes via UDP
-        let self_entry_for_chirp = state.current.topology.self_entry.clone();
+        let state_for_chirp = state.clone();
         let chirp_listener = Arc::new(infra::ChirpListener::new(Arc::new(move || {
-            let entry = self_entry_for_chirp.clone();
+            let state = state_for_chirp.clone();
             tokio::spawn(async move {
-                let topology_entry = entry.read().await.clone();
+                let topology_entry = state.build_self_entry().await;
                 if let Err(e) = crate::announcement::announce(&topology_entry).await {
                     tracing::warn!(error = ?e, "Failed to chirp from event listener");
                 }
@@ -1068,10 +1065,9 @@ pub(crate) async fn start_background_tasks(
     tokio::spawn(async move {
         // Get endpoint for Companion communication
         let endpoint = companion_scan_state
-            .current.topology.self_entry
+            .current.address
             .read()
             .await
-            .address
             .http_base();
         match companion_scan_state
             .companion.registry
@@ -1357,7 +1353,7 @@ pub(crate) async fn start_background_tasks(
 
     // Phase 13: Initial announcement (announce ourselves)
     tracing::info!("Sending initial announcement...");
-    let entry = state.current.topology.self_entry.read().await.clone();
+    let entry = state.build_self_entry().await;
     if let Err(e) = crate::announcement::announce(&entry).await {
         tracing::warn!(error = ?e, "Initial announcement failed");
     }
@@ -1523,9 +1519,7 @@ pub(crate) async fn start_background_tasks(
     // Phase 17.6: Topology + storage cache maintenance
     // Topology: mark stale stones offline, evict old, persist dirty cache to disk
     crate::tasks::start_topology_maintenance(
-        state.current.topology.cache.clone(),
-        state.current.topology.dirty.clone(),
-        state.current.topology.self_entry.clone(),
+        state.clone(),
         shutdown_token.child_token(),
     );
 

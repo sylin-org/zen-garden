@@ -149,10 +149,7 @@ async fn execute_companion_command_local(
         tracing::info!(companion_id = %companion_id, "Companion not running, auto-starting before command execution");
 
         // Get moss endpoint for Companion to connect to
-        let moss_endpoint = {
-            let self_entry = state.current.topology.self_entry.read().await;
-            self_entry.address.http_base()
-        };
+        let moss_endpoint = state.current.address.read().await.http_base();
 
         if let Err(e) = state
             .companion.registry
@@ -270,10 +267,7 @@ async fn broadcast_to_topology(
     use crate::domain::topology;
 
     // Get our own stone_id to exclude from broadcast
-    let self_id = {
-        let self_entry = state.current.topology.self_entry.read().await;
-        self_entry.stone_id.clone()
-    };
+    let self_id = state.current.stone.id.clone();
 
     // Get all online stones except self
     let stones = topology::get_online_stones(&state.current.topology.cache).await;
@@ -361,10 +355,7 @@ pub async fn start_companion(
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionLifecycleResponse> {
     // Build this Moss's endpoint for the Companion to connect to
-    let moss_endpoint = {
-        let self_entry = state.current.topology.self_entry.read().await;
-        self_entry.address.http_base()
-    };
+    let moss_endpoint = state.current.address.read().await.http_base();
 
     // Enable the Companion (mark for auto-start on boot)
     if let Err(e) = state.companion.registry.enable(&companion_id).await {

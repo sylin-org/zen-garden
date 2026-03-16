@@ -299,7 +299,7 @@ impl AppState {
         }
 
         if broadcast_beacon {
-            let endpoint = self.current.topology.self_entry.read().await.address.http_base();
+            let endpoint = self.current.address.read().await.http_base();
             if endpoint.trim().is_empty() {
                 return;
             }
@@ -316,62 +316,68 @@ impl AppState {
         }
     }
 
-    /// Sync self_entry services and tags from offerings and notifications
+    /// Build the self topology entry on demand from source domains.
     ///
-    /// Converts Offering → TopologyServiceEntry and updates self_entry.
-    /// Also compiles notification tags for cross-stone awareness.
-    /// Optionally triggers immediate chirp announcement (if network is ready).
-    /// Called after any offerings modification.
-    pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
-        let offerings = self.offerings.read().await;
-        let topology_services =
-            garden_common::TopologyServiceEntry::from_offerings(&offerings);
-
-        // Compile notification tags for cross-stone awareness
+    /// Replaces the mutable self_entry cache. Reads from:
+    /// - current.stone (identity)
+    /// - current.address (network)
+    /// - current.health (status)
+    /// - current.mac (MAC address)
+    /// - current.capabilities (hardware)
+    /// - offerings (local offerings -> TopologyServiceEntry)
+    /// - presence.notifications (tags)
+    pub async fn build_self_entry(&self) -> garden_common::TopologyEntry {
+        let address = self.current.address.read().await.clone();
+        let health = self.current.health.read().await.clone();
+        let mac = self.current.mac.read().await.clone();
+        let capabilities = self.current.capabilities.read().await.clone();
         let tags = self.presence.notifications.compile();
 
-        // TOOLS-0003: Gateways are no longer carried in chirps.
-        // They propagate via the tools beacon / registry path exclusively.
+        // Build services from offerings
+        let offerings = self.offerings.read().await;
+        let services = garden_common::TopologyServiceEntry::from_offerings(&offerings);
+        drop(offerings);
 
-        {
-            let mut entry = self.current.topology.self_entry.write().await;
-            entry.services = topology_services;
-            entry.tags = tags;
-            entry.gateways = vec![]; // Empty — registry beacon is the single path
-            entry.last_seen = chrono::Utc::now();
+        garden_common::TopologyEntry {
+            stone_id: self.current.stone.id.clone(),
+            stone_name: self.current.stone.name.clone(),
+            address,
+            moss_version: crate::version_string(),
+            mac,
+            health,
+            capabilities,
+            services,
+            status: garden_common::StoneStatus::Online,
+            discovered_at: chrono::Utc::now(),
+            last_seen: chrono::Utc::now(),
+            tags,
+            gateways: vec![], // TOOLS-0003: registry beacon is the single path
         }
+    }
 
-        tracing::debug!(
-            count = offerings.len(),
-            "Synced self_entry services from offerings"
-        );
-
+    /// Sync services and optionally chirp.
+    ///
+    /// With `build_self_entry()` assembling the topology entry on demand,
+    /// this method only needs to trigger an immediate chirp when requested.
+    /// Called after any offerings modification.
+    pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.current.topology.self_entry.read().await.clone();
+            let entry = self.build_self_entry().await;
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
             }
         }
     }
 
-    /// Sync self_entry capabilities from the capabilities cache.
+    /// Chirp after capabilities change.
     ///
-    /// Called after background hardware detection completes to ensure
-    /// chirps carry the freshly-detected hardware data instead of the
-    /// stale skeleton/cache loaded at boot.
+    /// With `build_self_entry()` reading capabilities from `current.capabilities`
+    /// directly, this method only needs to trigger a chirp so peers see the update.
     pub(crate) async fn sync_self_capabilities(&self, auto_chirp: bool) {
-        let caps = self.current.capabilities.read().await.clone();
-
-        {
-            let mut entry = self.current.topology.self_entry.write().await;
-            entry.capabilities = caps;
-            entry.last_seen = chrono::Utc::now();
-        }
-
-        tracing::info!("Synced self_entry capabilities from background detection");
+        tracing::info!("Capabilities updated — build_self_entry will read fresh data");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.current.topology.self_entry.read().await.clone();
+            let entry = self.build_self_entry().await;
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after capabilities sync");
             }
@@ -624,15 +630,14 @@ impl AppState {
     /// - `auto_chirp`: If true, broadcasts updated state immediately (if network is ready)
     pub async fn update_stone_health(&self, health: String, auto_chirp: bool) {
         {
-            let mut entry = self.current.topology.self_entry.write().await;
-            entry.health = health.clone();
-            entry.last_seen = chrono::Utc::now();
+            let mut h = self.current.health.write().await;
+            *h = health.clone();
         }
 
         tracing::debug!(health = %health, "Updated stone health");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.current.topology.self_entry.read().await.clone();
+            let entry = self.build_self_entry().await;
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after health update");
             }
@@ -643,7 +648,7 @@ impl AppState {
     ///
     /// Called when the means to resolve this stone changes (IP address, MAC address).
     /// This is different from service changes - resolution changes require:
-    /// 1. Update self_entry with new endpoint and MAC
+    /// 1. Update current.address and current.mac
     /// 2. Re-register mDNS service (updates TXT records and triggers re-announcement)
     /// 3. Send UDP chirp with updated topology entry
     ///
@@ -659,10 +664,9 @@ impl AppState {
         // Get fresh MAC address (may have changed with network)
         let (_, new_mac) = garden_common::infra::network::get_local_ip_and_mac();
 
-        // Update self_entry with new endpoint and MAC
+        // Update current.address and current.mac (source fields)
         {
-            let mut entry = self.current.topology.self_entry.write().await;
-            let old_tls_port = entry.address.tls_port;
+            let old_tls_port = self.current.address.read().await.tls_port;
             let new_ip: std::net::IpAddr = new_ip
                 .parse()
                 .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
@@ -670,9 +674,8 @@ impl AppState {
             if let Some(tp) = old_tls_port {
                 new_addr = new_addr.with_tls(tp);
             }
-            entry.address = new_addr;
-            entry.mac = new_mac.clone();
-            entry.last_seen = chrono::Utc::now();
+            *self.current.address.write().await = new_addr;
+            *self.current.mac.write().await = new_mac.clone();
         }
 
         // Re-register mDNS with updated IP and MAC
@@ -683,7 +686,7 @@ impl AppState {
         }
 
         // Immediately chirp the updated entry via UDP
-        let entry = self.current.topology.self_entry.read().await.clone();
+        let entry = self.build_self_entry().await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to chirp after resolution change");
         } else {
@@ -755,7 +758,7 @@ impl AppState {
     /// then sends a UDP STORAGE_BEACON announcement. This is the single
     /// codepath for beacon broadcasting — callers should not inline this logic.
     pub async fn broadcast_storage_beacon(&self) {
-        let endpoint = self.current.topology.self_entry.read().await.address.http_base();
+        let endpoint = self.current.address.read().await.http_base();
         let roles = crate::domain::storage::roles_snapshot(&self.current.storage.volumes).await;
         let pins = crate::domain::storage::pins_snapshot(&self.current.storage.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(

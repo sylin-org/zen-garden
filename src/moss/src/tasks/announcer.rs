@@ -56,12 +56,8 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
                 continue;
             }
 
-            // Refresh self_entry before chirping — this evicts expired gateways
-            // (TTL=60s) and ensures we never broadcast stale registrations.
-            state.sync_self_services(false).await;
-
-            // Read current self topology entry
-            let entry = state.current.topology.self_entry.read().await.clone();
+            // Build the self topology entry on demand from source domains.
+            let entry = state.build_self_entry().await;
 
             // Always chirp — peers rely on periodic chirps as heartbeats
             // to maintain online status in the topology cache.
@@ -77,7 +73,7 @@ pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
                     let reg = state.tool.registry.read().await;
                     reg.local_snapshot_for_beacon(&state.current.stone.id)
                 };
-                let endpoint = state.current.topology.self_entry.read().await.address.http_base();
+                let endpoint = state.current.address.read().await.http_base();
                 if !endpoint.trim().is_empty() {
                     if let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
                         &state.current.stone.id,

@@ -32,8 +32,8 @@ impl MossStateProvider {
         let uptime_secs = self.state.start_time.elapsed().as_secs();
         fields.insert("uptime".to_string(), json!(uptime_secs));
 
-        // Health (from self_entry)
-        let health = self.state.current.topology.self_entry.read().await.health.clone();
+        // Health (from current.health)
+        let health = self.state.current.health.read().await.clone();
         fields.insert("health".to_string(), json!(health));
 
         // Offering count

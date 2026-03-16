@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use garden_common::{HardwareCapabilities, NetworkMetrics, StoneResources};
+use garden_common::{HardwareCapabilities, NetworkMetrics, PeerAddress, StoneResources};
 
 /// This stone's identity — set at startup, effectively immutable at runtime.
 ///
@@ -38,8 +38,6 @@ pub struct Topology {
     pub cache: crate::domain::topology::TopologyCache,
     /// Dirty flag for topology persistence (TOPO-0002).
     pub dirty: crate::domain::topology::TopologyDirtyFlag,
-    /// Self topology entry (this stone's current state).
-    pub self_entry: Arc<RwLock<garden_common::TopologyEntry>>,
 }
 
 /// Current domain context (`state.current`).
@@ -54,11 +52,18 @@ pub struct Current {
     /// This stone's storage (volumes, media, domain event channel).
     pub storage: Arc<crate::domain::Storage>,
 
-    /// Topology state: cache, dirty flag, and this stone's self-entry.
+    /// Topology state: peer cache and dirty flag for persistence.
     pub topology: Topology,
 
     /// Hardware capabilities cache (detected at startup, persisted).
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
+
+    /// This stone's network address (updated on IP change).
+    pub address: Arc<RwLock<PeerAddress>>,
+    /// This stone's health status.
+    pub health: Arc<RwLock<String>>,
+    /// This stone's MAC address.
+    pub mac: Arc<RwLock<Option<String>>>,
 
     /// API port for constructing endpoint URLs.
     pub api_port: u16,

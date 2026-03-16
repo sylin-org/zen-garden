@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     let mut tools = Vec::new();
 
-    let endpoint = state.current.topology.self_entry.read().await.address.http_base();
+    let endpoint = state.current.address.read().await.http_base();
     let stone = Stone {
         id: state.current.stone.id.clone(),
         name: state.current.stone.name.clone(),

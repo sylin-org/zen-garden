@@ -241,7 +241,7 @@ pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
 pub async fn maintain_and_persist(
     cache: &TopologyCache,
     dirty: &TopologyDirtyFlag,
-    self_entry: &Arc<RwLock<TopologyEntry>>,
+    self_entry: &TopologyEntry,
 ) -> (usize, usize) {
     let (marked, evicted) = maintain_topology(cache).await;
 
@@ -343,13 +343,12 @@ pub async fn forget_stone_dirty(
 /// Uses atomic write (tmp + rename) for crash safety.
 pub async fn persist_topology(
     cache: &TopologyCache,
-    self_entry: &Arc<RwLock<TopologyEntry>>,
+    self_entry: &TopologyEntry,
 ) -> Result<(), anyhow::Error> {
-    let self_entry = self_entry.read().await.clone();
     let self_id = self_entry.stone_id.clone();
 
     // Build array: self first, then peers
-    let mut stones = vec![self_entry];
+    let mut stones = vec![self_entry.clone()];
     let cache_entries = {
         let map = cache.read().await;
         map.values().cloned().collect::<Vec<_>>()
@@ -386,7 +385,7 @@ pub async fn persist_topology(
 pub async fn flush_topology(
     cache: &TopologyCache,
     dirty: &TopologyDirtyFlag,
-    self_entry: &Arc<RwLock<TopologyEntry>>,
+    self_entry: &TopologyEntry,
 ) {
     // Clear dirty flag (we're flushing regardless)
     dirty.store(false, Ordering::Relaxed);
@@ -638,12 +637,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_topology_writes_file() {
         let cache = make_test_cache();
-        let self_entry = Arc::new(RwLock::new(make_entry(
+        let self_entry = make_entry(
             "self-1",
             "local",
             "http://127.0.0.1:7185",
             "0.1.0",
-        )));
+        );
 
         // Add a peer
         upsert_from_chirp(

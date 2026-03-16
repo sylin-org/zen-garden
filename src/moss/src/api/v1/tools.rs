@@ -197,6 +197,7 @@ fn parse_query(
             .as_deref()
             .map(|s| s.trim().to_ascii_lowercase())
             .filter(|s| !s.is_empty()),
+        stone_id: None,
         capabilities: capabilities.unwrap_or_default(),
     })
 }

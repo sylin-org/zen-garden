@@ -57,14 +57,13 @@ fn offering_to_service_info(o: &Offering) -> ServiceInfo {
 ///
 /// Unified endpoint behavior:
 /// - No params: lists all local services (fast, local-only)
-/// - With params: searches/filters across garden (may query remote stones)
+/// - With params: searches/filters across garden via tool registry
 ///
 /// Query parameters:
 /// - `q`: Search query (supports prefixes: c:, cat:, category:, t:, tag:, tags:)
 /// - `name`: Search by exact service name
 /// - `category`: Search by category
 /// - `tag`: Search by tag
-/// - `fresh`: Force fresh discovery (bypass cache)
 #[derive(Debug, serde::Deserialize)]
 pub struct ServicesQuery {
     /// Search query with optional prefix
@@ -82,10 +81,6 @@ pub struct ServicesQuery {
     /// Filter by tag
     #[serde(default)]
     pub tag: Option<String>,
-
-    /// Force fresh discovery
-    #[serde(default)]
-    pub fresh: bool,
 }
 
 impl ServicesQuery {
@@ -126,14 +121,13 @@ pub async fn list_services_v1(
 /// GET /api/v1/garden/services - Find services across the garden
 ///
 /// Searches for services matching criteria across ALL stones in the garden.
-/// This is a garden-wide operation that queries remote stones.
+/// Queries the unified tool registry which holds Local, Gateway, and Announced entries.
 ///
 /// Query parameters:
 /// - `q`: Search query (supports prefixes: c:, cat:, category:, t:, tag:, tags:)
 /// - `name`: Search by exact service name
 /// - `category`: Search by category
 /// - `tag`: Search by tag
-/// - `fresh`: Force fresh discovery (bypass cache)
 ///
 /// Response: ServiceDiscoveryResponse with found services
 pub async fn find_services_v1(
@@ -151,7 +145,6 @@ pub async fn find_services_v1(
         name = ?query.name,
         category = ?query.category,
         tag = ?query.tag,
-        fresh = query.fresh,
         has_params = query.has_search_params(),
         "find_services_v1: garden-wide search"
     );
@@ -185,7 +178,7 @@ pub async fn find_services_v1(
             unreachable!("has_search_params() returned true but no params found")
         };
 
-        find_services(&criteria, &state, query.fresh).await
+        find_services(&criteria, &state).await
     } else {
         // No params: return all local services (fallback for convenience)
         list_all_local_services(&state).await

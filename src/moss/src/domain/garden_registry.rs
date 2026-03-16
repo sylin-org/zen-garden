@@ -42,6 +42,8 @@ pub struct ToolQuery {
     pub category: Option<String>,
     /// Filter by status: `"running"`, `"degraded"`, `"stopped"`.
     pub status: Option<String>,
+    /// Filter by stone ID.
+    pub stone_id: Option<String>,
     /// Capability selectors (AND semantics).
     pub capabilities: Vec<CapabilitySelector>,
 }
@@ -62,6 +64,12 @@ impl ToolQuery {
 
         if let Some(ref status) = self.status {
             if !tool.service.status.eq_ignore_ascii_case(status) {
+                return false;
+            }
+        }
+
+        if let Some(ref stone_id) = self.stone_id {
+            if !tool.stone.id.eq_ignore_ascii_case(stone_id) {
                 return false;
             }
         }

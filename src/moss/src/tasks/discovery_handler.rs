@@ -9,7 +9,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::domain::TopologyEntry;
+use garden_common::TopologyEntry;
 use garden_common::infra::communications::p2p;
 
 /// Start discovery request handler

@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::{error_response, AppState};
+use crate::{bad_request, internal, not_found, AppState};
 use crate::infra::embedded::EmbeddedManifests;
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::manifests::{generate, runtime_manifests_dir, validation};
@@ -292,39 +292,18 @@ pub async fn get_catalog(
     }
 
     // 3. Get installed offerings from AppState
-    let installed = state.offerings.read().await;
-    let installed_names: HashSet<String> = installed.iter().map(|o| o.offering.clone()).collect();
-    let installed_running: HashSet<String> = installed
-        .iter()
-        .filter(|o| o.status.to_string() == "running")
-        .map(|o| o.offering.clone())
-        .collect();
-    drop(installed);
+    let (installed_names, installed_running) = {
+        let installed = state.offerings.read().await;
+        let names: HashSet<String> = installed.iter().map(|o| o.offering.clone()).collect();
+        let running: HashSet<String> = installed
+            .iter()
+            .filter(|o| o.status.to_string() == "running")
+            .map(|o| o.offering.clone())
+            .collect();
+        (names, running)
+    };
 
     // 4. Get compiled offerings index for compatibility info
-    let index = state.offerings_index.read().await;
-    let compat_map: HashMap<String, CompatResult> = match index.as_ref() {
-        Some(cache) => cache
-            .offerings
-            .iter()
-            .map(|o| {
-                let status = match o.compatibility.decision.as_str() {
-                    "pass" | "fallback" => "compatible",
-                    "warning" => "warning",
-                    "fail" => "incompatible",
-                    _ => "unknown",
-                };
-                (
-                    o.name.clone(),
-                    CompatResult {
-                        status: status.to_string(),
-                        reason: o.compatibility.reason.clone(),
-                    },
-                )
-            })
-            .collect(),
-        None => HashMap::new(),
-    };
     // Extract rich metadata from compiled offerings
     struct OfferingMeta {
         description: String,
@@ -333,26 +312,51 @@ pub async fn get_catalog(
         ports: Vec<(String, u16, u16)>,
         volume_count: usize,
     }
-    let meta_map: HashMap<String, OfferingMeta> = match index.as_ref() {
-        Some(cache) => cache
-            .offerings
-            .iter()
-            .map(|o| {
-                (
-                    o.name.clone(),
-                    OfferingMeta {
-                        description: o.description.clone(),
-                        image: o.image.clone(),
-                        tags: o.tags.clone(),
-                        ports: o.ports_vec_named(),
-                        volume_count: o.volumes.len(),
-                    },
-                )
-            })
-            .collect(),
-        None => HashMap::new(),
+    let (compat_map, meta_map) = {
+        let index = state.offerings_index.read().await;
+        let compat: HashMap<String, CompatResult> = match index.as_ref() {
+            Some(cache) => cache
+                .offerings
+                .iter()
+                .map(|o| {
+                    let status = match o.compatibility.decision.as_str() {
+                        "pass" | "fallback" => "compatible",
+                        "warning" => "warning",
+                        "fail" => "incompatible",
+                        _ => "unknown",
+                    };
+                    (
+                        o.name.clone(),
+                        CompatResult {
+                            status: status.to_string(),
+                            reason: o.compatibility.reason.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+        let meta: HashMap<String, OfferingMeta> = match index.as_ref() {
+            Some(cache) => cache
+                .offerings
+                .iter()
+                .map(|o| {
+                    (
+                        o.name.clone(),
+                        OfferingMeta {
+                            description: o.description.clone(),
+                            image: o.image.clone(),
+                            tags: o.tags.clone(),
+                            ports: o.ports_vec_named(),
+                            volume_count: o.volumes.len(),
+                        },
+                    )
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+        (compat, meta)
     };
-    drop(index);
 
     // 5. Merge into unified catalog
     let all_names: HashSet<String> = embedded_files
@@ -558,22 +562,18 @@ pub async fn get_file(
     Query(params): Query<FileQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiErrorResponse>)> {
     let (suffix, _ext) = file_type_to_suffix(&params.file_type).ok_or_else(|| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_FILE_TYPE",
             format!("Unknown file type: {}", params.file_type),
-            None,
         )
     })?;
 
     // Try runtime dir first (overlay)
     if let Some(rt_path) = find_runtime_path(&params.offering, suffix) {
         let content = tokio::fs::read_to_string(&rt_path).await.map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "READ_FAILED",
                 format!("Failed to read file: {e}"),
-                None,
             )
         })?;
         return Ok((
@@ -594,14 +594,12 @@ pub async fn get_file(
         }
     }
 
-    Err(error_response(
-        StatusCode::NOT_FOUND,
+    Err(not_found(
         "FILE_NOT_FOUND",
         format!(
             "No {} file found for offering '{}'",
             params.file_type, params.offering
         ),
-        None,
     ))
 }
 
@@ -615,11 +613,9 @@ pub async fn put_file(
     body: String,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
     let (suffix, _ext) = file_type_to_suffix(&params.file_type).ok_or_else(|| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_FILE_TYPE",
             format!("Unknown file type: {}", params.file_type),
-            None,
         )
     })?;
 
@@ -629,21 +625,17 @@ pub async fn put_file(
         .join(&category);
 
     tokio::fs::create_dir_all(&dir).await.map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             "DIR_CREATE_FAILED",
             format!("Failed to create directory: {e}"),
-            None,
         )
     })?;
 
     let file_path = dir.join(format!("{}{}", params.offering, suffix));
     tokio::fs::write(&file_path, &body).await.map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             "WRITE_FAILED",
             format!("Failed to write file: {e}"),
-            None,
         )
     })?;
 
@@ -669,32 +661,26 @@ pub async fn delete_file(
     Query(params): Query<FileQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
     let (suffix, _ext) = file_type_to_suffix(&params.file_type).ok_or_else(|| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_FILE_TYPE",
             format!("Unknown file type: {}", params.file_type),
-            None,
         )
     })?;
 
     let rt_path = find_runtime_path(&params.offering, suffix).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "NO_CUSTOM_FILE",
             format!(
                 "No custom {} file for '{}' to delete",
                 params.file_type, params.offering
             ),
-            None,
         )
     })?;
 
     tokio::fs::remove_file(&rt_path).await.map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             "DELETE_FAILED",
             format!("Failed to delete file: {e}"),
-            None,
         )
     })?;
 
@@ -749,11 +735,9 @@ pub async fn export_offering(
     }
 
     if bundle.is_empty() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
+        return Err(not_found(
             "OFFERING_NOT_FOUND",
             format!("No manifest files found for '{}'", params.offering),
-            None,
         ));
     }
 
@@ -835,11 +819,9 @@ pub async fn generate_manifest_v1(
         &payload.inspection,
     )
     .map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "GENERATION_FAILED",
             format!("Failed to generate manifest: {e}"),
-            None,
         )
     })?;
 

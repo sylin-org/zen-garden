@@ -6,19 +6,17 @@
 //! - List adopted/borrowed offerings
 //! - Remove adopted/borrowed offerings
 
-use crate::api::responses::ApiResponse;
 use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::{connection, ConnectivityOrchestrator, ConnectivityStatus};
-use crate::{error_response, AppState};
+use crate::{bad_request, conflict, internal, not_found, AppState};
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     Json,
 };
 use garden_common::offerings::OfferingFqn;
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
-    api_utils::ApiErrorResponse,
     AdoptedControlLevel, AdoptedData, BorrowedData, Offering, OfferingLocation, OfferingModeData,
     OfferingStatus, ServiceHealthStatus,
 };
@@ -31,7 +29,7 @@ use serde::{Deserialize, Serialize};
 pub async fn list_adoptable_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<AdoptableOffering>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<AdoptableOffering>> {
     // Get offering manifests that support adopted mode
     let adoptable_manifests = state
         .manifest_registry
@@ -53,7 +51,9 @@ pub async fn list_adoptable_v1(
         }
 
         // Try detection (this will use cached results if available)
-        let orchestrator = crate::domain::DetectionOrchestrator::new(state.platform.docker.clone());
+        let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
+            std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()));
+        let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
         match orchestrator.detect(offering).await {
             Ok(result) if result.detected && result.stable => {
                 adoptable.push(AdoptableOffering {
@@ -73,10 +73,7 @@ pub async fn list_adoptable_v1(
     let ctx = Suggestion::from_headers(&headers, "list_adoptable");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: adoptable,
-        suggestions,
-    }))
+    crate::api::ok_maybe(adoptable, suggestions)
 }
 
 /// POST /api/v1/offerings/:offering/adopt - Manually adopt an offering
@@ -88,22 +85,18 @@ pub async fn adopt_offering_v1(
     Path(offering): Path<String>,
     headers: HeaderMap,
     Json(req): Json<AdoptOfferingRequest>,
-) -> Result<Json<ApiResponse<Offering>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Offering> {
     let offering_fqn = OfferingFqn::parse(&offering).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", offering, e),
-            None,
         )
     })?;
     let offering_type = offering_fqn.offering.clone();
     let adopted_fqn = OfferingFqn::adopted(&offering_type).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", offering_type, e),
-            None,
         )
     })?;
 
@@ -114,11 +107,9 @@ pub async fn adopt_offering_v1(
             .iter()
             .any(|o| o.offering == offering_type && o.is_adopted())
         {
-            return Err(error_response(
-                StatusCode::CONFLICT,
+            return Err(conflict(
                 "ALREADY_ADOPTED",
                 format!("Offering '{}' is already adopted", offering_type),
-                None,
             ));
         }
     }
@@ -128,41 +119,35 @@ pub async fn adopt_offering_v1(
         .manifest_registry
         .get_offering(&offering_type)
         .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
+            not_found(
                 "OFFERING_NOT_FOUND",
                 format!("Offering '{}' not found", offering_type),
-                None,
             )
         })?;
 
     // Verify offering supports adopted mode
     if !offering_def.supports_mode(&garden_common::OfferingMode::Adopted) {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "NOT_ADOPTABLE",
             format!("Offering '{}' does not support adopted mode", offering_type),
-            None,
         ));
     }
 
     // Detect offering
-    let orchestrator = crate::domain::DetectionOrchestrator::new(state.platform.docker.clone());
+    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
+        std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()));
+    let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
     let detection_result = orchestrator.detect(offering_def).await.map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             "DETECTION_FAILED",
             format!("Detection failed: {}", e),
-            None,
         )
     })?;
 
     if !detection_result.detected {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
+        return Err(not_found(
             "NOT_DETECTED",
             format!("Offering '{}' not detected on this system", offering_type),
-            None,
         ));
     }
 
@@ -183,7 +168,9 @@ pub async fn adopt_offering_v1(
         port_map: std::collections::HashMap::new(),
     };
 
-    let connectivity = ConnectivityOrchestrator::new(state.platform.docker.clone());
+    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
+        std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()));
+    let connectivity = ConnectivityOrchestrator::new(detector);
     let connectivity_outcome = connectivity
         .ensure_connectivity(offering_def, Some(&location), &state.current.stone.name)
         .await
@@ -252,51 +239,39 @@ pub async fn adopt_offering_v1(
         orchestration: None,
     };
 
-    // Add to registry and persist
+    // Add to registry (gateway auto-persists)
     state.upsert_offering(unified.clone(), true).await;
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after adoption");
-    }
 
     let ctx = Suggestion::from_headers(&headers, "adopt_offering");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: unified,
-        suggestions,
-    }))
+    crate::api::ok_maybe(unified, suggestions)
 }
 
 /// GET /api/v1/offerings/adopted - List adopted offerings
 pub async fn list_adopted_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<Offering>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<Offering>> {
     let offerings = state.get_adopted_offerings().await;
 
     let ctx = Suggestion::from_headers(&headers, "list_adopted");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: offerings,
-        suggestions,
-    }))
+    crate::api::ok_maybe(offerings, suggestions)
 }
 
 /// GET /api/v1/offerings/borrowed - List borrowed offerings
 pub async fn list_borrowed_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<Offering>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<Offering>> {
     let offerings = state.get_borrowed_offerings().await;
 
     let ctx = Suggestion::from_headers(&headers, "list_borrowed");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: offerings,
-        suggestions,
-    }))
+    crate::api::ok_maybe(offerings, suggestions)
 }
 
 /// DELETE /api/v1/offerings/:offering/adopt - Remove adopted offering
@@ -306,13 +281,11 @@ pub async fn unadopt_offering_v1(
     State(state): State<AppState>,
     Path(offering): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<String> {
     let offering_fqn = OfferingFqn::parse(&offering).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", offering, e),
-            None,
         )
     })?;
     let offering_name = offering_fqn.fqn();
@@ -329,16 +302,11 @@ pub async fn unadopt_offering_v1(
     match found {
         Some(to_remove) => {
             state.remove_offering(&to_remove.offering_id, true).await;
-            if let Err(e) = state.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist offerings after unadopt");
-            }
         }
         None => {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
+            return Err(not_found(
                 "NOT_ADOPTED",
                 format!("Offering '{}' is not currently adopted", offering_name),
-                None,
             ));
         }
     }
@@ -346,10 +314,7 @@ pub async fn unadopt_offering_v1(
     let ctx = Suggestion::from_headers(&headers, "unadopt_offering");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: format!("Offering '{}' unadopted successfully", offering_name),
-        suggestions,
-    }))
+    crate::api::ok_maybe(format!("Offering '{}' unadopted successfully", offering_name), suggestions)
 }
 
 /// Adoptable offering information
@@ -401,13 +366,11 @@ pub async fn borrow_service_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<BorrowOfferingRequest>,
-) -> Result<Json<ApiResponse<Offering>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Offering> {
     let borrow_fqn = OfferingFqn::new(&req.name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_NAME",
             format!("Invalid offering name '{}': {}", req.name, e),
-            None,
         )
     })?;
 
@@ -418,22 +381,18 @@ pub async fn borrow_service_v1(
             .iter()
             .any(|o| o.name == borrow_fqn && o.is_borrowed())
         {
-            return Err(error_response(
-                StatusCode::CONFLICT,
+            return Err(conflict(
                 "ALREADY_BORROWED",
                 format!("Service '{}' is already registered as borrowed", req.name),
-                None,
             ));
         }
     }
 
     // Parse URL to extract host/port/protocol
     let url_parsed = url::Url::parse(&req.url).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_URL",
             format!("Invalid URL: {}", e),
-            None,
         )
     })?;
 
@@ -469,19 +428,13 @@ pub async fn borrow_service_v1(
         orchestration: None,
     };
 
-    // Add to registry and persist
+    // Add to registry (gateway auto-persists)
     state.upsert_offering(unified.clone(), true).await;
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after borrow");
-    }
 
     let ctx = Suggestion::from_headers(&headers, "borrow_service");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: unified,
-        suggestions,
-    }))
+    crate::api::ok_maybe(unified, suggestions)
 }
 
 /// DELETE /api/v1/adoption/borrow/:name - Unregister a borrowed service
@@ -491,13 +444,11 @@ pub async fn unborrow_service_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<String> {
     let unborrow_fqn = OfferingFqn::parse(&name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_NAME",
             format!("Invalid offering name '{}': {}", name, e),
-            None,
         )
     })?;
 
@@ -513,16 +464,11 @@ pub async fn unborrow_service_v1(
     match found {
         Some(to_remove) => {
             state.remove_offering(&to_remove.offering_id, true).await;
-            if let Err(e) = state.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist offerings after unborrow");
-            }
         }
         None => {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
+            return Err(not_found(
                 "NOT_BORROWED",
                 format!("Service '{}' is not currently registered as borrowed", name),
-                None,
             ));
         }
     }
@@ -530,8 +476,5 @@ pub async fn unborrow_service_v1(
     let ctx = Suggestion::from_headers(&headers, "unborrow_service");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: format!("Borrowed service '{}' unregistered successfully", name),
-        suggestions,
-    }))
+    crate::api::ok_maybe(format!("Borrowed service '{}' unregistered successfully", name), suggestions)
 }

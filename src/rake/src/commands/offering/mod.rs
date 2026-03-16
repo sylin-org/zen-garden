@@ -13,10 +13,9 @@ use crate::discovery;
 use anyhow::Result;
 use async_trait::async_trait;
 use garden_common::offerings::OfferingFqn;
-use garden_common::ui::rendering as ui;
-use garden_common::{
-    CliFormatter, GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo,
-};
+use crate::ui::rendering as ui;
+use crate::ui::colors::CliFormatter;
+use garden_common::{GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -303,7 +302,7 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
         let status_str = format!("{:?}", svc.status);
         if status_str
             .to_lowercase()
-            .contains(garden_common::SERVICE_RUNNING)
+            .contains(garden_common::constants::SERVICE_RUNNING)
         {
             running_count += 1;
         } else {
@@ -315,7 +314,7 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
             ui::truncate_name(&svc.name, ui::constants::MAX_SERVICE_NAME_LEN),
             status_display,
             if svc.offering.is_empty() {
-                garden_common::VALUE_UNKNOWN.to_string()
+                garden_common::constants::VALUE_UNKNOWN.to_string()
             } else {
                 svc.offering.clone()
             },
@@ -373,7 +372,7 @@ async fn print_offerings_index(client: &reqwest::Client, endpoint: &str) -> Resu
     // Filter out incompatible offerings (decision = "fail")
     let compatible_offerings: Vec<OfferingEntry> = offerings
         .into_iter()
-        .filter(|o| o.compatibility.decision != garden_common::COMPAT_FAIL)
+        .filter(|o| o.compatibility.decision != garden_common::constants::COMPAT_FAIL)
         .collect();
 
     if compatible_offerings.is_empty() {
@@ -391,7 +390,7 @@ async fn print_offerings_index(client: &reqwest::Client, endpoint: &str) -> Resu
     let mut by_category: BTreeMap<String, Vec<OfferingEntry>> = BTreeMap::new();
     let mut restricted_offerings: Vec<String> = Vec::new();
     for o in compatible_offerings {
-        if o.compatibility.decision == garden_common::COMPAT_FALLBACK {
+        if o.compatibility.decision == garden_common::constants::COMPAT_FALLBACK {
             restricted_offerings.push(o.name.clone());
         }
         by_category.entry(o.category.clone()).or_default().push(o);
@@ -408,7 +407,7 @@ async fn print_offerings_index(client: &reqwest::Client, endpoint: &str) -> Resu
         let grid_items: Vec<String> = items
             .iter()
             .map(|o| {
-                if o.compatibility.decision == garden_common::COMPAT_FALLBACK {
+                if o.compatibility.decision == garden_common::constants::COMPAT_FALLBACK {
                     format!("{}{}", o.name, ui::constants::LEGEND_SYMBOL)
                 } else {
                     o.name.clone()
@@ -476,10 +475,10 @@ async fn print_offering_info(
         let decision = compat
             .get("decision")
             .and_then(|v| v.as_str())
-            .unwrap_or(garden_common::COMPAT_PASS);
+            .unwrap_or(garden_common::constants::COMPAT_PASS);
         match decision {
-            garden_common::COMPAT_PASS => println!("Compatibility: pass"),
-            garden_common::COMPAT_FALLBACK => {
+            garden_common::constants::COMPAT_PASS => println!("Compatibility: pass"),
+            garden_common::constants::COMPAT_FALLBACK => {
                 let reason = compat
                     .get("reason")
                     .and_then(|v| v.as_str())
@@ -493,7 +492,7 @@ async fn print_offering_info(
                 }
                 println!("  Reason: {}", reason);
             }
-            garden_common::COMPAT_FAIL => {
+            garden_common::constants::COMPAT_FAIL => {
                 let reason = compat
                     .get("reason")
                     .and_then(|v| v.as_str())
@@ -551,7 +550,7 @@ async fn print_offer_query_recommendations(
 
     println!("Top recommendations:");
     for (idx, o) in results.results.iter().enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+        let flag = if o.compatibility == garden_common::constants::COMPAT_FALLBACK {
             "(!) "
         } else {
             ""
@@ -622,7 +621,7 @@ async fn print_offer_anywhere_recommendations(
 
     println!("Top recommendations across stones:");
     for (idx, (_score, stone_name, ep, o)) in candidates.into_iter().take(3).enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+        let flag = if o.compatibility == garden_common::constants::COMPAT_FALLBACK {
             "(!) "
         } else {
             ""
@@ -686,7 +685,7 @@ async fn print_alternatives_for_failed_install(
 
     println!("\nAlternatives:");
     for (idx, o) in alternatives.iter().enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+        let flag = if o.compatibility == garden_common::constants::COMPAT_FALLBACK {
             "(!) "
         } else {
             ""
@@ -873,8 +872,8 @@ async fn stream_job_progress(
                     }
 
                     // Check for completion
-                    if status == garden_common::STATUS_COMPLETED
-                        || status == garden_common::STATUS_SUCCESS
+                    if status == garden_common::constants::STATUS_COMPLETED
+                        || status == garden_common::constants::STATUS_SUCCESS
                     {
                         if !quiet {
                             println!(
@@ -885,8 +884,8 @@ async fn stream_job_progress(
                             );
                         }
                         break;
-                    } else if status == garden_common::STATUS_FAILED
-                        || status == garden_common::STATUS_ERROR
+                    } else if status == garden_common::constants::STATUS_FAILED
+                        || status == garden_common::constants::STATUS_ERROR
                     {
                         println!(
                             "\n{}{} Installation failed: {}",
@@ -1496,13 +1495,13 @@ impl Command for OfferCommand {
                                 " ".repeat(ui::constants::DEFAULT_INDENT * 2),
                                 existing.name
                             );
-                            if status_str.contains(garden_common::SERVICE_STOPPED) {
+                            if status_str.contains(garden_common::constants::SERVICE_STOPPED) {
                                 println!(
                                     "{}  • Start service:  garden-rake start {}",
                                     " ".repeat(ui::constants::DEFAULT_INDENT * 2),
                                     existing.name
                                 );
-                            } else if status_str.contains(garden_common::SERVICE_RUNNING) {
+                            } else if status_str.contains(garden_common::constants::SERVICE_RUNNING) {
                                 println!(
                                     "{}  • Stop service:   garden-rake stop {}",
                                     " ".repeat(ui::constants::DEFAULT_INDENT * 2),

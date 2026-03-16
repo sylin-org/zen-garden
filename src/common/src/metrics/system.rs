@@ -3,7 +3,7 @@ use crate::{
     InterfaceMetrics, MemoryMetrics, NetworkMetrics, StoneResources, StorageMetrics,
 };
 use anyhow::{Context, Result};
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::process::Command;
 use sysinfo::{Networks, System};
@@ -15,13 +15,13 @@ pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
         get_cpu_info_windows()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         get_cpu_info_linux()
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn get_cpu_info_linux() -> Result<(String, Vec<String>, String)> {
     let cpuinfo = fs::read_to_string("/proc/cpuinfo").context("Failed to read /proc/cpuinfo")?;
 
@@ -426,7 +426,7 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
         None
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         // Strategy 1: Use lsblk which resolves LVM/device-mapper to physical device.
         // `lsblk -ndo ROTA,TYPE <source>` returns e.g. "0 disk" (SSD) or "1 disk" (HDD).
@@ -441,7 +441,7 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
 }
 
 /// Detect disk type using `lsblk`, which handles LVM, device-mapper, and LUKS.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn detect_via_lsblk(mount_point: &str) -> Option<String> {
     // Find the source device for this mount point
     let findmnt = Command::new("findmnt")
@@ -514,7 +514,7 @@ fn detect_via_lsblk(mount_point: &str) -> Option<String> {
 
 /// Fallback: detect disk type via sysfs rotational flag.
 /// Works for direct /dev/sdX and /dev/nvmeXnY devices only.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn detect_via_sysfs(mount_point: &str) -> Option<String> {
     let output = Command::new("findmnt")
         .args(["-no", "SOURCE", "--target", mount_point])
@@ -798,7 +798,7 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
     }
 
     // Fallback: check lspci on Linux
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         if let Ok(output) = Command::new("lspci").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -836,7 +836,7 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
 }
 
 fn detect_intel_gpus() -> Result<Vec<GpuInfo>> {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         if let Ok(output) = Command::new("lspci").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1329,7 +1329,7 @@ fn detect_directml() -> bool {
         .any(|path| std::path::Path::new(path).exists())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 #[allow(dead_code)]
 fn detect_directml() -> bool {
     false
@@ -1477,7 +1477,7 @@ pub fn detect_swap() -> Option<u64> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 #[allow(dead_code)]
 fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
     anyhow::bail!("Windows GPU detection not available on this platform")

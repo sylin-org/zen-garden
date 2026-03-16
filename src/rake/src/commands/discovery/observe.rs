@@ -13,9 +13,10 @@ use crate::suggestions;
 use crate::tending;
 use async_trait::async_trait;
 use colored::Colorize;
-use garden_common::ui::layout::{IndentLevel, Layout};
-use garden_common::ui::rendering as ui;
-use garden_common::{CliFormatter, GardenApiResponse, TopologyEntry};
+use crate::ui::layout::{IndentLevel, Layout};
+use crate::ui::rendering as ui;
+use crate::ui::colors::CliFormatter;
+use garden_common::{GardenApiResponse, TopologyEntry};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -624,7 +625,7 @@ fn display_topology_compact(
     for stone in &displayable {
         // Offline stones always count as dormant regardless of last-known health
         let effective_health = if stone.status == garden_common::StoneStatus::Offline {
-            garden_common::VITALITY_DORMANT
+            garden_common::constants::VITALITY_DORMANT
         } else {
             &stone.health
         };
@@ -663,7 +664,7 @@ fn display_topology_compact(
 
         // Offline stones always render as dormant
         let effective_health = if stone.status == garden_common::StoneStatus::Offline {
-            garden_common::VITALITY_DORMANT
+            garden_common::constants::VITALITY_DORMANT
         } else {
             &stone.health
         };

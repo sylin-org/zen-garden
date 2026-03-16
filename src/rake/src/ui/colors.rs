@@ -94,7 +94,7 @@ impl ColorSupport {
     /// 1. NO_COLOR environment variable (universal disable)
     /// 2. Whether stdout is a terminal
     pub fn detect() -> Self {
-        let no_color = std::env::var(crate::ENV_NO_COLOR).is_ok();
+        let no_color = std::env::var(garden_common::constants::ENV_NO_COLOR).is_ok();
         let is_terminal = std::io::stdout().is_terminal();
 
         Self {

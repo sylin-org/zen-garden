@@ -6,8 +6,8 @@
 //! - Category listings (`garden-rake commands <category>`)
 
 use crate::command_manifest::{self, CommandCategory, CommandDef, MANIFEST};
-use garden_common::ui::rendering as ui;
-use garden_common::CliFormatter;
+use crate::ui::rendering as ui;
+use crate::ui::colors::CliFormatter;
 
 /// Display detailed information for a specific command
 pub fn display_command_detail(cmd: &CommandDef, zen_only: bool, normative_only: bool) {

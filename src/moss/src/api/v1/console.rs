@@ -1,4 +1,4 @@
-use crate::{error_response, AppState};
+use crate::{bad_request, AppState};
 use axum::{extract::State, http::StatusCode, Json};
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::console::ConsoleMode;
@@ -32,14 +32,12 @@ pub async fn set_console_mode_v1(
 ) -> Result<(StatusCode, Json<ConsoleModeResponse>), (StatusCode, Json<ApiErrorResponse>)> {
     // Parse requested mode
     let new_mode: ConsoleMode = request.mode.parse().map_err(|_| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_MODE",
             format!(
                 "Invalid console mode '{}'. Valid modes: silent, minimal, informative, verbose",
                 request.mode
             ),
-            None,
         )
     })?;
 

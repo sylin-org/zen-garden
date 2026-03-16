@@ -7,11 +7,14 @@
 
 use crate::docker::Client;
 use crate::domain::harvest::{HarvestManifest, VolumeArchive};
+use crate::domain::traits::HarvestOps;
 use crate::infra::HarvestStore;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use garden_common::infra::archive;
 use garden_common::offerings::OfferingFqn;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Create a harvest for an offering
 ///
@@ -250,6 +253,34 @@ pub async fn verify_harvest(store: &HarvestStore, harvest_id: &str) -> Result<bo
     }
 
     Ok(true)
+}
+
+/// Concrete harvest operations backed by Docker + HarvestStore.
+pub struct OsHarvestOps {
+    docker: Arc<Client>,
+    store: Arc<HarvestStore>,
+}
+
+impl OsHarvestOps {
+    pub fn new(docker: Arc<Client>, store: Arc<HarvestStore>) -> Self {
+        Self { docker, store }
+    }
+}
+
+#[async_trait]
+impl HarvestOps for OsHarvestOps {
+    async fn create_harvest(
+        &self,
+        offering: &str,
+        source_stone: &str,
+        commit_image: bool,
+    ) -> Result<HarvestManifest> {
+        create_harvest(&self.docker, &self.store, offering, source_stone, commit_image).await
+    }
+
+    async fn restore_harvest(&self, harvest_id: &str) -> Result<()> {
+        restore_harvest(&self.docker, &self.store, harvest_id).await
+    }
 }
 
 #[cfg(test)]

@@ -29,17 +29,11 @@ pub async fn get_capabilities(
     let caps_guard = state.current.capabilities.read().await;
 
     if let Some(caps) = caps_guard.as_ref() {
-        Json(ApiResponse {
-            data: caps.clone(),
-            suggestions: None,
-        })
+        Json(ApiResponse::new(caps.clone()))
     } else {
         // Should never happen - skeleton is created immediately at startup
         // But handle gracefully with skeleton data
         let skeleton = crate::infra::hardware::create_skeleton(state.current.stone.name.to_string());
-        Json(ApiResponse {
-            data: skeleton,
-            suggestions: None,
-        })
+        Json(ApiResponse::new(skeleton))
     }
 }

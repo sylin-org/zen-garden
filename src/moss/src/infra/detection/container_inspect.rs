@@ -7,10 +7,34 @@
 //! - Running state verification
 
 use crate::docker::Client;
+use crate::domain::traits::ServiceDetector;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use garden_common::detection::DetectionResult;
 use garden_common::manifests::ContainerInspectDetection;
 use regex::Regex;
+use std::sync::Arc;
+
+/// Concrete container-based service detector backed by Docker.
+pub struct ContainerDetector {
+    docker: Arc<Client>,
+}
+
+impl ContainerDetector {
+    pub fn new(docker: Arc<Client>) -> Self {
+        Self { docker }
+    }
+}
+
+#[async_trait]
+impl ServiceDetector for ContainerDetector {
+    async fn detect_by_container_inspect(
+        &self,
+        config: &ContainerInspectDetection,
+    ) -> Result<DetectionResult> {
+        detect_by_container_inspect(&self.docker, config).await
+    }
+}
 
 /// Detect service by inspecting Client containers
 ///

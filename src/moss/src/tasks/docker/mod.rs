@@ -91,7 +91,7 @@ impl Monitor {
         config: Config,
         docker_ready: Arc<AtomicBool>,
     ) -> Self {
-        let (tx, _) = broadcast::channel(100);
+        let (tx, _) = broadcast::channel(garden_common::constants::channels::MONITOR_EVENT);
 
         // Check initial state
         let initially_healthy = docker.is_healthy().await;

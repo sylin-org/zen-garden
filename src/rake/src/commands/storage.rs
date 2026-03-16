@@ -131,7 +131,7 @@ impl AddStorageCommand {
 #[async_trait]
 impl Command for AddStorageCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -232,7 +232,7 @@ impl Command for AddStorageCommand {
 impl AddStorageCommand {
     /// Interactive device selection when no target provided.
     async fn pick_target(&self, ctx: &Runtime, base: &str) -> anyhow::Result<String> {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let url = format!("{}/api/v1/stone/storage/candidates", base);
         let response = ctx
@@ -357,7 +357,7 @@ impl ReleaseStorageCommand {
 #[async_trait]
 impl Command for ReleaseStorageCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -476,7 +476,7 @@ impl ListStorageCommand {
 #[async_trait]
 impl Command for ListStorageCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -706,7 +706,7 @@ impl PinStorageCommand {
 #[async_trait]
 impl Command for PinStorageCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -766,7 +766,7 @@ impl UnpinStorageCommand {
 #[async_trait]
 impl Command for UnpinStorageCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -880,7 +880,7 @@ impl StorePutCommand {
 #[async_trait]
 impl Command for StorePutCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -978,7 +978,7 @@ impl StoreGetCommand {
 #[async_trait]
 impl Command for StoreGetCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -1129,7 +1129,7 @@ struct CommonPrefix {
 #[async_trait]
 impl Command for StoreListCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -1330,7 +1330,7 @@ impl StoreDeleteCommand {
 #[async_trait]
 impl Command for StoreDeleteCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -1399,7 +1399,7 @@ impl StoreHeadCommand {
 #[async_trait]
 impl Command for StoreHeadCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -1495,7 +1495,7 @@ impl Default for StorageStatusCommand {
 #[async_trait]
 impl Command for StorageStatusCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint

@@ -3,12 +3,13 @@
 //! Provides service discovery across the garden with connection string resolution.
 //! Supports search by name, category, or tags with cache-first architecture.
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::domain::connection::{self, ResolvedConnection};
-use crate::domain::{topology, TopologyEntry};
+use crate::domain::topology;
+use garden_common::TopologyEntry;
 use crate::AppState;
 use garden_common::manifests::get_category_registry;
 use garden_common::{OfferingStatus, ServiceStatus};
@@ -214,67 +215,8 @@ fn parse_capability_requirements(input: &str) -> Vec<SubCapabilityFilter> {
         .collect()
 }
 
-/// Found service with connection information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FoundService {
-    /// Unique identifier for this offering instance (GUIDv7)
-    /// Survives renames, migrations, used for backup keying.
-    #[serde(default)]
-    pub offering_id: String,
-
-    /// Service name
-    pub name: String,
-
-    /// Offering type (e.g., "mongodb", "redis")
-    pub offering: String,
-
-    /// Service category
-    pub category: String,
-
-    /// Service tags
-    pub tags: Vec<String>,
-
-    /// Current status
-    pub status: String,
-
-    /// Stone hosting this service
-    pub stone: StoneRef,
-
-    /// Resolved connection information
-    pub connection: ResolvedConnection,
-
-    /// Sub-capabilities (e.g., models, collections)
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub sub_capabilities: Vec<garden_common::SubCapability>,
-}
-
-/// Reference to a stone
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoneRef {
-    pub id: String,
-    pub name: String,
-    pub endpoint: String,
-}
-
-/// Service discovery response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceDiscoveryResponse {
-    /// Whether services were found
-    pub found: bool,
-
-    /// Found services
-    pub services: Vec<FoundService>,
-
-    /// Data source ("cache" or "fresh")
-    pub source: String,
-
-    /// Cache age in seconds (if from cache)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_age_seconds: Option<u64>,
-
-    /// Response timestamp
-    pub timestamp: DateTime<Utc>,
-}
+// Re-export response types from garden-common (canonical definitions)
+pub use garden_common::discovery::{FoundService, ServiceDiscoveryResponse, StoneRef};
 
 /// Find services matching criteria on local stone
 ///
@@ -474,7 +416,7 @@ pub async fn find_services(
                 offering: offering.clone(),
                 category: gw_category.to_string(),
                 tags: gw_tags,
-                status: garden_common::SERVICE_RUNNING.to_string(),
+                status: garden_common::constants::SERVICE_RUNNING.to_string(),
                 stone: StoneRef {
                     id: tool.stone.id.clone(),
                     name: tool.stone.name.clone(),
@@ -566,7 +508,7 @@ async fn find_services_in_topology_cache(
 
         for svc in &stone.services {
             // Only include running services
-            if svc.status != garden_common::SERVICE_RUNNING {
+            if svc.status != garden_common::constants::SERVICE_RUNNING {
                 continue;
             }
 

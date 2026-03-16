@@ -1,10 +1,8 @@
 use crate::api::responses::{ApiResponse, CreateServiceRequest, ServiceActionResponse};
 use crate::api::suggestions::{generate_suggestions, Suggestion};
-use crate::domain::connection;
 use crate::domain::events::OfferingEvent;
-use crate::infra::network::{load_network_state, revert_to_dhcp};
-use crate::infra::TaskStore;
-use crate::{error_response, AppState};
+use crate::domain::service_lifecycle;
+use crate::{bad_request, conflict, internal, not_found, AppState};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -15,9 +13,8 @@ use garden_common::{
         is_suspicious, sanitize_fqn_input, sanitize_query, sanitize_tag, ApiErrorResponse,
     },
     offerings::OfferingFqn,
-    utils::ids::generate_guidv7,
-    ManagedData, Offering, OfferingLocation, OfferingModeData, OfferingStatus, Ports,
-    ServiceHealthStatus, ServiceInfo, ServiceStatus,
+    Offering, OfferingStatus, Ports,
+    ServiceInfo, ServiceStatus,
 };
 
 /// Convert Offering to ServiceInfo for API responses
@@ -163,11 +160,9 @@ pub async fn find_services_v1(
     if let Some(ref q) = query.q {
         if is_suspicious(q) {
             tracing::warn!(query = %q, "Suspicious query pattern detected");
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
+            return Err(bad_request(
                 "INVALID_QUERY",
                 "Query contains invalid patterns".to_string(),
-                None,
             ));
         }
     }
@@ -217,24 +212,23 @@ pub async fn get_service_v1(
         "get_service_v1: handler invoked for /api/v1/services/:service"
     );
 
-    let offerings = state.offerings.read().await;
-    let service_info = offerings
-        .iter()
-        .find(|o| o.name.to_string() == service_name && o.is_managed())
-        .map(offering_to_service_info)
-        .ok_or_else(|| {
-            tracing::warn!(
-                service = %service_name,
-                "get_service_v1: service not found in registry"
-            );
-            error_response(
-                StatusCode::NOT_FOUND,
-                "SERVICE_NOT_FOUND",
-                format!("Service '{}' not found", service_name),
-                None,
-            )
-        })?;
-    drop(offerings);
+    let service_info = {
+        let offerings = state.offerings.read().await;
+        offerings
+            .iter()
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
+            .map(offering_to_service_info)
+            .ok_or_else(|| {
+                tracing::warn!(
+                    service = %service_name,
+                    "get_service_v1: service not found in registry"
+                );
+                not_found(
+                    "SERVICE_NOT_FOUND",
+                    format!("Service '{}' not found", service_name),
+                )
+            })?
+    };
 
     let ctx = Suggestion::from_headers(&headers, "get_service");
     let suggestions = generate_suggestions(&ctx);
@@ -251,331 +245,51 @@ pub async fn create_service_v1(
     headers: HeaderMap,
     Json(payload): Json<CreateServiceRequest>,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    use crate::domain::service_lifecycle::{self, InstallOutcome};
+
     let mut offering_fqn = OfferingFqn::parse(&payload.offering).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", payload.offering, e),
-            None,
         )
     })?;
-    let mut service_name = offering_fqn.fqn();
-    let offering_type = offering_fqn.offering.clone();
 
-    // ── Image-direct deployment (OFFER-0006) ──────────────────────────────
-    if offering_fqn.source == Some(garden_common::offerings::OfferingSource::Image) {
-        let image_ref = offering_fqn
-            .image_ref
-            .clone()
-            .unwrap_or_else(|| offering_fqn.offering.clone());
-
-        // Check if already installed
-        {
-            let offerings = state.offerings.read().await;
-            if let Some(existing) = offerings
-                .iter()
-                .find(|o| o.name.to_string() == service_name && o.is_managed())
-            {
-                if existing.status == OfferingStatus::Maintenance {
-                    let ctx = Suggestion::from_headers(&headers, "create_service");
-                    let suggestions = generate_suggestions(&ctx);
-                    return Ok(Json(ApiResponse {
-                        data: ServiceActionResponse {
-                            service: service_name,
-                            action: "create".to_string(),
-                            status: "maintenance".to_string(),
-                            message: "Service under maintenance, retry later".to_string(),
-                        },
-                        suggestions,
-                    }));
-                }
-            }
-        }
-
-        // Create job
-        let job_id = uuid::Uuid::now_v7().to_string();
-        let job = crate::Job {
-            id: job_id.clone(),
-            offerings: vec![service_name.clone()],
-            status: crate::JobStatus::Pending,
-            completed: vec![],
-            failed: std::collections::HashMap::new(),
-            started_at: std::time::SystemTime::now(),
-            completed_at: None,
-        };
-        state.jobs.write().await.insert(job_id.clone(), job);
-
-        // Add minimal Installing entry to registry
-        let installing_offering = Offering {
-            offering_id: generate_guidv7(),
-            name: offering_fqn.clone(),
-            offering: offering_type.clone(),
-            version: image_ref
-                .rsplit_once(':')
-                .map(|(_, tag)| tag)
-                .unwrap_or("latest")
-                .to_string(),
-            status: OfferingStatus::Installing,
-            health: ServiceHealthStatus::Offline,
-            sub_capabilities: Vec::new(),
-            location: OfferingLocation {
-                host: "localhost".to_string(),
-                port: 0, // assigned after inspection
-                protocol: "http".to_string(),
-                agnostic_port: None,
-                port_map: std::collections::HashMap::new(),
-            },
-            mode_data: OfferingModeData::Managed(ManagedData {
-                resources: None,
-                job_id: Some(job_id.clone()),
-                guidance: None,
-                ..Default::default()
-            }),
-            registered_at: chrono::Utc::now(),
-            updated_at: None,
-            orchestration: None,
-        };
-        state.upsert_offering(installing_offering, true).await;
-        let _ = state.persist_offerings().await;
-
-        // Spawn async image-direct installation
-        let state = state.clone();
-        let task_fqn = offering_fqn.clone();
-        let task_image = image_ref.clone();
-        let task_job_id = job_id.clone();
-        let task_svc_name = service_name.clone();
-        tokio::spawn(async move {
-            crate::install_image_direct_task(
-                &state,
-                &task_job_id,
-                &task_fqn,
-                &task_image,
-                &task_svc_name,
-            )
-            .await;
-        });
-
-        let ctx = Suggestion::from_headers(&headers, "create_service");
-        let suggestions = generate_suggestions(&ctx);
-        return Ok(Json(ApiResponse {
-            data: ServiceActionResponse {
-                service: service_name,
-                action: "create".to_string(),
-                status: "accepted".to_string(),
-                message: format!(
-                    "Image-direct installation started, check /api/jobs/{} for status",
-                    job_id
-                ),
-            },
-            suggestions,
-        }));
-    }
-
-    // Self-heal: if the container exists but registry forgot it (e.g. after restart), adopt it.
-    if state
-        .platform.docker
-        .zen_container_exists(&service_name)
+    let outcome = service_lifecycle::install(&state, &mut offering_fqn)
         .await
-        .unwrap_or(false)
-    {
-        let in_registry = {
-            let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.name.to_string() == service_name)
-        };
-
-        if !in_registry {
-            let cached_caps = state.current.capabilities.read().await.clone();
-            if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
-                &state.platform.docker,
-                &state.manifest_registry,
-                &service_name,
-                &state.current.stone.name,
-                cached_caps.as_ref(),
-            )
-            .await
-            {
-                state.upsert_offering(adopted_offering, true).await;
-                let _ = state.persist_offerings().await;
-
-                let ctx = Suggestion::from_headers(&headers, "create_service");
-                let suggestions = generate_suggestions(&ctx);
-
-                return Ok(Json(ApiResponse {
-                    data: ServiceActionResponse {
-                        service: service_name,
-                        action: "create".to_string(),
-                        status: "adopted".to_string(),
-                        message: "Existing container adopted into registry".to_string(),
-                    },
-                    suggestions,
-                }));
-            }
-        }
-    }
-
-    let compiled = match crate::get_compiled_offering(&state, &offering_type).await {
-        Ok(Some(o)) => o,
-        Ok(None) => {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                "TEMPLATE_NOT_FOUND",
-                format!("Unknown offering: {}", offering_type),
-                None,
-            ));
-        }
-        Err(e) => {
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL_ERROR",
-                format!("Failed to read offerings index: {}", e),
-                None,
-            ));
-        }
-    };
-
-    if compiled.compatibility.decision == garden_common::COMPAT_FAIL {
-        let reason = compiled
-            .compatibility
-            .reason
-            .unwrap_or_else(|| "Unknown reason".to_string());
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "COMPATIBILITY_FAILED",
-            format!("Offering is incompatible with this stone: {}", reason),
-            None,
-        ));
-    }
-
-    // If a compatibility fallback suggests an instance name and the user didn't
-    // explicitly provide one, apply it so incompatible versions land in separate
-    // FQN groups (e.g. mongodb → mongodb::legacy on non-AVX hardware).
-    if offering_fqn.instance.is_none() {
-        if let Some(ref fallback_name) = compiled.compatibility.fallback_name {
-            if let Ok(adjusted) = OfferingFqn::with_instance(&offering_type, fallback_name) {
-                tracing::info!(
-                    original = %service_name,
-                    adjusted = %adjusted.fqn(),
-                    reason = ?compiled.compatibility.reason,
-                    "Compatibility fallback renamed offering instance"
-                );
-                service_name = adjusted.fqn();
-                offering_fqn = adjusted;
-            }
-        }
-    }
-
-    // Check if already running/maintenance
-    let offerings = state.offerings.read().await;
-    if let Some(existing) = offerings
-        .iter()
-        .find(|o| o.name.to_string() == service_name && o.is_managed())
-    {
-        if existing.status == OfferingStatus::Maintenance {
-            drop(offerings);
-            let ctx = Suggestion::from_headers(&headers, "create_service");
-            let suggestions = generate_suggestions(&ctx);
-            return Ok(Json(ApiResponse {
-                data: ServiceActionResponse {
-                    service: service_name,
-                    action: "create".to_string(),
-                    status: "maintenance".to_string(),
-                    message: "Service under maintenance, retry later".to_string(),
-                },
-                suggestions,
-            }));
-        }
-    }
-    drop(offerings);
-
-    // Create job
-    let job_id = uuid::Uuid::now_v7().to_string();
-    let job = crate::Job {
-        id: job_id.clone(),
-        offerings: vec![service_name.clone()],
-        status: crate::JobStatus::Pending,
-        completed: vec![],
-        failed: std::collections::HashMap::new(),
-        started_at: std::time::SystemTime::now(),
-        completed_at: None,
-    };
-
-    state.jobs.write().await.insert(job_id.clone(), job);
-
-    // Add service to registry immediately with Installing status
-    // This ensures `rake list` shows the service as planting
-    {
-        let native_port = compiled.default_host_port();
-        let offering_protocol = connection::infer_protocol_from_manifest_metadata(
-            &offering_type,
-            &compiled.category,
-            state
-                .manifest_registry
-                .get_offering(&offering_type)
-                .and_then(|entry| entry.connection.as_ref()),
-        );
-        let installing_offering = Offering {
-            offering_id: generate_guidv7(),
-            name: offering_fqn.clone(),
-            offering: offering_type.clone(),
-            version: compiled
-                .image
-                .split(':')
-                .next_back()
-                .unwrap_or("latest")
-                .into(),
-            status: OfferingStatus::Installing,
-            health: ServiceHealthStatus::Offline,
-            sub_capabilities: Vec::new(),
-            location: OfferingLocation {
-                host: "localhost".to_string(),
-                port: native_port,
-                protocol: offering_protocol,
-                agnostic_port: None,
-                port_map: std::collections::HashMap::new(),
-            },
-            mode_data: OfferingModeData::Managed(ManagedData {
-                resources: None,
-                job_id: Some(job_id.clone()),
-                guidance: None, // Guidance is added when installation completes
-                ..Default::default()
-            }),
-            registered_at: chrono::Utc::now(),
-            updated_at: None,
-            orchestration: None,
-        };
-
-        state.upsert_offering(installing_offering, true).await;
-    }
-    let _ = state.persist_offerings().await;
-
-    // Spawn async installation task
-    let state = state.clone();
-    let task_offering = offering_type.clone();
-    let task_svc_name = service_name.clone();
-    let task_job_id = job_id.clone();
-    tokio::spawn(async move {
-        crate::install_service_task(
-            &state,
-            &task_job_id,
-            &task_offering,
-            &task_svc_name,
-        )
-        .await;
-    });
+        .map_err(|e| lifecycle_error("INSTALL_FAILED", &e))?;
 
     let ctx = Suggestion::from_headers(&headers, "create_service");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: ServiceActionResponse {
+    let response = match outcome {
+        InstallOutcome::ImageDirectStarted { service_name, job_id } => ServiceActionResponse {
             service: service_name,
             action: "create".to_string(),
             status: "accepted".to_string(),
-            message: format!(
-                "Installation started, check /api/jobs/{} for status",
-                job_id
-            ),
+            message: format!("Image-direct installation started, check /api/jobs/{} for status", job_id),
         },
+        InstallOutcome::Adopted { service_name } => ServiceActionResponse {
+            service: service_name,
+            action: "create".to_string(),
+            status: "adopted".to_string(),
+            message: "Existing container adopted into registry".to_string(),
+        },
+        InstallOutcome::InstallStarted { service_name, job_id } => ServiceActionResponse {
+            service: service_name,
+            action: "create".to_string(),
+            status: "accepted".to_string(),
+            message: format!("Installation started, check /api/jobs/{} for status", job_id),
+        },
+        InstallOutcome::Maintenance { service_name } => ServiceActionResponse {
+            service: service_name,
+            action: "create".to_string(),
+            status: "maintenance".to_string(),
+            message: "Service under maintenance, retry later".to_string(),
+        },
+    };
+
+    Ok(Json(ApiResponse {
+        data: response,
         suggestions,
     }))
 }
@@ -585,69 +299,21 @@ pub async fn rest_service_v1(
     State(state): State<AppState>,
     Path(service): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ServiceActionResponse> {
     let service_name = normalize_service_name(&service)?;
-    // Find the offering
-    let offering_id = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .map(|o| o.offering_id.clone())
-            .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
-                    "SERVICE_NOT_FOUND",
-                    format!("Service '{}' not found", service_name),
-                    None,
-                )
-            })?
-    };
 
-    // Stop the Docker container
-    if let Err(e) = state
-        .platform.docker
-        .stop_service(&service_name, Some(&state.console))
+    service_lifecycle::stop(&state, &service_name)
         .await
-    {
-        tracing::error!(error = ?e, service = %service_name, "Failed to stop container");
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "STOP_FAILED",
-            format!("Failed to stop service: {}", e),
-            None,
-        ));
-    }
-
-    // Update status via gateway (syncs self_entry for chirps)
-    state.update_offering(&offering_id, true, |o| {
-        o.status = OfferingStatus::Stopped;
-        true
-    }).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::warn!(error = ?e, "Failed to persist offerings after rest");
-    }
-
-    // Emit offering lifecycle event
-    state.event_bus.emit(OfferingEvent::stopped(
-        &offering_id,
-        &service_name,
-        state.stone_name(),
-    ));
+        .map_err(|e| lifecycle_error("STOP_FAILED", &e))?;
 
     let ctx = Suggestion::from_headers(&headers, "rest_service");
     let suggestions = generate_suggestions(&ctx);
-
-    Ok(Json(ApiResponse {
-        data: ServiceActionResponse {
-            service: service_name,
-            action: "rest".to_string(),
-            status: "stopped".to_string(),
-            message: "Service stopped successfully".to_string(),
-        },
-        suggestions,
-    }))
+    crate::api::ok_maybe(ServiceActionResponse {
+        service: service_name,
+        action: "rest".to_string(),
+        status: "stopped".to_string(),
+        message: "Service stopped successfully".to_string(),
+    }, suggestions)
 }
 
 /// POST /api/v1/services/:service/wake - Wake (start) service
@@ -655,126 +321,21 @@ pub async fn wake_service_v1(
     State(state): State<AppState>,
     Path(service): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ServiceActionResponse> {
     let service_name = normalize_service_name(&service)?;
-    // Find the offering
-    let offering_id = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .map(|o| o.offering_id.clone())
-            .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
-                    "SERVICE_NOT_FOUND",
-                    format!("Service '{}' not found", service_name),
-                    None,
-                )
-            })?
-    };
 
-    // Check if the Docker container still exists. If the offering is registered
-    // but the container was removed (pruned, failed upgrade, etc.), transparently
-    // reinstall it from the manifest — preserving data in named volumes/mounts.
-    let container_exists = state
-        .platform.docker
-        .zen_container_exists(&service_name)
+    service_lifecycle::start(&state, &service_name)
         .await
-        .unwrap_or(false);
-
-    if !container_exists {
-        tracing::info!(
-            service = %service_name,
-            "Container missing for registered offering, reinstalling"
-        );
-        match rebuild_missing_container(&state, &service_name).await {
-            Ok(_) => {
-                tracing::info!(
-                    service = %service_name,
-                    "Container reinstalled successfully (data preserved)"
-                );
-            }
-            Err(e) => {
-                tracing::error!(error = ?e, service = %service_name, "Failed to reinstall missing container");
-                return Err(error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "REINSTALL_FAILED",
-                    format!(
-                        "Container is missing and reinstall failed: {}. Try 'garden-rake offer {}' to reinstall manually.",
-                        e, service_name
-                    ),
-                    None,
-                ));
-            }
-        }
-    } else {
-        // Container exists — run compose-on-start if needed, then start normally.
-        let needs_compose = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .find(|o| o.offering_id == offering_id)
-                .and_then(|o| o.managed_data())
-                .map(|d| !d.config_patches.is_empty())
-                .unwrap_or(false)
-        };
-
-        if needs_compose {
-            if let Err(e) = compose_on_start(&state, &service_name).await {
-                tracing::warn!(
-                    service = %service_name,
-                    error = ?e,
-                    "Compose-on-start failed, falling back to normal start"
-                );
-            }
-        }
-
-        // Start the Docker container
-        if let Err(e) = state
-            .platform.docker
-            .start_service(&service_name, Some(&state.console))
-            .await
-        {
-            tracing::error!(error = ?e, service = %service_name, "Failed to start container");
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "START_FAILED",
-                format!("Failed to start service: {}", e),
-                None,
-            ));
-        }
-    }
-
-    // Update status via gateway (syncs self_entry for chirps)
-    state.update_offering(&offering_id, true, |o| {
-        o.status = OfferingStatus::Running;
-        true
-    }).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::warn!(error = ?e, "Failed to persist offerings after wake");
-    }
-
-    // Emit offering lifecycle event
-    state.event_bus.emit(OfferingEvent::started(
-        &offering_id,
-        &service_name,
-        state.stone_name(),
-    ));
+        .map_err(|e| lifecycle_error("START_FAILED", &e))?;
 
     let ctx = Suggestion::from_headers(&headers, "wake_service");
     let suggestions = generate_suggestions(&ctx);
-
-    Ok(Json(ApiResponse {
-        data: ServiceActionResponse {
-            service: service_name,
-            action: "wake".to_string(),
-            status: "running".to_string(),
-            message: "Service started successfully".to_string(),
-        },
-        suggestions,
-    }))
+    crate::api::ok_maybe(ServiceActionResponse {
+        service: service_name,
+        action: "wake".to_string(),
+        status: "running".to_string(),
+        message: "Service started successfully".to_string(),
+    }, suggestions)
 }
 
 /// POST /api/v1/services/:service/nourish - Nourish (upgrade) service
@@ -792,11 +353,9 @@ pub async fn nourish_service_v1(
             .iter()
             .find(|o| o.name.to_string() == service_name && o.is_managed())
             .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
+                not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Service '{}' not found", service_name),
-                    None,
                 )
             })?;
 
@@ -825,11 +384,9 @@ pub async fn nourish_service_v1(
 
     // Load template for upgrade
     let entry = state.manifest_registry.sw.get(&offering).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "TEMPLATE_NOT_FOUND",
             format!("Template for '{}' not found", offering),
-            None,
         )
     })?;
     let template = entry.parse_template().map_err(|e| {
@@ -842,11 +399,9 @@ pub async fn nourish_service_v1(
                 true
             }).await;
         });
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             "TEMPLATE_LOAD_FAILED",
             format!("Failed to load template: {}", e),
-            None,
         )
     })?;
 
@@ -871,11 +426,9 @@ pub async fn nourish_service_v1(
             o.status = OfferingStatus::Running;
             true
         }).await;
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        return Err(internal(
             "UPGRADE_FAILED",
             format!("Failed to upgrade: {}", e),
-            None,
         ));
     }
 
@@ -894,10 +447,6 @@ pub async fn nourish_service_v1(
         o.version = nv;
         true
     }).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::warn!(error = ?e, "Failed to persist offerings after nourish");
-    }
 
     // Emit offering lifecycle event (old_image reconstructed from old_version)
     let old_image = format!(
@@ -934,97 +483,22 @@ pub async fn delete_service_v1(
     State(state): State<AppState>,
     Path(service): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ServiceActionResponse> {
     let service_name = normalize_service_name(&service)?;
-    // Find and remove the service from registry
-    let offering_id = {
-        let offerings = state.offerings.read().await;
-        let o = offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
-                    "SERVICE_NOT_FOUND",
-                    format!("Service '{}' not found", service_name),
-                    None,
-                )
-            })?;
-        o.offering_id.clone()
-    };
 
-    // Remove container first (preserves volumes by default)
-    if let Err(e) = state
-        .platform.docker
-        .remove_service(&service_name, Some(&state.console))
+    service_lifecycle::remove(&state, &service_name)
         .await
-    {
-        tracing::error!(error = ?e, service = %service_name, "Docker remove failed");
-        // Don't fail completely - continue to remove from registry even if container removal fails
-        tracing::warn!(service = %service_name, "Container removal failed, continuing with registry cleanup");
-    }
-
-    // Then remove from registry
-    state.remove_offering(&offering_id, true).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::warn!(error = ?e, "Failed to persist offerings after delete");
-    }
-
-    // Emit offering lifecycle event (removed = soft delete, volumes preserved)
-    state.event_bus.emit(OfferingEvent::removed(
-        &offering_id,
-        &service_name,
-        state.stone_name(),
-    ));
-
-    // Unregister scheduled tasks for this offering
-    let task_store = TaskStore::new();
-    if let Err(e) = task_store.unregister_tasks(&offering_id).await {
-        tracing::warn!(
-            offering_id = %offering_id,
-            error = ?e,
-            "Failed to unregister scheduled tasks (non-fatal)"
-        );
-    }
-
-    // Release static IP if this offering was a requester
-    // (will revert to DHCP if no other requesters remain)
-    let mut network_state = load_network_state().await;
-    if network_state.requested_by.contains(&service_name) {
-        if let Err(e) = revert_to_dhcp(&service_name, &mut network_state).await {
-            tracing::warn!(
-                service = %service_name,
-                error = ?e,
-                "Failed to release static IP (non-fatal)"
-            );
-        } else {
-            let remaining = network_state.requester_count();
-            if remaining == 0 {
-                tracing::info!(service = %service_name, "Released static IP, reverted to DHCP");
-            } else {
-                tracing::info!(
-                    service = %service_name,
-                    remaining_requesters = remaining,
-                    "Released static IP requester, other services still using it"
-                );
-            }
-        }
-    }
+        .map_err(|e| lifecycle_error("REMOVE_FAILED", &e))?;
 
     let ctx = Suggestion::from_headers(&headers, "delete_service");
     let suggestions = generate_suggestions(&ctx);
-
-    Ok(Json(ApiResponse {
-        data: ServiceActionResponse {
-            service: service_name,
-            action: "delete".to_string(),
-            status: "removed".to_string(),
-            message: "Service removed (container stopped and removed, volumes preserved)"
-                .to_string(),
-        },
-        suggestions,
-    }))
+    crate::api::ok_maybe(ServiceActionResponse {
+        service: service_name,
+        action: "delete".to_string(),
+        status: "removed".to_string(),
+        message: "Service removed (container stopped and removed, volumes preserved)"
+            .to_string(),
+    }, suggestions)
 }
 
 /// POST /api/v1/services/:service/destroy - Hard delete (uproot: remove from registry AND destroy container)
@@ -1032,100 +506,21 @@ pub async fn destroy_service_v1(
     State(state): State<AppState>,
     Path(service): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ServiceActionResponse> {
     let service_name = normalize_service_name(&service)?;
-    // Find the service
-    let offering_id = {
-        let offerings = state.offerings.read().await;
-        let o = offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
-                    "SERVICE_NOT_FOUND",
-                    format!("Service '{}' not found", service_name),
-                    None,
-                )
-            })?;
-        o.offering_id.clone()
-    };
 
-    // Hard delete: destroy Docker container first
-    // If the container doesn't exist (already removed, failed install, etc.),
-    // continue with registry cleanup — the goal is to fully remove the offering.
-    if let Err(e) = state
-        .platform.docker
-        .remove_service(&service_name, Some(&state.console))
+    service_lifecycle::destroy(&state, &service_name)
         .await
-    {
-        tracing::warn!(
-            service = %service_name,
-            error = ?e,
-            "Container removal failed, continuing with registry cleanup"
-        );
-    }
-
-    // Then remove from registry
-    state.remove_offering(&offering_id, true).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::warn!(error = ?e, "Failed to persist offerings after destroy");
-    }
-
-    // Emit offering lifecycle event (destroyed = hard delete)
-    state.event_bus.emit(OfferingEvent::destroyed(
-        &offering_id,
-        &service_name,
-        state.stone_name(),
-    ));
-
-    // Unregister scheduled tasks for this offering
-    let task_store = TaskStore::new();
-    if let Err(e) = task_store.unregister_tasks(&offering_id).await {
-        tracing::warn!(
-            offering_id = %offering_id,
-            error = ?e,
-            "Failed to unregister scheduled tasks (non-fatal)"
-        );
-    }
-
-    // Release static IP if this offering was a requester
-    // (will revert to DHCP if no other requesters remain)
-    let mut network_state = load_network_state().await;
-    if network_state.requested_by.contains(&service_name) {
-        if let Err(e) = revert_to_dhcp(&service_name, &mut network_state).await {
-            tracing::warn!(
-                service = %service_name,
-                error = ?e,
-                "Failed to release static IP (non-fatal)"
-            );
-        } else {
-            let remaining = network_state.requester_count();
-            if remaining == 0 {
-                tracing::info!(service = %service_name, "Released static IP, reverted to DHCP");
-            } else {
-                tracing::info!(
-                    service = %service_name,
-                    remaining_requesters = remaining,
-                    "Released static IP requester, other services still using it"
-                );
-            }
-        }
-    }
+        .map_err(|e| lifecycle_error("DESTROY_FAILED", &e))?;
 
     let ctx = Suggestion::from_headers(&headers, "destroy_service");
     let suggestions = generate_suggestions(&ctx);
-
-    Ok(Json(ApiResponse {
-        data: ServiceActionResponse {
-            service: service_name,
-            action: "destroy".to_string(),
-            status: "uprooted".to_string(),
-            message: "Service destroyed (container removed)".to_string(),
-        },
-        suggestions,
-    }))
+    crate::api::ok_maybe(ServiceActionResponse {
+        service: service_name,
+        action: "destroy".to_string(),
+        status: "uprooted".to_string(),
+        message: "Service destroyed (container removed)".to_string(),
+    }, suggestions)
 }
 
 // ============================================================================
@@ -1165,11 +560,9 @@ pub async fn get_manifest_v1(
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<ApiErrorResponse>)> {
     let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_SERVICE_NAME",
             format!("Invalid service name '{}': {}", name, e),
-            None,
         )
     })?;
     let offering_type = offering_fqn.offering.clone();
@@ -1179,11 +572,9 @@ pub async fn get_manifest_v1(
         .sw
         .get(&offering_type)
         .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
+            not_found(
                 "MANIFEST_NOT_FOUND",
                 format!("Manifest for '{}' not found", offering_type),
-                None,
             )
         })?;
 
@@ -1236,11 +627,9 @@ pub async fn get_service_env_v1(
     };
 
     let offering = offering.ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "SERVICE_NOT_FOUND",
             format!("Service '{}' not found", service_name),
-            None,
         )
     })?;
 
@@ -1268,11 +657,9 @@ pub async fn get_service_env_v1(
                     "manageable": manageable_vars,
                 })))
             }
-            Err(e) => Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            Err(e) => Err(internal(
                 "ENV_FETCH_FAILED",
                 format!("Failed to read env for '{}': {}", service_name, e),
-                None,
             )),
         }
     } else if !manageable_vars.is_empty() {
@@ -1303,11 +690,9 @@ pub async fn patch_service_env_v1(
     {
         let offerings = state.offerings.read().await;
         if !offerings.iter().any(|o| o.name.to_string() == service_name) {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
+            return Err(not_found(
                 "SERVICE_NOT_FOUND",
                 format!("Service '{}' not found", service_name),
-                None,
             ));
         }
     }
@@ -1317,11 +702,9 @@ pub async fn patch_service_env_v1(
     let manageable = manifest_offering.and_then(|o| o.manageable_env.as_ref());
 
     let manageable = manageable.ok_or_else(|| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "NO_MANAGEABLE_ENV",
             format!("Service '{}' has no manageable environment variables declared", service_name),
-            None,
         )
     })?;
 
@@ -1334,15 +717,13 @@ pub async fn patch_service_env_v1(
         .collect();
 
     if !rejected.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "VARS_NOT_ALLOWED",
             format!(
                 "Variables not in manageable allowlist: {}. Allowed: {}",
                 rejected.join(", "),
                 manageable.vars.join(", ")
             ),
-            None,
         ));
     }
 
@@ -1353,11 +734,9 @@ pub async fn patch_service_env_v1(
         .unwrap_or_else(|| service_name.clone());
 
     if let Err(e) = crate::infra::platform::service_env::write_env(&svc_name, &body).await {
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        return Err(internal(
             "ENV_WRITE_FAILED",
             format!("Failed to write env for '{}': {}", service_name, e),
-            None,
         ));
     }
 
@@ -1379,32 +758,10 @@ pub async fn restart_service_v1(
     Path(service): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     let service_name = normalize_service_name(&service)?;
-    // Stop then start
-    state
-        .platform.docker
-        .stop_service(&service_name, Some(&state.console))
-        .await
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "RESTART_FAILED",
-                format!("Failed to stop service: {}", e),
-                None,
-            )
-        })?;
 
-    state
-        .platform.docker
-        .start_service(&service_name, Some(&state.console))
+    service_lifecycle::restart(&state, &service_name)
         .await
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "RESTART_FAILED",
-                format!("Failed to start service: {}", e),
-                None,
-            )
-        })?;
+        .map_err(|e| lifecycle_error("RESTART_FAILED", &e))?;
 
     Ok((
         StatusCode::OK,
@@ -1460,11 +817,6 @@ pub async fn reconcile_inventory_v1(
 
     let result = reconcile_services(&state, payload.drop_invalid).await;
 
-    // Persist changes if any adoptions or drops occurred
-    if result.has_changes() {
-        let _ = state.persist_offerings().await;
-    }
-
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
@@ -1483,24 +835,20 @@ pub async fn refresh_manifests_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     // Rebuild offerings index (which includes manifest validation)
-    crate::ensure_offerings_index(&state, true)
+    crate::ensure_offerings_index(&state, true, &crate::infra::persistence::OsOfferingsCache)
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "REFRESH_FAILED",
                 format!("Failed to refresh manifests: {}", e),
-                None,
             )
         })?;
 
     let idx_guard = state.offerings_index.read().await;
     let idx = idx_guard.as_ref().ok_or_else(|| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             "INDEX_UNAVAILABLE",
             "Manifests index unavailable after refresh".to_string(),
-            None,
         )
     })?;
 
@@ -1538,11 +886,9 @@ pub async fn discover_service_capabilities_v1(
             .find(|o| o.name.to_string() == service_name && o.is_managed())
             .map(offering_to_service_info)
             .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
+                not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Service '{}' not found", service_name),
-                    None,
                 )
             })?
     };
@@ -1550,11 +896,9 @@ pub async fn discover_service_capabilities_v1(
     // Get capability manifest for this offering
     let cap_manifest = crate::infra::manifests::get_capability_manifest(&service.offering)
         .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
+            not_found(
                 "NO_CAPABILITY_MANIFEST",
                 format!("No capability manifest found for '{}'", service.offering),
-                None,
             )
         })?;
 
@@ -1574,11 +918,9 @@ pub async fn discover_service_capabilities_v1(
         .list_capabilities(&service, cap_manifest, mode)
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "DISCOVERY_FAILED",
                 format!("Failed to discover capabilities: {}", e),
-                None,
             )
         })?;
 
@@ -1593,7 +935,6 @@ pub async fn discover_service_capabilities_v1(
             o.sub_capabilities = caps;
             false // sub_capabilities are detail-only, don't trigger chirp sync
         }).await;
-        let _ = state.persist_offerings().await;
     }
 
     Ok(Json(ApiResponse {
@@ -1692,177 +1033,27 @@ fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<Api
     OfferingFqn::parse(service)
         .map(|fqn| fqn.fqn())
         .map_err(|e| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "INVALID_SERVICE_NAME",
                 format!("Invalid service name '{}': {}", service, e),
-                None,
             )
         })
 }
 
-/// Build a ContainerSpec from the manifest template + any config patches.
+/// Map a domain lifecycle error to an API error tuple.
 ///
-/// Uses the **compiled offerings index** for the image (which factors in
-/// hardware capabilities like AVX detection) and the raw manifest for
-/// command/config_files/ports (which are hardware-independent).
-///
-/// Used by both `compose_on_start` (drift convergence) and
-/// `rebuild_missing_container` (dormant container reinstall).
-async fn build_spec_from_manifest(
-    state: &crate::AppState,
-    service_name: &str,
-) -> anyhow::Result<crate::docker::ContainerSpec> {
-    use anyhow::Context;
-
-    let patches = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .and_then(|o| o.managed_data())
-            .map(|d| d.config_patches.clone())
-            .unwrap_or_default()
-    };
-
-    // Resolve the offering type (strip instance suffix for FQN lookups)
-    let offering_type = OfferingFqn::parse(service_name)
-        .map(|fqn| fqn.offering.clone())
-        .unwrap_or_else(|_| service_name.to_string());
-
-    let manifest = state
-        .manifest_registry
-        .get_offering(&offering_type)
-        .context("No manifest for offering")?;
-    let template = manifest
-        .parse_template()
-        .context("Failed to parse template")?;
-
-    let effective = crate::domain::config_compose::compose(&template, &patches)
-        .context("Failed to compose config")?;
-
-    // Use the compiled offerings index for the image — it applies hardware
-    // capability resolution (e.g., AVX fallback: mongo:7 → mongo:4.4).
-    // Fall back to the raw manifest image if the index is unavailable.
-    let resolved_image =
-        match crate::get_compiled_offering(state, &offering_type).await {
-            Ok(Some(compiled)) => {
-                if compiled.image != effective.image {
-                    tracing::info!(
-                        service = %service_name,
-                        manifest_image = %effective.image,
-                        resolved_image = %compiled.image,
-                        "Using hardware-resolved image from compiled index"
-                    );
-                }
-                compiled.image
-            }
-            Ok(None) => {
-                tracing::debug!(
-                    service = %service_name,
-                    "No compiled offering found, using manifest image"
-                );
-                effective.image
-            }
-            Err(e) => {
-                tracing::warn!(
-                    service = %service_name,
-                    error = ?e,
-                    "Failed to read compiled offerings index, using manifest image"
-                );
-                effective.image
-            }
-        };
-
-    Ok(crate::docker::ContainerSpec {
-        image: resolved_image,
-        command: effective.command,
-        ports: effective.ports,
-        environment: effective.environment,
-        volumes: effective.volumes,
-        config_files: effective.config_files,
-    })
-}
-
-/// Reinstall a container for a registered offering whose Docker container is
-/// missing. Rebuilds the spec from the manifest + config patches and calls
-/// `install_service`, which preserves named Docker volumes on disk.
-async fn rebuild_missing_container(
-    state: &crate::AppState,
-    service_name: &str,
-) -> anyhow::Result<()> {
-    use anyhow::Context;
-
-    let spec = build_spec_from_manifest(state, service_name)
-        .await
-        .context("Failed to build container spec from manifest")?;
-
-    state
-        .platform.docker
-        .install_service(service_name, &spec, Some(&state.console))
-        .await
-        .context("Failed to install container")?;
-
-    Ok(())
-}
-
-/// Compose-on-start: check if a stopped container needs to be recreated
-/// to match the effective config (manifest + patches).
-///
-/// This ensures config patches are applied even after a container restart or
-/// Moss daemon restart. If the container spec doesn't match the desired config,
-/// it is removed and recreated.
-async fn compose_on_start(state: &crate::AppState, service_name: &str) -> anyhow::Result<()> {
-    use anyhow::Context;
-
-    // Only run if there are config patches to apply
-    let has_patches = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .and_then(|o| o.managed_data())
-            .map(|d| !d.config_patches.is_empty())
-            .unwrap_or(false)
-    };
-
-    if !has_patches {
-        return Ok(());
+/// Uses `not_found` when the error message contains "not found",
+/// otherwise `internal`.
+fn lifecycle_error(
+    code: &str,
+    err: &anyhow::Error,
+) -> (StatusCode, Json<ApiErrorResponse>) {
+    let msg = format!("{}", err);
+    if msg.contains("not found") {
+        not_found("SERVICE_NOT_FOUND", msg)
+    } else {
+        internal(code, msg)
     }
-
-    let desired_spec = build_spec_from_manifest(state, service_name)
-        .await
-        .context("Failed to build spec for compose-on-start")?;
-
-    // Check if container needs cycling
-    match state.platform.docker.needs_cycle(service_name, &desired_spec).await {
-        Ok(true) => {
-            tracing::info!(
-                service = %service_name,
-                "Compose-on-start: container spec mismatch, cycling"
-            );
-            state
-                .platform.docker
-                .recreate_service(service_name, &desired_spec)
-                .await
-                .context("Failed to recreate container for compose-on-start")?;
-        }
-        Ok(false) => {
-            tracing::debug!(
-                service = %service_name,
-                "Compose-on-start: container already matches desired config"
-            );
-        }
-        Err(e) => {
-            tracing::warn!(
-                service = %service_name,
-                error = ?e,
-                "Compose-on-start: could not inspect container, will start as-is"
-            );
-        }
-    }
-
-    Ok(())
 }
 
 /// POST /api/v1/stone/services/:service/reassign — Non-destructive FQN reassign.
@@ -1881,30 +1072,24 @@ pub async fn reassign_service_v1(
         .get("new_fqn")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "MISSING_FIELD",
                 "Missing required field 'new_fqn'".to_string(),
-                None,
             )
         })?;
 
     let new_fqn = OfferingFqn::parse(new_fqn_str).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_FQN",
             format!("Invalid FQN '{}': {}", new_fqn_str, e),
-            None,
         )
     })?;
     let new_name = new_fqn.fqn();
 
     if old_name == new_name {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "SAME_FQN",
             "New FQN is the same as the current one".to_string(),
-            None,
         ));
     }
 
@@ -1912,11 +1097,9 @@ pub async fn reassign_service_v1(
     {
         let offerings = state.offerings.read().await;
         if offerings.iter().any(|o| o.name.to_string() == new_name) {
-            return Err(error_response(
-                StatusCode::CONFLICT,
+            return Err(conflict(
                 "FQN_EXISTS",
                 format!("A service with FQN '{}' already exists", new_name),
-                None,
             ));
         }
     }
@@ -1929,11 +1112,9 @@ pub async fn reassign_service_v1(
             .find(|o| o.name.to_string() == old_name && o.is_managed())
             .map(|o| o.offering_id.clone())
             .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
+                not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Managed service '{}' not found", old_name),
-                    None,
                 )
             })?
     };
@@ -1955,11 +1136,9 @@ pub async fn reassign_service_v1(
             .platform.docker
             .start_service(&old_name, Some(&state.console))
             .await;
-        return Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        return Err(internal(
             "RENAME_FAILED",
             format!("Failed to rename container: {}", e),
-            None,
         ));
     }
 
@@ -1970,10 +1149,6 @@ pub async fn reassign_service_v1(
             true
         })
         .await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::warn!(error = ?e, "Failed to persist offerings after reassign");
-    }
 
     // Step 4: Start the container with its new name
     if let Err(e) = state

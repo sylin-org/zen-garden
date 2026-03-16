@@ -3,7 +3,7 @@
 //! Provides shared state and utilities for command handlers.
 //! This eliminates repetitive setup code in each command.
 
-use garden_common::ui::rendering::{OutputWriter, TerminalInfo};
+use crate::ui::rendering::{OutputWriter, TerminalInfo};
 
 /// Global output format for automation-friendly output
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

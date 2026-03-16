@@ -17,7 +17,7 @@ use garden_common::tools::{
     event_types as tools_event_types, parse_capability_wish, CapabilitySelector, GardenTool,
     ToolDelta,
 };
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -102,46 +102,13 @@ impl FindCommand {
     }
 }
 
-/// Stone reference in response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoneRef {
-    pub id: String,
-    pub name: String,
-    pub endpoint: String,
-}
+// Re-use canonical types from garden-common
+pub use garden_common::discovery::{
+    FoundService, ResolvedConnection, ServiceDiscoveryResponse, StoneRef,
+};
 
-/// Connection information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectionInfo {
-    pub hostname: String,
-    pub ip: String,
-    pub port: u16,
-    pub protocol: String,
-    pub uris: Vec<String>,
-}
-
-/// Found service
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FoundService {
-    pub name: String,
-    pub offering: String,
-    pub category: String,
-    pub tags: Vec<String>,
-    pub status: String,
-    pub stone: StoneRef,
-    pub connection: ConnectionInfo,
-}
-
-/// Service discovery response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceDiscoveryResponse {
-    pub found: bool,
-    pub services: Vec<FoundService>,
-    pub source: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_age_seconds: Option<u64>,
-    pub timestamp: String,
-}
+/// Backward-compat alias: rake previously named this `ConnectionInfo`
+pub type ConnectionInfo = ResolvedConnection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ToolsSnapshotEvent {

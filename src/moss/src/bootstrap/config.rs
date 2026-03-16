@@ -106,7 +106,7 @@ impl DaemonConfig {
 async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::Result<String> {
     use crate::infra::load_cached_stone_name;
 
-    let env_stone_name = std::env::var(garden_common::ENV_STONE_NAME).ok();
+    let env_stone_name = std::env::var(garden_common::constants::ENV_STONE_NAME).ok();
 
     // CLI flag only counts if it wasn't set via env var
     let explicit_cli_stone_name = if cli.stone_name.is_some() && env_stone_name.is_none() {
@@ -136,7 +136,7 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
         .or(cached_stone_name)
         .or(system_hostname)
         .or(env_stone_name)
-        .unwrap_or_else(|| garden_common::DEFAULT_STONE_NAME.to_string());
+        .unwrap_or_else(|| garden_common::constants::DEFAULT_STONE_NAME.to_string());
 
     Ok(stone_name)
 }

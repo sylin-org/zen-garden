@@ -40,18 +40,13 @@ use garden_common::HardwareCapabilities;
 /// Validates hardware constraints and returns available/blocked updates.
 pub async fn check_stone(
     State(state): State<AppState>,
-) -> Result<
-    Json<ApiResponse<NourishmentCheckResponse>>,
-    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
-> {
+) -> crate::api::ApiResult<NourishmentCheckResponse> {
     // Get hardware capabilities for constraint checking
     let caps_guard = state.current.capabilities.read().await;
     let capabilities = caps_guard.as_ref().ok_or_else(|| {
-        crate::infra::error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
+        crate::unavailable(
             "HARDWARE_NOT_DETECTED",
-            "Hardware capabilities not yet detected".to_string(),
-            None,
+            "Hardware capabilities not yet detected",
         )
     })?;
 
@@ -59,11 +54,9 @@ pub async fn check_stone(
     let offering_updates = check_offering_updates(&state, capabilities)
         .await
         .map_err(|e| {
-            crate::infra::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            crate::internal(
                 "REGISTRY_ERROR",
                 format!("Failed to check offering updates: {}", e),
-                None,
             )
         })?;
 
@@ -71,11 +64,9 @@ pub async fn check_stone(
     let firmware_updates = check_firmware_updates(&state, capabilities)
         .await
         .map_err(|e| {
-            crate::infra::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            crate::internal(
                 "FIRMWARE_ERROR",
                 format!("Failed to check firmware updates: {}", e),
-                None,
             )
         })?;
 
@@ -102,10 +93,7 @@ pub async fn check_stone(
         updates: Updates { available, blocked },
     };
 
-    Ok(Json(ApiResponse {
-        data: response,
-        suggestions: None,
-    }))
+    crate::api::ok(response)
 }
 
 // ============================================================================
@@ -117,10 +105,7 @@ pub async fn check_stone(
 /// Queries all stones in parallel for updates, following the observe pattern.
 pub async fn check_garden(
     State(state): State<AppState>,
-) -> Result<
-    Json<ApiResponse<GardenNourishmentResponse>>,
-    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
-> {
+) -> crate::api::ApiResult<GardenNourishmentResponse> {
     // Get topology from this stone's cache
     let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
 
@@ -131,7 +116,7 @@ pub async fn check_garden(
             let endpoint = entry.address.http_base();
             let stone_name = entry.stone_name.clone();
             let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .timeout(garden_common::constants::timeouts::nourishment_timeout())
                 .build()
                 .unwrap();
 
@@ -151,10 +136,7 @@ pub async fn check_garden(
 
     let response = GardenNourishmentResponse { stones };
 
-    Ok(Json(ApiResponse {
-        data: response,
-        suggestions: None,
-    }))
+    crate::api::ok(response)
 }
 
 /// Query single stone for updates
@@ -200,10 +182,7 @@ async fn query_stone_nourishment(
 pub async fn execute_garden(
     State(state): State<AppState>,
     Json(request): Json<ExecuteRequest>,
-) -> Result<
-    Json<ApiResponse<GardenExecuteResponse>>,
-    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
-> {
+) -> crate::api::ApiResult<GardenExecuteResponse> {
     use garden_common::nourishment::UpdateScope;
     use garden_common::utils::ids::generate_guidv7;
 
@@ -211,7 +190,7 @@ pub async fn execute_garden(
     let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(garden_common::constants::timeouts::nourishment_timeout())
         .build()
         .unwrap();
 
@@ -252,13 +231,13 @@ pub async fn execute_garden(
     }
 
     if affected_stones.is_empty() {
-        return Ok(Json(ApiResponse {
-            data: GardenExecuteResponse {
+        return crate::api::ok_with(
+            GardenExecuteResponse {
                 job_id: generate_guidv7(),
                 stone_jobs: Vec::new(),
             },
-            suggestions: Some(vec!["No stones have matching updates".to_string()]),
-        }));
+            vec!["No stones have matching updates".to_string()],
+        );
     }
 
     // Step 2: Dispatch execute request to each affected stone
@@ -294,10 +273,7 @@ pub async fn execute_garden(
         stone_jobs,
     };
 
-    Ok(Json(ApiResponse {
-        data: response,
-        suggestions: None,
-    }))
+    crate::api::ok(response)
 }
 
 /// Dispatch execute request to a single stone
@@ -372,46 +348,41 @@ async fn dispatch_execute_to_stone(
 pub async fn execute_stone(
     State(state): State<AppState>,
     Json(request): Json<ExecuteRequest>,
-) -> Result<
-    Json<ApiResponse<ExecuteResponse>>,
-    (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
-> {
+) -> crate::api::ApiResult<ExecuteResponse> {
     use garden_common::nourishment::UpdateScope;
     use garden_common::utils::ids::generate_guidv7;
 
     // Get this stone's pending updates
-    let caps_guard = state.current.capabilities.read().await;
-    let capabilities = caps_guard.as_ref().ok_or_else(|| {
-        crate::infra::error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "HARDWARE_NOT_DETECTED",
-            "Hardware capabilities not yet detected".to_string(),
-            None,
-        )
-    })?;
-
-    // Check what updates are available
-    let offering_updates = check_offering_updates(&state, capabilities)
-        .await
-        .map_err(|e| {
-            crate::infra::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "REGISTRY_ERROR",
-                format!("Failed to check offering updates: {}", e),
-                None,
+    let (offering_updates, firmware_updates) = {
+        let caps_guard = state.current.capabilities.read().await;
+        let capabilities = caps_guard.as_ref().ok_or_else(|| {
+            crate::unavailable(
+                "HARDWARE_NOT_DETECTED",
+                "Hardware capabilities not yet detected",
             )
         })?;
 
-    let firmware_updates = check_firmware_updates(&state, capabilities)
-        .await
-        .map_err(|e| {
-            crate::infra::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "FIRMWARE_ERROR",
-                format!("Failed to check firmware updates: {}", e),
-                None,
-            )
-        })?;
+        // Check what updates are available
+        let offerings = check_offering_updates(&state, capabilities)
+            .await
+            .map_err(|e| {
+                crate::internal(
+                    "REGISTRY_ERROR",
+                    format!("Failed to check offering updates: {}", e),
+                )
+            })?;
+
+        let firmware = check_firmware_updates(&state, capabilities)
+            .await
+            .map_err(|e| {
+                crate::internal(
+                    "FIRMWARE_ERROR",
+                    format!("Failed to check firmware updates: {}", e),
+                )
+            })?;
+
+        (offerings, firmware)
+    };
 
     // Filter based on scope
     let (apply_offerings, apply_firmware) = match request.scope {
@@ -482,9 +453,6 @@ pub async fn execute_stone(
         jobs.insert(job_id.clone(), tx.clone());
     }
 
-    // Drop the capabilities guard before spawning
-    drop(caps_guard);
-
     // Spawn background task
     let state = state.clone();
     let task_job_id = job_id.clone();
@@ -502,10 +470,7 @@ pub async fn execute_stone(
 
     let response = ExecuteResponse { job_id };
 
-    Ok(Json(ApiResponse {
-        data: response,
-        suggestions: None,
-    }))
+    crate::api::ok(response)
 }
 
 /// Background task for executing updates
@@ -676,7 +641,7 @@ async fn execute_offering_update(
         .map_err(|e| anyhow::anyhow!("Failed to remove service '{}': {}", name, e))?;
 
     // Step 3: Get compiled manifest for service configuration
-    let compiled = crate::domain::get_compiled_offering(state, name)
+    let compiled = crate::domain::get_compiled_offering(state, name, &crate::infra::persistence::OsOfferingsCache)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to get offering config for '{}': {}", name, e))?
         .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in catalog", name))?;
@@ -821,11 +786,9 @@ pub async fn stream_status(
     let rx = {
         let jobs = state.orchestration.nourishment.jobs.read().await;
         jobs.get(&job_id).map(|tx| tx.subscribe()).ok_or_else(|| {
-            crate::infra::error_response(
-                StatusCode::NOT_FOUND,
+            crate::not_found(
                 "JOB_NOT_FOUND",
                 format!("Nourishment job not found: {}", job_id),
-                None,
             )
         })?
     };
@@ -852,7 +815,7 @@ async fn check_offering_updates(
     capabilities: &HardwareCapabilities,
 ) -> anyhow::Result<Vec<Result<Update, BlockedUpdate>>> {
     use crate::domain::constraints::check_constraints;
-    use garden_common::infra::registry_client::{
+    use crate::infra::registry_client::{
         find_newer_version, get_image_digest, query_image_tags, RegistryConfig,
     };
 

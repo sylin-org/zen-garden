@@ -12,7 +12,7 @@ use crate::context::Runtime;
 use crate::commands::Command;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 
 // ============================================================================
 // Types

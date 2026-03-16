@@ -19,6 +19,17 @@ pub struct StorageOrchestration {
     pub rescan: tokio::sync::mpsc::Sender<()>,
 }
 
+impl StorageOrchestration {
+    /// Subscribe to the debounced storage tick stream.
+    ///
+    /// Returns a broadcast receiver of [`garden_common::storage::StorageTick`]
+    /// events quantized at 2s quiet / 10s deadline. Use this for SSE streams
+    /// and replication tasks instead of accessing `tick.debounced` directly.
+    pub fn tick_stream(&self) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageTick> {
+        self.tick.debounced.subscribe()
+    }
+}
+
 /// Write-event tick channels at two frequencies.
 ///
 /// Field path: `state.orchestration.storage.tick.{raw|debounced}`
@@ -29,6 +40,6 @@ pub struct Tick {
     pub raw:       tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
 
     /// Debounced tick (2s quiet / 10s deadline cap).
-    /// Subscribers: SSE stream, replication task.
-    pub debounced: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+    /// Internal — use [`StorageOrchestration::tick_stream()`] to subscribe.
+    pub(crate) debounced: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
 }

@@ -144,7 +144,7 @@ pub async fn generate_unique_name(runtime: &dyn PlatformRuntime) -> Result<Strin
         generate_unique_name_windows(runtime).await
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         generate_unique_name_linux(runtime).await
     }
@@ -507,7 +507,7 @@ pub async fn get_hostname() -> Result<String> {
         anyhow::bail!("Failed to get Windows hostname");
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         let content = tokio::fs::read_to_string("/etc/hostname")
             .await

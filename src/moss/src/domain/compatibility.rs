@@ -168,14 +168,14 @@ fn build_from_live_detection() -> CompatCheckCapabilities {
 /// Evaluates rules and modifies template image if needed (fallback).
 /// Returns structured compatibility result.
 pub fn compile_compatibility(
-    template: &mut crate::infra::manifests::ServiceTemplate,
+    template: &mut garden_common::manifests::ServiceTemplate,
     cached_capabilities: Option<&HardwareCapabilities>,
 ) -> CompiledCompatibility {
     if let Some(rules) = &template.compatibility {
         let capabilities = get_current_compat_capabilities(cached_capabilities);
         match evaluate_compatibility(rules, &capabilities) {
             CompatibilityDecision::Pass => CompiledCompatibility {
-                decision: garden_common::COMPAT_PASS.to_string(),
+                decision: garden_common::constants::COMPAT_PASS.to_string(),
                 reason: None,
                 original_image: None,
                 fallback_image: None,
@@ -186,7 +186,7 @@ pub fn compile_compatibility(
                 let original_image = template.image.clone();
                 template.image = image.clone();
                 CompiledCompatibility {
-                    decision: garden_common::COMPAT_FALLBACK.to_string(),
+                    decision: garden_common::constants::COMPAT_FALLBACK.to_string(),
                     reason: Some(reason),
                     original_image: Some(original_image),
                     fallback_image: Some(image),
@@ -195,7 +195,7 @@ pub fn compile_compatibility(
                 }
             }
             CompatibilityDecision::Warning { reason, suggestion } => CompiledCompatibility {
-                decision: garden_common::COMPAT_WARNING.to_string(),
+                decision: garden_common::constants::COMPAT_WARNING.to_string(),
                 reason: Some(reason),
                 original_image: None,
                 fallback_image: None,
@@ -203,7 +203,7 @@ pub fn compile_compatibility(
                 suggestion,
             },
             CompatibilityDecision::Fail { reason, suggestion } => CompiledCompatibility {
-                decision: garden_common::COMPAT_FAIL.to_string(),
+                decision: garden_common::constants::COMPAT_FAIL.to_string(),
                 reason: Some(reason),
                 original_image: Some(template.image.clone()),
                 fallback_image: None,
@@ -213,7 +213,7 @@ pub fn compile_compatibility(
         }
     } else {
         CompiledCompatibility {
-            decision: garden_common::COMPAT_PASS.to_string(),
+            decision: garden_common::constants::COMPAT_PASS.to_string(),
             reason: None,
             original_image: None,
             fallback_image: None,

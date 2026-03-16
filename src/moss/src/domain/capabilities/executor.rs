@@ -787,7 +787,7 @@ impl CapabilityExecutor {
         #[cfg(target_os = "windows")]
         let (shell, flag) = ("cmd", "/C");
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         let (shell, flag) = ("sh", "-c");
 
         let output = tokio::time::timeout(

@@ -394,16 +394,11 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         }
     }
 
-    // Persist if we made changes
     if updated > 0 {
-        if let Err(e) = state.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after guidance backfill");
-        } else {
-            tracing::info!(
-                count = updated,
-                "Guidance backfill complete, offerings persisted"
-            );
-        }
+        tracing::info!(
+            count = updated,
+            "Guidance backfill complete"
+        );
     }
 
     updated
@@ -470,7 +465,7 @@ pub async fn install_service_task(
         offering_type,
         "Resolving compiled offering config"
     );
-    let compiled = match get_compiled_offering(state, offering_type).await {
+    let compiled = match get_compiled_offering(state, offering_type, &crate::infra::persistence::OsOfferingsCache).await {
         Ok(Some(o)) => o,
         Ok(None) => {
             state.console.emit(console::ConsoleEvent::new(
@@ -867,7 +862,6 @@ pub async fn install_service_task(
 
     // Sync + chirp so topology reflects the change immediately
     state.sync_self_services(true).await;
-    let _ = state.persist_offerings().await;
 
     // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
     state.event_bus.emit(OfferingEvent::deployed(
@@ -1115,8 +1109,6 @@ pub async fn install_image_direct_task(
         })
         .await;
 
-    let _ = state.persist_offerings().await;
-
     // Emit deployed event
     state.event_bus.emit(OfferingEvent::deployed(
         service_name,
@@ -1219,7 +1211,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let service_name = offering_fqn.fqn();
         let offering_type = offering_fqn.offering.clone();
 
-        let compiled = match get_compiled_offering(state, &offering_type).await {
+        let compiled = match get_compiled_offering(state, &offering_type, &crate::infra::persistence::OsOfferingsCache).await {
             Ok(Some(o)) => o,
             Ok(None) => {
                 let mut jobs = state.jobs.write().await;

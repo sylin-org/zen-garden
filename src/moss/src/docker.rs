@@ -412,7 +412,7 @@ impl Client {
             )?
         };
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         let docker = {
             tracing::debug!("Connecting to Docker via Unix socket");
             BollardDocker::connect_with_socket_defaults()

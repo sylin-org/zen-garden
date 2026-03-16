@@ -127,7 +127,7 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             let compat = compatibility.unwrap_or_else(|| {
                 // Index not built yet or offering not in manifest — assume pass
                 crate::domain::compatibility::CompiledCompatibility {
-                    decision: garden_common::COMPAT_PASS.to_string(),
+                    decision: garden_common::constants::COMPAT_PASS.to_string(),
                     reason: None,
                     original_image: None,
                     fallback_image: None,

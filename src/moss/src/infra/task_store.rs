@@ -12,107 +12,13 @@
 //! ```
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use garden_common::{ScheduledTask, TaskDefinition, TaskResult};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Registry of all scheduled tasks
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-pub struct TaskRegistry {
-    /// All scheduled tasks keyed by task_id
-    pub tasks: HashMap<String, ScheduledTask>,
-    /// Last update timestamp
-    pub updated_at: String,
-}
-
-impl TaskRegistry {
-    /// Create empty registry
-    pub fn new() -> Self {
-        Self {
-            tasks: HashMap::new(),
-            updated_at: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
-    /// Get all tasks for an offering
-    pub fn tasks_for_offering(&self, offering_id: &str) -> Vec<&ScheduledTask> {
-        self.tasks
-            .values()
-            .filter(|t| t.offering_id == offering_id)
-            .collect()
-    }
-
-    /// Get a specific task by ID
-    pub fn get(&self, task_id: &str) -> Option<&ScheduledTask> {
-        self.tasks.get(task_id)
-    }
-
-    /// Get a mutable reference to a task
-    pub fn get_mut(&mut self, task_id: &str) -> Option<&mut ScheduledTask> {
-        self.tasks.get_mut(task_id)
-    }
-
-    /// Check if a task exists
-    pub fn contains(&self, task_id: &str) -> bool {
-        self.tasks.contains_key(task_id)
-    }
-
-    /// Add or update a task
-    pub fn upsert(&mut self, task: ScheduledTask) {
-        self.tasks.insert(task.task_id.clone(), task);
-        self.updated_at = chrono::Utc::now().to_rfc3339();
-    }
-
-    /// Remove a task by ID
-    pub fn remove(&mut self, task_id: &str) -> Option<ScheduledTask> {
-        let result = self.tasks.remove(task_id);
-        if result.is_some() {
-            self.updated_at = chrono::Utc::now().to_rfc3339();
-        }
-        result
-    }
-
-    /// Remove all tasks for an offering
-    pub fn remove_for_offering(&mut self, offering_id: &str) -> Vec<ScheduledTask> {
-        let task_ids: Vec<String> = self
-            .tasks
-            .iter()
-            .filter(|(_, t)| t.offering_id == offering_id)
-            .map(|(id, _)| id.clone())
-            .collect();
-
-        let mut removed = Vec::new();
-        for id in task_ids {
-            if let Some(task) = self.tasks.remove(&id) {
-                removed.push(task);
-            }
-        }
-
-        if !removed.is_empty() {
-            self.updated_at = chrono::Utc::now().to_rfc3339();
-        }
-
-        removed
-    }
-
-    /// Get count of all tasks
-    pub fn len(&self) -> usize {
-        self.tasks.len()
-    }
-
-    /// Check if empty
-    pub fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
-    }
-
-    /// Get all enabled tasks
-    pub fn enabled_tasks(&self) -> Vec<&ScheduledTask> {
-        self.tasks
-            .values()
-            .filter(|t| t.definition.enabled)
-            .collect()
-    }
-}
+// TaskRegistry (pure data type) lives in domain; re-export for backward compat.
+pub use crate::domain::task_registry::TaskRegistry;
 
 /// Store for scheduled task persistence
 pub struct TaskStore {
@@ -317,6 +223,17 @@ impl TaskStore {
             .into_iter()
             .cloned()
             .collect())
+    }
+}
+
+#[async_trait]
+impl crate::domain::traits::TaskRegistryPersistence for TaskStore {
+    async fn load_registry(&self) -> Result<TaskRegistry> {
+        TaskStore::load_registry(self).await
+    }
+
+    async fn save_registry(&self, registry: &TaskRegistry) -> Result<()> {
+        TaskStore::save_registry(self, registry).await
     }
 }
 

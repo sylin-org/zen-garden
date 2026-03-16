@@ -98,7 +98,7 @@ impl Network {
     ) -> Self {
         let initial_ip = get_current_ip();
         let current_ip = Arc::new(RwLock::new(initial_ip.clone()));
-        let (tx, _) = broadcast::channel(100);
+        let (tx, _) = broadcast::channel(garden_common::constants::channels::MONITOR_EVENT);
 
         // Set initial network_ready state
         let initially_connected = !is_disconnected(&initial_ip);

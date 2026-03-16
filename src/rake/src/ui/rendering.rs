@@ -20,7 +20,7 @@ impl TerminalInfo {
             .unwrap_or(constants::DEFAULT_TERMINAL_WIDTH);
 
         // Check NO_COLOR environment variable first (universal override)
-        let no_color = std::env::var(crate::ENV_NO_COLOR).is_ok();
+        let no_color = std::env::var(garden_common::constants::ENV_NO_COLOR).is_ok();
 
         // Use supports-color crate for proper terminal detection
         let supports_color =
@@ -29,7 +29,7 @@ impl TerminalInfo {
         // Unicode support: disabled on Windows by default (PowerShell encoding issues)
         // Can be enabled with GARDEN_UNICODE=1 environment variable
         let supports_unicode = if cfg!(windows) {
-            std::env::var(crate::ENV_GARDEN_UNICODE).is_ok()
+            std::env::var(garden_common::constants::ENV_GARDEN_UNICODE).is_ok()
         } else {
             true // Unix terminals generally handle Unicode well
         };
@@ -193,18 +193,18 @@ pub fn stone_banner(name: &str, status: &str, color: bool) -> String {
     let status_lower = status.to_lowercase();
     let status_with_brackets = format!("[{}]", status);
     let status_colored = if color {
-        if status_lower.contains(crate::VITALITY_THRIVING)
-            || status_lower.contains(crate::HEALTH_HEALTHY)
+        if status_lower.contains(garden_common::constants::VITALITY_THRIVING)
+            || status_lower.contains(garden_common::constants::HEALTH_HEALTHY)
         {
             status_with_brackets.green().to_string()
-        } else if status_lower.contains(crate::VITALITY_WITHERING)
-            || status_lower.contains(crate::HEALTH_UNHEALTHY)
+        } else if status_lower.contains(garden_common::constants::VITALITY_WITHERING)
+            || status_lower.contains(garden_common::constants::HEALTH_UNHEALTHY)
             || status.contains("ERROR")
         {
             status_with_brackets.red().to_string()
-        } else if status_lower.contains(crate::VITALITY_DORMANT)
-            || status_lower.contains(crate::VITALITY_NEEDS_ATTENTION)
-            || status_lower.contains(crate::HEALTH_DEGRADED)
+        } else if status_lower.contains(garden_common::constants::VITALITY_DORMANT)
+            || status_lower.contains(garden_common::constants::VITALITY_NEEDS_ATTENTION)
+            || status_lower.contains(garden_common::constants::HEALTH_DEGRADED)
             || status.contains("WARN")
         {
             status_with_brackets.yellow().to_string()
@@ -317,9 +317,9 @@ pub fn format_number(value: f64, precision: usize) -> String {
 }
 
 /// Truncate service/offering name to max length
-/// Delegates to crate::utils::strings::truncate
+/// Delegates to garden_common::utils::strings::truncate
 pub fn truncate_name(name: &str, max_len: usize) -> String {
-    crate::utils::strings::truncate(name, max_len)
+    garden_common::utils::strings::truncate(name, max_len)
 }
 
 /// Render text with specified color (respects terminal color support)
@@ -507,24 +507,24 @@ pub fn status_indicator(status: &str, color: bool) -> String {
     }
 
     let indicator =
-        if status_str == crate::SERVICE_RUNNING || status_str == crate::VITALITY_THRIVING {
-            crate::VITALITY_THRIVING
-        } else if status_str == crate::SERVICE_STOPPED || status_str == crate::VITALITY_DORMANT {
-            crate::VITALITY_DORMANT
-        } else if status_str == crate::VITALITY_NEEDS_ATTENTION
-            || status_str == crate::VITALITY_WITHERING
+        if status_str == garden_common::constants::SERVICE_RUNNING || status_str == garden_common::constants::VITALITY_THRIVING {
+            garden_common::constants::VITALITY_THRIVING
+        } else if status_str == garden_common::constants::SERVICE_STOPPED || status_str == garden_common::constants::VITALITY_DORMANT {
+            garden_common::constants::VITALITY_DORMANT
+        } else if status_str == garden_common::constants::VITALITY_NEEDS_ATTENTION
+            || status_str == garden_common::constants::VITALITY_WITHERING
         {
-            crate::VITALITY_NEEDS_ATTENTION
-        } else if status_str == "ok" || status_str == crate::HEALTH_HEALTHY {
-            crate::VITALITY_THRIVING
+            garden_common::constants::VITALITY_NEEDS_ATTENTION
+        } else if status_str == "ok" || status_str == garden_common::constants::HEALTH_HEALTHY {
+            garden_common::constants::VITALITY_THRIVING
         } else if status_str == "error"
             || status_str == "failed"
-            || status_str == crate::HEALTH_UNHEALTHY
+            || status_str == garden_common::constants::HEALTH_UNHEALTHY
             || status_str == "warn"
             || status_str == "warning"
-            || status_str == crate::HEALTH_DEGRADED
+            || status_str == garden_common::constants::HEALTH_DEGRADED
         {
-            crate::VITALITY_NEEDS_ATTENTION
+            garden_common::constants::VITALITY_NEEDS_ATTENTION
         } else {
             return status.to_string(); // Unknown status, pass through without brackets
         };
@@ -533,22 +533,22 @@ pub fn status_indicator(status: &str, color: bool) -> String {
     let bracketed = format!("[{}]", indicator);
 
     if color {
-        let is_healthy = status_str == crate::SERVICE_RUNNING
+        let is_healthy = status_str == garden_common::constants::SERVICE_RUNNING
             || status_str == "ok"
-            || status_str == crate::HEALTH_HEALTHY
-            || status_str == crate::VITALITY_THRIVING;
+            || status_str == garden_common::constants::HEALTH_HEALTHY
+            || status_str == garden_common::constants::VITALITY_THRIVING;
 
         let is_dormant =
-            status_str == crate::SERVICE_STOPPED || status_str == crate::VITALITY_DORMANT;
+            status_str == garden_common::constants::SERVICE_STOPPED || status_str == garden_common::constants::VITALITY_DORMANT;
 
         let is_degraded =
-            status_str == "warn" || status_str == "warning" || status_str == crate::HEALTH_DEGRADED;
+            status_str == "warn" || status_str == "warning" || status_str == garden_common::constants::HEALTH_DEGRADED;
 
         let is_unhealthy = status_str == "error"
             || status_str == "failed"
-            || status_str == crate::HEALTH_UNHEALTHY
-            || status_str == crate::VITALITY_WITHERING
-            || status_str == crate::VITALITY_NEEDS_ATTENTION;
+            || status_str == garden_common::constants::HEALTH_UNHEALTHY
+            || status_str == garden_common::constants::VITALITY_WITHERING
+            || status_str == garden_common::constants::VITALITY_NEEDS_ATTENTION;
 
         if is_healthy {
             bracketed.green().to_string()
@@ -602,18 +602,18 @@ pub fn os_indicator(os_string: &str, supports_unicode: bool) -> &'static str {
 /// Returns None for thriving (no symbol needed — name color conveys health).
 pub fn compact_status_symbol(health: &str, supports_unicode: bool) -> Option<&'static str> {
     let h = health.to_lowercase();
-    if h == crate::VITALITY_THRIVING
-        || h == crate::SERVICE_RUNNING
+    if h == garden_common::constants::VITALITY_THRIVING
+        || h == garden_common::constants::SERVICE_RUNNING
         || h == "ok"
-        || h == crate::HEALTH_HEALTHY
+        || h == garden_common::constants::HEALTH_HEALTHY
         || h == "starting"
         || h == "initializing"
     {
         None // Thriving = no symbol
-    } else if h == crate::VITALITY_DORMANT || h == crate::SERVICE_STOPPED {
+    } else if h == garden_common::constants::VITALITY_DORMANT || h == garden_common::constants::SERVICE_STOPPED {
         Some(if supports_unicode { "\u{25CB}" } else { "o" }) // ○
-    } else if h == crate::HEALTH_DEGRADED
-        || h == crate::VITALITY_NEEDS_ATTENTION
+    } else if h == garden_common::constants::HEALTH_DEGRADED
+        || h == garden_common::constants::VITALITY_NEEDS_ATTENTION
         || h == "warn"
         || h == "warning"
     {
@@ -635,18 +635,18 @@ pub enum VitalityClass {
 /// Map a health/status string to its vitality class.
 pub fn classify_health(health: &str) -> VitalityClass {
     let h = health.to_lowercase();
-    if h == crate::VITALITY_THRIVING
-        || h == crate::SERVICE_RUNNING
+    if h == garden_common::constants::VITALITY_THRIVING
+        || h == garden_common::constants::SERVICE_RUNNING
         || h == "ok"
-        || h == crate::HEALTH_HEALTHY
+        || h == garden_common::constants::HEALTH_HEALTHY
         || h == "starting"
         || h == "initializing"
     {
         VitalityClass::Thriving
-    } else if h == crate::VITALITY_DORMANT || h == crate::SERVICE_STOPPED {
+    } else if h == garden_common::constants::VITALITY_DORMANT || h == garden_common::constants::SERVICE_STOPPED {
         VitalityClass::Dormant
-    } else if h == crate::HEALTH_DEGRADED
-        || h == crate::VITALITY_NEEDS_ATTENTION
+    } else if h == garden_common::constants::HEALTH_DEGRADED
+        || h == garden_common::constants::VITALITY_NEEDS_ATTENTION
         || h == "warn"
         || h == "warning"
     {
@@ -674,7 +674,7 @@ pub fn colored_stone_name(name: &str, health: &str, is_tended: bool, color: bool
 }
 
 /// Format AI capabilities into a compact string like "GPU 8G/DML" or "2xGPU 16G/CUDA".
-pub fn compact_ai(caps: &crate::types::HardwareCapabilities) -> String {
+pub fn compact_ai(caps: &garden_common::types::HardwareCapabilities) -> String {
     if let Some(ref ai) = caps.hardware.ai_capabilities {
         if ai.gpu_count == 0 {
             return "\u{2014}".to_string(); // —
@@ -720,7 +720,7 @@ pub fn compact_ai(caps: &crate::types::HardwareCapabilities) -> String {
 
 /// Format offerings list compactly with truncation: "memcached redis vault +2"
 pub fn compact_offerings(
-    services: &[crate::types::TopologyServiceEntry],
+    services: &[garden_common::types::TopologyServiceEntry],
     max_shown: usize,
 ) -> String {
     if services.is_empty() {

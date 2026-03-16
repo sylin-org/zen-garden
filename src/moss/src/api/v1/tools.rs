@@ -1,5 +1,5 @@
 use crate::domain::tools::{stream_event_type_for_delta, ToolQuery, ToolsSnapshotPayload};
-use crate::{error_response, AppState};
+use crate::{bad_request, AppState};
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -7,7 +7,7 @@ use axum::{
     Json,
 };
 use futures_util::stream::{self, Stream, StreamExt};
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::api_utils::ApiErrorResponse;
 use garden_common::tools::event_types;
 use garden_common::tools::{CapabilitySelector, GardenTool, ToolDelta};
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ pub struct ToolsSnapshotResponse {
 pub async fn list_garden_tools_v1(
     State(state): State<AppState>,
     Query(query): Query<ToolsQueryParams>,
-) -> Result<Json<ApiResponse<ToolsSnapshotResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ToolsSnapshotResponse> {
     let filter = parse_query(&query)?;
     let since = query.since.unwrap_or(0);
 
@@ -60,11 +60,11 @@ pub async fn list_garden_tools_v1(
         (cursor, tools, replay)
     };
 
-    Ok(Json(ApiResponse::new(ToolsSnapshotResponse {
+    crate::api::ok(ToolsSnapshotResponse {
         cursor,
         tools,
         replay,
-    })))
+    })
 }
 
 pub async fn stream_garden_tools_v1(
@@ -78,7 +78,7 @@ pub async fn stream_garden_tools_v1(
 
     // MOSS-0004: child token for cooperative shutdown
     let token = state.shutdown_token.child_token();
-    let rx = state.tool.delta.subscribe();
+    let rx = state.tool.delta_stream();
 
     let (snapshot_cursor, snapshot_tools, replay) = {
         let reg = state.tool.registry.read().await;
@@ -211,32 +211,26 @@ fn parse_capability_selectors(
             continue;
         }
         let Some((cap_type, item)) = token.split_once(':') else {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
+            return Err(bad_request(
                 "INVALID_CAPABILITY_FILTER",
-                "capability must be '<type>:<item>' (comma-separated for multiple)".to_string(),
-                None,
+                "capability must be '<type>:<item>' (comma-separated for multiple)",
             ));
         };
         let cap_type = cap_type.trim().to_ascii_lowercase();
         let item = item.trim().to_string();
         if cap_type.is_empty() || item.is_empty() {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
+            return Err(bad_request(
                 "INVALID_CAPABILITY_FILTER",
-                "capability must be '<type>:<item>' (comma-separated for multiple)".to_string(),
-                None,
+                "capability must be '<type>:<item>' (comma-separated for multiple)",
             ));
         }
         parsed.push(CapabilitySelector { cap_type, item });
     }
 
     if parsed.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "INVALID_CAPABILITY_FILTER",
-            "capability must include at least one '<type>:<item>' selector".to_string(),
-            None,
+            "capability must include at least one '<type>:<item>' selector",
         ));
     }
 

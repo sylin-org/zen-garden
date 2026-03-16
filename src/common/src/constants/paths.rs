@@ -29,7 +29,7 @@ pub fn data_dir() -> String {
         {
             ".zen-garden".to_string()
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             "/var/lib/zen-garden".to_string()
         }
@@ -57,7 +57,7 @@ pub fn shared_data_dir() -> String {
                 std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string());
             format!(r"{}\zen-garden", program_data)
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             data_dir()
         }
@@ -131,7 +131,7 @@ pub fn companions_dir() -> String {
         {
             ".zen-garden\\Companions".to_string()
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             "/usr/local/bin/companions".to_string()
         }

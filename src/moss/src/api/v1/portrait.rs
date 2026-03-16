@@ -586,13 +586,12 @@ pub async fn get_portrait_data(
         let adapters = state.companion.registry.list().await;
         let mut result = Vec::new();
         for adapter in adapters {
-            let running = state.companion.registry.is_running(&adapter.id).await;
             result.push(PortraitCompanion {
                 id: adapter.manifest.id.clone(),
                 name: adapter.manifest.name.clone(),
                 description: adapter.manifest.description.clone(),
-                port: adapter.port(),
-                status: if running {
+                port: adapter.port,
+                status: if adapter.running {
                     "running".into()
                 } else {
                     "stopped".into()

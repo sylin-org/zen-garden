@@ -357,7 +357,7 @@ pub async fn put_file_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<ApiResponse<FileWriteResult>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<FileWriteResult> {
     let path = path.trim_start_matches('/');
     if path.is_empty() {
         return Err(err(
@@ -402,10 +402,10 @@ pub async fn put_file_v1(
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "WRITE_FAILED", &e.to_string()))?;
 
     debug!(storage = %name, path = %path, size, "garden PUT file");
-    Ok(Json(ApiResponse::new(FileWriteResult {
+    crate::api::ok(FileWriteResult {
         path: path.to_string(),
         size,
-    })))
+    })
 }
 
 // ============================================================================

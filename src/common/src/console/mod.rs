@@ -33,7 +33,7 @@ pub fn detect_platform_console_mode() -> ConsoleMode {
     }
 
     // Linux systemd/interactive detection
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         // Check for systemd without TTY
         if std::env::var("INVOCATION_ID").is_ok() && !std::io::stdin().is_terminal() {

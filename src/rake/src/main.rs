@@ -3,7 +3,7 @@ mod dispatch;
 mod route;
 
 // Use shared modules from the library
-use garden_common::ui::rendering as ui;
+use garden_rake::ui::rendering as ui;
 use garden_rake::cli_build::{
     build_clap_app, count_verbosity, extract_global_flags, normalize_zen_to_clap, AliasIndex,
 };

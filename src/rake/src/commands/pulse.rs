@@ -20,8 +20,8 @@ use futures_util::StreamExt;
 use garden_common::presence::{
     event_types, OfferingState, PresenceSnapshot, StoneLoadUpdatedPayload, StoneState,
 };
-use garden_common::ui::gauge;
-use garden_common::ui::rendering::{self, TerminalInfo};
+use crate::ui::gauge;
+use crate::ui::rendering::{self, TerminalInfo};
 use garden_common::utils::strings::shorten_stone_name;
 use garden_common::{GardenApiResponse, TopologyEntry};
 use std::collections::VecDeque;

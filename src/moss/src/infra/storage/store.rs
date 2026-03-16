@@ -1139,6 +1139,56 @@ fn decrypt(dek: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
     Ok(plaintext)
 }
 
+#[async_trait::async_trait]
+impl crate::domain::traits::content_store::ContentStoreOps for ContentStore {
+    async fn read(&self, rel: &Path) -> Result<Vec<u8>> {
+        ContentStore::read(self, rel).await
+    }
+
+    async fn write(&self, rel: &Path, data: &[u8]) -> Result<()> {
+        ContentStore::write(self, rel, data).await
+    }
+
+    async fn read_string(&self, rel: &Path) -> Result<String> {
+        ContentStore::read_string(self, rel).await
+    }
+
+    async fn write_string(&self, rel: &Path, data: &str) -> Result<()> {
+        ContentStore::write_string(self, rel, data).await
+    }
+
+    async fn delete(&self, rel: &Path) -> Result<bool> {
+        ContentStore::delete(self, rel).await
+    }
+
+    async fn exists(&self, rel: &Path) -> bool {
+        ContentStore::exists(self, rel).await
+    }
+}
+
+// ============================================================================
+// Trait implementations
+// ============================================================================
+
+#[async_trait::async_trait]
+impl crate::domain::traits::ManagementStoreOps for ContentStore {
+    async fn read_pin(&self) -> Option<String> {
+        self.read_pin().await
+    }
+
+    async fn write_pin(&self, pin_id: &str) -> Result<()> {
+        self.write_pin(pin_id).await
+    }
+
+    async fn delete_pin(&self) -> Result<()> {
+        self.delete_pin().await
+    }
+
+    async fn snapshot_lkg(&self) -> Result<()> {
+        self.snapshot_lkg().await
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

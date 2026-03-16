@@ -125,7 +125,7 @@ pub fn check_process_exists(process_name: &str) -> bool {
         false
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         use std::process::Command;
         let current_pid = std::process::id();
@@ -193,7 +193,7 @@ pub fn kill_process(process_name: &str) -> Result<()> {
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         use std::process::Command;
         let current_pid = std::process::id();

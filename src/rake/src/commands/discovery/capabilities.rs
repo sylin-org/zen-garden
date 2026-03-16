@@ -9,7 +9,7 @@ use crate::suggestions;
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
-use garden_common::ui::rendering::{self as ui};
+use crate::ui::rendering::{self as ui};
 use garden_common::{CapabilityCollection, OfferingMode};
 use serde::{Deserialize, Serialize};
 

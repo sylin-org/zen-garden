@@ -21,7 +21,7 @@ use crate::infra::PulseEvent;
 use crate::AppState;
 use garden_common::presence::{
     event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot,
-    StorageSummary, StoneState,
+    StoragePresence, StoneState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +68,7 @@ pub async fn stream_stone_presence(
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
     // Subscribe to pulse channel (unified domain + transport events)
-    let rx = state.pulse.subscribe();
+    let rx = state.pulse_stream();
 
     // Create the inner event stream: snapshot first, then filtered domain events
     let inner = futures_util::stream::once(async move {
@@ -202,7 +202,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
         let map = state.current.storage.volumes.read().await;
         map.values().find_map(|v| {
             let mgmt = v.management.as_ref()?;
-            Some(StorageSummary {
+            Some(StoragePresence {
                 name: mgmt.name.clone(),
                 used_gb: v.used_bytes / 1_073_741_824,
                 total_gb: v.capacity_bytes / 1_073_741_824,

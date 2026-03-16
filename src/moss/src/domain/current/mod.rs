@@ -26,7 +26,7 @@ pub struct Topology {
     /// Dirty flag for topology persistence (TOPO-0002).
     pub dirty: crate::domain::topology::TopologyDirtyFlag,
     /// Self topology entry (this stone's current state).
-    pub self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+    pub self_entry: Arc<RwLock<garden_common::TopologyEntry>>,
 }
 
 /// Current domain context (`state.current`).

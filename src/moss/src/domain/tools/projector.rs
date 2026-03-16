@@ -150,7 +150,7 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
         },
         service: ServiceInfo {
             status: svc.status.to_ascii_lowercase(),
-            ready: svc.status.eq_ignore_ascii_case(garden_common::SERVICE_RUNNING),
+            ready: svc.status.eq_ignore_ascii_case(garden_common::constants::SERVICE_RUNNING),
             protocol: svc.connection.protocol,
             uris: svc.connection.uris,
             hostname: Some(svc.connection.hostname),

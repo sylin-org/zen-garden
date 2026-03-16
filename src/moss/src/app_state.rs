@@ -208,6 +208,21 @@ impl Default for DockerSubSystem {
 }
 
 impl AppState {
+    /// Subscribe to the live log stream.
+    ///
+    /// Returns a broadcast receiver of log lines for SSE streaming.
+    pub fn log_stream(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.log.subscribe()
+    }
+
+    /// Subscribe to the unified pulse event stream.
+    ///
+    /// Returns a broadcast receiver of [`PulseEvent`] (domain + transport events).
+    /// Consumers: pulse SSE (full firehose), presence SSE (domain-only, translated).
+    pub fn pulse_stream(&self) -> tokio::sync::broadcast::Receiver<PulseEvent> {
+        self.pulse.subscribe()
+    }
+
     /// Request the volume watcher to re-scan and re-classify all volumes.
     ///
     /// Non-blocking. If the channel is full (a rescan is already pending),
@@ -564,6 +579,9 @@ impl AppState {
 
         if changed {
             self.sync_self_services(auto_chirp).await;
+            if let Err(e) = self.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist after offering update");
+            }
         }
 
         changed
@@ -592,6 +610,9 @@ impl AppState {
 
         if changed {
             self.sync_self_services(auto_chirp).await;
+            if let Err(e) = self.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist after offering update by name");
+            }
         }
 
         changed

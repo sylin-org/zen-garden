@@ -19,7 +19,7 @@ use crate::enrollment;
 use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 
 /// Pond action to perform
 pub enum PondActionType {

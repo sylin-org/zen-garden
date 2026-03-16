@@ -25,9 +25,13 @@ use crate::{
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::infra::communications::p2p;
 use garden_common::{HardwareCapabilities, ServiceHealthStatus};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+
+use crate::domain::traits::ManagementStoreOps;
+use crate::infra::storage::{ContentStore, OsPlatform};
 
 /// Start topology maintenance task (TOPO-0002: with persistence)
 ///
@@ -37,7 +41,7 @@ use tokio_util::sync::CancellationToken;
 pub fn start_topology_maintenance(
     topology_cache: TopologyCache,
     topology_dirty: TopologyDirtyFlag,
-    self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+    self_entry: Arc<RwLock<garden_common::TopologyEntry>>,
     token: CancellationToken,
 ) {
     tokio::spawn(async move {
@@ -129,7 +133,7 @@ pub async fn start_discovery_listener(
     topology_dirty: TopologyDirtyFlag,
     tools: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
     registry: crate::domain::GardenRegistry,
-    self_entry: Arc<RwLock<crate::domain::TopologyEntry>>,
+    self_entry: Arc<RwLock<garden_common::TopologyEntry>>,
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
     manifest_registry: Arc<crate::infra::ManifestRegistry>,
@@ -453,7 +457,6 @@ pub fn start_registry_loader(state: AppState) {
         }
         if any_changed {
             state.sync_self_services(true).await;
-            let _ = state.persist_offerings().await;
         }
 
         // Coalesce any duplicate offerings that accumulated from prior versions
@@ -501,7 +504,7 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
             "Runtime templates".to_string(),
         ));
 
-        match ensure_offerings_index(&state, false).await {
+        match ensure_offerings_index(&state, false, &crate::infra::persistence::OsOfferingsCache).await {
             Ok(_) => {
                 let idx_guard = state.offerings_index.read().await;
                 if let Some(idx) = idx_guard.as_ref() {
@@ -560,7 +563,8 @@ pub fn start_maintenance_sweep(state: AppState, token: CancellationToken) {
                 }
             }
 
-            let run = crate::domain::maintenance::run_sweep(&state).await;
+            let task_store = crate::infra::TaskStore::new();
+            let run = crate::domain::maintenance::run_sweep(&state, &task_store).await;
             tracing::info!(
                 status = ?run.overall_status,
                 duration_ms = run.duration_ms,
@@ -634,7 +638,7 @@ pub async fn start_lantern_registration(
     console: Option<&ConsolePrinter>,
     token: CancellationToken,
 ) {
-    let lantern_endpoint = match std::env::var(garden_common::ENV_LANTERN_ENDPOINT) {
+    let lantern_endpoint = match std::env::var(garden_common::constants::ENV_LANTERN_ENDPOINT) {
         Ok(ep) => {
             let trimmed = ep.trim().to_string();
             if trimmed.is_empty() {
@@ -794,7 +798,7 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
 
             // Auto-mount any unmounted managed devices.
             // Connected ribbons come from the VolumeMonitor — no events emitted here.
-            let mounted = crate::domain::storage::auto_mount_unmounted().await;
+            let mounted = crate::domain::storage::auto_mount_unmounted(&OsPlatform).await;
             if mounted > 0 {
                 state.emit_storage_changed(
                     garden_common::storage::StorageChanged::Reclassified,
@@ -802,7 +806,7 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
             }
 
             // Health tick all volumes (~10s)
-            crate::domain::storage::health_tick_all(&state.current.storage.volumes).await;
+            crate::domain::storage::health_tick_all(&state.current.storage.volumes, &OsPlatform).await;
 
             // Periodic beacon heartbeat (tools projection + beacon)
             state.refresh_local_tools_projection().await;
@@ -984,7 +988,11 @@ pub(crate) async fn start_background_tasks(
     // Cross-platform: uses platform::scan_volumes() (Linux: /proc/mounts, Windows: GetLogicalDrives).
     {
         let volumes = state.current.storage.volumes.clone();
-        crate::domain::storage::initial_scan(&volumes).await;
+        let platform: Arc<dyn crate::domain::traits::StoragePlatform> = Arc::new(OsPlatform);
+        let make_store = |path: PathBuf| -> Arc<dyn ManagementStoreOps> {
+            Arc::new(ContentStore::new(path, None))
+        };
+        crate::domain::storage::initial_scan(&volumes, platform, &make_store).await;
     }
 
     // Phase 11.post4b: Initial media scan (STORAGE-0011)
@@ -1240,7 +1248,7 @@ pub(crate) async fn start_background_tasks(
                         );
                         // Add to topology cache (only if stone_id is present)
                         if let Some(sid) = discovered.stone_id {
-                            let entry = crate::domain::TopologyEntry {
+                            let entry = garden_common::TopologyEntry {
                                 stone_id: sid,
                                 stone_name: discovered.stone_name,
                                 address: discovered.address,
@@ -1321,7 +1329,7 @@ pub(crate) async fn start_background_tasks(
 
             for peer in discovered_peers {
                 if let Some(peer_id) = peer.stone_id {
-                    let entry = crate::domain::TopologyEntry {
+                    let entry = garden_common::TopologyEntry {
                         stone_id: peer_id,
                         stone_name: peer.stone_name,
                         address: peer.address,
@@ -1386,13 +1394,16 @@ pub(crate) async fn start_background_tasks(
     // StorageBank classifies volumes and emits StorageChanged; coordinator handles pulse + notifications.
     {
         use crate::infra::storage::monitor::PhysicalStorageEvent;
-        use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
+        use garden_common::notifications::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 
         let (vol_tx, mut vol_rx) = tokio::sync::mpsc::channel::<PhysicalStorageEvent>(32);
         let monitor_token = shutdown_token.child_token();
         let bank = crate::domain::StorageBank::new(
             state.current.storage.volumes.clone(),
             state.current.storage.changed.clone(),
+            |path: PathBuf| -> Arc<dyn ManagementStoreOps> {
+                Arc::new(ContentStore::new(path, None))
+            },
         );
         crate::infra::storage::monitor::build_monitor().start(vol_tx, monitor_token.clone());
 
@@ -1460,8 +1471,11 @@ pub(crate) async fn start_background_tasks(
                         )
                         .await
                         .unwrap_or_default();
-                        crate::domain::storage::reconcile(&volumes, &snaps).await;
-                        crate::domain::storage::health_tick_all(&volumes).await;
+                                                let make_store = |path: PathBuf| -> Arc<dyn ManagementStoreOps> {
+                            Arc::new(ContentStore::new(path, None))
+                        };
+                        crate::domain::storage::reconcile(&volumes, &snaps, &make_store).await;
+                        crate::domain::storage::health_tick_all(&volumes, &OsPlatform).await;
 
                         let candidate_count = {
                             let map = volumes.read().await;
@@ -1639,7 +1653,7 @@ pub(crate) async fn start_background_tasks(
             state.current.stone.id.clone(),
             state.orchestration.storage.tick.raw.clone(),
             state.subscribe_storage_changed(),
-            state.tool.delta.subscribe(),
+            state.tool.delta_stream(),
             state.console.clone(),
             shutdown_token.child_token(),
         )

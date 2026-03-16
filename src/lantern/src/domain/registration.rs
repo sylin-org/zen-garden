@@ -76,7 +76,7 @@ pub fn register_stone(
             moss_version: String::new(),
             services: topo_services,
             mac: None,
-            health: garden_common::VITALITY_THRIVING.to_string(),
+            health: garden_common::constants::VITALITY_THRIVING.to_string(),
             capabilities: None,
             status: StoneStatus::Online,
             discovered_at: now,

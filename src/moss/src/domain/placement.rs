@@ -8,8 +8,9 @@ use chrono::Utc;
 use std::time::Duration;
 
 use crate::domain::{
-    compatibility, metrics_collection, scoring, services, topology, CompiledOffering, TopologyEntry,
+    compatibility, metrics_collection, scoring, services, topology, CompiledOffering,
 };
+use garden_common::TopologyEntry;
 use crate::AppState;
 
 /// Placement request from client

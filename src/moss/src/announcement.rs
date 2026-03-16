@@ -22,7 +22,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use tokio::time::Instant;
 
-use crate::domain::TopologyEntry;
+use garden_common::TopologyEntry;
 
 /// Announce stone presence via all available channels
 ///
@@ -186,7 +186,7 @@ pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::TopologyEntry;
+    use garden_common::TopologyEntry;
     use garden_common::TopologyServiceEntry;
 
     #[test]

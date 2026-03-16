@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::infra::embedded::EmbeddedManifests;
-use crate::{error_response, AppState};
+use crate::{bad_request, error_response, internal, unavailable, AppState};
 
 /// Query parameters for filtering offerings
 #[derive(Debug, Deserialize)]
@@ -139,10 +139,7 @@ pub async fn list_offerings_v1(
 
     Ok((
         StatusCode::OK,
-        Json(ApiResponse {
-            data: offerings,
-            suggestions,
-        }),
+        Json(ApiResponse { data: offerings, suggestions }),
     ))
 }
 
@@ -156,11 +153,9 @@ pub async fn get_offering_v1(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", name, e),
-            None,
         )
     })?;
     let service_name = offering_fqn.fqn();
@@ -171,27 +166,22 @@ pub async fn get_offering_v1(
     if let Some(offering) = offerings_guard.iter().find(|o| o.name.fqn() == service_name) {
         return Ok((
             StatusCode::OK,
-            Json(ApiResponse {
-                data: serde_json::json!({
-                    "name": offering.name,
-                    "state": "installed",
-                    "category": offering.offering,
-                    "health": simplify_health(&offering.status),
-                    "version": offering.version,
-                }),
-                suggestions: None,
-            }),
+            Json(ApiResponse::new(serde_json::json!({
+                "name": offering.name,
+                "state": "installed",
+                "category": offering.offering,
+                "health": simplify_health(&offering.status),
+                "version": offering.version,
+            }))),
         ));
     }
 
     // Check if available
     let idx_guard = state.offerings_index.read().await;
     let offerings_index = idx_guard.as_ref().ok_or_else(|| {
-        error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
+        unavailable(
             "INDEX_UNAVAILABLE",
-            "Offerings catalog not yet loaded".to_string(),
-            None,
+            "Offerings catalog not yet loaded",
         )
     })?;
 
@@ -202,20 +192,17 @@ pub async fn get_offering_v1(
     {
         return Ok((
             StatusCode::OK,
-            Json(ApiResponse {
-                data: serde_json::json!({
-                    "name": offering.name,
-                    "state": "available",
-                    "category": offering.category,
-                    "description": offering.description,
-                    "tags": offering.tags,
-                    "compatibility": {
-                        "decision": offering.compatibility.decision.to_string(),
-                        "reason": offering.compatibility.reason,
-                    },
-                }),
-                suggestions: None,
-            }),
+            Json(ApiResponse::new(serde_json::json!({
+                "name": offering.name,
+                "state": "available",
+                "category": offering.category,
+                "description": offering.description,
+                "tags": offering.tags,
+                "compatibility": {
+                    "decision": offering.compatibility.decision.to_string(),
+                    "reason": offering.compatibility.reason,
+                },
+            }))),
         ));
     }
 
@@ -237,11 +224,9 @@ pub async fn get_offering_manifest_v1(
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
     let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", name, e),
-            None,
         )
     })?;
     let offering_type = offering_fqn.offering;
@@ -351,7 +336,7 @@ pub async fn refresh_catalog_v1(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     // Rebuild offerings index
-    crate::ensure_offerings_index(&state, true)
+    crate::ensure_offerings_index(&state, true, &crate::infra::persistence::OsOfferingsCache)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "Failed to rebuild offerings catalog");
@@ -367,11 +352,9 @@ pub async fn refresh_catalog_v1(
 
     let idx_guard = state.offerings_index.read().await;
     let idx = idx_guard.as_ref().ok_or_else(|| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             garden_common::constants::INTERNAL_ERROR,
-            "Offerings catalog unavailable after rebuild".to_string(),
-            None,
+            "Offerings catalog unavailable after rebuild",
         )
     })?;
 
@@ -425,22 +408,18 @@ pub async fn inspect_image_v1(
 > {
     let image_ref = query.image.trim();
     if image_ref.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "INVALID_IMAGE_REF",
-            "Image reference cannot be empty".to_string(),
-            None,
+            "Image reference cannot be empty",
         ));
     }
 
     let inspection = crate::infra::image_inspect::inspect_image(&state.platform.docker, image_ref)
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "IMAGE_INSPECT_FAILED",
                 format!("Failed to inspect image '{}': {}", image_ref, e),
-                None,
             )
         })?;
 
@@ -543,11 +522,9 @@ pub async fn search_offerings_v1(
     // Get offerings from index
     let idx_guard = state.offerings_index.read().await;
     let offerings_index = idx_guard.as_ref().ok_or_else(|| {
-        error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
+        unavailable(
             "INDEX_UNAVAILABLE",
-            "Offerings catalog not yet loaded".to_string(),
-            None,
+            "Offerings catalog not yet loaded",
         )
     })?;
 
@@ -557,7 +534,7 @@ pub async fn search_offerings_v1(
     let mut ranked: Vec<(i32, &crate::domain::offerings::CompiledOffering)> = offerings_index
         .offerings
         .iter()
-        .filter(|o| o.compatibility.decision.as_str() != garden_common::COMPAT_FAIL)
+        .filter(|o| o.compatibility.decision.as_str() != garden_common::constants::COMPAT_FAIL)
         .map(|o| {
             let score = offering_relevance_score(&tokens, o);
             (score, o)
@@ -585,15 +562,12 @@ pub async fn search_offerings_v1(
 
     Ok((
         StatusCode::OK,
-        Json(ApiResponse {
-            data: OfferingSearchResponse {
-                query: query.q,
-                tokens,
-                results,
-                total_offerings,
-            },
-            suggestions: None,
-        }),
+        Json(ApiResponse::new(OfferingSearchResponse {
+            query: query.q,
+            tokens,
+            results,
+            total_offerings,
+        })),
     ))
 }
 
@@ -746,11 +720,9 @@ pub async fn test_manifest_v1(
             .collect();
         if !fm_errors.is_empty() {
             let error_msgs: Vec<String> = fm_errors.iter().map(|e| format!("[{}] {}", e.code, e.message)).collect();
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
+            return Err(bad_request(
                 "MANIFEST_VALIDATION_FAILED",
                 format!("Frontmatter has {} error(s): {}", fm_errors.len(), error_msgs.join("; ")),
-                None,
             ));
         }
     }
@@ -758,22 +730,18 @@ pub async fn test_manifest_v1(
     // Extract image reference from snippet YAML to deploy via image-direct
     let offering_name = payload.name.trim().to_string();
     if offering_name.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "INVALID_OFFERING_NAME",
-            "Offering name cannot be empty".to_string(),
-            None,
+            "Offering name cannot be empty",
         ));
     }
 
     // Parse snippet to extract the image field
     let snippet_value: serde_yaml::Value =
         serde_yaml::from_str(&payload.snippet_yaml).map_err(|e| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "INVALID_SNIPPET",
                 format!("Failed to parse snippet YAML: {}", e),
-                None,
             )
         })?;
 
@@ -781,11 +749,9 @@ pub async fn test_manifest_v1(
         .get("image")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "MISSING_IMAGE",
-                "Snippet YAML must contain an 'image' field".to_string(),
-                None,
+                "Snippet YAML must contain an 'image' field",
             )
         })?
         .to_string();
@@ -831,11 +797,9 @@ pub async fn export_offering_manifest_v1(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", name, e),
-            None,
         )
     })?;
 

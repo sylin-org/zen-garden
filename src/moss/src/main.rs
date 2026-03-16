@@ -64,7 +64,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let config = DaemonConfig::from_cli(&cli).await?;
 
     // Create log broadcast channel (for live SSE streaming via API)
-    let (log, _) = tokio::sync::broadcast::channel::<String>(1024);
+    let (log, _) = tokio::sync::broadcast::channel::<String>(garden_common::constants::channels::LOG_STREAM);
 
     // Initialize tracing/logging (returns guard that must be held for process lifetime)
     let _log_guard = init_tracing(&config, log.clone());

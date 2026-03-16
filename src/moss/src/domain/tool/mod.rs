@@ -26,11 +26,21 @@ pub struct Tool {
 
     /// Tool delta broadcast stream.
     ///
-    /// Fired on every upsert/remove. SSE handlers and background tasks
-    /// subscribe here. Name the local receiver by its consumer's purpose:
+    /// Fired on every upsert/remove. Internal — use [`Tool::delta_stream()`]
+    /// to subscribe.
+    pub(crate) delta: broadcast::Sender<ToolDelta>,
+}
+
+impl Tool {
+    /// Subscribe to the tool delta stream.
+    ///
+    /// Returns a broadcast receiver of [`ToolDelta`] events. Name the local
+    /// receiver by its consumer's purpose:
     ///
     /// ```rust
-    /// let sse_feed = state.tool.delta.subscribe();
+    /// let sse_feed = state.tool.delta_stream();
     /// ```
-    pub delta: broadcast::Sender<ToolDelta>,
+    pub fn delta_stream(&self) -> broadcast::Receiver<ToolDelta> {
+        self.delta.subscribe()
+    }
 }

@@ -157,7 +157,7 @@ pub async fn put_object_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<ApiResponse<ObjectMeta>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ObjectMeta> {
     if is_proxied(&headers) {
         if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
             if local.role != StorageRole::Primary {
@@ -223,13 +223,13 @@ pub async fn put_object_v1(
 
         debug!(storage = %handle.storage_name(), key = %key, size = body.len(), "garden PUT object");
 
-        Ok(Json(ApiResponse::new(ObjectMeta {
+        crate::api::ok(ObjectMeta {
             key,
             size: body.len() as u64,
             content_type: content_type.to_string(),
             etag: result.etag,
             last_modified: chrono::Utc::now().to_rfc3339(),
-        })))
+        })
     } else {
         // Remote — proxy
         let target = handle.proxy_target().unwrap();

@@ -39,6 +39,7 @@ pub mod modes;
 pub mod naming;
 pub mod network;
 pub mod nurturing;
+pub mod offering_lifecycle;
 pub mod offering_resolution;
 pub mod offerings;
 pub mod placement;
@@ -49,13 +50,16 @@ pub mod scoring;
 pub mod storage;
 pub mod storage_service;
 pub mod service_discovery;
+pub mod service_lifecycle;
 pub mod service_manager;
 pub mod services;
+pub mod services_internal;
 pub mod fqn_handler;
 pub mod platform;
 pub mod presence;
 pub mod security;
 pub mod tool;
+pub mod task_registry;
 pub mod tools;
 pub mod topology;
 pub mod traits;
@@ -104,7 +108,6 @@ pub use ceremony::{
     CeremonyRegistry, CeremonyState, CeremonyType, Phase, PhaseState,
 };
 pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent};
-pub use garden_common::TopologyEntry;
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
     DockerRegistry, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
@@ -115,6 +118,7 @@ pub use network::{
 };
 pub use nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
+    snapshot_from_harvest,
 };
 pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
 pub use garden_registry::{

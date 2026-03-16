@@ -5,16 +5,13 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
-    Json,
 };
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use std::convert::Infallible;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::infra::error_response;
+use crate::internal;
 use crate::AppState;
 
 /// Query parameters for GET /api/v1/stone/logs
@@ -33,7 +30,7 @@ pub struct LogsQuery {
 pub async fn get_recent_logs(
     State(_state): State<AppState>,
     Query(params): Query<LogsQuery>,
-) -> Result<Json<ApiResponse<Vec<String>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<String>> {
     let max_lines = params.lines.unwrap_or(100).min(5000);
     let level_filter = params.level.as_deref().map(|l| l.to_uppercase());
 
@@ -41,7 +38,7 @@ pub async fn get_recent_logs(
     let logs_path = std::path::Path::new(&logs_dir);
 
     if !logs_path.exists() {
-        return Ok(Json(ApiResponse::new(Vec::new())));
+        return crate::api::ok(Vec::new());
     }
 
     // Find the most recent log file (today's or latest available)
@@ -49,18 +46,16 @@ pub async fn get_recent_logs(
 
     let log_file = match log_file {
         Some(f) => f,
-        None => return Ok(Json(ApiResponse::new(Vec::new()))),
+        None => return crate::api::ok(Vec::new()),
     };
 
     // Read the file and take last N lines
     let content = match tokio::fs::read_to_string(&log_file).await {
         Ok(c) => c,
         Err(e) => {
-            return Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            return Err(internal(
                 "log_read_failed",
                 format!("Failed to read log file: {}", e),
-                None,
             ));
         }
     };
@@ -82,7 +77,7 @@ pub async fn get_recent_logs(
         lines = lines.split_off(lines.len() - max_lines);
     }
 
-    Ok(Json(ApiResponse::new(lines)))
+    crate::api::ok(lines)
 }
 
 /// GET /api/v1/stone/logs/stream
@@ -94,7 +89,7 @@ pub async fn stream_logs(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     // MOSS-0004: child token for cooperative shutdown
     let token = state.shutdown_token.child_token();
-    let rx = state.log.subscribe();
+    let rx = state.log_stream();
     let inner = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(line) => Some(Event::default().data(line)),
         Err(_) => None,

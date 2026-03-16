@@ -32,7 +32,7 @@ pub fn check_disk_health() -> HealthCheck {
 
                     if free_percent < 10.0 {
                         HealthCheck {
-                            status: garden_common::CHECK_WARN.to_string(),
+                            status: garden_common::constants::CHECK_WARN.to_string(),
                             message: Some(format!(
                                 "Low disk space: {:.1}% free ({} GB available)",
                                 free_percent, disk.available_gb
@@ -40,19 +40,19 @@ pub fn check_disk_health() -> HealthCheck {
                         }
                     } else {
                         HealthCheck {
-                            status: garden_common::CHECK_PASS.to_string(),
+                            status: garden_common::constants::CHECK_PASS.to_string(),
                             message: None,
                         }
                     }
                 }
                 None => HealthCheck {
-                    status: garden_common::CHECK_WARN.to_string(),
+                    status: garden_common::constants::CHECK_WARN.to_string(),
                     message: Some("No storage devices found".to_string()),
                 },
             }
         }
         Err(e) => HealthCheck {
-            status: garden_common::CHECK_FAIL.to_string(),
+            status: garden_common::constants::CHECK_FAIL.to_string(),
             message: Some(format!("Failed to check disk: {}", e)),
         },
     }
@@ -68,7 +68,7 @@ pub fn check_memory_health() -> HealthCheck {
         Ok(resources) => {
             if resources.memory.used_percent > 90.0 {
                 HealthCheck {
-                    status: garden_common::CHECK_WARN.to_string(),
+                    status: garden_common::constants::CHECK_WARN.to_string(),
                     message: Some(format!(
                         "High memory usage: {:.1}% ({} used of {})",
                         resources.memory.used_percent,
@@ -78,13 +78,13 @@ pub fn check_memory_health() -> HealthCheck {
                 }
             } else {
                 HealthCheck {
-                    status: garden_common::CHECK_PASS.to_string(),
+                    status: garden_common::constants::CHECK_PASS.to_string(),
                     message: None,
                 }
             }
         }
         Err(e) => HealthCheck {
-            status: garden_common::CHECK_FAIL.to_string(),
+            status: garden_common::constants::CHECK_FAIL.to_string(),
             message: Some(format!("Failed to check memory: {}", e)),
         },
     }
@@ -209,18 +209,18 @@ pub fn determine_overall_status(components: &HashMap<String, ComponentHealth>) -
 
     for component in components.values() {
         match component.status.as_str() {
-            garden_common::HEALTH_UNHEALTHY => has_unhealthy = true,
-            garden_common::HEALTH_DEGRADED => has_degraded = true,
+            garden_common::constants::HEALTH_UNHEALTHY => has_unhealthy = true,
+            garden_common::constants::HEALTH_DEGRADED => has_degraded = true,
             _ => {}
         }
     }
 
     if has_unhealthy {
-        garden_common::HEALTH_UNHEALTHY.to_string()
+        garden_common::constants::HEALTH_UNHEALTHY.to_string()
     } else if has_degraded {
-        garden_common::HEALTH_DEGRADED.to_string()
+        garden_common::constants::HEALTH_DEGRADED.to_string()
     } else {
-        garden_common::HEALTH_HEALTHY.to_string()
+        garden_common::constants::HEALTH_HEALTHY.to_string()
     }
 }
 
@@ -238,7 +238,7 @@ mod tests {
         );
 
         let status = determine_overall_status(&components);
-        assert_eq!(status, garden_common::HEALTH_HEALTHY);
+        assert_eq!(status, garden_common::constants::HEALTH_HEALTHY);
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         );
 
         let status = determine_overall_status(&components);
-        assert_eq!(status, garden_common::HEALTH_DEGRADED);
+        assert_eq!(status, garden_common::constants::HEALTH_DEGRADED);
     }
 
     #[test]
@@ -267,6 +267,6 @@ mod tests {
         );
 
         let status = determine_overall_status(&components);
-        assert_eq!(status, garden_common::HEALTH_UNHEALTHY);
+        assert_eq!(status, garden_common::constants::HEALTH_UNHEALTHY);
     }
 }

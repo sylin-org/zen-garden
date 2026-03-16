@@ -103,7 +103,7 @@ async fn build_state(
 
     // Phase 0.5: Initialize self topology entry
     // Create with minimal identity, will be progressively enriched during boot
-    let self_entry = Arc::new(RwLock::new(crate::domain::TopologyEntry {
+    let self_entry = Arc::new(RwLock::new(garden_common::TopologyEntry {
         stone_id: stone_id.clone(),
         stone_name: stone_name.clone(),
         address: garden_common::PeerAddress::new(
@@ -144,7 +144,7 @@ async fn build_state(
         tracing::debug!("Initial topology file written");
     }
 
-    let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
+    let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(garden_common::constants::channels::TOOL_DELTA);
     let tool = Arc::new(crate::domain::Tool {
         registry: crate::domain::garden_registry::new_registry(),
         delta:    tool_delta,
@@ -300,8 +300,8 @@ async fn build_state(
     // Network manages the subsystems.network.ready flag
     let network = Network::start_with_config(
         NetworkConfig::default()
-            .with_disconnect_retry(5)
-            .with_connected_poll(30),
+            .with_disconnect_retry(crate::tasks::network_monitor::DEFAULT_DISCONNECT_RETRY_SECS)
+            .with_connected_poll(crate::tasks::network_monitor::DEFAULT_CONNECTED_POLL_SECS),
         subsystems.network.ready.clone(),
     )
     .await;
@@ -311,7 +311,7 @@ async fn build_state(
 
     // Phase 3: Resolve API endpoint
     // Prefer explicit STONE_HOST, otherwise use monitored network IP
-    let use_static_host = std::env::var(garden_common::ENV_STONE_HOST)
+    let use_static_host = std::env::var(garden_common::constants::ENV_STONE_HOST)
         .ok()
         .filter(|h| !h.trim().is_empty());
 
@@ -586,16 +586,18 @@ async fn build_state(
     let _docker_monitor = DockerMonitor::start_with_config(
         docker.clone(),
         DockerMonitorConfig::default()
-            .with_disconnect_retry(5)
-            .with_connected_poll(30),
+            .with_disconnect_retry(crate::tasks::docker::DEFAULT_DISCONNECT_RETRY_SECS)
+            .with_connected_poll(crate::tasks::docker::DEFAULT_CONNECTED_POLL_SECS),
         subsystems.docker.ready.clone(),
     )
     .await;
-    tracing::debug!("Docker monitor started (5s retry, 30s poll)");
+    tracing::debug!("Docker monitor started ({}s retry, {}s poll)",
+        crate::tasks::docker::DEFAULT_DISCONNECT_RETRY_SECS,
+        crate::tasks::docker::DEFAULT_CONNECTED_POLL_SECS);
 
     // Phase 8: Create domain event bus and pulse channel
     let event_bus = infra::EventBus::new();
-    let (pulse, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(512);
+    let (pulse, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(garden_common::constants::channels::PULSE);
     tracing::debug!("Domain event bus and pulse channel initialized");
 
     // Phase 9: Capabilities loading
@@ -648,17 +650,20 @@ async fn build_state(
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
-    let nurturing_store = Arc::new(infra::NurturingStore::new(
+    let harvest_ops: Arc<dyn crate::domain::traits::HarvestOps> =
+        Arc::new(crate::infra::harvest::OsHarvestOps::new(docker.clone(), Arc::clone(&harvest_store)));
+    let nurturing_store: Arc<dyn crate::domain::traits::NurturingStoreOps> = Arc::new(infra::NurturingStore::new(
         infra::HarvestStore::default_store(),
+        docker.clone(),
     ));
 
     // Storage and orchestration channels (ARCH-0004)
     let (storage_tick_raw_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
+        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(garden_common::constants::channels::STORAGE_EVENT);
     let (storage_tick_debounced_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
+        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(garden_common::constants::channels::STORAGE_EVENT);
     let (storage_changed_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageChanged>(64);
+        tokio::sync::broadcast::channel::<garden_common::storage::StorageChanged>(garden_common::constants::channels::STORAGE_EVENT);
     let nourishment_map = Arc::new(RwLock::new(
         HashMap::<String, tokio::sync::broadcast::Sender<String>>::new(),
     ));
@@ -731,7 +736,7 @@ async fn build_state(
         }),
         presence: Arc::new(crate::domain::Presence {
             elections: election_service_placeholder,
-            notifications: Arc::new(garden_common::NotificationRegistry::new()),
+            notifications: Arc::new(garden_common::notifications::NotificationRegistry::new()),
         }),
         companion: Arc::new(crate::domain::Companion {
             registry: Arc::new(infra::CompanionRegistry::new().await),
@@ -755,8 +760,8 @@ async fn build_state(
                 rescan: volume_rescan.clone(),
             },
             nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
-                harvest: Arc::clone(&harvest_store),
-                store:   Arc::clone(&nurturing_store),
+                harvest_ops: Arc::clone(&harvest_ops),
+                store:       Arc::clone(&nurturing_store),
             },
             nourishment: crate::domain::orchestration::nourishment::NourishmentOrchestration {
                 jobs: nourishment_map.clone(),

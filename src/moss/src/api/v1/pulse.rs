@@ -55,7 +55,7 @@ pub async fn stream_pulse(
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
     // Subscribe to pulse channel
-    let rx = state.pulse.subscribe();
+    let rx = state.pulse_stream();
 
     // Snapshot first, then full firehose
     let inner = futures_util::stream::once(async move {

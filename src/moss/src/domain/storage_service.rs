@@ -24,12 +24,8 @@ use anyhow::{Context, Result};
 use garden_common::storage::StorageRole;
 use tracing::debug;
 
-use tokio::sync::broadcast;
-
 use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
-use crate::infra::storage::{ContentStore, ObjectStore};
-use garden_common::storage::StorageTick;
 
 // ============================================================================
 // Route decision
@@ -164,46 +160,6 @@ impl StorageRoute {
 }
 
 // ============================================================================
-// LocalStorage — store construction
-// ============================================================================
-
-impl LocalStorage {
-    /// Build a read-only `ContentStore` for this local storage.
-    pub fn content_store(&self) -> ContentStore {
-        ContentStore::new(self.mount_path.clone(), None)
-    }
-
-    /// Build a `ContentStore` with changelog notifications (for writes).
-    ///
-    /// The notification channel feeds the SSE doorbell and replication task.
-    /// Pass `None` to get a plain store without notifications.
-    pub fn notifying_content_store(
-        &self,
-        tick: Option<&broadcast::Sender<StorageTick>>,
-    ) -> ContentStore {
-        let store = ContentStore::new(self.mount_path.clone(), None);
-        if let Some(tx) = tick {
-            store.with_notifications(self.name.clone(), self.replica_set_id.clone(), tx.clone())
-        } else {
-            store
-        }
-    }
-
-    /// Build a read-only `ObjectStore` for this local storage.
-    pub fn object_store(&self) -> ObjectStore {
-        ObjectStore::new(&self.mount_path)
-    }
-
-    /// Build an `ObjectStore` with changelog notifications (for writes).
-    pub fn notifying_object_store(
-        &self,
-        tick: Option<&broadcast::Sender<StorageTick>>,
-    ) -> ObjectStore {
-        ObjectStore::with_store(self.notifying_content_store(tick))
-    }
-}
-
-// ============================================================================
 // Private free functions
 // ============================================================================
 
@@ -327,7 +283,6 @@ mod tests {
     use super::*;
     use crate::domain::garden_registry::new_registry;
     use crate::domain::storage::{new_volumes, Management, Volume, VolumeState};
-    use crate::infra::storage::ContentStore;
     use garden_common::storage::{StorageRole, StorageVisibility};
     use std::path::PathBuf;
 
@@ -356,7 +311,6 @@ mod tests {
                 roles: vec!["seed-bank".to_string()],
                 role,
                 pin: None,
-                store: ContentStore::new_public(mount),
             }),
         }
     }
@@ -459,46 +413,6 @@ mod tests {
         let names: Vec<&str> = all.iter().map(|l| l.name.as_str()).collect();
         assert!(names.contains(&"photos"));
         assert!(names.contains(&"backups"));
-    }
-
-    #[tokio::test]
-    async fn test_content_store_construction() {
-        let volumes = new_volumes();
-        {
-            let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "data", StorageRole::Primary, "/mnt/data"));
-        }
-
-        let local = StorageRoute::find_local("data", &volumes).await.unwrap();
-
-        let store = local.content_store();
-        assert_eq!(store.mount_root(), PathBuf::from("/mnt/data"));
-        assert!(!store.is_encrypted());
-    }
-
-    #[tokio::test]
-    async fn test_notifying_store_without_tx() {
-        let volumes = new_volumes();
-        {
-            let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "data", StorageRole::Primary, "/mnt/data"));
-        }
-
-        let local = StorageRoute::find_local("data", &volumes).await.unwrap();
-        let _store = local.notifying_content_store(None);
-    }
-
-    #[tokio::test]
-    async fn test_notifying_store_with_tx() {
-        let volumes = new_volumes();
-        let (tx, _rx) = broadcast::channel::<StorageTick>(16);
-        {
-            let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "data", StorageRole::Primary, "/mnt/data"));
-        }
-
-        let local = StorageRoute::find_local("data", &volumes).await.unwrap();
-        let _store = local.notifying_content_store(Some(&tx));
     }
 
     #[tokio::test]

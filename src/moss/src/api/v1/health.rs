@@ -48,14 +48,14 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
 
     // HTTP status code based on overall status
     let http_status = match overall_status.as_str() {
-        garden_common::HEALTH_UNHEALTHY => StatusCode::SERVICE_UNAVAILABLE,
+        garden_common::constants::HEALTH_UNHEALTHY => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::OK,
     };
 
     // Legacy boolean flags for backward compatibility
-    let docker_ok = docker_check.status == garden_common::CHECK_PASS;
-    let disk_ok = disk_check.status != garden_common::CHECK_FAIL;
-    let memory_ok = memory_check.status != garden_common::CHECK_FAIL;
+    let docker_ok = docker_check.status == garden_common::constants::CHECK_PASS;
+    let disk_ok = disk_check.status != garden_common::constants::CHECK_FAIL;
+    let memory_ok = memory_check.status != garden_common::constants::CHECK_FAIL;
     let uptime_seconds = state.start_time.elapsed().as_secs();
 
     // Platform information from capabilities
@@ -112,12 +112,12 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
 async fn check_docker_health(state: &AppState) -> HealthCheck {
     if state.platform.docker.is_healthy().await {
         HealthCheck {
-            status: garden_common::CHECK_PASS.to_string(),
+            status: garden_common::constants::CHECK_PASS.to_string(),
             message: None,
         }
     } else {
         HealthCheck {
-            status: garden_common::CHECK_FAIL.to_string(),
+            status: garden_common::constants::CHECK_FAIL.to_string(),
             message: Some("Docker daemon unavailable".to_string()),
         }
     }

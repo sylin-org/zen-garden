@@ -114,7 +114,7 @@ pub async fn put_gateway(
             endpoint: state.current.topology.self_entry.read().await.address.http_base(),
         },
         service: ServiceInfo {
-            status: garden_common::SERVICE_RUNNING.to_string(),
+            status: garden_common::constants::SERVICE_RUNNING.to_string(),
             ready: true,
             protocol: registration.protocol.clone(),
             uris: {

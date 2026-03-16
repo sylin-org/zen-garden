@@ -33,6 +33,45 @@ use crate::domain::storage::Volumes;
 use crate::domain::storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 use garden_common::storage::StorageTick;
 
+use super::{ContentStore, ObjectStore};
+
+// ============================================================================
+// Store construction (infra extension for domain LocalStorage)
+// ============================================================================
+
+impl LocalStorage {
+    /// Build a read-only `ContentStore` for this local storage.
+    pub fn content_store(&self) -> ContentStore {
+        ContentStore::new(self.mount_path.clone(), None)
+    }
+
+    /// Build a `ContentStore` with changelog notifications (for writes).
+    pub fn notifying_content_store(
+        &self,
+        tick: Option<&broadcast::Sender<StorageTick>>,
+    ) -> ContentStore {
+        let store = ContentStore::new(self.mount_path.clone(), None);
+        if let Some(tx) = tick {
+            store.with_notifications(self.name.clone(), self.replica_set_id.clone(), tx.clone())
+        } else {
+            store
+        }
+    }
+
+    /// Build a read-only `ObjectStore` for this local storage.
+    pub fn object_store(&self) -> ObjectStore {
+        ObjectStore::new(&self.mount_path)
+    }
+
+    /// Build an `ObjectStore` with changelog notifications (for writes).
+    pub fn notifying_object_store(
+        &self,
+        tick: Option<&broadcast::Sender<StorageTick>>,
+    ) -> ObjectStore {
+        ObjectStore::with_store(self.notifying_content_store(tick))
+    }
+}
+
 // ============================================================================
 // Typed error (A11a — replaces string-based error detection)
 // ============================================================================

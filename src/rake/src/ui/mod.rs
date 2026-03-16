@@ -1,4 +1,5 @@
-﻿pub mod gauge;
+pub mod colors;
+pub mod gauge;
 pub mod layout;
 pub mod rendering;
 

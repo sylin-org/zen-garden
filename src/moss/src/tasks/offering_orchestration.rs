@@ -545,10 +545,6 @@ async fn transition_role(
         true
     }).await;
 
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after role transition");
-    }
-
     tracing::info!(
         offering = %fqn,
         old_role = %old_role,
@@ -694,10 +690,6 @@ pub async fn assign_initial_role(state: &AppState, offering_id: &str, fqn: &str)
         o.touch();
         true
     }).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after initial role assignment");
-    }
 
     Ok(())
 }

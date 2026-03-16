@@ -110,7 +110,7 @@ impl AppState {
         snapshot_rx: watch::Receiver<serde_json::Value>,
         metrics_tx: mpsc::UnboundedSender<MetricEvent>,
     ) -> Self {
-        let (dashboard_tx, _) = broadcast::channel(256);
+        let (dashboard_tx, _) = broadcast::channel(garden_common::constants::channels::SSE_DASHBOARD);
         let metrics_enabled = config.features.metrics_enabled;
         let mut engine = MetricsEngine::new();
         engine.enabled = metrics_enabled;

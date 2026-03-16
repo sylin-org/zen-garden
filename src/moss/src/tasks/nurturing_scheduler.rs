@@ -221,7 +221,6 @@ impl NurturingScheduler {
         self.state
             .orchestration.nurturing.store
             .create_snapshot(
-                &self.state.platform.docker,
                 offering_id,
                 offering_name,
                 &self.state.current.stone.id,
@@ -385,18 +384,7 @@ impl NurturingScheduler {
             "Attempting replication"
         );
 
-        // STORAGE-0011: prefer store from Volume management; fall back to ad-hoc
-        let store = {
-            let map = self.state.current.storage.volumes.read().await;
-            map.values()
-                .find_map(|v| {
-                    let m = v.management.as_ref()?;
-                    if m.id == seed_bank.id { Some(m.store.clone()) } else { None }
-                })
-                .unwrap_or_else(|| {
-                    crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path)
-                })
-        };
+        let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
         let result = self
             .state

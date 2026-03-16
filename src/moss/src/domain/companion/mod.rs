@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::domain::traits::CompanionOps;
+
 /// Companion domain context (`state.companion`).
 ///
 /// Owns the companion registry that manages external companions
@@ -9,5 +11,5 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Companion {
     /// Registry of all discovered and running companions.
-    pub registry: Arc<crate::infra::CompanionRegistry>,
+    pub registry: Arc<dyn CompanionOps>,
 }

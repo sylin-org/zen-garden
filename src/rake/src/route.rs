@@ -19,7 +19,7 @@
 
 use crate::dispatch::{self, CommandInvocation, Runtime};
 
-use garden_common::ui::rendering as ui;
+use garden_rake::ui::rendering as ui;
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::commands;
 use garden_rake::commands::Command;
@@ -951,11 +951,9 @@ async fn route_election(
                 "ceremony_coordinator" => ElectionType::CeremonyCoordinator,
                 "replica_target" => ElectionType::ReplicaTarget,
                 "backup_source" => ElectionType::BackupSource,
-                s if s.starts_with("offering_primary:") => {
-                    ElectionType::OfferingPrimary(
-                        s.strip_prefix("offering_primary:").unwrap().to_string(),
-                    )
-                }
+                s if s.starts_with("offering_primary:") => ElectionType::OfferingPrimary(
+                    s["offering_primary:".len()..].to_string(),
+                ),
                 custom => ElectionType::Custom(custom.to_string()),
             };
             let timeout_secs: u64 = timeout.as_deref().unwrap_or("10").parse().unwrap_or(10);

@@ -162,7 +162,7 @@ fn extract_zip(archive_path: &Path, dest_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn extract_zip(archive_path: &Path, dest_dir: &Path) -> anyhow::Result<()> {
     use std::process::Command;
 

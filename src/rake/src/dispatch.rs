@@ -10,7 +10,7 @@
 //! 7-argument dispatch calls. `CommandInvocation` pairs a Command with its
 //! per-invocation target stone.
 
-use garden_common::ui::rendering::{self as ui, TerminalInfo};
+use garden_rake::ui::rendering::{self as ui, TerminalInfo};
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::client::{resolve_target_endpoint, CachedStoneOps};
 use garden_rake::commands::management::tend;
@@ -185,7 +185,7 @@ pub async fn resolve_endpoint(
     }
 
     // Priority 2: GARDEN_STONE environment variable
-    if let Ok(env_endpoint) = std::env::var(garden_common::ENV_GARDEN_STONE) {
+    if let Ok(env_endpoint) = std::env::var(garden_common::constants::ENV_GARDEN_STONE) {
         tracing::info!(endpoint = %env_endpoint, "Using GARDEN_STONE environment variable");
         let endpoint = resolve_target_endpoint(client, &env_endpoint, cache).await?;
         return Ok(endpoint);

@@ -36,8 +36,8 @@
 //! | Content | 12     | Field values, list items       |
 //! | Detail  | 16     | Nested details, verbose output |
 
-use crate::cli_colors::CliFormatter;
-use crate::ui::rendering::{constants, TerminalInfo};
+use super::colors::CliFormatter;
+use super::rendering::{constants, TerminalInfo};
 
 /// Semantic indentation levels for consistent nesting
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,7 +427,7 @@ pub enum StatusType {
 
 impl StatusType {
     fn indicator(&self, color: bool) -> String {
-        crate::ui::rendering::status_indicator(
+        super::rendering::status_indicator(
             match self {
                 Self::Ok => "ok",
                 Self::Info => "info",

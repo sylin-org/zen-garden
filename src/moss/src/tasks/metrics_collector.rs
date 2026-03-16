@@ -19,7 +19,7 @@ use garden_common::constants::timeouts::{metrics_disk_interval, metrics_fast_int
 use garden_common::metrics::system::{
     get_fast_metrics, get_gpu_utilization, get_network_metrics, get_storage_metrics,
 };
-use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
+use garden_common::notifications::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 
 /// Run system metrics collector with dual intervals
 ///

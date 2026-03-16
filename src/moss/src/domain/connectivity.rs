@@ -16,13 +16,12 @@ use regex::Regex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::docker::Client;
+use crate::domain::traits::ServiceDetector;
 use garden_common::detection::{detect_by_http_probe, DetectionResult};
-use crate::infra::detection::detect_by_container_inspect;
 
 /// Connectivity orchestration with caching and enforcement cooldowns
 pub struct ConnectivityOrchestrator {
-    docker: Arc<Client>,
+    detector: Arc<dyn ServiceDetector>,
     cache: Arc<DashMap<String, CachedCheck>>,
     last_enforced: Arc<DashMap<String, Instant>>,
     attempts: Arc<DashMap<String, EnforceState>>,
@@ -95,9 +94,9 @@ impl ConnectivityOutcome {
 }
 
 impl ConnectivityOrchestrator {
-    pub fn new(docker: Arc<Client>) -> Self {
+    pub fn new(detector: Arc<dyn ServiceDetector>) -> Self {
         Self {
-            docker,
+            detector,
             cache: Arc::new(DashMap::new()),
             last_enforced: Arc::new(DashMap::new()),
             attempts: Arc::new(DashMap::new()),
@@ -299,7 +298,7 @@ impl ConnectivityOrchestrator {
                         details: "Invalid container_inspect config".into(),
                     });
                 };
-                match detect_by_container_inspect(&self.docker, config).await {
+                match self.detector.detect_by_container_inspect(config).await {
                     Ok(result) => Ok(result),
                     Err(e) => Ok(DetectionResult {
                         detected: false,
@@ -502,7 +501,7 @@ async fn execute_shell_command(command: &str, timeout: Duration) -> Result<std::
     #[cfg(target_os = "windows")]
     let (shell, flag) = ("cmd", "/C");
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     let (shell, flag) = ("sh", "-c");
 
     let output = tokio::time::timeout(

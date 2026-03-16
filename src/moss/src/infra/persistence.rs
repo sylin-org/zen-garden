@@ -176,6 +176,20 @@ pub async fn save_offerings_cache<T: serde::Serialize>(cache: &T) -> Result<()> 
     atomic_write(&path, cache).await
 }
 
+/// Filesystem-backed offerings cache persistence.
+pub struct OsOfferingsCache;
+
+#[async_trait::async_trait]
+impl crate::domain::traits::OfferingsCachePersistence for OsOfferingsCache {
+    async fn load_cache(&self) -> Result<Option<crate::domain::offerings::OfferingsIndex>> {
+        load_offerings_cache().await
+    }
+
+    async fn save_cache(&self, cache: &crate::domain::offerings::OfferingsIndex) -> Result<()> {
+        save_offerings_cache(cache).await
+    }
+}
+
 // ============================================================================
 // Stone Identity
 // ============================================================================

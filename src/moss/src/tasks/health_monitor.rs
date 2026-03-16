@@ -10,9 +10,8 @@
 
 use crate::domain::adopt_offering_container;
 use crate::AppState;
-use garden_common::{
-    NotificationTag, OfferingStatus, ServiceHealthStatus, NOTIF_SOURCE_OFFERINGS_DEGRADED,
-};
+use garden_common::notifications::{NotificationTag, NOTIF_SOURCE_OFFERINGS_DEGRADED};
+use garden_common::{OfferingStatus, ServiceHealthStatus};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
 
@@ -317,12 +316,11 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
         }
 
-        // Sync + chirp + persist if we made changes.
+        // Sync + chirp if we made changes (gateway methods auto-persist).
         // The gateway calls above used auto_chirp=false to batch changes;
         // now emit a single chirp with the final state.
         if state_changed {
             state.sync_self_services(true).await;
-            let _ = state.persist_offerings().await;
         }
     }
 }

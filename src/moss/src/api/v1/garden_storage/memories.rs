@@ -10,7 +10,7 @@ use axum::{
     response::Response,
     Json,
 };
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::api_utils::ApiResponse;
 use super::audit::{log_access, AuditAccessEntry};
 use garden_common::constants::headers::{
     HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME,
@@ -190,7 +190,7 @@ pub async fn list_memories_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<RemoteNurturingIndex>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<RemoteNurturingIndex> {
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
         registry: &state.tool.registry,
@@ -218,7 +218,7 @@ pub async fn list_memories_v1(
                     &state, &headers, StatusCode::OK, ACTION_LIST,
                     Some(handle.storage_name()), None, None,
                 );
-                Ok(Json(ApiResponse::new(index)))
+                crate::api::ok(index)
             }
             Err(e) => {
                 log_memories_access(
@@ -271,7 +271,7 @@ pub async fn list_offering_snapshots_v1(
     State(state): State<AppState>,
     Path((name, offering_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<OfferingSnapshotsResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<OfferingSnapshotsResponse> {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -324,10 +324,10 @@ pub async fn list_offering_snapshots_v1(
             Some(handle.storage_name()), Some(&offering_id), None,
         );
 
-        Ok(Json(ApiResponse::new(OfferingSnapshotsResponse {
+        crate::api::ok(OfferingSnapshotsResponse {
             offering_id,
             snapshots,
-        })))
+        })
     } else {
         // Remote — proxy
         let target = handle.proxy_target().unwrap();
@@ -367,7 +367,7 @@ pub async fn get_offering_manifest_v1(
     State(state): State<AppState>,
     Path((name, offering_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<MemoriesOfferingManifest>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<MemoriesOfferingManifest> {
     if offering_id.is_empty() || has_path_traversal(&offering_id) {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -425,7 +425,7 @@ pub async fn get_offering_manifest_v1(
             Some(handle.storage_name()), Some(&offering_id), None,
         );
 
-        Ok(Json(ApiResponse::new(manifest)))
+        crate::api::ok(manifest)
     } else {
         // Remote — proxy
         let target = handle.proxy_target().unwrap();

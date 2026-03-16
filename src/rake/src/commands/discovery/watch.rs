@@ -12,7 +12,7 @@ use crate::discovery;
 use crate::suggestions;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 use garden_common::{GardenApiResponse, HardwareCapabilities};
 use std::time::Duration;
 

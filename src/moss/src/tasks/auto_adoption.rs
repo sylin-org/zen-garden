@@ -57,8 +57,10 @@ use tokio_util::sync::CancellationToken;
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
-    let orchestrator = DetectionOrchestrator::new(state.platform.docker.clone());
-    let connectivity = ConnectivityOrchestrator::new(state.platform.docker.clone());
+    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
+        std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()));
+    let orchestrator = DetectionOrchestrator::new(detector.clone());
+    let connectivity = ConnectivityOrchestrator::new(detector);
 
     // Track elapsed time for schedule phases
     let start_time = Instant::now();
@@ -387,12 +389,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             }
         }
 
-        // Sync + chirp + persist if we made changes
+        // Sync + chirp if we made changes (gateway methods auto-persist)
         if state_changed {
             state.sync_self_services(true).await;
-            if let Err(e) = state.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist offerings");
-            }
         }
 
         tracing::debug!("Auto-adoption scan complete");

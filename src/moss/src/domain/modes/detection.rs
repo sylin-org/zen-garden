@@ -6,9 +6,8 @@
 //! - Stability tracking (consecutive successes required before adoption)
 //! - Proactive cache refresh
 
-use crate::docker::Client;
+use crate::domain::traits::ServiceDetector;
 use garden_common::detection::{detect_by_command, detect_by_http_probe, DetectionResult};
-use crate::infra::detection::detect_by_container_inspect;
 use anyhow::{Context, Result};
 use dashmap::DashMap;
 use garden_common::manifests::{DetectionMethod, DetectionRule, Offering};
@@ -17,8 +16,8 @@ use std::time::{Duration, Instant};
 
 /// Detection orchestrator with caching and stability tracking
 pub struct DetectionOrchestrator {
-    /// Docker manager for container detection
-    docker: Arc<Client>,
+    /// Container detection backend
+    detector: Arc<dyn ServiceDetector>,
 
     /// Detection result cache
     cache: Arc<DashMap<String, CachedDetection>>,
@@ -50,9 +49,9 @@ struct StabilityState {
 
 impl DetectionOrchestrator {
     /// Create new detection orchestrator
-    pub fn new(docker: Arc<Client>) -> Self {
+    pub fn new(detector: Arc<dyn ServiceDetector>) -> Self {
         Self {
-            docker,
+            detector,
             cache: Arc::new(DashMap::new()),
             stability: Arc::new(DashMap::new()),
             _max_concurrent: 10,
@@ -166,7 +165,7 @@ impl DetectionOrchestrator {
                 if let garden_common::manifests::DetectionConfig::ContainerInspect(ref config) =
                     rule.config
                 {
-                    detect_by_container_inspect(&self.docker, config)
+                    self.detector.detect_by_container_inspect(config)
                         .await
                         .context("Container inspection failed")
                 } else {
@@ -266,12 +265,17 @@ pub struct AggregatedDetectionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infra::detection::ContainerDetector;
     use garden_common::manifests::{CommandDetection, DetectionConfig};
+
+    fn test_detector() -> Arc<dyn ServiceDetector> {
+        let docker = Arc::new(crate::docker::Client::new().unwrap());
+        Arc::new(ContainerDetector::new(docker))
+    }
 
     #[test]
     fn test_stability_tracking() {
-        let docker = Arc::new(Client::new().unwrap());
-        let orchestrator = DetectionOrchestrator::new(docker);
+        let orchestrator = DetectionOrchestrator::new(test_detector());
 
         let rule = DetectionRule {
             method: DetectionMethod::Command,
@@ -299,8 +303,7 @@ mod tests {
 
     #[test]
     fn test_cache_invalidation() {
-        let docker = Arc::new(Client::new().unwrap());
-        let orchestrator = DetectionOrchestrator::new(docker);
+        let orchestrator = DetectionOrchestrator::new(test_detector());
 
         orchestrator.cache.insert(
             "test:command".into(),

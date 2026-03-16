@@ -7,7 +7,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 use std::io::Write;
 
 /// Uproot a service (hard delete - destroy container completely)

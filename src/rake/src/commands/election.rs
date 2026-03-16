@@ -54,7 +54,7 @@ pub async fn handle_election(cmd: ElectionCommand, client: &reqwest::Client) -> 
 
 async fn handle_start(start: StartElection, client: &reqwest::Client) -> Result<()> {
     use crate::tending;
-    use garden_common::cli_colors::CliFormatter;
+    use crate::ui::colors::CliFormatter;
     use std::time::Duration;
 
     let formatter = CliFormatter::new();

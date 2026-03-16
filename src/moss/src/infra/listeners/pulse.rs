@@ -17,11 +17,11 @@ use crate::domain::events::{DomainEvent, JobEvent, OfferingEvent, PondEvent, Sto
 use crate::infra::event_bus::EventListener;
 use chrono::Utc;
 use garden_common::infra::communications::announcement_types;
-use garden_common::{
-    presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload},
+use garden_common::constants::{
     EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED, EVENT_RENAMED,
     EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED, SSE_LEVEL_INFO,
 };
+use garden_common::presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
 use serde::Serialize;
 use std::net::SocketAddr;
 use tokio::sync::broadcast;

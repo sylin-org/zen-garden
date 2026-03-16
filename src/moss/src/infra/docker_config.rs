@@ -33,9 +33,9 @@ fn daemon_json_path() -> PathBuf {
             .join("daemon.json")
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
-        // Linux/macOS: /etc/docker/daemon.json
+        // Linux: /etc/docker/daemon.json
         PathBuf::from("/etc/docker/daemon.json")
     }
 }

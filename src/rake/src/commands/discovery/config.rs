@@ -13,7 +13,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::{extract_json_field, Runtime};
 use anyhow::Context;
 use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 use serde::{Deserialize, Serialize};
 
 /// Service configuration response

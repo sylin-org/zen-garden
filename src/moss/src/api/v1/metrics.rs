@@ -22,12 +22,13 @@ use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, Sto
 /// # Fallback Behavior
 /// If metrics not yet collected, returns a fallback response with zero values.
 pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<MetricsSnapshot>> {
-    let resources_guard = state.current.system_resources.read().await;
-    let resources = resources_guard
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(create_fallback_resources);
-    drop(resources_guard);
+    let resources = {
+        let resources_guard = state.current.system_resources.read().await;
+        resources_guard
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(create_fallback_resources)
+    };
 
     // Convert primary storage mount to DiskMetrics for backward compatibility
     let disk = resources
@@ -83,10 +84,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<Metr
         uptime_seconds: resources.uptime_seconds,
     };
 
-    Json(ApiResponse {
-        data: snapshot,
-        suggestions: None,
-    })
+    Json(ApiResponse::new(snapshot))
 }
 
 /// Create fallback resource metrics with zero values

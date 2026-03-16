@@ -3,7 +3,7 @@
 //! Handles server binding, graceful shutdown, and error handling.
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use crate::infra::CompanionRegistry;
+use crate::domain::traits::CompanionOps;
 use axum::Router;
 use garden_common::console::{BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo};
 use garden_common::infra::platform::shutdown_signal;
@@ -32,8 +32,8 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             port: garden_common::constants::MOSS_HTTP,
-            drain_deadline_secs: 8,
-            hard_deadline_secs: 15,
+            drain_deadline_secs: garden_common::constants::server::DRAIN_DEADLINE_SECS,
+            hard_deadline_secs: garden_common::constants::server::HARD_DEADLINE_SECS,
         }
     }
 }
@@ -67,7 +67,7 @@ pub async fn bind(port: u16, console: &ConsolePrinter) -> anyhow::Result<TcpList
         Ok(()) => {
             // Listen with backlog
             socket
-                .listen(128)
+                .listen(garden_common::constants::server::TCP_BACKLOG)
                 .map_err(|e| anyhow::anyhow!("Failed to listen: {}", e))?;
 
             // Convert to tokio TcpListener
@@ -133,7 +133,7 @@ pub async fn run(
     shutdown_callback: Option<ShutdownCallback>,
     boot_banner: Option<BootBannerInfo>,
     shutdown_banner: Option<ShutdownBannerInfo>,
-    companion_registry: Option<Arc<CompanionRegistry>>,
+    companion_registry: Option<Arc<dyn CompanionOps>>,
 ) -> anyhow::Result<()> {
     let addr = listener.local_addr()?;
 
@@ -165,7 +165,7 @@ pub async fn run(
         let watchdog_runtime = runtime.clone();
         let watchdog_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(25));
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(garden_common::constants::server::WATCHDOG_PING_SECS));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {

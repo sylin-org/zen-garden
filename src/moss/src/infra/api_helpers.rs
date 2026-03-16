@@ -26,6 +26,56 @@ pub fn error_response(
     (status_code, Json(response))
 }
 
+// ============================================================================
+// Typed error constructors — eliminate 213 inline error_response() calls
+// ============================================================================
+
+type ErrTuple = (StatusCode, Json<ApiErrorResponse>);
+
+/// 404 Not Found — entity does not exist.
+pub fn not_found(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::NOT_FOUND, code, message, None)
+}
+
+/// 400 Bad Request — client sent invalid input.
+pub fn bad_request(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::BAD_REQUEST, code, message, None)
+}
+
+/// 500 Internal Server Error — unexpected server-side failure.
+pub fn internal(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, code, message, None)
+}
+
+/// 503 Service Unavailable — a required backend is down.
+pub fn unavailable(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::SERVICE_UNAVAILABLE, code, message, None)
+}
+
+/// 409 Conflict — resource state conflict.
+pub fn conflict(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::CONFLICT, code, message, None)
+}
+
+/// 502 Bad Gateway — upstream stone/service returned an error.
+pub fn bad_gateway(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::BAD_GATEWAY, code, message, None)
+}
+
+/// 403 Forbidden — operation not permitted.
+pub fn forbidden(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::FORBIDDEN, code, message, None)
+}
+
+/// 501 Not Implemented — feature not yet available.
+pub fn not_implemented(code: impl Into<String>, message: impl Into<String>) -> ErrTuple {
+    error_response(StatusCode::NOT_IMPLEMENTED, code, message, None)
+}
+
+// ============================================================================
+// Precondition checks
+// ============================================================================
+
 /// Check if Docker daemon is available
 ///
 /// Returns Ok(()) if Docker is ready, or a 503 Service Unavailable error if not.

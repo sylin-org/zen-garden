@@ -33,10 +33,10 @@ impl PlatformPaths for WindowsPaths {
 }
 
 /// Unix platform paths
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub struct UnixPaths;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 impl PlatformPaths for UnixPaths {
     fn data_dir(&self) -> PathBuf {
         PathBuf::from("/var/lib/zen-garden")
@@ -58,7 +58,7 @@ pub fn get_platform_paths() -> Box<dyn PlatformPaths> {
         Box::new(WindowsPaths)
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         Box::new(UnixPaths)
     }
@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(config.to_string_lossy(), ".zen-garden");
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_unix_paths() {
         let paths = UnixPaths;

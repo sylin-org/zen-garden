@@ -9,8 +9,9 @@ use std::sync::Arc;
 use garden_common::storage::StorageChanged;
 use tracing::{debug, info};
 
-use super::{Volume, VolumeState, Volumes};
-use crate::infra::storage::platform::VolumeSnapshot;
+use crate::domain::traits::ManagementStoreOps;
+
+use super::{Volume, VolumeSnapshot, VolumeState, Volumes};
 
 /// Domain bridge for physical storage events.
 ///
@@ -19,14 +20,16 @@ use crate::infra::storage::platform::VolumeSnapshot;
 pub struct StorageBank {
     volumes: Volumes,
     changed: tokio::sync::broadcast::Sender<StorageChanged>,
+    make_store: Box<dyn Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync>,
 }
 
 impl StorageBank {
     pub fn new(
         volumes: Volumes,
         changed: tokio::sync::broadcast::Sender<StorageChanged>,
+        make_store: impl Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync + 'static,
     ) -> Arc<Self> {
-        Arc::new(Self { volumes, changed })
+        Arc::new(Self { volumes, changed, make_store: Box::new(make_store) })
     }
 
     /// Called by the platform monitor after it has detected AND measured a volume.
@@ -56,7 +59,7 @@ impl StorageBank {
             // Drop lock before async classify
             drop(map);
 
-            vol.classify().await;
+            vol.classify(&self.make_store).await;
 
             let mut map = self.volumes.write().await;
             if vol.is_managed() {

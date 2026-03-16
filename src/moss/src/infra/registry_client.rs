@@ -5,7 +5,7 @@
 //!
 //! # Example
 //! ```ignore
-//! use garden_common::infra::registry_client::{query_image_tags, find_newer_version};
+//! use crate::infra::registry_client::{query_image_tags, find_newer_version};
 //!
 //! let config = RegistryConfig::default();
 //! let tags = query_image_tags("redis:7.2.3", &config).await?;

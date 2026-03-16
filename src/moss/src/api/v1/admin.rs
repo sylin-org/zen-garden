@@ -285,18 +285,24 @@ pub async fn stone_shutdown(
             if let Err(e) = result {
                 // Fallback to shutdown command
                 tracing::warn!(error = ?e, "systemctl failed, trying shutdown -h now");
-                let _ = std::process::Command::new("shutdown")
+                if let Err(e) = std::process::Command::new("shutdown")
                     .args(["-h", "now"])
-                    .spawn();
+                    .spawn()
+                {
+                    tracing::error!(error = ?e, "Failed to execute shutdown fallback command");
+                }
             }
         }
 
         #[cfg(windows)]
         {
             tracing::info!("Executing: shutdown /s /t 0");
-            let _ = std::process::Command::new("shutdown")
+            if let Err(e) = std::process::Command::new("shutdown")
                 .args(["/s", "/t", "0"])
-                .spawn();
+                .spawn()
+            {
+                tracing::error!(error = ?e, "Failed to execute shutdown command");
+            }
         }
     });
 
@@ -339,16 +345,21 @@ pub async fn stone_reboot(State(_state): State<AppState>) -> (StatusCode, Json<s
             if let Err(e) = result {
                 // Fallback to reboot command
                 tracing::warn!(error = ?e, "systemctl failed, trying reboot");
-                let _ = std::process::Command::new("reboot").spawn();
+                if let Err(e) = std::process::Command::new("reboot").spawn() {
+                    tracing::error!(error = ?e, "Failed to execute reboot fallback command");
+                }
             }
         }
 
         #[cfg(windows)]
         {
             tracing::info!("Executing: shutdown /r /t 0");
-            let _ = std::process::Command::new("shutdown")
+            if let Err(e) = std::process::Command::new("shutdown")
                 .args(["/r", "/t", "0"])
-                .spawn();
+                .spawn()
+            {
+                tracing::error!(error = ?e, "Failed to execute reboot command");
+            }
         }
     });
 

@@ -4,22 +4,9 @@
 //! Supports hostname-first resolution with IP fallback for resilience.
 
 use garden_common::manifests::{get_category_registry, ConnectionProfile};
-use serde::{Deserialize, Serialize};
 
-/// Resolved connection information for a service
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolvedConnection {
-    /// Hostname (e.g., "stone-02.local")
-    pub hostname: String,
-    /// IP address (e.g., "192.168.1.102")
-    pub ip: String,
-    /// Service port
-    pub port: u16,
-    /// Protocol (e.g., "mongodb", "postgresql", "redis")
-    pub protocol: String,
-    /// Connection URIs - hostname-first, then IP (for resilience)
-    pub uris: Vec<String>,
-}
+// Re-export from garden-common (canonical definition)
+pub use garden_common::discovery::ResolvedConnection;
 
 /// Default connection templates by protocol
 ///

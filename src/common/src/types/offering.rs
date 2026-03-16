@@ -23,6 +23,16 @@ pub enum OfferingMode {
     Borrowed,
 }
 
+impl std::fmt::Display for OfferingMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Managed => write!(f, "managed"),
+            Self::Adopted => write!(f, "adopted"),
+            Self::Borrowed => write!(f, "borrowed"),
+        }
+    }
+}
+
 /// Control level for adopted offerings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

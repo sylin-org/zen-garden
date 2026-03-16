@@ -23,10 +23,9 @@
 use crate::docker::Client;
 use crate::domain::harvest::HarvestManifest;
 use crate::domain::nurturing::{
-    NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
+    snapshot_from_harvest, NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots,
     RemoteNurturingIndex, RemoteSnapshot, ReplicationResult,
 };
-use crate::infra::storage::ContentStore;
 use crate::infra::{create_harvest, HarvestStore};
 use anyhow::{Context, Result};
 use garden_common::constants::paths;
@@ -39,6 +38,8 @@ pub struct NurturingStore {
     index_path: PathBuf,
     /// Underlying harvest store for backup operations
     harvest_store: HarvestStore,
+    /// Docker client for container operations (image commit, volume inspection)
+    docker: std::sync::Arc<Client>,
     /// Mutex to serialize index load/modify/save cycles (STORAGE-0006 fix)
     /// Without this, two concurrent snapshots can read the same index,
     /// modify independently, and overwrite each other's changes.
@@ -47,20 +48,16 @@ pub struct NurturingStore {
 
 impl NurturingStore {
     /// Create a new nurturing store
-    pub fn new(harvest_store: HarvestStore) -> Self {
+    pub fn new(harvest_store: HarvestStore, docker: std::sync::Arc<Client>) -> Self {
         let config_dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
         let index_path = config_dir.join("nurturing").join("index.json");
 
         Self {
             index_path,
             harvest_store,
+            docker,
             index_lock: tokio::sync::Mutex::new(()),
         }
-    }
-
-    /// Create with default harvest store
-    pub fn default_store() -> Self {
-        Self::new(HarvestStore::default_store())
     }
 
     /// Load the nurturing index from disk
@@ -127,12 +124,12 @@ impl NurturingStore {
     /// * `commit_image` - Whether to commit the container image
     pub async fn create_snapshot(
         &self,
-        docker: &Client,
         offering_id: &str,
         offering_name: &str,
         stone_id: &str,
         commit_image: bool,
     ) -> Result<NurturingResult> {
+        let docker = &self.docker;
         // STORAGE-0006: Hold index lock for the entire read-modify-save cycle.
         // The harvest creation (slow I/O) happens inside the lock — acceptable
         // because nurturing snapshots are already serialized per stone.
@@ -168,7 +165,7 @@ impl NurturingStore {
         .context("Failed to create harvest for nurturing snapshot")?;
 
         // Create the snapshot
-        let snapshot = NurturingSnapshot::from_harvest(&harvest, target_slot, offering_id, true);
+        let snapshot = snapshot_from_harvest(&harvest, target_slot, offering_id, true);
         let harvest_id = harvest.id.clone();
         let size_bytes = harvest.total_size_bytes();
 
@@ -238,10 +235,10 @@ impl NurturingStore {
     /// * `slot` - Which slot to restore from (None = current/latest)
     pub async fn restore_snapshot(
         &self,
-        docker: &Client,
         offering_id: &str,
         slot: Option<NurturingSlot>,
     ) -> Result<HarvestManifest> {
+        let docker = &self.docker;
         let index = self.load_index().await?;
 
         let slots = index.get(offering_id).ok_or_else(|| {
@@ -326,7 +323,7 @@ impl NurturingStore {
     pub async fn replicate_to_seed_bank(
         &self,
         offering_id: &str,
-        store: &ContentStore,
+        store: &dyn crate::domain::traits::ContentStoreOps,
         seed_bank_id: &str,
         storage_name: &str,
         stone_id: &str,
@@ -449,7 +446,7 @@ impl NurturingStore {
     /// List remote snapshots on a seed bank
     pub async fn list_remote_snapshots(
         &self,
-        store: &ContentStore,
+        store: &dyn crate::domain::traits::ContentStoreOps,
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
         self.load_remote_index(store, seed_bank_id).await
@@ -466,12 +463,12 @@ impl NurturingStore {
     /// * `harvest_id` - Optional specific harvest (defaults to latest)
     pub async fn restore_from_seed_bank(
         &self,
-        docker: &Client,
-        store: &ContentStore,
+        store: &dyn crate::domain::traits::ContentStoreOps,
         seed_bank_id: &str,
         offering_id: &str,
         harvest_id: Option<&str>,
     ) -> Result<HarvestManifest> {
+        let docker = &self.docker;
         let remote_index = self.load_remote_index(store, seed_bank_id).await?;
 
         // Find the snapshot
@@ -530,7 +527,7 @@ impl NurturingStore {
     /// Delete a remote snapshot from a seed bank
     pub async fn delete_remote_snapshot(
         &self,
-        store: &ContentStore,
+        store: &dyn crate::domain::traits::ContentStoreOps,
         seed_bank_id: &str,
         harvest_id: &str,
     ) -> Result<bool> {
@@ -558,7 +555,7 @@ impl NurturingStore {
     /// Load the remote nurturing index from a seed bank
     async fn load_remote_index(
         &self,
-        store: &ContentStore,
+        store: &dyn crate::domain::traits::ContentStoreOps,
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
         let index_rel = memories_index_rel();
@@ -576,7 +573,7 @@ impl NurturingStore {
     /// Save the remote nurturing index to a seed bank
     async fn save_remote_index(
         &self,
-        store: &ContentStore,
+        store: &dyn crate::domain::traits::ContentStoreOps,
         index: &RemoteNurturingIndex,
     ) -> Result<()> {
         let json =
@@ -592,7 +589,7 @@ impl NurturingStore {
 
     async fn store_offering_manifest(
         &self,
-        store: &ContentStore,
+        store: &dyn crate::domain::traits::ContentStoreOps,
         manifest: &MemoriesOfferingManifest,
     ) -> Result<()> {
         let json = serde_json::to_string_pretty(manifest)
@@ -659,6 +656,74 @@ fn memories_rel_path(object_key: &str) -> PathBuf {
     Path::new(paths::STORAGE_MEMORIES_DIR).join(object_key)
 }
 
+#[async_trait::async_trait]
+impl crate::domain::traits::NurturingStoreOps for NurturingStore {
+    async fn load_index(&self) -> Result<NurturingIndex> {
+        NurturingStore::load_index(self).await
+    }
+
+    async fn get_offering_slots(&self, offering_id: &str) -> Result<Option<OfferingSlots>> {
+        NurturingStore::get_offering_slots(self, offering_id).await
+    }
+
+    async fn create_snapshot(
+        &self,
+        offering_id: &str,
+        offering_name: &str,
+        stone_id: &str,
+        commit_image: bool,
+    ) -> Result<NurturingResult> {
+        NurturingStore::create_snapshot(self, offering_id, offering_name, stone_id, commit_image)
+            .await
+    }
+
+    async fn restore_snapshot(
+        &self,
+        offering_id: &str,
+        slot: Option<NurturingSlot>,
+    ) -> Result<HarvestManifest> {
+        NurturingStore::restore_snapshot(self, offering_id, slot).await
+    }
+
+    async fn delete_offering(&self, offering_id: &str) -> Result<()> {
+        NurturingStore::delete_offering(self, offering_id).await
+    }
+
+    async fn replicate_to_seed_bank(
+        &self,
+        offering_id: &str,
+        store: &dyn crate::domain::traits::ContentStoreOps,
+        seed_bank_id: &str,
+        storage_name: &str,
+        stone_id: &str,
+        hydration_manifest: Option<MemoriesOfferingManifest>,
+    ) -> Result<ReplicationResult> {
+        NurturingStore::replicate_to_seed_bank(
+            self, offering_id, store, seed_bank_id, storage_name, stone_id, hydration_manifest,
+        )
+        .await
+    }
+
+    async fn list_remote_snapshots(
+        &self,
+        store: &dyn crate::domain::traits::ContentStoreOps,
+        seed_bank_id: &str,
+    ) -> Result<RemoteNurturingIndex> {
+        NurturingStore::list_remote_snapshots(self, store, seed_bank_id).await
+    }
+
+    async fn restore_from_seed_bank(
+        &self,
+        store: &dyn crate::domain::traits::ContentStoreOps,
+        seed_bank_id: &str,
+        offering_id: &str,
+        harvest_id: Option<&str>,
+    ) -> Result<HarvestManifest> {
+        NurturingStore::restore_from_seed_bank(self, store, seed_bank_id, offering_id, harvest_id)
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,9 +738,11 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
 
         // Create store with custom path
+        let docker = std::sync::Arc::new(crate::docker::Client::new().unwrap());
         let store = NurturingStore {
             index_path: config_dir.join("nurturing").join("index.json"),
             harvest_store,
+            docker,
             index_lock: tokio::sync::Mutex::new(()),
         };
 

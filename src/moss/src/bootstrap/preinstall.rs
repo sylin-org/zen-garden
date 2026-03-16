@@ -12,7 +12,7 @@ pub struct PreInstallManifest {
 
 /// Load preinstall manifest from disk
 ///
-/// Looks for manifest at `/home/stone/garden-moss-preinstall.json`.
+/// Looks for manifest at `{stone_home}/garden-moss-preinstall.json`.
 /// This is typically used for automated deployment scenarios where
 /// offerings should be pre-installed at first boot.
 ///
@@ -33,10 +33,11 @@ pub struct PreInstallManifest {
 /// }
 /// ```
 pub async fn load_preinstall_manifest() -> Option<PreInstallManifest> {
-    let path = "/home/stone/garden-moss-preinstall.json";
-    if std::path::Path::new(path).exists() {
-        tracing::info!("Found pre-install manifest at {}", path);
-        match tokio::fs::read_to_string(path).await {
+    let path = std::path::PathBuf::from(garden_common::constants::paths::stone_home())
+        .join("garden-moss-preinstall.json");
+    if path.exists() {
+        tracing::info!("Found pre-install manifest at {}", path.display());
+        match tokio::fs::read_to_string(&path).await {
             Ok(content) => match serde_json::from_str(&content) {
                 Ok(manifest) => {
                     tracing::info!(
@@ -60,7 +61,7 @@ pub async fn load_preinstall_manifest() -> Option<PreInstallManifest> {
             }
         }
     } else {
-        tracing::debug!("No pre-install manifest found at {}", path);
+        tracing::debug!("No pre-install manifest found at {}", path.display());
         None
     }
 }

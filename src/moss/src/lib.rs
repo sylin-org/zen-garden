@@ -30,6 +30,10 @@ pub use app_state::{
 
 // Re-export API helpers from infra
 pub use infra::error_response;
+pub use infra::api_helpers::{
+    bad_gateway, bad_request, conflict, forbidden, internal, not_found, not_implemented,
+    unavailable,
+};
 
 // Re-export commonly used job event utilities
 pub use api::v1::events::{

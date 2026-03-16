@@ -15,13 +15,12 @@ use garden_common::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::time::Duration;
 use urlencoding::encode;
 
 use crate::api::responses::ApiResponse;
 use crate::domain::{get_offering_port, topology, CapabilityExecutor};
 use crate::infra::manifests::get_capability_manifest;
-use crate::{error_response, AppState};
+use crate::{bad_gateway, bad_request, conflict, internal, not_found, not_implemented, AppState};
 
 /// Response for capability listing
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,7 +74,7 @@ pub struct CapabilitiesQuery {
 pub async fn list_offering_capabilities_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
-) -> Result<Json<ApiResponse<CapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<CapabilitiesResponse> {
     let (offering, mode) = resolve_offering_for_capability(&state, &offering_name).await?;
 
     // Convert to ServiceInfo for the capability executor (which still uses ServiceInfo)
@@ -83,11 +82,9 @@ pub async fn list_offering_capabilities_v1(
 
     // Get capability manifest for this offering
     let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "NO_CAPABILITY_MANIFEST",
             format!("No capability manifest found for offering '{}'. This offering does not support capability discovery.", service.offering),
-            None,
         )
     })?;
 
@@ -97,11 +94,9 @@ pub async fn list_offering_capabilities_v1(
         .list_capabilities(&service, manifest, mode)
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "DISCOVERY_FAILED",
                 format!("Failed to discover capabilities: {}", e),
-                None,
             )
         })?;
 
@@ -114,19 +109,13 @@ pub async fn list_offering_capabilities_v1(
             o.sub_capabilities = sub_caps;
             false // sub_capabilities are detail-only
         }).await;
-        if let Err(e) = state.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after capability discovery");
-        }
     }
 
-    Ok(Json(ApiResponse {
-        data: CapabilitiesResponse {
+    crate::api::ok(CapabilitiesResponse {
             offering: service.name.clone(),
             mode,
             capabilities,
-        },
-        suggestions: None,
-    }))
+        })
 }
 
 /// Request body for adding a capability
@@ -244,7 +233,7 @@ pub async fn add_offering_capability_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
     Json(request): Json<AddCapabilityRequest>,
-) -> Result<Json<ApiResponse<AddCapabilityResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<AddCapabilityResponse> {
     use crate::{Job, JobStatus};
 
     // Find the service (managed or adopted)
@@ -252,14 +241,12 @@ pub async fn add_offering_capability_v1(
 
     // Get capability manifest
     let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "NO_CAPABILITY_MANIFEST",
             format!(
                 "No capability manifest found for offering '{}'.",
                 service.offering
             ),
-            None,
         )
     })?;
 
@@ -278,27 +265,23 @@ pub async fn add_offering_capability_v1(
         .iter()
         .find(|c| c.cap_type == cap_type)
         .ok_or_else(|| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "UNKNOWN_CAPABILITY_TYPE",
                 format!(
                     "Capability type '{}' not found in manifest for '{}'.",
                     cap_type, service.offering
                 ),
-                None,
             )
         })?;
 
     // Check if add operation is available
     if cap_def.add.as_ref().map(|a| !a.available).unwrap_or(true) {
-        return Err(error_response(
-            StatusCode::NOT_IMPLEMENTED,
+        return Err(not_implemented(
             "ADD_NOT_SUPPORTED",
             format!(
                 "Adding capabilities of type '{}' is not supported for '{}'.",
                 cap_type, service.offering
             ),
-            None,
         ));
     }
 
@@ -308,17 +291,14 @@ pub async fn add_offering_capability_v1(
         .capability_exists(&service, manifest, mode, &cap_type, &request.name)
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "CHECK_FAILED",
                 format!("Failed to check existing capabilities: {}", e),
-                None,
             )
         })?;
 
     if exists {
-        return Ok(Json(ApiResponse {
-            data: AddCapabilityResponse::AlreadyExists {
+        return crate::api::ok(AddCapabilityResponse::AlreadyExists {
                 offering: service.name.clone(),
                 capability: request.name.clone(),
                 cap_type: cap_type.clone(),
@@ -326,15 +306,12 @@ pub async fn add_offering_capability_v1(
                     "{} '{}' already exists for {}",
                     cap_type, request.name, service.name
                 ),
-            },
-            suggestions: None,
-        }));
+            });
     }
 
     // Case 2: Dry run - validation passed
     if request.dry_run {
-        return Ok(Json(ApiResponse {
-            data: AddCapabilityResponse::DryRun {
+        return crate::api::ok(AddCapabilityResponse::DryRun {
                 offering: service.name.clone(),
                 capability: request.name.clone(),
                 cap_type: cap_type.clone(),
@@ -342,9 +319,7 @@ pub async fn add_offering_capability_v1(
                     "{} '{}' can be added to {}",
                     cap_type, request.name, service.name
                 ),
-            },
-            suggestions: None,
-        }));
+            });
     }
 
     // Case 3: Check for existing running add job for this capability
@@ -355,8 +330,7 @@ pub async fn add_offering_capability_v1(
             if job_id.starts_with(&job_key)
                 && matches!(job.status, JobStatus::Running | JobStatus::Pending)
             {
-                return Ok(Json(ApiResponse {
-                    data: AddCapabilityResponse::InProgress {
+                return crate::api::ok(AddCapabilityResponse::InProgress {
                         offering: service.name.clone(),
                         capability: request.name.clone(),
                         job_id: job_id.clone(),
@@ -364,9 +338,7 @@ pub async fn add_offering_capability_v1(
                             "Add operation already in progress for {} '{}'",
                             cap_type, request.name
                         ),
-                    },
-                    suggestions: None,
-                }));
+                    });
             }
         }
     }
@@ -411,15 +383,12 @@ pub async fn add_offering_capability_v1(
         "Capability add job started"
     );
 
-    Ok(Json(ApiResponse {
-        data: AddCapabilityResponse::Started {
+    crate::api::ok(AddCapabilityResponse::Started {
             offering: service.name.clone(),
             capability: request.name.clone(),
             job_id,
             message: format!("Adding {} '{}' to {}", cap_type, request.name, service.name),
-        },
-        suggestions: None,
-    }))
+        })
 }
 
 /// DELETE /api/v1/stone/offerings/:name/capabilities/:capability
@@ -447,20 +416,18 @@ pub async fn remove_offering_capability_v1(
     State(state): State<AppState>,
     Path((offering_name, capability_name)): Path<(String, String)>,
     axum::extract::Query(query): axum::extract::Query<RemoveCapabilityQuery>,
-) -> Result<Json<ApiResponse<CapabilityMutationResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<CapabilityMutationResponse> {
     // Find the service (managed or adopted)
     let (service, mode) = find_service_for_capability(&state, &offering_name).await?;
 
     // Get capability manifest
     let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "NO_CAPABILITY_MANIFEST",
             format!(
                 "No capability manifest found for offering '{}'.",
                 service.offering
             ),
-            None,
         )
     })?;
 
@@ -479,14 +446,12 @@ pub async fn remove_offering_capability_v1(
         .iter()
         .find(|c| c.cap_type == cap_type)
         .ok_or_else(|| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "UNKNOWN_CAPABILITY_TYPE",
                 format!(
                     "Capability type '{}' not found in manifest for '{}'.",
                     cap_type, service.offering
                 ),
-                None,
             )
         })?;
 
@@ -497,14 +462,12 @@ pub async fn remove_offering_capability_v1(
         .map(|r| !r.available)
         .unwrap_or(true)
     {
-        return Err(error_response(
-            StatusCode::NOT_IMPLEMENTED,
+        return Err(not_implemented(
             "REMOVE_NOT_SUPPORTED",
             format!(
                 "Removing capabilities of type '{}' is not supported for '{}'.",
                 cap_type, service.offering
             ),
-            None,
         ));
     }
 
@@ -514,11 +477,9 @@ pub async fn remove_offering_capability_v1(
         .remove_capability(&service, manifest, mode, cap_type, &capability_name)
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "REMOVE_FAILED",
                 format!("Failed to remove capability: {}", e),
-                None,
             )
         })?;
 
@@ -531,24 +492,19 @@ pub async fn remove_offering_capability_v1(
         )
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "CAPABILITY_STATE_UPDATE_FAILED",
                 format!("Capability removed but state update failed: {}", e),
-                None,
             )
         })?;
     }
 
-    Ok(Json(ApiResponse {
-        data: CapabilityMutationResponse {
+    crate::api::ok(CapabilityMutationResponse {
             success: result.success,
             capability: result.capability,
             operation: result.operation,
             error: result.error,
-        },
-        suggestions: None,
-    }))
+        })
 }
 
 /// Query parameters for remove capability endpoint
@@ -697,7 +653,7 @@ pub async fn refresh_offering_capabilities_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
     Json(request): Json<RefreshCapabilitiesRequest>,
-) -> Result<Json<ApiResponse<RefreshCapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<RefreshCapabilitiesResponse> {
     use crate::{Job, JobStatus};
 
     // Find the service (managed or adopted)
@@ -705,14 +661,12 @@ pub async fn refresh_offering_capabilities_v1(
 
     // Get capability manifest
     let manifest = get_capability_manifest(&service.offering).ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "NO_CAPABILITY_MANIFEST",
             format!(
                 "No capability manifest found for offering '{}'.",
                 service.offering
             ),
-            None,
         )
     })?;
 
@@ -722,11 +676,9 @@ pub async fn refresh_offering_capabilities_v1(
         .list_capabilities(&service, manifest, mode)
         .await
         .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            internal(
                 "DISCOVERY_FAILED",
                 format!("Failed to discover capabilities: {}", e),
-                None,
             )
         })?;
 
@@ -764,26 +716,20 @@ pub async fn refresh_offering_capabilities_v1(
     // Case 1: No capabilities to refresh
     if total == 0 {
         let type_label = request.cap_type.as_deref().unwrap_or("capabilities");
-        return Ok(Json(ApiResponse {
-            data: RefreshCapabilitiesResponse::NoUpdates {
+        return crate::api::ok(RefreshCapabilitiesResponse::NoUpdates {
                 offering: service.name.clone(),
                 cap_type: request.cap_type.clone(),
                 message: format!("No {} found for {}", type_label, service.name),
-            },
-            suggestions: None,
-        }));
+            });
     }
 
     // Case 2: Dry run - return what would be refreshed
     if request.dry_run {
-        return Ok(Json(ApiResponse {
-            data: RefreshCapabilitiesResponse::DryRun {
+        return crate::api::ok(RefreshCapabilitiesResponse::DryRun {
                 offering: service.name.clone(),
                 capabilities: capabilities_to_refresh,
                 total,
-            },
-            suggestions: None,
-        }));
+            });
     }
 
     // Case 3: Check for existing running refresh job for this offering
@@ -804,17 +750,14 @@ pub async fn refresh_offering_capabilities_v1(
                     0
                 };
 
-                return Ok(Json(ApiResponse {
-                    data: RefreshCapabilitiesResponse::InProgress {
+                return crate::api::ok(RefreshCapabilitiesResponse::InProgress {
                         offering: service.name.clone(),
                         job_id: job_id.clone(),
                         progress_percent: progress,
                         completed,
                         failed,
                         total: job_total,
-                    },
-                    suggestions: None,
-                }));
+                    });
             }
         }
     }
@@ -862,15 +805,12 @@ pub async fn refresh_offering_capabilities_v1(
         "Capabilities refresh job started"
     );
 
-    Ok(Json(ApiResponse {
-        data: RefreshCapabilitiesResponse::Started {
+    crate::api::ok(RefreshCapabilitiesResponse::Started {
             offering: service.name.clone(),
             job_id,
             total,
             message: format!("Refresh started for {} capabilities", total),
-        },
-        suggestions: None,
-    }))
+        })
 }
 
 /// POST /api/v1/stone/offerings/:name/capabilities/mirror
@@ -882,13 +822,11 @@ pub async fn mirror_offering_capabilities_v1(
     State(state): State<AppState>,
     Path(offering_name): Path<String>,
     Json(request): Json<MirrorCapabilitiesRequest>,
-) -> Result<Json<ApiResponse<MirrorCapabilitiesResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<MirrorCapabilitiesResponse> {
     let offering_fqn = OfferingFqn::parse(&offering_name).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", offering_name, e),
-            None,
         )
     })?;
     let offering_fqn = offering_fqn.fqn();
@@ -897,42 +835,34 @@ pub async fn mirror_offering_capabilities_v1(
     let to = request.to.trim();
 
     if from.is_empty() || to.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "MIRROR_REQUIRES_STONES",
-            "Both 'from' and 'to' stones are required".to_string(),
-            None,
+            "Both 'from' and 'to' stones are required",
         ));
     }
 
     if from.eq_ignore_ascii_case(to) {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "MIRROR_SAME_STONE",
-            "Source and destination stones must be different".to_string(),
-            None,
+            "Source and destination stones must be different",
         ));
     }
 
     let from_endpoint = resolve_stone_endpoint(&state, from).await.ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "STONE_NOT_FOUND",
             format!("Stone '{}' not found in topology cache", from),
-            None,
         )
     })?;
     let to_endpoint = resolve_stone_endpoint(&state, to).await.ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
+        not_found(
             "STONE_NOT_FOUND",
             format!("Stone '{}' not found in topology cache", to),
-            None,
         )
     })?;
 
     let client = Client::builder()
-        .timeout(Duration::from_secs(20))
+        .timeout(garden_common::constants::timeouts::capability_check_timeout())
         .build()
         .unwrap_or_else(|_| Client::new());
 
@@ -1018,8 +948,7 @@ pub async fn mirror_offering_capabilities_v1(
         ))
     };
 
-    Ok(Json(ApiResponse {
-        data: MirrorCapabilitiesResponse {
+    crate::api::ok(MirrorCapabilitiesResponse {
             offering: offering_fqn,
             from: from.to_string(),
             to: to.to_string(),
@@ -1030,9 +959,7 @@ pub async fn mirror_offering_capabilities_v1(
             dry_run: request.dry_run,
             message,
             failures,
-        },
-        suggestions: None,
-    }))
+        })
 }
 
 async fn resolve_stone_endpoint(state: &AppState, stone_name: &str) -> Option<String> {
@@ -1065,11 +992,9 @@ async fn fetch_remote_capabilities(
     );
 
     let response = client.get(&url).send().await.map_err(|e| {
-        error_response(
-            StatusCode::BAD_GATEWAY,
+        bad_gateway(
             "REMOTE_UNREACHABLE",
             format!("Failed to reach stone '{}': {}", stone_name, e),
-            None,
         )
     })?;
 
@@ -1080,35 +1005,22 @@ async fn fetch_remote_capabilities(
             .map(|err| err.error.message)
             .unwrap_or_else(|_| body);
 
-        let code = if status.as_u16() == StatusCode::NOT_FOUND.as_u16() {
-            "OFFERING_NOT_FOUND"
-        } else {
-            "REMOTE_ERROR"
-        };
+        let err_msg = format!(
+            "Failed to fetch capabilities from '{}': {}",
+            stone_name, message
+        );
 
-        let http_status = if status.as_u16() == StatusCode::NOT_FOUND.as_u16() {
-            StatusCode::NOT_FOUND
+        return Err(if status.as_u16() == StatusCode::NOT_FOUND.as_u16() {
+            not_found("OFFERING_NOT_FOUND", err_msg)
         } else {
-            StatusCode::BAD_GATEWAY
-        };
-
-        return Err(error_response(
-            http_status,
-            code,
-            format!(
-                "Failed to fetch capabilities from '{}': {}",
-                stone_name, message
-            ),
-            None,
-        ));
+            bad_gateway("REMOTE_ERROR", err_msg)
+        });
     }
 
     let api_response: ApiResponse<CapabilitiesResponse> = response.json().await.map_err(|e| {
-        error_response(
-            StatusCode::BAD_GATEWAY,
+        bad_gateway(
             "REMOTE_PARSE_FAILED",
             format!("Failed to parse capabilities from '{}': {}", stone_name, e),
-            None,
         )
     })?;
 
@@ -1219,11 +1131,9 @@ async fn resolve_offering_for_capability(
 ) -> Result<(Offering, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
     let normalized = normalize_offering_selector(offering_name);
     let offering_fqn = OfferingFqn::parse(&normalized).map_err(|e| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "INVALID_OFFERING_NAME",
             format!("Invalid offering name '{}': {}", offering_name, e),
-            None,
         )
     })?;
     let offering_fqn_str = offering_fqn.fqn();
@@ -1238,14 +1148,12 @@ async fn resolve_offering_for_capability(
             .cloned();
         return match found {
             Some(offering) => Ok((offering.clone(), offering.mode())),
-            None => Err(error_response(
-                StatusCode::NOT_FOUND,
+            None => Err(not_found(
                 "OFFERING_NOT_FOUND",
                 format!(
                     "Offering '{}' is not running on this stone.",
                     offering_fqn_str
                 ),
-                None,
             )),
         };
     }
@@ -1267,14 +1175,12 @@ async fn resolve_offering_for_capability(
         .collect();
 
     if matches.is_empty() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
+        return Err(not_found(
             "OFFERING_NOT_FOUND",
             format!(
                 "Offering '{}' is not running on this stone.",
                 offering_fqn.offering
             ),
-            None,
         ));
     }
 
@@ -1297,15 +1203,13 @@ async fn resolve_offering_for_capability(
     }
 
     let candidates: Vec<String> = selected.iter().map(|o| o.name.to_string()).collect();
-    Err(error_response(
-        StatusCode::CONFLICT,
+    Err(conflict(
         "OFFERING_AMBIGUOUS",
         format!(
             "Offering '{}' matches multiple instances: {}",
             offering_fqn.offering,
             candidates.join(", ")
         ),
-        None,
     ))
 }
 

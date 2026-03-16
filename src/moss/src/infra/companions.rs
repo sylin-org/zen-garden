@@ -907,6 +907,91 @@ impl CompanionRegistry {
     }
 }
 
+#[async_trait::async_trait]
+impl crate::domain::traits::CompanionOps for CompanionRegistry {
+    async fn scan_and_autostart(&self, moss_endpoint: &str) -> Result<(usize, usize)> {
+        CompanionRegistry::scan_and_autostart(self, moss_endpoint).await
+    }
+
+    async fn refresh_all(&self) -> Result<usize> {
+        CompanionRegistry::refresh_all(self).await
+    }
+
+    async fn list(&self) -> Vec<crate::domain::traits::companion_ops::CompanionInfo> {
+        let companions = CompanionRegistry::list(self).await;
+        companions
+            .into_iter()
+            .map(|c| {
+                let running = c.is_running();
+                let pid = c.pid();
+                let port = c.port();
+                crate::domain::traits::companion_ops::CompanionInfo {
+                    id: c.id,
+                    pid,
+                    port,
+                    manifest: c.manifest,
+                    running,
+                }
+            })
+            .collect()
+    }
+
+    async fn get(&self, id: &str) -> Option<crate::domain::traits::companion_ops::CompanionInfo> {
+        CompanionRegistry::get(self, id).await.map(|c| {
+            let running = c.is_running();
+            let pid = c.pid();
+            let port = c.port();
+            crate::domain::traits::companion_ops::CompanionInfo {
+                id: c.id,
+                pid,
+                port,
+                manifest: c.manifest,
+                running,
+            }
+        })
+    }
+
+    async fn get_manifest(&self, id: &str) -> Option<garden_common::command_manifest::CommandManifest> {
+        CompanionRegistry::get_manifest(self, id).await
+    }
+
+    async fn is_running(&self, id: &str) -> bool {
+        CompanionRegistry::is_running(self, id).await
+    }
+
+    async fn start(&self, id: &str, moss_endpoint: &str) -> Result<u32> {
+        CompanionRegistry::start(self, id, moss_endpoint).await
+    }
+
+    async fn stop(&self, id: &str) -> Result<()> {
+        CompanionRegistry::stop(self, id).await
+    }
+
+    async fn stop_and_disable(&self, id: &str) -> Result<()> {
+        CompanionRegistry::stop_and_disable(self, id).await
+    }
+
+    async fn enable(&self, id: &str) -> Result<()> {
+        CompanionRegistry::enable(self, id).await
+    }
+
+    async fn stop_all(&self) -> Vec<(String, Result<()>)> {
+        CompanionRegistry::stop_all(self).await
+    }
+
+    async fn reap_terminated(&self) -> usize {
+        CompanionRegistry::reap_terminated(self).await
+    }
+
+    async fn sigterm_all(&self) {
+        CompanionRegistry::sigterm_all(self).await
+    }
+
+    async fn kill_all_survivors(&self) {
+        CompanionRegistry::kill_all_survivors(self).await
+    }
+}
+
 /// Check if a process is alive by PID
 fn is_process_alive(pid: u32) -> bool {
     #[cfg(windows)]

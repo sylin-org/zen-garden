@@ -1,5 +1,4 @@
 use crate::AppState;
-use anyhow::Context;
 use chrono::Utc;
 use garden_common::SubCapability;
 
@@ -101,15 +100,7 @@ async fn mutate_capability_set(
         false // sub_capabilities are detail-only, don't trigger chirp sync
     }).await;
 
-    // The closure always returns false (no sync needed), but we need to check
-    // if mutation actually happened for persistence. Since we can't get that
-    // info from the gateway return value, always persist if offering was found.
-    // This is a lightweight no-op if nothing changed on disk.
-    let _ = changed; // gateway returns false (detail-only)
-    state
-        .persist_offerings()
-        .await
-        .context("Failed to persist offerings after capability mutation")?;
+    let _ = changed; // gateway auto-persists
 
     Ok(())
 }

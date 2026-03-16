@@ -52,7 +52,7 @@ use axum::{
     response::Response,
     Json,
 };
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::api_utils::ApiErrorResponse;
 use garden_common::storage::StorageRole;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -267,7 +267,7 @@ pub(crate) async fn proxy_request(
 /// Groups by storage name — each name may have multiple replicas.
 pub async fn list_storages_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<GardenStorageSummary>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<GardenStorageSummary>> {
     let mut by_name: std::collections::HashMap<String, GardenStorageSummary> =
         std::collections::HashMap::new();
 
@@ -315,7 +315,7 @@ pub async fn list_storages_v1(
     storages.sort_by(|a, b| a.name.cmp(&b.name));
 
     info!(count = storages.len(), "Listed garden storages");
-    Ok(Json(ApiResponse::new(storages)))
+    crate::api::ok(storages)
 }
 
 // ============================================================================
@@ -328,27 +328,27 @@ pub async fn list_storages_v1(
 pub async fn discover_v1(
     State(state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
-) -> Result<Json<ApiResponse<StorageDiscovery>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageDiscovery> {
     let mut instances = Vec::new();
 
     // Check local storages
     if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-        let map = state.current.storage.volumes.read().await;
-        let (pin_id, roles) = map
-            .values()
-            .find_map(|v| {
-                let m = v.management.as_ref()?;
-                if m.name == name {
-                    Some((
-                        v.pin_id().map(|s| s.to_string()),
-                        m.roles.clone(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-        drop(map);
+        let (pin_id, roles) = {
+            let map = state.current.storage.volumes.read().await;
+            map.values()
+                .find_map(|v| {
+                    let m = v.management.as_ref()?;
+                    if m.name == name {
+                        Some((
+                            v.pin_id().map(|s| s.to_string()),
+                            m.roles.clone(),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        };
 
         let local_endpoint = state.current.topology.self_entry.read().await.address.http_base();
 
@@ -400,5 +400,5 @@ pub async fn discover_v1(
         ));
     }
 
-    Ok(Json(ApiResponse::new(StorageDiscovery { name, instances })))
+    crate::api::ok(StorageDiscovery { name, instances })
 }

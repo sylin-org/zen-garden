@@ -13,56 +13,12 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
+use garden_common::nurturing::{NurturingIndex, OfferingSlots, RemoteNurturingIndex};
 use serde::Deserialize;
 
 // ============================================================================
-// Response Types (mirror of API responses)
+// Rake-only response types (not shared with moss)
 // ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct NurturingSnapshot {
-    pub slot: String,
-    pub offering_id: String,
-    pub offering_name: String,
-    pub harvest_id: String,
-    pub created_at: String,
-    pub size_bytes: u64,
-    pub is_current: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OfferingSlots {
-    pub offering_id: String,
-    #[serde(default)]
-    pub offering_name: Option<String>,
-    pub slot_a: Option<NurturingSnapshot>,
-    pub slot_b: Option<NurturingSnapshot>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NurturingIndex {
-    pub version: u32,
-    pub offerings: Vec<OfferingSlots>,
-    #[serde(default)]
-    pub total_snapshots: usize,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RemoteSnapshot {
-    pub offering_id: String,
-    pub harvest_id: String,
-    pub seed_bank_id: String,
-    pub object_key: String,
-    pub created_at: String,
-    #[serde(default)]
-    pub size_bytes: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RemoteNurturingIndex {
-    pub seed_bank_id: String,
-    pub snapshots: Vec<RemoteSnapshot>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct HarvestManifest {
@@ -114,7 +70,7 @@ impl RestoreLocalCommand {
 #[async_trait]
 impl Command for RestoreLocalCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -288,7 +244,7 @@ impl RestoreRemoteCommand {
 #[async_trait]
 impl Command for RestoreRemoteCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -388,9 +344,7 @@ impl Command for RestoreRemoteCommand {
         println!("  Seed Bank:   {}", self.storage);
         println!("  Harvest ID:  {}", snapshot.harvest_id);
         println!("  Created:     {}", snapshot.created_at);
-        if let Some(size) = snapshot.size_bytes {
-            println!("  Size:        {}", format_bytes(size));
-        }
+        println!("  Size:        {}", format_bytes(snapshot.size_bytes));
 
         if self.dry_run {
             println!(
@@ -472,7 +426,7 @@ impl NurturingStatusCommand {
 #[async_trait]
 impl Command for NurturingStatusCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -526,9 +480,13 @@ impl Command for NurturingStatusCommand {
             })
             .collect();
 
+        let total_snapshots: usize = index.data.offerings.iter().map(|o| {
+            o.slot_a.is_some() as usize + o.slot_b.is_some() as usize
+        }).sum();
+
         println!(
             "  Total Snapshots: {}  |  Offerings: {}  |  Seed Banks: {} online",
-            index.data.total_snapshots,
+            total_snapshots,
             index.data.offerings.len(),
             online_banks.len()
         );
@@ -583,7 +541,7 @@ impl NurturingStatusCommand {
         endpoint: &str,
         offering: &str,
     ) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         // Get local slots
         let offering_path = urlencoding::encode(offering);
@@ -683,15 +641,11 @@ impl NurturingStatusCommand {
                                             matching.len()
                                         );
                                         for snap in matching.iter().take(5) {
-                                            let size_str = snap
-                                                .size_bytes
-                                                .map(format_bytes)
-                                                .unwrap_or_else(|| "?".to_string());
                                             println!(
                                                 "      {} - {} ({})",
                                                 &snap.harvest_id[..8],
                                                 snap.created_at,
-                                                size_str
+                                                format_bytes(snap.size_bytes)
                                             );
                                         }
                                         if matching.len() > 5 {
@@ -745,7 +699,7 @@ impl NurturingListCommand {
 #[async_trait]
 impl Command for NurturingListCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint
@@ -888,15 +842,11 @@ impl Command for NurturingListCommand {
                                     println!("\n  Remote ({}):", bank_name);
                                     for snap in &matching {
                                         total_count += 1;
-                                        let size_str = snap
-                                            .size_bytes
-                                            .map(format_bytes)
-                                            .unwrap_or_else(|| "?".to_string());
                                         println!(
                                             "    {} - {} - {}",
                                             &snap.harvest_id[..12],
                                             snap.created_at,
-                                            size_str
+                                            format_bytes(snap.size_bytes)
                                         );
                                     }
                                 }
@@ -948,7 +898,7 @@ impl NurturingTriggerCommand {
 #[async_trait]
 impl Command for NurturingTriggerCommand {
     async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
         let endpoint = ctx
             .endpoint

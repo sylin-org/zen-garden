@@ -502,7 +502,7 @@ pub async fn subscribe_to_announcement(
     let filter_type = announcement_type.to_string();
 
     // Create filtered channel
-    let (tx, rx) = mpsc::channel(100);
+    let (tx, rx) = mpsc::channel(crate::constants::channels::P2P_EVENT);
 
     tokio::spawn(async move {
         loop {
@@ -541,7 +541,7 @@ pub async fn subscribe_to_announcement(
 pub async fn subscribe_to_all() -> Result<mpsc::Receiver<(String, serde_json::Value, SocketAddr)>> {
     let mut broadcast_rx = subscribe_to_all_internal().await?;
 
-    let (tx, rx) = mpsc::channel(100);
+    let (tx, rx) = mpsc::channel(crate::constants::channels::P2P_EVENT);
 
     tokio::spawn(async move {
         loop {
@@ -720,8 +720,8 @@ async fn subscribe_to_all_internal() -> Result<broadcast::Receiver<InternalUdpEv
                 .get_or_init(|| async { DiscoveryConfig::from_env() })
                 .await;
 
-            // Create broadcast channel with capacity for 100 events
-            let (tx, _rx) = broadcast::channel(100);
+            // Create broadcast channel for P2P events
+            let (tx, _rx) = broadcast::channel(crate::constants::channels::P2P_EVENT);
             let broadcast_tx = tx.clone();
 
             // Bind receiver socket

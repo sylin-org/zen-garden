@@ -42,6 +42,7 @@ pub mod nurturing_store;
 pub mod persistence;
 pub mod platform;
 pub mod process;
+pub mod registry_client;
 pub mod secrets;
 pub mod service;
 pub mod stone_client;
@@ -99,7 +100,7 @@ pub use network::{
 pub use nurturing_store::NurturingStore;
 pub use persistence::{
     load_offerings, load_offerings_cache, load_or_generate_stone_id, save_offerings,
-    save_offerings_cache,
+    save_offerings_cache, OsOfferingsCache,
 };
 pub use process::{
     check_moss_processes_exist, kill_existing_moss_processes, kill_existing_moss_processes_graceful,

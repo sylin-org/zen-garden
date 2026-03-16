@@ -34,7 +34,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::api_utils::ApiErrorResponse;
 use garden_common::constants::paths;
 use garden_common::storage::{
     AddStorageRequest, AddStorageResponse, CandidatesResponse, DeviceState, MediumAction,
@@ -47,7 +47,7 @@ use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 use crate::domain::storage::analyze_device;
-use crate::infra::storage::{layout, ContentStore};
+use crate::infra::storage::{layout, ContentStore, OsPlatform};
 use crate::infra::{DomainPulse, PulseEvent};
 use crate::{error_response, AppState};
 use garden_common::presence::event_types;
@@ -246,7 +246,7 @@ fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
 /// Returns local bank stats plus garden-wide view from registry.
 pub async fn storage_overview_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<StorageOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageOverview> {
     // Get local banks from the unified Volumes domain (STORAGE-0011)
     let local_banks: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
@@ -320,7 +320,7 @@ pub async fn storage_overview_v1(
         garden_banks,
     };
 
-    Ok(Json(ApiResponse::new(overview)))
+    crate::api::ok(overview)
 }
 
 // ============================================================================
@@ -330,7 +330,7 @@ pub async fn storage_overview_v1(
 /// Get storage readiness for this stone (mounted + canonical + writable).
 pub async fn storage_health_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<StorageHealth>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageHealth> {
     let managed: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
         map.values().filter_map(|v| v.to_storage_info()).collect()
@@ -383,13 +383,13 @@ pub async fn storage_health_v1(
         issues.push("no seed banks are ready".to_string());
     }
 
-    Ok(Json(ApiResponse::new(StorageHealth {
+    crate::api::ok(StorageHealth {
         ready,
         bank_count,
         ready_count,
         banks,
         issues,
-    })))
+    })
 }
 
 // ============================================================================
@@ -399,7 +399,7 @@ pub async fn storage_health_v1(
 /// List all seed banks
 pub async fn list_banks_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<StorageInfo>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<StorageInfo>> {
     let banks: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
         map.values()
@@ -407,7 +407,7 @@ pub async fn list_banks_v1(
             .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
             .collect()
     };
-    Ok(Json(ApiResponse::new(banks)))
+    crate::api::ok(banks)
 }
 
 // ============================================================================
@@ -418,7 +418,7 @@ pub async fn list_banks_v1(
 pub async fn get_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageInfo> {
     let bank = {
         let map = state.current.storage.volumes.read().await;
         map.values()
@@ -431,7 +431,7 @@ pub async fn get_bank_v1(
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
-    Ok(Json(ApiResponse::new(bank)))
+    crate::api::ok(bank)
 }
 
 // ============================================================================
@@ -512,7 +512,7 @@ pub async fn delete_bank_v1(
 pub async fn release_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<ReleaseResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ReleaseResponse> {
     let _mount_path = {
         let map = state.current.storage.volumes.read().await;
         let vol = map.values()
@@ -571,11 +571,11 @@ pub async fn release_bank_v1(
     }).await;
 
     info!(name = %name, "Bank released");
-    Ok(Json(ApiResponse::new(ReleaseResponse {
+    crate::api::ok(ReleaseResponse {
         released: true,
         name,
         message: "Bank safely released. You may now remove the device.".to_string(),
-    })))
+    })
 }
 
 // ============================================================================
@@ -590,7 +590,7 @@ pub async fn rename_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(request): Json<RenameStorageRequest>,
-) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageInfo> {
     // Validate new name
     if request.new_name.is_empty() {
         return Err(err(
@@ -663,7 +663,7 @@ pub async fn rename_bank_v1(
     }).await;
     state.orchestration.storage.nudge.notify_one();
 
-    Ok(Json(ApiResponse::new(updated.clone())))
+    crate::api::ok(updated.clone())
 }
 
 // ============================================================================
@@ -676,73 +676,76 @@ pub async fn rename_bank_v1(
 pub async fn list_candidates_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<CandidatesResponse>), (StatusCode, Json<ApiErrorResponse>)> {
-    // Space candidates: mounted volumes that are unmanaged, removable, and online.
-    let volumes_map = state.current.storage.volumes.read().await;
-    let spaces: Vec<StorageDetectedInfo> = volumes_map
-        .values()
-        .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
-        .map(|v| StorageDetectedInfo {
-            device: v.path.clone(),
-            mount_path: Some(v.mount_path.to_string_lossy().to_string()),
-            label: v.label.clone(),
-            capacity_bytes: v.capacity_bytes,
-            state: DeviceState::Empty,
-            eligible: true,
-            removable: v.removable,
-            ineligible_reason: None,
-        })
-        .collect();
+    // Space and medium candidates collected under a single scope for both read guards.
+    let (spaces, media) = {
+        // Space candidates: mounted volumes that are unmanaged, removable, and online.
+        let volumes_map = state.current.storage.volumes.read().await;
+        let spaces: Vec<StorageDetectedInfo> = volumes_map
+            .values()
+            .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+            .map(|v| StorageDetectedInfo {
+                device: v.path.clone(),
+                mount_path: Some(v.mount_path.to_string_lossy().to_string()),
+                label: v.label.clone(),
+                capacity_bytes: v.capacity_bytes,
+                state: DeviceState::Empty,
+                eligible: true,
+                removable: v.removable,
+                ineligible_reason: None,
+            })
+            .collect();
 
-    // Medium candidates: physical disks (USB/external only).
-    let media_map = state.current.storage.media.read().await;
-    let media: Vec<MediumInfo> = media_map
-        .values()
-        .filter(|m| m.removable)
-        .map(|m| {
-            let managed = m.has_managed_space(&volumes_map);
-            let suggested_action = match m.condition {
-                crate::infra::storage::platform::MediumCondition::Unreadable => {
-                    MediumAction::Unreadable
-                }
-                crate::infra::storage::platform::MediumCondition::Raw => {
-                    MediumAction::NeedsPartition
-                }
-                crate::infra::storage::platform::MediumCondition::Partitioned => {
-                    if managed {
-                        MediumAction::AlreadyManaged
-                    } else if m.has_mounted_space() {
-                        MediumAction::Ready
-                    } else {
-                        MediumAction::NeedsFormat
+        // Medium candidates: physical disks (USB/external only).
+        let media_map = state.current.storage.media.read().await;
+        let media: Vec<MediumInfo> = media_map
+            .values()
+            .filter(|m| m.removable)
+            .map(|m| {
+                let managed = m.has_managed_space(&volumes_map);
+                let suggested_action = match m.condition {
+                    crate::infra::storage::platform::MediumCondition::Unreadable => {
+                        MediumAction::Unreadable
                     }
-                }
-            };
+                    crate::infra::storage::platform::MediumCondition::Raw => {
+                        MediumAction::NeedsPartition
+                    }
+                    crate::infra::storage::platform::MediumCondition::Partitioned => {
+                        if managed {
+                            MediumAction::AlreadyManaged
+                        } else if m.has_mounted_space() {
+                            MediumAction::Ready
+                        } else {
+                            MediumAction::NeedsFormat
+                        }
+                    }
+                };
 
-            MediumInfo {
-                device_id: m.device_id.clone(),
-                model: m.model.clone(),
-                bus_type: garden_common::storage::BusType::from(m.bus_type),
-                size_bytes: m.size_bytes,
-                removable: m.removable,
-                condition: garden_common::storage::MediumCondition::from(m.condition),
-                partitions: m
-                    .partitions
-                    .iter()
-                    .map(|p| MediumPartitionInfo {
-                        index: p.index,
-                        size_bytes: p.size_bytes,
-                        filesystem: p.filesystem.clone(),
-                        mount_path: p.mount_path.clone(),
-                        label: p.label.clone(),
-                    })
-                    .collect(),
-                managed,
-                suggested_action,
-            }
-        })
-        .collect();
-    drop(volumes_map);
-    drop(media_map);
+                MediumInfo {
+                    device_id: m.device_id.clone(),
+                    model: m.model.clone(),
+                    bus_type: garden_common::storage::BusType::from(m.bus_type),
+                    size_bytes: m.size_bytes,
+                    removable: m.removable,
+                    condition: garden_common::storage::MediumCondition::from(m.condition),
+                    partitions: m
+                        .partitions
+                        .iter()
+                        .map(|p| MediumPartitionInfo {
+                            index: p.index,
+                            size_bytes: p.size_bytes,
+                            filesystem: p.filesystem.clone(),
+                            mount_path: p.mount_path.clone(),
+                            label: p.label.clone(),
+                        })
+                        .collect(),
+                    managed,
+                    suggested_action,
+                }
+            })
+            .collect();
+
+        (spaces, media)
+    };
 
     Ok((
         StatusCode::OK,
@@ -763,7 +766,7 @@ pub async fn list_candidates_v1(
 pub async fn add_storage_v1(
     State(state): State<AppState>,
     Json(request): Json<AddStorageRequest>,
-) -> Result<Json<ApiResponse<AddStorageResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<AddStorageResponse> {
     let target = &request.target;
     let target_path = std::path::Path::new(target);
 
@@ -785,7 +788,7 @@ pub async fn add_storage_v1(
         }
 
         // Analyze device state
-        let device_info = analyze_device(target).map_err(|e| {
+        let device_info = analyze_device(target, &OsPlatform).map_err(|e| {
             err(StatusCode::BAD_REQUEST, "DEVICE_ANALYSIS_FAILED", &e.to_string())
         })?;
 
@@ -901,7 +904,7 @@ pub async fn add_storage_v1(
                 cataloged: 0,
                 job_id: Some(job_id),
             };
-            return Ok(Json(ApiResponse::new(response)));
+            return crate::api::ok(response);
         }
 
         // ── Device has filesystem but no format needed ──────────────────
@@ -981,7 +984,7 @@ async fn add_at_path(
     mount_path: &std::path::Path,
     manifest: StorageManifest,
     formatted: bool,
-) -> Result<Json<ApiResponse<AddStorageResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<AddStorageResponse> {
     // Migrate legacy layout if present
     layout::migrate_legacy_layout(mount_path).await.map_err(|e| {
         err(StatusCode::INTERNAL_SERVER_ERROR, "MIGRATION_FAILED",
@@ -1051,7 +1054,7 @@ async fn add_at_path(
         warn!(error = %e, "Failed to refresh signpost after add");
     }
 
-    Ok(Json(ApiResponse::new(response)))
+    crate::api::ok(response)
 }
 
 /// Run format-and-add job in background (for block devices needing formatting).
@@ -1389,7 +1392,7 @@ pub async fn set_roles_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(request): Json<SetRolesRequest>,
-) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageInfo> {
     let mount_path = {
         let map = state.current.storage.volumes.read().await;
         let vol = map.values()
@@ -1434,7 +1437,7 @@ pub async fn set_roles_v1(
     // STORAGE-0013: Emit domain event — beacon subscriber reacts
     state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
 
-    Ok(Json(ApiResponse::new(updated.clone())))
+    crate::api::ok(updated.clone())
 }
 
 // ============================================================================
@@ -1543,7 +1546,7 @@ pub struct PinSeedBankResponse {
 pub async fn pin_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<PinSeedBankResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<PinSeedBankResponse> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err(err(
@@ -1567,7 +1570,8 @@ pub async fn pin_bank_v1(
                 )
             })?;
 
-        vol.pin().await.map_err(|e| {
+        let store = ContentStore::new(vol.mount_path.clone(), None);
+        vol.pin(&store).await.map_err(|e| {
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PIN_FAILED",
@@ -1593,14 +1597,14 @@ pub async fn pin_bank_v1(
     }).await;
     state.orchestration.storage.nudge.notify_one();
 
-    Ok(Json(ApiResponse::new(PinSeedBankResponse {
+    crate::api::ok(PinSeedBankResponse {
         name: name.clone(),
         pinned: true,
         message: format!(
             "Primary role for '{}' pinned to this stone (pin_id: {})",
             name, pin_id
         ),
-    })))
+    })
 }
 
 /// POST /api/v1/stone/storage/banks/:name/unpin
@@ -1610,7 +1614,7 @@ pub async fn pin_bank_v1(
 pub async fn unpin_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<PinSeedBankResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<PinSeedBankResponse> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err(err(
@@ -1626,7 +1630,8 @@ pub async fn unpin_bank_v1(
         if let Some(vol) = map.values_mut().find(|v| {
             v.management.as_ref().is_some_and(|m| m.name == name)
         }) {
-            match vol.unpin().await {
+            let store = ContentStore::new(vol.mount_path.clone(), None);
+            match vol.unpin(&store).await {
                 Ok(old_pin_id) => old_pin_id,
                 Err(e) => {
                     warn!(name = %name, error = %e, "Unpin encountered an error");
@@ -1656,11 +1661,11 @@ pub async fn unpin_bank_v1(
     }).await;
     state.orchestration.storage.nudge.notify_one();
 
-    Ok(Json(ApiResponse::new(PinSeedBankResponse {
+    crate::api::ok(PinSeedBankResponse {
         name: name.clone(),
         pinned: false,
         message: format!("Primary role for '{}' is now unpinned", name),
-    })))
+    })
 }
 
 // ============================================================================
@@ -1677,10 +1682,7 @@ pub async fn bank_changes_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Query(params): Query<ChangesQuery>,
-) -> Result<
-    Json<ApiResponse<garden_common::storage::ChangesResponse>>,
-    (StatusCode, Json<ApiErrorResponse>),
-> {
+) -> crate::api::ApiResult<garden_common::storage::ChangesResponse> {
     let mount_path = {
         let map = state.current.storage.volumes.read().await;
         let vol = map.values()
@@ -1712,7 +1714,7 @@ pub async fn bank_changes_v1(
         "Served changelog changes"
     );
 
-    Ok(Json(ApiResponse::new(resp)))
+    crate::api::ok(resp)
 }
 
 /// Query parameters for the storage SSE stream.
@@ -1744,7 +1746,7 @@ pub async fn stream_storage_v1(
     use tokio_stream::StreamExt;
 
     let token = state.shutdown_token.child_token();
-    let rx = state.orchestration.storage.tick.debounced.subscribe();
+    let rx = state.orchestration.storage.tick_stream();
     let filter_name = query.storage.clone();
 
     info!(

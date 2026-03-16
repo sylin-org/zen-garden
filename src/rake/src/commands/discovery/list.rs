@@ -8,30 +8,11 @@ use crate::context::Runtime;
 use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
-use garden_common::ui::rendering::{self as ui, TerminalInfo};
+use crate::ui::rendering::{self as ui, TerminalInfo};
 use garden_common::SubCapability;
-use serde::Deserialize;
 
-/// Service discovery response (matches moss ServiceDiscoveryResponse)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ServiceDiscoveryResponse {
-    found: bool,
-    services: Vec<FoundService>,
-    source: String,
-}
-
-/// Found service (matches moss FoundService)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct FoundService {
-    name: String,
-    offering: String,
-    category: String,
-    status: String,
-    #[serde(default)]
-    sub_capabilities: Vec<SubCapability>,
-}
+// Re-use canonical types from garden-common
+use garden_common::discovery::{FoundService, ServiceDiscoveryResponse};
 
 // Use shared ApiResponse from garden-common
 use garden_common::api_utils::ApiResponse;
@@ -108,7 +89,7 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
 
     for svc in services {
         let status_lower = svc.status.to_lowercase();
-        if status_lower.contains(garden_common::SERVICE_RUNNING) {
+        if status_lower.contains(garden_common::constants::SERVICE_RUNNING) {
             running_count += 1;
         } else {
             stopped_count += 1;
@@ -116,7 +97,7 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
 
         let status_display = ui::status_indicator(&status_lower, term.supports_color);
         let offering_display = if svc.offering.is_empty() {
-            garden_common::VALUE_UNKNOWN.to_string()
+            garden_common::constants::VALUE_UNKNOWN.to_string()
         } else {
             svc.offering.clone()
         };

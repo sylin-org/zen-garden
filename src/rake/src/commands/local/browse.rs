@@ -9,7 +9,7 @@ use crate::commands::help::{
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 
 /// Browse commands in the manifest
 pub struct BrowseCommand {

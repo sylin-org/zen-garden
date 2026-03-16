@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::app_state::AppState;
+use crate::infra::storage::ContentStore;
 
 /// Startup reconciliation window — wait before asserting Primary (ms).
 const STARTUP_RECONCILIATION_MS: u64 = 3_000;
@@ -222,7 +223,8 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
             if let Some(vol) = map.values_mut().find(|v| {
                 v.management.as_ref().is_some_and(|m| m.name == *name)
             }) {
-                if let Err(e) = vol.unpin().await {
+                let store = ContentStore::new(vol.mount_path.clone(), None);
+                if let Err(e) = vol.unpin(&store).await {
                     warn!(name = %name, error = %e, "Failed to auto-unpin volume");
                 }
             }
@@ -278,7 +280,8 @@ async fn compact_primary_changelogs(state: &AppState) {
             _ => continue,
         };
 
-        match mgmt.store.compact_changelog(&cutoff_cursor).await {
+        let store = ContentStore::new(vol.mount_path.clone(), None);
+        match store.compact_changelog(&cutoff_cursor).await {
             Ok(0) => {}
             Ok(pruned) => {
                 info!(

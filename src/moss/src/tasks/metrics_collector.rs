@@ -43,7 +43,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
             // Also get initial storage metrics
             let storage = get_storage_metrics().unwrap_or_else(|_| Vec::new());
 
-            let mut cache = state.current.system_resources.write().await;
+            let mut cache = state.current.metrics.system.write().await;
             *cache = Some(garden_common::StoneResources {
                 cpu: cpu.clone(),
                 memory: memory.clone(),
@@ -65,7 +65,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
     // Collect initial network metrics
     {
         let network = get_network_metrics();
-        let mut cache = state.network_metrics_cache.write().await;
+        let mut cache = state.current.metrics.network.write().await;
         *cache = Some(network);
         tracing::debug!("Initial network metrics collected");
     }
@@ -121,7 +121,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update CPU, memory, uptime (fast - in-memory kernel data)
                 match get_fast_metrics() {
                     Ok((cpu, memory, uptime_seconds, uptime_friendly)) => {
-                        let mut cache = state.current.system_resources.write().await;
+                        let mut cache = state.current.metrics.system.write().await;
                         if let Some(ref mut resources) = *cache {
                             resources.cpu = cpu;
                             resources.memory = memory;
@@ -146,7 +146,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update network metrics (fast - reads from kernel counters)
                 {
                     let network = get_network_metrics();
-                    let mut cache = state.network_metrics_cache.write().await;
+                    let mut cache = state.current.metrics.network.write().await;
                     *cache = Some(network);
                 }
 
@@ -155,7 +155,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                     let gpu_util = tokio::task::spawn_blocking(get_gpu_utilization)
                         .await
                         .unwrap_or(None);
-                    let mut cache = state.gpu_utilization.write().await;
+                    let mut cache = state.current.metrics.gpu.write().await;
                     *cache = gpu_util;
                 }
             }
@@ -164,7 +164,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update storage metrics (slow - involves statvfs syscalls)
                 match get_storage_metrics() {
                     Ok(storage) => {
-                        let mut cache = state.current.system_resources.write().await;
+                        let mut cache = state.current.metrics.system.write().await;
                         if let Some(ref mut resources) = *cache {
                             resources.storage = storage;
                             let disk_count = resources.storage.len();

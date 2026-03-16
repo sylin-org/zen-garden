@@ -17,7 +17,6 @@ use crate::domain::{Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
-use garden_common::NetworkMetrics;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -129,12 +128,6 @@ pub struct AppState {
     // Background tasks are responsible for keeping caches fresh.
 
 
-    /// Cached network metrics (updated every 5s by health_monitor task)
-    pub network_metrics_cache: Arc<RwLock<Option<NetworkMetrics>>>,
-
-    /// Cached GPU utilization percentage (FIREFLY-0003)
-    /// Updated every 5s by metrics_collector. None = no GPU or query failed.
-    pub gpu_utilization: Arc<RwLock<Option<f32>>>,
 
     /// Log broadcast channel (for live SSE log streaming)
     pub log: tokio::sync::broadcast::Sender<String>,
@@ -385,29 +378,42 @@ impl AppState {
         }
     }
 
-    /// Add or update a single offering
+    // ========================================================================
+    // Offering Mutation Gateway
+    // ========================================================================
+
+    /// Single offering mutation gateway.
     ///
-    /// Immediately syncs to self_entry and triggers chirp.
-    /// This is the primary method for offering state changes.
+    /// All offering mutations go through this method. The closure receives
+    /// `&mut Vec<Offering>` and returns `(R, bool)` — the result for the
+    /// caller, plus a `changed` flag. If changed, the post-mutation
+    /// invariant runs: sync_self_services + persist_offerings.
+    async fn mutate_offerings<F, R>(&self, auto_chirp: bool, mutator: F) -> R
+    where
+        F: FnOnce(&mut Vec<Offering>) -> (R, bool),
+    {
+        let (result, changed) = {
+            let mut offerings = self.offerings.write().await;
+            mutator(&mut offerings)
+        };
+        if changed {
+            self.sync_self_services(auto_chirp).await;
+            if let Err(e) = self.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist offerings");
+            }
+        }
+        result
+    }
+
+    /// Add or update a single offering.
     ///
     /// Dedup guard: matches by `offering_id` first, then by FQN (`name`).
-    /// This prevents duplicate entries when callers generate a fresh GUID
-    /// for an offering that already exists in the registry.
     pub async fn upsert_offering(&self, mut offering: Offering, auto_chirp: bool) {
         offering.touch();
-        {
-            let mut offerings = self.offerings.write().await;
-            if let Some(pos) = offerings
-                .iter()
-                .position(|o| o.offering_id == offering.offering_id)
-            {
-                // Exact ID match — update in place
+        self.mutate_offerings(auto_chirp, |offerings| {
+            if let Some(pos) = offerings.iter().position(|o| o.offering_id == offering.offering_id) {
                 offerings[pos] = offering;
-            } else if let Some(pos) = offerings
-                .iter()
-                .position(|o| o.name == offering.name)
-            {
-                // FQN match — same service, different ID (e.g. re-adoption)
+            } else if let Some(pos) = offerings.iter().position(|o| o.name == offering.name) {
                 tracing::info!(
                     name = %offering.name,
                     old_id = %offerings[pos].offering_id,
@@ -418,61 +424,35 @@ impl AppState {
             } else {
                 offerings.push(offering);
             }
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after upsert");
-        }
+            ((), true)
+        }).await;
     }
 
-    /// Remove an offering by ID
-    ///
-    /// Immediately syncs to self_entry and triggers chirp.
+    /// Remove an offering by ID.
     pub async fn remove_offering(&self, offering_id: &str, auto_chirp: bool) {
-        {
-            let mut offerings = self.offerings.write().await;
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let before = offerings.len();
             offerings.retain(|o| o.offering_id != offering_id);
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after removal");
-        }
+            ((), offerings.len() != before)
+        }).await;
     }
 
-    /// Remove an offering by name
-    ///
-    /// Immediately syncs to self_entry and triggers chirp.
+    /// Remove an offering by name (FQN).
     pub async fn remove_service(&self, service_name: &str, auto_chirp: bool) {
-        {
-            let mut offerings = self.offerings.write().await;
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let before = offerings.len();
             offerings.retain(|o| o.name.to_string() != service_name);
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after removal");
-        }
+            ((), offerings.len() != before)
+        }).await;
     }
 
-    /// Coalesce duplicate offerings by FQN (name)
-    ///
-    /// When multiple entries share the same `name`, keeps the one that
-    /// was most recently updated (or registered). This is a self-heal
-    /// mechanism for registries that accumulated duplicates before the
-    /// FQN dedup guard was added to `upsert_offering`.
+    /// Coalesce duplicate offerings by FQN, keeping the most recently updated.
     ///
     /// Returns the number of duplicates removed.
     pub async fn coalesce_duplicate_offerings(&self) -> usize {
-        let removed = {
-            let mut offerings = self.offerings.write().await;
+        self.mutate_offerings(true, |offerings| {
             let before = offerings.len();
 
-            // Build a map of FQN → best index (most recently updated)
             let mut best: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             for (i, o) in offerings.iter().enumerate() {
@@ -497,53 +477,27 @@ impl AppState {
                 k
             });
 
-            before - offerings.len()
-        };
-
-        if removed > 0 {
-            tracing::warn!(
-                removed,
-                "Coalesced duplicate offerings by FQN"
-            );
-            self.sync_self_services(true).await;
-            if let Err(e) = self.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist offerings after coalesce");
+            let removed = before - offerings.len();
+            if removed > 0 {
+                tracing::warn!(removed, "Coalesced duplicate offerings by FQN");
             }
-        }
-
-        removed
+            (removed, removed > 0)
+        }).await
     }
 
-    /// Batch update offerings (for reconciliation)
-    ///
-    /// Replaces entire offerings registry and triggers chirp.
-    pub async fn replace_offerings(&self, offerings: Vec<Offering>, auto_chirp: bool) {
-        {
-            let mut registry = self.offerings.write().await;
-            *registry = offerings;
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after batch update");
-        }
+    /// Replace entire offerings registry.
+    pub async fn replace_offerings(&self, new_offerings: Vec<Offering>, auto_chirp: bool) {
+        self.mutate_offerings(auto_chirp, |offerings| {
+            *offerings = new_offerings;
+            ((), true)
+        }).await;
     }
-
-    // ========================================================================
-    // Offering Gateway Methods
-    // ========================================================================
 
     /// Update a single offering by ID via a closure.
     ///
-    /// This is the preferred way to mutate an existing offering's operational
-    /// state (status, health, port, role, etc.).  The closure receives `&mut Offering`
-    /// and returns `true` if it made changes.
-    ///
-    /// After a successful mutation, `self_entry` is synced automatically so
-    /// chirps carry current data.  Pass `auto_chirp = true` for immediate
-    /// broadcast (status changes) or `false` to let the periodic announcer
-    /// pick it up (detail-only changes).
+    /// The closure receives `&mut Offering` and returns `true` if it made changes.
+    /// Pass `auto_chirp = true` for immediate broadcast, `false` to let the
+    /// periodic announcer pick it up.
     pub async fn update_offering<F>(
         &self,
         offering_id: &str,
@@ -553,28 +507,16 @@ impl AppState {
     where
         F: FnOnce(&mut Offering) -> bool,
     {
-        let changed = {
-            let mut offerings = self.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
-                mutator(o)
-            } else {
-                false
-            }
-        };
-
-        if changed {
-            self.sync_self_services(auto_chirp).await;
-            if let Err(e) = self.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist after offering update");
-            }
-        }
-
-        changed
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let changed = offerings.iter_mut()
+                .find(|o| o.offering_id == offering_id)
+                .map(mutator)
+                .unwrap_or(false);
+            (changed, changed)
+        }).await
     }
 
     /// Update a single offering by name (FQN) via a closure.
-    ///
-    /// Same semantics as `update_offering` but looks up by `offering.name`.
     pub async fn update_offering_by_name<F>(
         &self,
         name: &str,
@@ -584,33 +526,18 @@ impl AppState {
     where
         F: FnOnce(&mut Offering) -> bool,
     {
-        let changed = {
-            let mut offerings = self.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
-                mutator(o)
-            } else {
-                false
-            }
-        };
-
-        if changed {
-            self.sync_self_services(auto_chirp).await;
-            if let Err(e) = self.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist after offering update by name");
-            }
-        }
-
-        changed
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let changed = offerings.iter_mut()
+                .find(|o| o.name.to_string() == name)
+                .map(mutator)
+                .unwrap_or(false);
+            (changed, changed)
+        }).await
     }
 
     /// Batch-update offerings via a closure over the entire vec.
     ///
-    /// The closure receives `&mut Vec<Offering>` and returns the count of
-    /// offerings it changed.  If > 0, self_entry is synced and offerings
-    /// are persisted to disk automatically.
-    ///
-    /// Use this for bulk operations like the health monitor's iterate-all
-    /// pattern where acquiring/releasing the lock per-offering is wasteful.
+    /// The closure returns the count of offerings changed.
     pub async fn update_offerings_batch<F>(
         &self,
         mutator: F,
@@ -619,19 +546,10 @@ impl AppState {
     where
         F: FnOnce(&mut Vec<Offering>) -> usize,
     {
-        let changed = {
-            let mut offerings = self.offerings.write().await;
-            mutator(&mut offerings)
-        };
-
-        if changed > 0 {
-            self.sync_self_services(auto_chirp).await;
-            if let Err(e) = self.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist after batch update");
-            }
-        }
-
-        changed
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let changed = mutator(offerings);
+            (changed, changed > 0)
+        }).await
     }
 
     // ========================================================================

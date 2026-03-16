@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use garden_common::{HardwareCapabilities, StoneResources};
+use garden_common::{HardwareCapabilities, NetworkMetrics, StoneResources};
 
 /// This stone's identity — set at startup, effectively immutable at runtime.
 ///
@@ -16,6 +16,19 @@ pub struct Stone {
     pub id: String,
     /// User-assigned display name — fixed for the lifetime of the process.
     pub name: String,
+}
+
+/// Runtime metrics — updated by background metrics_collector task.
+/// Individual locks: GPU queries are slow (spawn_blocking), disk ticks
+/// do partial updates of system_resources.storage.
+#[derive(Clone)]
+pub struct Metrics {
+    /// CPU, memory, disk, uptime (updated every 5s fast tick + 30s disk tick)
+    pub system: Arc<RwLock<Option<StoneResources>>>,
+    /// Network RX/TX bytes and rates (updated every 5s)
+    pub network: Arc<RwLock<Option<NetworkMetrics>>>,
+    /// GPU utilization percentage (updated every 5s via spawn_blocking)
+    pub gpu: Arc<RwLock<Option<f32>>>,
 }
 
 /// Topology sub-context (`state.current.topology`).
@@ -50,6 +63,6 @@ pub struct Current {
     /// API port for constructing endpoint URLs.
     pub api_port: u16,
 
-    /// System metrics cache (CPU/memory/disk, updated every 5s).
-    pub system_resources: Arc<RwLock<Option<StoneResources>>>,
+    /// Runtime metrics (system, network, GPU) — updated by metrics_collector task.
+    pub metrics: Arc<Metrics>,
 }

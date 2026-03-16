@@ -696,7 +696,11 @@ async fn build_state(
             },
             capabilities: capabilities.clone(),
             api_port: port,
-            system_resources: Arc::new(RwLock::new(None)),
+            metrics: Arc::new(crate::domain::current::Metrics {
+                system: Arc::new(RwLock::new(None)),
+                network: Arc::new(RwLock::new(None)),
+                gpu: Arc::new(RwLock::new(None)),
+            }),
         }),
         offerings: Arc::new(RwLock::new(offerings)),
         manifest_registry: manifest_registry.clone(),
@@ -740,10 +744,6 @@ async fn build_state(
         companion: Arc::new(crate::domain::Companion {
             registry: Arc::new(infra::CompanionRegistry::new().await),
         }),
-        // Cached metrics - populated by background tasks, read-only for endpoints
-        network_metrics_cache: Arc::new(RwLock::new(None)),
-        // FIREFLY-0003: GPU utilization cache
-        gpu_utilization: Arc::new(RwLock::new(None)),
         // Log broadcast channel (for live SSE log streaming)
         log: log.clone(),
         // Subsystem readiness (network_ready managed by Network)

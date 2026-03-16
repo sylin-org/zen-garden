@@ -30,7 +30,7 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
 
         // Get real system metrics from shared cache
         let (cpu_percent, memory_percent, disk_percent) = {
-            let resources = state.current.system_resources.read().await;
+            let resources = state.current.metrics.system.read().await;
             if let Some(ref res) = *resources {
                 let primary_disk = res
                     .storage
@@ -47,14 +47,14 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
 
         // FIREFLY-0003: Get GPU utilization from cache
         let gpu_percent = {
-            let gpu = state.gpu_utilization.read().await;
+            let gpu = state.current.metrics.gpu.read().await;
             gpu.unwrap_or(0.0) as f64
         };
         let gpu_active = gpu_percent > GPU_ACTIVE_THRESHOLD;
 
         // FIREFLY-0003: Get network rates from cache
         let (net_rx, net_tx) = {
-            let network = state.network_metrics_cache.read().await;
+            let network = state.current.metrics.network.read().await;
             network
                 .as_ref()
                 .map(|n| {
@@ -103,7 +103,7 @@ pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::C
 
         // Get real metrics from shared cache
         let (cpu, memory) = {
-            let resources = state.current.system_resources.read().await;
+            let resources = state.current.metrics.system.read().await;
             if let Some(ref res) = *resources {
                 (res.cpu.usage_percent as f64, res.memory.used_percent as f64)
             } else {

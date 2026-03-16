@@ -146,7 +146,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // Get real metrics from system monitor (fallback to zeros if not yet collected)
     let (cpu_percent, memory_percent, disk_percent) = {
-        let resources = state.current.system_resources.read().await;
+        let resources = state.current.metrics.system.read().await;
         if let Some(ref res) = *resources {
             // Use primary mount point (root or largest disk) for summary disk %
             let primary_disk_percent = res
@@ -169,14 +169,14 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: GPU utilization
     let gpu_percent = {
-        let gpu = state.gpu_utilization.read().await;
+        let gpu = state.current.metrics.gpu.read().await;
         gpu.unwrap_or(0.0) as f64
     };
     let gpu_active = gpu_percent > 10.0;
 
     // FIREFLY-0003: Network rates
     let (net_rx, net_tx) = {
-        let network = state.network_metrics_cache.read().await;
+        let network = state.current.metrics.network.read().await;
         network
             .as_ref()
             .map(|n| (n.rx_bytes_per_sec.unwrap_or(0), n.tx_bytes_per_sec.unwrap_or(0)))

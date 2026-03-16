@@ -382,7 +382,7 @@ pub async fn get_portrait_data(
 
     // Get uptime from resources
     let uptime = {
-        let resources = state.current.system_resources.read().await;
+        let resources = state.current.metrics.system.read().await;
         resources
             .as_ref()
             .map(|r| r.uptime_friendly.clone())
@@ -433,11 +433,11 @@ pub async fn get_portrait_data(
     // === Foundation (system resources) ===
     // NOTE: All metrics read from cache - no I/O allowed here
     let foundation = {
-        let resources = state.current.system_resources.read().await;
+        let resources = state.current.metrics.system.read().await;
 
         // Read network metrics from cache (populated by health_monitor task)
         let network = {
-            let cached = state.network_metrics_cache.read().await;
+            let cached = state.current.metrics.network.read().await;
             cached.as_ref().map(|m| FoundationNetwork {
                 rx_bytes: m.total_rx_bytes,
                 tx_bytes: m.total_tx_bytes,

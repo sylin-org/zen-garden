@@ -23,7 +23,7 @@ use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, Sto
 /// If metrics not yet collected, returns a fallback response with zero values.
 pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<MetricsSnapshot>> {
     let resources = {
-        let resources_guard = state.current.system_resources.read().await;
+        let resources_guard = state.current.metrics.system.read().await;
         resources_guard
             .as_ref()
             .cloned()
@@ -73,7 +73,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<Metr
                 })
         });
 
-    let network = state.network_metrics_cache.read().await.clone();
+    let network = state.current.metrics.network.read().await.clone();
 
     let snapshot = MetricsSnapshot {
         timestamp: chrono::Utc::now().to_rfc3339(),

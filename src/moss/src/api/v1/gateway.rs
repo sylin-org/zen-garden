@@ -1,8 +1,10 @@
-﻿//! Gateway registration API — ORCH-0004
+//! Gateway registration API — ORCH-0004
 //!
 //! Orchestrators register as gateways for offerings they front.
-//! PUT upserts (idempotent), DELETE removes. Both trigger auto-chirp
-//! so the gateway entry propagates through topology.
+//! PUT upserts (idempotent), DELETE removes.
+//!
+//! Writes go directly to `tool.registry` with `EntryOrigin::Gateway` and a
+//! TTL. The registry reaper removes expired entries. No separate registry.
 
 use crate::domain::garden_registry::EntryOrigin;
 use crate::AppState;
@@ -16,6 +18,10 @@ use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{GardenTool, ServiceInfo, Stone, ToolIdentity};
 use garden_common::GatewayRegistration;
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+
+/// Gateway TTL — entries expire if not refreshed within this period.
+const GATEWAY_TTL_SECS: u64 = 60;
 
 /// Request body for PUT /api/v1/garden/gateway/{offering}
 #[derive(Debug, Deserialize)]
@@ -82,12 +88,12 @@ pub async fn put_gateway(
         fqn = %registration.fqn,
         hostname = %registration.hostname,
         port = registration.port,
-        "{} FQN handler registration for {}",
+        "{} gateway registration for {}",
         offering,
         registration.fqn,
     );
 
-    // Build GardenTool for gateway registration
+    // Build GardenTool for registry
     let fqn = OfferingFqn::parse(&registration.fqn).ok();
     let fqid = fqn.as_ref().map(|f| f.fqn()).unwrap_or_else(|| registration.fqn.clone());
     let tool_type = fqn
@@ -104,7 +110,7 @@ pub async fn put_gateway(
             category: registration
                 .category
                 .clone()
-                .unwrap_or_else(|| "orchestrator".to_string()),
+                .unwrap_or_else(|| garden_common::constants::CATEGORY_ORCHESTRATOR.to_string()),
             id: String::new(),
             tags: registration.tags.clone(),
         },
@@ -133,7 +139,6 @@ pub async fn put_gateway(
                     &registration.protocol,
                 )
             },
-            // Preserve source fields — don't lose them in URI composition
             hostname: Some(registration.hostname.clone()),
             ip: Some(registration.ip.clone()),
             port: Some(registration.port),
@@ -143,67 +148,54 @@ pub async fn put_gateway(
         storage: None,
     };
 
+    let expires_at = Instant::now() + Duration::from_secs(GATEWAY_TTL_SECS);
+
     let delta = {
-        let mut reg = state.fqn_handler.registry.write().await;
-        reg.upsert(&offering, tool.clone(), registration.handler_for.clone())
+        let mut reg = state.tool.registry.write().await;
+        reg.upsert_with_expiry(tool, EntryOrigin::Gateway, Some(expires_at))
     };
 
-    // Mirror into tool.registry so local find_services sees this gateway immediately.
-    // Remote stones receive it via the tools beacon below.
-    if let Some(ref d) = delta {
-        if let Some(t) = &d.tool {
-            let mut reg = state.tool.registry.write().await;
-            reg.upsert(t.clone(), EntryOrigin::Local);
-        }
+    if let Some(delta) = delta {
         tracing::info!(
             offering = %offering,
             fqn = %registration.fqn,
-            "{} FQN handler entry committed (delta → broadcast)",
+            "{} gateway entry committed",
             offering,
         );
+        state.publish_tool_deltas(vec![delta], true).await;
     } else {
         tracing::debug!(
             offering = %offering,
             fqn = %registration.fqn,
-            "{} FQN handler TTL refreshed (no change)",
+            "{} gateway TTL refreshed (no change)",
             offering,
         );
     }
 
-    // Broadcast via tools beacon so remote registries get the entry
-    if let Some(delta) = delta {
-        state.publish_tool_deltas(vec![delta], true).await;
-    }
-
     Ok(Json(PutGatewayResponse {
         lease_id,
-        ttl_seconds: 60,
+        ttl_seconds: GATEWAY_TTL_SECS as u32,
     }))
 }
 
 /// DELETE /api/v1/garden/gateway/{offering}
 ///
-/// Deregister a gateway. Triggers auto-chirp to remove from topology.
+/// Deregister a gateway. Removes from registry and broadcasts removal beacon.
 pub async fn delete_gateway(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> StatusCode {
     let delta = {
-        let mut reg = state.fqn_handler.registry.write().await;
-        reg.remove(&offering, &state.current.stone.id)
+        let mut reg = state.tool.registry.write().await;
+        reg.remove_gateway(&offering, &state.current.stone.id)
     };
 
     if let Some(delta) = delta {
         tracing::info!(
             offering = %offering,
-            "{} FQN handler deregistered (explicit)",
+            "{} gateway deregistered",
             offering,
         );
-        // Mirror removal into tool.registry so local find_services stops seeing it.
-        {
-            let mut reg = state.tool.registry.write().await;
-            reg.remove(&delta.tool_key);
-        }
         state.publish_tool_deltas(vec![delta], true).await;
     } else {
         tracing::debug!(offering = %offering, "Gateway not found for deregistration");

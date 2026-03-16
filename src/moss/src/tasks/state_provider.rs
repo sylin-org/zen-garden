@@ -100,13 +100,11 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // Find the running offering by FQN
             let offering = self.state.find_offering(&fqn).await?;
 
-            // ORCH-0008: if an active gateway claims handler_for this offering
-            // type, this stone is ineligible — the handler owns the lifecycle.
-            // Check if an orchestrator handles this offering (suppress elections)
+            // ORCH-0008: if a registered gateway handles this offering type,
+            // this stone is ineligible — the gateway owns the lifecycle.
             {
-                let reg = self.state.fqn_handler.registry.read().await;
-                let handled = reg.handles_offering(&offering.offering);
-                if handled {
+                let reg = self.state.tool.registry.read().await;
+                if reg.handles_offering(&offering.offering) {
                     return None;
                 }
             }

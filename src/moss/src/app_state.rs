@@ -13,7 +13,7 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{FqnHandler, Orchestration, Security, Tool};
+use crate::domain::{Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
@@ -109,9 +109,6 @@ pub struct AppState {
     /// Garden-wide tool registry and delta stream (ARCH-0004).
     pub tool: Arc<Tool>,
 
-    /// FQN handler registry — processes registered to handle FIND requests for a given FQN
-    /// (ARCH-0004). Ephemeral, TTL-based; handlers refresh every 30 seconds.
-    pub fqn_handler: Arc<FqnHandler>,
 
     /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
     pub security: Arc<Security>,

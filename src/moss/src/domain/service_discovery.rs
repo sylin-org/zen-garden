@@ -377,14 +377,14 @@ pub async fn find_services(
     {
         let reg = state.tool.registry.read().await;
         let (_, orchestrator_tools) = reg.snapshot(&crate::domain::ToolQuery {
-            category: Some("orchestrator".to_string()),
+            category: Some(garden_common::constants::CATEGORY_ORCHESTRATOR.to_string()),
             ..Default::default()
         });
         for tool in &orchestrator_tools {
             let offering = &tool.tool.tool_type;
             let gw_category = &tool.tool.category;
             let gw_tags = if tool.tool.tags.is_empty() {
-                vec!["orchestrator".to_string()]
+                vec![garden_common::constants::CATEGORY_ORCHESTRATOR.to_string()]
             } else {
                 tool.tool.tags.clone()
             };

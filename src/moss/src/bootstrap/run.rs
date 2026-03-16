@@ -714,7 +714,6 @@ async fn build_state(
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
         tool: tool.clone(),
-        fqn_handler: Arc::new(crate::domain::FqnHandler::new()),
         discovery: Arc::new(crate::domain::Discovery {
             mdns: mdns_handle.clone(),
             koi: koi_handle.clone(),

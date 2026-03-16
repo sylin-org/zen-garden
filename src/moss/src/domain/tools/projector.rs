@@ -24,10 +24,9 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
         tools.push(found_service_to_garden_tool(svc));
     }
 
-    // ── Gateway / orchestrator entries ───────────────────────────
-    // Gateways are written directly to the registry with EntryOrigin::Registered
-    // by the gateway API (PUT /api/v1/garden/gateway). They are NOT projected
-    // here — the reconcile_local() call skips Registered entries.
+    // Gateway entries are written directly to tool.registry with
+    // EntryOrigin::Gateway by the gateway API. They are not projected here —
+    // reconcile_local only touches Local entries, so Gateway entries survive.
 
     // ── Managed storages from unified volumes ────────────────────
     let endpoint = state.current.topology.self_entry.read().await.address.http_base();

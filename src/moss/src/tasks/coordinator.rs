@@ -73,10 +73,10 @@ pub fn start_topology_maintenance(
     });
 }
 
-/// Periodically reaps expired gateway entries from the registry.
+/// Periodically reaps expired gateway entries from `tool.registry`.
 ///
 /// Runs every 15 seconds (gateway TTL is 60s, orchestrators refresh every 30s).
-/// Reaped entries are broadcast via SSE **and** UDP tools beacon so remote
+/// Reaped entries are broadcast via SSE and UDP tools beacon so remote
 /// stones learn about the removal promptly.
 pub fn start_registry_maintenance(
     state: AppState,
@@ -95,23 +95,21 @@ pub fn start_registry_maintenance(
                 }
             }
             let reaped = {
-                let mut reg = state.fqn_handler.registry.write().await;
-                reg.reap_expired(&state.current.stone.id)
+                let mut reg = state.tool.registry.write().await;
+                reg.reap_expired_gateways()
             };
             if !reaped.is_empty() {
                 tracing::info!(
                     count = reaped.len(),
-                    "Registry maintenance: reaped expired FQN handler entries"
+                    "Registry maintenance: reaped expired gateway entries"
                 );
                 for r in &reaped {
                     tracing::info!(
                         fqid = %r.fqid,
-                        "{} FQN handler entry expired (stale)",
+                        "{} gateway expired (stale)",
                         r.fqid,
                     );
                 }
-                // Notify SSE subscribers AND broadcast beacon so remote
-                // registries drop the reaped entries.
                 state.publish_tool_deltas(reaped, true).await;
             }
         }
@@ -365,12 +363,12 @@ pub async fn start_discovery_listener(
                     };
                     for delta in &applied {
                         if let Some(tool) = &delta.tool {
-                            if tool.tool.category == "orchestrator" {
+                            if tool.tool.category == garden_common::constants::CATEGORY_ORCHESTRATOR {
                                 tracing::info!(
                                     stone = %beacon.stone_name,
                                     offering = %tool.tool.tool_type,
                                     fqid = %tool.fqid,
-                                    "Stone {} announces {} FQN handler registration for {}",
+                                    "Stone {} announces {} gateway for {}",
                                     beacon.stone_name,
                                     tool.fqid,
                                     tool.tool.tool_type,

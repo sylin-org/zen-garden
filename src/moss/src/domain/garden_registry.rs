@@ -20,6 +20,7 @@ use garden_common::tools::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 const DEFAULT_HISTORY_LIMIT: usize = 4096;
@@ -105,11 +106,18 @@ impl ToolQuery {
 
 // ── Entry Origin ────────────────────────────────────────────────────────────
 
-/// Who wrote this entry — determines lifecycle and persistence rules.
+/// Who wrote this entry — each origin has exactly one lifecycle owner.
+///
+/// - `Local` — projected from offerings + storage. `reconcile_local` owns lifecycle.
+/// - `Gateway` — written directly by orchestrator registration. TTL reaping owns lifecycle.
+/// - `Announced` — received from remote stone. Beacon reconciliation owns lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryOrigin {
-    /// This stone's offerings or storage — persisted to disk.
+    /// Projected from local offerings or storage volumes.
     Local,
+    /// Registered directly by an orchestrator gateway (`PUT /api/v1/garden/gateway`).
+    /// TTL-managed — expires if not refreshed within the lease period.
+    Gateway,
     /// Received from a remote stone via beacon.
     Announced { stone_id: String },
 }
@@ -125,6 +133,8 @@ pub struct RegistryEntry {
     pub version: u64,
     /// Who wrote this entry.
     pub origin: EntryOrigin,
+    /// When this entry expires (Gateway entries only). `None` = permanent.
+    pub expires_at: Option<Instant>,
 }
 
 // ── Registry Core ───────────────────────────────────────────────────────────
@@ -222,10 +232,24 @@ impl GardenRegistryInner {
     ///
     /// This is the primary write method. All write adapters call this.
     pub fn upsert(&mut self, tool: GardenTool, origin: EntryOrigin) -> Option<ToolDelta> {
+        self.upsert_with_expiry(tool, origin, None)
+    }
+
+    /// Upsert with an optional expiry. Gateway entries use this to set TTL.
+    pub fn upsert_with_expiry(
+        &mut self,
+        tool: GardenTool,
+        origin: EntryOrigin,
+        expires_at: Option<Instant>,
+    ) -> Option<ToolDelta> {
         let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
 
         if let Some(existing) = self.entries.get(&key) {
             if tool_equivalent(&existing.tool, &tool) && existing.origin == origin {
+                // Content unchanged — just refresh TTL silently if applicable.
+                if expires_at.is_some() {
+                    self.entries.get_mut(&key).unwrap().expires_at = expires_at;
+                }
                 return None;
             }
         }
@@ -242,6 +266,7 @@ impl GardenRegistryInner {
                 tool: tool.clone(),
                 version,
                 origin,
+                expires_at,
             },
         );
 
@@ -412,6 +437,7 @@ impl GardenRegistryInner {
                             tool: tool.clone(),
                             version,
                             origin: origin.clone(),
+                            expires_at: None,
                         },
                     );
 
@@ -615,6 +641,63 @@ impl GardenRegistryInner {
             .values()
             .find(|e| e.tool.stone.id == stone_id)
             .map(|e| e.tool.stone.endpoint.as_str())
+    }
+
+    // ── Gateway Lifecycle ────────────────────────────────────────────────
+
+    /// Remove all expired gateway entries. Returns deltas for each removal.
+    pub fn reap_expired_gateways(&mut self) -> Vec<ToolDelta> {
+        let now = Instant::now();
+        let expired: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.origin == EntryOrigin::Gateway && e.expires_at.is_some_and(|t| t <= now))
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        let mut removed = Vec::new();
+        for key in expired {
+            if let Some(delta) = self.remove(&key) {
+                removed.push(delta);
+            }
+        }
+        removed
+    }
+
+    /// Remove the gateway entry for a given offering on a given stone.
+    ///
+    /// Finds the entry by matching `EntryOrigin::Gateway` + `tool_type` + `stone_id`.
+    pub fn remove_gateway(&mut self, offering: &str, stone_id: &str) -> Option<ToolDelta> {
+        let key = self
+            .entries
+            .iter()
+            .find(|(_, e)| {
+                e.origin == EntryOrigin::Gateway
+                    && e.tool.stone.id == stone_id
+                    && e.tool.tool.tool_type.eq_ignore_ascii_case(offering)
+            })
+            .map(|(k, _)| k.clone());
+        key.and_then(|k| self.remove(&k))
+    }
+
+    /// Returns true if any gateway entry handles the given offering type.
+    pub fn handles_offering(&self, offering: &str) -> bool {
+        self.entries.values().any(|e| {
+            e.origin == EntryOrigin::Gateway
+                && e.tool
+                    .tool
+                    .tool_type
+                    .eq_ignore_ascii_case(offering)
+        })
+    }
+
+    /// Returns the set of offering types that have registered gateway handlers.
+    pub fn handled_offerings(&self) -> std::collections::HashSet<String> {
+        self.entries
+            .values()
+            .filter(|e| e.origin == EntryOrigin::Gateway)
+            .map(|e| e.tool.tool.tool_type.clone())
+            .collect()
     }
 
     // ── Internals ───────────────────────────────────────────────────────

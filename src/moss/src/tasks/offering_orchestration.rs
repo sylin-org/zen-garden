@@ -270,10 +270,9 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     };
 
     // ORCH-0008: collect offering types covered by any active gateway in the garden.
-    // A service registering handler_for suppresses elections for that offering.
-    // Read from the unified registry (category=orchestrator entries).
+    // A registered gateway suppresses elections for that offering type.
     let gateway_handled: std::collections::HashSet<String> = {
-        let reg = state.fqn_handler.registry.read().await;
+        let reg = state.tool.registry.read().await;
         reg.handled_offerings()
     };
 

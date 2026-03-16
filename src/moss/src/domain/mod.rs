@@ -54,7 +54,6 @@ pub mod service_lifecycle;
 pub mod service_manager;
 pub mod services;
 pub mod services_internal;
-pub mod fqn_handler;
 pub mod platform;
 pub mod presence;
 pub mod security;
@@ -129,7 +128,6 @@ pub use current::{Current, Stone as CurrentStone, Topology as CurrentTopology};
 pub use discovery::Discovery;
 pub use platform::Platform;
 pub use presence::Presence;
-pub use fqn_handler::{FqnHandler, FqnHandlerEntry, FqnHandlerRegistry};
 pub use security::{Pond, Security};
 pub use tool::Tool;
 pub use tools::{

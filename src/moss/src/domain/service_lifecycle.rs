@@ -342,6 +342,7 @@ pub async fn install(
             offering_id: generate_guidv7(),
             name: offering_fqn.clone(),
             offering: offering_type.clone(),
+            category: String::new(), // Image-direct: no manifest, backfilled later
             version: image_ref
                 .rsplit_once(':')
                 .map(|(_, tag)| tag)
@@ -493,6 +494,7 @@ pub async fn install(
         offering_id: generate_guidv7(),
         name: offering_fqn.clone(),
         offering: offering_type.clone(),
+        category: compiled.category.clone(),
         version: compiled
             .image
             .split(':')

@@ -211,6 +211,7 @@ mod tests {
             offering_id: "test-id".to_string(),
             name: garden_common::offerings::OfferingFqn::new("test-offering").unwrap(),
             offering: "test".to_string(),
+            category: String::new(),
             version: "1.0".to_string(),
             status: OfferingStatus::Running,
             health: ServiceHealthStatus::Healthy,

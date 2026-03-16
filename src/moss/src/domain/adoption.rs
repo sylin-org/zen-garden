@@ -179,6 +179,7 @@ pub async fn adopt_offering_container(
         offering_id: generate_guidv7(),
         name: fqn,
         offering: offering_type,
+        category: entry.category.clone(),
         version,
         status,
         health,

@@ -323,6 +323,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         offering_id: garden_common::utils::ids::generate_guidv7(),
                         name: adopted_fqn,
                         offering: manifest.name.clone(),
+                        category: manifest.category.clone(),
                         version: result.version.unwrap_or_else(|| "unknown".to_string()),
                         status: garden_common::OfferingStatus::Running,
                         health,

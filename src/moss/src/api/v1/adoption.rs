@@ -217,6 +217,7 @@ pub async fn adopt_offering_v1(
         offering_id: generate_guidv7(),
         name: adopted_fqn,
         offering: offering_type.clone(),
+        category: offering_def.category.clone(),
         version: detection_result
             .version
             .unwrap_or_else(|| "unknown".to_string()),
@@ -412,6 +413,7 @@ pub async fn borrow_service_v1(
         offering_id: generate_guidv7(),
         name: borrow_fqn,
         offering: req.name.clone(), // For borrowed, name and offering are the same
+        category: req.category.clone().unwrap_or_default(),
         version: "unknown".to_string(),
         status: OfferingStatus::Running,
         health: ServiceHealthStatus::Offline, // Unknown until health check runs

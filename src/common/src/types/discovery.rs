@@ -132,15 +132,17 @@ impl TopologyServiceEntry {
     /// Create from Offering
     ///
     /// Note: `Offering` does not carry its manifest category, so `category`
-    /// is set to the offering name as a placeholder. Callers that have access
-    /// to the offerings index should patch the category afterward
-    /// (see `AppState::sync_self_services`).
+    /// Convert a runtime Offering to a lightweight topology entry.
     pub fn from_offering(offering: &Offering) -> Self {
         Self {
             offering_id: offering.offering_id.clone(),
             name: offering.name.clone(),
             offering: offering.offering.clone(),
-            category: offering.offering.clone(), // Use offering as category
+            category: if offering.category.is_empty() {
+                offering.offering.clone() // Fallback for legacy offerings
+            } else {
+                offering.category.clone()
+            },
             status: match offering.status {
                 OfferingStatus::Running => SERVICE_RUNNING,
                 OfferingStatus::Stopped => SERVICE_STOPPED,

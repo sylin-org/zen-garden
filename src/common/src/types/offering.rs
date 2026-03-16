@@ -79,6 +79,12 @@ pub struct Offering {
     /// Offering type/template name (e.g., "mongodb", "ollama")
     pub offering: String,
 
+    /// Category from manifest (e.g., "ai", "data", "cache").
+    /// Set at creation time. Empty string for legacy persisted offerings
+    /// (backfilled from manifest on load).
+    #[serde(default)]
+    pub category: String,
+
     /// Version string (always present, "unknown" if undetected)
     #[serde(default = "default_version_unknown")]
     pub version: String,

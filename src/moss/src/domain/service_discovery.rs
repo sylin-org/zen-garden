@@ -227,7 +227,6 @@ pub async fn find_local_services(
 ) -> Vec<FoundService> {
     let self_endpoint = state.current.topology.self_entry.read().await.address.http_base();
     let offerings = state.offerings.read().await;
-    let offerings_index = state.offerings_index.read().await;
 
     let mut results = Vec::new();
 
@@ -237,12 +236,12 @@ pub async fn find_local_services(
             continue;
         }
 
-        // Get offering metadata (category, tags)
-        let (category, tags) = offerings_index
-            .as_ref()
-            .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
-            .map(|o| (o.category.clone(), o.tags.clone()))
-            .unwrap_or_else(|| (offering.offering.clone(), vec![]));
+        let category = if offering.category.is_empty() {
+            offering.offering.clone()
+        } else {
+            offering.category.clone()
+        };
+        let tags: Vec<String> = vec![];
 
         // Check if matches criteria
         if !matches_criteria(
@@ -301,17 +300,16 @@ pub async fn find_local_services(
 pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryResponse {
     let self_endpoint = state.current.topology.self_entry.read().await.address.http_base();
     let offerings = state.offerings.read().await;
-    let offerings_index = state.offerings_index.read().await;
 
     let mut services = Vec::new();
 
     for offering in offerings.iter() {
-        // Get offering metadata (category, tags)
-        let (category, tags) = offerings_index
-            .as_ref()
-            .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
-            .map(|o| (o.category.clone(), o.tags.clone()))
-            .unwrap_or_else(|| (offering.offering.clone(), vec![]));
+        let category = if offering.category.is_empty() {
+            offering.offering.clone()
+        } else {
+            offering.category.clone()
+        };
+        let tags: Vec<String> = vec![];
 
         // Resolve connection
         let protocol = connection::infer_protocol(&offering.offering, &category, state).await;

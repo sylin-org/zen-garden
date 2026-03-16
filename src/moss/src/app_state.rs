@@ -331,20 +331,8 @@ impl AppState {
     /// Called after any offerings modification.
     pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
         let offerings = self.offerings.read().await;
-        let mut topology_services =
+        let topology_services =
             garden_common::TopologyServiceEntry::from_offerings(&offerings);
-
-        // Fix up categories from the compiled offerings index.
-        // Offering doesn't carry its category, so from_offering() falls back to the
-        // offering name. Patch with the real category from the registry so that
-        // chirps carry the correct value and protocol inference works on peers.
-        if let Some(index) = self.offerings_index.read().await.as_ref() {
-            for svc in &mut topology_services {
-                if let Some(compiled) = index.offerings.iter().find(|c| c.name == svc.offering) {
-                    svc.category = compiled.category.clone();
-                }
-            }
-        }
 
         // Compile notification tags for cross-stone awareness
         let tags = self.presence.notifications.compile();

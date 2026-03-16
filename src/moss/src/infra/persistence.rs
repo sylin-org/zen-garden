@@ -88,6 +88,7 @@ mod normalize_tests {
             offering_id: "test-id".to_string(),
             name: OfferingFqn::parse(name).unwrap(),
             offering: offering_type.to_string(),
+            category: String::new(),
             version: "unknown".to_string(),
             status: OfferingStatus::Running,
             health: ServiceHealthStatus::Healthy,

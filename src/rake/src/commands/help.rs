@@ -10,17 +10,14 @@ use crate::ui::rendering as ui;
 use crate::ui::colors::CliFormatter;
 
 /// Display detailed information for a specific command
-pub fn display_command_detail(cmd: &CommandDef, zen_only: bool, normative_only: bool) {
+pub fn display_command_detail(cmd: &CommandDef, _zen_only: bool, _normative_only: bool) {
     let _term = ui::TerminalInfo::detect();
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let fmt = CliFormatter::new();
 
     // Title
     println!();
-    println!("{}{}", indent, fmt.title(&cmd.zen_name.to_uppercase()));
-    if let Some(norm) = cmd.normative_name {
-        println!("{}{}", indent, fmt.hint(&format!("(Normative: {})", norm)));
-    }
+    println!("{}{}", indent, fmt.title(&cmd.name.to_uppercase()));
     println!("{}{}", indent, fmt.divider(&"─".repeat(60)));
     println!();
 
@@ -60,53 +57,24 @@ pub fn display_command_detail(cmd: &CommandDef, zen_only: bool, normative_only: 
             } else {
                 String::new()
             };
-            if !normative_only {
-                println!(
-                    "{}  {} {}{}",
-                    indent,
-                    fmt.label("Zen:"),
-                    fmt.example(param.zen_syntax),
-                    required
-                );
-            }
-            if let Some(norm_syntax) = param.normative_syntax {
-                if !zen_only {
-                    println!(
-                        "{}  {} {}{}",
-                        indent,
-                        fmt.label("Normative:"),
-                        fmt.example(norm_syntax),
-                        required
-                    );
-                }
-            }
-            println!("{}    {}", indent, fmt.description(param.description));
+            println!(
+                "{}  {} {}{}",
+                indent,
+                fmt.label(&format!("--{}:", param.name)),
+                fmt.description(param.description),
+                required
+            );
             println!();
         }
     }
 
     // Examples
     if !cmd.examples.is_empty() {
-        if !normative_only && cmd.examples.iter().any(|e| e.zen_syntax.is_some()) {
-            println!("{}{}", indent, fmt.group("EXAMPLES (Zen Syntax)"));
-            for example in &cmd.examples {
-                if let Some(zen_syntax) = example.zen_syntax {
-                    println!("{}  {}", indent, fmt.example(zen_syntax));
-                    println!("{}    → {}", indent, fmt.description(example.description));
-                    println!();
-                }
-            }
-        }
-
-        if !zen_only && cmd.examples.iter().any(|e| e.normative_syntax.is_some()) {
-            println!("{}{}", indent, fmt.group("EXAMPLES (Normative Syntax)"));
-            for example in &cmd.examples {
-                if let Some(norm_syntax) = example.normative_syntax {
-                    println!("{}  {}", indent, fmt.example(norm_syntax));
-                    println!("{}    → {}", indent, fmt.description(example.description));
-                    println!();
-                }
-            }
+        println!("{}{}", indent, fmt.group("EXAMPLES"));
+        for example in &cmd.examples {
+            println!("{}  {}", indent, fmt.example(example.syntax));
+            println!("{}    → {}", indent, fmt.description(example.description));
+            println!();
         }
     }
 
@@ -126,8 +94,8 @@ pub fn display_command_detail(cmd: &CommandDef, zen_only: bool, normative_only: 
 pub fn display_command_category(
     category: &CommandCategory,
     commands: &[&CommandDef],
-    zen_only: bool,
-    normative_only: bool,
+    _zen_only: bool,
+    _normative_only: bool,
 ) {
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let fmt = CliFormatter::new();
@@ -142,20 +110,7 @@ pub fn display_command_category(
     println!();
 
     for cmd in commands {
-        // Command name(s)
-        if !normative_only {
-            println!("{}  {}", indent, fmt.command(cmd.zen_name));
-        }
-        if let Some(norm) = cmd.normative_name {
-            if !zen_only {
-                println!(
-                    "{}  {} {}",
-                    indent,
-                    fmt.command(norm),
-                    fmt.hint("(normative)")
-                );
-            }
-        }
+        println!("{}  {}", indent, fmt.command(cmd.name));
         println!("{}    {}", indent, fmt.description(cmd.description));
         println!();
     }
@@ -169,7 +124,7 @@ pub fn display_command_category(
 }
 
 /// Display all commands grouped by category (command catalog)
-pub fn display_all_commands(_zen_only: bool, normative_only: bool) {
+pub fn display_all_commands(_zen_only: bool, _normative_only: bool) {
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let fmt = CliFormatter::new();
 
@@ -181,7 +136,6 @@ pub fn display_all_commands(_zen_only: bool, normative_only: bool) {
     println!("{}{} commands available", indent, command_count);
     println!();
 
-    // Category-based sections (no ESSENTIALS to avoid duplication)
     let categories = [
         (command_manifest::CommandCategory::Discovery, "DISCOVERY"),
         (command_manifest::CommandCategory::Lifecycle, "SERVICES"),
@@ -199,15 +153,12 @@ pub fn display_all_commands(_zen_only: bool, normative_only: bool) {
         if !commands.is_empty() {
             println!("{}{}", indent, fmt.group(display_name));
             for cmd in commands {
-                if !normative_only {
-                    println!(
-                        "{}    {:<20} {}",
-                        indent,
-                        fmt.command(cmd.zen_name),
-                        fmt.description(cmd.description)
-                    );
-                }
-                // Normative variants hidden by default to reduce clutter
+                println!(
+                    "{}    {:<20} {}",
+                    indent,
+                    fmt.command(cmd.name),
+                    fmt.description(cmd.description)
+                );
             }
             println!();
         }

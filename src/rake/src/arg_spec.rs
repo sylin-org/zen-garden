@@ -1,18 +1,17 @@
-﻿//! Argument specification types for the command manifest
+//! Argument specification types for the command manifest
 //!
-//! These types describe CLI arguments declaratively, enabling both:
-//! - Clap builder API generation (parsing)  
+//! These types describe CLI arguments declaratively for:
+//! - Clap builder API generation (parsing)
 //! - Help system display (documentation)
 //!
-//! This replaces the old `CommandParam` with richer type information,
-//! making the manifest the single source of truth for ALL command metadata.
+//! Single grammar: `verb [noun] [--flags]`. No dual syntax.
 
 /// How an argument is parsed by Clap
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArgKind {
     /// Positional argument (no `--` prefix): `<service>`
     Positional,
-    /// Boolean flag: `--force`, `--quiet`
+    /// Boolean flag: `--yes`, `--quiet`
     Flag,
     /// Named option with value: `--at <stone>`, `--name <name>`
     Option,
@@ -24,7 +23,7 @@ pub enum ArgKind {
     Trailing,
 }
 
-/// Full argument specification — single source of truth for both parsing and help
+/// Full argument specification — single source of truth for parsing and help
 #[derive(Debug, Clone)]
 pub struct ArgSpec {
     // === Identity ===
@@ -51,13 +50,9 @@ pub struct ArgSpec {
     /// Whether to allow values starting with `-`
     pub allow_hyphen_values: bool,
 
-    // === Help display properties ===
+    // === Help display ===
     /// Description shown in help text
     pub description: &'static str,
-    /// Zen syntax display: `"at <stone>"`, `"<service>"`
-    pub zen_syntax: &'static str,
-    /// Normative syntax display: `"--at <stone>"`
-    pub normative_syntax: Option<&'static str>,
 }
 
 impl ArgSpec {
@@ -77,12 +72,10 @@ impl ArgSpec {
             global: false,
             allow_hyphen_values: false,
             description,
-            zen_syntax: "",
-            normative_syntax: None,
         }
     }
 
-    /// Create a boolean flag: `--force`
+    /// Create a boolean flag: `--yes`
     pub fn flag(name: &'static str, description: &'static str) -> Self {
         Self {
             kind: ArgKind::Flag,
@@ -148,18 +141,6 @@ impl ArgSpec {
         self
     }
 
-    /// Set zen syntax display string
-    pub fn zen(mut self, syntax: &'static str) -> Self {
-        self.zen_syntax = syntax;
-        self
-    }
-
-    /// Set normative syntax display string
-    pub fn normative(mut self, syntax: &'static str) -> Self {
-        self.normative_syntax = Some(syntax);
-        self
-    }
-
     /// Set value delimiter
     pub fn delimiter(mut self, d: char) -> Self {
         self.value_delimiter = Some(d);
@@ -203,9 +184,6 @@ pub struct SubDef {
 /// Standard `--at <stone>` argument used by most remote-capable commands
 pub fn at_arg() -> ArgSpec {
     ArgSpec::option("at", "Target stone (omit to use tended stone)")
-        .zen("at <stone>")
-        .normative("--at <stone>")
-        .alias("on")
 }
 
 /// Standard `--at <stone>` as a global arg (for commands with subcommands)
@@ -213,7 +191,7 @@ pub fn at_arg_global() -> ArgSpec {
     at_arg().global()
 }
 
-/// Standard `--force` flag
-pub fn force_flag() -> ArgSpec {
-    ArgSpec::flag("force", "Skip confirmation prompt").zen("--force")
+/// Standard `--yes` flag for skipping confirmation prompts
+pub fn yes_flag() -> ArgSpec {
+    ArgSpec::flag("yes", "Skip confirmation prompt").short('y')
 }

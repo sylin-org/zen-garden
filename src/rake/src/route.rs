@@ -204,12 +204,12 @@ pub async fn route(
         // =================================================================
 
         "remove" => Inv::remote(
-            commands::lifecycle::RemoveCommand::new(req(m, "service")?, m.get_flag("force"), g.quiet),
+            commands::lifecycle::RemoveCommand::new(req(m, "service")?, m.get_flag("yes"), g.quiet),
             m,
         ),
 
         "uproot" => Inv::remote(
-            commands::lifecycle::UprootCommand::new(req(m, "service")?, m.get_flag("force"), g.quiet),
+            commands::lifecycle::UprootCommand::new(req(m, "service")?, m.get_flag("yes"), g.quiet),
             m,
         ),
 

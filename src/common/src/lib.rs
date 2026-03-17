@@ -3,7 +3,6 @@
 
 pub mod api_manifest;
 pub mod api_utils;
-pub mod cli;
 pub mod client;
 pub mod command_manifest;
 pub mod companion;

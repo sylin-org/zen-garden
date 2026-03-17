@@ -1,12 +1,10 @@
-﻿// Binary-only modules (not available to library crate)
+// Binary-only modules (not available to library crate)
 mod dispatch;
 mod route;
 
 // Use shared modules from the library
 use garden_rake::ui::rendering as ui;
-use garden_rake::cli_build::{
-    build_clap_app, count_verbosity, extract_global_flags, normalize_zen_to_clap, AliasIndex,
-};
+use garden_rake::cli_build::{build_clap_app, count_verbosity, extract_global_flags};
 use garden_rake::command_manifest::MANIFEST;
 use garden_rake::commands;
 use garden_rake::enrollment;
@@ -47,14 +45,12 @@ async fn async_main() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     garden_rake::command_manifest::validate_manifest();
 
-    // Pre-parse for zen syntax (before Clap)
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
     // Pre-parse verbosity level from raw args (before tracing init)
     let verbosity = count_verbosity(&raw_args);
 
     // Initialize tracing with appropriate level
-    // Priority: CLI flag > RUST_LOG env var > default (warn)
     let env_filter = if verbosity > 0 {
         let level = match verbosity {
             1 => "info",
@@ -85,7 +81,7 @@ async fn async_main() -> anyhow::Result<()> {
 
         if let Some(name) = help_name {
             if !name.is_empty() {
-                if let Some(cmd) = MANIFEST.find_by_any_name(name) {
+                if let Some(cmd) = MANIFEST.get(name) {
                     commands::help::display_command_detail(cmd, false, false);
                     return Ok(());
                 } else {
@@ -96,50 +92,19 @@ async fn async_main() -> anyhow::Result<()> {
         }
     }
 
-    // Build Clap app from manifest (SSOT: manifest → builder API)
+    // Build Clap app from manifest and parse directly — no normalization layer
     let app = build_clap_app(&MANIFEST);
-    let alias_index = AliasIndex::build(&MANIFEST);
 
-    // Build verb sets for the parser (manifest-driven, SSOT)
-    let zen_verbs = alias_index.zen_verbs().clone();
-    let normative_verbs: std::collections::HashSet<&str> = alias_index
-        .all_known_verbs()
-        .difference(alias_index.zen_verbs())
-        .copied()
-        .collect();
-
-    // Detect zen syntax → normalize → parse
-    let effective_args = if !raw_args.is_empty() {
-        match garden_common::cli::parser::parse_args(raw_args.clone(), &zen_verbs, &normative_verbs)
-        {
-            Ok(parsed) if parsed.style == garden_common::cli::parser::CommandStyle::Zen => {
-                // Zen syntax detected: normalize to Clap-parseable form
-                normalize_zen_to_clap(&parsed, &alias_index, &MANIFEST)?
-            }
-            Ok(_) => {
-                // Normative syntax: pass through as-is
-                raw_args.clone()
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-    } else {
-        vec![]
-    };
-
-    // Parse with Clap (manifest-generated builder)
     let matches = app
         .try_get_matches_from(
-            std::iter::once("garden-rake".to_string()).chain(effective_args),
+            std::iter::once("garden-rake".to_string()).chain(raw_args),
         )
         .unwrap_or_else(|e| e.exit());
 
     // Extract global flags from ArgMatches
     let global = extract_global_flags(&matches);
 
-    // Create pooled HTTP client with connection reuse (hot cache architecture)
+    // Create pooled HTTP client with connection reuse
     let mut client_builder = reqwest::Client::builder()
         .pool_max_idle_per_host(10)
         .pool_idle_timeout(Duration::from_secs(90))

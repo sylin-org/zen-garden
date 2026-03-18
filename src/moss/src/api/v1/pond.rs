@@ -12,8 +12,8 @@
 //! - All cert lifecycle managed by certmesh (issue, renew, revoke)
 
 use crate::{
-    bad_gateway, bad_request, conflict, error_response, forbidden, internal, not_found, unavailable,
-    AppState,
+    bad_gateway, bad_request, conflict, error_response, forbidden, internal, not_found,
+    unavailable, AppState,
 };
 use axum::{
     extract::{Path, State},
@@ -89,8 +89,8 @@ pub struct PondInviteRequest {
 
 #[derive(Deserialize)]
 pub struct PondPromoteRequest {
-    /// Passphrase for CA key decryption during promotion
-    pub passphrase: String,
+    /// Client's X25519 public key for key exchange (hex-encoded, 32 bytes)
+    pub client_public_key: String,
 }
 
 #[derive(Deserialize)]
@@ -226,10 +226,7 @@ fn certmesh_err(e: koi_certmesh::CertmeshError) -> (StatusCode, Json<ApiErrorRes
             "ALREADY_ENROLLED",
             format!("Stone '{hostname}' is already enrolled in the pond."),
         ),
-        CertmeshError::NotFound(what) => not_found(
-            "NOT_FOUND",
-            format!("Not found: {what}"),
-        ),
+        CertmeshError::NotFound(what) => not_found("NOT_FOUND", format!("Not found: {what}")),
         CertmeshError::Revoked(hostname) => forbidden(
             "REVOKED",
             format!("Stone '{hostname}' has been revoked from the pond."),
@@ -238,10 +235,7 @@ fn certmesh_err(e: koi_certmesh::CertmeshError) -> (StatusCode, Json<ApiErrorRes
             "APPROVAL_DENIED",
             "Enrollment request was denied by the operator.",
         ),
-        CertmeshError::NoSlotFound(detail) => bad_request(
-            "NO_SLOT_FOUND",
-            detail.to_string(),
-        ),
+        CertmeshError::NoSlotFound(detail) => bad_request("NO_SLOT_FOUND", detail.to_string()),
         _ => {
             // Sanitise: strip internal Rust error chains, log the full detail
             let full = format!("{e}");
@@ -306,9 +300,18 @@ async fn refresh_pond_active(state: &AppState) {
 /// (spawned at boot) reacts by starting/stopping HTTPS + chirp signing.
 async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone: Option<String>) {
     // Update flags
-    state.security.pond.active.store(enrolled, Ordering::Relaxed);
+    state
+        .security
+        .pond
+        .active
+        .store(enrolled, Ordering::Relaxed);
     if enrolled {
-        state.security.pond.state.set_enrolled(cornerstone.clone()).await;
+        state
+            .security
+            .pond
+            .state
+            .set_enrolled(cornerstone.clone())
+            .await;
     } else {
         state.security.pond.state.set_unenrolled().await;
     }
@@ -585,7 +588,9 @@ async fn local_enrollment(
 ) -> PondResult<PondJoinResponse> {
     let core = get_certmesh_core(state)?;
 
-    let hostname = payload.hostname.unwrap_or_else(|| state.current.stone.name.clone());
+    let hostname = payload
+        .hostname
+        .unwrap_or_else(|| state.current.stone.name.clone());
 
     let join_req = koi_certmesh::protocol::JoinRequest {
         hostname: hostname.clone(),
@@ -649,7 +654,8 @@ async fn proxy_enrollment(
     );
 
     let resp = state
-        .security.stone_client
+        .security
+        .stone_client
         .post(&cornerstone_addr, "/api/v1/pond/join")
         .timeout(garden_common::constants::timeouts::pond_join_timeout())
         .json(&proxy_payload)
@@ -713,7 +719,13 @@ async fn proxy_enrollment(
     };
 
     // Write certs to local filesystem
-    write_enrollment_certs(&state.current.stone.name, &ca_cert, &service_cert, &service_key).await?;
+    write_enrollment_certs(
+        &state.current.stone.name,
+        &ca_cert,
+        &service_cert,
+        &service_key,
+    )
+    .await?;
 
     // Notify enrollment change — listener starts HTTPS + chirp signing
     notify_enrollment_changed(state, true, join_resp.cornerstone.clone()).await;
@@ -765,7 +777,8 @@ async fn discover_cornerstone(
 
     for entry in &candidates {
         let resp = match state
-            .security.stone_client
+            .security
+            .stone_client
             .get(&entry.address, "/api/v1/pond/status")
             .timeout(garden_common::constants::timeouts::pond_operation_timeout())
             .send()
@@ -841,21 +854,11 @@ async fn write_enrollment_certs(
 
     tokio::fs::write(certs_dir.join("cert.pem"), service_cert)
         .await
-        .map_err(|e| {
-            internal(
-                "CERT_WRITE_ERROR",
-                format!("Failed to write cert.pem: {e}"),
-            )
-        })?;
+        .map_err(|e| internal("CERT_WRITE_ERROR", format!("Failed to write cert.pem: {e}")))?;
 
     tokio::fs::write(certs_dir.join("key.pem"), service_key)
         .await
-        .map_err(|e| {
-            internal(
-                "CERT_WRITE_ERROR",
-                format!("Failed to write key.pem: {e}"),
-            )
-        })?;
+        .map_err(|e| internal("CERT_WRITE_ERROR", format!("Failed to write key.pem: {e}")))?;
 
     // Restrict key.pem permissions on Unix
     #[cfg(unix)]
@@ -870,12 +873,7 @@ async fn write_enrollment_certs(
 
     tokio::fs::write(certs_dir.join("ca.pem"), ca_cert)
         .await
-        .map_err(|e| {
-            internal(
-                "CERT_WRITE_ERROR",
-                format!("Failed to write ca.pem: {e}"),
-            )
-        })?;
+        .map_err(|e| internal("CERT_WRITE_ERROR", format!("Failed to write ca.pem: {e}")))?;
 
     let fullchain = format!("{service_cert}{ca_cert}");
     tokio::fs::write(certs_dir.join("fullchain.pem"), &fullchain)
@@ -1122,10 +1120,20 @@ pub async fn pond_promote_v1(
 ) -> PondResult<serde_json::Value> {
     let core = get_certmesh_core(&state)?;
 
-    let _resp = core
-        .promote(&payload.passphrase)
-        .await
-        .map_err(certmesh_err)?;
+    let key_bytes: [u8; 32] = hex::decode(&payload.client_public_key)
+        .map_err(|e| {
+            certmesh_err(koi_certmesh::CertmeshError::Internal(format!(
+                "invalid client_public_key hex: {e}"
+            )))
+        })?
+        .try_into()
+        .map_err(|_| {
+            certmesh_err(koi_certmesh::CertmeshError::Internal(
+                "client_public_key must be exactly 32 bytes".to_string(),
+            ))
+        })?;
+
+    let _resp = core.promote(&key_bytes).await.map_err(certmesh_err)?;
 
     tracing::info!(
         stone = %state.current.stone.name,
@@ -1203,12 +1211,9 @@ pub async fn pond_ceremony_v1(
             .or_insert_with(|| serde_json::json!(state.current.stone.name));
     }
 
-    let response = host.step(req).map_err(|e| {
-        bad_request(
-            "CEREMONY_ERROR",
-            format!("{e}"),
-        )
-    })?;
+    let response = host
+        .step(req)
+        .map_err(|e| bad_request("CEREMONY_ERROR", format!("{e}")))?;
 
     // When an init ceremony completes, execute the CA creation
     if response.complete && response.error.is_none() {
@@ -1521,7 +1526,10 @@ async fn execute_pond_init_from_ceremony(
         "ca_fingerprint".into(),
         serde_json::json!(create_resp.ca_fingerprint),
     );
-    safe_data.insert("cornerstone".into(), serde_json::json!(state.current.stone.name));
+    safe_data.insert(
+        "cornerstone".into(),
+        serde_json::json!(state.current.stone.name),
+    );
     safe_data.insert("profile".into(), serde_json::json!(effective_profile));
     response.result_data = Some(safe_data);
 

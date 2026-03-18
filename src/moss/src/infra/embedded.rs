@@ -504,7 +504,7 @@ pub fn load_sw_manifests_with_overlay(fs_dir: &Path) -> Result<OfferingRegistry>
 /// Vec of Offering definitions
 pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
     use garden_common::manifests::{
-        AdoptedConfig, ConnectivityConfig, ConnectionProfile, ControlConfig, HealthConfig,
+        AdoptedConfig, ConnectionProfile, ConnectivityConfig, ControlConfig, HealthConfig,
         ManageableEnv, OfferingMetadata, OsDetectionRules,
     };
     use garden_common::types::AdoptedControlLevel;
@@ -603,8 +603,12 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                     }),
                     borrowed: None,
                     metadata: OfferingMetadata {
-                        description: file.description.or_else(|| fm.and_then(|f| f.description.clone())),
-                        tags: file.tags.unwrap_or_else(|| fm.map(|f| f.tags.clone()).unwrap_or_default()),
+                        description: file
+                            .description
+                            .or_else(|| fm.and_then(|f| f.description.clone())),
+                        tags: file
+                            .tags
+                            .unwrap_or_else(|| fm.map(|f| f.tags.clone()).unwrap_or_default()),
                         icon: fm.and_then(|f| f.icon.clone()),
                         homepage: fm.and_then(|f| f.homepage.clone()),
                         documentation: fm.and_then(|f| f.documentation.clone()),
@@ -612,7 +616,9 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                     },
                     compatibility: None,
                     guidance: None,
-                    connection: file.connection.or_else(|| fm.and_then(|f| f.connection.clone())),
+                    connection: file
+                        .connection
+                        .or_else(|| fm.and_then(|f| f.connection.clone())),
                     manageable_env: fm.and_then(|f| f.manageable_env.clone()),
                     coordination: file.coordination,
                 };
@@ -685,7 +691,8 @@ pub fn extract_seeds(offering: &str, volumes: &[(String, String)]) -> Result<usi
         // Find the matching host path from compiled volumes.
         // Convention: host path ends with /{volume-name}
         let Some((host_path, _)) = volumes.iter().find(|(hp, _)| {
-            hp.ends_with(&format!("/{}", volume_name)) || hp.ends_with(&format!("\\{}", volume_name))
+            hp.ends_with(&format!("/{}", volume_name))
+                || hp.ends_with(&format!("\\{}", volume_name))
         }) else {
             tracing::debug!(
                 offering,
@@ -718,14 +725,12 @@ pub fn extract_seeds(offering: &str, volumes: &[(String, String)]) -> Result<usi
 
         // Ensure parent directories exist
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create seed directory {}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create seed directory {}", parent.display()))?;
         }
 
-        std::fs::write(&target, &final_content).with_context(|| {
-            format!("Failed to write seed file {}", target.display())
-        })?;
+        std::fs::write(&target, &final_content)
+            .with_context(|| format!("Failed to write seed file {}", target.display()))?;
 
         tracing::info!(
             offering,
@@ -878,7 +883,10 @@ mod tests {
         let result = post_process_seed(input.as_bytes());
         let text = std::str::from_utf8(&result).unwrap();
         assert!(!text.starts_with('\u{FEFF}'), "BOM should be stripped");
-        assert!(!text.contains(SECRET_PLACEHOLDER), "placeholder should be replaced");
+        assert!(
+            !text.contains(SECRET_PLACEHOLDER),
+            "placeholder should be replaced"
+        );
         assert!(text.contains("secret_key:"), "key should remain");
     }
 

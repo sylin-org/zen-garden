@@ -39,7 +39,11 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
                     .or_else(|| res.storage.iter().max_by_key(|s| s.total_gb))
                     .map(|s| s.used_percent as f64)
                     .unwrap_or(0.0);
-                (res.cpu.usage_percent as f64, res.memory.used_percent as f64, primary_disk)
+                (
+                    res.cpu.usage_percent as f64,
+                    res.memory.used_percent as f64,
+                    primary_disk,
+                )
             } else {
                 (0.0, 0.0, 0.0)
             }

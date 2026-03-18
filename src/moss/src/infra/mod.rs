@@ -17,6 +17,8 @@
 pub mod api_helpers;
 pub mod auth;
 pub mod ceremony_journal;
+#[cfg(target_os = "windows")]
+pub mod cloud_filter;
 pub mod companions;
 pub mod config;
 pub mod container;
@@ -30,8 +32,8 @@ pub mod firmware;
 pub mod hardware;
 pub mod hardware_id;
 pub mod harvest;
-pub mod image_inspect;
 pub mod harvest_store;
+pub mod image_inspect;
 pub mod installer;
 pub mod listeners;
 pub mod log_broadcast;
@@ -45,14 +47,12 @@ pub mod process;
 pub mod registry_client;
 pub mod secrets;
 pub mod service;
+#[cfg(target_os = "windows")]
+pub mod shell_integration;
 pub mod stone_client;
 pub mod storage;
 pub mod task_store;
 pub mod tools;
-#[cfg(target_os = "windows")]
-pub mod cloud_filter;
-#[cfg(target_os = "windows")]
-pub mod shell_integration;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;
 
@@ -62,12 +62,12 @@ pub use ceremony_journal::CeremonyJournal;
 pub use companions::CompanionRegistry;
 pub use config::{AdoptionConfig, MossConfig, NetworkConfig, StaticIpPoolConfig};
 pub use container::ContainerRuntime;
+pub use docker_config_adapter::OsDockerConfig;
 pub use embedded::{
     extract_seeds, list_all_manifests, load_embedded_adopted_offerings,
     load_sw_manifests_with_overlay, manifest_exists, read_manifest_overlay, AssetSource,
     EmbeddedCompanions, EmbeddedManifests, EmbeddedSeeds, ManifestSource,
 };
-pub use docker_config_adapter::OsDockerConfig;
 pub use event_bus::{spawn_listener, EventBus, EventListener};
 pub use filesystem::FileSystem;
 pub use garden_common::infra::archive::{
@@ -85,8 +85,8 @@ pub use hardware_id::{load_cached_stone_name, save_stone_name_cache};
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
 pub use harvest_store::HarvestStore;
 pub use listeners::{
-    ChirpListener, DomainPulse, PulseDomainBridge, PulseEvent, TimerListener, TransportPulse,
-    spawn_transport_tap,
+    spawn_transport_tap, ChirpListener, DomainPulse, PulseDomainBridge, PulseEvent, TimerListener,
+    TransportPulse,
 };
 pub use manifests::{runtime_manifests_dir, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
 pub use manifests::{

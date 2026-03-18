@@ -225,10 +225,7 @@ async fn find_remote(
     let reg = registry.read().await;
     reg.route_to_primary(name, stone_id)
         .map(|(stone_id, endpoint, _bank_id)| {
-            StorageRoute::Proxy(ProxyTarget {
-                endpoint,
-                stone_id,
-            })
+            StorageRoute::Proxy(ProxyTarget { endpoint, stone_id })
         })
 }
 
@@ -321,10 +318,15 @@ mod tests {
         let registry = new_registry();
         {
             let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"));
+            map.insert(
+                "/dev/sda1".into(),
+                make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"),
+            );
         }
 
-        let route = StorageRoute::for_read("photos", &volumes, &registry, "stone-01").await.unwrap();
+        let route = StorageRoute::for_read("photos", &volumes, &registry, "stone-01")
+            .await
+            .unwrap();
         assert!(matches!(route, StorageRoute::Local(l) if l.name == "photos"));
     }
 
@@ -334,10 +336,15 @@ mod tests {
         let registry = new_registry();
         {
             let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"));
+            map.insert(
+                "/dev/sda1".into(),
+                make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"),
+            );
         }
 
-        let route = StorageRoute::for_read("photos", &volumes, &registry, "stone-01").await.unwrap();
+        let route = StorageRoute::for_read("photos", &volumes, &registry, "stone-01")
+            .await
+            .unwrap();
         assert!(matches!(route, StorageRoute::Local(l) if l.role == StorageRole::Dormant));
     }
 
@@ -356,10 +363,15 @@ mod tests {
         let registry = new_registry();
         {
             let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"));
+            map.insert(
+                "/dev/sda1".into(),
+                make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"),
+            );
         }
 
-        let route = StorageRoute::for_write("photos", &volumes, &registry, "stone-01").await.unwrap();
+        let route = StorageRoute::for_write("photos", &volumes, &registry, "stone-01")
+            .await
+            .unwrap();
         assert!(matches!(route, StorageRoute::Local(l) if l.role == StorageRole::Primary));
     }
 
@@ -369,7 +381,10 @@ mod tests {
         let registry = new_registry();
         {
             let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"));
+            map.insert(
+                "/dev/sda1".into(),
+                make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"),
+            );
         }
 
         let result = StorageRoute::for_write("photos", &volumes, &registry, "stone-01").await;
@@ -380,7 +395,9 @@ mod tests {
     async fn test_resolve_local_returns_none_for_missing() {
         let volumes = new_volumes();
 
-        assert!(StorageRoute::find_local("missing", &volumes).await.is_none());
+        assert!(StorageRoute::find_local("missing", &volumes)
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -388,14 +405,19 @@ mod tests {
         let volumes = new_volumes();
         {
             let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-123", "data", StorageRole::Primary, "/mnt/data"));
+            map.insert(
+                "/dev/sda1".into(),
+                make_volume("id-123", "data", StorageRole::Primary, "/mnt/data"),
+            );
         }
 
         let found = StorageRoute::find_local_by_id("id-123", &volumes).await;
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "data");
 
-        assert!(StorageRoute::find_local_by_id("id-999", &volumes).await.is_none());
+        assert!(StorageRoute::find_local_by_id("id-999", &volumes)
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -403,8 +425,14 @@ mod tests {
         let volumes = new_volumes();
         {
             let mut map = volumes.write().await;
-            map.insert("/dev/sda1".into(), make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"));
-            map.insert("/dev/sdb1".into(), make_volume("id-2", "backups", StorageRole::Dormant, "/mnt/backups"));
+            map.insert(
+                "/dev/sda1".into(),
+                make_volume("id-1", "photos", StorageRole::Primary, "/mnt/photos"),
+            );
+            map.insert(
+                "/dev/sdb1".into(),
+                make_volume("id-2", "backups", StorageRole::Dormant, "/mnt/backups"),
+            );
         }
 
         let all = StorageRoute::list_local(&volumes).await;
@@ -428,7 +456,9 @@ mod tests {
             map.insert("/dev/sda1".into(), vol);
         }
 
-        let local = StorageRoute::find_local("encrypted-bank", &volumes).await.unwrap();
+        let local = StorageRoute::find_local("encrypted-bank", &volumes)
+            .await
+            .unwrap();
         assert!(local.encrypted);
         assert_eq!(local.roles, vec!["seed-bank", "archive"]);
         assert_eq!(local.id, "id-1");

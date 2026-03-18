@@ -92,10 +92,7 @@ impl Network {
     }
 
     /// Start background network monitoring with custom config
-    pub async fn start_with_config(
-        config: NetworkConfig,
-        network_ready: Arc<AtomicBool>,
-    ) -> Self {
+    pub async fn start_with_config(config: NetworkConfig, network_ready: Arc<AtomicBool>) -> Self {
         let initial_ip = get_current_ip();
         let current_ip = Arc::new(RwLock::new(initial_ip.clone()));
         let (tx, _) = broadcast::channel(garden_common::constants::channels::MONITOR_EVENT);

@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::{bad_request, internal, not_found, AppState};
 use crate::infra::embedded::EmbeddedManifests;
+use crate::{bad_request, internal, not_found, AppState};
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::manifests::{generate, runtime_manifests_dir, validation};
 
@@ -570,12 +570,9 @@ pub async fn get_file(
 
     // Try runtime dir first (overlay)
     if let Some(rt_path) = find_runtime_path(&params.offering, suffix) {
-        let content = tokio::fs::read_to_string(&rt_path).await.map_err(|e| {
-            internal(
-                "READ_FAILED",
-                format!("Failed to read file: {e}"),
-            )
-        })?;
+        let content = tokio::fs::read_to_string(&rt_path)
+            .await
+            .map_err(|e| internal("READ_FAILED", format!("Failed to read file: {e}")))?;
         return Ok((
             StatusCode::OK,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
@@ -632,12 +629,9 @@ pub async fn put_file(
     })?;
 
     let file_path = dir.join(format!("{}{}", params.offering, suffix));
-    tokio::fs::write(&file_path, &body).await.map_err(|e| {
-        internal(
-            "WRITE_FAILED",
-            format!("Failed to write file: {e}"),
-        )
-    })?;
+    tokio::fs::write(&file_path, &body)
+        .await
+        .map_err(|e| internal("WRITE_FAILED", format!("Failed to write file: {e}")))?;
 
     tracing::info!(
         offering = %params.offering,
@@ -677,12 +671,9 @@ pub async fn delete_file(
         )
     })?;
 
-    tokio::fs::remove_file(&rt_path).await.map_err(|e| {
-        internal(
-            "DELETE_FAILED",
-            format!("Failed to delete file: {e}"),
-        )
-    })?;
+    tokio::fs::remove_file(&rt_path)
+        .await
+        .map_err(|e| internal("DELETE_FAILED", format!("Failed to delete file: {e}")))?;
 
     let has_builtin = find_embedded_path(&params.offering, suffix).is_some();
 

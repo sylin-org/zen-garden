@@ -27,9 +27,7 @@ pub async fn get_sweep_history(
 /// POST /api/v1/stone/maintenance/sweep
 ///
 /// Trigger an immediate sweep, persist the result, and return it.
-pub async fn trigger_sweep(
-    State(state): State<AppState>,
-) -> crate::api::ApiResult<SweepRun> {
+pub async fn trigger_sweep(State(state): State<AppState>) -> crate::api::ApiResult<SweepRun> {
     let task_store = crate::infra::TaskStore::new();
     let run = run_sweep(&state, &task_store).await;
 

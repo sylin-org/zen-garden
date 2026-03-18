@@ -142,10 +142,7 @@ pub fn configure_public(state: AppState) -> Router {
             "/api/v1/stone/pulse/stream",
             get(api::v1::pulse::stream_pulse),
         )
-        .route(
-            "/api/v1/stone/updates",
-            get(api::v1::updates::check_stone),
-        )
+        .route("/api/v1/stone/updates", get(api::v1::updates::check_stone))
         .route(
             "/api/v1/stone/companions",
             get(api::v1::companions::get_companions),
@@ -265,7 +262,10 @@ pub fn configure_public(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
-        .layer(middleware::from_fn_with_state(state.clone(), inject_stone_identity))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            inject_stone_identity,
+        ))
         .with_state(state)
 }
 
@@ -600,15 +600,9 @@ pub fn configure(state: AppState) -> Router {
         )
         // WebDAV file access — STORAGE-0009 Phase 3
         // Accepts all HTTP methods (GET, PUT, DELETE, PROPFIND, MKCOL, MOVE, COPY, etc.)
-        .route(
-            "/dav/{name}/{*path}",
-            any(api::v1::webdav::handle_webdav),
-        )
+        .route("/dav/{name}/{*path}", any(api::v1::webdav::handle_webdav))
         // Root collection (PROPFIND on /dav/{name}/ without trailing content)
-        .route(
-            "/dav/{name}",
-            any(api::v1::webdav::handle_webdav),
-        )
+        .route("/dav/{name}", any(api::v1::webdav::handle_webdav))
         // Stone storage (seed banks on THIS stone) — STORAGE-0009
         .route(
             "/api/v1/stone/storage",
@@ -636,8 +630,7 @@ pub fn configure(state: AppState) -> Router {
         )
         .route(
             "/api/v1/stone/storage/banks/{name}",
-            get(api::v1::storage::get_bank_v1)
-                .delete(api::v1::storage::delete_bank_v1),
+            get(api::v1::storage::get_bank_v1).delete(api::v1::storage::delete_bank_v1),
         )
         .route(
             "/api/v1/stone/storage/banks/{name}/visibility",
@@ -687,10 +680,7 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::pulse::stream_pulse),
         )
         // Stone nourishment (updates for THIS stone)
-        .route(
-            "/api/v1/stone/updates",
-            get(api::v1::updates::check_stone),
-        )
+        .route("/api/v1/stone/updates", get(api::v1::updates::check_stone))
         .route(
             "/api/v1/stone/updates/execute",
             post(api::v1::updates::execute_stone),
@@ -909,7 +899,10 @@ pub fn configure(state: AppState) -> Router {
         // ══════════════════════════════════════════════════════════════════════
         .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
-        .layer(middleware::from_fn_with_state(state.clone(), inject_stone_identity))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            inject_stone_identity,
+        ))
         .with_state(state)
 }
 
@@ -978,9 +971,6 @@ mod tests {
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(
-            body_str.starts_with("content:mystore:"),
-            "body={body_str}"
-        );
+        assert!(body_str.starts_with("content:mystore:"), "body={body_str}");
     }
 }

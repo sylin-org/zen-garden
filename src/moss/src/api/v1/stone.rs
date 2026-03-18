@@ -54,10 +54,9 @@ pub async fn get_stone_info_v1(
     // Get capabilities from cached state
     let capabilities = {
         let caps_guard = state.current.capabilities.read().await;
-        caps_guard
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| crate::infra::hardware::create_skeleton(state.current.stone.name.clone()))
+        caps_guard.as_ref().cloned().unwrap_or_else(|| {
+            crate::infra::hardware::create_skeleton(state.current.stone.name.clone())
+        })
     };
 
     // Get offerings from registry
@@ -627,10 +626,13 @@ pub async fn deploy_stone_v1(
         ));
 
         // Show update banner on physical console (platform-appropriate output)
-        state.platform.runtime.print_update_banner(&garden_common::console::UpdateBannerInfo {
-            stone_name: state.current.stone.name.clone(),
-            new_version: None, // Version extracted earlier but not easily accessible here
-        });
+        state
+            .platform
+            .runtime
+            .print_update_banner(&garden_common::console::UpdateBannerInfo {
+                stone_name: state.current.stone.name.clone(),
+                new_version: None, // Version extracted earlier but not easily accessible here
+            });
 
         #[cfg(target_os = "windows")]
         {

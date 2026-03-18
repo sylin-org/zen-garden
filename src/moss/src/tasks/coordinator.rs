@@ -16,7 +16,7 @@ use crate::domain::topology::{
     mark_stone_offline_dirty, upsert_from_chirp_dirty, TopologyCache, TopologyDirtyFlag,
 };
 use crate::tasks::backfill_missing_guidance;
-use crate::tasks::network_monitor::{NetworkEvent, Network};
+use crate::tasks::network_monitor::{Network, NetworkEvent};
 use crate::tasks::task_scheduler::{backfill_missing_tasks, start_task_scheduler};
 use crate::{
     adopt_existing_containers, auto_adoption_task, detect_capabilities_background,
@@ -38,10 +38,7 @@ use crate::infra::storage::{ContentStore, OsPlatform};
 /// Periodically marks stale stones as offline, evicts old offline stones,
 /// and flushes dirty topology cache to disk.
 /// Runs every 30 seconds (aligns with stone chirp interval).
-pub fn start_topology_maintenance(
-    state: crate::AppState,
-    token: CancellationToken,
-) {
+pub fn start_topology_maintenance(state: crate::AppState, token: CancellationToken) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         interval.tick().await; // Skip first immediate tick
@@ -77,10 +74,7 @@ pub fn start_topology_maintenance(
 /// Runs every 15 seconds (gateway TTL is 60s, orchestrators refresh every 30s).
 /// Reaped entries are broadcast via SSE and UDP tools beacon so remote
 /// stones learn about the removal promptly.
-pub fn start_registry_maintenance(
-    state: AppState,
-    token: CancellationToken,
-) {
+pub fn start_registry_maintenance(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
         interval.tick().await; // Skip first immediate tick
@@ -228,7 +222,8 @@ pub async fn start_discovery_listener(
                                 }
                             };
 
-                            let roles = crate::domain::storage::roles_snapshot(&local_volumes).await;
+                            let roles =
+                                crate::domain::storage::roles_snapshot(&local_volumes).await;
                             let pins = crate::domain::storage::pins_snapshot(&local_volumes).await;
                             match crate::infra::storage::broadcast_if_has_storage(
                                 &local_stone_id,
@@ -307,7 +302,6 @@ pub async fn start_discovery_listener(
                     for delta in &removed {
                         let _ = tools.send(delta.clone());
                     }
-
                 }
                 garden_common::infra::communications::announcement_types::STORAGE_BEACON => {
                     // STORAGE-0003: Handle storage beacon from peer
@@ -362,7 +356,8 @@ pub async fn start_discovery_listener(
                     };
                     for delta in &applied {
                         if let Some(tool) = &delta.tool {
-                            if tool.tool.category == garden_common::constants::CATEGORY_ORCHESTRATOR {
+                            if tool.tool.category == garden_common::constants::CATEGORY_ORCHESTRATOR
+                            {
                                 tracing::info!(
                                     stone = %beacon.stone_name,
                                     offering = %tool.tool.tool_type,
@@ -373,7 +368,8 @@ pub async fn start_discovery_listener(
                                     tool.tool.tool_type,
                                 );
                             }
-                        } else if matches!(delta.kind, garden_common::tools::ToolDeltaKind::Remove) {
+                        } else if matches!(delta.kind, garden_common::tools::ToolDeltaKind::Remove)
+                        {
                             tracing::info!(
                                 stone = %beacon.stone_name,
                                 fqid = %delta.fqid,
@@ -384,7 +380,6 @@ pub async fn start_discovery_listener(
                         }
                         let _ = tools.send(delta.clone());
                     }
-
                 }
                 _ => {
                     // Ignore other announcement types (election events handled by election service, discovery handled by discovery_handler)
@@ -439,16 +434,19 @@ pub fn start_registry_loader(state: AppState) {
         let mut any_changed = false;
         for (offering_id, name) in managed_snapshot {
             if !state
-                .platform.docker
+                .platform
+                .docker
                 .zen_container_exists(&name)
                 .await
                 .unwrap_or(false)
             {
-                state.update_offering(&offering_id, false, |o| {
-                    o.status = garden_common::OfferingStatus::Stopped;
-                    o.health = ServiceHealthStatus::Offline;
-                    true
-                }).await;
+                state
+                    .update_offering(&offering_id, false, |o| {
+                        o.status = garden_common::OfferingStatus::Stopped;
+                        o.health = ServiceHealthStatus::Offline;
+                        true
+                    })
+                    .await;
                 any_changed = true;
             }
         }
@@ -459,10 +457,7 @@ pub fn start_registry_loader(state: AppState) {
         // Coalesce any duplicate offerings that accumulated from prior versions
         let coalesced = state.coalesce_duplicate_offerings().await;
         if coalesced > 0 {
-            tracing::info!(
-                coalesced,
-                "Startup: removed duplicate offerings by FQN"
-            );
+            tracing::info!(coalesced, "Startup: removed duplicate offerings by FQN");
         }
 
         // Backfill missing guidance for services that were installed before guidance caching
@@ -501,7 +496,9 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
             "Runtime templates".to_string(),
         ));
 
-        match ensure_offerings_index(&state, false, &crate::infra::persistence::OsOfferingsCache).await {
+        match ensure_offerings_index(&state, false, &crate::infra::persistence::OsOfferingsCache)
+            .await
+        {
             Ok(_) => {
                 let idx_guard = state.offerings_index.read().await;
                 if let Some(idx) = idx_guard.as_ref() {
@@ -797,17 +794,26 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
             // Connected ribbons come from the VolumeMonitor — no events emitted here.
             let mounted = crate::domain::storage::auto_mount_unmounted(&OsPlatform).await;
             if mounted > 0 {
-                state.emit_storage_changed(
-                    garden_common::storage::StorageChanged::Reclassified,
-                ).await;
+                state
+                    .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
+                    .await;
             }
 
             // Health tick all volumes (~10s)
-            crate::domain::storage::health_tick_all(&state.current.storage.volumes, &OsPlatform).await;
+            crate::domain::storage::health_tick_all(&state.current.storage.volumes, &OsPlatform)
+                .await;
 
-            // Periodic beacon heartbeat (tools projection + beacon)
+            // Periodic beacon heartbeat (tools projection + beacon).
+            // Only broadcast if this stone has managed storage — stones
+            // without storage can still QUERY the garden for remote banks.
             state.refresh_local_tools_projection().await;
-            state.broadcast_storage_beacon().await;
+            let has_managed = {
+                let map = state.current.storage.volumes.read().await;
+                map.values().any(|v| v.is_managed())
+            };
+            if has_managed {
+                state.broadcast_storage_beacon().await;
+            }
         }
     });
 }
@@ -860,16 +866,17 @@ pub async fn start_all_background_tasks(
     let console = state.console.clone();
 
     // Start topology maintenance (mark stale offline, evict old, persist if dirty)
-    start_topology_maintenance(
-        state.clone(),
-        token.child_token(),
-    );
+    start_topology_maintenance(state.clone(), token.child_token());
 
     // Start unified storage lifecycle (STORAGE-0011: auto-mount, health, beacon)
     start_storage_lifecycle(state.clone(), token.child_token());
 
     // Start storage console task — sole renderer of storage ribbons
-    start_storage_console_task(state.platform.runtime.clone(), state.subscribe_storage_changed(), token.child_token());
+    start_storage_console_task(
+        state.platform.runtime.clone(),
+        state.subscribe_storage_changed(),
+        token.child_token(),
+    );
 
     // Start UDP discovery (immediate - critical for stone visibility)
     start_discovery_listener(
@@ -946,19 +953,19 @@ pub(crate) async fn start_background_tasks(
 ) -> String {
     use garden_common::console;
     // Rebind Stage-1 locals from AppState so the task-wiring body is verbatim.
-    let stone_id         = state.current.stone.id.clone();
-    let stone_name       = state.current.stone.name.clone();
-    let shutdown_token   = state.shutdown_token.clone();
-    let capabilities     = state.current.capabilities.clone();
-    let console_printer  = state.console.clone();
-    let event_bus        = state.event_bus.clone();
-    let pulse            = state.pulse.clone();
-    let koi_handle       = state.discovery.koi.clone();
+    let stone_id = state.current.stone.id.clone();
+    let stone_name = state.current.stone.name.clone();
+    let shutdown_token = state.shutdown_token.clone();
+    let capabilities = state.current.capabilities.clone();
+    let console_printer = state.console.clone();
+    let event_bus = state.event_bus.clone();
+    let pulse = state.pulse.clone();
+    let koi_handle = state.discovery.koi.clone();
     let election_service_final = state.presence.elections.clone();
-    let api_endpoint     = artifacts.api_endpoint;
+    let api_endpoint = artifacts.api_endpoint;
     let volume_rescan_rx = artifacts.volume_rescan_rx;
     // bool: true when ZG_STONE_HOST was set (gates IP-change handler variant)
-    let use_static_host  = artifacts.use_static_host;
+    let use_static_host = artifacts.use_static_host;
 
     // Phase 11.post2: Start election service listener (subscribes to p2p events)
     tokio::spawn(async move {
@@ -1065,12 +1072,14 @@ pub(crate) async fn start_background_tasks(
     tokio::spawn(async move {
         // Get endpoint for Companion communication
         let endpoint = companion_scan_state
-            .current.address
+            .current
+            .address
             .read()
             .await
             .http_base();
         match companion_scan_state
-            .companion.registry
+            .companion
+            .registry
             .scan_and_autostart(&endpoint)
             .await
         {
@@ -1176,12 +1185,17 @@ pub(crate) async fn start_background_tasks(
                         state_for_pond.security.stone_client.reload_tls();
 
                         if enrolled {
-                            crate::bootstrap::run::activate_pond_security(&state_for_pond, &console_for_pond).await;
+                            crate::bootstrap::run::activate_pond_security(
+                                &state_for_pond,
+                                &console_for_pond,
+                            )
+                            .await;
                         } else {
                             // HTTPS shutdown is not implemented yet (Phase 3+).
                             // For now, just update the flag so new connections see the change.
                             state_for_pond
-                                .security.https
+                                .security
+                                .https
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             tracing::info!("Pond unenrolled — HTTPS deactivated (flag cleared)");
                         }
@@ -1217,8 +1231,7 @@ pub(crate) async fn start_background_tasks(
     let topology_dirty_for_mdns = state.current.topology.dirty.clone();
     let self_stone_name_for_mdns = stone_name.clone();
     let mdns_result = mdns::start_mdns_lurk_listener(koi_handle.clone(), stone_name.clone()).await;
-    if let Ok(mut mdns_rx) = mdns_result
-    {
+    if let Ok(mut mdns_rx) = mdns_result {
         console_printer.emit(console::ConsoleEvent::new(
             console::EventCategory::Discovery,
             console::EventStatus::MdnsActive,
@@ -1258,7 +1271,7 @@ pub(crate) async fn start_background_tasks(
                                 status: garden_common::StoneStatus::Online,
                                 discovered_at: chrono::Utc::now(),
                                 last_seen: chrono::Utc::now(),
-                                tags: vec![], // mDNS doesn't provide tags
+                                tags: vec![],     // mDNS doesn't provide tags
                                 gateways: vec![], // mDNS doesn't provide gateways
                             };
                             crate::domain::topology::upsert_from_chirp_dirty(
@@ -1518,23 +1531,14 @@ pub(crate) async fn start_background_tasks(
 
     // Phase 17.6: Topology + storage cache maintenance
     // Topology: mark stale stones offline, evict old, persist dirty cache to disk
-    crate::tasks::start_topology_maintenance(
-        state.clone(),
-        shutdown_token.child_token(),
-    );
+    crate::tasks::start_topology_maintenance(state.clone(), shutdown_token.child_token());
 
     // Registry maintenance: reap expired gateway entries and broadcast removals
-    crate::tasks::start_registry_maintenance(
-        state.clone(),
-        shutdown_token.child_token(),
-    );
+    crate::tasks::start_registry_maintenance(state.clone(), shutdown_token.child_token());
 
     // Storage lifecycle (STORAGE-0011): auto-mount, health, beacon — all platforms.
     // Replaces legacy seed bank resilience + hot-plug detection.
-    crate::tasks::coordinator::start_storage_lifecycle(
-        state.clone(),
-        shutdown_token.child_token(),
-    );
+    crate::tasks::coordinator::start_storage_lifecycle(state.clone(), shutdown_token.child_token());
     // Storage console task: renders connected/released ribbons to physical console.
     crate::tasks::coordinator::start_storage_console_task(
         state.platform.runtime.clone(),
@@ -1565,10 +1569,9 @@ pub(crate) async fn start_background_tasks(
         let sb_state = state.clone();
         let sb_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            if let Err(e) = crate::tasks::storage_orchestration::storage_orchestration_task(
-                sb_state, sb_token,
-            )
-            .await
+            if let Err(e) =
+                crate::tasks::storage_orchestration::storage_orchestration_task(sb_state, sb_token)
+                    .await
             {
                 tracing::error!(error = ?e, "Seed bank orchestration task failed");
             }
@@ -1584,7 +1587,8 @@ pub(crate) async fn start_background_tasks(
         let beacon_token = shutdown_token.child_token();
         tokio::spawn(async move {
             crate::tasks::storage_orchestration::storage_beacon_subscriber(
-                beacon_state, beacon_token,
+                beacon_state,
+                beacon_token,
             )
             .await;
         });
@@ -1613,10 +1617,9 @@ pub(crate) async fn start_background_tasks(
         let repl_state = state.clone();
         let repl_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            if let Err(e) = crate::tasks::storage_replication::storage_replication_task(
-                repl_state, repl_token,
-            )
-            .await
+            if let Err(e) =
+                crate::tasks::storage_replication::storage_replication_task(repl_state, repl_token)
+                    .await
             {
                 tracing::error!(error = ?e, "Seed bank replication task failed");
             }

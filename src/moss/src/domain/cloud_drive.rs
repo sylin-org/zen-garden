@@ -1,4 +1,4 @@
-﻿//! Cloud Drive domain policy (STORAGE-0015)
+//! Cloud Drive domain policy (STORAGE-0015)
 //!
 //! Pure decision functions for the Cloud Filter rename/move tree.
 //! No I/O, no CfApi types, no filesystem access — fully unit testable.
@@ -37,10 +37,7 @@ pub enum DriveAction {
         is_dir: bool,
     },
     /// Top-level storage folder renamed (replica set name change).
-    RenameStorage {
-        old_name: String,
-        new_name: String,
-    },
+    RenameStorage { old_name: String, new_name: String },
     /// Stray root item moved into a storage (not a known storage name).
     IngestStray {
         stray_path: PathBuf,
@@ -49,9 +46,7 @@ pub enum DriveAction {
         is_dir: bool,
     },
     /// Operation is not supported — reject the rename.
-    Reject {
-        reason: &'static str,
-    },
+    Reject { reason: &'static str },
 }
 
 /// Classify a CfApi rename callback into a domain action.
@@ -189,26 +184,27 @@ mod tests {
     fn test_ingest_from_outside() {
         let src = PathBuf::from("C:\\Users\\test\\Desktop\\photo.jpg");
         let action = classify_rename(
-            false, true,
-            "", "",
-            "photos", "photo.jpg",
-            false, false,
-            &src, &sr(),
+            false,
+            true,
+            "",
+            "",
+            "photos",
+            "photo.jpg",
+            false,
+            false,
+            &src,
+            &sr(),
         );
-        assert!(matches!(action, DriveAction::IngestFromOutside { ref storage, ref path, .. }
-            if storage == "photos" && path == "photo.jpg"));
+        assert!(
+            matches!(action, DriveAction::IngestFromOutside { ref storage, ref path, .. }
+            if storage == "photos" && path == "photo.jpg")
+        );
     }
 
     #[test]
     fn test_ingest_from_outside_to_root_rejected() {
         let src = PathBuf::from("C:\\Users\\test\\Desktop\\photo.jpg");
-        let action = classify_rename(
-            false, true,
-            "", "",
-            "", "",
-            false, false,
-            &src, &sr(),
-        );
+        let action = classify_rename(false, true, "", "", "", "", false, false, &src, &sr());
         assert!(matches!(action, DriveAction::Reject { .. }));
     }
 
@@ -216,39 +212,58 @@ mod tests {
     fn test_delete_from_storage() {
         let src = sr().join("photos").join("cats.jpg");
         let action = classify_rename(
-            true, false,
-            "photos", "cats.jpg",
-            "", "",
-            false, true,
-            &src, &sr(),
+            true,
+            false,
+            "photos",
+            "cats.jpg",
+            "",
+            "",
+            false,
+            true,
+            &src,
+            &sr(),
         );
-        assert!(matches!(action, DriveAction::DeleteFromStorage { ref storage, ref path, .. }
-            if storage == "photos" && path == "cats.jpg"));
+        assert!(
+            matches!(action, DriveAction::DeleteFromStorage { ref storage, ref path, .. }
+            if storage == "photos" && path == "cats.jpg")
+        );
     }
 
     #[test]
     fn test_rename_storage() {
         let src = sr().join("photos");
         let action = classify_rename(
-            true, true,
-            "photos", "",
-            "pictures", "",
-            true, true,
-            &src, &sr(),
+            true,
+            true,
+            "photos",
+            "",
+            "pictures",
+            "",
+            true,
+            true,
+            &src,
+            &sr(),
         );
-        assert!(matches!(action, DriveAction::RenameStorage { ref old_name, ref new_name }
-            if old_name == "photos" && new_name == "pictures"));
+        assert!(
+            matches!(action, DriveAction::RenameStorage { ref old_name, ref new_name }
+            if old_name == "photos" && new_name == "pictures")
+        );
     }
 
     #[test]
     fn test_cross_storage_move() {
         let src = sr().join("photos").join("cats.jpg");
         let action = classify_rename(
-            true, true,
-            "photos", "cats.jpg",
-            "backups", "cats.jpg",
-            false, true,
-            &src, &sr(),
+            true,
+            true,
+            "photos",
+            "cats.jpg",
+            "backups",
+            "cats.jpg",
+            false,
+            true,
+            &src,
+            &sr(),
         );
         assert!(matches!(action, DriveAction::CrossStorageMove {
             ref src_storage, ref src, ref dst_storage, ref dst, ..
@@ -260,25 +275,37 @@ mod tests {
     fn test_ingest_stray() {
         let src = sr().join("stray-folder").join("file.txt");
         let action = classify_rename(
-            true, true,
-            "stray-folder", "file.txt",
-            "photos", "file.txt",
-            false, false,
-            &src, &sr(),
+            true,
+            true,
+            "stray-folder",
+            "file.txt",
+            "photos",
+            "file.txt",
+            false,
+            false,
+            &src,
+            &sr(),
         );
-        assert!(matches!(action, DriveAction::IngestStray { ref storage, ref path, .. }
-            if storage == "photos" && path == "file.txt"));
+        assert!(
+            matches!(action, DriveAction::IngestStray { ref storage, ref path, .. }
+            if storage == "photos" && path == "file.txt")
+        );
     }
 
     #[test]
     fn test_rename_in_storage() {
         let src = sr().join("photos").join("old.jpg");
         let action = classify_rename(
-            true, true,
-            "photos", "old.jpg",
-            "photos", "new.jpg",
-            false, true,
-            &src, &sr(),
+            true,
+            true,
+            "photos",
+            "old.jpg",
+            "photos",
+            "new.jpg",
+            false,
+            true,
+            &src,
+            &sr(),
         );
         assert!(matches!(action, DriveAction::RenameInStorage {
             ref storage, ref old, ref new, is_dir: false
@@ -289,11 +316,16 @@ mod tests {
     fn test_source_at_root_rejected() {
         let src = sr().join("something");
         let action = classify_rename(
-            true, true,
-            "", "something",
-            "photos", "something",
-            false, false,
-            &src, &sr(),
+            true,
+            true,
+            "",
+            "something",
+            "photos",
+            "something",
+            false,
+            false,
+            &src,
+            &sr(),
         );
         assert!(matches!(action, DriveAction::Reject { .. }));
     }

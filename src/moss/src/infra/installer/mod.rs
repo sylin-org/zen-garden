@@ -1,23 +1,30 @@
-//! Self-install and uninstall for Zen Garden Moss
+//! Self-deploying Moss (BUILD-0003)
 //!
-//! Provides `garden-moss install` and `garden-moss uninstall` commands.
-//! These run synchronously in main() before the Tokio runtime — they must
-//! never activate the daemon loop, API server, or service stack.
+//! Single binary handles fresh install, update, repair, OS provisioning,
+//! and pre-start staged deployment. Shell scripts eliminated from critical path.
 //!
-//! Three installation tiers (all produce the same end state):
-//! - **Online**: Binary downloads the latest package from GitHub Releases
-//! - **Offline**: Binary + sibling package in the same directory
-//! - **USB**: NewStone USB stick (unchanged, handled by preseed)
+//! Subcommands (all synchronous, no Tokio runtime):
+//! - `garden-moss install [-y|--yes] [--dry-run]`
+//! - `garden-moss uninstall`
+//! - `garden-moss pre-start [--dry-run]`
 
 #[cfg(target_os = "linux")]
 mod linux;
 mod package;
+#[cfg(target_os = "linux")]
+pub mod pre_start;
+mod provision;
+#[cfg(test)]
+mod tests;
+pub mod version;
 #[cfg(target_os = "windows")]
 mod windows;
 
 use std::path::{Path, PathBuf};
 
 use garden_common::infra::platform::is_running_from_removable_media;
+
+use version::{InstallMethod, InstallMode, InstalledVersion};
 
 /// Service name constants
 #[cfg(target_os = "linux")]
@@ -37,25 +44,49 @@ const FIREWALL_RULE_PREFIX: &str = "Zen Garden";
 
 /// Legacy rule names from pre-v0.2 installs (cleaned up during install/uninstall).
 #[cfg(target_os = "windows")]
-const LEGACY_FIREWALL_RULES: &[&str] = &[
-    "Zen Garden Moss HTTP (TCP)",
-    "Zen Garden Moss mDNS (UDP)",
-];
+const LEGACY_FIREWALL_RULES: &[&str] =
+    &["Zen Garden Moss HTTP (TCP)", "Zen Garden Moss mDNS (UDP)"];
+
+/// Options for the install command
+#[derive(Default)]
+pub struct InstallOptions {
+    /// Accept all prompts without asking (for scripts/automation/USB)
+    pub yes: bool,
+    /// Show what would happen without making changes
+    pub dry_run: bool,
+}
 
 /// Install Zen Garden as a system service.
 ///
-/// Handles fresh installs and upgrades. Resolves a platform package
-/// (local sibling or GitHub download), extracts it, installs binaries
-/// and scripts, registers the service, and starts it.
-///
-/// If running from removable media (USB), copies the binary and package
-/// to the permanent install location before proceeding.
-pub fn install() -> anyhow::Result<()> {
-    check_privileges("install")?;
+/// Auto-detects fresh install vs update vs repair. Probes environment
+/// for missing components and offers to install them interactively
+/// (or auto-accepts with --yes).
+pub fn install(options: &InstallOptions) -> anyhow::Result<()> {
+    if !options.dry_run {
+        check_privileges("install")?;
+    }
+
+    // Detect install mode
+    let mode = InstallMode::detect(crate::cli::VERSION);
 
     println!();
-    println!("  Zen Garden Moss Installer");
-    println!("  {}", crate::cli::VERSION);
+    match &mode {
+        InstallMode::Fresh => {
+            println!("  Zen Garden Moss Installer");
+            println!("  {}", crate::cli::VERSION);
+        }
+        InstallMode::Update { from, to } => {
+            println!("  Zen Garden Moss Update");
+            println!("  {} -> {}", from, to);
+        }
+        InstallMode::Repair { version } => {
+            println!("  Zen Garden Moss Repair");
+            println!("  {}", version);
+        }
+    }
+    if options.dry_run {
+        println!("  [DRY RUN]");
+    }
     println!();
 
     let exe_path = std::env::current_exe()?;
@@ -64,36 +95,73 @@ pub fn install() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Cannot determine executable directory"))?;
 
     // If running from removable media, copy to permanent location first
-    let (work_dir, copied_from_removable) = resolve_work_directory(&exe_path, exe_dir)?;
+    let (work_dir, copied_from_removable) = if options.dry_run {
+        let is_removable = is_running_from_removable_media(&exe_path).unwrap_or(false);
+        if is_removable {
+            println!("  Would copy binary and package from removable media.");
+        }
+        (exe_dir.to_path_buf(), false)
+    } else {
+        resolve_work_directory(&exe_path, exe_dir)?
+    };
 
-    // Phase 1: Resolve package
+    // Phase 1: Resolve package (interactive download prompt)
     println!("Resolving package...");
-    let package_path = package::resolve_package(&work_dir)?;
+    let package_path = package::resolve_package(&work_dir, options.yes)?;
+
+    // ── Dry run: report and exit ────────────────────────────────────
+    if options.dry_run {
+        print_dry_run(&mode, &package_path)?;
+        return Ok(());
+    }
 
     // Phase 2: Extract and install
     println!();
-    println!("Installing Zen Garden...");
+    match &mode {
+        InstallMode::Fresh => println!("Installing Zen Garden..."),
+        InstallMode::Update { .. } => println!("Updating Zen Garden..."),
+        InstallMode::Repair { .. } => println!("Repairing Zen Garden..."),
+    }
 
     let install_dir = platform_install_dir();
     std::fs::create_dir_all(&install_dir)?;
 
-    // Extract package to staging, then install platform-specifically
-    let staging_dir = staging_directory();
-    std::fs::create_dir_all(&staging_dir)?;
+    let staging_handle = staging_directory()?;
+    let staging_dir = staging_handle.path();
 
-    // Extract the package
     println!("  Extracting package...");
-    package::extract_package(&package_path, &staging_dir)?;
+    package::extract_package(&package_path, staging_dir)?;
+
+    // On update: stop service before deploying files
+    if matches!(
+        mode,
+        InstallMode::Update { .. } | InstallMode::Repair { .. }
+    ) {
+        stop_service_if_running();
+    }
 
     // Platform-specific installation
     #[cfg(target_os = "linux")]
-    linux::install_platform(&staging_dir)?;
+    linux::install_platform(staging_dir)?;
 
     #[cfg(target_os = "windows")]
-    windows::install_platform(&staging_dir, &work_dir)?;
+    windows::install_platform(staging_dir, &work_dir)?;
 
-    // Cleanup staging
-    let _ = std::fs::remove_dir_all(&staging_dir);
+    // Create default config (fresh install only)
+    #[cfg(target_os = "linux")]
+    if matches!(mode, InstallMode::Fresh) {
+        create_default_config()?;
+    }
+
+    // Write version breadcrumb
+    let breadcrumb = InstalledVersion::new(crate::cli::VERSION, InstallMethod::Install);
+    if let Err(e) = version::write_installed_version(&breadcrumb) {
+        println!("  Warning: could not write version breadcrumb: {e}");
+    }
+
+    // Staging directory auto-cleans when `staging_handle` drops (end of function
+    // or on error). Explicit drop here to clean up before the next phase.
+    drop(staging_handle);
 
     // Cleanup removable media temp files
     if copied_from_removable {
@@ -101,11 +169,23 @@ pub fn install() -> anyhow::Result<()> {
         let _ = cleanup_removable_temp(&work_dir);
     }
 
-    // Phase 3: Start and verify
+    // Phase 3: Environment check and provisioning
+    run_environment_check(options)?;
+
+    // Phase 4: Start and verify
     println!();
     start_and_verify()?;
 
     Ok(())
+}
+
+/// Process pre-staged packages before daemon start.
+///
+/// Called as `ExecStartPre=/usr/local/bin/garden-moss pre-start`.
+/// Replaces `moss-update-helper.sh`.
+#[cfg(target_os = "linux")]
+pub fn pre_start(dry_run: bool) -> anyhow::Result<()> {
+    pre_start::run(dry_run)
 }
 
 /// Uninstall Zen Garden service and binaries. Data is preserved.
@@ -143,7 +223,198 @@ pub fn uninstall() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ── Privilege checks ─────────────────────────────────────────────────
+// ── Environment check and provisioning ──────────────────────────────
+
+fn run_environment_check(options: &InstallOptions) -> anyhow::Result<()> {
+    println!();
+    println!("Environment check:");
+
+    let components = provision::probe();
+
+    // Display status of each component
+    for component in &components {
+        let icon = match &component.status {
+            provision::ComponentStatus::Ok => "ok",
+            provision::ComponentStatus::Missing => "not installed",
+            provision::ComponentStatus::Manual(hint) => hint.as_str(),
+        };
+        println!("  {:<20} {}", component.name, icon);
+    }
+
+    if provision::all_ok(&components) {
+        // Nothing to do
+        return Ok(());
+    }
+
+    // Check if there are any auto-fixable components
+    if !provision::needs_provisioning(&components) {
+        // Only manual items remain
+        println!();
+        println!("  Some components require manual setup (see above).");
+        return Ok(());
+    }
+
+    // Prompt user (or auto-accept with --yes)
+    let should_provision = if options.yes {
+        println!();
+        println!("  Setting up missing components (--yes)...");
+        true
+    } else {
+        println!();
+        print!("  Set up missing components? [Y/n] ");
+        prompt_yes_no(true)
+    };
+
+    if should_provision {
+        println!();
+        provision::apply()?;
+    } else {
+        println!();
+        println!("  Skipped. You can re-run with: garden-moss install");
+    }
+
+    Ok(())
+}
+
+// ── Dry run report ──────────────────────────────────────────────────
+
+fn print_dry_run(mode: &InstallMode, package_path: &Path) -> anyhow::Result<()> {
+    println!();
+    println!("Dry run — the following actions would be performed:");
+    println!();
+    #[cfg(target_os = "linux")]
+    println!("  NOTE: Actual install requires root (sudo garden-moss install)");
+    #[cfg(target_os = "windows")]
+    println!("  NOTE: Actual install requires Administrator privileges");
+    println!();
+    println!("  Mode: {}", mode);
+    println!("  Package: {}", package_path.display());
+    println!("  Install dir: {}", platform_install_dir().display());
+
+    #[cfg(target_os = "linux")]
+    {
+        println!("  Service: systemd unit at /etc/systemd/system/garden-moss.service");
+        println!("  ExecStartPre: /usr/local/bin/garden-moss pre-start");
+        if matches!(mode, InstallMode::Fresh) {
+            println!(
+                "  Config: default garden-moss.toml at {}",
+                garden_common::constants::paths::config_dir()
+            );
+        }
+    }
+
+    // Show environment check in dry-run too
+    println!();
+    println!("  Environment check:");
+    let components = provision::probe();
+    for component in &components {
+        let icon = match &component.status {
+            provision::ComponentStatus::Ok => "ok",
+            provision::ComponentStatus::Missing => "WOULD INSTALL",
+            provision::ComponentStatus::Manual(hint) => hint.as_str(),
+        };
+        println!("    {:<20} {}", component.name, icon);
+    }
+
+    println!();
+    println!("  Would start service and verify health.");
+    println!();
+    Ok(())
+}
+
+// ── Interactive prompts ─────────────────────────────────────────────
+
+/// Prompt for yes/no with a default. Returns true for yes.
+pub(super) fn prompt_yes_no(default_yes: bool) -> bool {
+    use std::io::{self, BufRead, Write};
+
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    if io::stdin().lock().read_line(&mut input).is_err() {
+        return default_yes;
+    }
+
+    let trimmed = input.trim().to_lowercase();
+    if trimmed.is_empty() {
+        return default_yes;
+    }
+
+    matches!(trimmed.as_str(), "y" | "yes")
+}
+
+// ── Default config ──────────────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
+fn create_default_config() -> anyhow::Result<()> {
+    let config_dir = garden_common::constants::paths::config_dir();
+    let config_path = format!("{config_dir}/garden-moss.toml");
+
+    if Path::new(&config_path).exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&config_dir)?;
+    std::fs::write(
+        &config_path,
+        format!(
+            "# garden-moss configuration\n\
+             \n\
+             port = {}\n\
+             log_level = \"info\"\n",
+            garden_common::constants::MOSS_HTTP
+        ),
+    )?;
+
+    println!("  Default config: {config_path}");
+    Ok(())
+}
+
+// ── Service control ─────────────────────────────────────────────────
+
+/// Stop the OS service if it is currently running.
+///
+/// **Synchronous only** — uses `std::thread::sleep`. Must never be called from
+/// inside a Tokio runtime (the installer subcommands run without a runtime).
+fn stop_service_if_running() {
+    #[cfg(target_os = "linux")]
+    {
+        let is_active = std::process::Command::new("systemctl")
+            .args(["is-active", "--quiet", SERVICE_NAME])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if is_active {
+            print!("  Stopping service...");
+            let _ = std::process::Command::new("systemctl")
+                .args(["stop", SERVICE_NAME])
+                .output();
+            println!(" done.");
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let output = std::process::Command::new("sc")
+            .args(["query", WINDOWS_SERVICE_NAME])
+            .output();
+
+        if let Ok(o) = output {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            if stdout.contains("RUNNING") {
+                print!("  Stopping service...");
+                let _ = std::process::Command::new("sc")
+                    .args(["stop", WINDOWS_SERVICE_NAME])
+                    .output();
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                println!(" done.");
+            }
+        }
+    }
+}
+
+// ── Privilege checks ────────────────────────────────────────────────
 
 fn check_privileges(verb: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
@@ -178,11 +449,8 @@ fn check_privileges(verb: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ── Removable media handling ─────────────────────────────────────────
+// ── Removable media handling ────────────────────────────────────────
 
-/// If running from removable media, copy the binary and sibling package
-/// to a temporary directory on the system drive. Returns the work directory
-/// and whether we copied from removable media.
 fn resolve_work_directory(exe_path: &Path, exe_dir: &Path) -> anyhow::Result<(PathBuf, bool)> {
     let is_removable = is_running_from_removable_media(exe_path)?;
 
@@ -192,14 +460,11 @@ fn resolve_work_directory(exe_path: &Path, exe_dir: &Path) -> anyhow::Result<(Pa
 
     println!("  Detected removable media, copying to permanent location...");
 
-    let temp_dir = install_temp_dir();
-    std::fs::create_dir_all(&temp_dir)?;
+    let temp_dir = install_temp_dir()?;
 
-    // Copy the binary
     let target_exe = temp_dir.join(exe_path.file_name().unwrap_or_default());
     std::fs::copy(exe_path, &target_exe)?;
 
-    // Copy any sibling package files
     if let Ok(entries) = std::fs::read_dir(exe_dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -217,17 +482,17 @@ fn resolve_work_directory(exe_path: &Path, exe_dir: &Path) -> anyhow::Result<(Pa
 }
 
 fn cleanup_removable_temp(temp_dir: &Path) -> anyhow::Result<()> {
-    // Only clean up the install temp dir, not the entire permanent location
-    let expected = install_temp_dir();
-    if temp_dir == expected {
-        std::fs::remove_dir_all(temp_dir)?;
+    // Only clean up directories we created (prefixed with zen-garden-install-)
+    if let Some(name) = temp_dir.file_name().and_then(|n| n.to_str()) {
+        if name.starts_with("zen-garden-install-") {
+            std::fs::remove_dir_all(temp_dir)?;
+        }
     }
     Ok(())
 }
 
-// ── Platform paths ───────────────────────────────────────────────────
+// ── Platform paths ──────────────────────────────────────────────────
 
-/// Where binaries are installed
 fn platform_install_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
@@ -241,26 +506,34 @@ fn platform_install_dir() -> PathBuf {
     }
 }
 
-/// Temporary directory for removable media copies and package extraction
-fn install_temp_dir() -> PathBuf {
-    #[cfg(target_os = "linux")]
-    {
-        PathBuf::from("/tmp/zen-garden-install")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let temp = std::env::var("TEMP").unwrap_or_else(|_| r"C:\Windows\Temp".to_string());
-        PathBuf::from(format!(r"{}\zen-garden-install", temp))
-    }
+fn install_temp_dir() -> anyhow::Result<PathBuf> {
+    let dir = tempfile::Builder::new()
+        .prefix("zen-garden-install-")
+        .tempdir()?;
+    // Persist the directory (caller manages cleanup) — don't auto-delete on drop
+    let path = dir.keep();
+    Ok(path)
 }
 
-/// Staging directory for package extraction during install
-fn staging_directory() -> PathBuf {
-    install_temp_dir().join("staging")
+/// Create a staging directory that auto-cleans on drop.
+///
+/// Returns a `TempDir` handle — the caller uses `.path()` for the directory
+/// path, and the directory is automatically removed when the handle is dropped,
+/// even on error paths. Explicit cleanup via `std::fs::remove_dir_all` is not
+/// needed (but harmless if called).
+fn staging_directory() -> anyhow::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix("zen-garden-staging-")
+        .tempdir()
+        .map_err(Into::into)
 }
 
-// ── Start and verify ─────────────────────────────────────────────────
+// ── Start and verify ────────────────────────────────────────────────
 
+/// Start the OS service and poll for health.
+///
+/// **Synchronous only** — uses `std::thread::sleep`. Must never be called from
+/// inside a Tokio runtime (the installer subcommands run without a runtime).
 fn start_and_verify() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -309,7 +582,7 @@ fn start_and_verify() -> anyhow::Result<()> {
         }
     }
 
-    // Health check: poll for a few seconds
+    // Health check
     println!();
     print!("Checking health...");
     let port = garden_common::constants::MOSS_HTTP;
@@ -332,7 +605,6 @@ fn start_and_verify() -> anyhow::Result<()> {
         println!(" not yet responding (this is normal during first boot).");
     }
 
-    // Print success summary
     println!();
     println!("Zen Garden is ready.");
     println!();
@@ -359,17 +631,14 @@ fn start_and_verify() -> anyhow::Result<()> {
     }
 
     println!();
-
     Ok(())
 }
 
 /// Simple blocking HTTP GET that returns true if status is 2xx.
-/// Uses raw TCP to avoid pulling in reqwest for synchronous context.
 fn ureq_get(url: &str) -> anyhow::Result<bool> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    // Parse host:port from URL
     let url = url.strip_prefix("http://").unwrap_or(url);
     let (host_port, path) = url.split_once('/').unwrap_or((url, ""));
     let path = format!("/{}", path);
@@ -386,6 +655,5 @@ fn ureq_get(url: &str) -> anyhow::Result<bool> {
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
 
-    // Check for 2xx status
     Ok(response.starts_with("HTTP/1.") && response.contains(" 200 "))
 }

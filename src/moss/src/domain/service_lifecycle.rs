@@ -32,25 +32,21 @@ pub struct LifecycleOutcome {
     pub service_name: String,
 }
 
-/// Find a managed offering by service name. Returns (offering_id, service_name).
+/// Find a managed offering by service name. Returns the offering ID.
 ///
 /// This is the common precondition check for all lifecycle operations.
+/// Delegates to `offering_lifecycle::find_managed` (single source of truth).
 pub async fn find_managed(state: &AppState, service_name: &str) -> Result<String> {
-    let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .find(|o| o.name.to_string() == service_name && o.is_managed())
-        .map(|o| o.offering_id.clone())
+    crate::domain::offering_lifecycle::id_for_managed(state, service_name)
+        .await
         .ok_or_else(|| anyhow::anyhow!("Service '{}' not found", service_name))
 }
 
 /// Find any offering by service name (managed or adopted/borrowed).
+/// Delegates to `offering_lifecycle::id_for_name` (single source of truth).
 pub async fn find_any(state: &AppState, service_name: &str) -> Result<String> {
-    let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .find(|o| o.name.to_string() == service_name)
-        .map(|o| o.offering_id.clone())
+    crate::domain::offering_lifecycle::id_for_name(state, service_name)
+        .await
         .ok_or_else(|| anyhow::anyhow!("Service '{}' not found", service_name))
 }
 
@@ -193,12 +189,29 @@ pub async fn restart(state: &AppState, service_name: &str) -> Result<LifecycleOu
 }
 
 // ============================================================================
-// Remove (soft delete — container gone, volumes preserved)
+// Remove / Destroy (shared implementation, different event semantics)
 // ============================================================================
 
-/// Remove a service. Container is stopped and removed (volumes preserved).
+/// Remove a service (soft delete). Container is stopped and removed (volumes preserved).
 /// Cleans up scheduled tasks and static IP allocation.
 pub async fn remove(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+    remove_impl(state, service_name, false).await
+}
+
+/// Destroy a service (hard delete). Same as remove but signals permanent deletion.
+pub async fn destroy(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+    remove_impl(state, service_name, true).await
+}
+
+/// Shared implementation for remove and destroy.
+///
+/// `hard_delete` controls the event semantics: `false` emits `removed`,
+/// `true` emits `destroyed`.
+async fn remove_impl(
+    state: &AppState,
+    service_name: &str,
+    hard_delete: bool,
+) -> Result<LifecycleOutcome> {
     let offering_id = find_managed(state, service_name).await?;
 
     // Remove container (non-fatal — continue cleanup even if container is already gone)
@@ -215,53 +228,14 @@ pub async fn remove(state: &AppState, service_name: &str) -> Result<LifecycleOut
     state.remove_offering(&offering_id, true).await;
 
     // Emit domain event
-    state.event_bus.emit(OfferingEvent::removed(
-        &offering_id,
-        service_name,
-        state.stone_name(),
-    ));
+    let event = if hard_delete {
+        OfferingEvent::destroyed(&offering_id, service_name, state.stone_name())
+    } else {
+        OfferingEvent::removed(&offering_id, service_name, state.stone_name())
+    };
+    state.event_bus.emit(event);
 
-    // Cleanup: unregister scheduled tasks
-    cleanup_tasks(&offering_id).await;
-
-    // Cleanup: release static IP if applicable
-    cleanup_static_ip(service_name).await;
-
-    Ok(LifecycleOutcome {
-        offering_id,
-        service_name: service_name.to_string(),
-    })
-}
-
-// ============================================================================
-// Destroy (hard delete — same as remove but different event semantics)
-// ============================================================================
-
-/// Destroy a service (hard delete). Same as remove but signals permanent deletion.
-pub async fn destroy(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
-    let offering_id = find_managed(state, service_name).await?;
-
-    // Remove container (non-fatal)
-    if let Err(e) = state
-        .platform
-        .docker
-        .remove_service(service_name, Some(&state.console))
-        .await
-    {
-        warn!(service = %service_name, error = ?e, "Container removal failed, continuing with registry cleanup");
-    }
-
-    // Remove from registry (auto-persists)
-    state.remove_offering(&offering_id, true).await;
-
-    // Emit domain event (destroyed = hard delete, distinct from removed)
-    state.event_bus.emit(OfferingEvent::destroyed(
-        &offering_id,
-        service_name,
-        state.stone_name(),
-    ));
-
-    // Cleanup
+    // Cleanup: unregister scheduled tasks + release static IP
     cleanup_tasks(&offering_id).await;
     cleanup_static_ip(service_name).await;
 
@@ -279,11 +253,17 @@ pub async fn destroy(state: &AppState, service_name: &str) -> Result<LifecycleOu
 #[derive(Debug)]
 pub enum InstallOutcome {
     /// Image-direct installation started (background job).
-    ImageDirectStarted { service_name: String, job_id: String },
+    ImageDirectStarted {
+        service_name: String,
+        job_id: String,
+    },
     /// Existing container adopted into registry (self-heal).
     Adopted { service_name: String },
     /// Standard manifest-based installation started (background job).
-    InstallStarted { service_name: String, job_id: String },
+    InstallStarted {
+        service_name: String,
+        job_id: String,
+    },
     /// Service is under maintenance, retry later.
     Maintenance { service_name: String },
 }
@@ -529,13 +509,7 @@ pub async fn install(
     let task_svc_name = service_name.clone();
     let task_job_id = job_id.clone();
     tokio::spawn(async move {
-        crate::install_service_task(
-            &state,
-            &task_job_id,
-            &task_offering,
-            &task_svc_name,
-        )
-        .await;
+        crate::install_service_task(&state, &task_job_id, &task_offering, &task_svc_name).await;
     });
 
     Ok(InstallOutcome::InstallStarted {
@@ -549,6 +523,10 @@ pub async fn install(
 // ============================================================================
 
 /// Unregister scheduled tasks for an offering (non-fatal).
+///
+/// NOTE: `TaskStore::new()` is lightweight (path construction only, no I/O or
+/// connections). A per-call instance is acceptable until `TaskStore` is injected
+/// via `AppState` as part of the ARCH-0005 trait boundary work.
 async fn cleanup_tasks(offering_id: &str) {
     let task_store = crate::infra::task_store::TaskStore::new();
     if let Err(e) = task_store.unregister_tasks(offering_id).await {
@@ -563,7 +541,7 @@ async fn cleanup_tasks(offering_id: &str) {
 /// Release static IP if this service was a requester (non-fatal).
 async fn cleanup_static_ip(service_name: &str) {
     let mut network_state = crate::infra::network::load_network_state().await;
-    if network_state.requested_by.contains(&service_name.to_string()) {
+    if network_state.requested_by.iter().any(|r| r == service_name) {
         if let Err(e) =
             crate::infra::network::revert_to_dhcp(service_name, &mut network_state).await
         {

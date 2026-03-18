@@ -222,7 +222,13 @@ pub async fn put_object(
 
     let handle = match resolver.for_write(&selected).await {
         Ok(handle) => handle,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            )
+        }
     };
 
     if let Some(store) = handle.object_store_for_write() {
@@ -305,7 +311,13 @@ pub async fn get_object(
 
     let handle = match resolver.for_read(&selected).await {
         Ok(handle) => handle,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            )
+        }
     };
 
     if let Some(store) = handle.object_store_for_read() {
@@ -469,7 +481,13 @@ pub async fn delete_object(
 
     let handle = match resolver.for_write(&selected).await {
         Ok(handle) => handle,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            )
+        }
     };
 
     if let Some(store) = handle.object_store_for_write() {
@@ -530,7 +548,13 @@ pub async fn list_buckets(
 
     let handle = match resolver.for_read(&selected).await {
         Ok(handle) => handle,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            )
+        }
     };
 
     if let Some(store) = handle.object_store_for_read() {
@@ -614,7 +638,13 @@ pub async fn list_objects(
 
     let handle = match resolver.for_read(&selected).await {
         Ok(handle) => handle,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            )
+        }
     };
 
     let max_keys = query.max_keys.unwrap_or(DEFAULT_MAX_KEYS).min(MAX_MAX_KEYS);

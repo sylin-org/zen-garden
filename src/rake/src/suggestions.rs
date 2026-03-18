@@ -15,9 +15,9 @@ pub fn get_suggestions(command_name: &str) -> Vec<String> {
     cmd.see_also
         .iter()
         .filter_map(|related| {
-            MANIFEST.get(related).map(|related_cmd| {
-                format!("{:<16} {}", related_cmd.name, related_cmd.description)
-            })
+            MANIFEST
+                .get(related)
+                .map(|related_cmd| format!("{:<16} {}", related_cmd.name, related_cmd.description))
         })
         .collect()
 }

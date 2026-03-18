@@ -3,9 +3,9 @@
 //! `state.current.*` = writable stores owned by this stone.
 //! `state.*`         = garden-wide aggregates (local + remote peers).
 
+use garden_common::{HardwareCapabilities, NetworkMetrics, PeerAddress, StoneResources};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use garden_common::{HardwareCapabilities, NetworkMetrics, PeerAddress, StoneResources};
 
 /// This stone's identity — set at startup, effectively immutable at runtime.
 ///

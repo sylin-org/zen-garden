@@ -363,9 +363,7 @@ pub enum StorageEvent {
         timestamp: DateTime<Utc>,
     },
     /// Volumes reclassified (broad change)
-    StorageReclassified {
-        timestamp: DateTime<Utc>,
-    },
+    StorageReclassified { timestamp: DateTime<Utc> },
     /// Sync started
     SyncStarted {
         name: String,
@@ -423,14 +421,10 @@ impl StorageEvent {
             } => {
                 format!("Storage '{}' role changed to {}", replica_set_id, new_role)
             }
-            Self::StoragePinChanged {
-                replica_set_id, ..
-            } => {
+            Self::StoragePinChanged { replica_set_id, .. } => {
                 format!("Storage '{}' pin changed", replica_set_id)
             }
-            Self::StorageReclassified { .. } => {
-                "Storage volumes reclassified".to_string()
-            }
+            Self::StorageReclassified { .. } => "Storage volumes reclassified".to_string(),
             Self::SyncStarted { name, .. } => {
                 format!("Storage '{}' sync started", name)
             }
@@ -541,16 +535,14 @@ impl From<&garden_common::storage::StorageChanged> for StorageEvent {
                 replica_set_id: replica_set_id.clone(),
                 timestamp: now,
             },
-            garden_common::storage::StorageChanged::Reclassified => Self::StorageReclassified {
+            garden_common::storage::StorageChanged::Reclassified => {
+                Self::StorageReclassified { timestamp: now }
+            }
+            garden_common::storage::StorageChanged::Sensed { name, roles } => Self::StorageSensed {
+                name: name.clone(),
+                roles: roles.clone(),
                 timestamp: now,
             },
-            garden_common::storage::StorageChanged::Sensed { name, roles } => {
-                Self::StorageSensed {
-                    name: name.clone(),
-                    roles: roles.clone(),
-                    timestamp: now,
-                }
-            }
             garden_common::storage::StorageChanged::Connected {
                 name,
                 roles,

@@ -63,7 +63,6 @@ pub fn disk_usage(path: &str) -> Option<DiskUsage> {
     }
 }
 
-
 /// Scan physical storage media (disks).
 ///
 /// Returns every physical disk the OS can see, including those without
@@ -458,9 +457,7 @@ mod linux {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        name.chars()
-            .take_while(|c| !c.is_ascii_digit())
-            .collect()
+        name.chars().take_while(|c| !c.is_ascii_digit()).collect()
     }
 
     pub(super) fn capacity_from_sysfs(device_path: &str) -> Option<u64> {
@@ -551,10 +548,8 @@ mod linux {
                 if output.status.success() {
                     let result = check_mount_contents(&temp_mount);
 
-                    let _ =
-                        run_command_timed_sync("sudo", &["umount", &temp_mount], mount_timeout);
-                    let _ =
-                        run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
+                    let _ = run_command_timed_sync("sudo", &["umount", &temp_mount], mount_timeout);
+                    let _ = run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
 
                     return result;
                 }
@@ -612,17 +607,24 @@ mod linux {
 
         tokio::fs::create_dir_all(mount_path).await?;
 
-        let output =
-            run_sudo_timed_quiet(&["mount", device, mount_path], timeouts::subprocess_mount_timeout())
-                .await
-                .context("mount command failed or timed out")?;
+        let output = run_sudo_timed_quiet(
+            &["mount", device, mount_path],
+            timeouts::subprocess_mount_timeout(),
+        )
+        .await
+        .context("mount command failed or timed out")?;
 
         if output.status.success() {
             tracing::info!(device = %device, mount = %mount_path, "Mounted device");
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("mount {} -> {} failed: {}", device, mount_path, stderr.trim())
+            anyhow::bail!(
+                "mount {} -> {} failed: {}",
+                device,
+                mount_path,
+                stderr.trim()
+            )
         }
     }
 
@@ -630,10 +632,12 @@ mod linux {
         use super::super::subprocess::run_sudo_timed_quiet;
         use garden_common::constants::timeouts;
 
-        let output =
-            run_sudo_timed_quiet(&["umount", mount_path], timeouts::subprocess_mount_timeout())
-                .await
-                .context("umount command failed or timed out")?;
+        let output = run_sudo_timed_quiet(
+            &["umount", mount_path],
+            timeouts::subprocess_mount_timeout(),
+        )
+        .await
+        .context("umount command failed or timed out")?;
 
         if output.status.success() {
             tracing::info!(mount = %mount_path, "Unmounted");
@@ -689,7 +693,8 @@ mod linux {
                 let manifest_path = format!("{}/.zen-garden/manifest.json", temp_mount);
                 let manifest = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await
                 {
-                    match serde_json::from_str::<garden_common::storage::StorageManifest>(&content) {
+                    match serde_json::from_str::<garden_common::storage::StorageManifest>(&content)
+                    {
                         Ok(m) => {
                             debug!(device = %device, name = %m.name, id = %m.id, "Probed manifest");
                             Some(m)
@@ -952,8 +957,14 @@ mod linux {
                 continue;
             }
 
-            let model = dev.get("model").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
-            let serial = dev.get("serial").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+            let model = dev
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
+            let serial = dev
+                .get("serial")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
             let tran = dev.get("tran").and_then(|v| v.as_str()).unwrap_or("");
             let size = dev.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
             let rm = dev.get("rm").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -973,9 +984,7 @@ mod linux {
 
             let (condition, partitions) = match children {
                 None => (MediumCondition::Raw, Vec::new()),
-                Some(parts) if parts.is_empty() => {
-                    (MediumCondition::Raw, Vec::new())
-                }
+                Some(parts) if parts.is_empty() => (MediumCondition::Raw, Vec::new()),
                 Some(parts) => {
                     let parts_vec: Vec<PartitionSnapshot> = parts
                         .iter()
@@ -1040,9 +1049,7 @@ mod windows {
     const DRIVE_FIXED: u32 = 3;
 
     pub fn scan_volumes() -> Vec<VolumeSnapshot> {
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetDriveTypeW, GetLogicalDriveStringsW,
-        };
+        use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDriveStringsW};
 
         let mut results = Vec::new();
 
@@ -1385,12 +1392,24 @@ $disks | ConvertTo-Json -Depth 3 -Compress
                 continue;
             }
 
-            let model = disk.get("Model").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
-            let serial = disk.get("Serial").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+            let model = disk
+                .get("Model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
+            let serial = disk
+                .get("Serial")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
             let bus_str = disk.get("BusType").and_then(|v| v.as_str()).unwrap_or("");
             let size = disk.get("SizeBytes").and_then(|v| v.as_u64()).unwrap_or(0);
-            let style = disk.get("Style").and_then(|v| v.as_str()).unwrap_or("Unknown");
-            let status = disk.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown");
+            let style = disk
+                .get("Style")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let status = disk
+                .get("Status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
 
             let bus_type = match bus_str {
                 "USB" => BusType::Usb,
@@ -1507,7 +1526,10 @@ mod tests {
     #[test]
     fn test_scan_volumes_finds_drives() {
         let volumes = scan_volumes();
-        assert!(!volumes.is_empty(), "scan_volumes should find at least one volume");
+        assert!(
+            !volumes.is_empty(),
+            "scan_volumes should find at least one volume"
+        );
     }
 
     /// Verify USB bus type detection via IOCTL.

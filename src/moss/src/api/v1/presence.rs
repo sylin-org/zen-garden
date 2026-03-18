@@ -20,8 +20,8 @@ use crate::domain::StoneEvent;
 use crate::infra::PulseEvent;
 use crate::AppState;
 use garden_common::presence::{
-    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot,
-    StoragePresence, StoneState,
+    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StoneState,
+    StoragePresence,
 };
 
 #[derive(Debug, Deserialize)]
@@ -179,7 +179,12 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
         let network = state.current.metrics.network.read().await;
         network
             .as_ref()
-            .map(|n| (n.rx_bytes_per_sec.unwrap_or(0), n.tx_bytes_per_sec.unwrap_or(0)))
+            .map(|n| {
+                (
+                    n.rx_bytes_per_sec.unwrap_or(0),
+                    n.tx_bytes_per_sec.unwrap_or(0),
+                )
+            })
             .unwrap_or((0, 0))
     };
 
@@ -191,11 +196,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             .unwrap_or(false)
     };
 
-    let has_cricket = state
-        .companion.registry
-        .get("cricket")
-        .await
-        .is_some();
+    let has_cricket = state.companion.registry.get("cricket").await.is_some();
 
     // FIREFLY-0003: Seed bank summary (only if one is plugged in)
     let seed_bank = {
@@ -227,7 +228,9 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             disk_percent,
             uptime_seconds: uptime,
             pond_active: state
-                .security.pond.active
+                .security
+                .pond
+                .active
                 .load(std::sync::atomic::Ordering::Relaxed),
             // FIREFLY-0003 fields
             io_percent: 0.0, // Placeholder until I/O collection is implemented

@@ -7,8 +7,8 @@
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 
 /// Place target type
 pub enum PlaceTarget {
@@ -136,11 +136,7 @@ async fn execute_place_keystone(
     Ok(())
 }
 
-async fn execute_place_stone(
-    ctx: &Runtime,
-    endpoint: &str,
-    code: &str,
-) -> anyhow::Result<()> {
+async fn execute_place_stone(ctx: &Runtime, endpoint: &str, code: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond/join", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "code": code });
 

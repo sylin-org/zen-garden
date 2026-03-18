@@ -22,7 +22,7 @@ pub use storage::StorageOrchestration;
 /// Field path: `state.orchestration.{storage|nurturing|nourishment}.*`
 #[derive(Clone)]
 pub struct Orchestration {
-    pub storage:     StorageOrchestration,
-    pub nurturing:   NurturingOrchestration,
+    pub storage: StorageOrchestration,
+    pub nurturing: NurturingOrchestration,
     pub nourishment: NourishmentOrchestration,
 }

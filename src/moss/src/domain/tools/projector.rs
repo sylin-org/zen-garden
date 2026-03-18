@@ -41,36 +41,29 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     // ── Managed storages from unified volumes ────────────────────
     let managed_vols: Vec<_> = {
         let map = state.current.storage.volumes.read().await;
-        map.values()
-            .filter(|v| v.is_managed())
-            .cloned()
-            .collect()
+        map.values().filter(|v| v.is_managed()).cloned().collect()
     };
 
     for vol in &managed_vols {
-        let mgmt = vol.management.as_ref().unwrap(); // safe: filtered above
+        let Some(mgmt) = vol.management.as_ref() else {
+            continue;
+        };
         let (status, ready) = volume_state_to_readiness(&vol.state);
         let visibility_str = mgmt.visibility.to_string();
 
         let fqid = mgmt.display_name().to_string();
 
-        let protocols = vec![garden_common::constants::PROTOCOL_S3.to_string(), garden_common::constants::PROTOCOL_STORAGE.to_string()];
+        let protocols = vec![
+            garden_common::constants::PROTOCOL_S3.to_string(),
+            garden_common::constants::PROTOCOL_STORAGE.to_string(),
+        ];
         let protocol = garden_common::constants::PROTOCOL_S3.to_string();
 
-        let mut uris = Vec::new();
-        uris.push(format!(
-            "{}/api/v1/storage",
-            endpoint.trim_end_matches('/')
-        ));
-        uris.push(format!(
-            "{}/api/v1/storage/s3",
-            endpoint.trim_end_matches('/')
-        ));
-        uris = uris
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let base = endpoint.trim_end_matches('/');
+        let uris = vec![
+            format!("{base}/api/v1/storage"),
+            format!("{base}/api/v1/storage/s3"),
+        ];
 
         tools.push(GardenTool {
             fqid,
@@ -80,6 +73,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                 category: garden_common::constants::CATEGORY_STORAGE.to_string(),
                 id: mgmt.id.clone(),
                 tags: Vec::new(),
+                source: String::new(),
             },
             stone: stone.clone(),
             service: ServiceInfo {
@@ -164,7 +158,7 @@ async fn offering_to_garden_tool(
         .filter(|cap| !cap.items.is_empty())
         .collect();
 
-    let status_str = format!("{}", offering.status).to_ascii_lowercase();
+    let status_str = offering.status.to_string().to_ascii_lowercase();
 
     GardenTool {
         fqid,
@@ -174,6 +168,7 @@ async fn offering_to_garden_tool(
             category: category.to_ascii_lowercase(),
             id: offering.offering_id.clone(),
             tags: Vec::new(),
+            source: String::new(),
         },
         stone: stone.clone(),
         service: ServiceInfo {

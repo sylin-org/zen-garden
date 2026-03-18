@@ -6,8 +6,8 @@
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 
 /// Invite command for pond zen syntax operations
 pub struct InviteCommand {

@@ -95,12 +95,18 @@ pub async fn put_gateway(
 
     // Build GardenTool for registry
     let fqn = OfferingFqn::parse(&registration.fqn).ok();
-    let fqid = fqn.as_ref().map(|f| f.fqn()).unwrap_or_else(|| registration.fqn.clone());
+    let fqid = fqn
+        .as_ref()
+        .map(|f| f.fqn())
+        .unwrap_or_else(|| registration.fqn.clone());
     let tool_type = fqn
         .as_ref()
         .map(|f| f.offering.clone())
         .unwrap_or_else(|| offering.clone());
-    let instance = fqn.as_ref().and_then(|f| f.instance.clone()).unwrap_or_default();
+    let instance = fqn
+        .as_ref()
+        .and_then(|f| f.instance.clone())
+        .unwrap_or_default();
 
     let tool = GardenTool {
         fqid: fqid.clone(),

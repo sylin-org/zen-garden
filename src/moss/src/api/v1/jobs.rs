@@ -50,10 +50,7 @@ pub async fn get_job_status(
     let jobs = state.jobs.read().await;
 
     match jobs.get(&job_id) {
-        Some(job) => (
-            StatusCode::OK,
-            Json(ApiResponse::new(job.clone())),
-        ),
+        Some(job) => (StatusCode::OK, Json(ApiResponse::new(job.clone()))),
         None => {
             // Job not found - return 404 with stub and helpful suggestion
             (
@@ -103,8 +100,5 @@ pub async fn list_jobs(State(state): State<AppState>) -> (StatusCode, Json<ApiRe
     let jobs = state.jobs.read().await;
     let job_list: Vec<Job> = jobs.values().cloned().collect();
 
-    (
-        StatusCode::OK,
-        Json(ApiResponse::new(job_list)),
-    )
+    (StatusCode::OK, Json(ApiResponse::new(job_list)))
 }

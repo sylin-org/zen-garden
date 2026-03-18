@@ -11,9 +11,9 @@
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::{extract_json_field, Runtime};
+use crate::ui::rendering as ui;
 use anyhow::Context;
 use async_trait::async_trait;
-use crate::ui::rendering as ui;
 use serde::{Deserialize, Serialize};
 
 /// Service configuration response
@@ -84,12 +84,7 @@ pub struct ConfigCommand {
 }
 
 impl ConfigCommand {
-    pub fn new(
-        service: String,
-        quiet: bool,
-        json_output: bool,
-        field: Option<String>,
-    ) -> Self {
+    pub fn new(service: String, quiet: bool, json_output: bool, field: Option<String>) -> Self {
         Self {
             service,
             quiet,

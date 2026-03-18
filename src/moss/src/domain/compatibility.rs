@@ -182,7 +182,11 @@ pub fn compile_compatibility(
                 fallback_name: None,
                 suggestion: None,
             },
-            CompatibilityDecision::Fallback { image, name, reason } => {
+            CompatibilityDecision::Fallback {
+                image,
+                name,
+                reason,
+            } => {
                 let original_image = template.image.clone();
                 template.image = image.clone();
                 CompiledCompatibility {

@@ -50,10 +50,7 @@ use super::garden_storage::HEADER_ZEN_PROXIED;
 ///
 /// Extracts the storage name from the URI, resolves via StorageService,
 /// then serves locally or proxies to the remote stone.
-pub async fn handle_webdav(
-    State(state): State<AppState>,
-    request: Request,
-) -> Response {
+pub async fn handle_webdav(State(state): State<AppState>, request: Request) -> Response {
     let uri_path = request.uri().path().to_string();
     let method = request.method().clone();
 
@@ -196,7 +193,11 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
 
     // Build target URL preserving the /dav/{name}/... path
     let path = parts.uri.path();
-    let query = parts.uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let query = parts
+        .uri
+        .query()
+        .map(|q| format!("?{}", q))
+        .unwrap_or_default();
     let url = format!("{}{}{}", endpoint.trim_end_matches('/'), path, query);
 
     let client = reqwest::Client::builder()
@@ -248,7 +249,8 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
     };
 
     // Convert reqwest response → axum response (streaming — A11j Wave 3)
-    let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let resp_headers = response.headers().clone();
 
     let mut builder = Response::builder().status(status);
@@ -264,11 +266,13 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
     let stream = response
         .bytes_stream()
         .map(|r| r.map_err(std::io::Error::other));
-    builder
-        .body(Body::from_stream(stream))
-        .unwrap_or_else(|_| {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build proxy response").into_response()
-        })
+    builder.body(Body::from_stream(stream)).unwrap_or_else(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to build proxy response",
+        )
+            .into_response()
+    })
 }
 
 // ============================================================================
@@ -317,7 +321,9 @@ async fn record_changelog(
 
 /// Extract storage name from `/dav/{name}/...`.
 fn extract_storage_name(uri_path: &str) -> Option<&str> {
-    let trimmed = uri_path.strip_prefix("/dav/").unwrap_or(uri_path.strip_prefix("/dav").unwrap_or(""));
+    let trimmed = uri_path
+        .strip_prefix("/dav/")
+        .unwrap_or(uri_path.strip_prefix("/dav").unwrap_or(""));
     let name = trimmed.split('/').next().unwrap_or("");
     if name.is_empty() {
         None
@@ -336,13 +342,15 @@ fn extract_rel_path(uri_path: &str, storage_name: &str) -> String {
         .to_string()
 }
 
-
 /// Whether the HTTP method is a mutation (write) operation.
 fn is_write_method(method: &Method) -> bool {
     matches!(
         method,
         &Method::PUT | &Method::DELETE | &Method::POST | &Method::PATCH
-    ) || matches!(method.as_str(), "MKCOL" | "MOVE" | "COPY" | "LOCK" | "UNLOCK")
+    ) || matches!(
+        method.as_str(),
+        "MKCOL" | "MOVE" | "COPY" | "LOCK" | "UNLOCK"
+    )
 }
 
 // ============================================================================
@@ -371,14 +379,8 @@ mod tests {
             extract_rel_path("/dav/personal/Photos/cat.jpg", "personal"),
             "Photos/cat.jpg"
         );
-        assert_eq!(
-            extract_rel_path("/dav/personal/", "personal"),
-            ""
-        );
-        assert_eq!(
-            extract_rel_path("/dav/personal", "personal"),
-            ""
-        );
+        assert_eq!(extract_rel_path("/dav/personal/", "personal"), "");
+        assert_eq!(extract_rel_path("/dav/personal", "personal"), "");
     }
 
     #[test]

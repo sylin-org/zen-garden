@@ -69,9 +69,9 @@ impl Medium {
     pub fn has_managed_space(&self, volumes: &HashMap<String, Volume>) -> bool {
         self.partitions.iter().any(|p| {
             p.mount_path.as_ref().is_some_and(|mp| {
-                volumes.values().any(|v| {
-                    v.is_managed() && v.mount_path.to_string_lossy() == mp.as_str()
-                })
+                volumes
+                    .values()
+                    .any(|v| v.is_managed() && v.mount_path.to_string_lossy() == mp.as_str())
             })
         })
     }

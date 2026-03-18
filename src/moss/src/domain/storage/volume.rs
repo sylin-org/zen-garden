@@ -279,9 +279,7 @@ impl Volume {
                 let pin_path = self.mount_path.join(".zen-garden").join("pin.json");
                 let disk_pin = std::fs::read_to_string(&pin_path)
                     .ok()
-                    .and_then(|content| {
-                        serde_json::from_str::<serde_json::Value>(&content).ok()
-                    })
+                    .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
                     .and_then(|v| v.get("pin_id")?.as_str().map(|s| s.to_string()));
 
                 match (&mgmt.pin, &disk_pin) {
@@ -330,7 +328,10 @@ impl Volume {
     }
 
     /// Unpin, returning to normal orchestration.
-    pub async fn unpin(&mut self, store: &dyn ManagementStoreOps) -> anyhow::Result<Option<String>> {
+    pub async fn unpin(
+        &mut self,
+        store: &dyn ManagementStoreOps,
+    ) -> anyhow::Result<Option<String>> {
         let mgmt = self
             .management
             .as_mut()
@@ -393,7 +394,10 @@ impl Volume {
             replica_set_name: mgmt.replica_set_name.clone(),
             replica_set_name_updated_at: mgmt.replica_set_name_updated_at,
             role: mgmt.role,
-            protocols: vec![garden_common::constants::PROTOCOL_STORAGE.to_string(), garden_common::constants::PROTOCOL_S3.to_string()],
+            protocols: vec![
+                garden_common::constants::PROTOCOL_STORAGE.to_string(),
+                garden_common::constants::PROTOCOL_S3.to_string(),
+            ],
             access: StorageAccess::Direct,
             visibility: mgmt.visibility.to_string(),
             health: if self.state == VolumeState::Online {

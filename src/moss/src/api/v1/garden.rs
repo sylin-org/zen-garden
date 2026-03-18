@@ -4,7 +4,6 @@ use crate::domain::{
     placement::{PlacementRequest, PlacementResponse},
     topology,
 };
-use garden_common::TopologyEntry;
 use crate::{internal, not_found, AppState};
 use axum::{
     extract::{Path, State},
@@ -12,9 +11,10 @@ use axum::{
     Json,
 };
 use garden_common::metrics::system as metrics;
+use garden_common::TopologyEntry;
 use garden_common::{
-    CpuCapabilities, DetectionStatus, DiskCapabilities,
-    HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo,
+    CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory,
+    MemoryCapabilities, RuntimeInfo,
 };
 
 /// GET /api/v1/garden - Get garden overview (all stones)
@@ -40,7 +40,9 @@ pub async fn get_garden_v1(
     // Add self first with live metrics
     let self_info = topology_entry_to_stone_info_with_metrics(&self_entry, cpu_usage, memory_usage);
     total_services += self_info.services_count;
-    if self_info.health == garden_common::constants::HEALTH_HEALTHY || self_info.health == garden_common::constants::VITALITY_THRIVING {
+    if self_info.health == garden_common::constants::HEALTH_HEALTHY
+        || self_info.health == garden_common::constants::VITALITY_THRIVING
+    {
         healthy_stones += 1;
     } else {
         degraded_stones += 1;
@@ -54,7 +56,9 @@ pub async fn get_garden_v1(
         }
         let info = topology_entry_to_stone_info(&entry);
         total_services += info.services_count;
-        if info.health == garden_common::constants::HEALTH_HEALTHY || info.health == garden_common::constants::VITALITY_THRIVING {
+        if info.health == garden_common::constants::HEALTH_HEALTHY
+            || info.health == garden_common::constants::VITALITY_THRIVING
+        {
             healthy_stones += 1;
         } else {
             degraded_stones += 1;

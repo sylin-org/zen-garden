@@ -75,7 +75,10 @@ pub async fn run_sweep(
     state: &AppState,
     task_persistence: &dyn crate::domain::traits::TaskRegistryPersistence,
 ) -> SweepRun {
-    let ctx = Sweep { state, task_persistence };
+    let ctx = Sweep {
+        state,
+        task_persistence,
+    };
     let start = std::time::Instant::now();
 
     let reports = vec![

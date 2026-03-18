@@ -35,15 +35,14 @@
 
 pub mod audit;
 pub mod files;
-pub mod snapshots;
 pub mod objects;
+pub mod snapshots;
 
 pub use files::{delete_file_v1, get_file_v1, head_file_v1, list_fs_v1, put_file_v1};
-pub use snapshots::{
-    download_snapshot_v1, get_offering_manifest_v1, list_memories_v1,
-    list_offering_snapshots_v1,
-};
 pub use objects::{delete_object_v1, get_object_v1, head_object_v1, put_object_v1};
+pub use snapshots::{
+    download_snapshot_v1, get_offering_manifest_v1, list_memories_v1, list_offering_snapshots_v1,
+};
 
 use axum::{
     body::Bytes,
@@ -301,12 +300,12 @@ pub async fn list_storages_v1(
                 name: name.clone(),
                 replica_count: 0,
                 primary_stone: None,
-                roles: sm
-                    .map(|s| s.roles.clone())
-                    .unwrap_or_default(),
+                roles: sm.map(|s| s.roles.clone()).unwrap_or_default(),
             });
         entry.replica_count += 1;
-        if sm.and_then(|s| s.role.as_deref()) == Some(garden_common::constants::ROLE_PRIMARY) && entry.primary_stone.is_none() {
+        if sm.and_then(|s| s.role.as_deref()) == Some(garden_common::constants::ROLE_PRIMARY)
+            && entry.primary_stone.is_none()
+        {
             entry.primary_stone = Some(storage_entry.tool.stone.name.clone());
         }
     }
@@ -339,10 +338,7 @@ pub async fn discover_v1(
                 .find_map(|v| {
                     let m = v.management.as_ref()?;
                     if m.name == name {
-                        Some((
-                            v.pin_id().map(|s| s.to_string()),
-                            m.roles.clone(),
-                        ))
+                        Some((v.pin_id().map(|s| s.to_string()), m.roles.clone()))
                     } else {
                         None
                     }

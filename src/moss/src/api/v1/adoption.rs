@@ -52,7 +52,9 @@ pub async fn list_adoptable_v1(
 
         // Try detection (this will use cached results if available)
         let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
-            std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()));
+            std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
+                state.platform.docker.clone(),
+            ));
         let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
         match orchestrator.detect(offering).await {
             Ok(result) if result.detected && result.stable => {
@@ -134,15 +136,14 @@ pub async fn adopt_offering_v1(
     }
 
     // Detect offering
-    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
-        std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()));
+    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> = std::sync::Arc::new(
+        crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
+    );
     let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
-    let detection_result = orchestrator.detect(offering_def).await.map_err(|e| {
-        internal(
-            "DETECTION_FAILED",
-            format!("Detection failed: {}", e),
-        )
-    })?;
+    let detection_result = orchestrator
+        .detect(offering_def)
+        .await
+        .map_err(|e| internal("DETECTION_FAILED", format!("Detection failed: {}", e)))?;
 
     if !detection_result.detected {
         return Err(not_found(
@@ -168,8 +169,9 @@ pub async fn adopt_offering_v1(
         port_map: std::collections::HashMap::new(),
     };
 
-    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
-        std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()));
+    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> = std::sync::Arc::new(
+        crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
+    );
     let connectivity = ConnectivityOrchestrator::new(detector);
     let connectivity_outcome = connectivity
         .ensure_connectivity(offering_def, Some(&location), &state.current.stone.name)
@@ -315,7 +317,10 @@ pub async fn unadopt_offering_v1(
     let ctx = Suggestion::from_headers(&headers, "unadopt_offering");
     let suggestions = generate_suggestions(&ctx);
 
-    crate::api::ok_maybe(format!("Offering '{}' unadopted successfully", offering_name), suggestions)
+    crate::api::ok_maybe(
+        format!("Offering '{}' unadopted successfully", offering_name),
+        suggestions,
+    )
 }
 
 /// Adoptable offering information
@@ -390,12 +395,8 @@ pub async fn borrow_service_v1(
     }
 
     // Parse URL to extract host/port/protocol
-    let url_parsed = url::Url::parse(&req.url).map_err(|e| {
-        bad_request(
-            "INVALID_URL",
-            format!("Invalid URL: {}", e),
-        )
-    })?;
+    let url_parsed = url::Url::parse(&req.url)
+        .map_err(|e| bad_request("INVALID_URL", format!("Invalid URL: {}", e)))?;
 
     let host = url_parsed.host_str().unwrap_or("localhost").to_string();
     let port = url_parsed.port().unwrap_or(0);
@@ -478,5 +479,8 @@ pub async fn unborrow_service_v1(
     let ctx = Suggestion::from_headers(&headers, "unborrow_service");
     let suggestions = generate_suggestions(&ctx);
 
-    crate::api::ok_maybe(format!("Borrowed service '{}' unregistered successfully", name), suggestions)
+    crate::api::ok_maybe(
+        format!("Borrowed service '{}' unregistered successfully", name),
+        suggestions,
+    )
 }

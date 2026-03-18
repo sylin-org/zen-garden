@@ -1,9 +1,9 @@
 //! Pond domain — enrollment state and certmesh CA lifecycle.
 
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use crate::domain::PondState;
 use super::ceremony::Ceremony;
+use crate::domain::PondState;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 /// Pond domain context (`state.security.pond`).
 #[derive(Clone)]

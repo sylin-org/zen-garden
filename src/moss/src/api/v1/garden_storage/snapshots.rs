@@ -3,6 +3,7 @@
 //! Read-only access to nurturing backups for external orchestrators.
 //! Storage name comes from the URL path — no header-based selection.
 
+use super::audit::{log_access, AuditAccessEntry};
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -11,10 +12,7 @@ use axum::{
     Json,
 };
 use garden_common::api_utils::ApiResponse;
-use super::audit::{log_access, AuditAccessEntry};
-use garden_common::constants::headers::{
-    HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME,
-};
+use garden_common::constants::headers::{HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME};
 use garden_common::constants::paths;
 use garden_common::storage::MemoriesOfferingManifest;
 use serde::{Deserialize, Serialize};
@@ -197,10 +195,13 @@ pub async fn list_memories_v1(
         stone_id: &state.current.stone.id,
         tick: None,
     };
-    let handle = resolver
-        .for_read(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_read(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     if let Some(mount_path) = handle.mount_path() {
         if let Err(msg) = validate_storage_layout(mount_path) {
@@ -209,21 +210,33 @@ pub async fn list_memories_v1(
         let store = handle.content_store_for_read().unwrap();
         let volume_id = handle.volume_id().unwrap();
         match state
-            .orchestration.nurturing.store
+            .orchestration
+            .nurturing
+            .store
             .list_remote_snapshots(&store, volume_id)
             .await
         {
             Ok(index) => {
                 log_memories_access(
-                    &state, &headers, StatusCode::OK, ACTION_LIST,
-                    Some(handle.storage_name()), None, None,
+                    &state,
+                    &headers,
+                    StatusCode::OK,
+                    ACTION_LIST,
+                    Some(handle.storage_name()),
+                    None,
+                    None,
                 );
                 crate::api::ok(index)
             }
             Err(e) => {
                 log_memories_access(
-                    &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_LIST,
-                    Some(handle.storage_name()), None, None,
+                    &state,
+                    &headers,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ACTION_LIST,
+                    Some(handle.storage_name()),
+                    None,
+                    None,
                 );
                 Err(err(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -286,10 +299,13 @@ pub async fn list_offering_snapshots_v1(
         stone_id: &state.current.stone.id,
         tick: None,
     };
-    let handle = resolver
-        .for_read(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_read(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     if let Some(mount_path) = handle.mount_path() {
         if let Err(msg) = validate_storage_layout(mount_path) {
@@ -298,13 +314,20 @@ pub async fn list_offering_snapshots_v1(
         let store = handle.content_store_for_read().unwrap();
         let volume_id = handle.volume_id().unwrap();
         let index = state
-            .orchestration.nurturing.store
+            .orchestration
+            .nurturing
+            .store
             .list_remote_snapshots(&store, volume_id)
             .await
             .map_err(|e| {
                 log_memories_access(
-                    &state, &headers, StatusCode::INTERNAL_SERVER_ERROR,
-                    ACTION_LIST_OFFERING, Some(handle.storage_name()), Some(&offering_id), None,
+                    &state,
+                    &headers,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ACTION_LIST_OFFERING,
+                    Some(handle.storage_name()),
+                    Some(&offering_id),
+                    None,
                 );
                 err(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -320,8 +343,13 @@ pub async fn list_offering_snapshots_v1(
             .collect();
 
         log_memories_access(
-            &state, &headers, StatusCode::OK, ACTION_LIST_OFFERING,
-            Some(handle.storage_name()), Some(&offering_id), None,
+            &state,
+            &headers,
+            StatusCode::OK,
+            ACTION_LIST_OFFERING,
+            Some(handle.storage_name()),
+            Some(&offering_id),
+            None,
         );
 
         crate::api::ok(OfferingSnapshotsResponse {
@@ -382,10 +410,13 @@ pub async fn get_offering_manifest_v1(
         stone_id: &state.current.stone.id,
         tick: None,
     };
-    let handle = resolver
-        .for_read(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_read(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     if let Some(mount_path) = handle.mount_path() {
         let mount = mount_path.to_string_lossy().into_owned();
@@ -394,8 +425,13 @@ pub async fn get_offering_manifest_v1(
             Ok(json) => json,
             Err(_) => {
                 log_memories_access(
-                    &state, &headers, StatusCode::NOT_FOUND, ACTION_MANIFEST,
-                    Some(handle.storage_name()), Some(&offering_id), None,
+                    &state,
+                    &headers,
+                    StatusCode::NOT_FOUND,
+                    ACTION_MANIFEST,
+                    Some(handle.storage_name()),
+                    Some(&offering_id),
+                    None,
                 );
                 return Err(err(
                     StatusCode::NOT_FOUND,
@@ -409,8 +445,13 @@ pub async fn get_offering_manifest_v1(
             Ok(m) => m,
             Err(e) => {
                 log_memories_access(
-                    &state, &headers, StatusCode::INTERNAL_SERVER_ERROR, ACTION_MANIFEST,
-                    Some(handle.storage_name()), Some(&offering_id), None,
+                    &state,
+                    &headers,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ACTION_MANIFEST,
+                    Some(handle.storage_name()),
+                    Some(&offering_id),
+                    None,
                 );
                 return Err(err(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -421,8 +462,13 @@ pub async fn get_offering_manifest_v1(
         };
 
         log_memories_access(
-            &state, &headers, StatusCode::OK, ACTION_MANIFEST,
-            Some(handle.storage_name()), Some(&offering_id), None,
+            &state,
+            &headers,
+            StatusCode::OK,
+            ACTION_MANIFEST,
+            Some(handle.storage_name()),
+            Some(&offering_id),
+            None,
         );
 
         crate::api::ok(manifest)
@@ -508,8 +554,13 @@ pub async fn download_snapshot_v1(
             Ok(bytes) => bytes,
             Err(_) => {
                 log_memories_access(
-                    &state, &headers, StatusCode::NOT_FOUND, ACTION_DOWNLOAD,
-                    Some(handle.storage_name()), Some(&offering_id), Some(&harvest_id),
+                    &state,
+                    &headers,
+                    StatusCode::NOT_FOUND,
+                    ACTION_DOWNLOAD,
+                    Some(handle.storage_name()),
+                    Some(&offering_id),
+                    Some(&harvest_id),
                 );
                 return error_response_raw(
                     StatusCode::NOT_FOUND,
@@ -520,8 +571,13 @@ pub async fn download_snapshot_v1(
         };
 
         log_memories_access(
-            &state, &headers, StatusCode::OK, ACTION_DOWNLOAD,
-            Some(handle.storage_name()), Some(&offering_id), Some(&harvest_id),
+            &state,
+            &headers,
+            StatusCode::OK,
+            ACTION_DOWNLOAD,
+            Some(handle.storage_name()),
+            Some(&offering_id),
+            Some(&harvest_id),
         );
 
         Response::builder()

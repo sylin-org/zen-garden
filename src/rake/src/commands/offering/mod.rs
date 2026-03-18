@@ -7,14 +7,14 @@
 //! - View offering details
 
 use crate::command_manifest::cmd;
-use crate::context::Runtime;
 use crate::commands::Command;
+use crate::context::Runtime;
 use crate::discovery;
+use crate::ui::colors::CliFormatter;
+use crate::ui::rendering as ui;
 use anyhow::Result;
 use async_trait::async_trait;
 use garden_common::offerings::OfferingFqn;
-use crate::ui::rendering as ui;
-use crate::ui::colors::CliFormatter;
 use garden_common::{GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -1337,12 +1337,7 @@ impl OfferCommand {
         }
     }
 
-    pub fn install(
-        name: String,
-        prefer: Vec<String>,
-        anywhere_on_fail: bool,
-        quiet: bool,
-    ) -> Self {
+    pub fn install(name: String, prefer: Vec<String>, anywhere_on_fail: bool, quiet: bool) -> Self {
         Self {
             action: OfferAction::Install { name },
             prefer,
@@ -1378,7 +1373,12 @@ impl OfferCommand {
         }
     }
 
-    pub fn image(image_ref: String, instance: Option<String>, info_only: bool, quiet: bool) -> Self {
+    pub fn image(
+        image_ref: String,
+        instance: Option<String>,
+        info_only: bool,
+        quiet: bool,
+    ) -> Self {
         Self {
             action: OfferAction::Image {
                 image_ref,
@@ -1501,7 +1501,8 @@ impl Command for OfferCommand {
                                     " ".repeat(ui::constants::DEFAULT_INDENT * 2),
                                     existing.name
                                 );
-                            } else if status_str.contains(garden_common::constants::SERVICE_RUNNING) {
+                            } else if status_str.contains(garden_common::constants::SERVICE_RUNNING)
+                            {
                                 println!(
                                     "{}  • Stop service:   garden-rake stop {}",
                                     " ".repeat(ui::constants::DEFAULT_INDENT * 2),
@@ -1744,10 +1745,7 @@ impl Command for OfferCommand {
                 instance,
                 info_only,
             } => {
-                let endpoint = ctx
-                    .endpoint
-                    .as_ref()
-                    .expect("endpoint required for image");
+                let endpoint = ctx.endpoint.as_ref().expect("endpoint required for image");
 
                 if *info_only {
                     // Info-only: inspect the image without deploying
@@ -1788,10 +1786,14 @@ impl Command for OfferCommand {
                         }
                         if let Some(alt) = body.get("curated_alternative") {
                             if !alt.is_null() {
-                                let alt_name =
-                                    alt.get("offering_name").and_then(|v| v.as_str()).unwrap_or("?");
-                                let alt_desc =
-                                    alt.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                                let alt_name = alt
+                                    .get("offering_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?");
+                                let alt_desc = alt
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
                                 println!();
                                 println!(
                                     "{}{} A curated manifest '{}' exists for this image.",
@@ -1802,10 +1804,7 @@ impl Command for OfferCommand {
                                 if !alt_desc.is_empty() {
                                     println!("{}  {}", indent, alt_desc);
                                 }
-                                println!(
-                                    "{}  Use: garden-rake offer {}",
-                                    indent, alt_name
-                                );
+                                println!("{}  Use: garden-rake offer {}", indent, alt_name);
                             }
                         }
                         println!();
@@ -1830,8 +1829,7 @@ impl Command for OfferCommand {
                         format!("image:{}", image_ref)
                     };
 
-                    let url =
-                        format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+                    let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
                     let payload = serde_json::json!({
                         "offering": fqn_string,
                     });

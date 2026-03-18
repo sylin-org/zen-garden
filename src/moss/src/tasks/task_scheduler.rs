@@ -73,7 +73,8 @@ async fn execute_task(state: &AppState, task: &ScheduledTask) -> TaskResult {
     // Execute command inside container (timeout_secs as u32)
     let timeout_secs = task.definition.timeout_secs.min(u32::MAX as u64) as u32;
     let result = state
-        .platform.docker
+        .platform
+        .docker
         .exec_in_container(&task.offering_name, &task.definition.command, timeout_secs)
         .await;
 
@@ -268,7 +269,13 @@ pub async fn backfill_missing_tasks(state: &AppState) -> usize {
         offerings
             .iter()
             .filter(|o| o.is_managed())
-            .map(|o| (o.offering_id.clone(), o.name.to_string(), o.offering.clone()))
+            .map(|o| {
+                (
+                    o.offering_id.clone(),
+                    o.name.to_string(),
+                    o.offering.clone(),
+                )
+            })
             .collect()
     };
 

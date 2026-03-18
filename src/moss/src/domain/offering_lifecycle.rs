@@ -35,10 +35,7 @@ pub async fn find_by_id(state: &AppState, offering_id: &str) -> Option<Offering>
 /// Find an offering by service name (FQN). Returns a clone (snapshot).
 pub async fn find_by_name(state: &AppState, name: &str) -> Option<Offering> {
     let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .find(|o| o.name.to_string() == name)
-        .cloned()
+    offerings.iter().find(|o| o.name.fqn_eq(name)).cloned()
 }
 
 /// Find a managed offering by service name. Returns (offering_id, offering clone).
@@ -46,7 +43,7 @@ pub async fn find_managed(state: &AppState, name: &str) -> Option<Offering> {
     let offerings = state.offerings.read().await;
     offerings
         .iter()
-        .find(|o| o.name.to_string() == name && o.is_managed())
+        .find(|o| o.name.fqn_eq(name) && o.is_managed())
         .cloned()
 }
 
@@ -55,7 +52,7 @@ pub async fn id_for_name(state: &AppState, name: &str) -> Option<String> {
     let offerings = state.offerings.read().await;
     offerings
         .iter()
-        .find(|o| o.name.to_string() == name)
+        .find(|o| o.name.fqn_eq(name))
         .map(|o| o.offering_id.clone())
 }
 
@@ -64,7 +61,7 @@ pub async fn id_for_managed(state: &AppState, name: &str) -> Option<String> {
     let offerings = state.offerings.read().await;
     offerings
         .iter()
-        .find(|o| o.name.to_string() == name && o.is_managed())
+        .find(|o| o.name.fqn_eq(name) && o.is_managed())
         .map(|o| o.offering_id.clone())
 }
 
@@ -76,7 +73,7 @@ pub async fn list_all(state: &AppState) -> Vec<Offering> {
 /// Check if an offering with the given name exists.
 pub async fn exists(state: &AppState, name: &str) -> bool {
     let offerings = state.offerings.read().await;
-    offerings.iter().any(|o| o.name.to_string() == name)
+    offerings.iter().any(|o| o.name.fqn_eq(name))
 }
 
 /// Check if an offering is in a given status.
@@ -84,7 +81,7 @@ pub async fn has_status(state: &AppState, name: &str, status: OfferingStatus) ->
     let offerings = state.offerings.read().await;
     offerings
         .iter()
-        .any(|o| o.name.to_string() == name && o.status == status)
+        .any(|o| o.name.fqn_eq(name) && o.status == status)
 }
 
 // ============================================================================
@@ -96,7 +93,9 @@ pub async fn has_status(state: &AppState, name: &str, status: OfferingStatus) ->
 pub async fn upsert(state: &AppState, offering: Offering) {
     let is_new = {
         let offerings = state.offerings.read().await;
-        !offerings.iter().any(|o| o.offering_id == offering.offering_id)
+        !offerings
+            .iter()
+            .any(|o| o.offering_id == offering.offering_id)
             && !offerings.iter().any(|o| o.name == offering.name)
     };
 
@@ -177,10 +176,12 @@ where
 
 /// Transition an offering to Running status. Emits `OfferingEvent::started`.
 pub async fn mark_running(state: &AppState, offering_id: &str, name: &str) {
-    let changed = state.update_offering(offering_id, true, |o| {
-        o.status = OfferingStatus::Running;
-        true
-    }).await;
+    let changed = state
+        .update_offering(offering_id, true, |o| {
+            o.status = OfferingStatus::Running;
+            true
+        })
+        .await;
 
     if changed {
         state.event_bus.emit(OfferingEvent::started(
@@ -193,10 +194,12 @@ pub async fn mark_running(state: &AppState, offering_id: &str, name: &str) {
 
 /// Transition an offering to Stopped status. Emits `OfferingEvent::stopped`.
 pub async fn mark_stopped(state: &AppState, offering_id: &str, name: &str) {
-    let changed = state.update_offering(offering_id, true, |o| {
-        o.status = OfferingStatus::Stopped;
-        true
-    }).await;
+    let changed = state
+        .update_offering(offering_id, true, |o| {
+            o.status = OfferingStatus::Stopped;
+            true
+        })
+        .await;
 
     if changed {
         state.event_bus.emit(OfferingEvent::stopped(

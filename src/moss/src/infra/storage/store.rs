@@ -302,11 +302,16 @@ impl ContentStore {
 
         // Changelog: old path deleted, new path created
         if !old_rel.starts_with(".zen-garden/") {
-            self.append_changelog(&ChangelogEntry::deleted(old_rel)).await;
+            self.append_changelog(&ChangelogEntry::deleted(old_rel))
+                .await;
         }
         if !new_rel.starts_with(".zen-garden/") {
-            let size = tokio::fs::metadata(&dst).await.map(|m| m.len()).unwrap_or(0);
-            self.append_changelog(&ChangelogEntry::created(new_rel, size)).await;
+            let size = tokio::fs::metadata(&dst)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
+            self.append_changelog(&ChangelogEntry::created(new_rel, size))
+                .await;
         }
 
         debug!(old = %old_rel, new = %new_rel, "renamed on mount");
@@ -514,13 +519,7 @@ impl ContentStore {
 
         tokio::fs::rename(&tmp_path, &full_path)
             .await
-            .with_context(|| {
-                format!(
-                    "rename {} → {}",
-                    tmp_path.display(),
-                    full_path.display()
-                )
-            })?;
+            .with_context(|| format!("rename {} → {}", tmp_path.display(), full_path.display()))?;
 
         debug!(path = %rel, size = bytes_written, "streaming write complete");
 
@@ -1528,8 +1527,11 @@ mod tests {
     async fn test_notify_tx_fires_on_write() {
         let tmp = TempDir::new().unwrap();
         let (tx, mut rx) = tokio::sync::broadcast::channel::<StorageTick>(16);
-        let store =
-            ContentStore::new_public(tmp.path()).with_notifications("test-bank".to_string(), "rs-test".to_string(), tx);
+        let store = ContentStore::new_public(tmp.path()).with_notifications(
+            "test-bank".to_string(),
+            "rs-test".to_string(),
+            tx,
+        );
 
         tokio::fs::create_dir_all(tmp.path().join(".zen-garden"))
             .await
@@ -1899,7 +1901,11 @@ mod tests {
         std::fs::write(root.join("docs/notes.txt"), b"some notes").unwrap();
 
         let entries = walk_content_files(root).unwrap();
-        assert_eq!(entries.len(), 2, "Should find 2 user files, skip .zen-garden and Zen Garden");
+        assert_eq!(
+            entries.len(),
+            2,
+            "Should find 2 user files, skip .zen-garden and Zen Garden"
+        );
 
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert!(paths.contains(&"photo.jpg") || paths.contains(&"photo.jpg"));
@@ -1939,10 +1945,8 @@ mod tests {
         let paths: std::collections::HashSet<&str> =
             entries.iter().map(|e| e.path.as_str()).collect();
         // Normalize path separators for Windows
-        let paths_normalized: std::collections::HashSet<String> = paths
-            .iter()
-            .map(|p| p.replace('\\', "/"))
-            .collect();
+        let paths_normalized: std::collections::HashSet<String> =
+            paths.iter().map(|p| p.replace('\\', "/")).collect();
         assert!(paths_normalized.contains("a/b/c/deep.txt"));
         assert!(paths_normalized.contains("a/top.txt"));
     }

@@ -815,7 +815,12 @@ impl OfferingRegistry {
         // Load optional files
         let compatibility = Self::load_compatibility(dir, name);
         let (metadata, connection, fm_coordination, manageable_env) =
-            Self::load_metadata(dir, name).unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default(), None));
+            Self::load_metadata(dir, name).unwrap_or((
+                OfferingMetadata::default(),
+                None,
+                CoordinationMode::default(),
+                None,
+            ));
         let guidance = Self::load_guidance(dir, name);
 
         Ok(Offering {
@@ -881,8 +886,12 @@ impl OfferingRegistry {
         // (e.g., ollama.frontmatter.json applies to both ollama.snippet.yaml
         // and ollama.adopted.yaml).
         let (fm_metadata, fm_connection, _fm_coord, manageable_env) =
-            Self::load_metadata(dir, name)
-                .unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default(), None));
+            Self::load_metadata(dir, name).unwrap_or((
+                OfferingMetadata::default(),
+                None,
+                CoordinationMode::default(),
+                None,
+            ));
 
         // Adopted YAML fields override frontmatter where both exist
         let metadata = OfferingMetadata {
@@ -936,7 +945,12 @@ impl OfferingRegistry {
     fn load_metadata(
         dir: &Path,
         name: &str,
-    ) -> Option<(OfferingMetadata, Option<ConnectionProfile>, CoordinationMode, Option<ManageableEnv>)> {
+    ) -> Option<(
+        OfferingMetadata,
+        Option<ConnectionProfile>,
+        CoordinationMode,
+        Option<ManageableEnv>,
+    )> {
         let path = dir.join(format!("{}.frontmatter.json", name));
         if !path.exists() {
             return None;
@@ -1020,7 +1034,12 @@ impl OfferingRegistry {
                 };
                 (metadata, fm.connection, fm.coordination, fm.manageable_env)
             })
-            .unwrap_or((OfferingMetadata::default(), None, CoordinationMode::default(), None));
+            .unwrap_or((
+                OfferingMetadata::default(),
+                None,
+                CoordinationMode::default(),
+                None,
+            ));
 
         let guidance = guidance_content
             .map(crate::utils::strings::strip_bom)

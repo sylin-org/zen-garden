@@ -46,10 +46,7 @@ impl Command for NourishCommand {
                 async move {
                     use crate::tending::StoneError;
 
-                    let url = format!(
-                        "{}/api/v1/garden/updates",
-                        endpoint.trim_end_matches('/')
-                    );
+                    let url = format!("{}/api/v1/garden/updates", endpoint.trim_end_matches('/'));
 
                     // Make HTTP request
                     let response = client.get(&url).send().await.map_err(|e| {

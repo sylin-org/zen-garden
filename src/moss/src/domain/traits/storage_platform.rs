@@ -57,10 +57,7 @@ pub trait StoragePlatform: Send + Sync {
     // ---- Async operations (I/O, process spawning) ----
 
     /// Temp-mount a device, read manifest, unmount.
-    async fn probe_device_manifest(
-        &self,
-        device: &str,
-    ) -> Result<Option<StorageManifest>>;
+    async fn probe_device_manifest(&self, device: &str) -> Result<Option<StorageManifest>>;
 
     /// Lazy unmount — detach filesystem immediately.
     async fn unmount_lazy(&self, path: &str) -> Result<()>;

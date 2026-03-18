@@ -19,7 +19,10 @@ pub async fn auto_mount_unmounted(platform: &dyn StoragePlatform) -> usize {
         return 0;
     }
 
-    debug!(count = unmounted.len(), "Checking unmounted removable devices for manifests");
+    debug!(
+        count = unmounted.len(),
+        "Checking unmounted removable devices for manifests"
+    );
 
     let data_dir = garden_common::constants::paths::data_dir();
     let mut mounted = 0usize;

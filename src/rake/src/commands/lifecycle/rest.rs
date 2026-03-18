@@ -6,8 +6,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 
 /// Stop (rest) a service
 pub struct RestCommand {
@@ -17,10 +17,7 @@ pub struct RestCommand {
 
 impl RestCommand {
     pub fn new(service: String, quiet: bool) -> Self {
-        Self {
-            service,
-            quiet,
-        }
+        Self { service, quiet }
     }
 }
 
@@ -93,9 +90,7 @@ impl Command for RestCommand {
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .and_then(|body| {
-                        crate::api::responses::extract_error_message(&body)
-                    });
+                    .and_then(|body| crate::api::responses::extract_error_message(&body));
                 if let Some(msg) = detail {
                     eprintln!(
                         "{}{} Failed: {} - {}",

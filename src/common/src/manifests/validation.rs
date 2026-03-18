@@ -60,14 +60,7 @@ impl ValidationResult {
 }
 
 /// Sensitive volume mount targets that should never appear in manifests.
-const SENSITIVE_MOUNTS: &[&str] = &[
-    "/",
-    "/etc",
-    "/proc",
-    "/sys",
-    "/var/run/docker.sock",
-    "/dev",
-];
+const SENSITIVE_MOUNTS: &[&str] = &["/", "/etc", "/proc", "/sys", "/var/run/docker.sock", "/dev"];
 
 // ============================================================================
 // Snippet validation
@@ -222,10 +215,7 @@ fn validate_ports(
 
     // Ports can be a mapping (named ports) or sequence
     let port_pairs: Vec<(u16, u16)> = if let Some(mapping) = ports.as_mapping() {
-        mapping
-            .values()
-            .filter_map(extract_port_pair)
-            .collect()
+        mapping.values().filter_map(extract_port_pair).collect()
     } else if let Some(seq) = ports.as_sequence() {
         seq.iter().filter_map(extract_port_pair).collect()
     } else {
@@ -323,11 +313,7 @@ pub fn validate_frontmatter(content: &str, filename: &str) -> Vec<ValidationFind
     }
 
     // FM003: Missing description
-    if value
-        .get("description")
-        .and_then(|d| d.as_str())
-        .is_none()
-    {
+    if value.get("description").and_then(|d| d.as_str()).is_none() {
         findings.push(ValidationFinding {
             file: filename.to_string(),
             line: 0,
@@ -404,8 +390,8 @@ pub fn validate_manifest_dir(dir: &Path) -> anyhow::Result<ValidationResult> {
     let mut findings = Vec::new();
     let mut files_checked = 0;
 
-    let entries =
-        std::fs::read_dir(dir).with_context(|| format!("Cannot read directory: {}", dir.display()))?;
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("Cannot read directory: {}", dir.display()))?;
 
     for entry in entries {
         let entry = entry?;
@@ -577,7 +563,10 @@ networks:
             .iter()
             .filter(|f| f.severity == Severity::Error)
             .collect();
-        assert!(errors.is_empty(), "Expected no errors for compose format, got: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "Expected no errors for compose format, got: {errors:?}"
+        );
     }
 
     #[test]

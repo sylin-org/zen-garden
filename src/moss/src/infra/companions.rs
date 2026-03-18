@@ -951,7 +951,10 @@ impl crate::domain::traits::CompanionOps for CompanionRegistry {
         })
     }
 
-    async fn get_manifest(&self, id: &str) -> Option<garden_common::command_manifest::CommandManifest> {
+    async fn get_manifest(
+        &self,
+        id: &str,
+    ) -> Option<garden_common::command_manifest::CommandManifest> {
         CompanionRegistry::get_manifest(self, id).await
     }
 

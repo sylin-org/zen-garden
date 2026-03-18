@@ -105,17 +105,19 @@ pub async fn list_offering_capabilities_v1(
         let sub_caps: Vec<_> = capabilities.iter().map(|c| c.to_sub_capability()).collect();
 
         // Update in unified registry via gateway (detail-only, no chirp sync)
-        state.update_offering(&offering.offering_id, false, |o| {
-            o.sub_capabilities = sub_caps;
-            false // sub_capabilities are detail-only
-        }).await;
+        state
+            .update_offering(&offering.offering_id, false, |o| {
+                o.sub_capabilities = sub_caps;
+                false // sub_capabilities are detail-only
+            })
+            .await;
     }
 
     crate::api::ok(CapabilitiesResponse {
-            offering: service.name.clone(),
-            mode,
-            capabilities,
-        })
+        offering: service.name.clone(),
+        mode,
+        capabilities,
+    })
 }
 
 /// Request body for adding a capability
@@ -299,27 +301,27 @@ pub async fn add_offering_capability_v1(
 
     if exists {
         return crate::api::ok(AddCapabilityResponse::AlreadyExists {
-                offering: service.name.clone(),
-                capability: request.name.clone(),
-                cap_type: cap_type.clone(),
-                message: format!(
-                    "{} '{}' already exists for {}",
-                    cap_type, request.name, service.name
-                ),
-            });
+            offering: service.name.clone(),
+            capability: request.name.clone(),
+            cap_type: cap_type.clone(),
+            message: format!(
+                "{} '{}' already exists for {}",
+                cap_type, request.name, service.name
+            ),
+        });
     }
 
     // Case 2: Dry run - validation passed
     if request.dry_run {
         return crate::api::ok(AddCapabilityResponse::DryRun {
-                offering: service.name.clone(),
-                capability: request.name.clone(),
-                cap_type: cap_type.clone(),
-                message: format!(
-                    "{} '{}' can be added to {}",
-                    cap_type, request.name, service.name
-                ),
-            });
+            offering: service.name.clone(),
+            capability: request.name.clone(),
+            cap_type: cap_type.clone(),
+            message: format!(
+                "{} '{}' can be added to {}",
+                cap_type, request.name, service.name
+            ),
+        });
     }
 
     // Case 3: Check for existing running add job for this capability
@@ -331,14 +333,14 @@ pub async fn add_offering_capability_v1(
                 && matches!(job.status, JobStatus::Running | JobStatus::Pending)
             {
                 return crate::api::ok(AddCapabilityResponse::InProgress {
-                        offering: service.name.clone(),
-                        capability: request.name.clone(),
-                        job_id: job_id.clone(),
-                        message: format!(
-                            "Add operation already in progress for {} '{}'",
-                            cap_type, request.name
-                        ),
-                    });
+                    offering: service.name.clone(),
+                    capability: request.name.clone(),
+                    job_id: job_id.clone(),
+                    message: format!(
+                        "Add operation already in progress for {} '{}'",
+                        cap_type, request.name
+                    ),
+                });
             }
         }
     }
@@ -384,11 +386,11 @@ pub async fn add_offering_capability_v1(
     );
 
     crate::api::ok(AddCapabilityResponse::Started {
-            offering: service.name.clone(),
-            capability: request.name.clone(),
-            job_id,
-            message: format!("Adding {} '{}' to {}", cap_type, request.name, service.name),
-        })
+        offering: service.name.clone(),
+        capability: request.name.clone(),
+        job_id,
+        message: format!("Adding {} '{}' to {}", cap_type, request.name, service.name),
+    })
 }
 
 /// DELETE /api/v1/stone/offerings/:name/capabilities/:capability
@@ -500,11 +502,11 @@ pub async fn remove_offering_capability_v1(
     }
 
     crate::api::ok(CapabilityMutationResponse {
-            success: result.success,
-            capability: result.capability,
-            operation: result.operation,
-            error: result.error,
-        })
+        success: result.success,
+        capability: result.capability,
+        operation: result.operation,
+        error: result.error,
+    })
 }
 
 /// Query parameters for remove capability endpoint
@@ -717,19 +719,19 @@ pub async fn refresh_offering_capabilities_v1(
     if total == 0 {
         let type_label = request.cap_type.as_deref().unwrap_or("capabilities");
         return crate::api::ok(RefreshCapabilitiesResponse::NoUpdates {
-                offering: service.name.clone(),
-                cap_type: request.cap_type.clone(),
-                message: format!("No {} found for {}", type_label, service.name),
-            });
+            offering: service.name.clone(),
+            cap_type: request.cap_type.clone(),
+            message: format!("No {} found for {}", type_label, service.name),
+        });
     }
 
     // Case 2: Dry run - return what would be refreshed
     if request.dry_run {
         return crate::api::ok(RefreshCapabilitiesResponse::DryRun {
-                offering: service.name.clone(),
-                capabilities: capabilities_to_refresh,
-                total,
-            });
+            offering: service.name.clone(),
+            capabilities: capabilities_to_refresh,
+            total,
+        });
     }
 
     // Case 3: Check for existing running refresh job for this offering
@@ -751,13 +753,13 @@ pub async fn refresh_offering_capabilities_v1(
                 };
 
                 return crate::api::ok(RefreshCapabilitiesResponse::InProgress {
-                        offering: service.name.clone(),
-                        job_id: job_id.clone(),
-                        progress_percent: progress,
-                        completed,
-                        failed,
-                        total: job_total,
-                    });
+                    offering: service.name.clone(),
+                    job_id: job_id.clone(),
+                    progress_percent: progress,
+                    completed,
+                    failed,
+                    total: job_total,
+                });
             }
         }
     }
@@ -806,11 +808,11 @@ pub async fn refresh_offering_capabilities_v1(
     );
 
     crate::api::ok(RefreshCapabilitiesResponse::Started {
-            offering: service.name.clone(),
-            job_id,
-            total,
-            message: format!("Refresh started for {} capabilities", total),
-        })
+        offering: service.name.clone(),
+        job_id,
+        total,
+        message: format!("Refresh started for {} capabilities", total),
+    })
 }
 
 /// POST /api/v1/stone/offerings/:name/capabilities/mirror
@@ -949,17 +951,17 @@ pub async fn mirror_offering_capabilities_v1(
     };
 
     crate::api::ok(MirrorCapabilitiesResponse {
-            offering: offering_fqn,
-            from: from.to_string(),
-            to: to.to_string(),
-            added,
-            skipped,
-            failed,
-            total,
-            dry_run: request.dry_run,
-            message,
-            failures,
-        })
+        offering: offering_fqn,
+        from: from.to_string(),
+        to: to.to_string(),
+        added,
+        skipped,
+        failed,
+        total,
+        dry_run: request.dry_run,
+        message,
+        failures,
+    })
 }
 
 async fn resolve_stone_endpoint(state: &AppState, stone_name: &str) -> Option<String> {
@@ -1107,9 +1109,7 @@ async fn offering_to_service_info(offering: &Offering, state: &AppState) -> Serv
             .or_else(|| offering.adopted_data().and_then(|a| a.guidance.clone())),
         customized_by: offering
             .managed_data()
-            .map(|m| {
-                crate::domain::config_compose::patch_owners(&m.config_patches)
-            })
+            .map(|m| crate::domain::config_compose::patch_owners(&m.config_patches))
             .unwrap_or_default(),
     }
 }

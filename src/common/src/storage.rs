@@ -249,7 +249,6 @@ pub enum StorageVisibility {
     ReadOnly,
 }
 
-
 /// Reserved display name for the default replica set (STORAGE-0013).
 /// When `replica_set_name` is empty, this is the display moniker.
 pub const DEFAULT_REPLICA_SET_DISPLAY: &str = "storage";
@@ -375,7 +374,9 @@ impl StorageInfo {
 
     /// Whether this storage has the seed-bank role (receives offering backups)
     pub fn is_seed_bank(&self) -> bool {
-        self.roles.iter().any(|r| r == crate::constants::ROLE_SEED_BANK)
+        self.roles
+            .iter()
+            .any(|r| r == crate::constants::ROLE_SEED_BANK)
     }
 
     /// Derive the short ID (first 8 hex chars of the GUIDv7, excluding dashes).
@@ -895,7 +896,9 @@ impl StorageManifest {
 
     /// Whether this storage has the seed-bank role
     pub fn is_seed_bank(&self) -> bool {
-        self.roles.iter().any(|r| r == crate::constants::ROLE_SEED_BANK)
+        self.roles
+            .iter()
+            .any(|r| r == crate::constants::ROLE_SEED_BANK)
     }
 
     /// Display name for the replica set — returns the reserved moniker
@@ -1038,7 +1041,6 @@ impl Default for StorageOrchestrationState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageAnnouncement {
     // --- Device identity ---
-
     /// Unique device ID (GUIDv7). One per physical storage device.
     pub id: String,
 
@@ -1046,7 +1048,6 @@ pub struct StorageAnnouncement {
     pub name: String,
 
     // --- Replica set identity ---
-
     /// Replica set ID (GUIDv7). Groups devices that replicate the same content.
     #[serde(default)]
     pub replica_set_id: String,
@@ -1060,7 +1061,6 @@ pub struct StorageAnnouncement {
     pub replica_set_name_updated_at: Option<DateTime<Utc>>,
 
     // --- Runtime state ---
-
     /// Runtime role (Primary / Dormant)
     #[serde(default)]
     pub role: StorageRole,
@@ -1186,10 +1186,7 @@ pub enum StorageChanged {
     Reclassified,
     /// Storage device sensed — recognised and being measured. Triggers a brief
     /// "checking..." line before size data is available.
-    Sensed {
-        name: String,
-        roles: Vec<String>,
-    },
+    Sensed { name: String, roles: Vec<String> },
     /// Managed storage connected or reconnected — size confirmed, triggers ribbon.
     Connected {
         name: String,
@@ -1198,9 +1195,7 @@ pub enum StorageChanged {
         capacity_bytes: u64,
     },
     /// Storage released — triggers released ribbon.
-    Released {
-        name: String,
-    },
+    Released { name: String },
 }
 
 #[cfg(test)]
@@ -1225,12 +1220,8 @@ mod tests {
 
     #[test]
     fn test_manifest_creation() {
-        let manifest = StorageManifest::new(
-            "test-bank",
-            "stone-alpha",
-            "btrfs",
-            StorageVisibility::Open,
-        );
+        let manifest =
+            StorageManifest::new("test-bank", "stone-alpha", "btrfs", StorageVisibility::Open);
 
         assert_eq!(manifest.version, 5);
         assert_eq!(manifest.name, "test-bank");
@@ -1262,8 +1253,7 @@ mod tests {
         let base = "/var/lib/zen-garden";
 
         // All seed banks use {name}/{short_id} now
-        let manifest =
-            StorageManifest::new("my-backup", "stone", "ext4", StorageVisibility::Open);
+        let manifest = StorageManifest::new("my-backup", "stone", "ext4", StorageVisibility::Open);
         let path = manifest.derive_mount_path(base);
 
         // Path should be: /var/lib/zen-garden/mounts/my-backup/{first 8 hex of id}
@@ -1362,7 +1352,10 @@ mod tests {
 
         assert_eq!(summary.short_id, "01956a3e");
         assert_eq!(summary.name, "private-seed-bank");
-        assert_eq!(summary.replica_set_id, "019aaaaa-0000-7000-8000-000000000001");
+        assert_eq!(
+            summary.replica_set_id,
+            "019aaaaa-0000-7000-8000-000000000001"
+        );
         assert_eq!(summary.replica_set_name, "personal");
         assert_eq!(summary.replica_set_display_name(), "personal");
         assert_eq!(summary.capacity_gb as u32, 128);
@@ -1455,12 +1448,8 @@ mod tests {
 
     #[test]
     fn test_manifest_replica_set_fqn() {
-        let mut manifest = StorageManifest::new(
-            "seed-01",
-            "stone-alpha",
-            "btrfs",
-            StorageVisibility::Open,
-        );
+        let mut manifest =
+            StorageManifest::new("seed-01", "stone-alpha", "btrfs", StorageVisibility::Open);
 
         // Default set → "storage"
         assert_eq!(manifest.replica_set_fqn(), "storage");

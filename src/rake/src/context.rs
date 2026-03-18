@@ -79,7 +79,7 @@ impl Runtime {
         Self {
             client,
             endpoint: Some(endpoint),
-        stone,
+            stone,
             quiet,
             fresh,
             verbose,
@@ -107,7 +107,7 @@ impl Runtime {
         Self {
             client,
             endpoint,
-        stone,
+            stone,
             quiet,
             fresh,
             verbose,

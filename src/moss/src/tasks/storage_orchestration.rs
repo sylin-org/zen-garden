@@ -220,9 +220,10 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         let mut map = state.current.storage.volumes.write().await;
 
         for name in &auto_unpin {
-            if let Some(vol) = map.values_mut().find(|v| {
-                v.management.as_ref().is_some_and(|m| m.name == *name)
-            }) {
+            if let Some(vol) = map
+                .values_mut()
+                .find(|v| v.management.as_ref().is_some_and(|m| m.name == *name))
+            {
                 let store = ContentStore::new(vol.mount_path.clone(), None);
                 if let Err(e) = vol.unpin(&store).await {
                     warn!(name = %name, error = %e, "Failed to auto-unpin volume");
@@ -234,9 +235,10 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         }
 
         for (name, role) in &new_roles {
-            if let Some(vol) = map.values_mut().find(|v| {
-                v.management.as_ref().is_some_and(|m| m.name == *name)
-            }) {
+            if let Some(vol) = map
+                .values_mut()
+                .find(|v| v.management.as_ref().is_some_and(|m| m.name == *name))
+            {
                 if let Some(ref mut mgmt) = vol.management {
                     mgmt.role = *role;
                 }
@@ -246,7 +248,9 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
     // If any role changed, emit domain event — beacon subscriber reacts.
     if any_changed {
-        state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
+        state
+            .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
+            .await;
     }
 
     Ok(())
@@ -349,9 +353,7 @@ fn resolve_role(
                 (None, Some(_)) => StorageRole::Dormant,
                 // Neither pinned → current Primary with higher stone_id wins
                 (None, None) => {
-                    if current_role == StorageRole::Primary
-                        && my_stone_id > remote_stone_id
-                    {
+                    if current_role == StorageRole::Primary && my_stone_id > remote_stone_id {
                         StorageRole::Primary
                     } else {
                         StorageRole::Dormant
@@ -395,7 +397,11 @@ fn find_remote_primary_with_pin(
             .is_some_and(|r| r.eq_ignore_ascii_case(garden_common::constants::ROLE_PRIMARY));
         if is_primary {
             let pin_id = sm.and_then(|s| s.pin_id.clone());
-            return Some((entry.tool.stone.id.clone(), entry.tool.tool.id.clone(), pin_id));
+            return Some((
+                entry.tool.stone.id.clone(),
+                entry.tool.tool.id.clone(),
+                pin_id,
+            ));
         }
     }
     None
@@ -667,6 +673,7 @@ mod tests {
                 category: garden_common::constants::CATEGORY_STORAGE.to_string(),
                 id: bank_id.to_string(),
                 tags: Vec::new(),
+                source: String::new(),
             },
             stone: Stone {
                 id: stone_id.to_string(),
@@ -719,7 +726,12 @@ mod tests {
         let t1 = make_storage_tool("stone-1", "sb-1", "mybank", StorageRole::Primary, None);
         let t2 = make_storage_tool("stone-2", "sb-2", "mybank", StorageRole::Primary, None);
         reg.upsert(t1, EntryOrigin::Local);
-        reg.upsert(t2, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
+        reg.upsert(
+            t2,
+            EntryOrigin::Announced {
+                stone_id: "stone-2".to_string(),
+            },
+        );
 
         let result = find_remote_primary_with_pin(&reg, "mybank", "stone-1");
         assert!(result.is_some());
@@ -734,7 +746,12 @@ mod tests {
         let mut reg = GardenRegistryInner::default();
         let pid = "019c6d5a-0000-7000-8000-000000000001";
         let tool = make_storage_tool("stone-2", "sb-2", "mybank", StorageRole::Primary, Some(pid));
-        reg.upsert(tool, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
+        reg.upsert(
+            tool,
+            EntryOrigin::Announced {
+                stone_id: "stone-2".to_string(),
+            },
+        );
 
         let result = find_remote_primary_with_pin(&reg, "mybank", "stone-1");
         assert!(result.is_some());
@@ -745,7 +762,12 @@ mod tests {
     fn test_find_remote_primary_ignores_dormant() {
         let mut reg = GardenRegistryInner::default();
         let tool = make_storage_tool("stone-2", "sb-2", "mybank", StorageRole::Dormant, None);
-        reg.upsert(tool, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
+        reg.upsert(
+            tool,
+            EntryOrigin::Announced {
+                stone_id: "stone-2".to_string(),
+            },
+        );
 
         assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
     }
@@ -754,7 +776,12 @@ mod tests {
     fn test_find_remote_primary_wrong_name() {
         let mut reg = GardenRegistryInner::default();
         let tool = make_storage_tool("stone-2", "sb-2", "other-bank", StorageRole::Primary, None);
-        reg.upsert(tool, EntryOrigin::Announced { stone_id: "stone-2".to_string() });
+        reg.upsert(
+            tool,
+            EntryOrigin::Announced {
+                stone_id: "stone-2".to_string(),
+            },
+        );
 
         assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
     }

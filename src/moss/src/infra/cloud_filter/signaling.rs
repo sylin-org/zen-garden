@@ -54,9 +54,7 @@ pub(crate) fn init() {
         use winreg::RegKey;
 
         let path = format!(r"Software\Classes\AppUserModelId\{AUMID}");
-        match RegKey::predef(HKEY_CURRENT_USER)
-            .create_subkey_with_flags(&path, KEY_SET_VALUE)
-        {
+        match RegKey::predef(HKEY_CURRENT_USER).create_subkey_with_flags(&path, KEY_SET_VALUE) {
             Ok((key, _)) => {
                 let _ = key.set_value("DisplayName", &"Zen Garden");
             }
@@ -188,8 +186,8 @@ pub(crate) fn clear_sync_status(sync_root_path: &Path) {
 fn set_sync_status(sync_root_path: &Path, message: Option<&str>) -> windows::core::Result<()> {
     use std::mem;
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Storage::CloudFilters::{CfReportSyncStatus, CF_SYNC_STATUS};
     use windows::core::PCWSTR;
+    use windows::Win32::Storage::CloudFilters::{CfReportSyncStatus, CF_SYNC_STATUS};
 
     let path_wide: Vec<u16> = sync_root_path
         .as_os_str()
@@ -198,9 +196,7 @@ fn set_sync_status(sync_root_path: &Path, message: Option<&str>) -> windows::cor
         .collect();
 
     match message {
-        None => {
-            unsafe { CfReportSyncStatus(PCWSTR::from_raw(path_wide.as_ptr()), None) }
-        }
+        None => unsafe { CfReportSyncStatus(PCWSTR::from_raw(path_wide.as_ptr()), None) },
         Some(msg) => {
             let desc_wide: Vec<u16> = msg.encode_utf16().collect();
             let desc_bytes = desc_wide.len() * mem::size_of::<u16>();
@@ -268,9 +264,8 @@ fn try_send_toast(title: &str, body: &str) -> windows::core::Result<()> {
 
     let notification = ToastNotification::CreateToastNotification(&doc)?;
 
-    let notifier = ToastNotificationManager::CreateToastNotifierWithId(
-        &windows::core::HSTRING::from(AUMID),
-    )?;
+    let notifier =
+        ToastNotificationManager::CreateToastNotifierWithId(&windows::core::HSTRING::from(AUMID))?;
     notifier.Show(&notification)?;
 
     Ok(())

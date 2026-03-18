@@ -7,8 +7,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 use std::io::Write;
 
 /// Remove a service (stops and removes container, preserves volumes)

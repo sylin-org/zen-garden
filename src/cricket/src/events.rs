@@ -55,11 +55,7 @@ pub struct CricketEvents {
 
 impl CricketEvents {
     /// Create a new event handler
-    pub fn new(
-        mixer: Arc<Mixer>,
-        tunes: Arc<Tunes>,
-        state: Arc<CompanionState>,
-    ) -> Self {
+    pub fn new(mixer: Arc<Mixer>, tunes: Arc<Tunes>, state: Arc<CompanionState>) -> Self {
         Self {
             mixer,
             tunes,

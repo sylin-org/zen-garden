@@ -342,7 +342,11 @@ fn matches_search_criteria(criteria: &ServiceSearchCriteria, tool: &GardenTool) 
     // Tag match (any tag matches)
     if let Some(ref search_tag) = criteria.tag {
         let lower_search = search_tag.to_lowercase();
-        let has_tag = tool.tool.tags.iter().any(|t| t.to_lowercase() == lower_search);
+        let has_tag = tool
+            .tool
+            .tags
+            .iter()
+            .any(|t| t.to_lowercase() == lower_search);
         // Orchestrators implicitly carry their category as a tag
         let implicit_tag = tool.tool.category.to_lowercase() == lower_search;
         if !has_tag && !implicit_tag {
@@ -410,6 +414,7 @@ fn garden_tool_to_found_service(tool: GardenTool) -> FoundService {
         },
         connection: conn,
         sub_capabilities,
+        source: tool.tool.source.clone(),
     }
 }
 
@@ -858,6 +863,7 @@ mod tests {
                 uris: vec![],
             },
             sub_capabilities: vec![],
+            source: String::new(),
         }
     }
 
@@ -943,6 +949,7 @@ mod tests {
                 category: "offering".to_string(),
                 id: "test-id".to_string(),
                 tags: vec!["nosql".to_string(), "document".to_string()],
+                source: String::new(),
             },
             stone: Stone {
                 id: "stone-a".to_string(),
@@ -982,6 +989,7 @@ mod tests {
                 category: "offering".to_string(),
                 id: "test-id".to_string(),
                 tags: Vec::new(),
+                source: String::new(),
             },
             stone: Stone {
                 id: "stone-a".to_string(),
@@ -1024,6 +1032,7 @@ mod tests {
                 category: "offering".to_string(),
                 id: "uid-123".to_string(),
                 tags: vec!["database".to_string()],
+                source: String::new(),
             },
             stone: Stone {
                 id: "stone-a".to_string(),

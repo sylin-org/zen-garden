@@ -85,24 +85,26 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
 
             // Check container status (convert ServiceStatus → OfferingStatus)
-            let (new_status, new_health) = match state.platform.docker.get_service_status(&name).await {
-                Ok(service_status) => {
-                    let health = state
-                        .platform.docker
-                        .get_service_health(&name)
-                        .await
-                        .unwrap_or(ServiceHealthStatus::Offline);
-                    (OfferingStatus::from(service_status), health)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        offering = %name,
-                        error = ?e,
-                        "Failed to get offering status, marking as offline"
-                    );
-                    (OfferingStatus::Stopped, ServiceHealthStatus::Offline)
-                }
-            };
+            let (new_status, new_health) =
+                match state.platform.docker.get_service_status(&name).await {
+                    Ok(service_status) => {
+                        let health = state
+                            .platform
+                            .docker
+                            .get_service_health(&name)
+                            .await
+                            .unwrap_or(ServiceHealthStatus::Offline);
+                        (OfferingStatus::from(service_status), health)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            offering = %name,
+                            error = ?e,
+                            "Failed to get offering status, marking as offline"
+                        );
+                        (OfferingStatus::Stopped, ServiceHealthStatus::Offline)
+                    }
+                };
 
             // Update offerings if status or health changed (via gateway — syncs self_entry)
             if new_status != old_status || new_health != old_health {
@@ -115,22 +117,26 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     "Offering state changed"
                 );
                 // auto_chirp=false: defer chirp to end of cycle for batching
-                state.update_offering(&offering_id, false, |o| {
-                    o.status = new_status;
-                    o.health = new_health;
-                    true
-                }).await;
+                state
+                    .update_offering(&offering_id, false, |o| {
+                        o.status = new_status;
+                        o.health = new_health;
+                        true
+                    })
+                    .await;
                 state_changed = true;
             }
 
             // Update container resource metrics (detail-only, no chirp impact)
             if let Ok(resources) = state.platform.docker.get_container_stats(&name).await {
-                state.update_offering(&offering_id, false, |o| {
-                    if let Some(ref mut managed) = o.managed_data_mut() {
-                        managed.resources = Some(resources);
-                    }
-                    false // resources are detail-only, don't trigger sync
-                }).await;
+                state
+                    .update_offering(&offering_id, false, |o| {
+                        if let Some(ref mut managed) = o.managed_data_mut() {
+                            managed.resources = Some(resources);
+                        }
+                        false // resources are detail-only, don't trigger sync
+                    })
+                    .await;
             }
 
             // Port reconciliation: detect if Docker port bindings differ from registry.
@@ -140,7 +146,9 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 if let Ok(docker_ports) = state.platform.docker.get_container_ports(&name).await {
                     let current_port = {
                         let offerings = state.offerings.read().await;
-                        offerings.iter().find(|o| o.offering_id == offering_id)
+                        offerings
+                            .iter()
+                            .find(|o| o.offering_id == offering_id)
                             .map(|o| o.location.port)
                     };
                     if let Some(current_port) = current_port {
@@ -158,10 +166,12 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                                     docker_port = actual_host_port,
                                     "Port mismatch detected, updating registry"
                                 );
-                                state.update_offering(&offering_id, false, |o| {
-                                    o.location.port = actual_host_port;
-                                    true
-                                }).await;
+                                state
+                                    .update_offering(&offering_id, false, |o| {
+                                        o.location.port = actual_host_port;
+                                        true
+                                    })
+                                    .await;
                                 state_changed = true;
                             }
                         }
@@ -183,7 +193,9 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
 
                     let current_protocol = {
                         let offerings = state.offerings.read().await;
-                        offerings.iter().find(|o| o.offering_id == offering_id)
+                        offerings
+                            .iter()
+                            .find(|o| o.offering_id == offering_id)
                             .map(|o| o.location.protocol.clone())
                     };
                     if let Some(current_protocol) = current_protocol {
@@ -194,10 +206,12 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                                 new_protocol = %expected_protocol,
                                 "Protocol mismatch detected, updating registry"
                             );
-                            state.update_offering(&offering_id, false, |o| {
-                                o.location.protocol = expected_protocol;
-                                true
-                            }).await;
+                            state
+                                .update_offering(&offering_id, false, |o| {
+                                    o.location.protocol = expected_protocol;
+                                    true
+                                })
+                                .await;
                             state_changed = true;
                         }
                     }
@@ -228,12 +242,15 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                         );
                         match state.platform.docker.inspect_container_spec(name).await {
                             Ok(spec) => {
-                                if let Err(e) = state.platform.docker.remove_service(name, None).await {
+                                if let Err(e) =
+                                    state.platform.docker.remove_service(name, None).await
+                                {
                                     tracing::error!(offering = %name, error = ?e, "Failed to remove container for mount remediation");
                                     continue;
                                 }
                                 if let Err(e) = state
-                                    .platform.docker
+                                    .platform
+                                    .docker
                                     .install_service(name, &spec, None)
                                     .await
                                 {
@@ -283,7 +300,9 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     // Check if already in offerings (acquire read lock briefly)
                     let exists = {
                         let offerings = state.offerings.read().await;
-                        offerings.iter().any(|o| o.name.to_string() == *container_name)
+                        offerings
+                            .iter()
+                            .any(|o| o.name.to_string() == *container_name)
                     };
 
                     if !exists {

@@ -79,7 +79,12 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
     };
 
     // Pond name — zero-cost check (AtomicBool) + async name read only when active
-    let pond = if state.security.pond.active.load(std::sync::atomic::Ordering::Relaxed) {
+    let pond = if state
+        .security
+        .pond
+        .active
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
         state.security.pond.state.name().await
     } else {
         None

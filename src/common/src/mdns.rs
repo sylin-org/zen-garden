@@ -40,17 +40,11 @@ pub fn build_http_txt(
     // Component-specific keys
     match component {
         HttpServiceComponent::Moss => {
-            txt.insert(
-                constants::TXT_COMPONENT.to_string(),
-                "moss".to_string(),
-            );
+            txt.insert(constants::TXT_COMPONENT.to_string(), "moss".to_string());
             txt.insert("garden-role".to_string(), "stone-portrait".to_string());
         }
         HttpServiceComponent::Lantern => {
-            txt.insert(
-                constants::TXT_COMPONENT.to_string(),
-                "lantern".to_string(),
-            );
+            txt.insert(constants::TXT_COMPONENT.to_string(), "lantern".to_string());
             txt.insert("garden-role".to_string(), "dashboard".to_string());
         }
         HttpServiceComponent::Orchestrator { offering } => {

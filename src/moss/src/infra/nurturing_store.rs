@@ -699,7 +699,13 @@ impl crate::domain::traits::NurturingStoreOps for NurturingStore {
         hydration_manifest: Option<MemoriesOfferingManifest>,
     ) -> Result<ReplicationResult> {
         NurturingStore::replicate_to_seed_bank(
-            self, offering_id, store, seed_bank_id, storage_name, stone_id, hydration_manifest,
+            self,
+            offering_id,
+            store,
+            seed_bank_id,
+            storage_name,
+            stone_id,
+            hydration_manifest,
         )
         .await
     }

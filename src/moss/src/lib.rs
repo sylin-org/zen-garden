@@ -29,11 +29,11 @@ pub use app_state::{
 };
 
 // Re-export API helpers from infra
-pub use infra::error_response;
 pub use infra::api_helpers::{
     bad_gateway, bad_request, conflict, forbidden, internal, not_found, not_implemented,
     unavailable,
 };
+pub use infra::error_response;
 
 // Re-export commonly used job event utilities
 pub use api::v1::events::{
@@ -71,9 +71,9 @@ pub use tasks::{
     DockerEvent,
     DockerMonitor,
     DockerMonitorConfig,
-    NetworkEvent,
     Network,
     NetworkConfig,
+    NetworkEvent,
 };
 
 // Re-export bootstrap utilities

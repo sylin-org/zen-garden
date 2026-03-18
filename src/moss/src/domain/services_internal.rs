@@ -93,10 +93,7 @@ pub async fn build_spec_from_manifest(
 /// Reinstall a container for a registered offering whose Docker container is
 /// missing. Rebuilds the spec from the manifest + config patches and calls
 /// `install_service`, which preserves named Docker volumes on disk.
-pub async fn rebuild_missing_container(
-    state: &AppState,
-    service_name: &str,
-) -> anyhow::Result<()> {
+pub async fn rebuild_missing_container(state: &AppState, service_name: &str) -> anyhow::Result<()> {
     let spec = build_spec_from_manifest(state, service_name)
         .await
         .context("Failed to build container spec from manifest")?;

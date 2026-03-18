@@ -66,7 +66,8 @@ pub fn analyze_device(
     let label = platform.device_label(device_path);
     let mount_path = platform.mount_point_for_device(device_path);
 
-    let state = platform.probe_device_state(device_path, mount_path.as_deref())
+    let state = platform
+        .probe_device_state(device_path, mount_path.as_deref())
         .unwrap_or(DeviceState::HasData);
 
     let mut eligible = state.is_eligible();

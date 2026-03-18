@@ -637,12 +637,7 @@ mod tests {
     #[tokio::test]
     async fn test_persist_topology_writes_file() {
         let cache = make_test_cache();
-        let self_entry = make_entry(
-            "self-1",
-            "local",
-            "http://127.0.0.1:7185",
-            "0.1.0",
-        );
+        let self_entry = make_entry("self-1", "local", "http://127.0.0.1:7185", "0.1.0");
 
         // Add a peer
         upsert_from_chirp(

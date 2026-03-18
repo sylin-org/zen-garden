@@ -1,4 +1,4 @@
-﻿//! Sync root ingest — write-back path for Cloud Filter (STORAGE-0012)
+//! Sync root ingest — write-back path for Cloud Filter (STORAGE-0012)
 //!
 //! When a user pastes, drags, or saves a file into the Explorer "Zen Garden"
 //! sync root, this module detects the new file, copies it to the actual
@@ -190,11 +190,11 @@ async fn transfer_batch(
     let mut ingested = 0u32;
 
     for path in paths {
-        let (storage_name, remainder) =
-            match super::decompose_sync_root_path(path, sync_root_path) {
-                Some((s, r)) if !s.is_empty() && !r.as_os_str().is_empty() => (s, r),
-                _ => continue,
-            };
+        let (storage_name, remainder) = match super::decompose_sync_root_path(path, sync_root_path)
+        {
+            Some((s, r)) if !s.is_empty() && !r.as_os_str().is_empty() => (s, r),
+            _ => continue,
+        };
 
         let resolver = StorageResolver {
             volumes,
@@ -420,10 +420,7 @@ fn mark_in_sync(path: &Path) {
         };
 
         let mut ph = Placeholder::from(file);
-        match ph.convert_to_placeholder(
-            ConvertOptions::default().mark_in_sync().force(),
-            None,
-        ) {
+        match ph.convert_to_placeholder(ConvertOptions::default().mark_in_sync().force(), None) {
             Ok(_) => debug!(path = %path.display(), "marked in-sync"),
             Err(e) => debug!(path = %path.display(), error = %e, "convert_to_placeholder failed"),
         }

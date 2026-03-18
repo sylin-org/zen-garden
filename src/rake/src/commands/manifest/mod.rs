@@ -8,11 +8,11 @@
 //! - `manifest enrich` — add compatibility/guidance templates
 
 use crate::command_manifest::cmd;
-use crate::context::Runtime;
 use crate::commands::Command;
+use crate::context::Runtime;
+use crate::ui::rendering as ui;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use crate::ui::rendering as ui;
 
 // ============================================================================
 // Types
@@ -130,7 +130,14 @@ impl Command for ManifestCommand {
                 name,
                 category,
             } => {
-                execute_init(ctx, image_ref, output_dir.as_deref(), name.as_deref(), category.as_deref()).await
+                execute_init(
+                    ctx,
+                    image_ref,
+                    output_dir.as_deref(),
+                    name.as_deref(),
+                    category.as_deref(),
+                )
+                .await
             }
             ManifestAction::Validate { path } => execute_validate(path).await,
             ManifestAction::Test { path } => execute_test(ctx, path).await,
@@ -154,7 +161,10 @@ async fn execute_init(
     name: Option<&str>,
     category: Option<&str>,
 ) -> Result<()> {
-    let endpoint = ctx.endpoint.as_ref().context("endpoint required for init")?;
+    let endpoint = ctx
+        .endpoint
+        .as_ref()
+        .context("endpoint required for init")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
     if !ctx.quiet {
@@ -262,8 +272,8 @@ async fn execute_validate(path: &str) -> Result<()> {
         validation::validate_manifest_dir(p)?
     } else if p.is_file() {
         // Single file validation
-        let content = std::fs::read_to_string(p)
-            .with_context(|| format!("Cannot read {}", p.display()))?;
+        let content =
+            std::fs::read_to_string(p).with_context(|| format!("Cannot read {}", p.display()))?;
         let filename = p
             .file_name()
             .unwrap_or_default()
@@ -292,10 +302,7 @@ async fn execute_validate(path: &str) -> Result<()> {
     };
 
     println!();
-    println!(
-        "{}Validated {} file(s)",
-        indent, result.files_checked
-    );
+    println!("{}Validated {} file(s)", indent, result.files_checked);
     println!();
 
     if result.findings.is_empty() {
@@ -370,13 +377,19 @@ async fn execute_validate(path: &str) -> Result<()> {
 // ============================================================================
 
 async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
-    let endpoint = ctx.endpoint.as_ref().context("endpoint required for test")?;
+    let endpoint = ctx
+        .endpoint
+        .as_ref()
+        .context("endpoint required for test")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
     let p = std::path::Path::new(path);
 
     if !p.is_dir() {
-        anyhow::bail!("Path '{}' must be a directory containing manifest files", path);
+        anyhow::bail!(
+            "Path '{}' must be a directory containing manifest files",
+            path
+        );
     }
 
     // Validate first
@@ -462,10 +475,7 @@ async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
     }
 
     println!();
-    println!(
-        "{}To clean up: garden-rake remove {}",
-        indent, name
-    );
+    println!("{}To clean up: garden-rake remove {}", indent, name);
     println!();
 
     Ok(())
@@ -475,11 +485,7 @@ async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
 // Export — export running offering's manifest
 // ============================================================================
 
-async fn execute_export(
-    ctx: &Runtime,
-    offering: &str,
-    output_dir: Option<&str>,
-) -> Result<()> {
+async fn execute_export(ctx: &Runtime, offering: &str, output_dir: Option<&str>) -> Result<()> {
     let endpoint = ctx
         .endpoint
         .as_ref()
@@ -568,7 +574,10 @@ async fn execute_enrich(path: &str, auto: bool) -> Result<()> {
     let p = std::path::Path::new(path);
 
     if !p.is_dir() {
-        anyhow::bail!("Path '{}' must be a directory containing manifest files", path);
+        anyhow::bail!(
+            "Path '{}' must be a directory containing manifest files",
+            path
+        );
     }
 
     // Find existing files
@@ -596,7 +605,8 @@ async fn execute_enrich(path: &str, auto: bool) -> Result<()> {
         }
     }
 
-    let name = offering_name.context("No .snippet.yaml file found — cannot determine offering name")?;
+    let name =
+        offering_name.context("No .snippet.yaml file found — cannot determine offering name")?;
     let mut enriched = Vec::new();
 
     // Add compatibility template if missing
@@ -615,12 +625,11 @@ async fn execute_enrich(path: &str, auto: bool) -> Result<()> {
         };
 
         if should_add {
-            let content =
-                garden_common::manifests::generate::generate_from_inspection(
-                    Some(&name),
-                    None,
-                    &serde_json::json!({"image": format!("{}:latest", name), "exposed_ports": [], "volumes": [], "environment": [], "labels": {}, "healthcheck": null, "architecture": "unknown"}),
-                )?;
+            let content = garden_common::manifests::generate::generate_from_inspection(
+                Some(&name),
+                None,
+                &serde_json::json!({"image": format!("{}:latest", name), "exposed_ports": [], "volumes": [], "environment": [], "labels": {}, "healthcheck": null, "architecture": "unknown"}),
+            )?;
             let filepath = p.join(format!("{}.compatibility.yaml", name));
             tokio::fs::write(&filepath, &content.compatibility_yaml).await?;
             enriched.push(format!("{}.compatibility.yaml", name));
@@ -632,10 +641,7 @@ async fn execute_enrich(path: &str, auto: bool) -> Result<()> {
         let should_add = if auto {
             true
         } else {
-            print!(
-                "{}Add guidance.md template for '{}'? [Y/n]: ",
-                indent, name
-            );
+            print!("{}Add guidance.md template for '{}'? [Y/n]: ", indent, name);
             std::io::Write::flush(&mut std::io::stdout())?;
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
@@ -643,12 +649,11 @@ async fn execute_enrich(path: &str, auto: bool) -> Result<()> {
         };
 
         if should_add {
-            let content =
-                garden_common::manifests::generate::generate_from_inspection(
-                    Some(&name),
-                    None,
-                    &serde_json::json!({"image": format!("{}:latest", name), "exposed_ports": [], "volumes": [], "environment": [], "labels": {}, "healthcheck": null, "architecture": "unknown"}),
-                )?;
+            let content = garden_common::manifests::generate::generate_from_inspection(
+                Some(&name),
+                None,
+                &serde_json::json!({"image": format!("{}:latest", name), "exposed_ports": [], "volumes": [], "environment": [], "labels": {}, "healthcheck": null, "architecture": "unknown"}),
+            )?;
             let filepath = p.join(format!("{}.guidance.md", name));
             tokio::fs::write(&filepath, &content.guidance_md).await?;
             enriched.push(format!("{}.guidance.md", name));

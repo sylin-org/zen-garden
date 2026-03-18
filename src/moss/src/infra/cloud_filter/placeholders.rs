@@ -47,9 +47,12 @@ pub(crate) struct StorageAvailability {
 
 impl StorageAvailability {
     pub(crate) fn online(stone_name: impl Into<String>, local: bool) -> Self {
-        Self { online: true, stone_name: stone_name.into(), local }
+        Self {
+            online: true,
+            stone_name: stone_name.into(),
+            local,
+        }
     }
-
 }
 
 // ============================================================================
@@ -60,11 +63,7 @@ impl StorageAvailability {
 ///
 /// Uses `CfCreatePlaceholders` so Explorer picks it up immediately without
 /// requiring the user to close and reopen the Zen Garden folder.
-pub fn create_storage_placeholder(
-    sync_root_path: &Path,
-    name: &str,
-    avail: &StorageAvailability,
-) {
+pub fn create_storage_placeholder(sync_root_path: &Path, name: &str, avail: &StorageAvailability) {
     let placeholder = build_storage_dir_placeholder(name, avail);
 
     match placeholder.create::<&Path>(sync_root_path) {
@@ -154,23 +153,13 @@ pub fn build_placeholder(name: &str, is_dir: bool, size: u64) -> PlaceholderFile
     if is_dir {
         PlaceholderFile::new(name)
             .mark_in_sync()
-            .metadata(
-                Metadata::directory()
-                    .created(now)
-                    .written(now)
-                    .size(0),
-            )
+            .metadata(Metadata::directory().created(now).written(now).size(0))
             .blob(name.into())
     } else {
         PlaceholderFile::new(name)
             .has_no_children()
             .mark_in_sync()
-            .metadata(
-                Metadata::file()
-                    .created(now)
-                    .written(now)
-                    .size(size),
-            )
+            .metadata(Metadata::file().created(now).written(now).size(size))
             .blob(name.into())
     }
 }

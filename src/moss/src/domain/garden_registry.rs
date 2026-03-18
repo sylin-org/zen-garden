@@ -103,9 +103,7 @@ impl ToolQuery {
                 .map(|tool| self.matches_tool(tool))
                 .unwrap_or(false),
             ToolDeltaKind::Remove => {
-                (self.category.is_none()
-                    && self.status.is_none()
-                    && self.capabilities.is_empty())
+                (self.category.is_none() && self.status.is_none() && self.capabilities.is_empty())
                     || self.fqid.is_some()
             }
         }
@@ -262,11 +260,7 @@ impl GardenRegistryInner {
             }
         }
 
-        let version = self
-            .entries
-            .get(&key)
-            .map(|e| e.version + 1)
-            .unwrap_or(1);
+        let version = self.entries.get(&key).map(|e| e.version + 1).unwrap_or(1);
 
         self.entries.insert(
             key.clone(),
@@ -334,9 +328,7 @@ impl GardenRegistryInner {
             .entries
             .iter()
             .filter(|(key, e)| {
-                e.tool.stone.id == local_stone_id
-                    && e.origin == origin
-                    && !seen_keys.contains(*key)
+                e.tool.stone.id == local_stone_id && e.origin == origin && !seen_keys.contains(*key)
             })
             .map(|(key, _)| key.clone())
             .collect();
@@ -414,8 +406,7 @@ impl GardenRegistryInner {
                         continue;
                     };
 
-                    let key =
-                        build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
+                    let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
 
                     if beacon.snapshot {
                         seen_keys.insert(key.clone());
@@ -433,11 +424,7 @@ impl GardenRegistryInner {
                         continue;
                     }
 
-                    let version = self
-                        .entries
-                        .get(&key)
-                        .map(|e| e.version + 1)
-                        .unwrap_or(1);
+                    let version = self.entries.get(&key).map(|e| e.version + 1).unwrap_or(1);
 
                     self.entries.insert(
                         key.clone(),
@@ -577,11 +564,7 @@ impl GardenRegistryInner {
         });
 
         // Fallback: any replica on a different stone
-        let target = primary.or_else(|| {
-            replicas
-                .iter()
-                .find(|e| e.tool.stone.id != exclude_stone)
-        });
+        let target = primary.or_else(|| replicas.iter().find(|e| e.tool.stone.id != exclude_stone));
 
         target.map(|e| {
             (
@@ -598,10 +581,11 @@ impl GardenRegistryInner {
             .values()
             .filter(|e| {
                 e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE
-                    && e.tool
-                        .storage
-                        .as_ref()
-                        .is_some_and(|s| s.protocols.iter().any(|p| p == garden_common::constants::PROTOCOL_S3))
+                    && e.tool.storage.as_ref().is_some_and(|s| {
+                        s.protocols
+                            .iter()
+                            .any(|p| p == garden_common::constants::PROTOCOL_S3)
+                    })
             })
             .collect()
     }
@@ -609,7 +593,8 @@ impl GardenRegistryInner {
     /// Find a storage entry by seed bank ID across all stones.
     pub fn storage_by_id(&self, id: &str) -> Option<&RegistryEntry> {
         self.entries.values().find(|e| {
-            e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE && e.tool.tool.id == id
+            e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE
+                && e.tool.tool.id == id
         })
     }
 
@@ -659,7 +644,9 @@ impl GardenRegistryInner {
         let expired: Vec<String> = self
             .entries
             .iter()
-            .filter(|(_, e)| e.origin == EntryOrigin::Gateway && e.expires_at.is_some_and(|t| t <= now))
+            .filter(|(_, e)| {
+                e.origin == EntryOrigin::Gateway && e.expires_at.is_some_and(|t| t <= now)
+            })
             .map(|(key, _)| key.clone())
             .collect();
 
@@ -691,11 +678,7 @@ impl GardenRegistryInner {
     /// Returns true if any gateway entry handles the given offering type.
     pub fn handles_offering(&self, offering: &str) -> bool {
         self.entries.values().any(|e| {
-            e.origin == EntryOrigin::Gateway
-                && e.tool
-                    .tool
-                    .tool_type
-                    .eq_ignore_ascii_case(offering)
+            e.origin == EntryOrigin::Gateway && e.tool.tool.tool_type.eq_ignore_ascii_case(offering)
         })
     }
 
@@ -758,6 +741,7 @@ mod tests {
                 category: category.to_string(),
                 id: format!("uid-{}", fqid),
                 tags: Vec::new(),
+                source: String::new(),
             },
             stone: Stone {
                 id: stone_id.to_string(),
@@ -860,7 +844,12 @@ mod tests {
         reg.upsert(local, EntryOrigin::Local);
 
         let announced = sample_tool("mongodb", "orchestrator", "stone-b");
-        reg.upsert(announced, EntryOrigin::Announced { stone_id: "stone-b".to_string() });
+        reg.upsert(
+            announced,
+            EntryOrigin::Announced {
+                stone_id: "stone-b".to_string(),
+            },
+        );
 
         // Reconcile local with empty → removes offering, keeps announced
         let deltas = reg.reconcile_local("stone-a", vec![], EntryOrigin::Local);
@@ -876,7 +865,12 @@ mod tests {
         let tool1 = sample_tool("ollama", "offering", "stone-a");
         let tool2 = sample_tool("mongodb", "orchestrator", "stone-a");
         reg.upsert(tool1, EntryOrigin::Local);
-        reg.upsert(tool2, EntryOrigin::Announced { stone_id: "stone-a".to_string() });
+        reg.upsert(
+            tool2,
+            EntryOrigin::Announced {
+                stone_id: "stone-a".to_string(),
+            },
+        );
 
         let deltas = reg.remove_stone("stone-a");
         assert_eq!(deltas.len(), 2);
@@ -891,7 +885,12 @@ mod tests {
         let orchestrator = sample_tool("mongodb", "orchestrator", "stone-b");
 
         reg.upsert(offering, EntryOrigin::Local);
-        reg.upsert(orchestrator, EntryOrigin::Announced { stone_id: "stone-b".to_string() });
+        reg.upsert(
+            orchestrator,
+            EntryOrigin::Announced {
+                stone_id: "stone-b".to_string(),
+            },
+        );
 
         let (_, tools) = reg.snapshot(&ToolQuery::default());
         assert_eq!(tools.len(), 2);

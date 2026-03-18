@@ -71,14 +71,12 @@ pub async fn get_companion_manifest(
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionDetailResponse> {
     match state.companion.registry.get(&companion_id).await {
-        Some(c) => {
-            crate::api::ok(CompanionDetailResponse {
-                manifest: c.manifest.clone(),
-                running: c.running,
-                pid: if c.running { c.pid } else { None },
-                port: c.port,
-            })
-        }
+        Some(c) => crate::api::ok(CompanionDetailResponse {
+            manifest: c.manifest.clone(),
+            running: c.running,
+            pid: if c.running { c.pid } else { None },
+            port: c.port,
+        }),
         None => Err(not_found(
             "COMPANION_NOT_FOUND",
             format!("Companion '{}' not found", companion_id),
@@ -152,7 +150,8 @@ async fn execute_companion_command_local(
         let moss_endpoint = state.current.address.read().await.http_base();
 
         if let Err(e) = state
-            .companion.registry
+            .companion
+            .registry
             .start(companion_id, &moss_endpoint)
             .await
         {
@@ -363,7 +362,8 @@ pub async fn start_companion(
     }
 
     match state
-        .companion.registry
+        .companion
+        .registry
         .start(&companion_id, &moss_endpoint)
         .await
     {
@@ -393,7 +393,8 @@ pub async fn stop_companion(
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionLifecycleResponse> {
     match state
-        .companion.registry
+        .companion
+        .registry
         .stop_and_disable(&companion_id)
         .await
     {
@@ -439,9 +440,6 @@ pub async fn refresh_companions(
                 companions: summaries,
             })
         }
-        Err(e) => Err(internal(
-            "COMPANION_REFRESH_FAILED",
-            e.to_string(),
-        )),
+        Err(e) => Err(internal("COMPANION_REFRESH_FAILED", e.to_string())),
     }
 }

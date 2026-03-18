@@ -103,9 +103,7 @@ pub fn resolve_from_inspection(
         .volumes
         .iter()
         .map(|mount_point| {
-            let slug = mount_point
-                .trim_start_matches('/')
-                .replace(['/', '.'], "-");
+            let slug = mount_point.trim_start_matches('/').replace(['/', '.'], "-");
             let volume_name = format!("{}-{}", volume_prefix, slug);
             (volume_name, mount_point.clone())
         })
@@ -212,7 +210,11 @@ mod tests {
                 "PATH=/usr/local/sbin:/usr/local/bin".to_string(),
                 "NGINX_VERSION=1.27.0".to_string(),
             ],
-            command: Some(vec!["nginx".to_string(), "-g".to_string(), "daemon off;".to_string()]),
+            command: Some(vec![
+                "nginx".to_string(),
+                "-g".to_string(),
+                "daemon off;".to_string(),
+            ]),
             entrypoint: None,
             labels: {
                 let mut m = HashMap::new();

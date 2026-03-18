@@ -58,7 +58,6 @@ impl DockerRegistry {
     }
 }
 
-
 #[async_trait]
 impl InfrastructureHandler for DockerRegistry {
     fn name(&self) -> &'static str {
@@ -128,7 +127,11 @@ impl InfrastructureHandler for DockerRegistry {
             garden_sorted.sort();
 
             if previous_sorted != garden_sorted {
-                if let Err(e) = self.config_ops.write_garden_registries(&garden_registries).await {
+                if let Err(e) = self
+                    .config_ops
+                    .write_garden_registries(&garden_registries)
+                    .await
+                {
                     tracing::warn!(error = %e, "Failed to update garden registries state file");
                 }
             }
@@ -138,7 +141,10 @@ impl InfrastructureHandler for DockerRegistry {
         }
 
         // Step 4: Update daemon.json with merged list
-        let changed = self.config_ops.write_insecure_registries(&desired_registries).await?;
+        let changed = self
+            .config_ops
+            .write_insecure_registries(&desired_registries)
+            .await?;
 
         if changed {
             tracing::info!(
@@ -149,7 +155,11 @@ impl InfrastructureHandler for DockerRegistry {
             );
 
             // Update state file with current garden registries
-            if let Err(e) = self.config_ops.write_garden_registries(&garden_registries).await {
+            if let Err(e) = self
+                .config_ops
+                .write_garden_registries(&garden_registries)
+                .await
+            {
                 tracing::warn!(error = %e, "Failed to update garden registries state file");
             }
 
@@ -177,11 +187,21 @@ mod tests {
 
     #[async_trait]
     impl DockerConfigOps for NoopDockerConfig {
-        async fn read_insecure_registries(&self) -> Result<Vec<String>> { Ok(vec![]) }
-        async fn write_insecure_registries(&self, _: &[String]) -> Result<bool> { Ok(false) }
-        async fn read_garden_registries(&self) -> Vec<String> { vec![] }
-        async fn write_garden_registries(&self, _: &[String]) -> Result<()> { Ok(()) }
-        async fn restart_docker_daemon(&self) -> Result<()> { Ok(()) }
+        async fn read_insecure_registries(&self) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn write_insecure_registries(&self, _: &[String]) -> Result<bool> {
+            Ok(false)
+        }
+        async fn read_garden_registries(&self) -> Vec<String> {
+            vec![]
+        }
+        async fn write_garden_registries(&self, _: &[String]) -> Result<()> {
+            Ok(())
+        }
+        async fn restart_docker_daemon(&self) -> Result<()> {
+            Ok(())
+        }
     }
 
     fn test_handler() -> DockerRegistry {

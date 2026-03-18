@@ -506,28 +506,31 @@ pub fn status_indicator(status: &str, color: bool) -> String {
         };
     }
 
-    let indicator =
-        if status_str == garden_common::constants::SERVICE_RUNNING || status_str == garden_common::constants::VITALITY_THRIVING {
-            garden_common::constants::VITALITY_THRIVING
-        } else if status_str == garden_common::constants::SERVICE_STOPPED || status_str == garden_common::constants::VITALITY_DORMANT {
-            garden_common::constants::VITALITY_DORMANT
-        } else if status_str == garden_common::constants::VITALITY_NEEDS_ATTENTION
-            || status_str == garden_common::constants::VITALITY_WITHERING
-        {
-            garden_common::constants::VITALITY_NEEDS_ATTENTION
-        } else if status_str == "ok" || status_str == garden_common::constants::HEALTH_HEALTHY {
-            garden_common::constants::VITALITY_THRIVING
-        } else if status_str == "error"
-            || status_str == "failed"
-            || status_str == garden_common::constants::HEALTH_UNHEALTHY
-            || status_str == "warn"
-            || status_str == "warning"
-            || status_str == garden_common::constants::HEALTH_DEGRADED
-        {
-            garden_common::constants::VITALITY_NEEDS_ATTENTION
-        } else {
-            return status.to_string(); // Unknown status, pass through without brackets
-        };
+    let indicator = if status_str == garden_common::constants::SERVICE_RUNNING
+        || status_str == garden_common::constants::VITALITY_THRIVING
+    {
+        garden_common::constants::VITALITY_THRIVING
+    } else if status_str == garden_common::constants::SERVICE_STOPPED
+        || status_str == garden_common::constants::VITALITY_DORMANT
+    {
+        garden_common::constants::VITALITY_DORMANT
+    } else if status_str == garden_common::constants::VITALITY_NEEDS_ATTENTION
+        || status_str == garden_common::constants::VITALITY_WITHERING
+    {
+        garden_common::constants::VITALITY_NEEDS_ATTENTION
+    } else if status_str == "ok" || status_str == garden_common::constants::HEALTH_HEALTHY {
+        garden_common::constants::VITALITY_THRIVING
+    } else if status_str == "error"
+        || status_str == "failed"
+        || status_str == garden_common::constants::HEALTH_UNHEALTHY
+        || status_str == "warn"
+        || status_str == "warning"
+        || status_str == garden_common::constants::HEALTH_DEGRADED
+    {
+        garden_common::constants::VITALITY_NEEDS_ATTENTION
+    } else {
+        return status.to_string(); // Unknown status, pass through without brackets
+    };
 
     // Always bracket known statuses
     let bracketed = format!("[{}]", indicator);
@@ -538,11 +541,12 @@ pub fn status_indicator(status: &str, color: bool) -> String {
             || status_str == garden_common::constants::HEALTH_HEALTHY
             || status_str == garden_common::constants::VITALITY_THRIVING;
 
-        let is_dormant =
-            status_str == garden_common::constants::SERVICE_STOPPED || status_str == garden_common::constants::VITALITY_DORMANT;
+        let is_dormant = status_str == garden_common::constants::SERVICE_STOPPED
+            || status_str == garden_common::constants::VITALITY_DORMANT;
 
-        let is_degraded =
-            status_str == "warn" || status_str == "warning" || status_str == garden_common::constants::HEALTH_DEGRADED;
+        let is_degraded = status_str == "warn"
+            || status_str == "warning"
+            || status_str == garden_common::constants::HEALTH_DEGRADED;
 
         let is_unhealthy = status_str == "error"
             || status_str == "failed"
@@ -610,7 +614,9 @@ pub fn compact_status_symbol(health: &str, supports_unicode: bool) -> Option<&'s
         || h == "initializing"
     {
         None // Thriving = no symbol
-    } else if h == garden_common::constants::VITALITY_DORMANT || h == garden_common::constants::SERVICE_STOPPED {
+    } else if h == garden_common::constants::VITALITY_DORMANT
+        || h == garden_common::constants::SERVICE_STOPPED
+    {
         Some(if supports_unicode { "\u{25CB}" } else { "o" }) // ○
     } else if h == garden_common::constants::HEALTH_DEGRADED
         || h == garden_common::constants::VITALITY_NEEDS_ATTENTION
@@ -643,7 +649,9 @@ pub fn classify_health(health: &str) -> VitalityClass {
         || h == "initializing"
     {
         VitalityClass::Thriving
-    } else if h == garden_common::constants::VITALITY_DORMANT || h == garden_common::constants::SERVICE_STOPPED {
+    } else if h == garden_common::constants::VITALITY_DORMANT
+        || h == garden_common::constants::SERVICE_STOPPED
+    {
         VitalityClass::Dormant
     } else if h == garden_common::constants::HEALTH_DEGRADED
         || h == garden_common::constants::VITALITY_NEEDS_ATTENTION
@@ -1409,10 +1417,7 @@ mod tests {
     #[test]
     fn test_fit_items_single_with_overflow() {
         // "mongodb +2" = 10 chars
-        assert_eq!(
-            fit_items(&["mongodb", "ollama", "redis"], 10),
-            "mongodb +2"
-        );
+        assert_eq!(fit_items(&["mongodb", "ollama", "redis"], 10), "mongodb +2");
     }
 
     #[test]
@@ -1449,10 +1454,7 @@ mod tests {
             "mongodb, ollama, redis, weaviate, postgres"
         );
         // Medium: partial
-        assert_eq!(
-            fit_items(services, 30),
-            "mongodb, ollama, redis +2"
-        );
+        assert_eq!(fit_items(services, 30), "mongodb, ollama, redis +2");
         // Narrow: just one
         assert_eq!(fit_items(services, 12), "mongodb +4");
     }

@@ -158,8 +158,14 @@ impl ConsolePrinter {
                 // All high-level lifecycle events (exclude verbose-only).
                 // Connected/Disconnected are gated by category: Docker and Storage
                 // are user-visible; Services connections are not.
-                if matches!(event.status, EventStatus::Connected | EventStatus::Disconnected) {
-                    matches!(event.category, EventCategory::Docker | EventCategory::Storage)
+                if matches!(
+                    event.status,
+                    EventStatus::Connected | EventStatus::Disconnected
+                ) {
+                    matches!(
+                        event.category,
+                        EventCategory::Docker | EventCategory::Storage
+                    )
                 } else {
                     !matches!(
                         event.status,
@@ -220,7 +226,10 @@ impl ConsolePrinter {
 
         // Storage availability changes (managed storage plug/unplug)
         if matches!(event.category, EventCategory::Storage)
-            && matches!(event.status, EventStatus::Connected | EventStatus::Disconnected)
+            && matches!(
+                event.status,
+                EventStatus::Connected | EventStatus::Disconnected
+            )
         {
             return true;
         }

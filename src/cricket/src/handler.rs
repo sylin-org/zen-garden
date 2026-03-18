@@ -19,11 +19,7 @@ pub struct CricketCommands {
 
 impl CricketCommands {
     /// Create a new Cricket command handler
-    pub fn new(
-        mixer: Arc<Mixer>,
-        tunes: Arc<Tunes>,
-        state: Arc<CompanionState>,
-    ) -> Self {
+    pub fn new(mixer: Arc<Mixer>, tunes: Arc<Tunes>, state: Arc<CompanionState>) -> Self {
         Self {
             mixer,
             tunes,

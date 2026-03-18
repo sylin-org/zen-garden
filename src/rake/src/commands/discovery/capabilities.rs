@@ -6,10 +6,10 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
+use crate::ui::rendering::{self as ui};
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
-use crate::ui::rendering::{self as ui};
 use garden_common::{CapabilityCollection, OfferingMode};
 use serde::{Deserialize, Serialize};
 
@@ -31,10 +31,7 @@ pub struct CapabilitiesCommand {
 
 impl CapabilitiesCommand {
     pub fn new(offering: String, quiet: bool) -> Self {
-        Self {
-            offering,
-            quiet,
-        }
+        Self { offering, quiet }
     }
 }
 
@@ -584,12 +581,7 @@ impl MirrorCapabilitiesCommand {
 }
 
 impl RefreshCapabilitiesCommand {
-    pub fn new(
-        offering: String,
-        cap_type: Option<String>,
-        dry_run: bool,
-        quiet: bool,
-    ) -> Self {
+    pub fn new(offering: String, cap_type: Option<String>, dry_run: bool, quiet: bool) -> Self {
         Self {
             offering,
             cap_type,

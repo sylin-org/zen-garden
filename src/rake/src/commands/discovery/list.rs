@@ -6,10 +6,10 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
+use crate::ui::rendering::{self as ui, TerminalInfo};
 use anyhow::Context;
 use async_trait::async_trait;
 use colored::Colorize;
-use crate::ui::rendering::{self as ui, TerminalInfo};
 use garden_common::constants::CATEGORY_ORCHESTRATOR;
 use garden_common::SubCapability;
 
@@ -145,7 +145,10 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
     println!("{}", table.render());
     println!();
 
-    let registered_count = services.iter().filter(|s| s.category == CATEGORY_ORCHESTRATOR).count();
+    let registered_count = services
+        .iter()
+        .filter(|s| s.category == CATEGORY_ORCHESTRATOR)
+        .count();
     let offering_count = services.len() - registered_count;
 
     if registered_count > 0 {

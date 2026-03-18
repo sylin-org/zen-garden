@@ -32,7 +32,11 @@ impl Default for GlobalFlags {
 pub fn build_clap_app(manifest: &CommandManifest) -> clap::Command {
     let mut app = clap::Command::new("garden-rake")
         .about("Zen Garden management CLI - run without arguments to see command directory")
-        .version(concat!(env!("CARGO_PKG_VERSION"), ".", env!("BUILD_NUMBER")))
+        .version(concat!(
+            env!("CARGO_PKG_VERSION"),
+            ".",
+            env!("BUILD_NUMBER")
+        ))
         .subcommand_required(false)
         .arg_required_else_help(false)
         .disable_help_subcommand(true);
@@ -137,17 +141,13 @@ fn build_arg(spec: &ArgSpec) -> clap::Arg {
             arg = arg.long(spec.name).action(clap::ArgAction::Count);
         }
         ArgKind::MultiOption => {
-            arg = arg
-                .long(spec.name)
-                .action(clap::ArgAction::Append);
+            arg = arg.long(spec.name).action(clap::ArgAction::Append);
             if let Some(d) = spec.value_delimiter {
                 arg = arg.value_delimiter(d);
             }
         }
         ArgKind::Trailing => {
-            arg = arg
-                .trailing_var_arg(true)
-                .num_args(0..);
+            arg = arg.trailing_var_arg(true).num_args(0..);
             if spec.allow_hyphen_values {
                 arg = arg.allow_hyphen_values(true);
             }

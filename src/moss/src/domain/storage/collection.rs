@@ -142,9 +142,13 @@ pub async fn initial_scan(
     make_store: &(dyn Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync),
 ) {
     let p = platform.clone();
-    let snapshots = tokio::task::spawn_blocking(move || p.scan_volumes())
-        .await
-        .unwrap_or_default();
+    let snapshots = match tokio::task::spawn_blocking(move || p.scan_volumes()).await {
+        Ok(snaps) => snaps,
+        Err(e) => {
+            tracing::error!(error = ?e, "Volume scan task panicked; skipping initial scan");
+            return;
+        }
+    };
 
     if snapshots.is_empty() {
         debug!("Initial volume scan found no volumes");
@@ -210,12 +214,7 @@ pub async fn find_by_name(volumes: &Volumes, name: &str) -> Option<Volume> {
 pub async fn find_by_id(volumes: &Volumes, id: &str) -> Option<Volume> {
     let map = volumes.read().await;
     map.values()
-        .find(|v| {
-            v.management
-                .as_ref()
-                .map(|m| m.id == id)
-                .unwrap_or(false)
-        })
+        .find(|v| v.management.as_ref().map(|m| m.id == id).unwrap_or(false))
         .cloned()
 }
 
@@ -224,9 +223,9 @@ pub async fn roles_snapshot(volumes: &Volumes) -> HashMap<String, StorageRole> {
     let map = volumes.read().await;
     map.values()
         .filter_map(|v| {
-            v.management.as_ref().map(|m| {
-                (m.display_name().to_string(), m.role)
-            })
+            v.management
+                .as_ref()
+                .map(|m| (m.display_name().to_string(), m.role))
         })
         .collect()
 }
@@ -237,7 +236,9 @@ pub async fn pins_snapshot(volumes: &Volumes) -> HashMap<String, String> {
     map.values()
         .filter_map(|v| {
             v.management.as_ref().and_then(|m| {
-                m.pin.as_ref().map(|p| (m.display_name().to_string(), p.pin_id.clone()))
+                m.pin
+                    .as_ref()
+                    .map(|p| (m.display_name().to_string(), p.pin_id.clone()))
             })
         })
         .collect()
@@ -269,10 +270,18 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ManagementStoreOps for NoopManagementStore {
-        async fn read_pin(&self) -> Option<String> { None }
-        async fn write_pin(&self, _pin_id: &str) -> anyhow::Result<()> { Ok(()) }
-        async fn delete_pin(&self) -> anyhow::Result<()> { Ok(()) }
-        async fn snapshot_lkg(&self) -> anyhow::Result<()> { Ok(()) }
+        async fn read_pin(&self) -> Option<String> {
+            None
+        }
+        async fn write_pin(&self, _pin_id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn delete_pin(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn snapshot_lkg(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
     }
 
     fn test_store_factory() -> impl Fn(PathBuf) -> Arc<dyn ManagementStoreOps> {
@@ -340,7 +349,7 @@ mod tests {
     async fn test_list_candidates() {
         let volumes = new_volumes();
         let snaps = vec![
-            make_snapshot("/dev/sdb1", "/mnt/usb", true),  // removable
+            make_snapshot("/dev/sdb1", "/mnt/usb", true), // removable
             make_snapshot("/dev/sda2", "/mnt/data", false), // fixed
         ];
         reconcile(&volumes, &snaps, &test_store_factory()).await;
@@ -361,7 +370,9 @@ mod tests {
     fn test_allowed_mount_paths() {
         assert!(super::super::analysis::is_allowed_mount("/mnt/usb"));
         assert!(super::super::analysis::is_allowed_mount("/media/user/USB"));
-        assert!(super::super::analysis::is_allowed_mount("/run/media/user/USB"));
+        assert!(super::super::analysis::is_allowed_mount(
+            "/run/media/user/USB"
+        ));
         assert!(!super::super::analysis::is_allowed_mount("/home/user/usb"));
         assert!(!super::super::analysis::is_allowed_mount("/var/lib/data"));
     }

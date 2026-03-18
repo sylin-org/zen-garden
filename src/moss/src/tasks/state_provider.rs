@@ -23,7 +23,10 @@ impl MossStateProvider {
 
         // Basic identity
         fields.insert("stone_id".to_string(), json!(self.state.current.stone.id));
-        fields.insert("stone_name".to_string(), json!(self.state.current.stone.name));
+        fields.insert(
+            "stone_name".to_string(),
+            json!(self.state.current.stone.name),
+        );
 
         // Version
         fields.insert("moss_version".to_string(), json!(version_string()));
@@ -50,7 +53,10 @@ impl super::election_service::StateProvider for MossStateProvider {
         // Async criteria evaluation should use get_state_async() instead
         let mut fields = HashMap::new();
         fields.insert("stone_id".to_string(), json!(self.state.current.stone.id));
-        fields.insert("stone_name".to_string(), json!(self.state.current.stone.name));
+        fields.insert(
+            "stone_name".to_string(),
+            json!(self.state.current.stone.name),
+        );
         fields.insert("moss_version".to_string(), json!(version_string()));
         fields
     }

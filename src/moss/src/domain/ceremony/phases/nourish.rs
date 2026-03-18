@@ -18,7 +18,8 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     // Step 1: Pull the new image
     tracing::info!(offering, image = new_image, "Pulling new image");
     state
-        .platform.docker
+        .platform
+        .docker
         .pull_image(new_image, Some(&state.console))
         .await
         .context("Failed to pull new image")?;
@@ -29,7 +30,8 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     // Step 3: Stop the old container
     tracing::info!(offering, "Stopping old container");
     state
-        .platform.docker
+        .platform
+        .docker
         .stop_service(offering, Some(&state.console))
         .await
         .context("Failed to stop container")?;
@@ -37,7 +39,8 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     // Step 4: Remove the old container
     tracing::info!(offering, "Removing old container");
     state
-        .platform.docker
+        .platform
+        .docker
         .remove_service(offering, Some(&state.console))
         .await
         .context("Failed to remove container")?;
@@ -45,7 +48,8 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     // Step 5: Create new container with composed spec
     tracing::info!(offering, new_image, "Creating new container");
     state
-        .platform.docker
+        .platform
+        .docker
         .install_service(offering, &spec, Some(&state.console))
         .await
         .context("Failed to create new container")?;
@@ -80,9 +84,7 @@ async fn build_nourish_spec(
     };
 
     // Parse the manifest template
-    let manifest = state
-        .manifest_registry
-        .get_offering(offering);
+    let manifest = state.manifest_registry.get_offering(offering);
 
     if let Some(manifest) = manifest {
         let template = manifest

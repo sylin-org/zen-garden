@@ -17,9 +17,9 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::enrollment;
 use crate::suggestions;
+use crate::ui::rendering as ui;
 use anyhow::Context;
 use async_trait::async_trait;
-use crate::ui::rendering as ui;
 
 /// Pond action to perform
 pub enum PondActionType {

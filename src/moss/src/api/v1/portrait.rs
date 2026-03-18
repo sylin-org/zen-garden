@@ -378,7 +378,10 @@ pub async fn get_portrait_data(
     let role = "STONE".to_string();
 
     // Build endpoint URL
-    let endpoint = format!("http://{}:{}", state.current.stone.name, state.current.api_port);
+    let endpoint = format!(
+        "http://{}:{}",
+        state.current.stone.name, state.current.api_port
+    );
 
     // Get uptime from resources
     let uptime = {
@@ -664,7 +667,11 @@ pub async fn get_portrait_data(
 
     // === Pond ===
     let pond = {
-        let active = state.security.pond.active.load(std::sync::atomic::Ordering::Relaxed);
+        let active = state
+            .security
+            .pond
+            .active
+            .load(std::sync::atomic::Ordering::Relaxed);
         let name = state.security.pond.state.name().await;
         // Stone count from horizon (discovered peers + self if enrolled)
         let stone_count = if active { horizon.count.max(1) } else { 0 };

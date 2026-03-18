@@ -9,6 +9,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::{extract_json_field, Runtime};
 use crate::suggestions;
+use crate::ui::rendering as ui;
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -17,7 +18,6 @@ use garden_common::tools::{
     event_types as tools_event_types, parse_capability_wish, CapabilitySelector, GardenTool,
     ToolDelta,
 };
-use crate::ui::rendering as ui;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -257,11 +257,7 @@ impl FindCommand {
     }
 
     /// Check if the query matches a known offering
-    async fn check_offering_exists_for(
-        &self,
-        ctx: &Runtime,
-        query: &str,
-    ) -> Option<OfferingInfo> {
+    async fn check_offering_exists_for(&self, ctx: &Runtime, query: &str) -> Option<OfferingInfo> {
         let endpoint = ctx.endpoint.as_ref()?;
         let url = format!(
             "{}/api/v1/stone/offerings/{}",

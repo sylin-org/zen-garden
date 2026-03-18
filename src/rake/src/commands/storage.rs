@@ -275,10 +275,16 @@ impl AddStorageCommand {
             let actionable: Vec<_> = resp
                 .media
                 .iter()
-                .filter(|m| matches!(m.suggested_action, MediumAction::NeedsPartition | MediumAction::NeedsFormat))
+                .filter(|m| {
+                    matches!(
+                        m.suggested_action,
+                        MediumAction::NeedsPartition | MediumAction::NeedsFormat
+                    )
+                })
                 .collect();
             if !actionable.is_empty() {
-                let mut msg = String::from("No ready volumes found, but detected physical media:\n");
+                let mut msg =
+                    String::from("No ready volumes found, but detected physical media:\n");
                 for m in &actionable {
                     msg.push_str(&format!(
                         "  {} ({}) — {}\n",
@@ -583,10 +589,7 @@ impl Command for ListStorageCommand {
                     let cap = format_bytes(r.capacity_bytes);
                     println!(
                         "      {} — {} ({}){}",
-                        vol_name,
-                        r.stone_name,
-                        cap,
-                        role_tag,
+                        vol_name, r.stone_name, cap, role_tag,
                     );
                 }
             }
@@ -645,7 +648,10 @@ impl Command for ListStorageCommand {
                 })
                 .collect();
             if !actionable.is_empty() {
-                println!("\n{}", ui::section_header("PHYSICAL MEDIA (needs setup)", &ctx.term));
+                println!(
+                    "\n{}",
+                    ui::section_header("PHYSICAL MEDIA (needs setup)", &ctx.term)
+                );
                 for m in &actionable {
                     let name = m.model.as_deref().unwrap_or(&m.device_id);
                     println!(
@@ -1551,8 +1557,7 @@ impl Command for StorageStatusCommand {
         // Build a role lookup from garden banks
         let mut role_map: std::collections::HashMap<String, StorageRole> =
             std::collections::HashMap::new();
-        let mut pin_map: std::collections::HashMap<String, bool> =
-            std::collections::HashMap::new();
+        let mut pin_map: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
         for gb in &garden_banks {
             if gb.is_local {
                 role_map.insert(gb.id.clone(), gb.role);
@@ -1594,37 +1599,18 @@ impl Command for StorageStatusCommand {
 
             println!(
                 "\n  {} {}  ({}){}{}\n",
-                status_icon,
-                bank.name,
-                role,
-                pin_label,
-                enc_label,
+                status_icon, bank.name, role, pin_label, enc_label,
             );
-            println!(
-                "    Capacity:   {}",
-                format_bytes(bank.capacity_bytes)
-            );
+            println!("    Capacity:   {}", format_bytes(bank.capacity_bytes));
             println!(
                 "    Used:       {} ({}%)",
                 format_bytes(bank.used_bytes),
                 usage_pct,
             );
-            println!(
-                "    Available:  {}",
-                format_bytes(available)
-            );
-            println!(
-                "    Device:     {}",
-                bank.device
-            );
-            println!(
-                "    Mount:      {}",
-                bank.mount_path
-            );
-            println!(
-                "    Visibility: {}",
-                bank.visibility,
-            );
+            println!("    Available:  {}", format_bytes(available));
+            println!("    Device:     {}", bank.device);
+            println!("    Mount:      {}", bank.mount_path);
+            println!("    Visibility: {}", bank.visibility,);
             if !bank.replica_set_id.is_empty() {
                 let rs_display = if bank.replica_set_name.is_empty() {
                     "storage".to_string()
@@ -1673,4 +1659,3 @@ impl Command for StorageStatusCommand {
         "storage-status"
     }
 }
-

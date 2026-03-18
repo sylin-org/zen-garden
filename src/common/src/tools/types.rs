@@ -56,6 +56,11 @@ pub struct ToolIdentity {
     /// Tags.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+
+    /// Source identifier — who registered this entry.
+    /// Set by orchestrator gateways (e.g. `"zen-garden.mongodb.orchestrator"`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// Stone hosting a garden resource.
@@ -168,9 +173,9 @@ impl GardenTool {
         })
     }
 
-    /// Extract the offering type from the fqid.
-    /// `"mongodb:prod"` → `"mongodb"`, `"redis"` → `"redis"`.
-    pub fn offering_type(&self) -> &str {
+    /// Extract the tool type discriminator.
+    /// `"mongodb:prod"` → `"mongodb"`, `"redis"` → `"redis"`, seed-banks → `"seed-bank"`.
+    pub fn tool_type(&self) -> &str {
         &self.tool.tool_type
     }
 }
@@ -548,6 +553,7 @@ mod tests {
                 category: category.to_string(),
                 id: "test-id".to_string(),
                 tags: Vec::new(),
+                source: String::new(),
             },
             stone: Stone {
                 id: "stone-1".to_string(),

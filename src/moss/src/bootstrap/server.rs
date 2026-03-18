@@ -5,7 +5,9 @@
 
 use crate::domain::traits::CompanionOps;
 use axum::Router;
-use garden_common::console::{BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo};
+use garden_common::console::{
+    BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo,
+};
 use garden_common::infra::platform::shutdown_signal;
 use garden_common::PlatformRuntime;
 use std::future::Future;
@@ -165,7 +167,9 @@ pub async fn run(
         let watchdog_runtime = runtime.clone();
         let watchdog_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(garden_common::constants::server::WATCHDOG_PING_SECS));
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+                garden_common::constants::server::WATCHDOG_PING_SECS,
+            ));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {

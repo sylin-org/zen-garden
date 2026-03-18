@@ -396,7 +396,8 @@ pub async fn stone_wake(
 
     // Look up stone in topology cache (includes offline stones)
     let stone =
-        crate::domain::topology::get_stone_by_name(&state.current.topology.cache, &stone_name).await;
+        crate::domain::topology::get_stone_by_name(&state.current.topology.cache, &stone_name)
+            .await;
 
     match stone {
         None => {

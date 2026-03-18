@@ -108,16 +108,19 @@ pub fn derive_name_from_image(image_ref: &str) -> String {
         None => without_tag,
     };
     // Take last path segment
-    let name = without_digest
-        .rsplit('/')
-        .next()
-        .unwrap_or(without_digest);
+    let name = without_digest.rsplit('/').next().unwrap_or(without_digest);
 
     // Sanitize: lowercase, replace non-alphanumeric with hyphens
     let sanitized: String = name
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
 
     sanitized.trim_matches('-').to_string()
@@ -213,7 +216,9 @@ fn build_snippet_yaml(
     if !ports.is_empty() {
         yaml.push_str("ports:\n");
         for (port_name, container_port) in ports {
-            yaml.push_str(&format!("  {port_name}: [{container_port}, {container_port}]\n"));
+            yaml.push_str(&format!(
+                "  {port_name}: [{container_port}, {container_port}]\n"
+            ));
         }
     }
 
@@ -221,9 +226,7 @@ fn build_snippet_yaml(
     if !volumes.is_empty() {
         yaml.push_str("volumes:\n");
         for vol in volumes {
-            let slug = vol
-                .trim_start_matches('/')
-                .replace(['/', '.'], "-");
+            let slug = vol.trim_start_matches('/').replace(['/', '.'], "-");
             yaml.push_str(&format!("  - {name}-{slug}:{vol}\n"));
         }
     }
@@ -243,8 +246,7 @@ fn build_snippet_yaml(
             if let Some(test) = hc.get("test").and_then(|v| v.as_array()) {
                 let parts: Vec<&str> = test.iter().filter_map(|v| v.as_str()).collect();
                 if !parts.is_empty() {
-                    let formatted: Vec<String> =
-                        parts.iter().map(|p| format!("\"{p}\"")).collect();
+                    let formatted: Vec<String> = parts.iter().map(|p| format!("\"{p}\"")).collect();
                     yaml.push_str(&format!("  test: [{}]\n", formatted.join(", ")));
                 }
             }
@@ -408,10 +410,7 @@ mod tests {
 
     #[test]
     fn derive_name_registry() {
-        assert_eq!(
-            derive_name_from_image("ghcr.io/org/myapp:v2"),
-            "myapp"
-        );
+        assert_eq!(derive_name_from_image("ghcr.io/org/myapp:v2"), "myapp");
         assert_eq!(
             derive_name_from_image("registry.example.com/tools/builder:3.1"),
             "builder"
@@ -420,10 +419,7 @@ mod tests {
 
     #[test]
     fn derive_name_with_digest() {
-        assert_eq!(
-            derive_name_from_image("nginx@sha256:abc123"),
-            "nginx"
-        );
+        assert_eq!(derive_name_from_image("nginx@sha256:abc123"), "nginx");
     }
 
     #[test]
@@ -435,7 +431,9 @@ mod tests {
         assert!(result.snippet_yaml.contains("image: nginx:latest"));
         assert!(result.snippet_yaml.contains("default: [80, 80]"));
         assert!(result.snippet_yaml.contains("port1: [443, 443]"));
-        assert!(result.snippet_yaml.contains("nginx-usr-share-nginx-html:/usr/share/nginx/html"));
+        assert!(result
+            .snippet_yaml
+            .contains("nginx-usr-share-nginx-html:/usr/share/nginx/html"));
         assert!(result.snippet_yaml.contains("NGINX_VERSION=1.27.0"));
         // PATH= should be filtered
         assert!(!result.snippet_yaml.contains("PATH=/usr/local/sbin"));
@@ -451,8 +449,7 @@ mod tests {
     #[test]
     fn generate_with_custom_name_and_category() {
         let inspection = sample_inspection();
-        let result =
-            generate_from_inspection(Some("my-web"), Some("web"), &inspection).unwrap();
+        let result = generate_from_inspection(Some("my-web"), Some("web"), &inspection).unwrap();
 
         assert_eq!(result.name, "my-web");
         assert!(result.snippet_yaml.contains("container_name: my-web"));

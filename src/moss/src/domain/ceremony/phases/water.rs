@@ -27,7 +27,8 @@ pub async fn execute(
 
     // Step 1: Start the container
     state
-        .platform.docker
+        .platform
+        .docker
         .start_service(offering, Some(&state.console))
         .await
         .context("Failed to start container")?;
@@ -56,7 +57,8 @@ pub async fn execute(
 
         // Stop the unhealthy container
         let _ = state
-            .platform.docker
+            .platform
+            .docker
             .stop_service(offering, Some(&state.console))
             .await;
 
@@ -71,7 +73,8 @@ pub async fn execute(
 
         // Start the container again (now with original volumes)
         state
-            .platform.docker
+            .platform
+            .docker
             .start_service(offering, Some(&state.console))
             .await
             .context("Failed to start container after rollback")?;

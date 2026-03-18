@@ -170,11 +170,7 @@ async fn resolve_stone_endpoint(stone: &str) -> anyhow::Result<String> {
 }
 
 /// Execute parsed hey command
-async fn execute_hey_command(
-    cmd: HeyCommand,
-    endpoint: &str,
-    ctx: &Runtime,
-) -> CommandResult {
+async fn execute_hey_command(cmd: HeyCommand, endpoint: &str, ctx: &Runtime) -> CommandResult {
     match cmd {
         HeyCommand::Help => {
             print_hey_help();
@@ -329,11 +325,7 @@ async fn list_companions(endpoint: &str, ctx: &Runtime) -> CommandResult {
 }
 
 /// Show companion's command manifest (fetched from Moss)
-async fn show_companion_commands(
-    endpoint: &str,
-    companion: &str,
-    ctx: &Runtime,
-) -> CommandResult {
+async fn show_companion_commands(endpoint: &str, companion: &str, ctx: &Runtime) -> CommandResult {
     let url = format!("{}/api/v1/stone/companions/{}", endpoint, companion);
     let response = ctx.client.get(&url).send().await?;
 

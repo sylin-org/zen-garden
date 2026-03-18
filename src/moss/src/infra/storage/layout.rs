@@ -139,10 +139,7 @@ pub fn validate_layout(mount_path: &Path) -> Result<(), String> {
 
     let manifest = dotfolder.join("manifest.json");
     if !manifest.is_file() {
-        return Err(format!(
-            "Missing manifest.json in {}",
-            dotfolder.display()
-        ));
+        return Err(format!("Missing manifest.json in {}", dotfolder.display()));
     }
 
     Ok(())

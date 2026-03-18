@@ -135,11 +135,7 @@ fn draw_ui(
 }
 
 /// Main event loop
-async fn event_loop(
-    mixer: &Arc<Mixer>,
-    tunes: &Tunes,
-    bindings: &[KeyBinding],
-) -> Result<()> {
+async fn event_loop(mixer: &Arc<Mixer>, tunes: &Tunes, bindings: &[KeyBinding]) -> Result<()> {
     let mut stdout = stdout();
     let status_line = (bindings.len() + 15) as u16;
     let mut current_volume: u8 = 70;

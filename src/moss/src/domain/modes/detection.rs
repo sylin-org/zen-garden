@@ -7,9 +7,9 @@
 //! - Proactive cache refresh
 
 use crate::domain::traits::ServiceDetector;
-use garden_common::detection::{detect_by_command, detect_by_http_probe, DetectionResult};
 use anyhow::{Context, Result};
 use dashmap::DashMap;
+use garden_common::detection::{detect_by_command, detect_by_http_probe, DetectionResult};
 use garden_common::manifests::{DetectionMethod, DetectionRule, Offering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -165,7 +165,8 @@ impl DetectionOrchestrator {
                 if let garden_common::manifests::DetectionConfig::ContainerInspect(ref config) =
                     rule.config
                 {
-                    self.detector.detect_by_container_inspect(config)
+                    self.detector
+                        .detect_by_container_inspect(config)
                         .await
                         .context("Container inspection failed")
                 } else {

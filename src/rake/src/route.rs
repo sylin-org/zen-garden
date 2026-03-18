@@ -1,4 +1,4 @@
-﻿//! Command routing — thin dispatch layer
+//! Command routing — thin dispatch layer
 //!
 //! `route()` receives a subcommand name and its ArgMatches, extracts arguments,
 //! constructs the appropriate Command struct, and returns a `CommandInvocation`.
@@ -662,9 +662,7 @@ async fn route_offer(
                 commands::offering::OfferCommand::placement_recommend(name.to_string(), is_quiet),
             )));
         }
-        anyhow::bail!(
-            "Usage: garden-rake offer <offering> --placement-mode <interactive|auto>"
-        );
+        anyhow::bail!("Usage: garden-rake offer <offering> --placement-mode <interactive|auto>");
     }
 
     // ── --at anywhere ──
@@ -686,18 +684,14 @@ async fn route_offer(
     let cmd = match (offering.as_deref(), has_info_sub) {
         (None, _) => commands::offering::OfferCommand::list(g.quiet),
         (Some("refresh"), _) => commands::offering::OfferCommand::refresh(g.quiet),
-        (Some(name), true) => {
-            commands::offering::OfferCommand::info(name.to_string(), g.quiet)
-        }
+        (Some(name), true) => commands::offering::OfferCommand::info(name.to_string(), g.quiet),
         (Some(name), false) => {
             // Is it a known offering? Need pre-resolved endpoint to check.
             let endpoint =
-                dispatch::resolve_endpoint(&rt.client, at.clone(), Some(&*STONE))
-                    .await?;
-            let is_known = commands::offering::OfferCommand::is_known_offering(
-                &rt.client, &endpoint, name,
-            )
-            .await;
+                dispatch::resolve_endpoint(&rt.client, at.clone(), Some(&*STONE)).await?;
+            let is_known =
+                commands::offering::OfferCommand::is_known_offering(&rt.client, &endpoint, name)
+                    .await;
 
             if !is_known {
                 // Query — execute directly with pre-resolved endpoint
@@ -815,9 +809,7 @@ fn route_restore(
     if source_str.contains("seed-bank") || source_str.contains("seedbank") {
         let seed_bank = source_words
             .iter()
-            .skip_while(|s| {
-                s.to_lowercase() != "seed-bank" && s.to_lowercase() != "seedbank"
-            })
+            .skip_while(|s| s.to_lowercase() != "seed-bank" && s.to_lowercase() != "seedbank")
             .nth(1)
             .cloned()
             .ok_or_else(|| {
@@ -827,7 +819,9 @@ fn route_restore(
                 )
             })?;
         Ok(Some(Inv::remote(
-            commands::nurturing::RestoreRemoteCommand::new(offering, seed_bank, harvest_id, dry_run),
+            commands::nurturing::RestoreRemoteCommand::new(
+                offering, seed_bank, harvest_id, dry_run,
+            ),
             m,
         )))
     } else {
@@ -937,10 +931,7 @@ async fn refresh_component(
     let encoded = base64::engine::general_purpose::STANDARD.encode(&binary_data);
 
     println!("\u{1f680} Uploading to stone...");
-    let url = format!(
-        "{}/api/v1/system/refresh",
-        endpoint.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/system/refresh", endpoint.trim_end_matches('/'));
     let response = client
         .post(&url)
         .json(&serde_json::json!({
@@ -1015,9 +1006,7 @@ async fn refresh_component(
             }
         }
 
-        println!(
-            "\n\u{26a0}\u{fe0f}  Moss did not respond after restart (this may be normal)"
-        );
+        println!("\n\u{26a0}\u{fe0f}  Moss did not respond after restart (this may be normal)");
         println!("   Check garden-moss status: systemctl status garden-moss.service");
     }
 

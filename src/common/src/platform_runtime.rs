@@ -6,7 +6,9 @@
 //!
 //! No `#[cfg]` above the injection point in `bootstrap/run.rs`.
 
-use crate::console::{ribbon_art, BootBannerInfo, ShutdownBannerInfo, UpdateBannerInfo, RIBBON_DIVIDER};
+use crate::console::{
+    ribbon_art, BootBannerInfo, ShutdownBannerInfo, UpdateBannerInfo, RIBBON_DIVIDER,
+};
 
 /// Cross-cutting platform concerns: console output and system lifecycle signals.
 ///
@@ -53,7 +55,11 @@ pub trait PlatformRuntime: Send + Sync {
         let width = 40usize;
         let content_len = title.len().min(width.saturating_sub(4));
         let padding = (width - 2 - content_len) / 2;
-        let extra = if (width - 2 - content_len) % 2 == 1 { 1 } else { 0 };
+        let extra = if (width - 2 - content_len) % 2 == 1 {
+            1
+        } else {
+            0
+        };
         self.write_line("");
         self.write_line(&format!("╔{}╗", "═".repeat(width - 2)));
         self.write_line(&format!(
@@ -89,7 +95,13 @@ pub trait PlatformRuntime: Send + Sync {
     // ---- Storage ribbons ----
 
     /// Storage bank connected and live.
-    fn print_storage_connected(&self, name: &str, roles: &[String], used_bytes: u64, capacity_bytes: u64) {
+    fn print_storage_connected(
+        &self,
+        name: &str,
+        roles: &[String],
+        used_bytes: u64,
+        capacity_bytes: u64,
+    ) {
         let used = crate::utils::format_bytes(used_bytes);
         let capacity = crate::utils::format_bytes(capacity_bytes);
         let pct = if capacity_bytes > 0 {
@@ -103,10 +115,18 @@ pub trait PlatformRuntime: Send + Sync {
             roles.join(", ")
         };
         self.print_ribbon(&[
-            &format!("{}🌱  ✓       {} connected", ribbon_art::USB_TOP_ACTIVE, name),
+            &format!(
+                "{}🌱  ✓       {} connected",
+                ribbon_art::USB_TOP_ACTIVE,
+                name
+            ),
             &format!(
                 "{}            {}, {}/{} used{}",
-                ribbon_art::USB_BODY_ACTIVE, role_display, used, capacity, pct
+                ribbon_art::USB_BODY_ACTIVE,
+                role_display,
+                used,
+                capacity,
+                pct
             ),
         ]);
     }
@@ -125,7 +145,12 @@ pub trait PlatformRuntime: Send + Sync {
     fn print_boot_banner(&self, info: &BootBannerInfo) {
         let symbol = boot_symbol();
         self.print_ribbon(&[
-            &format!("{}{:9} Stone: {}", ribbon_art::CAT_HEAD, symbol, info.stone_name),
+            &format!(
+                "{}{:9} Stone: {}",
+                ribbon_art::CAT_HEAD,
+                symbol,
+                info.stone_name
+            ),
             &format!("{}          This stone awakens!", ribbon_art::CAT_WAKING),
         ]);
     }
@@ -150,9 +175,14 @@ pub trait PlatformRuntime: Send + Sync {
         self.print_ribbon(&[
             &format!(
                 "{}UPDATING  Stone: {}{}",
-                ribbon_art::CAT_HEAD, info.stone_name, version_msg
+                ribbon_art::CAT_HEAD,
+                info.stone_name,
+                version_msg
             ),
-            &format!("{}          This stone transforms...", ribbon_art::CAT_UPDATING),
+            &format!(
+                "{}          This stone transforms...",
+                ribbon_art::CAT_UPDATING
+            ),
         ]);
     }
 }

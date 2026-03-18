@@ -63,10 +63,7 @@ impl StoragePlatform for OsPlatform {
         platform::probe_device_state(device_path, mount_path)
     }
 
-    async fn probe_device_manifest(
-        &self,
-        device: &str,
-    ) -> Result<Option<StorageManifest>> {
+    async fn probe_device_manifest(&self, device: &str) -> Result<Option<StorageManifest>> {
         platform::probe_device_manifest(device).await
     }
 

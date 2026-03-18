@@ -153,8 +153,7 @@ pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
     // Uses immediate send (bypass debounce) — this is time-critical.
     let mut last_err = None;
     for attempt in 1..=3 {
-        match p2p::send_announcement_immediate(announcement_types::STONE_GOODBYE, &goodbye).await
-        {
+        match p2p::send_announcement_immediate(announcement_types::STONE_GOODBYE, &goodbye).await {
             Ok(()) => {
                 tracing::debug!(attempt, "Goodbye announcement sent");
             }

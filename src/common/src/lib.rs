@@ -23,15 +23,15 @@ pub mod nourishment;
 pub mod nurturing;
 pub mod offerings;
 pub mod persistence;
+pub mod platform_runtime;
 pub mod presence;
 pub mod responses;
-pub mod storage;
 pub mod stone;
+pub mod storage;
 pub mod templates;
 pub mod tools;
 pub mod traits;
 pub mod types;
-pub mod platform_runtime;
 pub mod utils;
 
 pub use platform_runtime::PlatformRuntime;
@@ -50,41 +50,103 @@ pub use utils::{format_bytes, format_uptime};
 
 // Types — explicit high-frequency re-exports (was: pub use types::*)
 pub use types::{
-    // Service
-    ServiceStatus, ServiceInfo, ServiceHealthStatus, Ports, SubCapability,
-    CapabilityItem, CapabilityCollection, CapabilityDisplay,
-    // Offering
-    Offering, OfferingStatus, OfferingMode, OfferingModeData, OfferingLocation,
-    ManagedData, AdoptedData, BorrowedData, ConfigPatch,
-    AdoptedControlLevel, HealthMethod,
-    OfferingGuidance, GuidanceFrontmatter, GuidanceTrigger,
-    // Orchestration
-    CoordinationMode, OfferingRole, OrchestrationState,
-    // Hardware
-    HardwareCapabilities, HardwareInventory, StoneResources, ContainerResources,
-    GpuInfo, DetectionStatus, NetworkMetrics, DiskType, StorageMetrics,
-    CpuCapabilities, MemoryCapabilities, DiskCapabilities,
-    MetricsSnapshot, CpuMetrics, MemoryMetrics, DiskMetrics, InterfaceMetrics,
-    AiRuntime, AiCapabilitiesSummary, RuntimeInfo,
-    // Discovery
-    DiscoveryRequest, DiscoveryResponse, UdpAnnouncement,
-    TopologyServiceEntry, StoneStatus, GatewayRegistration, StoneGoodbyePayload,
-    // Health
-    DaemonHealthStatus, HealthCheck, ComponentHealth,
-    // Compatibility
-    CompatibilityRules, CompatibilityRule, RuleCondition, FallbackConfig,
-    PostInstallHealthcheck, HealthcheckPattern,
-    // Pond
-    PondConfig, KeystoneRequest, StoneInviteRequest, StoneInviteResponse, PlaceStoneRequest,
-    // Lantern
-    RegisterRequest, RegisterServiceInfo, RegisterResponse,
-    ResolveRequest, ResolveResponse, ResolveServiceInfo,
-    LanternTopology, LanternStoneState, LanternServiceState, GardenEvent,
-    // Ports catalog
-    WellKnownPortsCatalog, WellKnownPort, PortConflictHandler, PortRemediation, RemediationFile,
-    // Task
-    TaskCategory, TaskDefinition, ScheduledTask, TaskResult,
+    AdoptedControlLevel,
+    AdoptedData,
+    AiCapabilitiesSummary,
+    AiRuntime,
     // Error
-    ApiError, ErrorDetails,
+    ApiError,
+    BorrowedData,
+    CapabilityCollection,
+    CapabilityDisplay,
+    CapabilityItem,
+    CompatibilityRule,
+    // Compatibility
+    CompatibilityRules,
+    ComponentHealth,
+    ConfigPatch,
+    ContainerResources,
+    // Orchestration
+    CoordinationMode,
+    CpuCapabilities,
+    CpuMetrics,
+    // Health
+    DaemonHealthStatus,
+    DetectionStatus,
+    // Discovery
+    DiscoveryRequest,
+    DiscoveryResponse,
+    DiskCapabilities,
+    DiskMetrics,
+    DiskType,
+    ErrorDetails,
+    FallbackConfig,
+    GardenEvent,
+    GatewayRegistration,
+    GpuInfo,
+    GuidanceFrontmatter,
+    GuidanceTrigger,
+    // Hardware
+    HardwareCapabilities,
+    HardwareInventory,
+    HealthCheck,
+    HealthMethod,
+    HealthcheckPattern,
+    InterfaceMetrics,
+    KeystoneRequest,
+    LanternServiceState,
+    LanternStoneState,
+    LanternTopology,
+    ManagedData,
+    MemoryCapabilities,
+    MemoryMetrics,
+    MetricsSnapshot,
+    NetworkMetrics,
+    // Offering
+    Offering,
+    OfferingGuidance,
+    OfferingLocation,
+    OfferingMode,
+    OfferingModeData,
+    OfferingRole,
+    OfferingStatus,
+    OrchestrationState,
+    PlaceStoneRequest,
+    // Pond
+    PondConfig,
+    PortConflictHandler,
+    PortRemediation,
+    Ports,
+    PostInstallHealthcheck,
+    // Lantern
+    RegisterRequest,
+    RegisterResponse,
+    RegisterServiceInfo,
+    RemediationFile,
+    ResolveRequest,
+    ResolveResponse,
+    ResolveServiceInfo,
+    RuleCondition,
+    RuntimeInfo,
+    ScheduledTask,
+    ServiceHealthStatus,
+    ServiceInfo,
+    // Service
+    ServiceStatus,
+    StoneGoodbyePayload,
+    StoneInviteRequest,
+    StoneInviteResponse,
+    StoneResources,
+    StoneStatus,
+    StorageMetrics,
+    SubCapability,
+    // Task
+    TaskCategory,
+    TaskDefinition,
+    TaskResult,
+    TopologyServiceEntry,
+    UdpAnnouncement,
+    WellKnownPort,
+    // Ports catalog
+    WellKnownPortsCatalog,
 };
-

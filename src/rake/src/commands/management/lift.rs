@@ -7,8 +7,8 @@
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 
 /// Lift target type
 pub enum LiftTarget {
@@ -119,11 +119,7 @@ async fn execute_lift_keystone(ctx: &Runtime, endpoint: &str) -> anyhow::Result<
     Ok(())
 }
 
-async fn execute_lift_stone(
-    ctx: &Runtime,
-    endpoint: &str,
-    stone_name: &str,
-) -> anyhow::Result<()> {
+async fn execute_lift_stone(ctx: &Runtime, endpoint: &str, stone_name: &str) -> anyhow::Result<()> {
     let url = format!(
         "{}/api/v1/pond/stones/{}",
         endpoint.trim_end_matches('/'),

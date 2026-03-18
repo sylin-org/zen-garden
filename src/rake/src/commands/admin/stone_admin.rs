@@ -8,8 +8,8 @@
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 use std::time::Duration;
 
 // ============================================================================
@@ -25,10 +25,7 @@ pub struct RouseCommand {
 
 impl RouseCommand {
     pub fn new(stone_name: String, quiet: bool) -> Self {
-        Self {
-            stone_name,
-            quiet,
-        }
+        Self { stone_name, quiet }
     }
 }
 

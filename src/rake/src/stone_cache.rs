@@ -81,4 +81,3 @@ pub async fn fetch_and_cache_stone(
         last_seen: std::time::Instant::now(),
     })
 }
-

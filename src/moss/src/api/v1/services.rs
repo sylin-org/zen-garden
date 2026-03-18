@@ -13,8 +13,7 @@ use garden_common::{
         is_suspicious, sanitize_fqn_input, sanitize_query, sanitize_tag, ApiErrorResponse,
     },
     offerings::OfferingFqn,
-    Offering, OfferingStatus, Ports,
-    ServiceInfo, ServiceStatus,
+    Offering, OfferingStatus, Ports, ServiceInfo, ServiceStatus,
 };
 
 /// Convert Offering to ServiceInfo for API responses
@@ -46,9 +45,7 @@ fn offering_to_service_info(o: &Offering) -> ServiceInfo {
             .or_else(|| o.adopted_data().and_then(|a| a.guidance.clone())),
         customized_by: o
             .managed_data()
-            .map(|m| {
-                crate::domain::config_compose::patch_owners(&m.config_patches)
-            })
+            .map(|m| crate::domain::config_compose::patch_owners(&m.config_patches))
             .unwrap_or_default(),
     }
 }
@@ -255,11 +252,17 @@ pub async fn create_service_v1(
     let suggestions = generate_suggestions(&ctx);
 
     let response = match outcome {
-        InstallOutcome::ImageDirectStarted { service_name, job_id } => ServiceActionResponse {
+        InstallOutcome::ImageDirectStarted {
+            service_name,
+            job_id,
+        } => ServiceActionResponse {
             service: service_name,
             action: "create".to_string(),
             status: "accepted".to_string(),
-            message: format!("Image-direct installation started, check /api/jobs/{} for status", job_id),
+            message: format!(
+                "Image-direct installation started, check /api/jobs/{} for status",
+                job_id
+            ),
         },
         InstallOutcome::Adopted { service_name } => ServiceActionResponse {
             service: service_name,
@@ -267,11 +270,17 @@ pub async fn create_service_v1(
             status: "adopted".to_string(),
             message: "Existing container adopted into registry".to_string(),
         },
-        InstallOutcome::InstallStarted { service_name, job_id } => ServiceActionResponse {
+        InstallOutcome::InstallStarted {
+            service_name,
+            job_id,
+        } => ServiceActionResponse {
             service: service_name,
             action: "create".to_string(),
             status: "accepted".to_string(),
-            message: format!("Installation started, check /api/jobs/{} for status", job_id),
+            message: format!(
+                "Installation started, check /api/jobs/{} for status",
+                job_id
+            ),
         },
         InstallOutcome::Maintenance { service_name } => ServiceActionResponse {
             service: service_name,
@@ -301,12 +310,15 @@ pub async fn rest_service_v1(
 
     let ctx = Suggestion::from_headers(&headers, "rest_service");
     let suggestions = generate_suggestions(&ctx);
-    crate::api::ok_maybe(ServiceActionResponse {
-        service: service_name,
-        action: "rest".to_string(),
-        status: "stopped".to_string(),
-        message: "Service stopped successfully".to_string(),
-    }, suggestions)
+    crate::api::ok_maybe(
+        ServiceActionResponse {
+            service: service_name,
+            action: "rest".to_string(),
+            status: "stopped".to_string(),
+            message: "Service stopped successfully".to_string(),
+        },
+        suggestions,
+    )
 }
 
 /// POST /api/v1/services/:service/wake - Wake (start) service
@@ -323,12 +335,15 @@ pub async fn wake_service_v1(
 
     let ctx = Suggestion::from_headers(&headers, "wake_service");
     let suggestions = generate_suggestions(&ctx);
-    crate::api::ok_maybe(ServiceActionResponse {
-        service: service_name,
-        action: "wake".to_string(),
-        status: "running".to_string(),
-        message: "Service started successfully".to_string(),
-    }, suggestions)
+    crate::api::ok_maybe(
+        ServiceActionResponse {
+            service: service_name,
+            action: "wake".to_string(),
+            status: "running".to_string(),
+            message: "Service started successfully".to_string(),
+        },
+        suggestions,
+    )
 }
 
 /// POST /api/v1/services/:service/nourish - Nourish (upgrade) service
@@ -370,10 +385,12 @@ pub async fn nourish_service_v1(
     };
 
     // Mark as Maintenance via gateway (syncs self_entry)
-    state.update_offering(&offering_id, true, |o| {
-        o.status = OfferingStatus::Maintenance;
-        true
-    }).await;
+    state
+        .update_offering(&offering_id, true, |o| {
+            o.status = OfferingStatus::Maintenance;
+            true
+        })
+        .await;
 
     // Load template for upgrade
     let entry = state.manifest_registry.sw.get(&offering).ok_or_else(|| {
@@ -387,10 +404,12 @@ pub async fn nourish_service_v1(
         let recovery_state = state.clone();
         let recovery_id = offering_id.clone();
         tokio::spawn(async move {
-            recovery_state.update_offering(&recovery_id, true, |o| {
-                o.status = OfferingStatus::Running;
-                true
-            }).await;
+            recovery_state
+                .update_offering(&recovery_id, true, |o| {
+                    o.status = OfferingStatus::Running;
+                    true
+                })
+                .await;
         });
         internal(
             "TEMPLATE_LOAD_FAILED",
@@ -409,16 +428,19 @@ pub async fn nourish_service_v1(
         config_files: template.config_files,
     };
     if let Err(e) = state
-        .platform.docker
+        .platform
+        .docker
         .upgrade_service(&service_name, &spec, Some(&state.console))
         .await
     {
         tracing::error!(error = ?e, service = %service_name, "Docker upgrade failed");
         // Restore status via gateway (syncs self_entry)
-        state.update_offering(&offering_id, true, |o| {
-            o.status = OfferingStatus::Running;
-            true
-        }).await;
+        state
+            .update_offering(&offering_id, true, |o| {
+                o.status = OfferingStatus::Running;
+                true
+            })
+            .await;
         return Err(internal(
             "UPGRADE_FAILED",
             format!("Failed to upgrade: {}", e),
@@ -435,11 +457,13 @@ pub async fn nourish_service_v1(
 
     // Update status and version via gateway (syncs self_entry + persists)
     let nv = new_version.clone();
-    state.update_offering(&offering_id, true, |o| {
-        o.status = OfferingStatus::Running;
-        o.version = nv;
-        true
-    }).await;
+    state
+        .update_offering(&offering_id, true, |o| {
+            o.status = OfferingStatus::Running;
+            o.version = nv;
+            true
+        })
+        .await;
 
     // Emit offering lifecycle event (old_image reconstructed from old_version)
     let old_image = format!(
@@ -485,13 +509,16 @@ pub async fn delete_service_v1(
 
     let ctx = Suggestion::from_headers(&headers, "delete_service");
     let suggestions = generate_suggestions(&ctx);
-    crate::api::ok_maybe(ServiceActionResponse {
-        service: service_name,
-        action: "delete".to_string(),
-        status: "removed".to_string(),
-        message: "Service removed (container stopped and removed, volumes preserved)"
-            .to_string(),
-    }, suggestions)
+    crate::api::ok_maybe(
+        ServiceActionResponse {
+            service: service_name,
+            action: "delete".to_string(),
+            status: "removed".to_string(),
+            message: "Service removed (container stopped and removed, volumes preserved)"
+                .to_string(),
+        },
+        suggestions,
+    )
 }
 
 /// POST /api/v1/services/:service/destroy - Hard delete (uproot: remove from registry AND destroy container)
@@ -508,12 +535,15 @@ pub async fn destroy_service_v1(
 
     let ctx = Suggestion::from_headers(&headers, "destroy_service");
     let suggestions = generate_suggestions(&ctx);
-    crate::api::ok_maybe(ServiceActionResponse {
-        service: service_name,
-        action: "destroy".to_string(),
-        status: "uprooted".to_string(),
-        message: "Service destroyed (container removed)".to_string(),
-    }, suggestions)
+    crate::api::ok_maybe(
+        ServiceActionResponse {
+            service: service_name,
+            action: "destroy".to_string(),
+            status: "uprooted".to_string(),
+            message: "Service destroyed (container removed)".to_string(),
+        },
+        suggestions,
+    )
 }
 
 // ============================================================================
@@ -616,7 +646,10 @@ pub async fn get_service_env_v1(
     // Check if service exists in registry
     let offering = {
         let offerings = state.offerings.read().await;
-        offerings.iter().find(|o| o.name.to_string() == service_name).cloned()
+        offerings
+            .iter()
+            .find(|o| o.name.to_string() == service_name)
+            .cloned()
     };
 
     let offering = offering.ok_or_else(|| {
@@ -629,13 +662,16 @@ pub async fn get_service_env_v1(
     // Look up manageable_env from the manifest
     let manifest_offering = state.manifest_registry.sw.get(&service_name);
     let manageable = manifest_offering.and_then(|o| o.manageable_env.as_ref());
-    let manageable_vars: Vec<String> = manageable
-        .map(|m| m.vars.clone())
-        .unwrap_or_default();
+    let manageable_vars: Vec<String> = manageable.map(|m| m.vars.clone()).unwrap_or_default();
 
     // For Docker-managed containers, inspect to get env vars
     if offering.is_managed() {
-        match state.platform.docker.inspect_container_spec(&service_name).await {
+        match state
+            .platform
+            .docker
+            .inspect_container_spec(&service_name)
+            .await
+        {
             Ok(spec) => {
                 let env_map: std::collections::HashMap<String, String> = spec
                     .environment
@@ -660,7 +696,8 @@ pub async fn get_service_env_v1(
         let svc_name = manageable
             .and_then(|m| m.service_name.clone())
             .unwrap_or_else(|| service_name.clone());
-        let env_map = crate::infra::platform::service_env::read_env(&svc_name, &manageable_vars).await;
+        let env_map =
+            crate::infra::platform::service_env::read_env(&svc_name, &manageable_vars).await;
         Ok(Json(serde_json::json!({
             "data": env_map,
             "manageable": manageable_vars,
@@ -697,12 +734,16 @@ pub async fn patch_service_env_v1(
     let manageable = manageable.ok_or_else(|| {
         bad_request(
             "NO_MANAGEABLE_ENV",
-            format!("Service '{}' has no manageable environment variables declared", service_name),
+            format!(
+                "Service '{}' has no manageable environment variables declared",
+                service_name
+            ),
         )
     })?;
 
     // Validate all keys against the allowlist
-    let allowed: std::collections::HashSet<&str> = manageable.vars.iter().map(|s| s.as_str()).collect();
+    let allowed: std::collections::HashSet<&str> =
+        manageable.vars.iter().map(|s| s.as_str()).collect();
     let rejected: Vec<&str> = body
         .keys()
         .filter(|k| !allowed.contains(k.as_str()))
@@ -924,10 +965,12 @@ pub async fn discover_service_capabilities_v1(
     // Update the offering in registry with discovered capabilities via gateway
     if !capabilities.is_empty() {
         let caps = capabilities.clone();
-        state.update_offering_by_name(&service_name, false, |o| {
-            o.sub_capabilities = caps;
-            false // sub_capabilities are detail-only, don't trigger chirp sync
-        }).await;
+        state
+            .update_offering_by_name(&service_name, false, |o| {
+                o.sub_capabilities = caps;
+                false // sub_capabilities are detail-only, don't trigger chirp sync
+            })
+            .await;
     }
 
     Ok(Json(ApiResponse {
@@ -1001,16 +1044,21 @@ pub async fn refresh_all_capabilities_v1(
 
     // Persist updated capabilities via gateway (detail-only, no chirp sync)
     if !updates.is_empty() {
-        state.update_offerings_batch(|offerings| {
-            let mut count = 0;
-            for (name, sub_caps) in updates {
-                if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
-                    o.sub_capabilities = sub_caps;
-                    count += 1;
-                }
-            }
-            count
-        }, false).await;
+        state
+            .update_offerings_batch(
+                |offerings| {
+                    let mut count = 0;
+                    for (name, sub_caps) in updates {
+                        if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
+                            o.sub_capabilities = sub_caps;
+                            count += 1;
+                        }
+                    }
+                    count
+                },
+                false,
+            )
+            .await;
     }
 
     Ok((
@@ -1037,10 +1085,7 @@ fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<Api
 ///
 /// Uses `not_found` when the error message contains "not found",
 /// otherwise `internal`.
-fn lifecycle_error(
-    code: &str,
-    err: &anyhow::Error,
-) -> (StatusCode, Json<ApiErrorResponse>) {
+fn lifecycle_error(code: &str, err: &anyhow::Error) -> (StatusCode, Json<ApiErrorResponse>) {
     let msg = format!("{}", err);
     if msg.contains("not found") {
         not_found("SERVICE_NOT_FOUND", msg)
@@ -1114,7 +1159,8 @@ pub async fn reassign_service_v1(
 
     // Step 1: Stop the container
     if let Err(e) = state
-        .platform.docker
+        .platform
+        .docker
         .stop_service(&old_name, Some(&state.console))
         .await
     {
@@ -1123,10 +1169,16 @@ pub async fn reassign_service_v1(
     }
 
     // Step 2: Rename the Docker container
-    if let Err(e) = state.platform.docker.rename_service(&old_name, &new_name).await {
+    if let Err(e) = state
+        .platform
+        .docker
+        .rename_service(&old_name, &new_name)
+        .await
+    {
         // Try to restart the old container on failure
         let _ = state
-            .platform.docker
+            .platform
+            .docker
             .start_service(&old_name, Some(&state.console))
             .await;
         return Err(internal(
@@ -1145,7 +1197,8 @@ pub async fn reassign_service_v1(
 
     // Step 4: Start the container with its new name
     if let Err(e) = state
-        .platform.docker
+        .platform
+        .docker
         .start_service(&new_name, Some(&state.console))
         .await
     {

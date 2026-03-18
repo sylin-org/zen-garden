@@ -242,7 +242,10 @@ fn extract_last_event_id(headers: &HeaderMap) -> Option<&str> {
     headers.get("last-event-id").and_then(|h| h.to_str().ok())
 }
 
-fn parse_resume_cursor(last_event_id: &str, reg: &crate::domain::garden_registry::GardenRegistryInner) -> u64 {
+fn parse_resume_cursor(
+    last_event_id: &str,
+    reg: &crate::domain::garden_registry::GardenRegistryInner,
+) -> u64 {
     if let Ok(parsed) = last_event_id.trim().parse::<u64>() {
         return parsed;
     }

@@ -80,12 +80,14 @@ pub async fn list_offerings_v1(
         for offering in offerings_guard.iter() {
             let name_str = offering.name.to_string();
             let image = state
-                .platform.docker
+                .platform
+                .docker
                 .get_service_image(&name_str)
                 .await
                 .unwrap_or_else(|_| "<unknown>".to_string());
             let uptime = state
-                .platform.docker
+                .platform
+                .docker
                 .get_service_uptime(&name_str)
                 .await
                 .ok()
@@ -139,7 +141,10 @@ pub async fn list_offerings_v1(
 
     Ok((
         StatusCode::OK,
-        Json(ApiResponse { data: offerings, suggestions }),
+        Json(ApiResponse {
+            data: offerings,
+            suggestions,
+        }),
     ))
 }
 
@@ -163,7 +168,10 @@ pub async fn get_offering_v1(
 
     // Check if installed
     let offerings_guard = state.offerings.read().await;
-    if let Some(offering) = offerings_guard.iter().find(|o| o.name.fqn() == service_name) {
+    if let Some(offering) = offerings_guard
+        .iter()
+        .find(|o| o.name.fqn() == service_name)
+    {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse::new(serde_json::json!({
@@ -178,12 +186,9 @@ pub async fn get_offering_v1(
 
     // Check if available
     let idx_guard = state.offerings_index.read().await;
-    let offerings_index = idx_guard.as_ref().ok_or_else(|| {
-        unavailable(
-            "INDEX_UNAVAILABLE",
-            "Offerings catalog not yet loaded",
-        )
-    })?;
+    let offerings_index = idx_guard
+        .as_ref()
+        .ok_or_else(|| unavailable("INDEX_UNAVAILABLE", "Offerings catalog not yet loaded"))?;
 
     if let Some(offering) = offerings_index
         .offerings
@@ -521,12 +526,9 @@ pub async fn search_offerings_v1(
 
     // Get offerings from index
     let idx_guard = state.offerings_index.read().await;
-    let offerings_index = idx_guard.as_ref().ok_or_else(|| {
-        unavailable(
-            "INDEX_UNAVAILABLE",
-            "Offerings catalog not yet loaded",
-        )
-    })?;
+    let offerings_index = idx_guard
+        .as_ref()
+        .ok_or_else(|| unavailable("INDEX_UNAVAILABLE", "Offerings catalog not yet loaded"))?;
 
     let total_offerings = offerings_index.offerings.len();
 
@@ -695,11 +697,18 @@ pub async fn test_manifest_v1(
         .collect();
 
     if !errors.is_empty() {
-        let error_msgs: Vec<String> = errors.iter().map(|e| format!("[{}] {}", e.code, e.message)).collect();
+        let error_msgs: Vec<String> = errors
+            .iter()
+            .map(|e| format!("[{}] {}", e.code, e.message))
+            .collect();
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "MANIFEST_VALIDATION_FAILED",
-            format!("Manifest has {} error(s): {}", errors.len(), error_msgs.join("; ")),
+            format!(
+                "Manifest has {} error(s): {}",
+                errors.len(),
+                error_msgs.join("; ")
+            ),
             Some({
                 let mut details = HashMap::new();
                 details.insert(
@@ -719,10 +728,17 @@ pub async fn test_manifest_v1(
             .filter(|f| f.severity == validation::Severity::Error)
             .collect();
         if !fm_errors.is_empty() {
-            let error_msgs: Vec<String> = fm_errors.iter().map(|e| format!("[{}] {}", e.code, e.message)).collect();
+            let error_msgs: Vec<String> = fm_errors
+                .iter()
+                .map(|e| format!("[{}] {}", e.code, e.message))
+                .collect();
             return Err(bad_request(
                 "MANIFEST_VALIDATION_FAILED",
-                format!("Frontmatter has {} error(s): {}", fm_errors.len(), error_msgs.join("; ")),
+                format!(
+                    "Frontmatter has {} error(s): {}",
+                    fm_errors.len(),
+                    error_msgs.join("; ")
+                ),
             ));
         }
     }
@@ -759,9 +775,7 @@ pub async fn test_manifest_v1(
     // Deploy via image-direct using the existing create pipeline.
     // The image-direct path handles container creation, port mapping, etc.
     let fqn_str = format!("image:{}", image_ref);
-    let create_req = crate::api::responses::CreateServiceRequest {
-        offering: fqn_str,
-    };
+    let create_req = crate::api::responses::CreateServiceRequest { offering: fqn_str };
 
     let result = crate::api::v1::services::create_service_v1(
         axum::extract::State(state.clone()),
@@ -849,7 +863,9 @@ pub async fn export_offering_manifest_v1(
     if let Some(offering_entry) = running {
         // If it's an image-direct offering, use the image ref to inspect
         if let Some(image_ref) = &offering_entry.name.image_ref {
-            match crate::infra::image_inspect::inspect_image(&state.platform.docker, image_ref).await {
+            match crate::infra::image_inspect::inspect_image(&state.platform.docker, image_ref)
+                .await
+            {
                 Ok(inspection) => {
                     let inspection_json = serde_json::to_value(&inspection).unwrap_or_default();
                     match garden_common::manifests::generate::generate_from_inspection(
@@ -887,7 +903,10 @@ pub async fn export_offering_manifest_v1(
     Err(error_response(
         StatusCode::NOT_FOUND,
         garden_common::constants::TEMPLATE_NOT_FOUND,
-        format!("Offering '{}' not found in registry or running services", name),
+        format!(
+            "Offering '{}' not found in registry or running services",
+            name
+        ),
         Some(details),
     ))
 }

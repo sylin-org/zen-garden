@@ -6,9 +6,9 @@ pub mod pond;
 pub use ceremony::Ceremony;
 pub use pond::Pond;
 
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use crate::domain::traits::PondClient;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 /// Security domain context (`state.security`).
 #[derive(Clone)]

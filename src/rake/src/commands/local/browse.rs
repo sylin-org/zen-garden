@@ -8,8 +8,8 @@ use crate::commands::help::{
 };
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 
 /// Browse commands in the manifest
 pub struct BrowseCommand {

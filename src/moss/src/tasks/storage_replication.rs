@@ -140,14 +140,7 @@ async fn replication_tick(state: &AppState) -> Result<()> {
     }
 
     for (name, id, mount_path) in &dormant_banks {
-        if let Err(e) = sync_dormant_bank(
-            state,
-            name,
-            id,
-            mount_path.as_path(),
-        )
-        .await
-        {
+        if let Err(e) = sync_dormant_bank(state, name, id, mount_path.as_path()).await {
             warn!(
                 bank = %name,
                 bank_id = %id,
@@ -201,7 +194,8 @@ async fn sync_dormant_bank(
     );
 
     let resp = state
-        .security.stone_client
+        .security
+        .stone_client
         .get(&peer, &changes_path)
         .timeout(std::time::Duration::from_secs(PULL_TIMEOUT_SECS))
         .send()
@@ -277,10 +271,7 @@ async fn sync_dormant_bank(
                     }
                 };
 
-                let object_path = format!(
-                    "/api/v1/garden/storage/{}/objects/{}",
-                    name, api_path
-                );
+                let object_path = format!("/api/v1/garden/storage/{}/objects/{}", name, api_path);
 
                 match download_and_write(state, &peer, &object_path, &local_store, &entry.path)
                     .await
@@ -355,7 +346,8 @@ async fn download_and_write(
     rel_path: &str,
 ) -> Result<()> {
     let resp = state
-        .security.stone_client
+        .security
+        .stone_client
         .get(peer, remote_path)
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .send()

@@ -118,9 +118,7 @@ pub async fn get_object_v1(
                     .body(data.into())
                     .unwrap()
             }
-            Ok(None) => {
-                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
-            }
+            Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found"),
             Err(e) => error_response_raw(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "GET_FAILED",
@@ -176,10 +174,13 @@ pub async fn put_object_v1(
         stone_id: &state.current.stone.id,
         tick: Some(state.orchestration.storage.tick.raw.clone()),
     };
-    let handle = resolver
-        .for_write(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
@@ -287,10 +288,13 @@ pub async fn delete_object_v1(
         stone_id: &state.current.stone.id,
         tick: Some(state.orchestration.storage.tick.raw.clone()),
     };
-    let handle = resolver
-        .for_write(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
@@ -421,9 +425,7 @@ pub async fn head_object_v1(
                 .header(header::LAST_MODIFIED, &meta.last_modified)
                 .body("".into())
                 .unwrap(),
-            Ok(None) => {
-                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
-            }
+            Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found"),
             Err(e) => error_response_raw(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "HEAD_FAILED",

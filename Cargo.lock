@@ -921,6 +921,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "curve25519-dalek"
+version = "4.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "curve25519-dalek-derive",
+ "fiat-crypto",
+ "rustc_version",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1265,6 +1291,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiat-crypto"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
 name = "filetime"
 version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1584,6 +1616,7 @@ dependencies = [
  "dashmap",
  "dav-server",
  "embed-resource",
+ "flate2",
  "futures-util",
  "garden-build-utils",
  "garden-common",
@@ -1613,6 +1646,7 @@ dependencies = [
  "sha2",
  "socket2 0.5.10",
  "sysinfo",
+ "tar",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -1922,6 +1956,15 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
 ]
 
 [[package]]
@@ -2502,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "koi-certmesh"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "axum",
  "chrono",
@@ -2524,14 +2567,16 @@ dependencies = [
  "tokio",
  "tracing",
  "utoipa",
+ "zeroize",
 ]
 
 [[package]]
 name = "koi-client"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "hickory-proto",
  "koi-common",
+ "koi-config",
  "koi-health",
  "koi-mdns",
  "serde",
@@ -2542,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "koi-common"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "async-stream",
  "axum",
@@ -2561,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "koi-config"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "koi-common",
  "serde",
@@ -2573,11 +2618,13 @@ dependencies = [
 
 [[package]]
 name = "koi-crypto"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "aes-gcm",
  "argon2",
  "base64 0.22.1",
+ "hkdf",
+ "hostname",
  "image",
  "keyring",
  "koi-common",
@@ -2593,21 +2640,20 @@ dependencies = [
  "totp-rs",
  "tracing",
  "utoipa",
+ "x25519-dalek",
  "zeroize",
 ]
 
 [[package]]
 name = "koi-dns"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "axum",
  "hickory-proto",
  "hickory-resolver",
  "hickory-server",
- "koi-certmesh",
  "koi-common",
  "koi-config",
- "koi-mdns",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -2619,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "koi-embedded"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "axum",
  "futures-util",
@@ -2653,16 +2699,11 @@ dependencies = [
 
 [[package]]
 name = "koi-health"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "axum",
  "chrono",
- "hickory-proto",
- "koi-certmesh",
  "koi-common",
- "koi-dns",
- "koi-mdns",
- "koi-proxy",
  "reqwest",
  "serde",
  "serde_json",
@@ -2675,7 +2716,7 @@ dependencies = [
 
 [[package]]
 name = "koi-mdns"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "async-stream",
  "axum",
@@ -2697,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "koi-proxy"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "axum",
  "axum-server",
@@ -2705,7 +2746,6 @@ dependencies = [
  "hostname",
  "http-body-util",
  "hyper",
- "koi-certmesh",
  "koi-common",
  "koi-config",
  "notify 6.1.1",
@@ -2725,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "koi-truststore"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "koi-common",
  "thiserror 2.0.17",
@@ -2734,7 +2774,7 @@ dependencies = [
 
 [[package]]
 name = "koi-udp"
-version = "0.2.202602280206"
+version = "0.2.202603181223"
 dependencies = [
  "async-stream",
  "axum",
@@ -4703,6 +4743,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
+name = "tar"
+version = "0.4.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d863878d212c87a19c1a610eb53bb01fe12951c0501cf5a0d65f724914a667a"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6074,6 +6125,28 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "x25519-dalek"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
+dependencies = [
+ "curve25519-dalek",
+ "rand_core 0.6.4",
+ "serde",
+ "zeroize",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix 1.1.3",
+]
 
 [[package]]
 name = "xml"

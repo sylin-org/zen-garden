@@ -11,11 +11,11 @@ use crate::context::Runtime;
 use crate::discovery;
 use crate::suggestions;
 use crate::tending;
-use async_trait::async_trait;
-use colored::Colorize;
+use crate::ui::colors::CliFormatter;
 use crate::ui::layout::{IndentLevel, Layout};
 use crate::ui::rendering as ui;
-use crate::ui::colors::CliFormatter;
+use async_trait::async_trait;
+use colored::Colorize;
 use garden_common::{GardenApiResponse, TopologyEntry};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -41,11 +41,7 @@ pub struct ObserveCommand {
 }
 
 impl ObserveCommand {
-    pub fn new(
-        stone_filter: Option<String>,
-        offering_filter: Option<String>,
-        quiet: bool,
-    ) -> Self {
+    pub fn new(stone_filter: Option<String>, offering_filter: Option<String>, quiet: bool) -> Self {
         Self {
             stone_filter,
             offering_filter,
@@ -123,11 +119,7 @@ async fn observe_garden(
         }
         layout
             .field("Fresh mode")
-            .value(if ctx.fresh {
-                "enabled"
-            } else {
-                "disabled"
-            })
+            .value(if ctx.fresh { "enabled" } else { "disabled" })
             .level(IndentLevel::Card)
             .tag("verbose")
             .print();

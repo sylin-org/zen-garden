@@ -94,14 +94,14 @@ impl TopologyServiceEntry {
     /// Convert full ServiceInfo to lightweight TopologyServiceEntry
     /// Used when syncing registry to self_entry for chirp broadcasts
     pub fn from_service_info(service: &ServiceInfo, category: Option<&str>) -> Self {
-        let name = OfferingFqn::parse(&service.name)
-            .unwrap_or_else(|_| OfferingFqn::new(&service.offering)
-                .unwrap_or_else(|_| OfferingFqn {
-                    source: None,
-                    offering: service.offering.clone(),
-                    instance: None,
-                    image_ref: None,
-                }));
+        let name = OfferingFqn::parse(&service.name).unwrap_or_else(|_| {
+            OfferingFqn::new(&service.offering).unwrap_or_else(|_| OfferingFqn {
+                source: None,
+                offering: service.offering.clone(),
+                instance: None,
+                image_ref: None,
+            })
+        });
         Self {
             offering_id: service.offering_id.clone(),
             name,

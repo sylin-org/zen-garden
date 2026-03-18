@@ -33,7 +33,8 @@ pub async fn get_capabilities(
     } else {
         // Should never happen - skeleton is created immediately at startup
         // But handle gracefully with skeleton data
-        let skeleton = crate::infra::hardware::create_skeleton(state.current.stone.name.to_string());
+        let skeleton =
+            crate::infra::hardware::create_skeleton(state.current.stone.name.to_string());
         Json(ApiResponse::new(skeleton))
     }
 }

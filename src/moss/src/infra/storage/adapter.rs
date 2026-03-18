@@ -233,7 +233,13 @@ impl StorageAdapter for NasAdapter {
                 Ok(mount_path.to_path_buf())
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("mount -t {} {} -> {} failed: {}", fs_type, source, mount_str, stderr.trim())
+                anyhow::bail!(
+                    "mount -t {} {} -> {} failed: {}",
+                    fs_type,
+                    source,
+                    mount_str,
+                    stderr.trim()
+                )
             }
         }
 

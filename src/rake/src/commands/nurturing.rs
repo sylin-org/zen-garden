@@ -480,9 +480,12 @@ impl Command for NurturingStatusCommand {
             })
             .collect();
 
-        let total_snapshots: usize = index.data.offerings.iter().map(|o| {
-            o.slot_a.is_some() as usize + o.slot_b.is_some() as usize
-        }).sum();
+        let total_snapshots: usize = index
+            .data
+            .offerings
+            .iter()
+            .map(|o| o.slot_a.is_some() as usize + o.slot_b.is_some() as usize)
+            .sum();
 
         println!(
             "  Total Snapshots: {}  |  Offerings: {}  |  Seed Banks: {} online",

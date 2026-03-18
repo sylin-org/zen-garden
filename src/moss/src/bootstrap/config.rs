@@ -187,8 +187,8 @@ pub fn init_tracing(
         .with_filter(make_filter("info"));
 
     // Layer 3: broadcast channel — always info+ (for live SSE streaming)
-    let broadcast_layer = crate::infra::log_broadcast::LogBroadcastLayer::new(log)
-        .with_filter(make_filter("info"));
+    let broadcast_layer =
+        crate::infra::log_broadcast::LogBroadcastLayer::new(log).with_filter(make_filter("info"));
 
     tracing_subscriber::registry()
         .with(stderr_layer)

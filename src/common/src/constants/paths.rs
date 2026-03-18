@@ -295,8 +295,7 @@ pub fn storage_objects_dir(mount_path: &str) -> String {
 pub fn is_internal_path(rel_path: &str) -> bool {
     let normalized = rel_path.replace('\\', "/");
     let lower = normalized.to_ascii_lowercase();
-    lower == STORAGE_DOTFOLDER
-        || lower.starts_with(&format!("{}/", STORAGE_DOTFOLDER))
+    lower == STORAGE_DOTFOLDER || lower.starts_with(&format!("{}/", STORAGE_DOTFOLDER))
 }
 
 // ========================================================================

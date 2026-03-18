@@ -151,34 +151,31 @@ A field that crosses domain boundaries in its name (e.g. `storage_orchestration_
 
 ### The `current` namespace
 
-`current` is the node's self-description — what this running instance *is* right now. It is not a domain context (it holds no operational state); it is the node's own identity and runtime environment.
+`current` is the node's self-description — what this running instance *is* right now. It is not a domain context (it holds no operational state); it is the node's own identity, network address, and runtime metrics.
 
 ```rust
 pub struct Current {
-    pub stone:       Arc<RwLock<Stone>>,  // mutable: name and host can change
-    pub environment: Environment,          // static after startup
+    pub stone:   Arc<Stone>,                // immutable: set at startup, never changes
+    pub address: Arc<RwLock<PeerAddress>>,   // mutable: IP/hostname change on DHCP renewal
+    pub health:  Arc<RwLock<String>>,        // mutable: updated by health checks
+    pub metrics: Arc<Metrics>,               // mutable: individual locks inside
+    pub storage: Arc<Storage>,               // domain context for local volumes
+    // ...
 }
 
 pub struct Stone {
     pub id:   String,   // permanent — cryptographic/install identity, never changes
-    pub name: String,   // user-assigned display name — changeable at runtime
-    pub host: String,   // network address — changes on DHCP renewal or reconnect
-}
-
-pub struct Environment {
-    pub os: OsKind,   // Linux | Windows — static after startup
+    pub name: String,   // user-assigned display name — fixed for the process lifetime
 }
 ```
 
-`stone.id` is permanent; `stone.name` and `stone.host` are mutable. The whole `Stone` is wrapped in `Arc<RwLock<>>` so updates are atomic. `Environment` needs no lock — it does not change after startup.
-
-The `current` namespace extends to any other node-level mutable state that cuts across domains:
+`Stone` is immutable after startup — both `id` and `name` are fixed for the process lifetime. The stone identity is behind `Arc<Stone>` (shared, not locked) because it never changes. Network address (`PeerAddress`) is the mutable identity, behind `Arc<RwLock<>>` because it changes on DHCP renewal.
 
 ```rust
-state.current.stone.read().id         // who am I — permanent
-state.current.stone.read().name       // my display name — may change
-state.current.stone.read().host       // my network address — may change
-state.current.environment.os          // Linux or Windows — static
+state.current.stone.id                         // who am I — permanent, no lock needed
+state.current.stone.name                       // my display name — fixed, no lock needed
+state.current.address.read().await.hostname()  // my network address — mutable, locked
+state.current.health.read().await              // current health — mutable, locked
 ```
 
 ---

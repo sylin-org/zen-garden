@@ -6,8 +6,8 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 use crate::ui::rendering as ui;
+use async_trait::async_trait;
 
 /// Adopt an existing container
 pub struct AdoptCommand {
@@ -17,10 +17,7 @@ pub struct AdoptCommand {
 
 impl AdoptCommand {
     pub fn new(container: String, quiet: bool) -> Self {
-        Self {
-            container,
-            quiet,
-        }
+        Self { container, quiet }
     }
 }
 

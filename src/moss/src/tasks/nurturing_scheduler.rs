@@ -219,7 +219,9 @@ impl NurturingScheduler {
         offering_name: &str,
     ) -> Result<NurturingResult> {
         self.state
-            .orchestration.nurturing.store
+            .orchestration
+            .nurturing
+            .store
             .create_snapshot(
                 offering_id,
                 offering_name,
@@ -332,7 +334,11 @@ impl NurturingScheduler {
                     .values()
                     .find_map(|v| {
                         let m = v.management.as_ref()?;
-                        if m.id == sb.id { Some(m.role) } else { None }
+                        if m.id == sb.id {
+                            Some(m.role)
+                        } else {
+                            None
+                        }
                     })
                     .unwrap_or(StorageRole::Primary);
                 if role == StorageRole::Dormant {
@@ -388,7 +394,9 @@ impl NurturingScheduler {
 
         let result = self
             .state
-            .orchestration.nurturing.store
+            .orchestration
+            .nurturing
+            .store
             .replicate_to_seed_bank(
                 &offering.offering_id,
                 &store,

@@ -406,9 +406,11 @@ where
                     endpoint = %candidate.endpoint,
                     "Auto-tending to new stone after fallback"
                 );
-                if let Err(e) =
-                    write_tending(candidate.stone_name.clone(), candidate.endpoint.clone(), None)
-                {
+                if let Err(e) = write_tending(
+                    candidate.stone_name.clone(),
+                    candidate.endpoint.clone(),
+                    None,
+                ) {
                     tracing::warn!(error = ?e, "Failed to write tending state");
                 }
                 return Ok((result, candidate));
@@ -492,7 +494,11 @@ pub fn auto_tend_to(candidate: &StoneCandidate) -> Result<()> {
         "Auto-tending to new stone after fallback"
     );
 
-    write_tending(candidate.stone_name.clone(), candidate.endpoint.clone(), None)
+    write_tending(
+        candidate.stone_name.clone(),
+        candidate.endpoint.clone(),
+        None,
+    )
 }
 
 #[cfg(test)]

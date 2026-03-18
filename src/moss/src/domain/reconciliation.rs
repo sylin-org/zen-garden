@@ -89,7 +89,8 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
                 if drop_invalid {
                     tracing::warn!(offering = %offering, "Reconciliation: dropping invalid container (no matching template)");
                     match state
-                        .platform.docker
+                        .platform
+                        .docker
                         .remove_service(&offering, Some(&state.console))
                         .await
                     {

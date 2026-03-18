@@ -10,8 +10,8 @@ use std::time::Duration;
 use crate::domain::{
     compatibility, metrics_collection, scoring, services, topology, CompiledOffering,
 };
-use garden_common::TopologyEntry;
 use crate::AppState;
+use garden_common::TopologyEntry;
 
 /// Placement request from client
 #[derive(Debug, Clone, serde::Deserialize)]

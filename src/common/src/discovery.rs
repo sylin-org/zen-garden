@@ -60,6 +60,10 @@ pub struct FoundService {
     /// Sub-capabilities (e.g., models, collections)
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub sub_capabilities: Vec<crate::SubCapability>,
+
+    /// Source identifier — who registered this entry (e.g. orchestrator name).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// Service discovery response

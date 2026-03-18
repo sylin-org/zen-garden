@@ -94,7 +94,6 @@ pub mod cmd {
     // Nurturing (Backup/Restore)
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandCategory {
     /// Discovery commands: explore, observe, watch, list, status
@@ -267,9 +266,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             (tty1, OLED sidecar, wall monitor). Reconnects automatically on stone restart.\n\n\
             Exit with Ctrl+C.",
         remote_capable: true,
-        args: vec![
-            at_arg(),
-        ],
+        args: vec![at_arg()],
         subcommands: vec![],
         examples: vec![
             CommandExample {
@@ -494,8 +491,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Container is stopped but not removed.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("service", "Service name to stop")
-                .required(),
+            ArgSpec::positional("service", "Service name to stop").required(),
             at_arg(),
         ],
         subcommands: vec![],
@@ -524,8 +520,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Container is started from stopped state.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("service", "Service name to start")
-                .required(),
+            ArgSpec::positional("service", "Service name to start").required(),
             at_arg(),
         ],
         subcommands: vec![],
@@ -555,8 +550,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Use 'uproot' for hard delete (destroy container and data).",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("service", "Service name to remove from registry")
-                .required(),
+            ArgSpec::positional("service", "Service name to remove from registry").required(),
             at_arg(),
             yes_flag(),
         ],
@@ -586,8 +580,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Use --force to skip confirmation prompt.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("service", "Service name to destroy")
-                .required(),
+            ArgSpec::positional("service", "Service name to destroy").required(),
             yes_flag(),
             at_arg(),
         ],
@@ -610,8 +603,6 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         hidden: false,
         subcommand_negates_reqs: false,
     });
-
-
 
     manifest.add(CommandDef {
         name: cmd::UPGRADE,
@@ -638,12 +629,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake upgrade --all",
             },
         ],
-        see_also: vec![ "offer", "rest"],
+        see_also: vec!["offer", "rest"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
-
-
 
     // === ADOPTION COMMANDS ===
 
@@ -658,8 +647,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Adopted services are external services (not containers) that moss monitors.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("target", "Container name or offering name to claim")
-                .required(),
+            ArgSpec::positional("target", "Container name or offering name to claim").required(),
             at_arg(),
         ],
         subcommands: vec![],
@@ -673,7 +661,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake adopt mongodb on stone-01",
             },
         ],
-        see_also: vec!["release", "find",],
+        see_also: vec!["release", "find"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -688,8 +676,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Does not affect borrowed services - use 'return' for those.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("service", "Adopted service name to release")
-                .required(),
+            ArgSpec::positional("service", "Adopted service name to release").required(),
             at_arg(),
         ],
         subcommands: vec![],
@@ -703,12 +690,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake release mongodb on stone-01",
             },
         ],
-        see_also: vec!["adopt",],
+        see_also: vec!["adopt"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
-
-
 
     manifest.add(CommandDef {
         name: "find",
@@ -721,8 +706,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Use 'ensure' modifier to auto-provision if service not found.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("query", "Service name, c:category, or t:tag")
-                .required(),
+            ArgSpec::positional("query", "Service name, c:category, or t:tag").required(),
             ArgSpec::option("format", "Output format: human, json, uri, uri-ip"),
             ArgSpec::flag("ensure", "Auto-provision if not found"),
             at_arg(),
@@ -762,10 +746,12 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Use --field to extract specific values for scripts.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("service", "Service name to query")
-                .required(),
+            ArgSpec::positional("service", "Service name to query").required(),
             ArgSpec::option("output", "Output format: human (default) or json"),
-            ArgSpec::option("field", "Extract specific field (dot notation: connection.uri)"),
+            ArgSpec::option(
+                "field",
+                "Extract specific field (dot notation: connection.uri)",
+            ),
             at_arg(),
         ],
         subcommands: vec![],
@@ -792,10 +778,6 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: false,
     });
 
-
-
-
-
     manifest.add(CommandDef {
         name: "borrow",
         aliases: &[],
@@ -807,10 +789,8 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             They're registered so other services can discover and connect to them.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("name", "Name for this borrowed service")
-                .required(),
-            ArgSpec::option("from", "URL/connection string for the external service")
-                .required(),
+            ArgSpec::positional("name", "Name for this borrowed service").required(),
+            ArgSpec::option("from", "URL/connection string for the external service").required(),
             at_arg(),
         ],
         subcommands: vec![],
@@ -828,7 +808,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake borrow redis from redis://cache:6379 on stone-01",
             },
         ],
-        see_also: vec!["return",],
+        see_also: vec!["return"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -844,8 +824,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             The external service continues running unaffected.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("name", "Name of the borrowed service to return")
-                .required(),
+            ArgSpec::positional("name", "Name of the borrowed service to return").required(),
             at_arg(),
         ],
         subcommands: vec![],
@@ -859,7 +838,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake return redis on stone-01",
             },
         ],
-        see_also: vec!["borrow",],
+        see_also: vec!["borrow"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -873,8 +852,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Includes health, ports, resource usage, and recent events.",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("service", "Service name to query")
-                .required(),
+            ArgSpec::positional("service", "Service name to query").required(),
             at_arg(),
         ],
         subcommands: vec![],
@@ -938,13 +916,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: false,
     });
 
-
-
     // === SYSTEM COMMANDS ===
-
-
-
-
 
     // === POND COMMANDS ===
 
@@ -978,36 +950,28 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "invite",
                 description: "Generate invitation code",
-                args: vec![
-                    ArgSpec::option("passphrase", "Passphrase to protect the invitation"),
-                ],
+                args: vec![ArgSpec::option(
+                    "passphrase",
+                    "Passphrase to protect the invitation",
+                )],
                 subcommands: vec![],
             },
             SubDef {
                 name: "join",
                 description: "Join pond with invitation code",
-                args: vec![
-                    ArgSpec::positional("code", "Invitation code")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("code", "Invitation code").required()],
                 subcommands: vec![],
             },
             SubDef {
                 name: "enroll",
                 description: "Enroll a stone into the pond",
-                args: vec![
-                    ArgSpec::positional("stone", "Stone to enroll")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("stone", "Stone to enroll").required()],
                 subcommands: vec![],
             },
             SubDef {
                 name: "trust",
                 description: "Trust a stone in the pond",
-                args: vec![
-                    ArgSpec::positional("stone", "Stone to trust")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("stone", "Stone to trust").required()],
                 subcommands: vec![],
             },
             SubDef {
@@ -1028,27 +992,20 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "remove",
                 description: "Remove a stone from the pond",
-                args: vec![
-                    ArgSpec::positional("stone", "Stone to remove")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("stone", "Stone to remove").required()],
                 subcommands: vec![],
             },
             SubDef {
                 name: "untrust",
                 description: "Revoke trust for a stone",
-                args: vec![
-                    ArgSpec::positional("stone", "Stone to untrust")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("stone", "Stone to untrust").required()],
                 subcommands: vec![],
             },
             SubDef {
                 name: "promote",
                 description: "Promote a stone to keystone",
                 args: vec![
-                    ArgSpec::positional("stone", "Stone to promote")
-                        .required(),
+                    ArgSpec::positional("stone", "Stone to promote").required(),
                     ArgSpec::option("passphrase", "Passphrase for keystone promotion"),
                 ],
                 subcommands: vec![],
@@ -1056,10 +1013,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "rename",
                 description: "Rename the pond",
-                args: vec![
-                    ArgSpec::positional("name", "New pond name")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("name", "New pond name").required()],
                 subcommands: vec![],
             },
         ],
@@ -1086,12 +1040,6 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: false,
     });
 
-
-
-
-
-
-
     // === SCAFFOLDED COMMANDS ===
     // These commands are recognized but output placeholder messages until fully implemented
 
@@ -1107,9 +1055,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             - ceremony migrate: Service migration workflow\n\
             - ceremony backup: Guided backup configuration",
         remote_capable: false,
-        args: vec![
-            ArgSpec::positional("workflow", "Workflow name (bootstrap, migrate, backup)"),
-        ],
+        args: vec![ArgSpec::positional(
+            "workflow",
+            "Workflow name (bootstrap, migrate, backup)",
+        )],
         subcommands: vec![],
         examples: vec![CommandExample {
             description: "Run bootstrap ceremony",
@@ -1142,10 +1091,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "show",
                 description: "Display template details",
-                args: vec![
-                    ArgSpec::positional("name", "Template name")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("name", "Template name").required()],
                 subcommands: vec![],
             },
         ],
@@ -1160,12 +1106,6 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
 
     // === STONE ADMIN COMMANDS ===
     // Power management for physical stones
-
-
-
-
-
-
 
     manifest.add(CommandDef {
         name: cmd::ELECTION,
@@ -1202,8 +1142,6 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         hidden: false,
         subcommand_negates_reqs: false,
     });
-
-
 
     // === Companion COMMANDS ===
 
@@ -1244,7 +1182,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake hey stone-01 tell cricket volume 80",
             },
         ],
-        see_also: vec!["watch",],
+        see_also: vec!["watch"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -1273,7 +1211,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 name: "add",
                 description: "Add a storage device or directory",
                 args: vec![
-                    ArgSpec::positional("target", "Device path or directory (e.g., /dev/sdb, /mnt/nas)"),
+                    ArgSpec::positional(
+                        "target",
+                        "Device path or directory (e.g., /dev/sdb, /mnt/nas)",
+                    ),
                     ArgSpec::option("name", "Storage name"),
                     ArgSpec::multi_option("roles", "Roles to assign (e.g., seed-bank)")
                         .delimiter(','),
@@ -1281,8 +1222,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                     ArgSpec::option("fs", "Filesystem type when formatting (ext4, btrfs)")
                         .default("btrfs"),
                     ArgSpec::flag("encrypted", "Enable encryption (pond-scoped)"),
-                    ArgSpec::flag("yes", "Skip confirmation (non-interactive)")
-                        .short('y'),
+                    ArgSpec::flag("yes", "Skip confirmation (non-interactive)").short('y'),
                 ],
                 subcommands: vec![],
             },
@@ -1302,27 +1242,20 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 name: "release",
                 description: "Safely unmount storage for removal",
                 args: vec![
-                    ArgSpec::positional("name", "Storage name to release (or 'all')")
-                        .required(),
+                    ArgSpec::positional("name", "Storage name to release (or 'all')").required(),
                 ],
                 subcommands: vec![],
             },
             SubDef {
                 name: "pin",
                 description: "Claim Primary role on this stone",
-                args: vec![
-                    ArgSpec::positional("name", "Storage name to pin")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("name", "Storage name to pin").required()],
                 subcommands: vec![],
             },
             SubDef {
                 name: "unpin",
                 description: "Release Primary role",
-                args: vec![
-                    ArgSpec::positional("name", "Storage name to unpin")
-                        .required(),
-                ],
+                args: vec![ArgSpec::positional("name", "Storage name to unpin").required()],
                 subcommands: vec![],
             },
         ],
@@ -1361,7 +1294,6 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: true,
     });
 
-
     manifest.add(CommandDef {
         name: cmd::STORE,
         aliases: &[],
@@ -1373,12 +1305,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             Use --app to prefix keys as {app}/{bucket}/... (default: zen-garden).",
         remote_capable: true,
         args: vec![
-            ArgSpec::positional("operation", "Storage operation to perform")
-                .required(),
-            ArgSpec::positional("bucket", "Bucket name")
-                .required(),
+            ArgSpec::positional("operation", "Storage operation to perform").required(),
+            ArgSpec::positional("bucket", "Bucket name").required(),
             ArgSpec::positional("key", "Object key (required for put/get/rm/head)"),
-            ArgSpec::positional("file", "Local file path (source for put, destination for get)"),
+            ArgSpec::positional(
+                "file",
+                "Local file path (source for put, destination for get)",
+            ),
             ArgSpec::option("prefix", "Prefix for list operations"),
             ArgSpec::option("app", "Application namespace (default: zen-garden)"),
             ArgSpec::option("delimiter", "Delimiter for list output"),
@@ -1420,12 +1353,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: false,
     });
 
-
     // === NURTURING (BACKUP/RESTORE) COMMANDS ===
-
-
-
-
 
     // === DEVELOPER TOOLS ===
 
@@ -1524,7 +1452,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         remote_capable: false,
         args: vec![
             ArgSpec::positional("name", "Specific command to show detailed help for"),
-            ArgSpec::option("category", "Filter by category (discovery, lifecycle, management, system, pond)"),
+            ArgSpec::option(
+                "category",
+                "Filter by category (discovery, lifecycle, management, system, pond)",
+            ),
             ArgSpec::flag("zen", "Show only zen syntax"),
             ArgSpec::flag("normative", "Show only normative syntax"),
         ],
@@ -1559,8 +1490,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         aliases: &[],
         category: CommandCategory::Lifecycle,
         description: "Scaffold, validate, test, and export offering manifests",
-        long_description:
-            "Author and manage offering manifest files.\n\n\
+        long_description: "Author and manage offering manifest files.\n\n\
             Subcommands:\n\
             - init: Scaffold manifest files from a Docker image via inspection\n\
             - validate: Check manifest files for errors (runs locally)\n\
@@ -1586,9 +1516,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "validate",
                 description: "Check manifest files for errors (local)",
-                args: vec![
-                    ArgSpec::positional("path", "Path to manifest directory (default: .)"),
-                ],
+                args: vec![ArgSpec::positional(
+                    "path",
+                    "Path to manifest directory (default: .)",
+                )],
                 subcommands: vec![],
             },
             SubDef {
@@ -1604,8 +1535,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 name: "export",
                 description: "Download manifest files for an installed offering",
                 args: vec![
-                    ArgSpec::positional("offering", "Offering name to export")
-                        .required(),
+                    ArgSpec::positional("offering", "Offering name to export").required(),
                     ArgSpec::option("output", "Output directory (default: ./<offering>)"),
                     at_arg(),
                 ],
@@ -1701,7 +1631,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "reconcile",
                 description: "Force registry sync with containers",
-                args: vec![ArgSpec::flag("drop-invalid", "Remove invalid zen-offering-* containers")],
+                args: vec![ArgSpec::flag(
+                    "drop-invalid",
+                    "Remove invalid zen-offering-* containers",
+                )],
                 subcommands: vec![],
             },
             SubDef {
@@ -1759,7 +1692,10 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             SubDef {
                 name: "status",
                 description: "Show backup status for offerings",
-                args: vec![ArgSpec::positional("offering", "Offering name (omit for all)")],
+                args: vec![ArgSpec::positional(
+                    "offering",
+                    "Offering name (omit for all)",
+                )],
                 subcommands: vec![],
             },
             SubDef {

@@ -50,7 +50,8 @@ pub async fn refresh_signpost(
     api_port: u16,
     storages: &[(String, String)], // Vec<(storage_name, storage_id)>
 ) -> Result<()> {
-    let signpost_dir = PathBuf::from(garden_common::constants::paths::data_dir()).join(SIGNPOST_DIR);
+    let signpost_dir =
+        PathBuf::from(garden_common::constants::paths::data_dir()).join(SIGNPOST_DIR);
 
     // Ensure directory exists
     tokio::fs::create_dir_all(&signpost_dir)
@@ -88,10 +89,7 @@ pub async fn refresh_signpost(
     // Generate Samba config fragment
     write_smb_fragment(&signpost_dir, stone_name).await?;
 
-    info!(
-        count = storages.len(),
-        "Signpost share refreshed"
-    );
+    info!(count = storages.len(), "Signpost share refreshed");
     Ok(())
 }
 
@@ -208,7 +206,9 @@ mod tests {
     #[tokio::test]
     async fn test_smb_fragment_content() {
         let tmp = tempfile::TempDir::new().unwrap();
-        write_smb_fragment(tmp.path(), "stone-crystal").await.unwrap();
+        write_smb_fragment(tmp.path(), "stone-crystal")
+            .await
+            .unwrap();
 
         let fragment = tokio::fs::read_to_string(tmp.path().join(SMB_CONF_FRAGMENT))
             .await

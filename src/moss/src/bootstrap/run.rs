@@ -41,7 +41,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-
 // ============================================================================
 // Bootstrap artifacts
 // ============================================================================
@@ -73,7 +72,9 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let file_config = config.file_config.clone();
     let (state, artifacts) = build_state(config, log).await?;
-    let api_endpoint = crate::tasks::coordinator::start_background_tasks(state.clone(), artifacts, file_config).await;
+    let api_endpoint =
+        crate::tasks::coordinator::start_background_tasks(state.clone(), artifacts, file_config)
+            .await;
     serve(state, &api_endpoint).await
 }
 
@@ -142,12 +143,11 @@ async fn build_state(
     // These are progressively enriched during bootstrap, then shared with
     // AppState. After construction, `build_self_entry()` reads from them
     // on demand — no mutable self_entry cache.
-    let current_address: Arc<RwLock<garden_common::PeerAddress>> = Arc::new(RwLock::new(
-        garden_common::PeerAddress::new(
+    let current_address: Arc<RwLock<garden_common::PeerAddress>> =
+        Arc::new(RwLock::new(garden_common::PeerAddress::new(
             std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             garden_common::constants::MOSS_HTTP,
-        ),
-    ));
+        )));
     let current_health: Arc<RwLock<String>> = Arc::new(RwLock::new(
         garden_common::constants::STONE_STARTING.to_string(),
     ));
@@ -169,7 +169,15 @@ async fn build_state(
 
     // Write initial topology file immediately (self entry only, no peers yet).
     // Don't wait for the 30s maintenance cycle -- containers may start before then.
-    let boot_entry = build_boot_entry(&stone_id, &stone_name, &current_address, &current_health, &current_mac, None).await;
+    let boot_entry = build_boot_entry(
+        &stone_id,
+        &stone_name,
+        &current_address,
+        &current_health,
+        &current_mac,
+        None,
+    )
+    .await;
     if let Err(e) = crate::domain::topology::persist_topology(&topology_cache, &boot_entry).await {
         tracing::warn!(error = %e, "Failed to write initial topology file");
     } else {
@@ -177,10 +185,12 @@ async fn build_state(
         tracing::debug!("Initial topology file written");
     }
 
-    let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(garden_common::constants::channels::TOOL_DELTA);
+    let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(
+        garden_common::constants::channels::TOOL_DELTA,
+    );
     let tool = Arc::new(crate::domain::Tool {
         registry: crate::domain::garden_registry::new_registry(),
-        delta:    tool_delta,
+        delta: tool_delta,
     });
 
     // Console is needed for UDP listener, create it early
@@ -270,9 +280,9 @@ async fn build_state(
     // Create infrastructure handlers - wired to UDP pipeline from the start
     let infrastructure_handlers =
         Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
-            Box::new(crate::domain::DockerRegistry::new(
-                std::sync::Arc::new(crate::infra::OsDockerConfig),
-            )),
+            Box::new(crate::domain::DockerRegistry::new(std::sync::Arc::new(
+                crate::infra::OsDockerConfig,
+            ))),
         ]));
 
     // Create orchestration nudge early â€” shared between discovery listener and AppState
@@ -308,7 +318,12 @@ async fn build_state(
     // Windows: Uses hardware-id cache existence, sets DNS hostname via registry
     #[cfg(target_os = "linux")]
     if console::is_first_run() {
-        start_first_boot_task(&stone_name, port, config.docker_retry_delay_secs(), runtime.clone());
+        start_first_boot_task(
+            &stone_name,
+            port,
+            config.docker_retry_delay_secs(),
+            runtime.clone(),
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -374,7 +389,15 @@ async fn build_state(
 
     // Auto-chirp: Network configuration complete
     {
-        let entry = build_boot_entry(&stone_id, &stone_name, &current_address, &current_health, &current_mac, None).await;
+        let entry = build_boot_entry(
+            &stone_id,
+            &stone_name,
+            &current_address,
+            &current_health,
+            &current_mac,
+            None,
+        )
+        .await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to auto-chirp after network config");
         } else {
@@ -475,7 +498,9 @@ async fn build_state(
                                 "Pond CA locked â€” unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
                             );
                         } else if methods.contains(&"fido2") {
-                            tracing::info!("Pond CA locked â€” unlock with security key via pond UI");
+                            tracing::info!(
+                                "Pond CA locked â€” unlock with security key via pond UI"
+                            );
                         } else {
                             tracing::info!(
                                 "Pond CA locked â€” run 'garden-rake pond unlock' with passphrase"
@@ -487,7 +512,9 @@ async fn build_state(
                         );
                     }
                 } else {
-                    tracing::info!("Pond CA exists but is locked â€” run 'garden-rake pond unlock'");
+                    tracing::info!(
+                        "Pond CA exists but is locked â€” run 'garden-rake pond unlock'"
+                    );
                 }
             }
         }
@@ -620,13 +647,17 @@ async fn build_state(
         subsystems.docker.ready.clone(),
     )
     .await;
-    tracing::debug!("Docker monitor started ({}s retry, {}s poll)",
+    tracing::debug!(
+        "Docker monitor started ({}s retry, {}s poll)",
         crate::tasks::docker::DEFAULT_DISCONNECT_RETRY_SECS,
-        crate::tasks::docker::DEFAULT_CONNECTED_POLL_SECS);
+        crate::tasks::docker::DEFAULT_CONNECTED_POLL_SECS
+    );
 
     // Phase 8: Create domain event bus and pulse channel
     let event_bus = infra::EventBus::new();
-    let (pulse, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(garden_common::constants::channels::PULSE);
+    let (pulse, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(
+        garden_common::constants::channels::PULSE,
+    );
     tracing::debug!("Domain event bus and pulse channel initialized");
 
     // Phase 9: Capabilities loading
@@ -638,7 +669,15 @@ async fn build_state(
 
     // Auto-chirp: Capabilities complete
     {
-        let entry = build_boot_entry(&stone_id, &stone_name, &current_address, &current_health, &current_mac, Some(&capabilities)).await;
+        let entry = build_boot_entry(
+            &stone_id,
+            &stone_name,
+            &current_address,
+            &current_health,
+            &current_mac,
+            Some(&capabilities),
+        )
+        .await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to auto-chirp after capabilities update");
         } else {
@@ -674,33 +713,36 @@ async fn build_state(
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
-    let harvest_ops: Arc<dyn crate::domain::traits::HarvestOps> =
-        Arc::new(crate::infra::harvest::OsHarvestOps::new(docker.clone(), Arc::clone(&harvest_store)));
-    let nurturing_store: Arc<dyn crate::domain::traits::NurturingStoreOps> = Arc::new(infra::NurturingStore::new(
-        infra::HarvestStore::default_store(),
-        docker.clone(),
-    ));
+    let harvest_ops: Arc<dyn crate::domain::traits::HarvestOps> = Arc::new(
+        crate::infra::harvest::OsHarvestOps::new(docker.clone(), Arc::clone(&harvest_store)),
+    );
+    let nurturing_store: Arc<dyn crate::domain::traits::NurturingStoreOps> = Arc::new(
+        infra::NurturingStore::new(infra::HarvestStore::default_store(), docker.clone()),
+    );
 
     // Storage and orchestration channels (ARCH-0004)
-    let (storage_tick_raw_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(garden_common::constants::channels::STORAGE_EVENT);
-    let (storage_tick_debounced_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(garden_common::constants::channels::STORAGE_EVENT);
-    let (storage_changed_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageChanged>(garden_common::constants::channels::STORAGE_EVENT);
-    let nourishment_map = Arc::new(RwLock::new(
-        HashMap::<String, tokio::sync::broadcast::Sender<String>>::new(),
-    ));
+    let (storage_tick_raw_tx, _) = tokio::sync::broadcast::channel::<
+        garden_common::storage::StorageTick,
+    >(garden_common::constants::channels::STORAGE_EVENT);
+    let (storage_tick_debounced_tx, _) = tokio::sync::broadcast::channel::<
+        garden_common::storage::StorageTick,
+    >(garden_common::constants::channels::STORAGE_EVENT);
+    let (storage_changed_tx, _) = tokio::sync::broadcast::channel::<
+        garden_common::storage::StorageChanged,
+    >(garden_common::constants::channels::STORAGE_EVENT);
+    let nourishment_map = Arc::new(RwLock::new(HashMap::<
+        String,
+        tokio::sync::broadcast::Sender<String>,
+    >::new()));
     let media = crate::domain::storage::new_media();
 
     // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
     // Note: No longer async - no socket binding (uses p2p transport)
-    let election_service_placeholder =
-        Arc::new(crate::tasks::election_service::Elections::new(
-            stone_id.clone(),
-            stone_name.clone(),
-            Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
-        ));
+    let election_service_placeholder = Arc::new(crate::tasks::election_service::Elections::new(
+        stone_id.clone(),
+        stone_name.clone(),
+        Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
+    ));
 
     let state = AppState {
         current: Arc::new(crate::domain::Current {
@@ -778,15 +820,15 @@ async fn build_state(
         orchestration: Arc::new(crate::domain::Orchestration {
             storage: crate::domain::StorageOrchestration {
                 tick: crate::domain::orchestration::storage::Tick {
-                    raw:       storage_tick_raw_tx.clone(),
+                    raw: storage_tick_raw_tx.clone(),
                     debounced: storage_tick_debounced_tx.clone(),
                 },
-                nudge:  orchestration_nudge.clone(),
+                nudge: orchestration_nudge.clone(),
                 rescan: volume_rescan.clone(),
             },
             nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
                 harvest_ops: Arc::clone(&harvest_ops),
-                store:       Arc::clone(&nurturing_store),
+                store: Arc::clone(&nurturing_store),
             },
             nourishment: crate::domain::orchestration::nourishment::NourishmentOrchestration {
                 jobs: nourishment_map.clone(),
@@ -820,7 +862,8 @@ async fn build_state(
     {
         let state_for_fitness = Arc::new(state.clone());
         state
-            .presence.elections
+            .presence
+            .elections
             .set_fitness_provider(Box::new(
                 crate::tasks::state_provider::MossFitnessProvider::new(state_for_fitness),
             ))
@@ -828,11 +871,14 @@ async fn build_state(
         tracing::info!("Fitness provider injected into election service (ORCH-0001)");
     }
 
-    Ok((state, BuildArtifacts {
-        volume_rescan_rx,
-        use_static_host: use_static_host.is_some(),
-        api_endpoint: api_endpoint.clone(),
-    }))
+    Ok((
+        state,
+        BuildArtifacts {
+            volume_rescan_rx,
+            use_static_host: use_static_host.is_some(),
+            api_endpoint: api_endpoint.clone(),
+        },
+    ))
 }
 
 // ============================================================================
@@ -841,11 +887,11 @@ async fn build_state(
 
 /// Bind the HTTP server and run until shutdown.
 async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
-    let stone_name      = state.current.stone.name.clone();
-    let port            = state.current.api_port;
-    let shutdown_token  = state.shutdown_token.clone();
+    let stone_name = state.current.stone.name.clone();
+    let port = state.current.api_port;
+    let shutdown_token = state.shutdown_token.clone();
     let console_printer = state.console.clone();
-    let runtime         = state.platform.runtime.clone();
+    let runtime = state.platform.runtime.clone();
 
     // Phase 18: HTTP server
     tracing::info!("Setting up HTTP router with 200 MB body limit");
@@ -853,7 +899,11 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     // When pond security is active, split routes across two listeners:
     // - HTTP :7185 â†’ public lobby (health, discovery, pond join/status)
     // - HTTPS :7183 â†’ all routes (authenticated, full API)
-    let pond_is_active = state.security.pond.active.load(std::sync::atomic::Ordering::Relaxed);
+    let pond_is_active = state
+        .security
+        .pond
+        .active
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     // If already enrolled at boot, activate HTTPS + chirp signing/verification
     if pond_is_active {
@@ -862,7 +912,8 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
 
     let app = if pond_is_active
         && state
-            .security.https
+            .security
+            .https
             .load(std::sync::atomic::Ordering::Relaxed)
     {
         tracing::info!(
@@ -928,7 +979,6 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     )
     .await
 }
-
 
 /// Configure systemd-resolved for Zen Garden container DNS.
 ///
@@ -1064,7 +1114,9 @@ fn start_first_boot_task(
                     );
                     runtime.display_success("Filesystem ready, starting configuration");
 
-                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
+                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port)
+                        .await
+                    {
                         Ok(new_name) => {
                             if let Err(e) = console::mark_first_run_complete().await {
                                 tracing::error!(error = ?e, "Failed to mark first-run complete");
@@ -1072,10 +1124,7 @@ fn start_first_boot_task(
 
                             tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
                             runtime.write_line("");
-                            runtime.display_success(&format!(
-                                "Stone configured as: {}",
-                                new_name
-                            ));
+                            runtime.display_success(&format!("Stone configured as: {}", new_name));
                             runtime.display_wait("Restarting to apply new configuration...");
                             runtime.write_line("");
 
@@ -1100,9 +1149,7 @@ fn start_first_boot_task(
                             .await;
                     } else {
                         tracing::error!("First boot initialization abandoned - filesystem never became writable");
-                        runtime.display_error(
-                            "Setup abandoned - filesystem remained read-only",
-                        );
+                        runtime.display_error("Setup abandoned - filesystem remained read-only");
                     }
                 }
             }
@@ -1364,18 +1411,26 @@ pub(crate) async fn activate_pond_security(
         if let Ok(key_pem) = std::fs::read_to_string(&key_path) {
             if let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem) {
                 use base64::Engine;
-                let public_key_pem = keypair.public_key_pem();
-                let _ = garden_common::infra::communications::p2p::set_envelope_enricher(Box::new(
-                    move |announcement| {
-                        if let Ok(data_bytes) = serde_json::to_vec(&announcement.data) {
-                            let sig = koi_crypto::signing::sign_bytes(&keypair, &data_bytes);
-                            announcement.signature =
-                                Some(base64::engine::general_purpose::STANDARD.encode(&sig));
-                            announcement.sender_cert = Some(public_key_pem.clone());
-                        }
-                    },
-                ));
-                tracing::info!("Chirp signing enabled");
+                match keypair.public_key_pem() {
+                    Ok(public_key_pem) => {
+                        let _ = garden_common::infra::communications::p2p::set_envelope_enricher(
+                            Box::new(move |announcement| {
+                                if let Ok(data_bytes) = serde_json::to_vec(&announcement.data) {
+                                    let sig =
+                                        koi_crypto::signing::sign_bytes(&keypair, &data_bytes);
+                                    announcement.signature = Some(
+                                        base64::engine::general_purpose::STANDARD.encode(&sig),
+                                    );
+                                    announcement.sender_cert = Some(public_key_pem.clone());
+                                }
+                            }),
+                        );
+                        tracing::info!("Chirp signing enabled");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = ?e, "Failed to extract public key PEM, chirp signing disabled");
+                    }
+                }
             }
         }
     }
@@ -1418,7 +1473,8 @@ pub(crate) async fn activate_pond_security(
 
     // --- HTTPS listener ---
     if state
-        .security.https
+        .security
+        .https
         .compare_exchange(
             false,
             true,
@@ -1438,7 +1494,8 @@ pub(crate) async fn activate_pond_security(
 
         if handle.is_none() {
             state
-                .security.https
+                .security
+                .https
                 .store(false, std::sync::atomic::Ordering::Relaxed);
             tracing::warn!("HTTPS listener not started (certs may not be ready)");
         } else {

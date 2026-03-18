@@ -8,8 +8,8 @@
 //! Composed with compatibility module for rule evaluation.
 
 use crate::domain::compatibility::{compile_compatibility, CompiledCompatibility};
-use garden_common::manifests::ManifestRegistry;
 use anyhow::Result;
+use garden_common::manifests::ManifestRegistry;
 use garden_common::manifests::NetworkRequirements;
 use garden_common::TaskDefinition;
 

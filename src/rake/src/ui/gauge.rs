@@ -40,7 +40,13 @@ pub fn format_gauge(label: &str, value: f64, width: usize, color: bool) -> Strin
     if color {
         let colored_fill = colorize_value(&fill_str, value);
         let colored_pct = colorize_value(&pct_str, value);
-        format!("{} [{}{}] {}", label, colored_fill, empty_str.dimmed(), colored_pct)
+        format!(
+            "{} [{}{}] {}",
+            label,
+            colored_fill,
+            empty_str.dimmed(),
+            colored_pct
+        )
     } else {
         format!("{} [{}{}] {}", label, fill_str, empty_str, pct_str)
     }

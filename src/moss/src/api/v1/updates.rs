@@ -458,14 +458,8 @@ pub async fn execute_stone(
     let task_job_id = job_id.clone();
 
     tokio::spawn(async move {
-        execute_updates_background(
-            state,
-            pending_offerings,
-            pending_firmware,
-            task_job_id,
-            tx,
-        )
-        .await;
+        execute_updates_background(state, pending_offerings, pending_firmware, task_job_id, tx)
+            .await;
     });
 
     let response = ExecuteResponse { job_id };
@@ -601,18 +595,21 @@ async fn execute_offering_update(
     tx: &broadcast::Sender<String>,
 ) -> anyhow::Result<()> {
     // Mark service as updating in registry via gateway (syncs self_entry + chirps)
-    state.update_offering_by_name(name, true, |o| {
-        if o.is_managed() {
-            o.status = garden_common::OfferingStatus::Maintenance;
-            true
-        } else {
-            false
-        }
-    }).await;
+    state
+        .update_offering_by_name(name, true, |o| {
+            if o.is_managed() {
+                o.status = garden_common::OfferingStatus::Maintenance;
+                true
+            } else {
+                false
+            }
+        })
+        .await;
 
     // Get the target image from the Docker service
     let target_image = state
-        .platform.docker
+        .platform
+        .docker
         .get_service_image(name)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to get image for service '{}': {}", name, e))?;
@@ -620,7 +617,8 @@ async fn execute_offering_update(
     // Step 1: Pull the latest image
     let _ = tx.send(format!("    Pulling image: {}", target_image));
     state
-        .platform.docker
+        .platform
+        .docker
         .pull_image(&target_image, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to pull image '{}': {}", target_image, e))?;
@@ -628,23 +626,29 @@ async fn execute_offering_update(
     // Step 2: Stop and remove the existing container
     let _ = tx.send(format!("    Stopping service: {}", name));
     state
-        .platform.docker
+        .platform
+        .docker
         .stop_service(name, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to stop service '{}': {}", name, e))?;
 
     let _ = tx.send(format!("    Removing old container: {}", name));
     state
-        .platform.docker
+        .platform
+        .docker
         .remove_service(name, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to remove service '{}': {}", name, e))?;
 
     // Step 3: Get compiled manifest for service configuration
-    let compiled = crate::domain::get_compiled_offering(state, name, &crate::infra::persistence::OsOfferingsCache)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to get offering config for '{}': {}", name, e))?
-        .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in catalog", name))?;
+    let compiled = crate::domain::get_compiled_offering(
+        state,
+        name,
+        &crate::infra::persistence::OsOfferingsCache,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to get offering config for '{}': {}", name, e))?
+    .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in catalog", name))?;
 
     // Step 4: Recreate the service with the new image, composing any config patches
     let _ = tx.send(format!(
@@ -695,7 +699,8 @@ async fn execute_offering_update(
     };
 
     state
-        .platform.docker
+        .platform
+        .docker
         .install_service(name, &spec, None)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to recreate service '{}': {}", name, e))?;
@@ -723,14 +728,16 @@ async fn execute_offering_update(
     }
 
     // Mark service as running again via gateway (syncs self_entry + chirps)
-    state.update_offering_by_name(name, true, |o| {
-        if o.is_managed() {
-            o.status = garden_common::OfferingStatus::Running;
-            true
-        } else {
-            false
-        }
-    }).await;
+    state
+        .update_offering_by_name(name, true, |o| {
+            if o.is_managed() {
+                o.status = garden_common::OfferingStatus::Running;
+                true
+            } else {
+                false
+            }
+        })
+        .await;
 
     Ok(())
 }
@@ -828,7 +835,12 @@ async fn check_offering_updates(
     for offering in offerings.iter().filter(|o| o.is_managed()) {
         // Get the template image reference (e.g., "redis:latest")
         let offering_name_str = offering.name.to_string();
-        let template_image = match state.platform.docker.get_service_image(&offering_name_str).await {
+        let template_image = match state
+            .platform
+            .docker
+            .get_service_image(&offering_name_str)
+            .await
+        {
             Ok(img) => img,
             Err(_) => continue,
         };

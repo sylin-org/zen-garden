@@ -29,7 +29,11 @@ impl StorageBank {
         changed: tokio::sync::broadcast::Sender<StorageChanged>,
         make_store: impl Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync + 'static,
     ) -> Arc<Self> {
-        Arc::new(Self { volumes, changed, make_store: Box::new(make_store) })
+        Arc::new(Self {
+            volumes,
+            changed,
+            make_store: Box::new(make_store),
+        })
     }
 
     /// Called by the platform monitor after it has detected AND measured a volume.
@@ -145,9 +149,7 @@ impl StorageBank {
             let name = vol.display_name().to_string();
             vol.state = VolumeState::Offline;
             if was_managed {
-                let _ = self.changed.send(StorageChanged::Released {
-                    name,
-                });
+                let _ = self.changed.send(StorageChanged::Released { name });
                 let _ = self.changed.send(StorageChanged::Reclassified);
             }
         }

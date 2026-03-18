@@ -124,10 +124,7 @@ mod normalize_tests {
         let mut offerings = vec![sample_offering("ollama@adopted", "ollama")];
         // name is already normalized by OfferingFqn::parse, offering matches → no change needed
         assert_eq!(offerings[0].name.offering, "ollama");
-        assert_eq!(
-            offerings[0].name.instance.as_deref(),
-            Some("adopted")
-        );
+        assert_eq!(offerings[0].name.instance.as_deref(), Some("adopted"));
         assert_eq!(offerings[0].name.to_string(), "ollama::adopted");
         let normalized = normalize_offering_identities(&mut offerings);
         assert_eq!(normalized, 0); // offering already matches

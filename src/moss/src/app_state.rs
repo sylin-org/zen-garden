@@ -104,10 +104,8 @@ pub struct AppState {
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
 
-
     /// Garden-wide tool registry and delta stream (ARCH-0004).
     pub tool: Arc<Tool>,
-
 
     /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
     pub security: Arc<Security>,
@@ -121,26 +119,19 @@ pub struct AppState {
     /// Companion domain — registry of external companions (Cricket, Firefly, etc.)
     pub companion: Arc<crate::domain::Companion>,
 
-
     // === Cached Metrics (updated by background tasks, read-only for endpoints) ===
     // IMPORTANT: These caches exist to keep API endpoints fast (<10ms).
     // Endpoints MUST NOT perform I/O - they read from these caches only.
     // Background tasks are responsible for keeping caches fresh.
-
-
-
     /// Log broadcast channel (for live SSE log streaming)
     pub log: tokio::sync::broadcast::Sender<String>,
 
     /// Subsystem readiness state
     pub subsystems: SubSystems,
 
-
-
     /// Orchestration coordination plane — tick signals, nudge, rescan,
     /// nurturing stores, nourishment job channels (ARCH-0004).
     pub orchestration: Arc<Orchestration>,
-
 }
 
 // ============================================================================
@@ -417,7 +408,10 @@ impl AppState {
     pub async fn upsert_offering(&self, mut offering: Offering, auto_chirp: bool) {
         offering.touch();
         self.mutate_offerings(auto_chirp, |offerings| {
-            if let Some(pos) = offerings.iter().position(|o| o.offering_id == offering.offering_id) {
+            if let Some(pos) = offerings
+                .iter()
+                .position(|o| o.offering_id == offering.offering_id)
+            {
                 offerings[pos] = offering;
             } else if let Some(pos) = offerings.iter().position(|o| o.name == offering.name) {
                 tracing::info!(
@@ -431,7 +425,8 @@ impl AppState {
                 offerings.push(offering);
             }
             ((), true)
-        }).await;
+        })
+        .await;
     }
 
     /// Remove an offering by ID.
@@ -440,16 +435,18 @@ impl AppState {
             let before = offerings.len();
             offerings.retain(|o| o.offering_id != offering_id);
             ((), offerings.len() != before)
-        }).await;
+        })
+        .await;
     }
 
     /// Remove an offering by name (FQN).
     pub async fn remove_service(&self, service_name: &str, auto_chirp: bool) {
         self.mutate_offerings(auto_chirp, |offerings| {
             let before = offerings.len();
-            offerings.retain(|o| o.name.to_string() != service_name);
+            offerings.retain(|o| !o.name.fqn_eq(service_name));
             ((), offerings.len() != before)
-        }).await;
+        })
+        .await;
     }
 
     /// Coalesce duplicate offerings by FQN, keeping the most recently updated.
@@ -488,7 +485,8 @@ impl AppState {
                 tracing::warn!(removed, "Coalesced duplicate offerings by FQN");
             }
             (removed, removed > 0)
-        }).await
+        })
+        .await
     }
 
     /// Replace entire offerings registry.
@@ -496,7 +494,8 @@ impl AppState {
         self.mutate_offerings(auto_chirp, |offerings| {
             *offerings = new_offerings;
             ((), true)
-        }).await;
+        })
+        .await;
     }
 
     /// Update a single offering by ID via a closure.
@@ -504,58 +503,49 @@ impl AppState {
     /// The closure receives `&mut Offering` and returns `true` if it made changes.
     /// Pass `auto_chirp = true` for immediate broadcast, `false` to let the
     /// periodic announcer pick it up.
-    pub async fn update_offering<F>(
-        &self,
-        offering_id: &str,
-        auto_chirp: bool,
-        mutator: F,
-    ) -> bool
+    pub async fn update_offering<F>(&self, offering_id: &str, auto_chirp: bool, mutator: F) -> bool
     where
         F: FnOnce(&mut Offering) -> bool,
     {
         self.mutate_offerings(auto_chirp, |offerings| {
-            let changed = offerings.iter_mut()
+            let changed = offerings
+                .iter_mut()
                 .find(|o| o.offering_id == offering_id)
                 .map(mutator)
                 .unwrap_or(false);
             (changed, changed)
-        }).await
+        })
+        .await
     }
 
     /// Update a single offering by name (FQN) via a closure.
-    pub async fn update_offering_by_name<F>(
-        &self,
-        name: &str,
-        auto_chirp: bool,
-        mutator: F,
-    ) -> bool
+    pub async fn update_offering_by_name<F>(&self, name: &str, auto_chirp: bool, mutator: F) -> bool
     where
         F: FnOnce(&mut Offering) -> bool,
     {
         self.mutate_offerings(auto_chirp, |offerings| {
-            let changed = offerings.iter_mut()
-                .find(|o| o.name.to_string() == name)
+            let changed = offerings
+                .iter_mut()
+                .find(|o| o.name.fqn_eq(name))
                 .map(mutator)
                 .unwrap_or(false);
             (changed, changed)
-        }).await
+        })
+        .await
     }
 
     /// Batch-update offerings via a closure over the entire vec.
     ///
     /// The closure returns the count of offerings changed.
-    pub async fn update_offerings_batch<F>(
-        &self,
-        mutator: F,
-        auto_chirp: bool,
-    ) -> usize
+    pub async fn update_offerings_batch<F>(&self, mutator: F, auto_chirp: bool) -> usize
     where
         F: FnOnce(&mut Vec<Offering>) -> usize,
     {
         self.mutate_offerings(auto_chirp, |offerings| {
             let changed = mutator(offerings);
             (changed, changed > 0)
-        }).await
+        })
+        .await
     }
 
     // ========================================================================
@@ -606,7 +596,7 @@ impl AppState {
             .read()
             .await
             .iter()
-            .find(|o| o.name.to_string().eq_ignore_ascii_case(name))
+            .find(|o| o.name.fqn_eq(name))
             .cloned()
     }
 
@@ -667,9 +657,13 @@ impl AppState {
         // Update current.address and current.mac (source fields)
         {
             let old_tls_port = self.current.address.read().await.tls_port;
-            let new_ip: std::net::IpAddr = new_ip
-                .parse()
-                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            let new_ip: std::net::IpAddr = match new_ip.parse() {
+                Ok(ip) => ip,
+                Err(e) => {
+                    tracing::warn!(raw = %new_ip, error = %e, "Failed to parse new IP — skipping resolution change");
+                    return;
+                }
+            };
             let mut new_addr = garden_common::PeerAddress::new(new_ip, self.current.api_port);
             if let Some(tp) = old_tls_port {
                 new_addr = new_addr.with_tls(tp);
@@ -781,5 +775,4 @@ impl AppState {
             tracing::warn!(error = %e, "Failed to broadcast storage beacon");
         }
     }
-
 }

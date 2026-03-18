@@ -3,11 +3,11 @@ mod dispatch;
 mod route;
 
 // Use shared modules from the library
-use garden_rake::ui::rendering as ui;
 use garden_rake::cli_build::{build_clap_app, count_verbosity, extract_global_flags};
 use garden_rake::command_manifest::MANIFEST;
 use garden_rake::commands;
 use garden_rake::enrollment;
+use garden_rake::ui::rendering as ui;
 
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
@@ -96,9 +96,7 @@ async fn async_main() -> anyhow::Result<()> {
     let app = build_clap_app(&MANIFEST);
 
     let matches = app
-        .try_get_matches_from(
-            std::iter::once("garden-rake".to_string()).chain(raw_args),
-        )
+        .try_get_matches_from(std::iter::once("garden-rake".to_string()).chain(raw_args))
         .unwrap_or_else(|e| e.exit());
 
     // Extract global flags from ArgMatches

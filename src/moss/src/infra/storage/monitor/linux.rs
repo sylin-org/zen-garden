@@ -51,8 +51,7 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                 for v in &current {
                     if !known.contains(&v.path) {
                         debug!(path = %v.path, "Volume appeared (polling)");
-                        let (used_bytes, _) =
-                            measure_usage(&v.mount_path, v.capacity_bytes);
+                        let (used_bytes, _) = measure_usage(&v.mount_path, v.capacity_bytes);
 
                         let event = PhysicalStorageEvent::Connected {
                             device_path: v.path.clone(),
@@ -77,9 +76,7 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                     if !in_proc || !dev_present {
                         debug!(path = %path, "Volume disappeared (polling)");
                         if tx
-                            .send(PhysicalStorageEvent::Disconnected {
-                                path: path.clone(),
-                            })
+                            .send(PhysicalStorageEvent::Disconnected { path: path.clone() })
                             .await
                             .is_err()
                         {
@@ -182,9 +179,7 @@ fn run_udev_watcher(
                 }
                 udev::EventType::Remove => {
                     debug!(device = %devnode, "udev: block device removed");
-                    let _ = tx.blocking_send(PhysicalStorageEvent::Disconnected {
-                        path: devnode,
-                    });
+                    let _ = tx.blocking_send(PhysicalStorageEvent::Disconnected { path: devnode });
                 }
                 _ => {}
             }

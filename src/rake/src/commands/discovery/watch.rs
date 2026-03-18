@@ -10,9 +10,9 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::discovery;
 use crate::suggestions;
+use crate::ui::rendering as ui;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use crate::ui::rendering as ui;
 use garden_common::{GardenApiResponse, HardwareCapabilities};
 use std::time::Duration;
 
@@ -44,10 +44,7 @@ impl WatchCommand {
 
     /// Create for offering log watching
     pub fn offering_logs(name: String, timestamps: bool, quiet: bool) -> Self {
-        Self::new(
-            WatchTargetType::OfferingLogs { name, timestamps },
-            quiet,
-        )
+        Self::new(WatchTargetType::OfferingLogs { name, timestamps }, quiet)
     }
 
     /// Create for stone log watching

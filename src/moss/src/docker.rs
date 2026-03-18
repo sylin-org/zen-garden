@@ -38,9 +38,7 @@ pub fn decode_zen_offering_container_name(container_name: &str) -> Option<String
 fn decode_offering_container_suffix(encoded: &str) -> String {
     // Image-direct containers: img-nginx-latest → image:nginx-latest (best-effort)
     if let Some(rest) = encoded.strip_prefix("img-") {
-        if let Some((sanitized_ref, instance)) =
-            rest.split_once(OFFERING_FQN_CONTAINER_SEPARATOR)
-        {
+        if let Some((sanitized_ref, instance)) = rest.split_once(OFFERING_FQN_CONTAINER_SEPARATOR) {
             return format!("image:{}::{}", sanitized_ref, instance);
         }
         return format!("image:{}", rest);
@@ -446,15 +444,14 @@ impl Client {
     pub async fn bridge_gateway(&self) -> Option<String> {
         let network = self
             .docker
-            .inspect_network("bridge", None::<bollard::network::InspectNetworkOptions<String>>)
+            .inspect_network(
+                "bridge",
+                None::<bollard::network::InspectNetworkOptions<String>>,
+            )
             .await
             .ok()?;
 
-        network
-            .ipam?
-            .config?
-            .into_iter()
-            .find_map(|c| c.gateway)
+        network.ipam?.config?.into_iter().find_map(|c| c.gateway)
     }
 
     /// Build container networking configuration.
@@ -670,9 +667,9 @@ impl Client {
         let mut effective_cmd = spec.command.clone();
         for cf in &spec.config_files {
             let host_dir = garden_common::constants::paths::offering_config_dir(name);
-            tokio::fs::create_dir_all(&host_dir).await.context(
-                format!("Failed to create config dir: {}", host_dir),
-            )?;
+            tokio::fs::create_dir_all(&host_dir)
+                .await
+                .context(format!("Failed to create config dir: {}", host_dir))?;
 
             let filename = std::path::Path::new(&cf.path)
                 .file_name()
@@ -683,9 +680,9 @@ impl Client {
             // Create empty config file if it doesn't exist (idempotent)
             if !tokio::fs::try_exists(&host_path).await.unwrap_or(false) {
                 let empty_content = cf.format.empty_content();
-                tokio::fs::write(&host_path, empty_content).await.context(
-                    format!("Failed to write empty config file: {}", host_path),
-                )?;
+                tokio::fs::write(&host_path, empty_content)
+                    .await
+                    .context(format!("Failed to write empty config file: {}", host_path))?;
                 tracing::info!(
                     service = %name,
                     host_path = %host_path,
@@ -902,9 +899,9 @@ impl Client {
         let mut effective_cmd = spec.command.clone();
         for cf in &spec.config_files {
             let host_dir = garden_common::constants::paths::offering_config_dir(name);
-            tokio::fs::create_dir_all(&host_dir).await.context(
-                format!("Failed to create config dir: {}", host_dir),
-            )?;
+            tokio::fs::create_dir_all(&host_dir)
+                .await
+                .context(format!("Failed to create config dir: {}", host_dir))?;
 
             let filename = std::path::Path::new(&cf.path)
                 .file_name()
@@ -914,9 +911,9 @@ impl Client {
 
             if !tokio::fs::try_exists(&host_path).await.unwrap_or(false) {
                 let empty_content = cf.format.empty_content();
-                tokio::fs::write(&host_path, empty_content).await.context(
-                    format!("Failed to write empty config file: {}", host_path),
-                )?;
+                tokio::fs::write(&host_path, empty_content)
+                    .await
+                    .context(format!("Failed to write empty config file: {}", host_path))?;
             }
 
             binds.push(format!("{}:{}:ro", host_path, cf.path));
@@ -1002,10 +999,7 @@ impl Client {
         let container_name = zen_offering_container_name(name)?;
         tracing::info!(service = %name, "Restarting container");
         self.docker
-            .restart_container(
-                &container_name,
-                Some(RestartContainerOptions { t: 10 }),
-            )
+            .restart_container(&container_name, Some(RestartContainerOptions { t: 10 }))
             .await
             .context("Failed to restart container")?;
         tracing::info!(service = %name, "Container restarted successfully");
@@ -1659,14 +1653,14 @@ impl Client {
             .unwrap_or_else(|| "<unknown>".to_string());
 
         // Command
-        let command = config
-            .cmd
-            .as_ref()
-            .filter(|c| !c.is_empty())
-            .cloned();
+        let command = config.cmd.as_ref().filter(|c| !c.is_empty()).cloned();
 
         // Env (filter out auto-injected vars that install_service adds)
-        let auto_prefixes = ["KOI_ENDPOINT=", "GARDEN_STONE_ENDPOINT=", "GARDEN_OFFERING_NAME="];
+        let auto_prefixes = [
+            "KOI_ENDPOINT=",
+            "GARDEN_STONE_ENDPOINT=",
+            "GARDEN_OFFERING_NAME=",
+        ];
         let env: Vec<String> = config
             .env
             .as_ref()
@@ -1808,7 +1802,9 @@ impl Client {
         let container_name = zen_offering_container_name(name)?;
         let net = self.container_networking(name).await;
 
-        let nameservers = net.dns.iter()
+        let nameservers = net
+            .dns
+            .iter()
             .map(|s| format!("nameserver {s}"))
             .collect::<Vec<_>>()
             .join("\\n");
@@ -1820,19 +1816,24 @@ impl Client {
         let desired_content = format!("{nameservers}{search}\\n");
 
         // Read current resolv.conf
-        let exec = self.docker.create_exec(
-            &container_name,
-            bollard::exec::CreateExecOptions {
-                cmd: Some(vec!["cat", "/etc/resolv.conf"]),
-                attach_stdout: Some(true),
-                ..Default::default()
-            },
-        ).await.context("create exec for resolv.conf read")?;
+        let exec = self
+            .docker
+            .create_exec(
+                &container_name,
+                bollard::exec::CreateExecOptions {
+                    cmd: Some(vec!["cat", "/etc/resolv.conf"]),
+                    attach_stdout: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("create exec for resolv.conf read")?;
 
-        let output = self.docker.start_exec(
-            &exec.id,
-            None::<bollard::exec::StartExecOptions>,
-        ).await.context("exec cat /etc/resolv.conf")?;
+        let output = self
+            .docker
+            .start_exec(&exec.id, None::<bollard::exec::StartExecOptions>)
+            .await
+            .context("exec cat /etc/resolv.conf")?;
 
         let current = match output {
             bollard::exec::StartExecResults::Attached { mut output, .. } => {
@@ -1847,7 +1848,8 @@ impl Client {
         };
 
         // Check if first nameserver already matches
-        let first_ns = current.lines()
+        let first_ns = current
+            .lines()
             .find(|l| l.starts_with("nameserver "))
             .and_then(|l| l.strip_prefix("nameserver "))
             .unwrap_or("");
@@ -1865,21 +1867,26 @@ impl Client {
         );
 
         // Write new resolv.conf via printf
-        let exec = self.docker.create_exec(
-            &container_name,
-            bollard::exec::CreateExecOptions {
-                cmd: Some(vec![
-                    "sh", "-c",
-                    &format!("printf '{desired_content}' > /etc/resolv.conf"),
-                ]),
-                ..Default::default()
-            },
-        ).await.context("create exec for resolv.conf write")?;
+        let exec = self
+            .docker
+            .create_exec(
+                &container_name,
+                bollard::exec::CreateExecOptions {
+                    cmd: Some(vec![
+                        "sh",
+                        "-c",
+                        &format!("printf '{desired_content}' > /etc/resolv.conf"),
+                    ]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("create exec for resolv.conf write")?;
 
-        self.docker.start_exec(
-            &exec.id,
-            None::<bollard::exec::StartExecOptions>,
-        ).await.context("exec write resolv.conf")?;
+        self.docker
+            .start_exec(&exec.id, None::<bollard::exec::StartExecOptions>)
+            .await
+            .context("exec write resolv.conf")?;
 
         Ok(())
     }

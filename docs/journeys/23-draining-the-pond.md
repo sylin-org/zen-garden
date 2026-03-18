@@ -86,7 +86,7 @@ garden-rake pond drain
 ║  After draining:                                                 ║
 ║    • Garden returns to unencrypted mode                          ║
 ║    • Services remain accessible (unprotected)                    ║
-║    • You can create a new pond with 'garden-rake place keystone' ║
+║    • You can create a new pond with 'garden-rake pond init'      ║
 ║                                                                  ║
 ║  This action requires your Keystone passphrase.                  ║
 ║                                                                  ║
@@ -110,7 +110,7 @@ Draining pond...
 ✓ Pond drained
 
 Your garden is now unencrypted. Services are discoverable by anyone on the network.
-To restore security, run: garden-rake place keystone
+To restore security, run: garden-rake pond init
 ```
 
 The pond is gone. Your garden is naked again.
@@ -142,7 +142,7 @@ All the other online Stones received the same message. They automatically switch
 You immediately create a new pond:
 
 ```bash
-garden-rake place keystone
+garden-rake pond init
 ```
 
 ```
@@ -377,7 +377,7 @@ garden-rake pond status --verbose
 garden-rake pond revoked
 
 # Create new pond after drain
-garden-rake place keystone
+garden-rake pond init
 
 # Invite offline Stone after pond recreation
 garden-rake invite stone-name

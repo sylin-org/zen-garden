@@ -425,10 +425,10 @@ GET    /api/v1/storage/{bucket}/?list=true&prefix=...&delimiter=/&marker=...&max
 **Philosophy:** Backups are portable, discoverable, and auditable
 
 ```http
-GET /api/v1/memories                                # List all remote snapshots (index)
-GET /api/v1/memories/{offering_id}                  # List snapshots for offering
-GET /api/v1/memories/{offering_id}/manifest         # Hydration metadata (offering.json)
-GET /api/v1/memories/{offering_id}/{harvest_id}     # Download snapshot tar.gz
+GET /api/v1/snapshots                                # List all remote snapshots (index)
+GET /api/v1/snapshots/{offering_id}                  # List snapshots for offering
+GET /api/v1/snapshots/{offering_id}/manifest         # Hydration metadata (offering.json)
+GET /api/v1/snapshots/{offering_id}/{harvest_id}     # Download snapshot tar.gz
 ```
 
 **Headers:**

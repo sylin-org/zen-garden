@@ -552,5 +552,5 @@ Content-Type: application/json
 ## Further Reading
 
 - [STORAGE-0005: Manifest-First Discovery](../decisions/STORAGE-0005-manifest-first-discovery.md) - Architecture decision record
-- [Nurturing Guide](./nurturing.md) - Backup configuration and scheduling
+- [Backup Guide](./nurturing.md) - Backup configuration and scheduling
 - [Hardware Guide](./stone-hardware.md) - Recommended storage devices

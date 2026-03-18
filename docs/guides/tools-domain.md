@@ -13,7 +13,7 @@ This guide covers the automation-grade Tools domain introduced in Moss:
 - Snapshot API: `GET /api/v1/garden/tools`
 - SSE stream API: `GET /api/v1/garden/tools/stream`
 - Unified tool model for offerings and seed banks
-- Event-driven readiness for `wishfully` and adapter workflows
+- Event-driven readiness for `--ensure` and adapter workflows
 
 ---
 
@@ -162,9 +162,9 @@ Because of that, remove events are only filterable by `tool_fqid` (or unfiltered
 
 ---
 
-## 5. Capability-Aware Wishful Flow
+## 5. Capability-Aware Ensure Flow
 
-A capability wish targets an offering plus a capability item.
+A capability ensure targets an offering plus a capability item.
 
 Canonical consumption syntax:
 
@@ -201,7 +201,7 @@ Multiple capabilities can be requested at once:
 
 1. Query current state:
    - `GET /api/v1/garden/tools?tool_fqid=offering:ollama&capability=model:model1,model:model2`
-2. If missing and policy allows wishful:
+2. If missing and policy allows ensure:
    - `POST /api/v1/stone/offerings/ollama/capabilities`
 3. Subscribe and wait:
    - `GET /api/v1/garden/tools/stream?tool_fqid=offering:ollama&capability=model:model1,model:model2`
@@ -228,15 +228,15 @@ Possible status variants in response `data.status`:
 
 ## 6. garden-rake Behavior
 
-`garden-rake find` now waits on tools stream readiness (event-driven), including wishful paths.
+`garden-rake find` now waits on tools stream readiness (event-driven), including ensure paths.
 
 Examples:
 
 ```bash
-garden-rake find mongodb wishfully
-garden-rake find ollama:modelv1 wishfully
-garden-rake find "ollama[model1,model2]" wishfully
-garden-rake find "postgres[extension:pgvector]" wishfully
+garden-rake find mongodb --ensure
+garden-rake find ollama:modelv1 --ensure
+garden-rake find "ollama[model1,model2]" --ensure
+garden-rake find "postgres[extension:pgvector]" --ensure
 ```
 
 The readiness wait timeout in current implementation is 240 seconds.

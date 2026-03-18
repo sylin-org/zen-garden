@@ -15,7 +15,7 @@ Time to fill the pond.
 ---
 
 ```bash
-garden-rake place keystone
+garden-rake pond init
 ```
 
 ```
@@ -113,7 +113,7 @@ Discovering garden...
     garden-rake invite <your-stone-name>
 
   Then run:
-    garden-rake join pond <code>
+    garden-rake pond join <code>
 
 No services available (not a pond member).
 ```
@@ -138,7 +138,7 @@ Generating invitation for stone-silver-creek...
 ║                      K7X9M2                                      ║
 ║                                                                  ║
 ║  On stone-silver-creek, run:                                     ║
-║    garden-rake join pond K7X9M2                                  ║
+║    garden-rake pond join K7X9M2                                  ║
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 ```
@@ -147,7 +147,7 @@ You read the code to your new Stone (or walk over and type it):
 
 ```bash
 # On stone-silver-creek
-garden-rake join pond K7X9M2
+garden-rake pond join K7X9M2
 ```
 
 ```
@@ -317,10 +317,10 @@ This is deliberate. Debugging mTLS handshakes when a container won't start is mi
 
 ```bash
 # Create a pond (generates Keystone, baptizes existing Stones)
-garden-rake place keystone
+garden-rake pond init
 
 # Create with auto-generated passphrase
-garden-rake place keystone --auto-passphrase
+garden-rake pond init --auto-passphrase
 
 # Check pond status
 garden-rake pond status
@@ -329,7 +329,7 @@ garden-rake pond status
 garden-rake invite stone-silver-creek
 
 # Join a pond (on the new Stone)
-garden-rake join pond K7X9M2
+garden-rake pond join K7X9M2
 
 # View security status across all Stones
 garden-rake status --security --all

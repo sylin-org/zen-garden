@@ -154,6 +154,12 @@
 
 **Migration** - Moving services between Stones. Example: MongoDB running on failing laptop → migrate to replacement Stone without app downtime.
 
+**Backup** - Local A/B snapshot of an offering's volumes and container image, stored on the Stone or replicated to a seed bank. Managed via `garden-rake backup` and the `/api/v1/stone/snapshots` API.
+
+**Update** - Applying a newer version of an offering image or firmware to a Stone. Managed via `garden-rake upgrade` and the `/api/v1/stone/updates` API. Replaces the former "nourishment" terminology.
+
+**Snapshot** - Point-in-time capture of an offering's data (volumes + optional container image commit). Stored in A/B rotation locally, with optional replication to seed banks.
+
 **Health** - Service/Stone status monitoring. Moss checks container healthchecks and reports: Running, Stopped, Maintenance, Degraded, or Unknown.
 
 **Diagnostics** - Troubleshooting data collection (logs, metrics, container state). Used to debug discovery failures, connection errors, and performance issues.  
@@ -195,6 +201,9 @@
 | Cornerstone       | First Stone with CA authority              | Security  |
 | Lantern           | Optional HTTP directory (port 7186)        | Discovery |
 | Set               | Logical namespace (database/schema/prefix) | Services  |
+| Backup            | A/B snapshot of offering data              | Operations|
+| Update            | Applying newer offering/firmware version    | Operations|
+| Snapshot          | Point-in-time capture of offering data     | Operations|
 | E-waste           | Repurposed obsolete hardware               | Mission   |
 
 ---

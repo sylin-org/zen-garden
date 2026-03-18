@@ -918,8 +918,8 @@ GET /api/v1/garden/topology
 **Garden-wide nourishment (updates):**
 
 ```http
-GET /api/v1/garden/nourishment
-POST /api/v1/garden/nourishment/execute
+GET /api/v1/garden/updates
+POST /api/v1/garden/updates/execute
 ```
 
 ---

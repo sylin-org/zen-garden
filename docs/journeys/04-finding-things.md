@@ -324,10 +324,10 @@ garden-rake find redis --format uri-ip     # Outputs: redis://192.168.1.58:6379
 garden-rake find redis --fresh
 
 # Wishful mode (auto-deploy if not found)
-garden-rake find redis --wishfully
+garden-rake find redis --ensure
 ```
 
-The `--wishfully` flag is interesting: if Redis isn't found, Rake will ask if you want to deploy it. "I wished for Redis, and the garden provided."
+The `--ensure` flag is interesting: if Redis isn't found, Rake will ask if you want to deploy it. "I needed Redis, and the garden provided."
 
 ---
 
@@ -425,7 +425,7 @@ garden-rake find redis --format uri
 garden-rake find redis --fresh
 
 # Auto-deploy if not found
-garden-rake find redis --wishfully
+garden-rake find redis --ensure
 
 # Direct query (bypass discovery)
 garden-rake find redis --at stone-amber-ridge

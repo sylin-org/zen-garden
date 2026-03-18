@@ -407,7 +407,7 @@ garden-rake services start mongodb
 
 ---
 
-### POST /api/v1/services/:service/nourish
+### POST /api/v1/services/:service/upgrade
 
 **Upgrade service to latest image version.**
 
@@ -1821,7 +1821,7 @@ Stops all services and shuts down the Moss HTTP server.
 
 **Phase 1-2 (Complete):**
 - Services CRUD endpoints
-- Lifecycle operations (rest/wake/nourish)
+- Lifecycle operations (rest/wake/upgrade)
 - Garden topology discovery
 - Offerings catalog with compatibility
 - Health and capabilities introspection

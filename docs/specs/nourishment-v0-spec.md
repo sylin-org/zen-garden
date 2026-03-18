@@ -71,19 +71,19 @@ Type-discriminated items for software vs firmware:
 
 #### Local Stone Check
 ```
-GET /api/v1/nourishment/check
+GET /api/v1/updates/check
 ```
 Returns updates available for this stone only.
 
 #### Garden-Wide Check (Orchestrated)
 ```
-GET /api/v1/garden/nourishment
+GET /api/v1/garden/updates
 ```
 Queries all stones in parallel, returns aggregated results.
 
 #### Execute Update
 ```
-POST /api/v1/nourishment/execute
+POST /api/v1/updates/execute
 {
   "updates": [
     { "type": "offering", "name": "redis" },
@@ -95,7 +95,7 @@ Returns job ID for status tracking.
 
 #### Live Status Stream
 ```
-GET /api/v1/nourishment/stream/:job_id
+GET /api/v1/updates/stream/:job_id
 ```
 Server-Sent Events stream for execution progress.
 
@@ -124,7 +124,7 @@ pub fn check_constraints(
 ```
 
 ### Phase 2: Nourishment API (~400 lines)
-**File:** `src/moss/src/api/v1/nourishment.rs` (NEW)
+**File:** `src/moss/src/api/v1/updates.rs` (NEW)
 
 - Local check: Query offering versions via Docker registry API, detect firmware updates
 - Garden-wide: Parallel stone queries (like observe)
@@ -132,7 +132,7 @@ pub fn check_constraints(
 - Stream: SSE for live status
 
 ### Phase 3: Rake Command (~500 lines)
-**File:** `src/rake/src/commands/nourish.rs` (NEW)
+**File:** `src/rake/src/commands/upgrade.rs` (NEW)
 
 Flow:
 1. Discovery (find tended stone)
@@ -212,7 +212,7 @@ UI Elements:
 - **V2:** Query Docker registry for actual versions
 - **V3:** Multi-stone coordinated updates
 - **V4:** Dependency conflict detection
-- **V5:** Full ceremony system with vacate/nourish/restore
+- **V5:** Full ceremony system with vacate/upgrade/restore
 
 ## Estimated Implementation Time
 

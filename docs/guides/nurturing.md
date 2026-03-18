@@ -1,4 +1,4 @@
-# Zen Garden Nurturing User Guide
+# Zen Garden Backup User Guide
 
 Reference guide for environment setup, backup policies, and service recovery.
 
@@ -13,7 +13,7 @@ Reference guide for environment setup, backup policies, and service recovery.
 2. [Seed Bank Preparation](#2-seed-bank-preparation)
 3. [Policy Configuration](#3-policy-configuration)
 4. [Manual Backup Operations](#4-manual-backup-operations)
-5. [Scheduled Nurturing](#5-scheduled-nurturing)
+5. [Scheduled Backups](#5-scheduled-backups)
 6. [Restore Operations](#6-restore-operations)
 7. [Known Gaps and Limitations](#7-known-gaps-and-limitations)
 
@@ -43,7 +43,7 @@ Reference guide for environment setup, backup policies, and service recovery.
 /var/lib/zen-garden/       # Data directory
   ├── harvests/            # Backup artifacts
   ├── stored/              # Portable backups
-  ├── ceremonies/          # Nourishment journals
+  ├── ceremonies/          # Update journals
   ├── staging/             # Deployment packages
   ├── mounts/              # Seed bank mount points
   └── nurturing/           # A/B slot index
@@ -123,8 +123,8 @@ After preparation, the seed bank contains:
 {mount_path}/.zen-garden/
 ├── manifest.json           # Identity and metadata
 └── garden/
-    ├── memories/           # Nurturing backups (seed bank memories)
-    │   ├── index.json       # Remote nurturing index
+    ├── memories/           # Backup snapshots (seed bank memories)
+    │   ├── index.json       # Remote backup index
     │   └── {offering_id}/
     │       ├── offering.json
     │       └── {harvest_id}.tar.gz
@@ -191,7 +191,7 @@ When replicating to seed banks, three strategies are available:
 
 ### Workflow Configuration
 
-The nurturing scheduler uses these defaults:
+The backup scheduler uses these defaults:
 ```rust
 NurturingWorkflowConfig {
     commit_image: true,              // Commit container image during snapshot
@@ -211,7 +211,7 @@ NurturingWorkflowConfig {
 
 ```bash
 # Via API
-curl -X POST http://localhost:7185/api/v1/stone/nurturing/{offering} \
+curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering} \
   -H "Content-Type: application/json" \
   -d '{"commit_image": true}'
 ```
@@ -224,7 +224,7 @@ Response includes:
 ### List Local Snapshots
 
 ```bash
-curl http://localhost:7185/api/v1/stone/nurturing/{offering}
+curl http://localhost:7185/api/v1/stone/snapshots/{offering}
 ```
 
 Response shows both slots:
@@ -246,7 +246,7 @@ Response shows both slots:
 ### Replicate to Seed Bank
 
 ```bash
-curl -X POST http://localhost:7185/api/v1/stone/nurturing/{offering}/replicate \
+curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/replicate \
   -H "Content-Type: application/json" \
   -d '{"seed_bank": "portable-backup"}'
 ```
@@ -254,7 +254,7 @@ curl -X POST http://localhost:7185/api/v1/stone/nurturing/{offering}/replicate \
 ### List Remote Snapshots
 
 ```bash
-curl http://localhost:7185/api/v1/stone/nurturing/remote/{seed_bank_name}
+curl http://localhost:7185/api/v1/stone/snapshots/remote/{seed_bank_name}
 ```
 
 ### Hydration Access (Memories API)
@@ -282,16 +282,16 @@ curl -o snapshot.tar.gz \
 
 ---
 
-## 5. Scheduled Nurturing
+## 5. Scheduled Backups
 
 ### Timer Integration
 
-The nurturing scheduler is triggered by system timers calling HTTP endpoints:
+The backup scheduler is triggered by system timers calling HTTP endpoints:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /api/v1/nurturing/{offering}/trigger` | Trigger single offering |
-| `POST /api/v1/nurturing/trigger-all` | Trigger all running offerings |
+| `POST /api/v1/snapshots/{offering}/trigger` | Trigger single offering |
+| `POST /api/v1/snapshots/trigger-all` | Trigger all running offerings |
 
 ### Workflow Execution
 
@@ -306,10 +306,10 @@ When triggered, the scheduler executes:
 
 **Linux (systemd):**
 
-Create a timer unit `/etc/systemd/system/zen-nurturing-{offering}.timer`:
+Create a timer unit `/etc/systemd/system/zen-backup-{offering}.timer`:
 ```ini
 [Unit]
-Description=Zen Garden Nurturing Timer for {offering}
+Description=Zen Garden Backup Timer for {offering}
 
 [Timer]
 OnCalendar=daily
@@ -320,27 +320,27 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-Create a service unit `/etc/systemd/system/zen-nurturing-{offering}.service`:
+Create a service unit `/etc/systemd/system/zen-backup-{offering}.service`:
 ```ini
 [Unit]
-Description=Zen Garden Nurturing Trigger for {offering}
+Description=Zen Garden Backup Trigger for {offering}
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/curl -X POST http://localhost:7185/api/v1/nurturing/{offering}/trigger
+ExecStart=/usr/bin/curl -X POST http://localhost:7185/api/v1/snapshots/{offering}/trigger
 ```
 
 Enable:
 ```bash
 systemctl daemon-reload
-systemctl enable --now zen-nurturing-{offering}.timer
+systemctl enable --now zen-backup-{offering}.timer
 ```
 
 **Windows (Task Scheduler):**
 
 Create a scheduled task that runs:
 ```powershell
-Invoke-WebRequest -Method POST -Uri "http://localhost:7185/api/v1/nurturing/{offering}/trigger"
+Invoke-WebRequest -Method POST -Uri "http://localhost:7185/api/v1/snapshots/{offering}/trigger"
 ```
 
 **Gap:** No CLI command to create/manage timers automatically.
@@ -352,7 +352,7 @@ Invoke-WebRequest -Method POST -Uri "http://localhost:7185/api/v1/nurturing/{off
 ### Restore from Local A/B Slot
 
 ```bash
-curl -X POST http://localhost:7185/api/v1/stone/nurturing/{offering}/restore \
+curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/restore \
   -H "Content-Type: application/json" \
   -d '{"slot": "A"}'
 ```
@@ -368,7 +368,7 @@ If `slot` is omitted, restores from the most recent slot.
 ### Restore from Seed Bank
 
 ```bash
-curl -X POST http://localhost:7185/api/v1/stone/nurturing/{offering}/restore-remote \
+curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/restore-remote \
   -H "Content-Type: application/json" \
   -d '{"seed_bank": "portable-backup", "harvest_id": null}'
 ```
@@ -385,7 +385,7 @@ If `harvest_id` is omitted, restores from the latest snapshot on that seed bank.
    mount /dev/sdb1 /var/lib/zen-garden/mounts/portable-backup
 
    # List offerings with snapshots
-   curl http://localhost:7185/api/v1/stone/nurturing/remote/portable-backup
+   curl http://localhost:7185/api/v1/stone/snapshots/remote/portable-backup
    ```
 
 2. **Install the offering:**
@@ -395,7 +395,7 @@ If `harvest_id` is omitted, restores from the latest snapshot on that seed bank.
 
 3. **Restore from seed bank:**
    ```bash
-   curl -X POST http://localhost:7185/api/v1/stone/nurturing/{offering}/restore-remote \
+   curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/restore-remote \
      -d '{"seed_bank": "portable-backup"}'
    ```
 
@@ -431,30 +431,30 @@ If `harvest_id` is omitted, restores from the latest snapshot on that seed bank.
 | Partial restore | Not supported - all-or-nothing per offering |
 | Incremental backups | Not supported - full snapshots only |
 | Encrypted backups | Planned for future release |
-| Backup to cloud (S3) | S3 gateway exists but not integrated with nurturing |
+| Backup to cloud (S3) | S3 gateway exists but not integrated with backup |
 
 ### Recommendations for Future Work
 
 1. **Add Rake restore commands:**
    ```bash
-   garden-rake restore {offering} from slot A
-   garden-rake restore {offering} from seed-bank portable-backup
+   garden-rake backup restore {offering} from slot A
+   garden-rake backup restore {offering} from seed-bank portable-backup
    ```
 
 2. **Add timer management to Rake:**
    ```bash
-   garden-rake schedule {offering} every 24h
-   garden-rake schedule list
+   garden-rake backup schedule {offering} every 24h
+   garden-rake backup schedule list
    ```
 
 3. **Make retention configurable:**
    ```bash
-   garden-rake configure nurturing --retention 10
+   garden-rake backup configure --retention 10
    ```
 
 4. **Add backup status command:**
    ```bash
-   garden-rake status nurturing
+   garden-rake backup status
    # Shows all offerings, last backup times, replication status
    ```
 
@@ -464,16 +464,16 @@ If `harvest_id` is omitted, restores from the latest snapshot on that seed bank.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/stone/nurturing` | List all offerings with slots |
-| GET | `/api/v1/stone/nurturing/{offering}` | Get slots for offering |
-| POST | `/api/v1/stone/nurturing/{offering}` | Create snapshot |
-| POST | `/api/v1/stone/nurturing/{offering}/restore` | Restore from local slot |
-| DELETE | `/api/v1/stone/nurturing/{offering}` | Delete all snapshots |
-| POST | `/api/v1/stone/nurturing/{offering}/replicate` | Replicate to seed bank |
-| GET | `/api/v1/stone/nurturing/remote/{seed_bank}` | List remote snapshots |
-| POST | `/api/v1/stone/nurturing/{offering}/restore-remote` | Restore from seed bank |
-| POST | `/api/v1/nurturing/{offering}/trigger` | Trigger full workflow |
-| POST | `/api/v1/nurturing/trigger-all` | Trigger all offerings |
+| GET | `/api/v1/stone/snapshots` | List all offerings with slots |
+| GET | `/api/v1/stone/snapshots/{offering}` | Get slots for offering |
+| POST | `/api/v1/stone/snapshots/{offering}` | Create snapshot |
+| POST | `/api/v1/stone/snapshots/{offering}/restore` | Restore from local slot |
+| DELETE | `/api/v1/stone/snapshots/{offering}` | Delete all snapshots |
+| POST | `/api/v1/stone/snapshots/{offering}/replicate` | Replicate to seed bank |
+| GET | `/api/v1/stone/snapshots/remote/{seed_bank}` | List remote snapshots |
+| POST | `/api/v1/stone/snapshots/{offering}/restore-remote` | Restore from seed bank |
+| POST | `/api/v1/snapshots/{offering}/trigger` | Trigger full workflow |
+| POST | `/api/v1/snapshots/trigger-all` | Trigger all offerings |
 
 ---
 

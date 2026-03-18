@@ -296,7 +296,7 @@ if ($UseDocker) {
         $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
 
         # Build binaries in one container run for efficiency
-        $buildArgs = @("cargo", "build", "--locked", "-j", "$parallelJobs")
+        $buildArgs = @("cargo", "build", "--frozen", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
         }
@@ -327,11 +327,14 @@ if ($UseDocker) {
         else {
             Write-Host "  → Creating new container: $containerName" -ForegroundColor DarkGray
             
+            # Workspace and koi mounted read-only to prevent lockfile drift.
+            # Target dir is a named volume for incremental compilation persistence.
             docker run -d `
                 --name $containerName `
-                -v "${unixPath}:/build" `
-                -v "${koiUnixPath}:/koi" `
+                -v "${unixPath}:/build:ro" `
+                -v "${koiUnixPath}:/koi:ro" `
                 -v "zen-cargo-cache-linux-x64:/root/.cargo" `
+                -v "zen-target-linux-x64:/target" `
                 -w /build `
                 $IMAGE_NAME `
                 tail -f /dev/null
@@ -357,7 +360,7 @@ if ($UseDocker) {
         # Execute build with isolated target directory
         # Mold linker: clang+mold are installed in the Docker image (Dockerfile.linux-x64).
         # Passed as env vars here (not .cargo/config.toml) to avoid affecting x86 cross-compilation.
-        docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-linux-x64 -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang -e "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" $containerName $buildArgs
+        docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/target -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang -e "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" $containerName $buildArgs
         
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
         
@@ -368,7 +371,7 @@ if ($UseDocker) {
         $copyFailed = $false
 
         foreach ($target in $buildTargets) {
-            docker cp "${containerName}:/build/target-linux-x64/${buildProfile}/${target}" "$LINUX_DIR\$target" 2>$null
+            docker cp "${containerName}:/target/${buildProfile}/${target}" "$LINUX_DIR\$target" 2>$null
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "    ✗ Failed to copy $target" -ForegroundColor Red
                 $copyFailed = $true
@@ -466,7 +469,7 @@ else {
             Write-Host "  → Building $target..."
         }
 
-        $buildArgs = @("build", "--locked", "-j", "$parallelJobs")
+        $buildArgs = @("build", "--frozen", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
         }

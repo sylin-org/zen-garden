@@ -244,7 +244,7 @@ try {
     }
 
     # Cargo build args with --target for cross-compilation
-    $buildArgs = @("cargo", "build", "--locked", "--target", $RUST_TARGET, "-j", "$parallelJobs")
+    $buildArgs = @("cargo", "build", "--frozen", "--target", $RUST_TARGET, "-j", "$parallelJobs")
     if ($buildProfile -eq "debug") {
         # Debug build - no profile flag needed
     } elseif ($buildProfile -eq "fast-release") {
@@ -271,11 +271,14 @@ try {
     } else {
         Write-Host "  -> Creating new container: $CONTAINER_NAME" -ForegroundColor DarkGray
 
+        # Workspace and koi mounted read-only to prevent lockfile drift.
+        # Target dir is a named volume for incremental compilation persistence.
         docker run -d `
             --name $CONTAINER_NAME `
-            -v "${unixPath}:/build" `
-            -v "${koiUnixPath}:/koi" `
+            -v "${unixPath}:/build:ro" `
+            -v "${koiUnixPath}:/koi:ro" `
             -v "${CARGO_CACHE_VOLUME}:/root/.cargo" `
+            -v "zen-target-linux-x86:/target" `
             -w /build `
             $IMAGE_NAME `
             tail -f /dev/null
@@ -290,7 +293,7 @@ try {
     # with the x64 builder which uses target-linux-x64/ and a different base image.
 
     # Execute build with separate target directory
-    docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/build/target-linux-x86 -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
+    docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/target -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
 
     if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
@@ -298,7 +301,7 @@ try {
     # Cross-compiled binaries are at target-linux-x86/{RUST_TARGET}/{profile}/{binary}
     Write-Host "  -> Copying binaries from container..." -ForegroundColor DarkGray
     $copyFailed = $false
-    $containerBuildDir = "/build/target-linux-x86/$RUST_TARGET/$buildProfile"
+    $containerBuildDir = "/target/$RUST_TARGET/$buildProfile"
 
     foreach ($target in $buildTargets) {
         docker cp "${CONTAINER_NAME}:${containerBuildDir}/${target}" "$LINUX_X86_DIR\$target" 2>$null

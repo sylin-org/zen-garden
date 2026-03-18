@@ -103,6 +103,25 @@ Write-Host "Build Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } e
 Write-Host "Build Profile: $buildProfile" -ForegroundColor Yellow
 Write-Host ""
 
+# ── Dependency resolution (single source of truth) ───────────────────
+# Resolve dependencies ONCE on the host before any platform build.
+# generate-lockfile ensures Cargo.lock matches Cargo.toml + path deps (koi)
+# without upgrading pinned versions. fetch pre-downloads all crates.
+# Platform builds use --frozen: no network, no lockfile writes.
+Write-Host "Resolving dependencies..." -ForegroundColor Yellow
+Push-Location $config.workspace.root
+try {
+    cargo generate-lockfile 2>&1 | Out-Null
+    cargo fetch 2>&1 | Out-Null
+    Write-Host "  Dependencies resolved. Cargo.lock is authoritative.`n" -ForegroundColor DarkGray
+}
+catch {
+    Write-Host "  Warning: dependency resolution failed: $_`n" -ForegroundColor Yellow
+}
+finally {
+    Pop-Location
+}
+
 # Destroy and recreate staging directory (ensures no stale packages)
 $stagingRoot = Join-Path $config.workspace.dist "staging"
 if (Test-Path $stagingRoot) { Remove-Item $stagingRoot -Recurse -Force }

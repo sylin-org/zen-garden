@@ -130,7 +130,7 @@ if (-not $SkipTests) {
     Write-Host "Running tests..." -ForegroundColor Yellow
     Push-Location $WORKSPACE_ROOT
     try {
-        cargo test --workspace --target x86_64-pc-windows-msvc
+        cargo test --frozen --workspace --target x86_64-pc-windows-msvc
         if ($LASTEXITCODE -ne 0) {
             throw "Tests failed with exit code $LASTEXITCODE"
         }
@@ -213,7 +213,7 @@ try {
     }
 
     # Build all targets
-    $buildArgs = @("build", "--locked") + $commonArgs + @("--target", "x86_64-pc-windows-msvc")
+    $buildArgs = @("build", "--frozen") + $commonArgs + @("--target", "x86_64-pc-windows-msvc")
     foreach ($target in $buildTargets) {
         $buildArgs += @("--bin", $target)
     }

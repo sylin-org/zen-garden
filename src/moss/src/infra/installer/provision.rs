@@ -295,9 +295,17 @@ fn configure_resolved() -> anyhow::Result<()> {
     if !command_exists("resolvectl") {
         println!("  Installing systemd-resolved...");
         if command_exists("apt-get") {
-            let _ = Command::new("apt-get")
+            match Command::new("apt-get")
                 .args(["install", "-y", "-qq", "systemd-resolved"])
-                .output();
+                .output()
+            {
+                Ok(out) if !out.status.success() => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    println!("    Warning: apt-get failed: {}", stderr.trim());
+                }
+                Err(e) => println!("    Warning: could not run apt-get: {e}"),
+                _ => {}
+            }
         }
     }
 

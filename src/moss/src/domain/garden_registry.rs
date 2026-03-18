@@ -250,11 +250,11 @@ impl GardenRegistryInner {
     ) -> Option<ToolDelta> {
         let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
 
-        if let Some(existing) = self.entries.get(&key) {
+        if let Some(existing) = self.entries.get_mut(&key) {
             if tool_equivalent(&existing.tool, &tool) && existing.origin == origin {
                 // Content unchanged — just refresh TTL silently if applicable.
                 if expires_at.is_some() {
-                    self.entries.get_mut(&key).unwrap().expires_at = expires_at;
+                    existing.expires_at = expires_at;
                 }
                 return None;
             }

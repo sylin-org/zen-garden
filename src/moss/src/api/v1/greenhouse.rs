@@ -320,10 +320,14 @@ pub async fn get_catalog(
                 .iter()
                 .map(|o| {
                     let status = match o.compatibility.decision.as_str() {
-                        "pass" | "fallback" => "compatible",
-                        "warning" => "warning",
-                        "fail" => "incompatible",
-                        _ => "unknown",
+                        garden_common::constants::COMPAT_PASS
+                        | garden_common::constants::COMPAT_FALLBACK => "compatible",
+                        garden_common::constants::COMPAT_WARNING => "warning",
+                        garden_common::constants::COMPAT_FAIL => "incompatible",
+                        other => {
+                            tracing::warn!(decision = other, offering = %o.name, "Unknown compatibility decision");
+                            "unknown"
+                        }
                     };
                     (
                         o.name.clone(),

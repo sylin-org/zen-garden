@@ -277,6 +277,132 @@ pub async fn install(
     offering_fqn: &mut garden_common::offerings::OfferingFqn,
 ) -> Result<InstallOutcome> {
     use garden_common::offerings::OfferingSource;
+
+    let service_name = offering_fqn.fqn();
+
+    // Route to the appropriate install path
+    if offering_fqn.source == Some(OfferingSource::Image) {
+        return install_image_direct(state, offering_fqn, &service_name).await;
+    }
+
+    if let Some(outcome) = try_adopt_existing(state, &service_name).await? {
+        return Ok(outcome);
+    }
+
+    install_from_manifest(state, offering_fqn).await
+}
+
+/// Image-direct deployment: pull and run a Docker image by reference (OFFER-0006).
+async fn install_image_direct(
+    state: &AppState,
+    offering_fqn: &garden_common::offerings::OfferingFqn,
+    service_name: &str,
+) -> Result<InstallOutcome> {
+    use garden_common::utils::generate_guidv7;
+    use garden_common::{
+        ManagedData, Offering, OfferingLocation, OfferingModeData, OfferingStatus,
+        ServiceHealthStatus,
+    };
+
+    let offering_type = offering_fqn.offering.clone();
+    let image_ref = offering_fqn
+        .image_ref
+        .clone()
+        .unwrap_or_else(|| offering_fqn.offering.clone());
+
+    if crate::domain::offering_lifecycle::has_status(state, service_name, OfferingStatus::Maintenance).await {
+        return Ok(InstallOutcome::Maintenance { service_name: service_name.to_string() });
+    }
+
+    let job_id = uuid::Uuid::now_v7().to_string();
+    let job = crate::Job {
+        id: job_id.clone(),
+        offerings: vec![service_name.to_string()],
+        status: crate::JobStatus::Pending,
+        completed: vec![],
+        failed: std::collections::HashMap::new(),
+        started_at: std::time::SystemTime::now(),
+        completed_at: None,
+    };
+    state.jobs.write().await.insert(job_id.clone(), job);
+
+    let installing_offering = Offering {
+        offering_id: generate_guidv7(),
+        name: offering_fqn.clone(),
+        offering: offering_type.clone(),
+        category: String::new(),
+        version: image_ref.rsplit_once(':').map(|(_, tag)| tag).unwrap_or("latest").to_string(),
+        status: OfferingStatus::Installing,
+        health: ServiceHealthStatus::Offline,
+        sub_capabilities: Vec::new(),
+        location: OfferingLocation {
+            host: "localhost".to_string(),
+            port: 0,
+            protocol: "http".to_string(),
+            agnostic_port: None,
+            port_map: std::collections::HashMap::new(),
+        },
+        mode_data: OfferingModeData::Managed(ManagedData {
+            resources: None,
+            job_id: Some(job_id.clone()),
+            guidance: None,
+            ..Default::default()
+        }),
+        registered_at: chrono::Utc::now(),
+        updated_at: None,
+        orchestration: None,
+    };
+    state.upsert_offering(installing_offering, true).await;
+
+    let state = state.clone();
+    let task_fqn = offering_fqn.clone();
+    let task_image = image_ref;
+    let task_job_id = job_id.clone();
+    let task_svc_name = service_name.to_string();
+    tokio::spawn(async move {
+        crate::install_image_direct_task(&state, &task_job_id, &task_fqn, &task_image, &task_svc_name).await;
+        tracing::debug!(fqn = %task_fqn, "Image-direct install task completed");
+    });
+
+    Ok(InstallOutcome::ImageDirectStarted {
+        service_name: service_name.to_string(),
+        job_id,
+    })
+}
+
+/// Self-heal: adopt an orphaned zen-offering-* container not in the registry.
+async fn try_adopt_existing(state: &AppState, service_name: &str) -> Result<Option<InstallOutcome>> {
+    if !state.platform.docker.zen_container_exists(service_name).await.unwrap_or(false) {
+        return Ok(None);
+    }
+
+    let in_registry = crate::domain::offering_lifecycle::exists(state, service_name).await;
+    if in_registry {
+        return Ok(None);
+    }
+
+    let cached_caps = state.current.capabilities.read().await.clone();
+    if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
+        &state.platform.docker,
+        &state.manifest_registry,
+        service_name,
+        &state.current.stone.name,
+        cached_caps.as_ref(),
+    )
+    .await
+    {
+        state.upsert_offering(adopted_offering, true).await;
+        return Ok(Some(InstallOutcome::Adopted { service_name: service_name.to_string() }));
+    }
+
+    Ok(None)
+}
+
+/// Manifest-based installation: resolve offering from catalog and deploy.
+async fn install_from_manifest(
+    state: &AppState,
+    offering_fqn: &mut garden_common::offerings::OfferingFqn,
+) -> Result<InstallOutcome> {
     use garden_common::utils::generate_guidv7;
     use garden_common::{
         ManagedData, Offering, OfferingLocation, OfferingModeData, OfferingStatus,
@@ -286,121 +412,6 @@ pub async fn install(
     let offering_type = offering_fqn.offering.clone();
     let mut service_name = offering_fqn.fqn();
 
-    // ── Image-direct deployment (OFFER-0006) ──────────────────────────
-    if offering_fqn.source == Some(OfferingSource::Image) {
-        let image_ref = offering_fqn
-            .image_ref
-            .clone()
-            .unwrap_or_else(|| offering_fqn.offering.clone());
-
-        // Check if already under maintenance
-        if crate::domain::offering_lifecycle::has_status(
-            state,
-            &service_name,
-            OfferingStatus::Maintenance,
-        )
-        .await
-        {
-            return Ok(InstallOutcome::Maintenance { service_name });
-        }
-
-        // Create job
-        let job_id = uuid::Uuid::now_v7().to_string();
-        let job = crate::Job {
-            id: job_id.clone(),
-            offerings: vec![service_name.clone()],
-            status: crate::JobStatus::Pending,
-            completed: vec![],
-            failed: std::collections::HashMap::new(),
-            started_at: std::time::SystemTime::now(),
-            completed_at: None,
-        };
-        state.jobs.write().await.insert(job_id.clone(), job);
-
-        // Add Installing placeholder to registry
-        let installing_offering = Offering {
-            offering_id: generate_guidv7(),
-            name: offering_fqn.clone(),
-            offering: offering_type.clone(),
-            category: String::new(), // Image-direct: no manifest, backfilled later
-            version: image_ref
-                .rsplit_once(':')
-                .map(|(_, tag)| tag)
-                .unwrap_or("latest")
-                .to_string(),
-            status: OfferingStatus::Installing,
-            health: ServiceHealthStatus::Offline,
-            sub_capabilities: Vec::new(),
-            location: OfferingLocation {
-                host: "localhost".to_string(),
-                port: 0,
-                protocol: "http".to_string(),
-                agnostic_port: None,
-                port_map: std::collections::HashMap::new(),
-            },
-            mode_data: OfferingModeData::Managed(ManagedData {
-                resources: None,
-                job_id: Some(job_id.clone()),
-                guidance: None,
-                ..Default::default()
-            }),
-            registered_at: chrono::Utc::now(),
-            updated_at: None,
-            orchestration: None,
-        };
-        state.upsert_offering(installing_offering, true).await;
-
-        // Spawn background task
-        let state = state.clone();
-        let task_fqn = offering_fqn.clone();
-        let task_image = image_ref;
-        let task_job_id = job_id.clone();
-        let task_svc_name = service_name.clone();
-        tokio::spawn(async move {
-            crate::install_image_direct_task(
-                &state,
-                &task_job_id,
-                &task_fqn,
-                &task_image,
-                &task_svc_name,
-            )
-            .await;
-        });
-
-        return Ok(InstallOutcome::ImageDirectStarted {
-            service_name,
-            job_id,
-        });
-    }
-
-    // ── Self-heal: adopt orphaned container ────────────────────────────
-    if state
-        .platform
-        .docker
-        .zen_container_exists(&service_name)
-        .await
-        .unwrap_or(false)
-    {
-        let in_registry = crate::domain::offering_lifecycle::exists(state, &service_name).await;
-
-        if !in_registry {
-            let cached_caps = state.current.capabilities.read().await.clone();
-            if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
-                &state.platform.docker,
-                &state.manifest_registry,
-                &service_name,
-                &state.current.stone.name,
-                cached_caps.as_ref(),
-            )
-            .await
-            {
-                state.upsert_offering(adopted_offering, true).await;
-                return Ok(InstallOutcome::Adopted { service_name });
-            }
-        }
-    }
-
-    // ── Manifest-based installation ────────────────────────────────────
     let compiled = crate::get_compiled_offering(
         state,
         &offering_type,
@@ -409,12 +420,8 @@ pub async fn install(
     .await?
     .ok_or_else(|| anyhow::anyhow!("Unknown offering: {}", offering_type))?;
 
-    // Compatibility check
     if compiled.compatibility.decision == garden_common::constants::COMPAT_FAIL {
-        let reason = compiled
-            .compatibility
-            .reason
-            .unwrap_or_else(|| "Unknown reason".to_string());
+        let reason = compiled.compatibility.reason.unwrap_or_else(|| "Unknown reason".to_string());
         anyhow::bail!("Offering is incompatible with this stone: {}", reason);
     }
 
@@ -436,18 +443,10 @@ pub async fn install(
         }
     }
 
-    // Duplicate/maintenance check
-    if crate::domain::offering_lifecycle::has_status(
-        state,
-        &service_name,
-        OfferingStatus::Maintenance,
-    )
-    .await
-    {
+    if crate::domain::offering_lifecycle::has_status(state, &service_name, OfferingStatus::Maintenance).await {
         return Ok(InstallOutcome::Maintenance { service_name });
     }
 
-    // Create job
     let job_id = uuid::Uuid::now_v7().to_string();
     let job = crate::Job {
         id: job_id.clone(),
@@ -460,27 +459,18 @@ pub async fn install(
     };
     state.jobs.write().await.insert(job_id.clone(), job);
 
-    // Add Installing placeholder
     let native_port = compiled.default_host_port();
     let offering_protocol = crate::domain::connection::infer_protocol_from_manifest_metadata(
         &offering_type,
         &compiled.category,
-        state
-            .manifest_registry
-            .get_offering(&offering_type)
-            .and_then(|entry| entry.connection.as_ref()),
+        state.manifest_registry.get_offering(&offering_type).and_then(|entry| entry.connection.as_ref()),
     );
     let installing_offering = Offering {
         offering_id: generate_guidv7(),
         name: offering_fqn.clone(),
         offering: offering_type.clone(),
         category: compiled.category.clone(),
-        version: compiled
-            .image
-            .split(':')
-            .next_back()
-            .unwrap_or("latest")
-            .into(),
+        version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
         status: OfferingStatus::Installing,
         health: ServiceHealthStatus::Offline,
         sub_capabilities: Vec::new(),
@@ -503,13 +493,13 @@ pub async fn install(
     };
     state.upsert_offering(installing_offering, true).await;
 
-    // Spawn background task
     let state = state.clone();
     let task_offering = offering_type;
     let task_svc_name = service_name.clone();
     let task_job_id = job_id.clone();
     tokio::spawn(async move {
         crate::install_service_task(&state, &task_job_id, &task_offering, &task_svc_name).await;
+        tracing::debug!(offering = %task_offering, "Install task completed");
     });
 
     Ok(InstallOutcome::InstallStarted {

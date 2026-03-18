@@ -6,6 +6,7 @@
 //! 3. GitHub Releases API (download latest matching asset)
 //! 4. Graceful failure with clear instructions
 
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 /// GitHub repository for release downloads
@@ -167,6 +168,13 @@ fn download_from_github(dest_dir: &Path, platform: &str, ext: &str) -> anyhow::R
         .get("browser_download_url")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("No download URL for asset"))?;
+
+    // Defence-in-depth: only allow HTTPS downloads from GitHub domains
+    if !download_url.starts_with("https://github.com/")
+        && !download_url.starts_with("https://objects.githubusercontent.com/")
+    {
+        anyhow::bail!("Unexpected download URL domain: {download_url}");
+    }
     let asset_size = asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
 
     println!(
@@ -215,7 +223,7 @@ fn https_get_string(url: &str) -> anyhow::Result<String> {
         anyhow::bail!("HTTP request failed: {}", stderr.trim());
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    String::from_utf8(output.stdout).context("GitHub API response is not valid UTF-8")
 }
 
 /// HTTPS download to file using system curl.

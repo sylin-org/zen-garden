@@ -102,10 +102,10 @@ $script:Config = @{
 function Write-Banner {
     $banner = @"
 
-  ╔════════════════════════════════════════════════════╗
-  ║   Zen Garden Stone USB Creator                     ║
-  ║   Creates bootable USB for auto stone install      ║
-  ╚════════════════════════════════════════════════════╝
+  +====================================================+
+  |   Zen Garden Stone USB Creator                     |
+  |   Creates bootable USB for auto stone install      |
+  +====================================================+
 
 "@
     Write-Host $banner -ForegroundColor Cyan
@@ -125,14 +125,14 @@ function Write-Panel {
     if (-not $LineColors) { $LineColors = @{} }
 
     $indent = $script:Config.BoxIndent
-    $top = "$indent┌" + ('─' * $InnerWidth) + '┐'
-    $bottom = "$indent└" + ('─' * $InnerWidth) + '┘'
+    $top = "$indent+" + ('-' * $InnerWidth) + '+'
+    $bottom = "$indent+" + ('-' * $InnerWidth) + '+'
 
     Write-Host $top -ForegroundColor $TitleColor
 
     if ($Title) {
         $titleText = ($Title + ' ').PadRight($InnerWidth).Substring(0, $InnerWidth)
-        Write-Host "$indent│$titleText│" -ForegroundColor $TitleColor
+        Write-Host "$indent|$titleText|" -ForegroundColor $TitleColor
     }
 
     for ($i = 0; $i -lt $Lines.Count; $i++) {
@@ -140,7 +140,7 @@ function Write-Panel {
         if ($null -eq $text) { $text = '' }
         $safe = (' ' + $text.ToString()).PadRight($InnerWidth).Substring(0, $InnerWidth)
         $color = if ($LineColors.ContainsKey($i)) { $LineColors[$i] } else { $BodyColor }
-        Write-Host "$indent│$safe│" -ForegroundColor $color
+        Write-Host "$indent|$safe|" -ForegroundColor $color
     }
 
     Write-Host $bottom -ForegroundColor $TitleColor
@@ -268,8 +268,8 @@ function Select-UsbDrive {
         Write-Step "No suitable USB drives detected" "FAIL"
         Write-Host ""
         Write-Host "  Requirements:" -ForegroundColor Yellow
-        Write-Host "    • USB removable drive (not fixed disk)" -ForegroundColor Gray
-        Write-Host "    • Minimum $($script:Config.MinUsbSizeGB)GB capacity (recommended $($script:Config.RecommendedUsbGB)GB+)" -ForegroundColor Gray
+        Write-Host "    * USB removable drive (not fixed disk)" -ForegroundColor Gray
+        Write-Host "    * Minimum $($script:Config.MinUsbSizeGB)GB capacity (recommended $($script:Config.RecommendedUsbGB)GB+)" -ForegroundColor Gray
         Write-Host ""
         Write-Host "  Please insert a USB drive and run again." -ForegroundColor Yellow
         return $null
@@ -297,9 +297,9 @@ function Select-UsbDrive {
     
     # Multiple drives - show selection menu
     Write-Host ""
-    Write-Host "  ┌────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-    Write-Host "  │ Multiple USB Drives Detected                       │" -ForegroundColor Cyan
-    Write-Host "  └────────────────────────────────────────────────────┘" -ForegroundColor Cyan
+    Write-Host "  +----------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host "  | Multiple USB Drives Detected                       |" -ForegroundColor Cyan
+    Write-Host "  +----------------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
     
     for ($i = 0; $i -lt $drives.Count; $i++) {
@@ -992,11 +992,11 @@ function Write-StoneFiles {
     
     # =========================================================================
     # Deploy from Linux package (single source of truth)
-    # Package structure → Target filesystem mapping:
-    #   bin/*           → /usr/local/bin/* 
-    #   bin/companions/*  → /usr/local/bin/companions/*
-    #   manifests/*     → /var/lib/zen-garden/manifests/*
-    #   scripts/*.sh    → /usr/local/bin/*.sh
+    # Package structure -> Target filesystem mapping:
+    #   bin/*           -> /usr/local/bin/* 
+    #   bin/companions/*  -> /usr/local/bin/companions/*
+    #   manifests/*     -> /var/lib/zen-garden/manifests/*
+    #   scripts/*.sh    -> /usr/local/bin/*.sh
     # =========================================================================
     
     # Find latest Linux package
@@ -1036,24 +1036,24 @@ function Write-StoneFiles {
         $pkgPath = $pkgDir.FullName
         Write-Step "Extracted: $($pkgDir.Name)" "OK"
         
-        # Deploy bin/ → stone-root/usr/local/bin/
+        # Deploy bin/ -> stone-root/usr/local/bin/
         $pkgBinDir = Join-Path $pkgPath "bin"
         if (Test-Path $pkgBinDir) {
             $binDir = Join-Path $stoneRootUsb "usr\local\bin"
             New-Item -ItemType Directory -Path $binDir -Force | Out-Null
             Copy-Item "$pkgBinDir\*" $binDir -Recurse -Force
             $binCount = @(Get-ChildItem $binDir -Recurse -File).Count
-            Write-Step "bin/ ($binCount files) → stone-root/usr/local/bin/" "OK"
+            Write-Step "bin/ ($binCount files) -> stone-root/usr/local/bin/" "OK"
         }
         
-        # Deploy lib/ → stone-root/var/lib/
+        # Deploy lib/ -> stone-root/var/lib/
         $pkgLibDir = Join-Path $pkgPath "lib"
         if (Test-Path $pkgLibDir) {
             $libDir = Join-Path $stoneRootUsb "var\lib"
             New-Item -ItemType Directory -Path $libDir -Force | Out-Null
             Copy-Item "$pkgLibDir\*" $libDir -Recurse -Force
             $libCount = @(Get-ChildItem $libDir -Recurse -File).Count
-            Write-Step "lib/ ($libCount files) → stone-root/var/lib/" "OK"
+            Write-Step "lib/ ($libCount files) -> stone-root/var/lib/" "OK"
         }
     }
     finally {
@@ -1075,7 +1075,7 @@ function Write-StoneFiles {
     else {
         $script:PreparedMossService | Out-File -FilePath $mossServicePath -Encoding utf8 -NoNewline
     }
-    Write-Step "garden-moss.service → stone-root/etc/systemd/system/" "OK"
+    Write-Step "garden-moss.service -> stone-root/etc/systemd/system/" "OK"
     
     # Copy sudoers configuration to stone-root/etc/sudoers.d/
     $sudoersFile = Join-Path $PSScriptRoot "sudoers.d-moss"
@@ -1083,7 +1083,7 @@ function Write-StoneFiles {
         $sudoersDir = Join-Path $stoneRootUsb "etc\sudoers.d"
         New-Item -ItemType Directory -Path $sudoersDir -Force | Out-Null
         Copy-Item $sudoersFile (Join-Path $sudoersDir "moss") -Force
-        Write-Step "sudoers.d/moss → stone-root/etc/sudoers.d/" "OK"
+        Write-Step "sudoers.d/moss -> stone-root/etc/sudoers.d/" "OK"
     }
     else {
         Write-Step "sudoers.d-moss not found" "WARN"
@@ -1092,7 +1092,7 @@ function Write-StoneFiles {
     # Create staging directory for binary updates
     $stagingDir = Join-Path $stoneRootUsb "home\stone\bin"
     New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
-    Write-Step "Binary staging directory → stone-root/home/stone/bin/" "OK"
+    Write-Step "Binary staging directory -> stone-root/home/stone/bin/" "OK"
     
     # Write garden-moss.toml to stone-root/etc/zen-garden/
     $configDir = Join-Path $stoneRootUsb "etc\zen-garden"
@@ -1104,14 +1104,14 @@ function Write-StoneFiles {
     else {
         $script:PreparedMossConfig | Out-File -FilePath $mossConfigPath -Encoding utf8 -NoNewline
     }
-    Write-Step "garden-moss.toml → stone-root/etc/zen-garden/" "OK"
+    Write-Step "garden-moss.toml -> stone-root/etc/zen-garden/" "OK"
     
     # Copy quickstart guide to stone-root/home/stone/
     $homeDir = Join-Path $stoneRootUsb "home\stone"
     $quickstartSource = Join-Path $PSScriptRoot "templates\garden-rake-quickstart.sh"
     if (Test-Path $quickstartSource) {
         Copy-Item $quickstartSource (Join-Path $homeDir "garden-rake-quickstart.sh") -Force
-        Write-Step "garden-rake-quickstart.sh → stone-root/home/stone/" "OK"
+        Write-Step "garden-rake-quickstart.sh -> stone-root/home/stone/" "OK"
     }
     
     # Write garden-moss-preinstall.json to stone-root/home/stone/ if offerings specified
@@ -1123,7 +1123,7 @@ function Write-StoneFiles {
         else {
             $script:PreparedPreInstallManifest | Out-File -FilePath $manifestPath -Encoding utf8
         }
-        Write-Step "garden-moss-preinstall.json → stone-root/home/stone/" "OK"
+        Write-Step "garden-moss-preinstall.json -> stone-root/home/stone/" "OK"
     }
     
     Write-Step "stone-root filesystem ready" "OK"
@@ -1426,7 +1426,7 @@ function Set-UsbReadOnly {
         $errMsg = $_.Exception.Message
         Write-Step "Failed to set read-only: $errMsg" "WARN"
         Write-Host "       The USB may still appear as an installation target" -ForegroundColor Yellow
-        Write-Host "       You can manually set it read-only with: diskpart → select disk $DiskNumber → attributes disk set readonly" -ForegroundColor Gray
+        Write-Host "       You can manually set it read-only with: diskpart -> select disk $DiskNumber -> attributes disk set readonly" -ForegroundColor Gray
     }
 }
 
@@ -1442,7 +1442,7 @@ function Show-Completion {
     Write-Panel -Title "The Stone Awaits" -Lines $lines -InnerWidth $script:Config.BoxWidth -TitleColor 'Green' -BodyColor 'Green'
 
     Write-Host "  Next Steps:" -ForegroundColor Cyan
-    Write-Host "  ────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  ----------------------------------------------------" -ForegroundColor DarkGray
     Write-Host "  1. Insert USB into target computer" -ForegroundColor White
     Write-Host "  2. Power on and boot from USB:" -ForegroundColor White
     Write-Host "       Dell: F12  |  HP: F9/Esc  |  Lenovo: F12" -ForegroundColor Gray
@@ -1600,7 +1600,7 @@ function Main {
                         try {
                             & $buildScript
                             Write-Host ""
-                            Write-Step "✓ Binaries built successfully" "OK"
+                            Write-Step "OK Binaries built successfully" "OK"
                             Write-Host "  Updated: ..\dist\linux-x64\moss, ..\dist\linux-x64\garden-rake" -ForegroundColor Gray
                             Write-Host ""
                             Write-Host "  Press Enter to continue..." -ForegroundColor Gray
@@ -1701,7 +1701,7 @@ function Main {
     
     if ($wizardState.UpdateOnly) {
         Write-Host ""
-        Write-Host "  ⚡ UPDATE-ONLY MODE: Skipping format and ISO copy" -ForegroundColor Yellow
+        Write-Host "   UPDATE-ONLY MODE: Skipping format and ISO copy" -ForegroundColor Yellow
         Write-Host "     Only updating Debian config files and GRUB" -ForegroundColor Gray
         Write-Host ""
     }
@@ -1729,7 +1729,7 @@ function Main {
         }
     }
     catch {
-        # Non-fatal — will fail naturally at file write if still protected
+        # Non-fatal - will fail naturally at file write if still protected
     }
 
     # Write stone setup files to USB

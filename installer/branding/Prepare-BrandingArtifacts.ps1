@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Prepares branding artifacts for Zen Garden Stone USB installer.
 
@@ -84,9 +84,9 @@ $script:Config = @{
 #region Helper Functions
 function Write-Banner {
     Write-Host ""
-    Write-Host "  ╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║   Zen Garden Branding Artifact Preparation         ║" -ForegroundColor Cyan
-    Write-Host "  ╚════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  +====================================================+" -ForegroundColor Cyan
+    Write-Host "  |   Zen Garden Branding Artifact Preparation         |" -ForegroundColor Cyan
+    Write-Host "  +====================================================+" -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -151,10 +151,10 @@ function Test-SourceAssets {
                 $img = [System.Drawing.Image]::FromFile($assetPath)
                 
                 if ($img.Width -ne $asset.RequiredWidth -or $img.Height -ne $asset.RequiredHeight) {
-                    $errors += "$($asset.FileName): Expected $($asset.RequiredWidth)×$($asset.RequiredHeight), got $($img.Width)×$($img.Height)"
+                    $errors += "$($asset.FileName): Expected $($asset.RequiredWidth)x$($asset.RequiredHeight), got $($img.Width)x$($img.Height)"
                 }
                 else {
-                    Write-Step "$($asset.FileName): $($img.Width)×$($img.Height) ✓" "OK"
+                    Write-Step "$($asset.FileName): $($img.Width)x$($img.Height) OK" "OK"
                 }
                 
                 $img.Dispose()
@@ -174,7 +174,7 @@ function Test-SourceAssets {
             $errors += "Theme file not found: $themeFile"
         }
         else {
-            Write-Step "${themeFile}: Found ✓" "OK"
+            Write-Step "${themeFile}: Found OK" "OK"
         }
     }
     
@@ -228,19 +228,19 @@ function Prepare-IsolinuxAssets {
         
         # For now, create a placeholder text splash (replace with actual image-to-ASCII conversion)
         $asciiSplash = @"
- ╔════════════════════════════════════════════════════════════╗
- ║                                                            ║
- ║          🪨  Zen Garden Stone Installer  🌿                ║
- ║                                                            ║
- ║   Zero-touch server deployment for self-hosted infra      ║
- ║                                                            ║
- ║   • Unattended install: ~10-15 minutes                    ║
- ║   • Auto-generates stone name on first boot               ║
- ║   • mDNS discovery: stone-<name>.local                    ║
- ║                                                            ║
- ║   Press Enter to begin (auto-starts in 3 seconds)         ║
- ║                                                            ║
- ╚════════════════════════════════════════════════════════════╝
+ +============================================================+
+ |                                                            |
+ |            Zen Garden Stone Installer                  |
+ |                                                            |
+ |   Zero-touch server deployment for self-hosted infra      |
+ |                                                            |
+ |   * Unattended install: ~10-15 minutes                    |
+ |   * Auto-generates stone name on first boot               |
+ |   * mDNS discovery: stone-<name>.local                    |
+ |                                                            |
+ |   Press Enter to begin (auto-starts in 3 seconds)         |
+ |                                                            |
+ +============================================================+
 "@
         Set-Content -Path $splashDest -Value $asciiSplash -Encoding ASCII
         Write-Step "ISOLINUX splash converted to ASCII" "OK"
@@ -318,28 +318,28 @@ function Prepare-FirstBootAssets {
     
     # Create MOTD template
     $motdTemplate = @'
-╔══════════════════════════════════════════════════════════════════╗
-║                                                                  ║
-║        🪨  Welcome to Zen Garden Stone: {{STONE_NAME}}          ║
-║                                                                  ║
-║  🌐 Network:                                                     ║
-║     • IP Address: {{STONE_IP}}                                  ║
-║     • mDNS: {{STONE_NAME}}.local                                ║
-║                                                                  ║
-║  🔍 Discovery Endpoints:                                         ║
-║     • UDP Broadcast: {{STONE_IP}}:7184                          ║
-║     • HTTP API: http://{{STONE_IP}}:7185                        ║
-║                                                                  ║
-║  📦 Services:                                                    ║
-║     • Moss Status: {{MOSS_STATUS}}                              ║
-║     • Offerings: {{OFFERING_COUNT}} available                   ║
-║                                                                  ║
-║  🛠️  Quick Commands:                                             ║
-║     sudo systemctl status garden-moss    # Check service        ║
-║     garden-rake observe                  # View details         ║
-║     garden-rake explore                  # List offerings       ║
-║                                                                  ║
-╚══════════════════════════════════════════════════════════════════╝
++==================================================================+
+|                                                                  |
+|          Welcome to Zen Garden Stone: {{STONE_NAME}}          |
+|                                                                  |
+|   Network:                                                     |
+|     * IP Address: {{STONE_IP}}                                  |
+|     * mDNS: {{STONE_NAME}}.local                                |
+|                                                                  |
+|   Discovery Endpoints:                                         |
+|     * UDP Broadcast: {{STONE_IP}}:7184                          |
+|     * HTTP API: http://{{STONE_IP}}:7185                        |
+|                                                                  |
+|   Services:                                                    |
+|     * Moss Status: {{MOSS_STATUS}}                              |
+|     * Offerings: {{OFFERING_COUNT}} available                   |
+|                                                                  |
+|    Quick Commands:                                             |
+|     sudo systemctl status garden-moss    # Check service        |
+|     garden-rake observe                  # View details         |
+|     garden-rake explore                  # List offerings       |
+|                                                                  |
++==================================================================+
 '@
     Set-Content -Path (Join-Path $stoneRootDir "etc\motd.template") -Value $motdTemplate -Encoding UTF8
     
@@ -365,9 +365,9 @@ echo "$TEMPLATE" | \
     
     # Create SSH banner
     $sshBanner = @'
-╔══════════════════════════════════════════════════════════════════╗
-║             Zen Garden Stone - Authorized Access Only            ║
-╚══════════════════════════════════════════════════════════════════╝
++==================================================================+
+|             Zen Garden Stone - Authorized Access Only            |
++==================================================================+
 '@
     Set-Content -Path (Join-Path $stoneRootDir "etc\issue.net") -Value $sshBanner -Encoding UTF8
     
@@ -430,9 +430,9 @@ try {
     Save-Manifest
     
     Write-Host ""
-    Write-Host "  ╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-    Write-Host "  ║   ✓ Branding artifacts prepared successfully       ║" -ForegroundColor Green
-    Write-Host "  ╚════════════════════════════════════════════════════╝" -ForegroundColor Green
+    Write-Host "  +====================================================+" -ForegroundColor Green
+    Write-Host "  |   OK Branding artifacts prepared successfully       |" -ForegroundColor Green
+    Write-Host "  +====================================================+" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Next step: Run NewStone-linux-x64.ps1 to create branded USB" -ForegroundColor Cyan
     Write-Host "  Location: $($script:Config.PreparedDir)" -ForegroundColor Gray

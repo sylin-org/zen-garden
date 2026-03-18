@@ -15,7 +15,7 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 
 Write-Host ""
-Write-Host "  Zen Garden — Build, Deploy, Orchestrators" -ForegroundColor Cyan
+Write-Host "  Zen Garden - Build, Deploy, Orchestrators" -ForegroundColor Cyan
 Write-Host "  ===========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -62,7 +62,7 @@ foreach ($orch in $orchestrators) {
 }
 
 if ($deployExitCode -ne 0) {
-    Write-Host "  Done (with deploy warnings — some stones failed)." -ForegroundColor Yellow
+    Write-Host "  Done (with deploy warnings - some stones failed)." -ForegroundColor Yellow
     exit 1
 } else {
     Write-Host "  All done." -ForegroundColor Green

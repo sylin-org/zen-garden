@@ -72,9 +72,9 @@ $env:GARDEN_VERSION = $Version
 $env:BUILD_NUMBER = ($Version -split '\.')[-1]
 $env:CARGO_BUILD_NUMBER = $env:BUILD_NUMBER
 
-Write-Host "`n═══════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "`n===================================================" -ForegroundColor Cyan
 Write-Host " Windows x64 Build Pipeline" -ForegroundColor Cyan
-Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+Write-Host "===================================================`n" -ForegroundColor Cyan
 Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
 Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'fast-release' })" -ForegroundColor Cyan
@@ -82,7 +82,7 @@ Write-Host ""
 
 # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
 # so Cargo automatically re-runs build scripts and recompiles affected crates when the
-# build number changes. No manual cache cleaning needed — incremental compilation works.
+# build number changes. No manual cache cleaning needed - incremental compilation works.
 # The Cargo.toml version update below also triggers Cargo fingerprint invalidation.
 
 # Update Cargo.toml files with version
@@ -225,10 +225,10 @@ if (-not $SkipPackage) {
     Compress-Archive -Path $packageDir -DestinationPath $zipPath -Force
     
     $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 2)
-    Write-Host "`n✓ Package: $packageName.zip ($sizeMB MB)" -ForegroundColor Green
+    Write-Host "`nOK Package: $packageName.zip ($sizeMB MB)" -ForegroundColor Green
     Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
     
     Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "`n✓ Windows x64 build complete" -ForegroundColor Green
+Write-Host "`nOK Windows x64 build complete" -ForegroundColor Green

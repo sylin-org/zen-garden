@@ -68,12 +68,12 @@ $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
 $WINDOWS_X64_DIR = Join-Path $DIST_DIR "windows-x64"
 
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Windows x64 Build                     ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+Write-Host "`n+====================================================+" -ForegroundColor Cyan
+Write-Host "|   Zen Garden Windows x64 Build                     |" -ForegroundColor Cyan
+Write-Host "+====================================================+`n" -ForegroundColor Cyan
 
 if (-not $RunningOnWindows) {
-    Write-Host "✗ This script must run on Windows." -ForegroundColor Red
+    Write-Host "X This script must run on Windows." -ForegroundColor Red
     Write-Host "  For Linux builds, use compile-linux-x64.ps1" -ForegroundColor Yellow
     exit 1
 }
@@ -102,7 +102,7 @@ if ($Version) {
     $env:GARDEN_VERSION = "0.1.$revision"
     $env:BUILD_NUMBER = $revision
     $env:CARGO_BUILD_NUMBER = $revision
-    Write-Host "⚠ Version not set by parent, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
+    Write-Host "! Version not set by parent, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
 }
 $version = $env:GARDEN_VERSION
 
@@ -134,12 +134,12 @@ if (-not $SkipTests) {
         if ($LASTEXITCODE -ne 0) {
             throw "Tests failed with exit code $LASTEXITCODE"
         }
-        Write-Host "✓ All tests passed`n" -ForegroundColor Green
+        Write-Host "OK All tests passed`n" -ForegroundColor Green
     } finally {
         Pop-Location
     }
 } else {
-    Write-Host "⚠ Skipping tests`n" -ForegroundColor DarkYellow
+    Write-Host "! Skipping tests`n" -ForegroundColor DarkYellow
 }
 
 # Check if MSVC target installed
@@ -150,7 +150,7 @@ if ($installedTargets -notcontains "x86_64-pc-windows-msvc") {
     rustup target add x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw "Failed to install Windows target" }
 }
-Write-Host "  ✓ x86_64-pc-windows-msvc target ready`n" -ForegroundColor Green
+Write-Host "  OK x86_64-pc-windows-msvc target ready`n" -ForegroundColor Green
 
 # Determine which binaries to build
 $defaultTargets = @("garden-moss", "garden-rake", "garden-lantern", "garden-cricket", "garden-firefly")
@@ -179,14 +179,14 @@ if ($buildTargets -contains "garden-lantern") {
                 if ($LASTEXITCODE -ne 0) { npm install }
                 npx vite build
             } else {
-                Write-Host "  ⚠ Neither bun nor npm found — skipping frontend build" -ForegroundColor Yellow
+                Write-Host "  ! Neither bun nor npm found - skipping frontend build" -ForegroundColor Yellow
                 Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
             }
 
             if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist\index.html"))) {
-                Write-Host "  ✓ Lantern frontend built`n" -ForegroundColor Green
+                Write-Host "  OK Lantern frontend built`n" -ForegroundColor Green
             } elseif ($LASTEXITCODE -ne 0) {
-                Write-Host "  ⚠ Frontend build failed (exit code $LASTEXITCODE) — continuing with cargo build`n" -ForegroundColor Yellow
+                Write-Host "  ! Frontend build failed (exit code $LASTEXITCODE) - continuing with cargo build`n" -ForegroundColor Yellow
             }
         } finally {
             Pop-Location
@@ -197,7 +197,7 @@ if ($buildTargets -contains "garden-lantern") {
 # Build Windows binaries
 Write-Host "Building Windows binaries..." -ForegroundColor Cyan
 foreach ($target in $buildTargets) {
-    Write-Host "  → Building $target.exe..."
+    Write-Host "  -> Building $target.exe..."
 }
 
 Push-Location $WORKSPACE_ROOT
@@ -222,7 +222,7 @@ try {
     cargo @buildArgs
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ⚠ Build failed with exit code $LASTEXITCODE" -ForegroundColor Yellow
+        Write-Host "  ! Build failed with exit code $LASTEXITCODE" -ForegroundColor Yellow
     }
 
     # Copy binaries from target-windows-x64 to dist/windows-x64/
@@ -236,7 +236,7 @@ try {
                 try { $_.Path -and [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($destPath) } catch { $false }
             }
             foreach ($proc in $procs) {
-                Write-Host "  ⚠ Killing $($proc.ProcessName) (PID $($proc.Id)) — file is locked" -ForegroundColor Yellow
+                Write-Host "  ! Killing $($proc.ProcessName) (PID $($proc.Id)) - file is locked" -ForegroundColor Yellow
                 $proc | Stop-Process -Force
                 Start-Sleep -Milliseconds 200
             }
@@ -247,22 +247,22 @@ try {
         $srcPath = "$srcDir\$target.exe"
         if (Test-Path $srcPath) {
             Copy-Item $srcPath "$WINDOWS_X64_DIR\$target.exe" -Force
-            Write-Host "  ✓ $target.exe built" -ForegroundColor Green
+            Write-Host "  OK $target.exe built" -ForegroundColor Green
         } else {
-            Write-Host "  ⚠ $target.exe not found (build may have failed)" -ForegroundColor Yellow
+            Write-Host "  ! $target.exe not found (build may have failed)" -ForegroundColor Yellow
         }
     }
 
-    Write-Host "`n✓ Windows binaries built`n" -ForegroundColor Green
+    Write-Host "`nOK Windows binaries built`n" -ForegroundColor Green
 
 } finally {
     Pop-Location
 }
 
 # Display results
-Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║   Build Complete!                                  ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+Write-Host "+====================================================+" -ForegroundColor Green
+Write-Host "|   Build Complete!                                  |" -ForegroundColor Green
+Write-Host "+====================================================+`n" -ForegroundColor Green
 
 Write-Host "Artifacts in $WINDOWS_X64_DIR`:" -ForegroundColor Cyan
 
@@ -276,7 +276,7 @@ if ($artifacts) {
             "$sizeMB MB"
         }
         
-        Write-Host ("  ✓ {0,-20} {1,10}" -f $_.Name, $sizeStr) -ForegroundColor Green
+        Write-Host ("  OK {0,-20} {1,10}" -f $_.Name, $sizeStr) -ForegroundColor Green
     }
 } else {
     Write-Host "  (no Windows artifacts found)" -ForegroundColor DarkGray

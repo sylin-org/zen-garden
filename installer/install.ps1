@@ -1,4 +1,4 @@
-# install.ps1 — One-liner Zen Garden installer for Windows
+# install.ps1 - One-liner Zen Garden installer for Windows
 #
 # Usage (run as Administrator):
 #   irm https://raw.githubusercontent.com/sylin-org/zen-garden/dev/installer/install.ps1 | iex
@@ -16,7 +16,7 @@ $Repo = "sylin-org/zen-garden"
 $Platform = "windows-x64"
 $InstallFlags = if ($env:ZG_INSTALL_FLAGS) { $env:ZG_INSTALL_FLAGS } else { "" }
 
-# ── Privilege check ──────────────────────────────────────────────────
+# -- Privilege check --------------------------------------------------
 
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
@@ -30,7 +30,7 @@ if (-not $isAdmin) {
     exit 1
 }
 
-# ── Fetch latest release ────────────────────────────────────────────
+# -- Fetch latest release --------------------------------------------
 
 Write-Host ""
 Write-Host "  Zen Garden Installer"
@@ -54,7 +54,7 @@ catch {
 $version = $release.tag_name
 Write-Host "  Latest version: $version"
 
-# ── Find matching assets ────────────────────────────────────────────
+# -- Find matching assets --------------------------------------------
 
 $pkgAsset = $release.assets | Where-Object {
     $_.name -like "zen-garden-*-$Platform.zip"
@@ -66,7 +66,7 @@ if (-not $pkgAsset) {
     exit 1
 }
 
-# ── Download ─────────────────────────────────────────────────────────
+# -- Download ---------------------------------------------------------
 
 $tmpDir = Join-Path $env:TEMP "zen-garden-install-$(Get-Random)"
 New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
@@ -92,7 +92,7 @@ try {
     Copy-Item $mossExe.FullName (Join-Path $workDir "garden-moss.exe")
     Copy-Item $pkgPath $workDir
 
-    # ── Run install ──────────────────────────────────────────────────
+    # -- Run install --------------------------------------------------
 
     Write-Host ""
     Write-Host "Running garden-moss install..."

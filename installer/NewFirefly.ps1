@@ -766,7 +766,7 @@ function Install-ESP32Resources {
             continue
         }
 
-        # Strip UTF-8 BOM if present — MicroPython cannot parse files with BOM
+        # Strip UTF-8 BOM if present - MicroPython cannot parse files with BOM
         $fileBytes = [System.IO.File]::ReadAllBytes($localPath)
         if ($fileBytes.Length -ge 3 -and $fileBytes[0] -eq 0xEF -and $fileBytes[1] -eq 0xBB -and $fileBytes[2] -eq 0xBF) {
             $uploadPath = Join-Path $script:Config.CacheDir $remoteName

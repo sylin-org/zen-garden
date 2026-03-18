@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 # Automated Integration Tests for Zen Garden v1
 # Tests zen syntax, v1 API, and quiet mode functionality
 
@@ -20,13 +20,13 @@ function Write-TestHeader($message) {
 function Write-TestResult($name, $passed, $message = "") {
     if ($passed) {
         $script:PassedTests++
-        Write-Host "  ✓ $name" -ForegroundColor Green
+        Write-Host "  OK $name" -ForegroundColor Green
         if ($message -and $Verbose) {
             Write-Host "    $message" -ForegroundColor Gray
         }
     } else {
         $script:FailedTests++
-        Write-Host "  ✗ $name" -ForegroundColor Red
+        Write-Host "  X $name" -ForegroundColor Red
         if ($message) {
             Write-Host "    $message" -ForegroundColor Yellow
         }
@@ -35,7 +35,7 @@ function Write-TestResult($name, $passed, $message = "") {
 
 function Write-TestSkipped($name, $reason) {
     $script:SkippedTests++
-    Write-Host "  ⊘ $name" -ForegroundColor Yellow
+    Write-Host "   $name" -ForegroundColor Yellow
     Write-Host "    $reason" -ForegroundColor Gray
 }
 
@@ -54,14 +54,14 @@ function Start-MossForTesting {
     # Use existing Dockerfile.build to build and run
     docker build -t garden-build -f Dockerfile.build . 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "✗ Failed to build" -ForegroundColor Red
+        Write-Host "X Failed to build" -ForegroundColor Red
         return $null
     }
     
     # Run container with Moss daemon
     $containerId = docker run -d -p 7185:7185 --name garden-moss-test garden-build bash -c "cargo build --bin garden-moss && ./target/debug/garden-moss --stone-name test-stone"
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "✗ Failed to start container" -ForegroundColor Red
+        Write-Host "X Failed to start container" -ForegroundColor Red
         return $null
     }
     
@@ -70,13 +70,13 @@ function Start-MossForTesting {
     while ($attempts -lt 60) {
         Start-Sleep -Milliseconds 500
         if (Test-MossRunning) {
-            Write-Host "✓ Moss started successfully (Container: $containerId)" -ForegroundColor Green
+            Write-Host "OK Moss started successfully (Container: $containerId)" -ForegroundColor Green
             return $containerId
         }
         $attempts++
     }
     
-    Write-Host "✗ Failed to start Moss" -ForegroundColor Red
+    Write-Host "X Failed to start Moss" -ForegroundColor Red
     docker logs garden-moss-test 2>&1 | Select-Object -Last 20
     return $null
 }
@@ -93,9 +93,9 @@ function Stop-MossForTesting($containerId) {
 # Main Test Suite
 # ============================================================================
 
-Write-Host "`n╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║     Zen Garden v1 - Automated Integration Test Suite        ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "`n+================================================================+" -ForegroundColor Cyan
+Write-Host "|     Zen Garden v1 - Automated Integration Test Suite        |" -ForegroundColor Cyan
+Write-Host "+================================================================+" -ForegroundColor Cyan
 
 # Check prerequisites
 Write-TestHeader "Prerequisites"
@@ -107,7 +107,7 @@ try {
     Write-TestResult "Docker available" $dockerRunning $dockerVersion
 } catch {
     Write-TestResult "Docker available" $false "Docker not found"
-    Write-Host "`n✗ Docker is required for testing. Please install Docker Desktop." -ForegroundColor Red
+    Write-Host "`nX Docker is required for testing. Please install Docker Desktop." -ForegroundColor Red
     exit 1
 }
 
@@ -116,7 +116,7 @@ $rakeExists = Test-Path ".\target\debug\garden-rake.exe"
 Write-TestResult "Rake binary exists" $rakeExists ".\target\debug\garden-rake.exe"
 
 if (-not $rakeExists) {
-    Write-Host "`n✗ Rake binary not found. Run: cargo build" -ForegroundColor Red
+    Write-Host "`nX Rake binary not found. Run: cargo build" -ForegroundColor Red
     exit 1
 }
 
@@ -131,7 +131,7 @@ if (-not $mossWasRunning) {
     
     $mossContainer = Start-MossForTesting
     if (-not $mossContainer) {
-        Write-Host "`n✗ Cannot start Moss in Docker. Tests aborted." -ForegroundColor Red
+        Write-Host "`nX Cannot start Moss in Docker. Tests aborted." -ForegroundColor Red
         exit 1
     }
     Start-Sleep -Seconds 3  # Give Moss time to initialize
@@ -328,7 +328,7 @@ try {
     if (-not $mossWasRunning -and $mossContainer) {
         Write-Host "`nCleaning up test environment..." -ForegroundColor Yellow
         Stop-MossForTesting $mossContainer
-        Write-Host "✓ Cleanup complete" -ForegroundColor Green
+        Write-Host "OK Cleanup complete" -ForegroundColor Green
     }
 }
 
@@ -336,9 +336,9 @@ try {
 # Test Summary
 # ============================================================================
 
-Write-Host "`n╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║                        Test Summary                            ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "`n+================================================================+" -ForegroundColor Cyan
+Write-Host "|                        Test Summary                            |" -ForegroundColor Cyan
+Write-Host "+================================================================+" -ForegroundColor Cyan
 
 $total = $script:PassedTests + $script:FailedTests + $script:SkippedTests
 Write-Host "`nTotal Tests: $total" -ForegroundColor White
@@ -347,9 +347,9 @@ Write-Host "  Failed:  $($script:FailedTests)" -ForegroundColor Red
 Write-Host "  Skipped: $($script:SkippedTests)" -ForegroundColor Yellow
 
 if ($script:FailedTests -eq 0) {
-    Write-Host "`n✓ All tests passed!" -ForegroundColor Green
+    Write-Host "`nOK All tests passed!" -ForegroundColor Green
     exit 0
 } else {
-    Write-Host "`n✗ Some tests failed" -ForegroundColor Red
+    Write-Host "`nX Some tests failed" -ForegroundColor Red
     exit 1
 }

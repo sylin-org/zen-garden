@@ -98,9 +98,9 @@ $buildTypeDesc = switch ($buildProfile) {
 
 $parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
 
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-Write-Host "║   Zen Garden Linux x86 Build                       ║" -ForegroundColor Magenta
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Magenta
+Write-Host "`n+====================================================+" -ForegroundColor Magenta
+Write-Host "|   Zen Garden Linux x86 Build                       |" -ForegroundColor Magenta
+Write-Host "+====================================================+`n" -ForegroundColor Magenta
 
 Write-Host "Configuration:" -ForegroundColor Yellow
 Write-Host "  Platform: Linux"
@@ -139,7 +139,7 @@ if ($existingImage -and -not $ForceRebuild) {
     if ($ForceRebuild) {
         # Remove existing container and cargo cache volume to avoid stale
         # build-script binaries compiled against a different glibc version.
-        # The x86 Dockerfile is pinned to rust:bookworm (glibc 2.36) — if the
+        # The x86 Dockerfile is pinned to rust:bookworm (glibc 2.36) - if the
         # cargo cache was populated under rust:latest (glibc 2.39), host-arch
         # build scripts (libsqlite3-sys, alsa-sys, etc.) will fail at runtime.
         Write-Host "  Removing old container and cargo cache..." -ForegroundColor DarkGray
@@ -180,9 +180,9 @@ if ($RunningOnWindows) {
     $unixPath = $WORKSPACE_ROOT
 }
 
-# Koi repo is a sibling directory — mount it so path dependency resolves
+# Koi repo is a sibling directory - mount it so path dependency resolves
 # Cargo.toml: koi-embedded = { path = "../koi/crates/koi-embedded" }
-# Inside container: /build/../koi → /koi
+# Inside container: /build/../koi -> /koi
 $koiHostPath = (Resolve-Path (Join-Path $WORKSPACE_ROOT "../koi")).Path
 if ($RunningOnWindows) {
     $koiDriveLetter = $koiHostPath.Substring(0, 1).ToLower()
@@ -224,14 +224,14 @@ try {
                     if ($LASTEXITCODE -ne 0) { npm install }
                     npx vite build
                 } else {
-                    Write-Host "  ⚠ Neither bun nor npm found — skipping frontend build" -ForegroundColor Yellow
+                    Write-Host "  ! Neither bun nor npm found - skipping frontend build" -ForegroundColor Yellow
                     Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
                 }
 
                 if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist/index.html"))) {
-                    Write-Host "  ✓ Lantern frontend built`n" -ForegroundColor Green
+                    Write-Host "  OK Lantern frontend built`n" -ForegroundColor Green
                 } elseif ($LASTEXITCODE -ne 0) {
-                    Write-Host "  ⚠ Frontend build failed (exit code $LASTEXITCODE) — continuing with cargo build`n" -ForegroundColor Yellow
+                    Write-Host "  ! Frontend build failed (exit code $LASTEXITCODE) - continuing with cargo build`n" -ForegroundColor Yellow
                 }
             } finally {
                 Pop-Location
@@ -288,7 +288,7 @@ try {
 
     # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
     # so Cargo automatically re-runs build scripts and recompiles affected crates when the
-    # build number changes. No manual cache cleaning needed — incremental compilation works.
+    # build number changes. No manual cache cleaning needed - incremental compilation works.
     # x86 uses a separate target dir (target-linux-x86/) to avoid glibc conflicts
     # with the x64 builder which uses target-linux-x64/ and a different base image.
 
@@ -320,9 +320,9 @@ try {
 }
 
 # Display results
-Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║   Linux x86 Build Complete!                        ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+Write-Host "+====================================================+" -ForegroundColor Green
+Write-Host "|   Linux x86 Build Complete!                        |" -ForegroundColor Green
+Write-Host "+====================================================+`n" -ForegroundColor Green
 
 Write-Host "Artifacts in $LINUX_X86_DIR`:" -ForegroundColor Cyan
 

@@ -115,7 +115,7 @@ if ($Version) {
     $env:GARDEN_VERSION = "0.1.$revision"
     $env:BUILD_NUMBER = $revision
     $env:CARGO_BUILD_NUMBER = $revision
-    Write-Host "⚠ Version not set by parent, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
+    Write-Host "! Version not set by parent, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
     Write-Host ""
 }
 $version = $env:GARDEN_VERSION
@@ -131,9 +131,9 @@ $buildTypeDesc = switch ($buildProfile) {
 # Determine parallel jobs
 $parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
 
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Linux x64 Build                       ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+Write-Host "`n+====================================================+" -ForegroundColor Cyan
+Write-Host "|   Zen Garden Linux x64 Build                       |" -ForegroundColor Cyan
+Write-Host "+====================================================+`n" -ForegroundColor Cyan
 
 Write-Host "Configuration:" -ForegroundColor Yellow
 Write-Host "  Platform: Linux"
@@ -153,7 +153,7 @@ if ($UseDocker) {
         docker version | Out-Null
     }
     catch {
-        Write-Host "✗ Docker not available." -ForegroundColor Red
+        Write-Host "X Docker not available." -ForegroundColor Red
         if ($RunningOnWindows) {
             Write-Host "  Install Docker Desktop: https://www.docker.com/products/docker-desktop/" -ForegroundColor Yellow
         }
@@ -168,7 +168,7 @@ if ($UseDocker) {
 
     if ($existingImage -and -not $ForceRebuild) {
         Write-Host "Build Container:" -ForegroundColor Yellow
-        Write-Host "  ✓ Using existing image: $IMAGE_NAME" -ForegroundColor Green
+        Write-Host "  OK Using existing image: $IMAGE_NAME" -ForegroundColor Green
         Write-Host "    (Use -ForceRebuild to recreate)" -ForegroundColor DarkGray
         Write-Host ""
     }
@@ -186,7 +186,7 @@ if ($UseDocker) {
         try {
             docker build -f Dockerfile.linux-x64 -t $IMAGE_NAME . --quiet
             if ($LASTEXITCODE -ne 0) { throw "Docker build failed" }
-            Write-Host "  ✓ Image ready`n" -ForegroundColor Green
+            Write-Host "  OK Image ready`n" -ForegroundColor Green
         }
         finally {
             Pop-Location
@@ -234,14 +234,14 @@ if ($UseDocker) {
                     if ($LASTEXITCODE -ne 0) { npm install }
                     npx vite build
                 } else {
-                    Write-Host "  ⚠ Neither bun nor npm found — skipping frontend build" -ForegroundColor Yellow
+                    Write-Host "  ! Neither bun nor npm found - skipping frontend build" -ForegroundColor Yellow
                     Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
                 }
 
                 if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist/index.html"))) {
-                    Write-Host "  ✓ Lantern frontend built`n" -ForegroundColor Green
+                    Write-Host "  OK Lantern frontend built`n" -ForegroundColor Green
                 } elseif ($LASTEXITCODE -ne 0) {
-                    Write-Host "  ⚠ Frontend build failed (exit code $LASTEXITCODE) — continuing with cargo build`n" -ForegroundColor Yellow
+                    Write-Host "  ! Frontend build failed (exit code $LASTEXITCODE) - continuing with cargo build`n" -ForegroundColor Yellow
                 }
             } finally {
                 Pop-Location
@@ -267,9 +267,9 @@ if ($UseDocker) {
         $unixPath = $WORKSPACE_ROOT
     }
 
-    # Koi repo is a sibling directory — mount it so path dependency resolves
+    # Koi repo is a sibling directory - mount it so path dependency resolves
     # Cargo.toml: koi-embedded = { path = "../koi/crates/koi-embedded" }
-    # Inside container: /build/../koi → /koi
+    # Inside container: /build/../koi -> /koi
     $koiHostPath = (Resolve-Path (Join-Path $WORKSPACE_ROOT "../koi")).Path
     if ($RunningOnWindows) {
         $koiDriveLetter = $koiHostPath.Substring(0, 1).ToLower()
@@ -282,7 +282,7 @@ if ($UseDocker) {
     Push-Location $WORKSPACE_ROOT
     try {
         foreach ($target in $buildTargets) {
-            Write-Host "  → Building $target..."
+            Write-Host "  -> Building $target..."
         }
 
         # Generate build number if not already set by parent script
@@ -317,15 +317,15 @@ if ($UseDocker) {
         $stoppedContainer = docker ps -a --filter "name=^/${containerName}$" --filter "status=exited" --format "{{.Names}}" 2>$null
         
         if ($existingContainer -eq $containerName) {
-            Write-Host "  → Using running container: $containerName" -ForegroundColor DarkGray
+            Write-Host "  -> Using running container: $containerName" -ForegroundColor DarkGray
         }
         elseif ($stoppedContainer -eq $containerName) {
-            Write-Host "  → Starting existing container: $containerName" -ForegroundColor DarkGray
+            Write-Host "  -> Starting existing container: $containerName" -ForegroundColor DarkGray
             docker start $containerName | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Failed to start container" }
         }
         else {
-            Write-Host "  → Creating new container: $containerName" -ForegroundColor DarkGray
+            Write-Host "  -> Creating new container: $containerName" -ForegroundColor DarkGray
             
             # Workspace and koi mounted read-only to prevent lockfile drift.
             # Target dir is a named volume for incremental compilation persistence.
@@ -347,7 +347,7 @@ if ($UseDocker) {
             Write-Host "`n  Checking for outdated dependencies..." -ForegroundColor Yellow
             docker exec $containerName cargo outdated --workspace --root-deps-only 2>$null
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "  → cargo-outdated not installed, installing..." -ForegroundColor DarkYellow
+                Write-Host "  -> cargo-outdated not installed, installing..." -ForegroundColor DarkYellow
                 docker exec $containerName cargo install cargo-outdated
             }
             Write-Host ""
@@ -355,7 +355,7 @@ if ($UseDocker) {
         
         # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
         # so Cargo automatically re-runs build scripts and recompiles affected crates when the
-        # build number changes. No manual cache cleaning needed — incremental compilation works.
+        # build number changes. No manual cache cleaning needed - incremental compilation works.
 
         # Execute build with isolated target directory
         # Mold linker: clang+mold are installed in the Docker image (Dockerfile.linux-x64).
@@ -366,21 +366,21 @@ if ($UseDocker) {
         
         # Copy binaries from Docker container to dist/linux-x64/
         # Use docker cp because volume mount may not reflect changes immediately on Windows
-        Write-Host "  → Copying binaries from container..." -ForegroundColor DarkGray
+        Write-Host "  -> Copying binaries from container..." -ForegroundColor DarkGray
 
         $copyFailed = $false
 
         foreach ($target in $buildTargets) {
             docker cp "${containerName}:/target/${buildProfile}/${target}" "$LINUX_DIR\$target" 2>$null
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "    ✗ Failed to copy $target" -ForegroundColor Red
+                Write-Host "    X Failed to copy $target" -ForegroundColor Red
                 $copyFailed = $true
             }
         }
 
         if ($copyFailed) { throw "Failed to copy one or more binaries from container" }
         
-        Write-Host "  ✓ Linux x64 binaries built`n" -ForegroundColor Green
+        Write-Host "  OK Linux x64 binaries built`n" -ForegroundColor Green
         
     }
     finally {
@@ -415,14 +415,14 @@ else {
                     if ($LASTEXITCODE -ne 0) { npm install }
                     npx vite build
                 } else {
-                    Write-Host "  ⚠ Neither bun nor npm found — skipping frontend build" -ForegroundColor Yellow
+                    Write-Host "  ! Neither bun nor npm found - skipping frontend build" -ForegroundColor Yellow
                     Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
                 }
 
                 if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist/index.html"))) {
-                    Write-Host "  ✓ Lantern frontend built`n" -ForegroundColor Green
+                    Write-Host "  OK Lantern frontend built`n" -ForegroundColor Green
                 } elseif ($LASTEXITCODE -ne 0) {
-                    Write-Host "  ⚠ Frontend build failed (exit code $LASTEXITCODE) — continuing with cargo build`n" -ForegroundColor Yellow
+                    Write-Host "  ! Frontend build failed (exit code $LASTEXITCODE) - continuing with cargo build`n" -ForegroundColor Yellow
                 }
             } finally {
                 Pop-Location
@@ -463,10 +463,10 @@ else {
     try {
         # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
         # so Cargo automatically re-runs build scripts and recompiles affected crates when the
-        # build number changes. No manual cache cleaning needed — incremental compilation works.
+        # build number changes. No manual cache cleaning needed - incremental compilation works.
 
         foreach ($target in $buildTargets) {
-            Write-Host "  → Building $target..."
+            Write-Host "  -> Building $target..."
         }
 
         $buildArgs = @("build", "--frozen", "-j", "$parallelJobs")
@@ -497,7 +497,7 @@ else {
             }
         }
 
-        Write-Host "  ✓ Binaries built`n" -ForegroundColor Green
+        Write-Host "  OK Binaries built`n" -ForegroundColor Green
 
     }
     finally {
@@ -506,9 +506,9 @@ else {
 }
 
 # Display results
-Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║   Build Complete!                                  ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+Write-Host "+====================================================+" -ForegroundColor Green
+Write-Host "|   Build Complete!                                  |" -ForegroundColor Green
+Write-Host "+====================================================+`n" -ForegroundColor Green
 
 Write-Host "Artifacts in $LINUX_DIR`:" -ForegroundColor Cyan
 
@@ -529,7 +529,7 @@ if ($artifacts) {
             try {
                 $fileType = docker run --rm -v "${LINUX_DIR}:/check" $IMAGE_NAME file "/check/$($_.Name)" 2>$null
                 $isLinuxBinary = $fileType -match "ELF.*Linux"
-                $marker = if ($isLinuxBinary) { "✓" } else { "?" }
+                $marker = if ($isLinuxBinary) { "OK" } else { "?" }
             }
             catch {
                 $marker = "-"
@@ -538,10 +538,10 @@ if ($artifacts) {
         elseif ($IsLinuxHost) {
             $fileType = file $_.FullName 2>$null
             $isLinuxBinary = $fileType -match "ELF"
-            $marker = if ($isLinuxBinary) { "✓" } else { "?" }
+            $marker = if ($isLinuxBinary) { "OK" } else { "?" }
         }
         
-        Write-Host ("  {0} {1,-20} {2,10}" -f $marker, $_.Name, $sizeStr) -ForegroundColor $(if ($marker -eq "✓") { "Green" } else { "White" })
+        Write-Host ("  {0} {1,-20} {2,10}" -f $marker, $_.Name, $sizeStr) -ForegroundColor $(if ($marker -eq "OK") { "Green" } else { "White" })
     }
 }
 else {

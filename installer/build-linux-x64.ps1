@@ -72,9 +72,9 @@ $env:GARDEN_VERSION = $Version
 $env:BUILD_NUMBER = ($Version -split '\.')[-1]
 $env:CARGO_BUILD_NUMBER = $env:BUILD_NUMBER
 
-Write-Host "`n═══════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "`n===================================================" -ForegroundColor Cyan
 Write-Host " Linux x64 Build Pipeline" -ForegroundColor Cyan
-Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+Write-Host "===================================================`n" -ForegroundColor Cyan
 Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } else { '(all binaries)' })" -ForegroundColor Cyan
 Write-Host "Profile: $(if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'fast-release' })" -ForegroundColor Cyan
@@ -197,7 +197,7 @@ if (-not $SkipPackage) {
         if ($LASTEXITCODE -eq 0 -and (Test-Path $tarFile)) {
             Move-Item $tarFile $tarPath -Force
             $sizeMB = [math]::Round((Get-Item $tarPath).Length / 1MB, 2)
-            Write-Host "`n✓ Package: $packageName.tar.gz ($sizeMB MB)" -ForegroundColor Green
+            Write-Host "`nOK Package: $packageName.tar.gz ($sizeMB MB)" -ForegroundColor Green
             Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
         } else {
             throw "tar failed with exit code $LASTEXITCODE"
@@ -208,4 +208,4 @@ if (-not $SkipPackage) {
     }
 }
 
-Write-Host "`n✓ Linux x64 build complete" -ForegroundColor Green
+Write-Host "`nOK Linux x64 build complete" -ForegroundColor Green

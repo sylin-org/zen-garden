@@ -83,7 +83,7 @@ function Transform-Links {
         'docs/README.md'    = 'zen-garden-distribution-readme.md'
     }
 
-    # Transform [Text](docs/folder/file.md) → [Text](zen-garden-folder-all.md#file)
+    # Transform [Text](docs/folder/file.md) -> [Text](zen-garden-folder-all.md#file)
     foreach ($pattern in $linkMap.Keys) {
         $replacement = $linkMap[$pattern]
         
@@ -95,7 +95,7 @@ function Transform-Links {
             $Content = $Content -replace '\]\(docs/decisions/\)', "]($replacement)"
         }
         else {
-            # Extract filename and create anchor: docs/guides/file.md → zen-garden-guides-all.md#file
+            # Extract filename and create anchor: docs/guides/file.md -> zen-garden-guides-all.md#file
             $escaped = [regex]::Escape($pattern)
             $Content = $Content -replace "\]\($escaped([^/)]+)\.md\)", "]($replacement`$1)"
         }

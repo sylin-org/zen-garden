@@ -98,8 +98,14 @@ $versionMajorMinor = ($Version -split '\.')[0..1] -join '.'
 foreach ($file in $cargoFiles) {
     if (Test-Path $file) {
         $lines = Get-Content $file
+        $inPackage = $false
         $updated = $lines | ForEach-Object {
-            if ($_ -match '^version\s*=\s*"[\d\.]+"' -and $_ -notmatch 'rust-version') {
+            # Track which TOML section we're in
+            if ($_ -match '^\[package\]') { $inPackage = $true }
+            elseif ($_ -match '^\[') { $inPackage = $false }
+
+            # Only replace the [package] version, not dependency versions
+            if ($inPackage -and $_ -match '^version\s*=\s*"[\d\.]+"' -and $_ -notmatch 'rust-version') {
                 "version = `"$versionMajorMinor.0`""
             } else {
                 $_
@@ -165,7 +171,7 @@ if (-not $SkipPackage) {
         $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform "windows"
         if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
     }
-    if ($externalTools.Count -gt 0) {
+    if ($externalTools -and @($externalTools).Count -gt 0) {
         Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
     }
 

@@ -135,7 +135,7 @@ if (-not $SkipPackage) {
         $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform "linux"
         if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
     }
-    if ($externalTools.Count -gt 0) {
+    if ($externalTools -and @($externalTools).Count -gt 0) {
         Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
     }
 

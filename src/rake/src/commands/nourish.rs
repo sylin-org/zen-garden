@@ -47,7 +47,7 @@ impl Command for NourishCommand {
                     use crate::tending::StoneError;
 
                     let url = format!(
-                        "{}/api/v1/garden/nourishment",
+                        "{}/api/v1/garden/updates",
                         endpoint.trim_end_matches('/')
                     );
 
@@ -424,7 +424,7 @@ async fn execute_with_scope(ctx: &Runtime, scope: UpdateScope) -> anyhow::Result
                 use crate::tending::StoneError;
 
                 let url = format!(
-                    "{}/api/v1/garden/nourishment/execute",
+                    "{}/api/v1/garden/updates/execute",
                     endpoint.trim_end_matches('/')
                 );
 

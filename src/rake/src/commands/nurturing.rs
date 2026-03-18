@@ -80,7 +80,7 @@ impl Command for RestoreLocalCommand {
 
         // First, show what would be restored (dry-run info)
         let slots_url = format!(
-            "{}/api/v1/stone/nurturing/{}",
+            "{}/api/v1/stone/snapshots/{}",
             endpoint.trim_end_matches('/'),
             offering_path
         );
@@ -168,7 +168,7 @@ impl Command for RestoreLocalCommand {
         );
 
         let restore_url = format!(
-            "{}/api/v1/stone/nurturing/{}/restore",
+            "{}/api/v1/stone/snapshots/{}/restore",
             endpoint.trim_end_matches('/'),
             offering_path
         );
@@ -254,7 +254,7 @@ impl Command for RestoreRemoteCommand {
         // Get list of remote snapshots from seed bank
         let seed_bank_path = urlencoding::encode(&self.storage);
         let remote_url = format!(
-            "{}/api/v1/stone/nurturing/remote/{}",
+            "{}/api/v1/stone/snapshots/remote/{}",
             endpoint.trim_end_matches('/'),
             seed_bank_path
         );
@@ -363,7 +363,7 @@ impl Command for RestoreRemoteCommand {
 
         let offering_path = urlencoding::encode(&self.offering);
         let restore_url = format!(
-            "{}/api/v1/stone/nurturing/{}/restore-remote",
+            "{}/api/v1/stone/snapshots/{}/restore-remote",
             endpoint.trim_end_matches('/'),
             offering_path
         );
@@ -439,7 +439,7 @@ impl Command for NurturingStatusCommand {
         }
 
         // Overview of all offerings
-        let url = format!("{}/api/v1/stone/nurturing", endpoint.trim_end_matches('/'));
+        let url = format!("{}/api/v1/stone/snapshots", endpoint.trim_end_matches('/'));
         let response = ctx.client.get(&url).send().await?;
 
         if !response.status().is_success() {
@@ -546,7 +546,7 @@ impl NurturingStatusCommand {
         // Get local slots
         let offering_path = urlencoding::encode(offering);
         let slots_url = format!(
-            "{}/api/v1/stone/nurturing/{}",
+            "{}/api/v1/stone/snapshots/{}",
             endpoint.trim_end_matches('/'),
             offering_path
         );
@@ -618,7 +618,7 @@ impl NurturingStatusCommand {
                                     .unwrap_or("unknown");
 
                                 let remote_url = format!(
-                                    "{}/api/v1/stone/nurturing/remote/{}",
+                                    "{}/api/v1/stone/snapshots/remote/{}",
                                     endpoint.trim_end_matches('/'),
                                     urlencoding::encode(bank_name)
                                 );
@@ -718,7 +718,7 @@ impl Command for NurturingListCommand {
         // Local backups
         if !self.remote_only {
             let slots_url = format!(
-                "{}/api/v1/stone/nurturing/{}",
+                "{}/api/v1/stone/snapshots/{}",
                 endpoint.trim_end_matches('/'),
                 offering_path
             );
@@ -816,7 +816,7 @@ impl Command for NurturingListCommand {
                         }
 
                         let remote_url = format!(
-                            "{}/api/v1/stone/nurturing/remote/{}",
+                            "{}/api/v1/stone/snapshots/remote/{}",
                             endpoint.trim_end_matches('/'),
                             urlencoding::encode(bank_name)
                         );
@@ -915,7 +915,7 @@ impl Command for NurturingTriggerCommand {
 
             let offering_path = urlencoding::encode(offering);
             let url = format!(
-                "{}/api/v1/nurturing/{}/trigger",
+                "{}/api/v1/snapshots/{}/trigger",
                 endpoint.trim_end_matches('/'),
                 offering_path
             );
@@ -956,7 +956,7 @@ impl Command for NurturingTriggerCommand {
             );
 
             let url = format!(
-                "{}/api/v1/nurturing/trigger-all",
+                "{}/api/v1/snapshots/trigger-all",
                 endpoint.trim_end_matches('/')
             );
 

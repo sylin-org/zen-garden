@@ -113,6 +113,7 @@ pub async fn put_gateway(
                 .unwrap_or_else(|| garden_common::constants::CATEGORY_ORCHESTRATOR.to_string()),
             id: String::new(),
             tags: registration.tags.clone(),
+            source: registration.source.clone(),
         },
         stone: Stone {
             id: state.current.stone.id.clone(),

@@ -143,8 +143,8 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::pulse::stream_pulse),
         )
         .route(
-            "/api/v1/stone/nourishment",
-            get(api::v1::nourishment::check_stone),
+            "/api/v1/stone/updates",
+            get(api::v1::updates::check_stone),
         )
         .route(
             "/api/v1/stone/companions",
@@ -198,8 +198,8 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::tools::stream_garden_tools_v1),
         )
         .route(
-            "/api/v1/garden/nourishment",
-            get(api::v1::nourishment::check_garden),
+            "/api/v1/garden/updates",
+            get(api::v1::updates::check_garden),
         )
         // ══════════════════════════════════════════════════════════════════
         // Jobs & manifests (read-only)
@@ -494,7 +494,7 @@ pub fn configure(state: AppState) -> Router {
             post(api::v1::services::wake_service_v1),
         )
         .route(
-            "/api/v1/stone/services/{service}/nourish",
+            "/api/v1/stone/services/{service}/upgrade",
             post(api::v1::services::nourish_service_v1),
         )
         .route(
@@ -581,21 +581,21 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/garden/storage/{name}/objects/{*path}",
             head(api::v1::garden_storage::head_object_v1),
         )
-        // Garden storage: /memories/ namespace (harvest artifacts)
+        // Garden storage: /snapshots/ namespace (harvest artifacts)
         .route(
-            "/api/v1/garden/storage/{name}/memories",
+            "/api/v1/garden/storage/{name}/snapshots",
             get(api::v1::garden_storage::list_memories_v1),
         )
         .route(
-            "/api/v1/garden/storage/{name}/memories/{offering_id}",
+            "/api/v1/garden/storage/{name}/snapshots/{offering_id}",
             get(api::v1::garden_storage::list_offering_snapshots_v1),
         )
         .route(
-            "/api/v1/garden/storage/{name}/memories/{offering_id}/manifest",
+            "/api/v1/garden/storage/{name}/snapshots/{offering_id}/manifest",
             get(api::v1::garden_storage::get_offering_manifest_v1),
         )
         .route(
-            "/api/v1/garden/storage/{name}/memories/{offering_id}/{harvest_id}",
+            "/api/v1/garden/storage/{name}/snapshots/{offering_id}/{harvest_id}",
             get(api::v1::garden_storage::download_snapshot_v1),
         )
         // WebDAV file access — STORAGE-0009 Phase 3
@@ -688,16 +688,16 @@ pub fn configure(state: AppState) -> Router {
         )
         // Stone nourishment (updates for THIS stone)
         .route(
-            "/api/v1/stone/nourishment",
-            get(api::v1::nourishment::check_stone),
+            "/api/v1/stone/updates",
+            get(api::v1::updates::check_stone),
         )
         .route(
-            "/api/v1/stone/nourishment/execute",
-            post(api::v1::nourishment::execute_stone),
+            "/api/v1/stone/updates/execute",
+            post(api::v1::updates::execute_stone),
         )
         .route(
-            "/api/v1/stone/nourishment/stream/{job_id}",
-            get(api::v1::nourishment::stream_status),
+            "/api/v1/stone/updates/stream/{job_id}",
+            get(api::v1::updates::stream_status),
         )
         // Stone logs (daemon log access)
         .route("/api/v1/stone/logs", get(api::v1::logs::get_recent_logs))
@@ -713,46 +713,46 @@ pub fn configure(state: AppState) -> Router {
         )
         // Stone nurturing (A/B local backup slots)
         .route(
-            "/api/v1/stone/nurturing",
-            get(api::v1::nurturing::list_nurturing),
+            "/api/v1/stone/snapshots",
+            get(api::v1::snapshots::list_nurturing),
         )
         .route(
-            "/api/v1/stone/nurturing/{offering}",
-            get(api::v1::nurturing::get_offering_slots),
+            "/api/v1/stone/snapshots/{offering}",
+            get(api::v1::snapshots::get_offering_slots),
         )
         .route(
-            "/api/v1/stone/nurturing/{offering}",
-            post(api::v1::nurturing::create_snapshot),
+            "/api/v1/stone/snapshots/{offering}",
+            post(api::v1::snapshots::create_snapshot),
         )
         .route(
-            "/api/v1/stone/nurturing/{offering}",
-            delete(api::v1::nurturing::delete_nurturing),
+            "/api/v1/stone/snapshots/{offering}",
+            delete(api::v1::snapshots::delete_nurturing),
         )
         .route(
-            "/api/v1/stone/nurturing/{offering}/restore",
-            post(api::v1::nurturing::restore_snapshot),
+            "/api/v1/stone/snapshots/{offering}/restore",
+            post(api::v1::snapshots::restore_snapshot),
         )
         // Stone nurturing - timer triggers (for systemd/Task Scheduler)
         .route(
-            "/api/v1/nurturing/{offering}/trigger",
-            post(api::v1::nurturing::trigger_offering_nurturing),
+            "/api/v1/snapshots/{offering}/trigger",
+            post(api::v1::snapshots::trigger_offering_nurturing),
         )
         .route(
-            "/api/v1/nurturing/trigger-all",
-            post(api::v1::nurturing::trigger_all_offerings_nurturing),
+            "/api/v1/snapshots/trigger-all",
+            post(api::v1::snapshots::trigger_all_offerings_nurturing),
         )
         // Stone nurturing - seed bank integration (remote backup)
         .route(
-            "/api/v1/stone/nurturing/{offering}/replicate",
-            post(api::v1::nurturing::replicate_to_seed_bank),
+            "/api/v1/stone/snapshots/{offering}/replicate",
+            post(api::v1::snapshots::replicate_to_seed_bank),
         )
         .route(
-            "/api/v1/stone/nurturing/{offering}/restore-remote",
-            post(api::v1::nurturing::restore_from_seed_bank),
+            "/api/v1/stone/snapshots/{offering}/restore-remote",
+            post(api::v1::snapshots::restore_from_seed_bank),
         )
         .route(
-            "/api/v1/stone/nurturing/remote/{seed_bank}",
-            get(api::v1::nurturing::list_remote_snapshots),
+            "/api/v1/stone/snapshots/remote/{seed_bank}",
+            get(api::v1::snapshots::list_remote_snapshots),
         )
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/garden/* - Garden-wide operations (via tended stone)
@@ -790,12 +790,12 @@ pub fn configure(state: AppState) -> Router {
         )
         // Garden nourishment (updates across ALL stones)
         .route(
-            "/api/v1/garden/nourishment",
-            get(api::v1::nourishment::check_garden),
+            "/api/v1/garden/updates",
+            get(api::v1::updates::check_garden),
         )
         .route(
-            "/api/v1/garden/nourishment/execute",
-            post(api::v1::nourishment::execute_garden),
+            "/api/v1/garden/updates/execute",
+            post(api::v1::updates::execute_garden),
         )
         // S3 gateway (preserved — independent of STORAGE-0009)
         .route("/api/v1/storage/s3", get(api::v1::s3_gateway::list_buckets))

@@ -35,11 +35,11 @@
 
 pub mod audit;
 pub mod files;
-pub mod memories;
+pub mod snapshots;
 pub mod objects;
 
 pub use files::{delete_file_v1, get_file_v1, head_file_v1, list_fs_v1, put_file_v1};
-pub use memories::{
+pub use snapshots::{
     download_snapshot_v1, get_offering_manifest_v1, list_memories_v1,
     list_offering_snapshots_v1,
 };

@@ -2,7 +2,6 @@
 //!
 //! Shows external services that have been borrowed (registered but not managed).
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -73,12 +72,12 @@ impl Command for BorrowedCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::BORROWED, self.quiet);
+        suggestions::print_suggestions("borrowed", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::BORROWED
+        "borrowed"
     }
 }

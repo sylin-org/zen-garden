@@ -161,7 +161,7 @@ impl Command for ConfigCommand {
                 self.service
             );
             println!(
-                "{}  garden-rake offer {} wishfully   # Auto-provision",
+                "{}  garden-rake offer {} --ensure   # Auto-provision",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 self.service
             );

@@ -19,7 +19,6 @@
 
 use crate::dispatch::{self, CommandInvocation, Runtime};
 
-use garden_rake::ui::rendering as ui;
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::commands;
 use garden_rake::commands::Command;
@@ -65,7 +64,7 @@ pub async fn route(
         "find" => {
             let query = opt(m, "query").unwrap_or_default();
             let format_str = opt(m, "format").unwrap_or_else(|| "human".into());
-            let wishfully = m.get_flag("wishfully");
+            let ensure = m.get_flag("ensure");
             let find_format: commands::discovery::FindOutputFormat =
                 if g.field.is_some() || g.output.as_str() == "json" {
                     commands::discovery::FindOutputFormat::Json
@@ -78,7 +77,7 @@ pub async fn route(
                     find_format,
                     g.quiet,
                     g.fresh,
-                    wishfully,
+                    ensure,
                     g.field.clone(),
                 ),
                 m,
@@ -228,11 +227,6 @@ pub async fn route(
             m,
         ),
 
-        "nourish" => {
-            let stone = opt(m, "service");
-            Inv::local(commands::nourish::NourishCommand::new(stone, false, false))
-        }
-
         // =================================================================
         // Manifest Authoring
         // =================================================================
@@ -298,10 +292,6 @@ pub async fn route(
             m,
         ),
 
-        "adopted" => Inv::remote(commands::discovery::AdoptedCommand::new(g.quiet), m),
-
-        "borrowed" => Inv::remote(commands::discovery::BorrowedCommand::new(g.quiet), m),
-
         "borrow" => {
             let name = req(m, "name")?;
             let from_url = opt(m, "from").ok_or_else(|| {
@@ -318,39 +308,9 @@ pub async fn route(
             m,
         ),
 
-        "locate" => match m.subcommand() {
-            Some(("strays", _)) => Inv::remote(
-                commands::adoption::LocateStraysCommand::new(g.quiet),
-                m,
-            ),
-            _ => anyhow::bail!("Usage: garden-rake locate strays"),
-        },
-
         // =================================================================
         // Management
         // =================================================================
-
-        "place" => {
-            match commands::management::PlaceCommand::from_args(
-                req(m, "target")?,
-                opt(m, "code"),
-                opt(m, "passphrase"),
-                g.quiet,
-            ) {
-                Ok(cmd) => Inv::remote(cmd, m),
-                Err(e) => {
-                    eprintln!(
-                        "{}{} {}",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", rt.term.supports_color),
-                        e
-                    );
-                    return Ok(None);
-                }
-            }
-        }
-
-        "invite" => Inv::remote(commands::management::InviteCommand::new(g.quiet), m),
 
         "reconcile" => Inv::remote(
             commands::management::ReconcileCommand::new(m.get_flag("drop-invalid"), g.quiet),
@@ -407,25 +367,6 @@ pub async fn route(
             )
         }
 
-        // === Lift ===
-        "lift" => {
-            use commands::management::LiftTarget;
-            let target_type = req(m, "target_type")?;
-            let target = match target_type.as_str() {
-                "keystone" => LiftTarget::Keystone,
-                "stone" => LiftTarget::Stone {
-                    name: opt(m, "stone_name").ok_or_else(|| {
-                        anyhow::anyhow!("Stone name required: garden-rake lift stone <name>")
-                    })?,
-                },
-                _ => anyhow::bail!(
-                    "Invalid target: '{}'. Use 'keystone' or 'stone'",
-                    target_type
-                ),
-            };
-            Inv::remote(commands::management::LiftCommand::new(target, g.quiet), m)
-        }
-
         // === Make (subcommands) ===
         "make" => {
             use commands::management::MakeActionType;
@@ -467,11 +408,6 @@ pub async fn route(
             )
         }
 
-        "install-service" => Inv::remote(
-            commands::admin::InstallServiceCommand::install_service(g.quiet),
-            m,
-        ),
-
         "rouse" => Inv::remote(
             commands::admin::RouseCommand::new(req(m, "stone")?, g.quiet),
             m,
@@ -510,8 +446,8 @@ pub async fn route(
         "commands" => Inv::local(commands::local::BrowseCommand::new(
             opt(m, "name"),
             opt(m, "category"),
-            m.get_flag("zen"),
-            m.get_flag("normative"),
+            false,
+            false,
         )),
 
         // =================================================================
@@ -650,20 +586,6 @@ pub async fn route(
                 opt(m, "category"),
                 opt(m, "endpoint"),
                 m.get_flag("examples"),
-            )
-            .await?;
-            return Ok(None);
-        }
-
-        "presence" => {
-            commands::presence::presence_command(
-                opt(m, "categories"),
-                opt(m, "at"),
-                &rt.client,
-                g.quiet,
-                g.fresh,
-                g.verbose,
-                Some(&*STONE),
             )
             .await?;
             return Ok(None);

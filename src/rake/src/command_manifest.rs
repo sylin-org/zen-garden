@@ -37,15 +37,11 @@ pub mod cmd {
     pub const WAKE: &str = "wake";
     pub const REMOVE: &str = "remove";
     pub const UPROOT: &str = "uproot";
-    pub const NOURISH: &str = "nourish";
     pub const UPGRADE: &str = "upgrade";
 
     // Adoption
     pub const ADOPT: &str = "adopt";
     pub const RELEASE: &str = "release";
-    pub const LOCATE: &str = "locate";
-    pub const ADOPTED: &str = "adopted";
-    pub const BORROWED: &str = "borrowed";
     pub const BORROW: &str = "borrow";
     pub const RETURN: &str = "return";
 
@@ -60,14 +56,10 @@ pub mod cmd {
 
     // System
     pub const TAKE_ROOT: &str = "take-root";
-    pub const INSTALL_SERVICE: &str = "install-service";
     pub const MAKE: &str = "make";
 
     // Pond
     pub const POND: &str = "pond";
-    pub const PLACE: &str = "place";
-    pub const INVITE: &str = "invite";
-    pub const LIFT: &str = "lift";
 
     // Scaffolded
     pub const CEREMONY: &str = "ceremony";
@@ -88,7 +80,6 @@ pub mod cmd {
 
     // Test/Diagnostic
     pub const ELECTION: &str = "election";
-    pub const PRESENCE: &str = "presence";
 
     // Companions
     pub const HEY: &str = "hey";
@@ -584,38 +575,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: false,
     });
 
-    manifest.add(CommandDef {
-        name: "nourish",
-        category: CommandCategory::Lifecycle,
-        description: "Upgrade service to latest version",
-        long_description: "Upgrade one or all services to their latest versions.\n\n\
-            Pulls latest container images and recreates services with data preserved.\n\
-            Use --all to upgrade all services on stone.",
-        remote_capable: true,
-        args: vec![
-            ArgSpec::positional("service", "Service name (omit with --all)"),
-            ArgSpec::flag("all", "Upgrade all services on stone"),
-            at_arg(),
-        ],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "Upgrade specific service",
-                syntax: "garden-rake nourish mongodb",
-            },
-            CommandExample {
-                description: "Upgrade all services on stone",
-                syntax: "garden-rake nourish --all",
-            },
-            CommandExample {
-                description: "Upgrade service on specific stone",
-                syntax: "garden-rake nourish mongodb at stone-01",
-            },
-        ],
-        see_also: vec!["offer", "reconcile"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
+
 
     manifest.add(CommandDef {
         name: cmd::UPGRADE,
@@ -641,7 +601,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake upgrade --all",
             },
         ],
-        see_also: vec!["nourish", "offer", "rest"],
+        see_also: vec![ "offer", "rest"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -761,7 +721,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake adopt mongodb on stone-01",
             },
         ],
-        see_also: vec!["release", "find", "adopted"],
+        see_also: vec!["release", "find",],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -790,40 +750,12 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake release mongodb on stone-01",
             },
         ],
-        see_also: vec!["adopt", "adopted"],
+        see_also: vec!["adopt",],
         hidden: false,
         subcommand_negates_reqs: false,
     });
 
-    manifest.add(CommandDef {
-        name: "locate",
-        category: CommandCategory::Adoption,
-        description: "Locate adoptable containers (strays)",
-        long_description: "Locate containers that are not managed by Zen Garden (strays).\n\n\
-            Strays are containers running on the stone but not in moss registry.\n\
-            Use 'adopt <name>' to claim a stray container.",
-        remote_capable: true,
-        args: vec![at_arg_global()],
-        subcommands: vec![SubDef {
-            name: "strays",
-            description: "Locate unmanaged containers",
-            args: vec![],
-            subcommands: vec![],
-        }],
-        examples: vec![
-            CommandExample {
-                description: "Locate stray containers",
-                syntax: "garden-rake locate strays",
-            },
-            CommandExample {
-                description: "Locate strays on specific stone",
-                syntax: "garden-rake locate strays on stone-01",
-            },
-        ],
-        see_also: vec!["adopt", "adopted"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
+
 
     manifest.add(CommandDef {
         name: "find",
@@ -832,13 +764,13 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         long_description: "Find running services across the garden and return connection URIs.\n\n\
             Supports search by name, category (c:prefix), or tags (t:prefix).\n\
             Results are returned instantly from topology cache.\n\n\
-            Use 'wishfully' modifier to auto-provision if service not found.",
+            Use 'ensure' modifier to auto-provision if service not found.",
         remote_capable: true,
         args: vec![
             ArgSpec::positional("query", "Service name, c:category, or t:tag")
                 .required(),
             ArgSpec::option("format", "Output format: human, json, uri, uri-ip"),
-            ArgSpec::flag("wishfully", "Auto-provision if not found"),
+            ArgSpec::flag("ensure", "Auto-provision if not found"),
             at_arg(),
         ],
         subcommands: vec![],
@@ -857,7 +789,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
             },
             CommandExample {
                 description: "Auto-provision if not found",
-                syntax: "garden-rake find mongodb wishfully",
+                syntax: "garden-rake find mongodb ensure",
             },
         ],
         see_also: vec!["observe", "list", "offer", "config"],
@@ -905,56 +837,9 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: false,
     });
 
-    manifest.add(CommandDef {
-        name: "adopted",
-        category: CommandCategory::Adoption,
-        description: "List adopted services",
-        long_description:
-            "List all services currently adopted (external services under moss management).\n\n\
-            Adopted services are not containers - they're external services moss monitors.",
-        remote_capable: true,
-        args: vec![at_arg()],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "List adopted services",
-                syntax: "garden-rake adopted",
-            },
-            CommandExample {
-                description: "List adopted on specific stone",
-                syntax: "garden-rake adopted on stone-01",
-            },
-        ],
-        see_also: vec!["adopt", "release", "borrowed"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
 
-    manifest.add(CommandDef {
-        name: "borrowed",
-        category: CommandCategory::Adoption,
-        description: "List borrowed (external) services",
-        long_description:
-            "List all borrowed services (external network services registered for reference).\n\n\
-            Borrowed services are external services not managed by this stone,\n\
-            but registered for service discovery and reference.",
-        remote_capable: true,
-        args: vec![at_arg()],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "List borrowed services",
-                syntax: "garden-rake borrowed",
-            },
-            CommandExample {
-                description: "List borrowed on specific stone",
-                syntax: "garden-rake borrowed on stone-01",
-            },
-        ],
-        see_also: vec!["borrow", "return", "adopted"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
+
+
 
     manifest.add(CommandDef {
         name: "borrow",
@@ -987,7 +872,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake borrow redis from redis://cache:6379 on stone-01",
             },
         ],
-        see_also: vec!["return", "borrowed"],
+        see_also: vec!["return",],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -1017,7 +902,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake return redis on stone-01",
             },
         ],
-        see_also: vec!["borrow", "borrowed"],
+        see_also: vec!["borrow",],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -1122,7 +1007,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake reconcile at stone-01",
             },
         ],
-        see_also: vec!["nourish", "refresh"],
+        see_also: vec![ "refresh"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -1199,7 +1084,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "sc query ZenGardenMoss",
             },
         ],
-        see_also: vec!["lift", "make"],
+        see_also: vec![ "make"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -1409,109 +1294,16 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake pond join ABC123",
             },
         ],
-        see_also: vec!["place", "invite", "lift"],
+        see_also: vec![],
         hidden: false,
         subcommand_negates_reqs: false,
     });
 
-    manifest.add(CommandDef {
-        name: "place",
-        category: CommandCategory::Pond,
-        description: "Initialize pond or join pond",
-        long_description:
-            "Initialize pond (place keystone) or join existing pond (place stone).\n\n\
-            Pond security enables multi-stone trust relationships with encrypted certificates.\n\
-            Phase 3b feature - implementation pending.",
-        remote_capable: true,
-        args: vec![
-            ArgSpec::positional("target", "'keystone' or 'stone'")
-                .required(),
-            ArgSpec::option("code", "Invitation code (required for 'stone')"),
-            ArgSpec::option("passphrase", "Encrypt pond certificate (keystone only)"),
-            at_arg(),
-        ],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "Initialize pond (place keystone)",
-                syntax: "garden-rake place keystone",
-            },
-            CommandExample {
-                description: "Initialize with passphrase",
-                syntax: "garden-rake place keystone --passphrase mypass",
-            },
-            CommandExample {
-                description: "Join pond (place stone)",
-                syntax: "garden-rake place stone --code ABC123",
-            },
-            CommandExample {
-                description: "Join pond on specific stone",
-                syntax: "garden-rake place stone --code ABC123 at stone-02",
-            },
-        ],
-        see_also: vec!["invite", "lift"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
 
-    manifest.add(CommandDef {
-        name: "invite",
-        category: CommandCategory::Pond,
-        description: "Generate pond invitation code",
-        long_description: "Generate pond invitation code for adding stones to pond.\n\n\
-            Invitation codes expire after 24 hours or first use.\n\
-            Phase 3b feature - implementation pending.",
-        remote_capable: true,
-        args: vec![at_arg()],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "Generate invitation code",
-                syntax: "garden-rake invite",
-            },
-            CommandExample {
-                description: "Generate code from specific keystone",
-                syntax: "garden-rake invite at stone-01",
-            },
-        ],
-        see_also: vec!["place", "lift"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
 
-    manifest.add(CommandDef {
-        name: "lift",
-        category: CommandCategory::Pond,
-        description: "Remove stone from pond",
-        long_description: "Remove a stone from pond or drain entire pond.\n\n\
-            Can remove specific stone (untrust) or drain keystone (destroy pond).\n\
-            Phase 3b feature - implementation pending.",
-        remote_capable: true,
-        args: vec![
-            ArgSpec::positional("target_type", "'keystone' or 'stone'")
-                .required(),
-            ArgSpec::positional("stone_name", "Stone name (required if type is 'stone')"),
-            at_arg(),
-        ],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "Remove specific stone from pond",
-                syntax: "garden-rake lift stone stone-02",
-            },
-            CommandExample {
-                description: "Drain pond (destroy CA)",
-                syntax: "garden-rake lift keystone",
-            },
-            CommandExample {
-                description: "Untrust stone from specific keystone",
-                syntax: "garden-rake lift stone stone-02 at stone-01",
-            },
-        ],
-        see_also: vec!["place", "invite"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
+
+
+
 
     // === SCAFFOLDED COMMANDS ===
     // These commands are recognized but output placeholder messages until fully implemented
@@ -1702,40 +1494,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
         subcommand_negates_reqs: false,
     });
 
-    manifest.add(CommandDef {
-        name: cmd::PRESENCE,
-        category: CommandCategory::Discovery,
-        description: "Monitor stone presence events in real-time",
-        long_description: "Subscribe to stone presence protocol events via Server-Sent Events (SSE).\n\n\
-            Displays real-time events from the stone including:\n\
-            - Stone lifecycle: boot, shutdown, tending\n\
-            - Offering state changes: up, down, maintenance\n\
-            - Service events: adoption, removal\n\n\
-            Optional filtering by event category (service, stone, offering, ceremony, nourishment, etc.)",
-        remote_capable: true,
-        args: vec![
-            at_arg(),
-            ArgSpec::option("categories", "Filter by event categories (comma-separated: service,stone,offering,ceremony,nourishment,firmware)"),
-        ],
-        subcommands: vec![],
-        examples: vec![
-            CommandExample {
-                description: "Monitor all presence events",
-                syntax: "garden-rake presence",
-            },
-            CommandExample {
-                description: "Monitor only service and stone events",
-                syntax: "garden-rake presence --categories service,stone",
-            },
-            CommandExample {
-                description: "Monitor offering state changes",
-                syntax: "garden-rake presence --categories offering",
-            },
-        ],
-        see_also: vec!["watch", "observe"],
-        hidden: false,
-        subcommand_negates_reqs: false,
-    });
+
 
     // === Companion COMMANDS ===
 
@@ -1775,7 +1534,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake hey stone-01 tell cricket volume 80",
             },
         ],
-        see_also: vec!["watch", "presence"],
+        see_also: vec!["watch",],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -2063,7 +1822,7 @@ pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
                 syntax: "garden-rake nurturing trigger-all",
             },
         ],
-        see_also: vec!["restore", "storage", "nourish"],
+        see_also: vec!["restore", "storage",],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -2300,7 +2059,6 @@ pub fn validate_manifest() {
         "list",
         "status",
         "find",
-        "presence",
         "config",
         // Lifecycle
         "offer",
@@ -2308,15 +2066,11 @@ pub fn validate_manifest() {
         "wake",
         "remove",
         "uproot",
-        "nourish",
         "upgrade",
         "capabilities",
         // Adoption
         "adopt",
         "release",
-        "locate",
-        "adopted",
-        "borrowed",
         "borrow",
         "return",
         // Management
@@ -2334,9 +2088,6 @@ pub fn validate_manifest() {
         "stir",
         // Pond
         "pond",
-        "place",
-        "invite",
-        "lift",
         // Test/Diagnostic
         "election",
         // Companions

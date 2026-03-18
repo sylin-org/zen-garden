@@ -3,7 +3,6 @@
 //! Zen syntax for generating pond invitations:
 //! - invite: Generate a time-limited TOTP invitation code (equivalent to pond invite)
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -88,12 +87,12 @@ impl Command for InviteCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::INVITE, self.quiet);
+        suggestions::print_suggestions("invite", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::INVITE
+        "invite"
     }
 }

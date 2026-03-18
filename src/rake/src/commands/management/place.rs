@@ -4,7 +4,6 @@
 //! - place keystone: Initialize pond security (equivalent to pond init)
 //! - place stone --code <code>: Join pond with invitation code (equivalent to pond join)
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -69,13 +68,13 @@ impl Command for PlaceCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::PLACE, self.quiet);
+        suggestions::print_suggestions("place", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::PLACE
+        "place"
     }
 }
 

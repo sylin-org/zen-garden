@@ -2,7 +2,6 @@
 //!
 //! Pulls latest images and restarts services with new versions.
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -191,12 +190,12 @@ impl Command for UpgradeCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::NOURISH, self.quiet);
+        suggestions::print_suggestions("nourish", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::NOURISH
+        "nourish"
     }
 }

@@ -3,7 +3,7 @@
 //! Finds running services across the garden and returns connection URIs.
 //! Supports search by name, category, or tags with cache-first architecture.
 //!
-//! Wishfully mode: Auto-provision if service not found and query matches a known offering.
+//! Ensurely mode: Provision if missing if service not found and query matches a known offering.
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
@@ -58,8 +58,8 @@ pub struct FindCommand {
     pub quiet: bool,
     /// Fresh discovery (bypass cache)
     pub fresh: bool,
-    /// Wishfully mode (auto-provision if not found)
-    pub wishfully: bool,
+    /// Ensurely mode (auto-provision if not found)
+    pub ensure: bool,
     /// Optional field extraction path (e.g., "services[0].connection.uris[0]")
     pub field: Option<String>,
 }
@@ -70,14 +70,14 @@ impl FindCommand {
         format: FindOutputFormat,
         quiet: bool,
         fresh: bool,
-        wishfully: bool,
+        ensure: bool,
     ) -> Self {
         Self {
             query,
             format,
             quiet,
             fresh,
-            wishfully,
+            ensure,
             field: None,
         }
     }
@@ -88,7 +88,7 @@ impl FindCommand {
         format: FindOutputFormat,
         quiet: bool,
         fresh: bool,
-        wishfully: bool,
+        ensure: bool,
         field: Option<String>,
     ) -> Self {
         Self {
@@ -96,7 +96,7 @@ impl FindCommand {
             format,
             quiet,
             fresh,
-            wishfully,
+            ensure,
             field,
         }
     }
@@ -174,7 +174,7 @@ impl Command for FindCommand {
     }
 }
 
-/// Offering info for wishfully mode
+/// Offering info for ensure mode
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OfferingInfo {
     pub name: String,
@@ -391,20 +391,20 @@ impl FindCommand {
         self.query_services(ctx, &sanitized_query, true).await
     }
 
-    async fn handle_capability_wishfully(&self, ctx: &Runtime) -> anyhow::Result<bool> {
+    async fn handle_capability_ensure(&self, ctx: &Runtime) -> anyhow::Result<bool> {
         let query = self.query.trim();
         if !query.contains(':') && !query.contains('[') {
             return Ok(false);
         }
 
         // V2 FQN with "::" separator (e.g., "mongodb::prod") is an instance
-        // reference, not a capability wish — let the offering wishful path handle it.
+        // reference, not a capability wish — let the offering ensure path handle it.
         if query.contains("::") && !query.contains('[') {
             return Ok(false);
         }
 
         // If the raw query is itself a valid offering FQN, this is a classic
-        // offering wishful path and should not be interpreted as capability wish.
+        // offering ensure path and should not be interpreted as capability wish.
         if !query.contains('[') && self.check_offering_exists_for(ctx, query).await.is_some() {
             return Ok(false);
         }
@@ -743,9 +743,9 @@ impl FindCommand {
 
     /// Handle not found case
     async fn handle_not_found(&self, ctx: &Runtime) -> CommandResult {
-        if self.wishfully && self.is_name_search() {
+        if self.ensure && self.is_name_search() {
             if self.query.contains(':') || self.query.contains('[') {
-                match self.handle_capability_wishfully(ctx).await {
+                match self.handle_capability_ensure(ctx).await {
                     Ok(true) => return Ok(()),
                     Ok(false) => {}
                     Err(e) => {
@@ -758,7 +758,7 @@ impl FindCommand {
                             );
                             std::process::exit(3);
                         }
-                        tracing::debug!(error = ?e, "Capability wishful path failed, falling back to offering wishful");
+                        tracing::debug!(error = ?e, "Capability ensure path failed, falling back to offering ensure");
                     }
                 }
             }
@@ -865,21 +865,21 @@ impl FindCommand {
                     " ".repeat(ui::constants::DEFAULT_INDENT)
                 );
             }
-        } else if self.wishfully {
-            // Wishfully mode with category/tag search
+        } else if self.ensure {
+            // Ensurely mode with category/tag search
             println!(
                 "{}No running services found matching '{}'",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 self.query
             );
             println!(
-                "{}{} Wishfully mode requires a specific offering name",
+                "{}{} Ensurely mode requires a specific offering name",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("info", ctx.term.supports_color)
             );
             println!();
             println!(
-                "{}Try: garden-rake find mongodb wishfully",
+                "{}Try: garden-rake find mongodb --ensure",
                 " ".repeat(ui::constants::DEFAULT_INDENT)
             );
         } else {
@@ -891,7 +891,7 @@ impl FindCommand {
             println!();
             println!("{}Suggestions:", " ".repeat(ui::constants::DEFAULT_INDENT));
             println!(
-                "{}  garden-rake find {} wishfully  # Auto-provision {}",
+                "{}  garden-rake find {} ensure  # Provision if missing {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 self.query,
                 self.query

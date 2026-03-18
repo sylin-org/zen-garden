@@ -125,7 +125,7 @@ impl Command for InstallServiceCommand {
         // Self-teaching suggestions
         let cmd_name = match self.style {
             InstallStyle::TakeRoot => cmd::TAKE_ROOT,
-            InstallStyle::InstallService => cmd::INSTALL_SERVICE,
+            InstallStyle::InstallService => "install-service",
         };
         suggestions::print_suggestions(cmd_name, self.quiet);
 
@@ -135,7 +135,7 @@ impl Command for InstallServiceCommand {
     fn name(&self) -> &'static str {
         match self.style {
             InstallStyle::TakeRoot => cmd::TAKE_ROOT,
-            InstallStyle::InstallService => cmd::INSTALL_SERVICE,
+            InstallStyle::InstallService => "install-service",
         }
     }
 }

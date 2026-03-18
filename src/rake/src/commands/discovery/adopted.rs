@@ -2,7 +2,6 @@
 //!
 //! Shows services that were adopted from existing containers.
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -70,12 +69,12 @@ impl Command for AdoptedCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::ADOPTED, self.quiet);
+        suggestions::print_suggestions("adopted", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::ADOPTED
+        "adopted"
     }
 }

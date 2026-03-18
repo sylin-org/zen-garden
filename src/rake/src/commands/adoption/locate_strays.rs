@@ -2,7 +2,6 @@
 //!
 //! Lists containers that are not managed by Zen Garden (strays).
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -84,12 +83,12 @@ impl Command for LocateStraysCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LOCATE, self.quiet);
+        suggestions::print_suggestions("locate", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::LOCATE
+        "locate"
     }
 }

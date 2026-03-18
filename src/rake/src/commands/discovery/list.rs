@@ -8,7 +8,9 @@ use crate::context::Runtime;
 use crate::suggestions;
 use anyhow::Context;
 use async_trait::async_trait;
+use colored::Colorize;
 use crate::ui::rendering::{self as ui, TerminalInfo};
+use garden_common::constants::CATEGORY_ORCHESTRATOR;
 use garden_common::SubCapability;
 
 // Re-use canonical types from garden-common
@@ -88,15 +90,35 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
     let mut stopped_count = 0;
 
     for svc in services {
-        let status_lower = svc.status.to_lowercase();
-        if status_lower.contains(garden_common::constants::SERVICE_RUNNING) {
-            running_count += 1;
-        } else {
-            stopped_count += 1;
+        let is_registered = svc.category == CATEGORY_ORCHESTRATOR;
+
+        if !is_registered {
+            let status_lower = svc.status.to_lowercase();
+            if status_lower.contains(garden_common::constants::SERVICE_RUNNING) {
+                running_count += 1;
+            } else {
+                stopped_count += 1;
+            }
         }
 
-        let status_display = ui::status_indicator(&status_lower, term.supports_color);
-        let offering_display = if svc.offering.is_empty() {
+        let status_display = if is_registered {
+            if term.supports_color {
+                "[registered]".blue().to_string()
+            } else {
+                "[registered]".to_string()
+            }
+        } else {
+            let status_lower = svc.status.to_lowercase();
+            ui::status_indicator(&status_lower, term.supports_color)
+        };
+
+        let offering_display = if is_registered {
+            if svc.source.is_empty() {
+                CATEGORY_ORCHESTRATOR.to_string()
+            } else {
+                svc.source.clone()
+            }
+        } else if svc.offering.is_empty() {
             garden_common::constants::VALUE_UNKNOWN.to_string()
         } else {
             svc.offering.clone()
@@ -122,13 +144,28 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
 
     println!("{}", table.render());
     println!();
-    println!(
-        "{}  {} services ({} running, {} stopped)",
-        " ".repeat(ui::constants::DEFAULT_INDENT),
-        services.len(),
-        running_count,
-        stopped_count
-    );
+
+    let registered_count = services.iter().filter(|s| s.category == CATEGORY_ORCHESTRATOR).count();
+    let offering_count = services.len() - registered_count;
+
+    if registered_count > 0 {
+        println!(
+            "{}  {} services ({} running, {} stopped) + {} registered",
+            " ".repeat(ui::constants::DEFAULT_INDENT),
+            offering_count,
+            running_count,
+            stopped_count,
+            registered_count,
+        );
+    } else {
+        println!(
+            "{}  {} services ({} running, {} stopped)",
+            " ".repeat(ui::constants::DEFAULT_INDENT),
+            offering_count,
+            running_count,
+            stopped_count,
+        );
+    }
 }
 
 /// Format capability summary (e.g., "12 models", "3 ext.")

@@ -4,7 +4,6 @@
 //! - lift keystone: Remove pond security entirely
 //! - lift stone <name>: Remove a stone from the pond
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -67,13 +66,13 @@ impl Command for LiftCommand {
         }
 
         // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIFT, self.quiet);
+        suggestions::print_suggestions("lift", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::LIFT
+        "lift"
     }
 }
 

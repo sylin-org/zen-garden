@@ -244,7 +244,7 @@ try {
     }
 
     # Cargo build args with --target for cross-compilation
-    $buildArgs = @("cargo", "build", "--target", $RUST_TARGET, "-j", "$parallelJobs")
+    $buildArgs = @("cargo", "build", "--locked", "--target", $RUST_TARGET, "-j", "$parallelJobs")
     if ($buildProfile -eq "debug") {
         # Debug build - no profile flag needed
     } elseif ($buildProfile -eq "fast-release") {

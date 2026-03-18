@@ -296,7 +296,7 @@ if ($UseDocker) {
         $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
 
         # Build binaries in one container run for efficiency
-        $buildArgs = @("cargo", "build", "-j", "$parallelJobs")
+        $buildArgs = @("cargo", "build", "--locked", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
         }
@@ -466,7 +466,7 @@ else {
             Write-Host "  → Building $target..."
         }
 
-        $buildArgs = @("build", "-j", "$parallelJobs")
+        $buildArgs = @("build", "--locked", "-j", "$parallelJobs")
         if ($buildProfile -eq "debug") {
             # Debug build - no profile flag needed
         }

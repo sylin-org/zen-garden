@@ -213,7 +213,7 @@ try {
     }
 
     # Build all targets
-    $buildArgs = @("build") + $commonArgs + @("--target", "x86_64-pc-windows-msvc")
+    $buildArgs = @("build", "--locked") + $commonArgs + @("--target", "x86_64-pc-windows-msvc")
     foreach ($target in $buildTargets) {
         $buildArgs += @("--bin", $target)
     }

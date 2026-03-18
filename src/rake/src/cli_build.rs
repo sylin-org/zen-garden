@@ -99,6 +99,11 @@ fn build_subcommand(def: &CommandDef) -> clap::Command {
         cmd = cmd.subcommand_negates_reqs(true);
     }
 
+    // Add visible aliases (e.g., "explore" for offer, "cap" for capabilities)
+    for alias in def.aliases {
+        cmd = cmd.visible_alias(alias);
+    }
+
     // Add arguments from ArgSpec
     for arg_spec in &def.args {
         cmd = cmd.arg(build_arg(arg_spec));

@@ -5,7 +5,6 @@
 //! - Slumber: Shut down a stone (power off)
 //! - Stir: Reboot a stone
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
@@ -168,13 +167,13 @@ impl Command for RouseCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::ROUSE, self.quiet);
+        suggestions::print_suggestions("stone wake", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::ROUSE
+        "stone wake"
     }
 }
 
@@ -245,13 +244,13 @@ impl Command for SlumberCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::SLUMBER, self.quiet);
+        suggestions::print_suggestions("stone shutdown", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::SLUMBER
+        "stone shutdown"
     }
 }
 
@@ -322,12 +321,12 @@ impl Command for StirCommand {
             }
         }
 
-        suggestions::print_suggestions(cmd::STIR, self.quiet);
+        suggestions::print_suggestions("stone reboot", self.quiet);
 
         Ok(())
     }
 
     fn name(&self) -> &'static str {
-        cmd::STIR
+        "stone reboot"
     }
 }

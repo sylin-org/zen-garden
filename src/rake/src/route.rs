@@ -108,6 +108,15 @@ pub async fn route(
 
         "pulse" => Inv::remote(commands::pulse::PulseCommand::new(g.quiet), m),
 
+        "logs" => {
+            let service = req(m, "service")?;
+            let timestamps = m.get_flag("timestamps");
+            Inv::remote(
+                commands::discovery::WatchCommand::offering_logs(service, timestamps, g.quiet),
+                m,
+            )
+        }
+
         // === Watch (subcommands) ===
         "watch" => {
             let cmd = match m.subcommand() {
@@ -312,11 +321,6 @@ pub async fn route(
         // Management
         // =================================================================
 
-        "reconcile" => Inv::remote(
-            commands::management::ReconcileCommand::new(m.get_flag("drop-invalid"), g.quiet),
-            m,
-        ),
-
         "tend" => Inv::local(commands::management::TendCommand::new(
             opt(m, "target"),
             m.get_flag("clear"),
@@ -367,61 +371,68 @@ pub async fn route(
             )
         }
 
-        // === Make (subcommands) ===
-        "make" => {
-            use commands::management::MakeActionType;
-            let target = req(m, "target")?;
-            if target != "stone" {
-                anyhow::bail!(
-                    "Invalid target: '{}'. Use: garden-rake make stone <sing|quiet|silent|minimal>",
-                    target
-                );
+        // =================================================================
+        // Stone Administration (grouped)
+        // =================================================================
+
+        "stone" => match m.subcommand() {
+            Some(("wake", sub)) => Inv::remote(
+                commands::admin::RouseCommand::new(req(sub, "stone")?, g.quiet),
+                m,
+            ),
+            Some(("shutdown", sub)) => {
+                let target = opt(sub, "stone").or_else(|| opt(m, "at"));
+                Inv::remote_at(commands::admin::SlumberCommand::new(g.quiet), target)
             }
-            let action_type = match m.subcommand() {
-                Some(("sing", sub)) => MakeActionType::Sing {
-                    forever: sub.get_flag("forever"),
-                },
-                Some(("quiet", _)) => MakeActionType::Quiet,
-                Some(("silent", _)) => MakeActionType::Silent,
-                Some(("minimal", _)) => MakeActionType::Minimal,
-                _ => anyhow::bail!("Usage: garden-rake make stone <sing|quiet|silent|minimal>"),
-            };
-            Inv::remote(commands::management::MakeCommand::new(action_type, g.quiet), m)
-        }
-
-        // =================================================================
-        // Admin
-        // =================================================================
-
-        "take-root" => {
-            let at_keyword = opt(m, "at_keyword");
-            let stone = opt(m, "stone");
-            let at_flag = opt(m, "at");
-            let target = if at_keyword.as_deref() == Some("at") {
-                stone.clone()
-            } else {
-                at_keyword.or(at_flag)
-            };
-            Inv::remote_at(
-                commands::admin::InstallServiceCommand::take_root(g.quiet),
-                target,
-            )
-        }
-
-        "rouse" => Inv::remote(
-            commands::admin::RouseCommand::new(req(m, "stone")?, g.quiet),
-            m,
-        ),
-
-        "slumber" => {
-            let target = opt(m, "stone").or_else(|| opt(m, "at"));
-            Inv::remote_at(commands::admin::SlumberCommand::new(g.quiet), target)
-        }
-
-        "stir" => {
-            let target = opt(m, "stone").or_else(|| opt(m, "at"));
-            Inv::remote_at(commands::admin::StirCommand::new(g.quiet), target)
-        }
+            Some(("reboot", sub)) => {
+                let target = opt(sub, "stone").or_else(|| opt(m, "at"));
+                Inv::remote_at(commands::admin::StirCommand::new(g.quiet), target)
+            }
+            Some(("verbosity", sub)) => {
+                use commands::management::MakeActionType;
+                let level = req(sub, "level")?;
+                let action_type = match level.as_str() {
+                    "sing" => MakeActionType::Sing {
+                        forever: sub.get_flag("forever"),
+                    },
+                    "quiet" => MakeActionType::Quiet,
+                    "silent" => MakeActionType::Silent,
+                    "minimal" => MakeActionType::Minimal,
+                    _ => anyhow::bail!(
+                        "Invalid verbosity level: '{}'. Use: sing, quiet, silent, minimal",
+                        level
+                    ),
+                };
+                Inv::remote(commands::management::MakeCommand::new(action_type, g.quiet), m)
+            }
+            Some(("install", _sub)) => {
+                Inv::remote_at(
+                    commands::admin::InstallServiceCommand::take_root(g.quiet),
+                    opt(m, "at"),
+                )
+            }
+            Some(("reconcile", sub)) => Inv::remote(
+                commands::management::ReconcileCommand::new(
+                    sub.get_flag("drop-invalid"),
+                    g.quiet,
+                ),
+                m,
+            ),
+            Some(("refresh", sub)) => {
+                let component = req(sub, "component")?;
+                let from = req(sub, "from")?;
+                let endpoint =
+                    dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*STONE))
+                        .await?;
+                println!("Refreshing {}...", component);
+                refresh_component(&rt.client, &endpoint, &component, std::path::Path::new(&from))
+                    .await?;
+                return Ok(None);
+            }
+            _ => anyhow::bail!(
+                "Usage: garden-rake stone <wake|shutdown|reboot|verbosity|install|reconcile|refresh>"
+            ),
+        },
 
         // =================================================================
         // Hey (companion)
@@ -532,13 +543,11 @@ pub async fn route(
 
         "store" => return route_store(m, g),
 
-        "restore" => return route_restore(m, g),
-
         // =================================================================
-        // Nurturing (subcommands)
+        // Backup (grouped, replaces nurturing + restore)
         // =================================================================
 
-        "nurturing" => match m.subcommand() {
+        "backup" => match m.subcommand() {
             Some(("status", sub)) => Inv::remote(
                 commands::nurturing::NurturingStatusCommand::new(opt(sub, "offering")),
                 m,
@@ -559,8 +568,11 @@ pub async fn route(
                 commands::nurturing::NurturingTriggerCommand::new(None),
                 m,
             ),
+            Some(("restore", sub)) => {
+                return route_restore(sub, g);
+            }
             _ => anyhow::bail!(
-                "Usage: garden-rake nurturing <status|list|trigger|trigger-all>"
+                "Usage: garden-rake backup <status|list|trigger|trigger-all|restore>"
             ),
         },
 
@@ -592,18 +604,6 @@ pub async fn route(
         }
 
         "election" => return route_election(m, &rt.client).await,
-
-        "refresh" => {
-            let component = req(m, "component")?;
-            let from = req(m, "from")?;
-            let endpoint =
-                dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*STONE))
-                    .await?;
-            println!("Refreshing {}...", component);
-            refresh_component(&rt.client, &endpoint, &component, std::path::Path::new(&from))
-                .await?;
-            return Ok(None);
-        }
 
         // =================================================================
         // Fallback

@@ -357,6 +357,12 @@ if ($UseDocker) {
         # so Cargo automatically re-runs build scripts and recompiles affected crates when the
         # build number changes. No manual cache cleaning needed - incremental compilation works.
 
+        # Ensure container cargo cache has all crates from the lockfile.
+        # The host runs cargo fetch into its own CARGO_HOME, but each Docker container
+        # has a separate cargo cache (named volume). Without this step, --frozen fails
+        # the first time a new dependency is added to Cargo.toml.
+        docker exec $containerName cargo fetch --manifest-path /build/Cargo.toml 2>&1 | Out-Null
+
         # Execute build with isolated target directory
         # Mold linker: clang+mold are installed in the Docker image (Dockerfile.linux-x64).
         # Passed as env vars here (not .cargo/config.toml) to avoid affecting x86 cross-compilation.

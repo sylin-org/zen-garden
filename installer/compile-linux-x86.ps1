@@ -292,6 +292,12 @@ try {
     # x86 uses a separate target dir (target-linux-x86/) to avoid glibc conflicts
     # with the x64 builder which uses target-linux-x64/ and a different base image.
 
+    # Ensure container cargo cache has all crates from the lockfile.
+    # The host runs cargo fetch into its own CARGO_HOME, but each Docker container
+    # has a separate cargo cache (named volume). Without this step, --frozen fails
+    # the first time a new dependency is added to Cargo.toml.
+    docker exec $CONTAINER_NAME cargo fetch --manifest-path /build/Cargo.toml 2>&1 | Out-Null
+
     # Execute build with separate target directory
     docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/target -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
 

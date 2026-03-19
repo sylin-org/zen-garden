@@ -1626,6 +1626,7 @@ dependencies = [
  "garden-build-utils",
  "garden-common",
  "hex",
+ "hmac",
  "hostname",
  "koi-certmesh",
  "koi-common",

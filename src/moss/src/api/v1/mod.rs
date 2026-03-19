@@ -24,6 +24,7 @@ pub mod portrait;
 pub mod presence;
 pub mod pulse;
 pub mod s3_gateway;
+pub mod s3_presign;
 pub mod services;
 pub mod snapshots;
 pub mod stone;

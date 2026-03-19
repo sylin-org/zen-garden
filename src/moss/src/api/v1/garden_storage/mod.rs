@@ -104,11 +104,31 @@ pub struct StorageInstance {
     pub roles: Vec<String>,
 }
 
+/// S3 connection details for a storage replica set.
+///
+/// Included in the discovery response so clients get everything needed
+/// to connect via standard S3 in a single API call.
+#[derive(Debug, Serialize)]
+pub struct S3Connection {
+    /// S3 endpoint (host:port). Standard S3 at root /.
+    pub endpoint: String,
+    /// Access key for S3 authentication.
+    pub access_key: String,
+    /// Secret key for S3 authentication.
+    pub secret_key: String,
+    /// Region (always "zen-garden" for Moss-hosted storage).
+    pub region: String,
+}
+
 /// Response for the discovery endpoint.
 #[derive(Debug, Serialize)]
 pub struct StorageDiscovery {
     pub name: String,
     pub instances: Vec<StorageInstance>,
+    /// S3 connection details for the primary instance.
+    /// Present when at least one instance has an armed S3 listener.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3Connection>,
 }
 
 /// Summary of a storage visible across the garden.
@@ -396,5 +416,110 @@ pub async fn discover_v1(
         ));
     }
 
-    crate::api::ok(StorageDiscovery { name, instances })
+    // Build S3 connection block for the primary instance
+    let s3 = build_s3_connection(&name, &instances, &state).await;
+
+    crate::api::ok(StorageDiscovery { name, instances, s3 })
+}
+
+/// Build S3 connection details for a replica set's primary instance.
+///
+/// Resolves the S3 port from the port catalog and generates credentials.
+/// Credentials are deterministic per replica set:
+/// - **Unsigned mode**: derived from stone_id + replica set name (stable, not validated)
+/// - **Pond active**: derived from pond CA fingerprint + replica set name (garden-scoped)
+async fn build_s3_connection(
+    replica_set: &str,
+    instances: &[StorageInstance],
+    state: &AppState,
+) -> Option<S3Connection> {
+    // Find primary instance (or first available)
+    let primary = instances
+        .iter()
+        .find(|i| matches!(i.role, StorageRole::Primary))
+        .or_else(|| instances.first())?;
+
+    // S3 block is only populated when this stone hosts the storage.
+    // Remote primaries: client follows the instance endpoint and asks that stone directly.
+    if primary.stone_id != state.current.stone.id {
+        return None;
+    }
+
+    let catalog = state.orchestration.storage.s3_listeners.port_catalog().await;
+    let port = catalog.get(replica_set).copied()
+        .or_else(|| catalog.values().next().copied())?;
+
+    // Build endpoint from the primary's stone endpoint host + S3 port
+    let host = extract_host(&primary.endpoint).unwrap_or_else(|| "localhost".to_string());
+
+    let endpoint = format!("{}:{}", host, port);
+
+    // Generate credentials
+    let (access_key, secret_key) = generate_s3_credentials(replica_set, state).await;
+
+    Some(S3Connection {
+        endpoint,
+        access_key,
+        secret_key,
+        region: "zen-garden".to_string(),
+    })
+}
+
+/// Extract host from an endpoint string like "http://192.168.1.174:7185".
+fn extract_host(endpoint: &str) -> Option<String> {
+    let stripped = endpoint
+        .strip_prefix("https://")
+        .or_else(|| endpoint.strip_prefix("http://"))
+        .unwrap_or(endpoint);
+    let host = stripped.split(':').next()?;
+    if host.is_empty() { None } else { Some(host.to_string()) }
+}
+
+/// Generate deterministic S3 credentials for a replica set.
+///
+/// Two-tier:
+/// - **Pond active**: HMAC(ca_fingerprint, "s3-cred:{replica_set}") — garden-scoped
+/// - **No pond**: HMAC(stone_id, "s3-cred:{replica_set}") — stone-scoped
+async fn generate_s3_credentials(replica_set: &str, state: &AppState) -> (String, String) {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use std::sync::atomic::Ordering;
+
+    type HmacSha256 = Hmac<Sha256>;
+
+    // Determine key material (pond CA fingerprint or stone_id)
+    let key_material = if state.security.pond.active.load(Ordering::Relaxed) {
+        if let Ok(handle) = state.discovery.koi.certmesh() {
+            if let Ok(core) = handle.core() {
+                let status = core.certmesh_status().await;
+                if let Some(ref fp) = status.ca_fingerprint {
+                    fp.clone()
+                } else {
+                    state.current.stone.id.clone()
+                }
+            } else {
+                state.current.stone.id.clone()
+            }
+        } else {
+            state.current.stone.id.clone()
+        }
+    } else {
+        state.current.stone.id.clone()
+    };
+
+    // Access key: first 20 chars of HMAC(material, "s3-access:{name}")
+    let access_msg = format!("s3-access:{}", replica_set);
+    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).unwrap();
+    mac.update(access_msg.as_bytes());
+    let access_key = hex::encode(mac.finalize().into_bytes());
+    let access_key = access_key[..20].to_uppercase();
+
+    // Secret key: first 40 chars of HMAC(material, "s3-secret:{name}")
+    let secret_msg = format!("s3-secret:{}", replica_set);
+    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).unwrap();
+    mac.update(secret_msg.as_bytes());
+    let secret_key = hex::encode(mac.finalize().into_bytes());
+    let secret_key = secret_key[..40].to_string();
+
+    (access_key, secret_key)
 }

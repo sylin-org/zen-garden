@@ -150,6 +150,11 @@ impl ObjectStore {
         Ok(PutResult { etag })
     }
 
+    /// Check if a bucket directory exists at the mount root.
+    pub fn bucket_exists(&self, bucket: &str) -> bool {
+        self.bucket_path(bucket).is_dir()
+    }
+
     /// GET object - retrieve data (decrypted if encrypted)
     pub async fn get_object(
         &self,

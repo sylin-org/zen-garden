@@ -491,6 +491,15 @@ pub async fn get_object(
     };
 
     if let Some(store) = handle.object_store_for_read() {
+        // Check bucket existence — return NoSuchBucket (not NoSuchKey) for missing buckets
+        if !store.bucket_exists(&bucket) {
+            return xml_error(
+                StatusCode::NOT_FOUND,
+                "NoSuchBucket",
+                &format!("Bucket '{}' does not exist", bucket),
+            );
+        }
+
         // Parse optional Range header (e.g., "bytes=0-99")
         let range = parse_range_header(&headers);
 
@@ -654,6 +663,13 @@ pub async fn head_object(
     };
 
     if let Some(store) = handle.object_store_for_read() {
+        if !store.bucket_exists(&bucket) {
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body("".into())
+                .unwrap();
+        }
+
         match store.head_object(&bucket, key).await {
             Ok(Some(meta)) => {
                 // Evaluate conditional headers

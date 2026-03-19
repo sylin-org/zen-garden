@@ -229,8 +229,22 @@ pub const STORAGE_MEMORIES_INDEX_FILE: &str = "index.json";
 /// Memories offering manifest filename
 pub const STORAGE_MEMORIES_OFFERING_MANIFEST_FILE: &str = "offering.json";
 
-/// Object storage directory (S3 root)
-/// Layout: {mount_path}/.zen-garden/storage/
+/// Object storage root — mount root itself (STORAGE-0016 unified namespace).
+/// S3 buckets map directly to directories at the mount root, sharing the same
+/// namespace as native REST/WebDAV files. This ensures S3 writes generate
+/// changelog entries and are replicated automatically.
+///
+/// Metadata sidecars live under STORAGE_OBJECTS_META_DIR to avoid polluting
+/// user-visible directories.
+pub const STORAGE_OBJECTS_ROOT: &str = "";
+
+/// Metadata sidecar directory for S3 objects (excluded from changelog).
+/// Layout: {mount_path}/.zen-garden/meta/{bucket}/{key}.json
+pub const STORAGE_OBJECTS_META_DIR: &str = ".zen-garden/meta";
+
+/// Legacy S3 object storage directory (pre-STORAGE-0016).
+/// Retained for reference only — no longer used for new writes.
+#[deprecated(note = "STORAGE-0016: S3 objects now live at mount root, not under .zen-garden/storage/")]
 pub const STORAGE_OBJECTS_DIR: &str = ".zen-garden/storage";
 
 /// Last-known-good directory for resilience snapshots
@@ -278,9 +292,14 @@ pub fn storage_memory_harvest_path(
     )
 }
 
-/// Get object storage directory on managed storage
-pub fn storage_objects_dir(mount_path: &str) -> String {
-    format!("{}/{}", mount_path, STORAGE_OBJECTS_DIR)
+/// Get object storage root on managed storage (mount root itself per STORAGE-0016).
+pub fn storage_objects_root(mount_path: &str) -> String {
+    mount_path.to_string()
+}
+
+/// Get object metadata sidecar directory on managed storage.
+pub fn storage_objects_meta_dir(mount_path: &str) -> String {
+    format!("{}/{}", mount_path, STORAGE_OBJECTS_META_DIR)
 }
 
 // ========================================================================

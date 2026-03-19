@@ -32,11 +32,11 @@ pub async fn initialize_layout(mount_path: &Path) -> Result<()> {
         .await
         .context("Failed to create memories directory")?;
 
-    // Object storage directory
-    let objects = mount_path.join(paths::STORAGE_OBJECTS_DIR);
-    tokio::fs::create_dir_all(&objects)
+    // Object metadata sidecar directory (STORAGE-0016: objects live at mount root)
+    let meta = mount_path.join(paths::STORAGE_OBJECTS_META_DIR);
+    tokio::fs::create_dir_all(&meta)
         .await
-        .context("Failed to create storage directory")?;
+        .context("Failed to create metadata sidecar directory")?;
 
     // Last-known-good directory
     let lkg = mount_path.join(paths::STORAGE_LAST_KNOWN_GOOD_DIR);
@@ -196,8 +196,8 @@ pub async fn migrate_legacy_layout(mount_path: &Path) -> Result<bool> {
     let memories = mount_path.join(paths::STORAGE_MEMORIES_DIR);
     let _ = tokio::fs::create_dir_all(&memories).await;
 
-    let objects = mount_path.join(paths::STORAGE_OBJECTS_DIR);
-    let _ = tokio::fs::create_dir_all(&objects).await;
+    let meta = mount_path.join(paths::STORAGE_OBJECTS_META_DIR);
+    let _ = tokio::fs::create_dir_all(&meta).await;
 
     // Create Zen Garden symlink
     create_symlink(mount_path).await;
@@ -224,7 +224,7 @@ mod tests {
 
         assert!(mount.join(paths::STORAGE_DOTFOLDER).is_dir());
         assert!(mount.join(paths::STORAGE_MEMORIES_DIR).is_dir());
-        assert!(mount.join(paths::STORAGE_OBJECTS_DIR).is_dir());
+        assert!(mount.join(paths::STORAGE_OBJECTS_META_DIR).is_dir());
         assert!(mount.join(paths::STORAGE_LAST_KNOWN_GOOD_DIR).is_dir());
     }
 
@@ -269,7 +269,7 @@ mod tests {
         assert!(!mount.join("garden").is_dir());
         assert!(mount.join(paths::STORAGE_DOTFOLDER).is_dir());
         assert!(mount.join(paths::STORAGE_MEMORIES_DIR).is_dir());
-        assert!(mount.join(paths::STORAGE_OBJECTS_DIR).is_dir());
+        assert!(mount.join(paths::STORAGE_OBJECTS_META_DIR).is_dir());
         assert!(mount.join(paths::STORAGE_LAST_KNOWN_GOOD_DIR).is_dir());
     }
 

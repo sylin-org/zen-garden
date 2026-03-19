@@ -17,6 +17,10 @@ pub struct StorageOrchestration {
     /// Requests a full volume reconcile from the watcher loop.
     /// Sent by API handlers after on-disk manifest mutations.
     pub rescan: tokio::sync::mpsc::Sender<()>,
+
+    /// Per-storage S3 listeners (STORAGE-0016).
+    /// Arms a dedicated S3-compatible HTTP port per managed storage.
+    pub s3_listeners: Arc<crate::infra::storage::S3ListenerManager>,
 }
 
 impl StorageOrchestration {

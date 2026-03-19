@@ -608,6 +608,11 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/storage",
             get(api::v1::storage::storage_overview_v1),
         )
+        // S3 port catalog (STORAGE-0016)
+        .route(
+            "/api/v1/stone/storage/s3/ports",
+            get(api::v1::storage::s3_port_catalog),
+        )
         .route(
             "/api/v1/stone/storage/health",
             get(api::v1::storage::storage_health_v1),
@@ -787,15 +792,21 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/garden/updates/execute",
             post(api::v1::updates::execute_garden),
         )
-        // S3 gateway (preserved — independent of STORAGE-0009)
+        // S3 gateway (STORAGE-0009 / STORAGE-0016)
+        .route(
+            "/api/v1/storage/s3/presign",
+            post(api::v1::s3_presign::generate_presigned_url),
+        )
         .route("/api/v1/storage/s3", get(api::v1::s3_gateway::list_buckets))
         .route(
             "/api/v1/storage/s3/{bucket}",
-            get(api::v1::s3_gateway::list_objects),
+            get(api::v1::s3_gateway::list_objects)
+                .put(api::v1::s3_gateway::create_bucket),
         )
         .route(
             "/api/v1/storage/s3/{bucket}/{*key}",
-            put(api::v1::s3_gateway::put_object),
+            put(api::v1::s3_gateway::put_object)
+                .post(api::v1::s3_gateway::complete_or_initiate_multipart),
         )
         .route(
             "/api/v1/storage/s3/{bucket}/{*key}",

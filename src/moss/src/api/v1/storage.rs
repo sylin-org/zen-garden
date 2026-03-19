@@ -216,14 +216,14 @@ async fn is_mount_readonly(mount_path: &str) -> Option<bool> {
 /// Validate that a seed bank uses the canonical layout.
 fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
     let memories = std::path::Path::new(mount_path).join(paths::STORAGE_MEMORIES_DIR);
-    let storage = std::path::Path::new(mount_path).join(paths::STORAGE_OBJECTS_DIR);
+    let meta = std::path::Path::new(mount_path).join(paths::STORAGE_OBJECTS_META_DIR);
 
     let mut missing = Vec::new();
     if !memories.is_dir() {
         missing.push(paths::STORAGE_MEMORIES_DIR);
     }
-    if !storage.is_dir() {
-        missing.push(paths::STORAGE_OBJECTS_DIR);
+    if !meta.is_dir() {
+        missing.push(paths::STORAGE_OBJECTS_META_DIR);
     }
 
     if missing.is_empty() {
@@ -1969,4 +1969,21 @@ pub async fn stream_storage_v1(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ============================================================================
+// GET /api/v1/stone/storage/s3/ports - S3 Port Catalog (STORAGE-0016)
+// ============================================================================
+
+/// Returns the mapping of replica set name → S3 port for all armed listeners.
+///
+/// Clients use this to discover which port to connect to for S3 operations
+/// on a specific storage.
+///
+/// Response: `{ "ports": { "storage": 23454, "prod": 23455 } }`
+pub async fn s3_port_catalog(
+    State(state): State<AppState>,
+) -> axum::Json<serde_json::Value> {
+    let catalog = state.orchestration.storage.s3_listeners.port_catalog().await;
+    axum::Json(serde_json::json!({ "ports": catalog }))
 }

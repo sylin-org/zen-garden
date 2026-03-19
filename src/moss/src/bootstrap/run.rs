@@ -825,6 +825,9 @@ async fn build_state(
                 },
                 nudge: orchestration_nudge.clone(),
                 rescan: volume_rescan.clone(),
+                s3_listeners: Arc::new(
+                    crate::infra::storage::S3ListenerManager::new(shutdown_token.clone()),
+                ),
             },
             nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
                 harvest_ops: Arc::clone(&harvest_ops),

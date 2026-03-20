@@ -65,6 +65,7 @@ dav-server = "0.11"
 notify = "7"
 
 # S3 gateway
+quick-xml = { version = "0.37", features = ["serialize"] }
 md5 = "0.7"
 hex = "0.4"
 mime_guess = "2.0"

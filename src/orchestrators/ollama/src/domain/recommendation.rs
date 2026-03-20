@@ -115,6 +115,7 @@ fn context_bonus_cap(cap: &str) -> i64 {
         "synthesis" => 500, // primary differentiator for synthesis
         "thinking" => 300,
         "tools" => 250,
+        "vision" => 200,    // vision benefits from context (multi-image, complex scenes)
         "chat" | "completion" => 150,
         "ocr" => 150,
         "quick" => 0,
@@ -127,6 +128,7 @@ fn quality_bonus_cap(cap: &str) -> i64 {
     match cap {
         "thinking" => 500,
         "tools" => 450,
+        "vision" => 450,   // larger vision models understand scenes better
         "chat" | "completion" | "synthesis" => 400,
         "ocr" => 400,
         "quick" => 0,
@@ -138,9 +140,9 @@ fn quality_bonus_cap(cap: &str) -> i64 {
 fn quality_multiplier(cap: &str) -> i64 {
     match cap {
         "thinking" => 60,
-        "tools" => 50,
+        "tools" | "vision" => 50,
         "chat" | "completion" | "synthesis" => 40,
-        "ocr" => 40,
+        "ocr" => 15,  // OCR: specialization > size. A tuned 1B beats a generic 13B.
         _ => 0,
     }
 }
@@ -149,7 +151,7 @@ fn quality_multiplier(cap: &str) -> i64 {
 /// are purpose-built and get a significant boost.
 fn name_affinity_bonus(cap: &str) -> i64 {
     match cap {
-        "ocr" => 200, // models named *ocr* are purpose-built
+        "ocr" => 300, // models named *ocr* are purpose-built — specialization dominates
         _ => 0,
     }
 }
@@ -1149,9 +1151,9 @@ mod tests {
         let matrix = GpuMatrix::default();
 
         let resp = recommend("ocr", &models, &instances, &matrix, None);
-        // minicpm-ocr gets +200 name affinity despite being smaller (7B vs 13B)
-        // llava: quality = min(13×40, 400) = 400, no affinity = 400 total layers 3+4
-        // minicpm-ocr: quality = min(7×40, 400) = 280, affinity = 200 = 480 total layers 3+4
+        // minicpm-ocr gets +300 name affinity despite being smaller (7B vs 13B)
+        // llava: quality = min(13×15, 400) = 195, no affinity = 195 total layers 3+4
+        // minicpm-ocr: quality = min(7×15, 400) = 105, affinity = 300 = 405 total layers 3+4
         assert_eq!(
             resp.recommendations[0].model, "minicpm-ocr:latest",
             "OCR-named model should rank above generic vision model"
@@ -1199,8 +1201,9 @@ mod tests {
         let vision = recommend("vision", &models, &instances, &matrix, None);
         let ocr = recommend("ocr", &models, &instances, &matrix, None);
 
-        // Vision has no quality/context caps (all 0) so both models score 0 —
-        // llava sorts first alphabetically.
+        // Vision now has quality scoring — llava (13B) beats minicpm-ocr (7B)
+        // llava: quality = min(13×50, 450) = 450, context = min(32, 200) = 32 → 482
+        // minicpm-ocr: quality = min(7×50, 450) = 350, context = min(8, 200) = 8 → 358
         assert_eq!(vision.recommendations[0].model, "llava:latest");
 
         // OCR has quality caps + name affinity so minicpm-ocr ranks #1

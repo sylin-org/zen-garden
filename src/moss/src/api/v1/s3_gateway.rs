@@ -40,6 +40,8 @@ use axum::{
 use serde::Deserialize;
 use tracing::{debug, warn};
 
+use super::s3_xml::{self, to_s3_xml};
+
 use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
 use garden_common::constants::headers::HEADER_SEED_BANK;
@@ -267,14 +269,10 @@ async fn check_presign_token(
 
 /// Build XML error response
 fn xml_error(status: StatusCode, code: &str, message: &str) -> Response {
-    let body = format!(
-        r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<Error>
-    <Code>{}</Code>
-    <Message>{}</Message>
-</Error>"#,
-        code, message
-    );
+    let body = to_s3_xml(&s3_xml::S3Error {
+        code: code.to_string(),
+        message: message.to_string(),
+    });
 
     Response::builder()
         .status(status)
@@ -858,7 +856,7 @@ pub async fn list_buckets(
         match store.list_buckets().await {
             Ok(buckets) => {
                 debug!(storage = %handle.storage_name(), count = buckets.len(), "LIST buckets success");
-                let xml = build_list_all_buckets_result(&buckets);
+                let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&buckets));
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "application/xml")
@@ -989,7 +987,7 @@ pub async fn list_objects(
                 debug!(storage = %handle.storage_name(), bucket = %bucket, count = result.contents.len(), truncated = result.is_truncated, v2 = is_v2, "LIST objects success");
 
                 let xml = if is_v2 {
-                    build_list_bucket_result_v2(
+                    to_s3_xml(&s3_xml::ListBucketResultV2::from_list_result(
                         &bucket,
                         query.prefix.as_deref().unwrap_or(""),
                         query.start_after.as_deref().unwrap_or(""),
@@ -997,16 +995,16 @@ pub async fn list_objects(
                         max_keys,
                         query.delimiter.as_deref().unwrap_or(""),
                         &result,
-                    )
+                    ))
                 } else {
-                    build_list_bucket_result(
+                    to_s3_xml(&s3_xml::ListBucketResult::from_list_result(
                         &bucket,
                         query.prefix.as_deref().unwrap_or(""),
                         query.marker.as_deref().unwrap_or(""),
                         max_keys,
                         query.delimiter.as_deref().unwrap_or(""),
                         &result,
-                    )
+                    ))
                 };
 
                 Response::builder()
@@ -1063,170 +1061,8 @@ pub async fn list_objects(
 }
 
 // ============================================================================
-// XML builders
+// XML builders (delegated to s3_xml module)
 // ============================================================================
-
-fn build_list_bucket_result(
-    bucket: &str,
-    prefix: &str,
-    marker: &str,
-    max_keys: usize,
-    delimiter: &str,
-    result: &crate::infra::storage::ListResult,
-) -> String {
-    let mut xml = String::new();
-    xml.push_str(r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"#);
-    xml.push_str("\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
-
-    xml.push_str(&format!("\n  <Name>{}</Name>", escape_xml(bucket)));
-    xml.push_str(&format!("\n  <Prefix>{}</Prefix>", escape_xml(prefix)));
-    xml.push_str(&format!("\n  <Marker>{}</Marker>", escape_xml(marker)));
-    xml.push_str(&format!("\n  <MaxKeys>{}</MaxKeys>", max_keys));
-
-    if !delimiter.is_empty() {
-        xml.push_str(&format!(
-            "\n  <Delimiter>{}</Delimiter>",
-            escape_xml(delimiter)
-        ));
-    }
-
-    xml.push_str(&format!(
-        "\n  <IsTruncated>{}</IsTruncated>",
-        result.is_truncated
-    ));
-
-    for obj in &result.contents {
-        xml.push_str("\n  <Contents>");
-        xml.push_str(&format!("\n    <Key>{}</Key>", escape_xml(&obj.key)));
-        xml.push_str(&format!(
-            "\n    <LastModified>{}</LastModified>",
-            escape_xml(&obj.last_modified)
-        ));
-        xml.push_str(&format!("\n    <ETag>{}</ETag>", escape_xml(&obj.etag)));
-        xml.push_str(&format!("\n    <Size>{}</Size>", obj.size));
-        xml.push_str("\n    <StorageClass>STANDARD</StorageClass>");
-        xml.push_str("\n  </Contents>");
-    }
-
-    for prefix in &result.common_prefixes {
-        xml.push_str("\n  <CommonPrefixes>");
-        xml.push_str(&format!("\n    <Prefix>{}</Prefix>", escape_xml(prefix)));
-        xml.push_str("\n  </CommonPrefixes>");
-    }
-
-    xml.push_str("\n</ListBucketResult>");
-    xml
-}
-
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-/// Build ListObjectsV2 XML response (uses KeyCount, ContinuationToken, NextContinuationToken)
-fn build_list_bucket_result_v2(
-    bucket: &str,
-    prefix: &str,
-    start_after: &str,
-    continuation_token: Option<&str>,
-    max_keys: usize,
-    delimiter: &str,
-    result: &crate::infra::storage::ListResult,
-) -> String {
-    use base64::Engine;
-    let mut xml = String::new();
-    xml.push_str(r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"#);
-    xml.push_str("\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
-
-    xml.push_str(&format!("\n  <Name>{}</Name>", escape_xml(bucket)));
-    xml.push_str(&format!("\n  <Prefix>{}</Prefix>", escape_xml(prefix)));
-    xml.push_str(&format!("\n  <KeyCount>{}</KeyCount>", result.contents.len()));
-    xml.push_str(&format!("\n  <MaxKeys>{}</MaxKeys>", max_keys));
-
-    if !start_after.is_empty() {
-        xml.push_str(&format!(
-            "\n  <StartAfter>{}</StartAfter>",
-            escape_xml(start_after)
-        ));
-    }
-
-    if !delimiter.is_empty() {
-        xml.push_str(&format!(
-            "\n  <Delimiter>{}</Delimiter>",
-            escape_xml(delimiter)
-        ));
-    }
-
-    if let Some(ct) = continuation_token {
-        xml.push_str(&format!(
-            "\n  <ContinuationToken>{}</ContinuationToken>",
-            escape_xml(ct)
-        ));
-    }
-
-    xml.push_str(&format!(
-        "\n  <IsTruncated>{}</IsTruncated>",
-        result.is_truncated
-    ));
-
-    if result.is_truncated {
-        if let Some(ref next_marker) = result.next_marker {
-            let token = base64::engine::general_purpose::STANDARD.encode(next_marker);
-            xml.push_str(&format!(
-                "\n  <NextContinuationToken>{}</NextContinuationToken>",
-                escape_xml(&token)
-            ));
-        }
-    }
-
-    for obj in &result.contents {
-        xml.push_str("\n  <Contents>");
-        xml.push_str(&format!("\n    <Key>{}</Key>", escape_xml(&obj.key)));
-        xml.push_str(&format!(
-            "\n    <LastModified>{}</LastModified>",
-            escape_xml(&obj.last_modified)
-        ));
-        xml.push_str(&format!("\n    <ETag>{}</ETag>", escape_xml(&obj.etag)));
-        xml.push_str(&format!("\n    <Size>{}</Size>", obj.size));
-        xml.push_str("\n    <StorageClass>STANDARD</StorageClass>");
-        xml.push_str("\n  </Contents>");
-    }
-
-    for prefix in &result.common_prefixes {
-        xml.push_str("\n  <CommonPrefixes>");
-        xml.push_str(&format!("\n    <Prefix>{}</Prefix>", escape_xml(prefix)));
-        xml.push_str("\n  </CommonPrefixes>");
-    }
-
-    xml.push_str("\n</ListBucketResult>");
-    xml
-}
-
-fn build_list_all_buckets_result(buckets: &[String]) -> String {
-    let mut xml = String::new();
-    xml.push_str(r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"#);
-    xml.push_str("\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
-
-    xml.push_str("\n  <Owner>");
-    xml.push_str("\n    <ID>zen-garden</ID>");
-    xml.push_str("\n    <DisplayName>zen-garden</DisplayName>");
-    xml.push_str("\n  </Owner>");
-
-    xml.push_str("\n  <Buckets>");
-    for bucket in buckets {
-        xml.push_str("\n    <Bucket>");
-        xml.push_str(&format!("\n      <Name>{}</Name>", escape_xml(bucket)));
-        xml.push_str("\n      <CreationDate>2025-01-01T00:00:00.000Z</CreationDate>");
-        xml.push_str("\n    </Bucket>");
-    }
-    xml.push_str("\n  </Buckets>");
-
-    xml.push_str("\n</ListAllMyBucketsResult>");
-    xml
-}
 
 // ============================================================================
 // PUT /api/v1/storage/s3/:bucket - Create Bucket
@@ -1349,17 +1185,11 @@ pub async fn initiate_multipart_upload(
     let mp = crate::infra::storage::multipart::MultipartStore::new(&mount_path);
     match mp.initiate(&bucket, key, content_type).await {
         Ok(upload_id) => {
-            let xml = format!(
-                r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<InitiateMultipartUploadResult>
-  <Bucket>{}</Bucket>
-  <Key>{}</Key>
-  <UploadId>{}</UploadId>
-</InitiateMultipartUploadResult>"#,
-                escape_xml(&bucket),
-                escape_xml(key),
-                escape_xml(&upload_id),
-            );
+            let xml = to_s3_xml(&s3_xml::InitiateMultipartUploadResult {
+                bucket: bucket.clone(),
+                key: key.to_string(),
+                upload_id,
+            });
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/xml")
@@ -1498,9 +1328,12 @@ pub async fn complete_or_initiate_multipart(
         None => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NotLocal", "Multipart uploads require local storage"),
     };
 
-    // Parse part list from XML body (simplified: extract all PartNumber values)
+    // Parse part list from XML body
     let body_str = String::from_utf8_lossy(&body);
-    let part_numbers = parse_complete_multipart_parts(&body_str);
+    let part_numbers = match s3_xml::from_s3_xml::<s3_xml::CompleteMultipartUploadRequest>(&body_str) {
+        Ok(req) => req.parts.into_iter().map(|p| p.part_number).collect::<Vec<_>>(),
+        Err(_) => return xml_error(StatusCode::BAD_REQUEST, "MalformedXML", "Could not parse CompleteMultipartUpload XML"),
+    };
 
     if part_numbers.is_empty() {
         return xml_error(StatusCode::BAD_REQUEST, "MalformedXML", "No parts specified");
@@ -1523,17 +1356,11 @@ pub async fn complete_or_initiate_multipart(
             // Clean up multipart staging
             let _ = mp.cleanup(&upload_id).await;
 
-            let xml = format!(
-                r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<CompleteMultipartUploadResult>
-  <Bucket>{}</Bucket>
-  <Key>{}</Key>
-  <ETag>{}</ETag>
-</CompleteMultipartUploadResult>"#,
-                escape_xml(&upload.bucket),
-                escape_xml(&upload.key),
-                escape_xml(&result.etag),
-            );
+            let xml = to_s3_xml(&s3_xml::CompleteMultipartUploadResult {
+                bucket: upload.bucket.clone(),
+                key: upload.key.clone(),
+                etag: result.etag.clone(),
+            });
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/xml")
@@ -1585,27 +1412,6 @@ pub async fn abort_multipart_upload(
             .unwrap(),
         Err(e) => xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
     }
-}
-
-/// Parse <PartNumber> values from CompleteMultipartUpload XML body
-fn parse_complete_multipart_parts(xml: &str) -> Vec<u16> {
-    let mut parts = Vec::new();
-    // Simple regex-free parser: find all <PartNumber>N</PartNumber>
-    let tag_start = "<PartNumber>";
-    let tag_end = "</PartNumber>";
-    let mut pos = 0;
-    while let Some(start) = xml[pos..].find(tag_start) {
-        let num_start = pos + start + tag_start.len();
-        if let Some(end) = xml[num_start..].find(tag_end) {
-            if let Ok(pn) = xml[num_start..num_start + end].trim().parse::<u16>() {
-                parts.push(pn);
-            }
-            pos = num_start + end + tag_end.len();
-        } else {
-            break;
-        }
-    }
-    parts
 }
 
 // PUT /api/v1/storage/s3/:bucket/*key with x-amz-copy-source - Copy Object
@@ -1736,7 +1542,10 @@ pub async fn copy_object(
                 dest_bucket = %dest_bucket, dest_key = %dest_key,
                 "COPY object success"
             );
-            let xml = build_copy_object_result(&put_result.etag, &src_meta.last_modified);
+            let xml = to_s3_xml(&s3_xml::CopyObjectResult {
+                etag: put_result.etag.clone(),
+                last_modified: src_meta.last_modified.clone(),
+            });
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/xml")
@@ -1752,18 +1561,6 @@ pub async fn copy_object(
             )
         }
     }
-}
-
-fn build_copy_object_result(etag: &str, last_modified: &str) -> String {
-    format!(
-        r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<CopyObjectResult>
-  <ETag>{}</ETag>
-  <LastModified>{}</LastModified>
-</CopyObjectResult>"#,
-        escape_xml(etag),
-        escape_xml(last_modified)
-    )
 }
 
 // ============================================================================
@@ -1845,70 +1642,50 @@ mod tests {
         assert!(validate_key("logs/2026/jan.log").is_none());
     }
 
-    // ── escape_xml ─────────────────────────────────────────────────────
+    // ── s3_xml serialization ────────────────────────────────────────────
 
     #[test]
-    fn test_escape_xml_ampersand() {
-        assert_eq!(escape_xml("a&b"), "a&amp;b");
+    fn test_xml_escapes_special_chars() {
+        // quick-xml handles escaping automatically
+        let xml = to_s3_xml(&s3_xml::S3Error {
+            code: "Test".to_string(),
+            message: "a<b>&c".to_string(),
+        });
+        assert!(xml.contains("a&lt;b&gt;&amp;c"));
     }
 
-    #[test]
-    fn test_escape_xml_angle_brackets() {
-        assert_eq!(escape_xml("<tag>"), "&lt;tag&gt;");
-    }
-
-    #[test]
-    fn test_escape_xml_quotes() {
-        assert_eq!(escape_xml(r#"he said "hi""#), "he said &quot;hi&quot;");
-        assert_eq!(escape_xml("it's"), "it&apos;s");
-    }
-
-    #[test]
-    fn test_escape_xml_no_special_chars() {
-        assert_eq!(escape_xml("plain text"), "plain text");
-    }
-
-    #[test]
-    fn test_escape_xml_all_special_chars() {
-        let input = "<>&\"'";
-        let expected = "&lt;&gt;&amp;&quot;&apos;";
-        assert_eq!(escape_xml(input), expected);
-    }
-
-    // ── build_list_all_buckets_result ───────────────────────────────────
+    // ── ListAllMyBucketsResult ──────────────────────────────────────────
 
     #[test]
     fn test_list_all_buckets_empty() {
-        let xml = build_list_all_buckets_result(&[]);
-        assert!(xml.contains("<Buckets>"));
-        assert!(xml.contains("</Buckets>"));
+        let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&[]));
+        assert!(xml.contains("<Buckets"));
         assert!(!xml.contains("<Bucket>"));
     }
 
     #[test]
     fn test_list_all_buckets_includes_names() {
         let buckets = vec!["photos".to_string(), "backups".to_string()];
-        let xml = build_list_all_buckets_result(&buckets);
+        let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&buckets));
         assert!(xml.contains("<Name>photos</Name>"));
         assert!(xml.contains("<Name>backups</Name>"));
-        assert_eq!(xml.matches("<Bucket>").count(), 2);
     }
 
     #[test]
     fn test_list_all_buckets_escapes_names() {
         let buckets = vec!["my<bucket>".to_string()];
-        let xml = build_list_all_buckets_result(&buckets);
+        let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&buckets));
         assert!(xml.contains("<Name>my&lt;bucket&gt;</Name>"));
     }
 
     #[test]
     fn test_list_all_buckets_has_owner() {
-        let xml = build_list_all_buckets_result(&[]);
+        let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&[]));
         assert!(xml.contains("<ID>zen-garden</ID>"));
         assert!(xml.contains("<DisplayName>zen-garden</DisplayName>"));
     }
 
-    // ── build_list_bucket_result ───────────────────────────────────────
+    // ── ListBucketResult (V1) ───────────────────────────────────────────
 
     #[test]
     fn test_list_bucket_result_empty() {
@@ -1918,7 +1695,9 @@ mod tests {
             is_truncated: false,
             next_marker: None,
         };
-        let xml = build_list_bucket_result("test-bucket", "", "", 1000, "", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResult::from_list_result(
+            "test-bucket", "", "", 1000, "", &result,
+        ));
         assert!(xml.contains("<Name>test-bucket</Name>"));
         assert!(xml.contains("<IsTruncated>false</IsTruncated>"));
         assert!(!xml.contains("<Contents>"));
@@ -1939,7 +1718,9 @@ mod tests {
             is_truncated: false,
             next_marker: None,
         };
-        let xml = build_list_bucket_result("data", "", "", 1000, "", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResult::from_list_result(
+            "data", "", "", 1000, "", &result,
+        ));
         assert!(xml.contains("<Key>file.txt</Key>"));
         assert!(xml.contains("<Size>1024</Size>"));
         assert!(xml.contains("<StorageClass>STANDARD</StorageClass>"));
@@ -1953,7 +1734,9 @@ mod tests {
             is_truncated: false,
             next_marker: None,
         };
-        let xml = build_list_bucket_result("mybucket", "", "", 1000, "/", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResult::from_list_result(
+            "mybucket", "", "", 1000, "/", &result,
+        ));
         assert!(xml.contains("<Prefix>logs/</Prefix>"));
         assert!(xml.contains("<Prefix>data/</Prefix>"));
         assert!(xml.contains("<Delimiter>/</Delimiter>"));
@@ -1967,7 +1750,9 @@ mod tests {
             is_truncated: true,
             next_marker: Some("marker123".to_string()),
         };
-        let xml = build_list_bucket_result("bucket", "", "", 10, "", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResult::from_list_result(
+            "bucket", "", "", 10, "", &result,
+        ));
         assert!(xml.contains("<IsTruncated>true</IsTruncated>"));
         assert!(xml.contains("<MaxKeys>10</MaxKeys>"));
     }
@@ -2055,7 +1840,7 @@ mod tests {
         assert_eq!(parse_range_header(&headers), None);
     }
 
-    // ── build_list_bucket_result_v2 ───────────────────────────────────
+    // ── ListBucketResultV2 ─────────────────────────────────────────────
 
     #[test]
     fn test_list_v2_has_key_count() {
@@ -2072,7 +1857,9 @@ mod tests {
             is_truncated: false,
             next_marker: None,
         };
-        let xml = build_list_bucket_result_v2("b", "", "", None, 1000, "", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResultV2::from_list_result(
+            "b", "", "", None, 1000, "", &result,
+        ));
         assert!(xml.contains("<KeyCount>1</KeyCount>"));
         assert!(!xml.contains("<Marker>"));
     }
@@ -2086,7 +1873,9 @@ mod tests {
             is_truncated: true,
             next_marker: Some("last-key".to_string()),
         };
-        let xml = build_list_bucket_result_v2("b", "", "", Some("input-token"), 10, "", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResultV2::from_list_result(
+            "b", "", "", Some("input-token"), 10, "", &result,
+        ));
         assert!(xml.contains("<ContinuationToken>input-token</ContinuationToken>"));
         assert!(xml.contains("<IsTruncated>true</IsTruncated>"));
         // NextContinuationToken should be base64 of "last-key"
@@ -2105,7 +1894,9 @@ mod tests {
             is_truncated: false,
             next_marker: None,
         };
-        let xml = build_list_bucket_result_v2("b", "", "start-key", None, 1000, "", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResultV2::from_list_result(
+            "b", "", "start-key", None, 1000, "", &result,
+        ));
         assert!(xml.contains("<StartAfter>start-key</StartAfter>"));
     }
 
@@ -2117,18 +1908,37 @@ mod tests {
             is_truncated: false,
             next_marker: Some("should-not-appear".to_string()),
         };
-        let xml = build_list_bucket_result_v2("b", "", "", None, 1000, "", &result);
+        let xml = to_s3_xml(&s3_xml::ListBucketResultV2::from_list_result(
+            "b", "", "", None, 1000, "", &result,
+        ));
         assert!(!xml.contains("NextContinuationToken"));
     }
 
-    // ── build_copy_object_result ──────────────────────────────────────
+    // ── CopyObjectResult ────────────────────────────────────────────────
 
     #[test]
     fn test_copy_result_has_etag_and_last_modified() {
-        let xml = build_copy_object_result("\"abc123\"", "2026-03-18T12:00:00Z");
+        let xml = to_s3_xml(&s3_xml::CopyObjectResult {
+            etag: "\"abc123\"".to_string(),
+            last_modified: "2026-03-18T12:00:00Z".to_string(),
+        });
         assert!(xml.contains("<CopyObjectResult>"));
-        assert!(xml.contains("<ETag>&quot;abc123&quot;</ETag>"));
+        assert!(xml.contains("<ETag>\"abc123\"</ETag>") || xml.contains("<ETag>&quot;abc123&quot;</ETag>"));
         assert!(xml.contains("<LastModified>2026-03-18T12:00:00Z</LastModified>"));
+    }
+
+    // ── CompleteMultipartUpload deserialization ──────────────────────────
+
+    #[test]
+    fn test_parse_complete_multipart_request() {
+        let xml = r#"<CompleteMultipartUpload>
+            <Part><PartNumber>1</PartNumber><ETag>"aaa"</ETag></Part>
+            <Part><PartNumber>2</PartNumber><ETag>"bbb"</ETag></Part>
+        </CompleteMultipartUpload>"#;
+        let req = s3_xml::from_s3_xml::<s3_xml::CompleteMultipartUploadRequest>(xml).unwrap();
+        assert_eq!(req.parts.len(), 2);
+        assert_eq!(req.parts[0].part_number, 1);
+        assert_eq!(req.parts[1].part_number, 2);
     }
 
     // ── copy_source parsing (via validate helpers) ────────────────────

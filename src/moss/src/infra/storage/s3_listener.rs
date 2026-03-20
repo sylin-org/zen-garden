@@ -310,6 +310,7 @@ fn build_s3_router(state: AppState, replica_set_name: String) -> Router {
                 .head(s3_head_object)
                 .delete(s3_delete_object),
         )
+        .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
         .with_state(s3_state)
 }
 

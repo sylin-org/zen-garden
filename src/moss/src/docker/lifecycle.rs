@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use bollard::container::{
-    Config, CreateContainerOptions, KillContainerOptions, RemoveContainerOptions,
+use bollard::models::{ContainerCreateBody, ContainerCreateResponse, HostConfig, PortBinding};
+use bollard::query_parameters::{
+    CreateContainerOptions, KillContainerOptions, RemoveContainerOptions,
     RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
-use bollard::models::{ContainerCreateResponse, HostConfig, PortBinding};
 use garden_common::console::{self, ConsolePrinter};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -65,7 +65,7 @@ impl Client {
         tracing::info!(service = %name, "Starting service via Docker API");
 
         self.docker
-            .start_container(&container_name, None::<StartContainerOptions<String>>)
+            .start_container(&container_name, None::<StartContainerOptions>)
             .await
             .context("Failed to start container")?;
 
@@ -98,7 +98,7 @@ impl Client {
         self.docker
             .rename_container(
                 &old_container,
-                bollard::container::RenameContainerOptions {
+                bollard::query_parameters::RenameContainerOptions {
                     name: new_container.clone(),
                 },
             )
@@ -164,8 +164,8 @@ impl Client {
             .docker
             .create_container(
                 Some(CreateContainerOptions {
-                    name: &container_name,
-                    platform: None,
+                    name: Some(container_name.clone()),
+                    platform: String::new(),
                 }),
                 config,
             )
@@ -184,7 +184,7 @@ impl Client {
         }
 
         self.docker
-            .start_container(&container_name, None::<StartContainerOptions<String>>)
+            .start_container(&container_name, None::<StartContainerOptions>)
             .await
             .context("Failed to start container")?;
 
@@ -306,8 +306,8 @@ impl Client {
             .docker
             .create_container(
                 Some(CreateContainerOptions {
-                    name: &container_name,
-                    platform: None,
+                    name: Some(container_name.clone()),
+                    platform: String::new(),
                 }),
                 config,
             )
@@ -322,7 +322,7 @@ impl Client {
 
         // Start the new container
         self.docker
-            .start_container(&container_name, None::<StartContainerOptions<String>>)
+            .start_container(&container_name, None::<StartContainerOptions>)
             .await
             .context("Failed to start container during recreate")?;
 
@@ -344,7 +344,7 @@ impl Client {
         let container_name = zen_offering_container_name(name)?;
         tracing::info!(service = %name, "Restarting container");
         self.docker
-            .restart_container(&container_name, Some(RestartContainerOptions { t: 10 }))
+            .restart_container(&container_name, Some(RestartContainerOptions { t: Some(10), signal: None }))
             .await
             .context("Failed to restart container")?;
         tracing::info!(service = %name, "Container restarted successfully");
@@ -417,7 +417,7 @@ impl Client {
         name: &str,
         spec: &ContainerSpec,
         resolved_ports: &[(u16, u16)],
-    ) -> Result<(Config<String>, ())> {
+    ) -> Result<(ContainerCreateBody, ())> {
         // Configure port bindings (using resolved ports)
         let mut port_bindings = HashMap::new();
         for (host_port, container_port) in resolved_ports {
@@ -504,7 +504,7 @@ impl Client {
             ..Default::default()
         };
 
-        let config = Config {
+        let config = ContainerCreateBody {
             image: Some(spec.image.clone()),
             cmd: effective_cmd,
             env: Some(full_env),

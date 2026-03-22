@@ -11,7 +11,7 @@ serde_yml.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "macros", "fs", "io-util", "net", "process", "signal"] }
 chrono = { workspace = true, features = ["serde"] }
 thiserror.workspace = true
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, features = ["json", "webpki-roots"] }
 anyhow.workspace = true
 async-stream.workspace = true
 tokio-stream.workspace = true
@@ -29,7 +29,7 @@ rand.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_Networking_WinSock", "Win32_Storage_FileSystem"] }
-windows = { version = "0.52", features = ["Win32_Graphics_Dxgi"] }
+windows = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Dxgi"] }
 
 [dev-dependencies]
 tempfile.workspace = true

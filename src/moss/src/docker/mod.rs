@@ -65,7 +65,7 @@ impl Client {
             .docker
             .inspect_network(
                 "bridge",
-                None::<bollard::network::InspectNetworkOptions<String>>,
+                None::<bollard::query_parameters::InspectNetworkOptions>,
             )
             .await
             .ok()?;

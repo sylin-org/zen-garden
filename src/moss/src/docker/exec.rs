@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use bollard::container::{ListContainersOptions, LogsOptions};
-use bollard::image::PruneImagesOptions;
+use bollard::query_parameters::{ListContainersOptions, LogsOptions, PruneImagesOptions};
 use futures_util::stream::{Stream, StreamExt};
 use garden_common::console::{self, ConsolePrinter};
 use std::collections::HashMap;
@@ -28,7 +27,7 @@ impl Client {
         image: &str,
         console: Option<&Arc<ConsolePrinter>>,
     ) -> Result<()> {
-        use bollard::image::CreateImageOptions;
+        use bollard::query_parameters::CreateImageOptions;
 
         let stall_timeout = garden_common::constants::timeouts::docker_pull_stall_timeout();
 
@@ -42,7 +41,7 @@ impl Client {
         tracing::info!(image = %image, "Pulling Docker image");
 
         let options = CreateImageOptions {
-            from_image: image,
+            from_image: Some(image.to_string()),
             ..Default::default()
         };
 
@@ -53,7 +52,8 @@ impl Client {
                 Ok(Some(Ok(info))) => {
                     if let Some(status) = info.status {
                         if let Some(console) = console
-                            && let Some(progress) = &info.progress {
+                            && let Some(detail) = &info.progress_detail {
+                                let progress = format!("{:?}", detail);
                                 console.emit(console::ConsoleEvent::new(
                                     console::EventCategory::Services,
                                     console::EventStatus::PullProgress,
@@ -124,7 +124,7 @@ impl Client {
         let docker = self.docker.clone();
 
         Box::pin(async_stream::stream! {
-            let options = LogsOptions::<String> {
+            let options = LogsOptions {
                 follow: true,
                 stdout: true,
                 stderr: true,
@@ -185,8 +185,8 @@ impl Client {
         tag: &str,
         pause: bool,
     ) -> Result<String> {
-        use bollard::container::Config;
-        use bollard::image::CommitContainerOptions;
+        use bollard::models::ContainerConfig;
+        use bollard::query_parameters::CommitContainerOptions;
 
         tracing::info!(
             container = %container_name,
@@ -197,14 +197,14 @@ impl Client {
         );
 
         let options = CommitContainerOptions {
-            container: container_name,
-            repo,
-            tag,
+            container: Some(container_name.to_string()),
+            repo: Some(repo.to_string()),
+            tag: Some(tag.to_string()),
             pause,
             ..Default::default()
         };
 
-        let config = Config::<String>::default();
+        let config = ContainerConfig::default();
 
         let result = self
             .docker
@@ -212,7 +212,7 @@ impl Client {
             .await
             .context(format!("Failed to commit container {}", container_name))?;
 
-        let image_id = result.id.unwrap_or_default();
+        let image_id = result.id;
         tracing::info!(
             container = %container_name,
             image_id = %image_id,
@@ -328,7 +328,7 @@ impl Client {
         &self,
         exclude_container: Option<&str>,
     ) -> Result<HashMap<u16, String>> {
-        let options = ListContainersOptions::<String> {
+        let options = ListContainersOptions {
             all: true,
             ..Default::default()
         };
@@ -441,10 +441,10 @@ impl Client {
     ///
     /// Returns (count_pruned, bytes_reclaimed).
     pub async fn prune_dangling_images(&self) -> Result<(usize, u64)> {
-        let mut filters = HashMap::new();
-        filters.insert("dangling", vec!["true"]);
+        let mut filters: HashMap<String, Vec<String>> = HashMap::new();
+        filters.insert("dangling".to_string(), vec!["true".to_string()]);
 
-        let options = Some(PruneImagesOptions { filters });
+        let options = Some(PruneImagesOptions { filters: Some(filters) });
         let response = self
             .docker
             .prune_images(options)

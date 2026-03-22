@@ -25,7 +25,7 @@ serde_json.workspace = true
 serde_yml.workspace = true
 
 # HTTP
-reqwest = { workspace = true, features = ["json", "rustls-tls", "stream"] }
+reqwest = { workspace = true, features = ["json", "webpki-roots", "stream"] }
 
 # CLI
 clap = { workspace = true, features = ["derive"] }

@@ -38,13 +38,13 @@ pub async fn inspect_image(docker: &Client, image_ref: &str) -> Result<ImageInsp
         .as_ref()
         .context("Image has no config layer")?;
 
-    // Extract exposed ports: keys like "80/tcp", "443/tcp"
+    // Extract exposed ports: entries like "80/tcp", "443/tcp"
     let exposed_ports = config
         .exposed_ports
         .as_ref()
         .map(|ports| {
             ports
-                .keys()
+                .iter()
                 .filter_map(|key| {
                     key.split('/')
                         .next()
@@ -57,8 +57,7 @@ pub async fn inspect_image(docker: &Client, image_ref: &str) -> Result<ImageInsp
     // Extract volume mount points
     let volumes = config
         .volumes
-        .as_ref()
-        .map(|vols| vols.keys().cloned().collect())
+        .clone()
         .unwrap_or_default();
 
     // Extract environment variables

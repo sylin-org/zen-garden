@@ -31,7 +31,7 @@ serde_json.workspace = true
 
 # HTTP / server
 axum.workspace = true
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, features = ["json", "webpki-roots"] }
 tower-http.workspace = true
 
 # CLI

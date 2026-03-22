@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bollard::container::{InspectContainerOptions, ListContainersOptions, StatsOptions};
+use bollard::query_parameters::{InspectContainerOptions, ListContainersOptions, StatsOptions};
 use bollard::models::HealthStatusEnum;
 use futures_util::stream::TryStreamExt;
 use garden_common::constants::OFFERING_CONTAINER_PREFIX;
@@ -15,7 +15,7 @@ impl Client {
         let filters = HashMap::from([("name".to_string(), vec![name.to_string()])]);
         let options = ListContainersOptions {
             all: true,
-            filters,
+            filters: Some(filters),
             ..Default::default()
         };
 
@@ -137,7 +137,7 @@ impl Client {
         )]);
         let options = ListContainersOptions {
             all: true,
-            filters,
+            filters: Some(filters),
             ..Default::default()
         };
 
@@ -166,7 +166,7 @@ impl Client {
     pub async fn list_all_containers(
         &self,
     ) -> Result<Vec<crate::infra::detection::container_inspect::ContainerInfo>> {
-        let options = ListContainersOptions::<String> {
+        let options = ListContainersOptions {
             all: true,
             ..Default::default()
         };
@@ -188,7 +188,7 @@ impl Client {
                     .to_string();
 
                 let image = c.image.unwrap_or_default();
-                let state = c.state.unwrap_or_else(|| "unknown".to_string());
+                let state = c.state.map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
 
                 if !name.is_empty() {
                     Some(crate::infra::detection::container_inspect::ContainerInfo {
@@ -227,20 +227,21 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("No stats available for container"))?;
 
         // Calculate CPU percentage
-        let cpu_delta = stats.cpu_stats.cpu_usage.total_usage as f64
-            - stats.precpu_stats.cpu_usage.total_usage as f64;
-        let system_delta = stats.cpu_stats.system_cpu_usage.unwrap_or(0) as f64
-            - stats.precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
+        let cpu_total = stats.cpu_stats.as_ref().and_then(|c| c.cpu_usage.as_ref()).map(|u| u.total_usage.unwrap_or(0)).unwrap_or(0);
+        let precpu_total = stats.precpu_stats.as_ref().and_then(|c| c.cpu_usage.as_ref()).map(|u| u.total_usage.unwrap_or(0)).unwrap_or(0);
+        let cpu_delta = cpu_total as f64 - precpu_total as f64;
+        let system_delta = stats.cpu_stats.as_ref().and_then(|c| c.system_cpu_usage).unwrap_or(0) as f64
+            - stats.precpu_stats.as_ref().and_then(|c| c.system_cpu_usage).unwrap_or(0) as f64;
         let cpu_percent = if system_delta > 0.0 && cpu_delta > 0.0 {
-            let num_cpus = stats.cpu_stats.online_cpus.unwrap_or(1) as f64;
+            let num_cpus = stats.cpu_stats.as_ref().and_then(|c| c.online_cpus).unwrap_or(1) as f64;
             (cpu_delta / system_delta) * num_cpus * 100.0
         } else {
             0.0
         };
 
         // Memory metrics
-        let memory_bytes = stats.memory_stats.usage.unwrap_or(0);
-        let memory_limit = stats.memory_stats.limit.unwrap_or(0);
+        let memory_bytes = stats.memory_stats.as_ref().and_then(|m| m.usage).unwrap_or(0);
+        let memory_limit = stats.memory_stats.as_ref().and_then(|m| m.limit).unwrap_or(0);
         let memory_percent = if memory_limit > 0 {
             (memory_bytes as f64 / memory_limit as f64 * 100.0) as f32
         } else {
@@ -250,7 +251,7 @@ impl Client {
         // Network I/O
         let (network_rx_bytes, network_tx_bytes) = if let Some(networks) = stats.networks {
             networks.values().fold((0u64, 0u64), |(rx, tx), net| {
-                (rx + net.rx_bytes, tx + net.tx_bytes)
+                (rx + net.rx_bytes.unwrap_or(0), tx + net.tx_bytes.unwrap_or(0))
             })
         } else {
             (0, 0)
@@ -258,11 +259,12 @@ impl Client {
 
         // Block I/O
         let (block_read_bytes, block_write_bytes) =
-            if let Some(io_stats) = stats.blkio_stats.io_service_bytes_recursive {
+            if let Some(io_stats) = stats.blkio_stats.and_then(|b| b.io_service_bytes_recursive) {
                 io_stats.iter().fold((0u64, 0u64), |(read, write), entry| {
-                    match entry.op.as_str() {
-                        "read" | "Read" => (read + entry.value, write),
-                        "write" | "Write" => (read, write + entry.value),
+                    let v = entry.value.unwrap_or(0);
+                    match entry.op.as_deref().unwrap_or("") {
+                        "read" | "Read" => (read + v, write),
+                        "write" | "Write" => (read, write + v),
                         _ => (read, write),
                     }
                 })

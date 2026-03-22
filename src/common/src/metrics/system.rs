@@ -142,7 +142,7 @@ pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
     system.refresh_all();
 
     // CPU metrics
-    let usage_percent = system.global_cpu_info().cpu_usage();
+    let usage_percent = system.global_cpu_usage();
     let cpu = CpuMetrics {
         cores: system.cpus().len(),
         usage_percent,
@@ -340,7 +340,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
     system.refresh_all();
 
     // CPU metrics
-    let usage_percent = system.global_cpu_info().cpu_usage();
+    let usage_percent = system.global_cpu_usage();
     let cpu = CpuMetrics {
         cores: system.cpus().len(),
         usage_percent,

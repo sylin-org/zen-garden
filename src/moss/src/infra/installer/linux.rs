@@ -290,13 +290,6 @@ SyslogIdentifier=garden-moss
 Environment=\"RUST_LOG=info\"
 Environment=\"PORT={port}\"
 
-# Security hardening
-NoNewPrivileges=false
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=false
-ReadWritePaths=/usr/local/bin
-
 # Resource limits
 LimitNOFILE=65536
 

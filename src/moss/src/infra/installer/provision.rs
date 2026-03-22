@@ -24,6 +24,7 @@ pub enum ComponentStatus {
     Missing,
     /// Missing, requires manual action (with hint).
     /// Constructed on Windows only (e.g., Docker Desktop without winget).
+    #[allow(dead_code)]
     Manual(String),
 }
 

@@ -72,6 +72,78 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let file_config = config.file_config.clone();
     let (state, artifacts) = build_state(config, log).await?;
+
+    // Write MOTD on every startup with whatever is known at this point.
+    // Hardware may not be fully detected yet (that happens in background), so
+    // cpu/ram/gpu may be None — the MOTD writer handles that gracefully.
+    // The hardware detection task will overwrite with full info once it completes.
+    #[cfg(target_os = "linux")]
+    {
+        use garden_common::console::{write_motd, BankSummary, MotdInfo, StorageSetSummary};
+        use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
+
+        let caps = state.current.capabilities.read().await.clone();
+        let stone_name = state.current.stone.name.clone();
+        let ip = state.current.address.read().await.ip_str();
+        let port = state.current.api_port;
+        let version = version_string();
+        let pond_name = state.security.pond.state.name().await;
+
+        let (cpu_cores, ram_mb, gpu) = match &caps {
+            Some(c) => {
+                let cores = Some(c.hardware.cpu.cores);
+                let ram = Some(c.hardware.memory.total_mb);
+                let first_gpu = c.hardware.gpus.first().map(|g| (g.model.clone(), g.vram_mb));
+                (cores, ram, first_gpu)
+            }
+            None => (None, None, None),
+        };
+
+        let storage_sets = {
+            let volumes = state.current.storage.volumes.read().await;
+            let mut sets: std::collections::BTreeMap<String, Vec<BankSummary>> =
+                std::collections::BTreeMap::new();
+            for volume in volumes.values() {
+                if volume.state != crate::domain::storage::VolumeState::Online {
+                    continue;
+                }
+                if let Some(mgmt) = &volume.management {
+                    let set_name = if mgmt.replica_set_name.is_empty() {
+                        DEFAULT_REPLICA_SET_DISPLAY.to_string()
+                    } else {
+                        mgmt.replica_set_name.clone()
+                    };
+                    sets.entry(set_name).or_default().push(BankSummary {
+                        name: mgmt.name.clone(),
+                        used_bytes: volume.used_bytes,
+                        capacity_bytes: volume.capacity_bytes,
+                    });
+                }
+            }
+            sets.into_iter()
+                .map(|(replica_set_name, banks)| StorageSetSummary {
+                    replica_set_name,
+                    banks,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let info = MotdInfo {
+            stone_name,
+            ip,
+            port,
+            version,
+            pond_name,
+            cpu_cores,
+            ram_mb,
+            gpu,
+            storage_sets,
+        };
+        if let Err(e) = write_motd(&info) {
+            tracing::warn!(error = %e, "Failed to write startup MOTD");
+        }
+    }
+
     let (api_endpoint, supervisor) =
         crate::tasks::coordinator::start_background_tasks(state.clone(), artifacts, file_config)
             .await;
@@ -1092,7 +1164,7 @@ async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<(
 
 /// Start first-boot initialization task (Linux only)
 ///
-/// Waits for filesystem to become writable, then runs initialization.
+/// Runs initialization in a background task.
 /// Exits process after completion so systemd restarts with new config.
 #[cfg(target_os = "linux")]
 fn start_first_boot_task(
@@ -1102,7 +1174,6 @@ fn start_first_boot_task(
     runtime: std::sync::Arc<dyn garden_common::PlatformRuntime>,
 ) {
     tracing::info!("First run detected on Linux, spawning background initialization task");
-    tracing::info!("First boot detected - will initialize console after Docker connection");
 
     let init_stone_name = stone_name.to_string();
     let init_port = port;
@@ -1110,54 +1181,44 @@ fn start_first_boot_task(
     tokio::spawn(async move {
         const MAX_ATTEMPTS: u32 = 20;
 
-        runtime.write_line("");
-        runtime.display_wait("First-boot setup: Waiting for filesystem to become writable");
+        match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
+            Ok(new_name) => {
+                if let Err(e) = console::mark_first_run_complete().await {
+                    tracing::error!(error = ?e, "Failed to mark first-run complete");
+                }
 
-        for attempt in 1..=MAX_ATTEMPTS {
-            match console::ensure_etc_writable().await {
-                Ok(true) => {
-                    tracing::info!(
-                        attempt,
-                        "Filesystem is writable, proceeding with first boot initialization"
-                    );
-                    runtime.display_success("Filesystem ready, starting configuration");
+                tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
+                runtime.write_line("");
+                runtime.display_success(&format!("Stone configured as: {}", new_name));
+                runtime.display_wait("Restarting to apply new configuration...");
+                runtime.write_line("");
 
-                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port)
-                        .await
-                    {
+                // Exit so systemd restarts us with the new configuration
+                std::process::exit(0);
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, "First boot initialization failed");
+                runtime.display_error(&format!("Setup failed: {}", e));
+
+                // Retry loop for transient failures (e.g. network not yet up for mDNS)
+                for attempt in 2..=MAX_ATTEMPTS {
+                    tracing::info!(attempt, "Retrying first boot initialization");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs)).await;
+
+                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
                         Ok(new_name) => {
                             if let Err(e) = console::mark_first_run_complete().await {
                                 tracing::error!(error = ?e, "Failed to mark first-run complete");
                             }
-
-                            tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
-                            runtime.write_line("");
-                            runtime.display_success(&format!("Stone configured as: {}", new_name));
-                            runtime.display_wait("Restarting to apply new configuration...");
-                            runtime.write_line("");
-
-                            // Exit so systemd restarts us with the new configuration
+                            tracing::info!(new_name = %new_name, "First boot initialization completed");
                             std::process::exit(0);
                         }
                         Err(e) => {
-                            tracing::error!(error = ?e, "First boot initialization failed");
-                            runtime.display_error(&format!("Setup failed: {}", e));
-                            if attempt < MAX_ATTEMPTS {
-                                tokio::time::sleep(tokio::time::Duration::from_secs(
-                                    retry_delay_secs,
-                                ))
-                                .await;
+                            tracing::error!(error = ?e, attempt, "First boot retry failed");
+                            if attempt == MAX_ATTEMPTS {
+                                runtime.display_error("First boot setup failed after all retries");
                             }
                         }
-                    }
-                }
-                Ok(false) | Err(_) => {
-                    if attempt < MAX_ATTEMPTS {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs))
-                            .await;
-                    } else {
-                        tracing::error!("First boot initialization abandoned - filesystem never became writable");
-                        runtime.display_error("Setup abandoned - filesystem remained read-only");
                     }
                 }
             }

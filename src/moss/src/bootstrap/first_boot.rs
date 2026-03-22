@@ -60,12 +60,11 @@ pub async fn run_first_boot_initialization(
     console::update_moss_config(runtime, &new_name).await?;
     runtime.write_line("");
 
-    // Create MOTD
-    let url = format!("http://{}:{}", console::get_local_ip_sync(), port);
-    console::write_motd(runtime, &new_name, &url)?;
-    runtime.write_line("");
+    // MOTD is written on every startup by the hardware detection task once
+    // capabilities are known — no write here.
 
     // Final summary
+    let url = format!("http://{}:{}", console::get_local_ip_sync(), port);
     runtime.display_header("Setup Complete");
     runtime.display_item("Stone Name", &new_name);
     runtime.display_item("Management URL", &url);

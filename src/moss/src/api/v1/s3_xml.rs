@@ -50,7 +50,8 @@ impl ListAllMyBucketsResult {
                     .iter()
                     .map(|name| BucketEntry {
                         name: name.clone(),
-                        creation_date: "2025-01-01T00:00:00.000Z".to_string(),
+                        // TODO: use actual directory mtime when bucket metadata is tracked
+                        creation_date: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                     })
                     .collect(),
             },
@@ -315,9 +316,7 @@ pub fn to_s3_xml<T: Serialize>(value: &T) -> String {
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to serialize S3 XML response");
-            format!(
-                r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>InternalError</Code><Message>XML serialization failed</Message></Error>"#
-            )
+            r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>InternalError</Code><Message>XML serialization failed</Message></Error>"#.to_string()
         }
     }
 }

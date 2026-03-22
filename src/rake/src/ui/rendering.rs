@@ -44,13 +44,11 @@ impl TerminalInfo {
 
 /// Consistent output formatting with automatic indentation and status indicators
 /// Reduces duplication of println!/eprintln! calls with manual formatting
-#[allow(dead_code)] // Incrementally adopting this pattern
 pub struct OutputWriter {
     term: TerminalInfo,
     indent: usize,
 }
 
-#[allow(dead_code)]
 impl OutputWriter {
     /// Create new output writer with default settings
     pub fn new() -> Self {
@@ -159,7 +157,6 @@ impl Default for OutputWriter {
 }
 
 /// Verbosity level for command output (Phase 3)
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Verbosity {
     Minimal = 0, // -v0
@@ -169,7 +166,6 @@ pub enum Verbosity {
     Debug = 3,   // -v3
 }
 
-#[allow(dead_code)]
 impl Verbosity {
     /// Parse from command line argument (e.g., "-v0", "-v1")
     pub fn from_arg(arg: &str) -> Option<Self> {
@@ -305,13 +301,11 @@ pub fn kv_line(label: &str, value: &str, indent_spaces: usize) -> String {
 }
 
 /// Render indented label: value line
-#[allow(dead_code)]
 pub fn label_value_line(label: &str, value: &str, indent: usize) -> String {
     format!("{}{:<12} {}", " ".repeat(indent), label, value)
 }
 
 /// Format number with specified precision (Phase 3)
-#[allow(dead_code)]
 pub fn format_number(value: f64, precision: usize) -> String {
     format!("{:.*}", precision, value)
 }
@@ -885,7 +879,6 @@ pub fn progress_step(active: bool, message: &str) -> String {
 }
 
 /// Render colored category label (Phase 3)
-#[allow(dead_code)]
 pub fn category_label(name: &str, color: bool) -> String {
     if color {
         name.cyan().to_string()
@@ -1088,7 +1081,6 @@ pub fn extract_sse_time(parsed: &serde_json::Value) -> String {
 pub mod constants {
     pub const DEFAULT_INDENT: usize = 4;
     pub const DEFAULT_TERMINAL_WIDTH: usize = 80;
-    #[allow(dead_code)] // Phase 3
     pub const NUMERIC_PRECISION: usize = 2;
     pub const MAX_SERVICE_NAME_LEN: usize = 24;
     pub const LEGEND_SYMBOL: char = '*';

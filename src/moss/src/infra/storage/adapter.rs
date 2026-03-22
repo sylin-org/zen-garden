@@ -61,7 +61,7 @@ pub struct StorageCandidate {
 /// Each implementation handles one class of storage medium. Adding NAS
 /// or local path support requires only a new implementation — no changes
 /// to `StorageService` or domain logic.
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)] // Not used as dyn — concrete types only
 pub trait StorageAdapter: Send + Sync {
     /// Adapter type identifier.
     fn adapter_type(&self) -> AdapterType;
@@ -93,7 +93,6 @@ pub trait StorageAdapter: Send + Sync {
 /// via fallback methods.
 pub struct UsbAdapter;
 
-#[async_trait::async_trait]
 impl StorageAdapter for UsbAdapter {
     fn adapter_type(&self) -> AdapterType {
         AdapterType::Usb
@@ -191,7 +190,6 @@ impl NasAdapter {
     }
 }
 
-#[async_trait::async_trait]
 impl StorageAdapter for NasAdapter {
     fn adapter_type(&self) -> AdapterType {
         AdapterType::Nas
@@ -367,7 +365,6 @@ impl StorageAdapter for NasAdapter {
 /// under Zen Garden management (e.g., a NAS volume already mounted via fstab).
 pub struct PathAdapter;
 
-#[async_trait::async_trait]
 impl StorageAdapter for PathAdapter {
     fn adapter_type(&self) -> AdapterType {
         AdapterType::Path

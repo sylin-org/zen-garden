@@ -95,7 +95,6 @@ pub struct TuneSummary {
 /// Manages tune manifests (embedded + filesystem)
 pub struct Tunes {
     /// Optional filesystem tunes directory
-    #[allow(dead_code)]
     fs_dir: Option<PathBuf>,
     /// All loaded tunes (embedded + filesystem merged)
     tunes: HashMap<String, LoadedTune>,
@@ -118,14 +117,13 @@ impl Tunes {
 
         // 2. Overlay filesystem tunes (if directory provided)
         let fs_dir = fs_dir.map(PathBuf::from);
-        if let Some(ref dir) = fs_dir {
-            if dir.exists() {
+        if let Some(ref dir) = fs_dir
+            && dir.exists() {
                 let fs_tunes = Self::scan_filesystem_tunes(dir)?;
                 tracing::debug!(count = fs_tunes.len(), dir = %dir.display(), "Loaded filesystem tunes");
                 // Filesystem overrides embedded
                 tunes.extend(fs_tunes);
             }
-        }
 
         tracing::info!(
             total = tunes.len(),
@@ -161,7 +159,7 @@ impl Tunes {
             }
 
             if let Some(content) = EmbeddedTunes::get(path_str) {
-                match serde_yaml::from_slice::<TuneManifest>(&content.data) {
+                match serde_yml::from_slice::<TuneManifest>(&content.data) {
                     Ok(manifest) => {
                         let name = manifest.name.clone();
                         tunes.insert(
@@ -236,7 +234,7 @@ impl Tunes {
         let content = std::fs::read_to_string(path).context("Failed to read manifest file")?;
 
         let manifest: TuneManifest =
-            serde_yaml::from_str(&content).context("Failed to parse manifest YAML")?;
+            serde_yml::from_str(&content).context("Failed to parse manifest YAML")?;
 
         Ok(manifest)
     }
@@ -261,7 +259,7 @@ impl Tunes {
     }
 
     /// Get loaded tune with source info
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn get_loaded_tune(&self, name: &str) -> Option<&LoadedTune> {
         self.tunes.get(name)
     }
@@ -356,31 +354,30 @@ impl Tunes {
     }
 
     /// Get a Cursor for audio playback (works for both sources)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn get_audio_cursor(&self, tune_name: &str, resource: &str) -> Option<Cursor<Vec<u8>>> {
         self.resolve_resource_bytes(tune_name, resource)
             .map(Cursor::new)
     }
 
     /// Get filesystem tunes directory (if set)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn fs_dir(&self) -> Option<&Path> {
         self.fs_dir.as_deref()
     }
 
     /// Reload filesystem tunes (keeps embedded, refreshes fs)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn reload(&mut self) -> Result<()> {
         // Reload embedded
         let mut tunes = Self::load_embedded_tunes()?;
 
         // Overlay filesystem
-        if let Some(ref dir) = self.fs_dir {
-            if dir.exists() {
+        if let Some(ref dir) = self.fs_dir
+            && dir.exists() {
                 let fs_tunes = Self::scan_filesystem_tunes(dir)?;
                 tunes.extend(fs_tunes);
             }
-        }
 
         self.tunes = tunes;
         tracing::info!(count = self.tunes.len(), "Reloaded tunes");
@@ -398,7 +395,7 @@ mod tests {
             resource: "ding.wav"
         "#;
 
-        let mapping: EventMapping = serde_yaml::from_str(yaml).unwrap();
+        let mapping: EventMapping = serde_yml::from_str(yaml).unwrap();
         assert_eq!(mapping.channel, "foreground");
         assert_eq!(mapping.debounce_ms, 0);
         assert!(!mapping.looping);
@@ -422,7 +419,7 @@ mod tests {
                 debounce_ms: 5000
         "#;
 
-        let manifest: TuneManifest = serde_yaml::from_str(yaml).unwrap();
+        let manifest: TuneManifest = serde_yml::from_str(yaml).unwrap();
         assert_eq!(manifest.name, "test-tune");
         assert_eq!(manifest.events.len(), 2);
         assert_eq!(manifest.events["stone-online"].channel, "foreground");

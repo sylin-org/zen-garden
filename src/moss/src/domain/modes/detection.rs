@@ -15,9 +15,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Detection orchestrator with caching and stability tracking
-pub struct DetectionOrchestrator {
+pub struct DetectionOrchestrator<D: ServiceDetector = crate::infra::detection::ContainerDetector> {
     /// Container detection backend
-    detector: Arc<dyn ServiceDetector>,
+    detector: Arc<D>,
 
     /// Detection result cache
     cache: Arc<DashMap<String, CachedDetection>>,
@@ -47,9 +47,9 @@ struct StabilityState {
     last_state: bool, // true = detected, false = not detected
 }
 
-impl DetectionOrchestrator {
+impl<D: ServiceDetector> DetectionOrchestrator<D> {
     /// Create new detection orchestrator
-    pub fn new(detector: Arc<dyn ServiceDetector>) -> Self {
+    pub fn new(detector: Arc<D>) -> Self {
         Self {
             detector,
             cache: Arc::new(DashMap::new()),
@@ -85,8 +85,8 @@ impl DetectionOrchestrator {
             let cache_key = format!("{}:{:?}", offering.name, rule.method);
 
             // Check cache first
-            if let Some(cached) = self.cache.get(&cache_key) {
-                if cached.cached_at.elapsed() < cached.ttl {
+            if let Some(cached) = self.cache.get(&cache_key)
+                && cached.cached_at.elapsed() < cached.ttl {
                     tracing::debug!(
                         offering = %offering.name,
                         method = ?rule.method,
@@ -102,7 +102,6 @@ impl DetectionOrchestrator {
                         details: cached.result.details.clone(),
                     });
                 }
-            }
 
             // Execute detection
             let result = self.execute_detection(&offering.name, rule).await?;
@@ -269,7 +268,7 @@ mod tests {
     use crate::infra::detection::ContainerDetector;
     use garden_common::manifests::{CommandDetection, DetectionConfig};
 
-    fn test_detector() -> Arc<dyn ServiceDetector> {
+    fn test_detector() -> Arc<ContainerDetector> {
         let docker = Arc::new(crate::docker::Client::new().unwrap());
         Arc::new(ContainerDetector::new(docker))
     }

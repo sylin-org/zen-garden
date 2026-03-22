@@ -139,6 +139,9 @@ fn run_udev_watcher(
             revents: 0,
         };
 
+        // SAFETY: `pollfd` is stack-allocated and valid for the duration of the call.
+        // `fd` is a valid file descriptor owned by `socket`. Timeout (5000ms) is positive.
+        // The function writes only to `pollfd.revents`, which is in our stack frame.
         let ret = unsafe { libc::poll(&mut pollfd, 1, 5000) };
         if ret < 0 {
             let err = std::io::Error::last_os_error();

@@ -186,9 +186,9 @@ impl Volume {
     ///
     /// `make_store` constructs the management store for the given mount path.
     /// This is provided by infra so domain code never depends on a concrete store type.
-    pub async fn classify(
+    pub async fn classify<S: ManagementStoreOps>(
         &mut self,
-        make_store: &(dyn Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync),
+        make_store: &(dyn Fn(PathBuf) -> Arc<S> + Send + Sync),
     ) {
         let manifest_path = self.mount_path.join(".zen-garden").join("manifest.json");
 
@@ -249,7 +249,7 @@ impl Volume {
     /// No-op for Offline volumes — the monitor (via [`super::StorageBank`]) is the sole
     /// authority for `Offline → Online` transitions. This prevents a statvfs
     /// call on an unmounted directory from silently reviving a lost volume.
-    pub fn probe_health(&mut self, platform: &dyn StoragePlatform) {
+    pub fn probe_health(&mut self, platform: &(impl StoragePlatform + ?Sized)) {
         if self.state == VolumeState::Offline {
             return;
         }
@@ -272,8 +272,8 @@ impl Volume {
         }
 
         // Reconcile pin state from disk (detect external changes)
-        if self.state.is_online() {
-            if let Some(ref mut mgmt) = self.management {
+        if self.state.is_online()
+            && let Some(ref mut mgmt) = self.management {
                 // We can't do async here, so we do a blocking pin read.
                 // Pin files are tiny (<100 bytes), blocking is acceptable.
                 let pin_path = self.mount_path.join(".zen-garden").join("pin.json");
@@ -302,7 +302,6 @@ impl Volume {
                     _ => {}
                 }
             }
-        }
     }
 
     // ========================================================================
@@ -310,7 +309,7 @@ impl Volume {
     // ========================================================================
 
     /// Pin this volume as Primary. Writes pin.json, updates role.
-    pub async fn pin(&mut self, store: &dyn ManagementStoreOps) -> anyhow::Result<String> {
+    pub async fn pin(&mut self, store: &(impl ManagementStoreOps + ?Sized)) -> anyhow::Result<String> {
         let mgmt = self
             .management
             .as_mut()
@@ -330,7 +329,7 @@ impl Volume {
     /// Unpin, returning to normal orchestration.
     pub async fn unpin(
         &mut self,
-        store: &dyn ManagementStoreOps,
+        store: &(impl ManagementStoreOps + ?Sized),
     ) -> anyhow::Result<Option<String>> {
         let mgmt = self
             .management
@@ -368,12 +367,11 @@ impl Volume {
     // ========================================================================
 
     /// Snapshot critical files to `last-known-good/`.
-    pub async fn snapshot_lkg(&self, store: &dyn ManagementStoreOps) {
-        if let Some(ref mgmt) = self.management {
-            if let Err(e) = store.snapshot_lkg().await {
+    pub async fn snapshot_lkg(&self, store: &(impl ManagementStoreOps + ?Sized)) {
+        if let Some(ref mgmt) = self.management
+            && let Err(e) = store.snapshot_lkg().await {
                 warn!(name = %mgmt.name, error = %e, "Failed to snapshot LKG");
             }
-        }
     }
 
     // ========================================================================

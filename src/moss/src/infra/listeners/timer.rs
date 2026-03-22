@@ -228,7 +228,6 @@ impl Default for TimerListener {
     }
 }
 
-#[async_trait::async_trait]
 impl EventListener for TimerListener {
     async fn on_event(&self, event: &DomainEvent) {
         // Only process offering events for timer management

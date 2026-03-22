@@ -49,17 +49,15 @@ pub async fn get_object_v1(
     Query(params): Query<ListQueryParams>,
     headers: HeaderMap,
 ) -> Response {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 );
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -156,17 +154,15 @@ pub async fn put_object_v1(
     headers: HeaderMap,
     body: Bytes,
 ) -> crate::api::ApiResult<ObjectMeta> {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -270,17 +266,15 @@ pub async fn delete_object_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -363,17 +357,15 @@ pub async fn head_object_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 );
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,

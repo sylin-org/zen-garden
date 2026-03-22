@@ -934,11 +934,10 @@ impl CapabilityExecutor {
         // Extract metadata fields
         let mut metadata = HashMap::new();
         for (key, path) in &fields.metadata {
-            if let Ok(value) = self.extract_path(item, path) {
-                if !value.is_null() {
+            if let Ok(value) = self.extract_path(item, path)
+                && !value.is_null() {
                     metadata.insert(key.clone(), value);
                 }
-            }
         }
 
         Ok(CapabilityItem {

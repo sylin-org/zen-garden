@@ -489,13 +489,13 @@ fn parse_capability_selector(
             ));
         }
 
-        if let Ok(default) = &default_cap_type {
-            if cap_type != *default {
-                return Ok(CapabilitySelector {
-                    cap_type: default.clone(),
-                    item: selector.to_string(),
-                });
-            }
+        if let Ok(default) = &default_cap_type
+            && cap_type != *default
+        {
+            return Ok(CapabilitySelector {
+                cap_type: default.clone(),
+                item: selector.to_string(),
+            });
         }
 
         return Ok(CapabilitySelector {

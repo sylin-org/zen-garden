@@ -20,7 +20,7 @@
 
 use anyhow::{Context, Result};
 use garden_common::OfferingStatus;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::domain::events::OfferingEvent;
 use crate::AppState;
@@ -120,8 +120,8 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
                 .unwrap_or(false)
         };
 
-        if needs_compose {
-            if let Err(e) =
+        if needs_compose
+            && let Err(e) =
                 crate::domain::services_internal::compose_on_start(state, service_name).await
             {
                 warn!(
@@ -130,7 +130,6 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
                     "Compose-on-start failed, falling back to normal start"
                 );
             }
-        }
 
         // Start the container
         state
@@ -426,9 +425,9 @@ async fn install_from_manifest(
     }
 
     // Compatibility fallback renaming
-    if offering_fqn.instance.is_none() {
-        if let Some(ref fallback_name) = compiled.compatibility.fallback_name {
-            if let Ok(adjusted) =
+    if offering_fqn.instance.is_none()
+        && let Some(ref fallback_name) = compiled.compatibility.fallback_name
+            && let Ok(adjusted) =
                 garden_common::offerings::OfferingFqn::with_instance(&offering_type, fallback_name)
             {
                 tracing::info!(
@@ -440,8 +439,6 @@ async fn install_from_manifest(
                 service_name = adjusted.fqn();
                 *offering_fqn = adjusted;
             }
-        }
-    }
 
     if crate::domain::offering_lifecycle::has_status(state, &service_name, OfferingStatus::Maintenance).await {
         return Ok(InstallOutcome::Maintenance { service_name });
@@ -506,6 +503,132 @@ async fn install_from_manifest(
         service_name,
         job_id,
     })
+}
+
+// ============================================================================
+// Nourish (upgrade)
+// ============================================================================
+
+/// Result of a nourish (upgrade) operation.
+#[derive(Debug)]
+pub enum NourishOutcome {
+    /// Service is under maintenance, retry later.
+    Maintenance,
+    /// Service was upgraded successfully.
+    Upgraded,
+}
+
+/// Nourish (upgrade) a service to the latest manifest version.
+///
+/// Loads the manifest template, pulls the new image, recreates the container,
+/// and updates the offering registry. On failure, restores the previous status.
+pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutcome> {
+    // Find and validate the service
+    let (offering_id, offering, old_version) = {
+        let offerings = state.offerings.read().await;
+        let o = offerings
+            .iter()
+            .find(|o| o.name.to_string() == service_name && o.is_managed())
+            .ok_or_else(|| anyhow::anyhow!("Service '{}' not found", service_name))?;
+
+        if o.status == OfferingStatus::Maintenance {
+            return Ok(NourishOutcome::Maintenance);
+        }
+
+        (o.offering_id.clone(), o.offering.clone(), o.version.clone())
+    };
+
+    // Mark as Maintenance via gateway (syncs self_entry)
+    state
+        .update_offering(&offering_id, true, |o| {
+            o.status = OfferingStatus::Maintenance;
+            true
+        })
+        .await;
+
+    // Load template for upgrade
+    let entry = state
+        .manifest_registry
+        .sw
+        .get(&offering)
+        .ok_or_else(|| anyhow::anyhow!("Template for '{}' not found", offering))?;
+
+    let template = match entry.parse_template() {
+        Ok(t) => t,
+        Err(e) => {
+            // Restore status on template load failure
+            state
+                .update_offering(&offering_id, true, |o| {
+                    o.status = OfferingStatus::Running;
+                    true
+                })
+                .await;
+            return Err(anyhow::anyhow!("Failed to load template: {}", e));
+        }
+    };
+
+    // Build container spec from template
+    let ports = template.ports_vec();
+    let spec = crate::docker::ContainerSpec {
+        image: template.image.clone(),
+        command: template.command,
+        ports,
+        environment: template.environment,
+        volumes: template.volumes,
+        config_files: template.config_files,
+    };
+
+    // Perform Docker upgrade
+    if let Err(e) = state
+        .platform
+        .docker
+        .upgrade_service(service_name, &spec, Some(&state.console))
+        .await
+    {
+        error!(error = ?e, service = %service_name, "Docker upgrade failed");
+        // Restore status on Docker failure
+        state
+            .update_offering(&offering_id, true, |o| {
+                o.status = OfferingStatus::Running;
+                true
+            })
+            .await;
+        return Err(anyhow::anyhow!("Failed to upgrade: {}", e));
+    }
+
+    let new_version = template
+        .image
+        .split(':')
+        .next_back()
+        .unwrap_or("latest")
+        .to_string();
+    let new_image = template.image.clone();
+
+    // Update status and version via gateway (syncs self_entry + persists)
+    let nv = new_version.clone();
+    state
+        .update_offering(&offering_id, true, |o| {
+            o.status = OfferingStatus::Running;
+            o.version = nv;
+            true
+        })
+        .await;
+
+    // Emit offering lifecycle event (old_image reconstructed from old_version)
+    let old_image = format!(
+        "{}:{}",
+        template.image.split(':').next().unwrap_or(&offering),
+        old_version
+    );
+    state.event_bus.emit(OfferingEvent::updated(
+        &offering_id,
+        service_name,
+        state.stone_name(),
+        &old_image,
+        &new_image,
+    ));
+
+    Ok(NourishOutcome::Upgraded)
 }
 
 // ============================================================================

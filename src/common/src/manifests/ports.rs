@@ -16,7 +16,7 @@ pub fn load_ports_catalog(path: &Path) -> Result<WellKnownPortsCatalog, String> 
         .map_err(|e| format!("Failed to read ports catalog: {}", e))?;
     let content = crate::utils::strings::strip_bom(&content);
 
-    serde_yaml::from_str(content).map_err(|e| format!("Failed to parse ports catalog: {}", e))
+    serde_yml::from_str(content).map_err(|e| format!("Failed to parse ports catalog: {}", e))
 }
 
 /// Initialize the global ports catalog from the given path
@@ -35,7 +35,7 @@ pub fn get_ports_catalog() -> Option<&'static WellKnownPortsCatalog> {
 /// Load ports catalog from embedded content (for compiled-in manifests)
 pub fn load_ports_catalog_from_str(content: &str) -> Result<WellKnownPortsCatalog, String> {
     let content = crate::utils::strings::strip_bom(content);
-    serde_yaml::from_str(content).map_err(|e| format!("Failed to parse ports catalog: {}", e))
+    serde_yml::from_str(content).map_err(|e| format!("Failed to parse ports catalog: {}", e))
 }
 
 /// Initialize the global ports catalog from embedded content

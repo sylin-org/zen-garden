@@ -164,11 +164,10 @@ fn should_ingest(path: &Path, sync_root_path: &Path) -> bool {
     {
         use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
-        if let Ok(meta) = std::fs::metadata(path) {
-            if meta.file_attributes() & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.file_attributes() & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
                 return false;
             }
-        }
     }
 
     true
@@ -213,15 +212,14 @@ async fn transfer_batch(
         let rel_path = remainder.to_string_lossy().replace('\\', "/");
 
         // For local storages, check if content is already identical
-        if handle.is_local() {
-            if let Some(mp) = handle.mount_path() {
+        if handle.is_local()
+            && let Some(mp) = handle.mount_path() {
                 let target = mp.join(&remainder);
                 if target.exists() && files_match(path, &target).await {
                     mark_in_sync(path);
                     continue;
                 }
             }
-        }
 
         // Transfer via handle (handles both local and remote)
         if path.is_dir() {

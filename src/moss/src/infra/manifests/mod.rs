@@ -47,8 +47,8 @@ pub fn load_capability_manifests() -> &'static HashMap<String, CapabilityManifes
 
         // Scan embedded manifests for *.capabilities.yaml files
         for file_path in EmbeddedManifests::list_files() {
-            if file_path.ends_with(".capabilities.yaml") {
-                if let Some(content) = EmbeddedManifests::get_string(&file_path) {
+            if file_path.ends_with(".capabilities.yaml")
+                && let Some(content) = EmbeddedManifests::get_string(&file_path) {
                     match CapabilityManifest::from_yaml(&content) {
                         Ok(manifest) => {
                             tracing::debug!(
@@ -67,7 +67,6 @@ pub fn load_capability_manifests() -> &'static HashMap<String, CapabilityManifes
                         }
                     }
                 }
-            }
         }
 
         tracing::info!(count = registry.len(), "Loaded capability manifests");

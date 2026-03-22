@@ -26,32 +26,92 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-edition = "2021"
-rust-version = "1.75"
+edition = "2024"
+rust-version = "1.92"
 authors = ["Koan Framework"]
 
 [workspace.dependencies]
+# Core
 anyhow = "1.0"
-axum = "0.8"
+thiserror = "2"
 chrono = "0.4"
-clap = { version = "4.4", features = ["derive"] }
-mdns-sd = "0.17"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+uuid = { version = "1.6", features = ["v7"] }
+rand = "0.9"
+regex = "1.10"
+
+# Async runtime — minimal features; each crate adds what it needs
+tokio = { version = "1.35", features = ["sync", "time", "macros"] }
+tokio-stream = "0.1"
+async-stream = "0.3"
+futures = "0.3"
+futures-util = "0.3"
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "2"
+serde_yml = "0.0.12"
+
+# HTTP
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# Crypto / hashing
+blake3 = "1.5"
+base64 = "0.22"
+
+# Networking
+socket2 = "0.5"
+if-addrs = "0.15"
+mdns-sd = "0.17"
+
+# System
+sysinfo = "0.30"
+walkdir = "2.4"
+hostname = "0.4"
+urlencoding = "2.1"
+mime_guess = "2.0"
+colored = "2.1"
+url = "2.5"
+rust-embed = "8"
+open = "5.3"
+tempfile = "3"
+
+# Koi framework
 koi-embedded = { path = "../koi/crates/koi-embedded" }
 koi-certmesh = { path = "../koi/crates/koi-certmesh" }
 koi-common = { path = "../koi/crates/koi-common" }
 koi-crypto = { path = "../koi/crates/koi-crypto" }
 koi-truststore = { path = "../koi/crates/koi-truststore" }
-# Minimal tokio features - each crate adds what it needs
-tokio = { version = "1.35", features = ["sync", "time", "macros"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-uuid = { version = "1.6", features = ["v7"] }
-# zen-common = { path = "src/linux/common" }  # Moved to src/common
+
+# ============================================================================
+# Workspace-wide lint policy — enforces code-standards.md mechanically
+# ============================================================================
+[workspace.lints.clippy]
+# Code standards §16: unsafe blocks must document invariants
+# Set to "warn" for gradual adoption; promote to "deny" after full audit
+undocumented_unsafe_blocks = "warn"
+# Code standards §17: no .unwrap() on external data
+# Set to "allow" at workspace level; enable per-crate as they're audited
+unwrap_used = "allow"
+# Incomplete work markers
+todo = "allow"
+unimplemented = "warn"
+# Prefer native async fn over manual desugaring
+manual_async_fn = "warn"
+# Pin<Box<dyn Future>> is inherently verbose — allow until ARCH-0007 completes
+type_complexity = "allow"
+
+[workspace.lints.rust]
+# Edition 2024 will enforce this; start warning now
+unsafe_op_in_unsafe_fn = "warn"
 
 # Dev profile: faster iteration
 [profile.dev]

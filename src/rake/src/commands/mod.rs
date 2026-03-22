@@ -45,7 +45,6 @@ pub mod pulse;
 pub mod storage;
 
 use crate::context::Runtime;
-use async_trait::async_trait;
 
 /// Command execution result
 pub type CommandResult = anyhow::Result<()>;
@@ -54,10 +53,9 @@ pub type CommandResult = anyhow::Result<()>;
 ///
 /// Commands implement this trait to be dispatched by the CLI.
 /// The trait provides hooks for common behavior like endpoint resolution.
-#[async_trait]
 pub trait Command: Send + Sync {
     /// Execute the command with the given context
-    async fn execute(&self, ctx: &Runtime) -> CommandResult;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>>;
 
     /// Whether this command requires a resolved stone endpoint
     ///

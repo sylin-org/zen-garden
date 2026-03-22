@@ -1,8 +1,11 @@
-﻿[package]
+[package]
 name = "garden-build-utils"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.75"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [lib]
 name = "garden_build_utils"

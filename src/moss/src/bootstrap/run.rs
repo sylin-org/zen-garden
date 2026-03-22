@@ -72,9 +72,15 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let file_config = config.file_config.clone();
     let (state, artifacts) = build_state(config, log).await?;
-    let api_endpoint =
+    let (api_endpoint, supervisor) =
         crate::tasks::coordinator::start_background_tasks(state.clone(), artifacts, file_config)
             .await;
+
+    // Run the task supervisor in the background — it monitors all spawned tasks
+    // for panics and handles clean shutdown when the cancellation token fires.
+    let shutdown_token = state.shutdown_token.clone();
+    tokio::spawn(supervisor.run(shutdown_token));
+
     serve(state, &api_endpoint).await
 }
 
@@ -472,8 +478,8 @@ async fn build_state(
     // so by this point the CA is already unlocked if the key file exists.
     // We just read the status and seed the application state.
     let pond_state = crate::domain::PondState::new();
-    if let Ok(cm) = koi_handle.certmesh() {
-        if let Ok(core) = cm.core() {
+    if let Ok(cm) = koi_handle.certmesh()
+        && let Ok(core) = cm.core() {
             let status = core.certmesh_status().await;
             if status.ca_initialized && !status.ca_locked {
                 pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -518,7 +524,6 @@ async fn build_state(
                 }
             }
         }
-    }
     // Enrolled member fallback: check for enrollment certs on disk
     if !pond_active.load(std::sync::atomic::Ordering::Relaxed) {
         let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
@@ -713,21 +718,21 @@ async fn build_state(
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
-    let harvest_ops: Arc<dyn crate::domain::traits::HarvestOps> = Arc::new(
+    let harvest_ops = Arc::new(
         crate::infra::harvest::OsHarvestOps::new(docker.clone(), Arc::clone(&harvest_store)),
     );
-    let nurturing_store: Arc<dyn crate::domain::traits::NurturingStoreOps> = Arc::new(
+    let nurturing_store = Arc::new(
         infra::NurturingStore::new(infra::HarvestStore::default_store(), docker.clone()),
     );
 
     // Storage and orchestration channels (ARCH-0004)
-    let (storage_tick_raw_tx, _) = tokio::sync::broadcast::channel::<
+    let (storage_tick_raw, _) = tokio::sync::broadcast::channel::<
         garden_common::storage::StorageTick,
     >(garden_common::constants::channels::STORAGE_EVENT);
-    let (storage_tick_debounced_tx, _) = tokio::sync::broadcast::channel::<
+    let (storage_tick_debounced, _) = tokio::sync::broadcast::channel::<
         garden_common::storage::StorageTick,
     >(garden_common::constants::channels::STORAGE_EVENT);
-    let (storage_changed_tx, _) = tokio::sync::broadcast::channel::<
+    let (storage_changed, _) = tokio::sync::broadcast::channel::<
         garden_common::storage::StorageChanged,
     >(garden_common::constants::channels::STORAGE_EVENT);
     let nourishment_map = Arc::new(RwLock::new(HashMap::<
@@ -753,7 +758,7 @@ async fn build_state(
             storage: Arc::new(crate::domain::Storage {
                 volumes: volumes.clone(),
                 media: media.clone(),
-                changed: storage_changed_tx.clone(),
+                changed: storage_changed.clone(),
             }),
             topology: crate::domain::current::Topology {
                 cache: topology_cache.clone(),
@@ -820,13 +825,13 @@ async fn build_state(
         orchestration: Arc::new(crate::domain::Orchestration {
             storage: crate::domain::StorageOrchestration {
                 tick: crate::domain::orchestration::storage::Tick {
-                    raw: storage_tick_raw_tx.clone(),
-                    debounced: storage_tick_debounced_tx.clone(),
+                    raw: storage_tick_raw.clone(),
+                    debounced: storage_tick_debounced.clone(),
                 },
                 nudge: orchestration_nudge.clone(),
                 rescan: volume_rescan.clone(),
                 s3_listeners: Arc::new(
-                    crate::infra::storage::S3ListenerManager::new(shutdown_token.clone()),
+                    crate::infra::storage::S3Listeners::new(shutdown_token.clone()),
                 ),
             },
             nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
@@ -1410,9 +1415,9 @@ pub(crate) async fn activate_pond_security(
     let cert_path = certs_dir.join("cert.pem");
 
     // --- Chirp signing ---
-    if key_path.exists() && cert_path.exists() {
-        if let Ok(key_pem) = std::fs::read_to_string(&key_path) {
-            if let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem) {
+    if key_path.exists() && cert_path.exists()
+        && let Ok(key_pem) = std::fs::read_to_string(&key_path)
+            && let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem) {
                 use base64::Engine;
                 match keypair.public_key_pem() {
                     Ok(public_key_pem) => {
@@ -1435,13 +1440,11 @@ pub(crate) async fn activate_pond_security(
                     }
                 }
             }
-        }
-    }
 
     // --- Chirp verification ---
     let ca_cert_path = koi_certmesh::ca::ca_cert_path();
-    if ca_cert_path.exists() {
-        if let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path) {
+    if ca_cert_path.exists()
+        && let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path) {
             let _ = garden_common::infra::communications::p2p::set_envelope_verifier(Box::new(
                 move |announcement| {
                     use base64::Engine;
@@ -1472,7 +1475,6 @@ pub(crate) async fn activate_pond_security(
             ));
             tracing::info!("Chirp verification enabled");
         }
-    }
 
     // --- HTTPS listener ---
     if state

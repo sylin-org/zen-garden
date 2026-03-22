@@ -4,8 +4,9 @@ use axum::{extract::State, http::StatusCode, Json};
 use garden_common::election::{ElectionType, ScoreMechanism};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
-use crate::app_state::AppState;
+use crate::domain::Presence;
 
 #[derive(Debug, Deserialize)]
 pub struct StartElectionRequest {
@@ -38,7 +39,7 @@ pub struct ElectionWinnerInfo {
 
 /// POST /api/v1/election/start - Start a distributed election
 pub async fn start_election(
-    State(state): State<AppState>,
+    State(presence): State<Arc<Presence>>,
     Json(req): Json<StartElectionRequest>,
 ) -> Result<Json<StartElectionResponse>, (StatusCode, Json<Value>)> {
     use garden_common::utils::ids::generate_guidv7;
@@ -53,8 +54,8 @@ pub async fn start_election(
     // Generate election ID
     let election_id = generate_guidv7();
 
-    // Get election service from app state (it's Arc, no lock needed)
-    let elections = state.presence.elections.clone();
+    // Get election service from presence domain (it's Arc, no lock needed)
+    let elections = presence.elections.clone();
 
     // Start election
     match elections

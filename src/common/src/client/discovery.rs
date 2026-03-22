@@ -9,7 +9,7 @@
 //! - Thread-safe via `Arc<Mutex>`
 //! - Automatic expiration
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 const TTL: Duration = Duration::from_secs(90);
 
 /// Process-scoped stone discovery singleton.
-pub static STONE: Lazy<Discovery> = Lazy::new(Discovery::new);
+pub static STONE: LazyLock<Discovery> = LazyLock::new(Discovery::new);
 
 /// A recently-discovered stone endpoint.
 #[derive(Clone, Debug)]

@@ -113,8 +113,8 @@ impl ServiceSearchCriteria {
 
         // Check for sub-capability syntax: name[item]
         // E.g., "ollama[llama2,mistral]"
-        if let Some((name_part, rest)) = query.split_once('[') {
-            if let Some(item) = rest.strip_suffix(']') {
+        if let Some((name_part, rest)) = query.split_once('[')
+            && let Some(item) = rest.strip_suffix(']') {
                 let required_capabilities = parse_capability_requirements(item);
                 if !required_capabilities.is_empty() {
                     return Self::by_name_with_sub_capabilities(
@@ -123,7 +123,6 @@ impl ServiceSearchCriteria {
                     );
                 }
             }
-        }
 
         // Check for category prefix
         if let Some(cat) = query
@@ -359,11 +358,10 @@ fn matches_search_criteria(criteria: &ServiceSearchCriteria, tool: &GardenTool) 
         let lower_item = filter.item.to_lowercase();
 
         let has_cap = tool.capabilities.iter().any(|cap| {
-            if let Some(ref cap_type) = filter.cap_type {
-                if cap.cap_type.to_lowercase() != cap_type.to_lowercase() {
+            if let Some(ref cap_type) = filter.cap_type
+                && cap.cap_type.to_lowercase() != cap_type.to_lowercase() {
                     return false;
                 }
-            }
             cap.items.iter().any(|i| i.to_lowercase() == lower_item)
         });
 

@@ -79,8 +79,8 @@ async fn async_main() -> anyhow::Result<()> {
             None
         };
 
-        if let Some(name) = help_name {
-            if !name.is_empty() {
+        if let Some(name) = help_name
+            && !name.is_empty() {
                 if let Some(cmd) = MANIFEST.get(name) {
                     commands::help::display_command_detail(cmd, false, false);
                     return Ok(());
@@ -89,7 +89,6 @@ async fn async_main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
-        }
     }
 
     // Build Clap app from manifest and parse directly — no normalization layer

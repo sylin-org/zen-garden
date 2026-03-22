@@ -183,10 +183,10 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
         // Auto-unpin: if we had a pin but lost to a higher remote pin_id,
         // clear the local pin so the winner is undisputed.
-        if let Some(ref local_pid) = local_pin_id {
-            if new_role == StorageRole::Dormant {
-                if let Some((_, _, Some(ref remote_pid))) = remote_primary {
-                    if remote_pid > local_pid {
+        if let Some(ref local_pid) = local_pin_id
+            && new_role == StorageRole::Dormant
+                && let Some((_, _, Some(ref remote_pid))) = remote_primary
+                    && remote_pid > local_pid {
                         info!(
                             name = %name,
                             local_pin = %local_pid,
@@ -195,12 +195,9 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
                         );
                         auto_unpin.push(name.clone());
                     }
-                }
-            }
-        }
 
-        if let Some((ref remote_stone_id, _, _)) = remote_primary {
-            if current_role == StorageRole::Primary && new_role != current_role {
+        if let Some((ref remote_stone_id, _, _)) = remote_primary
+            && current_role == StorageRole::Primary && new_role != current_role {
                 debug!(
                     name = %name,
                     remote_stone = %remote_stone_id,
@@ -208,7 +205,6 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
                     "Role decision: yielding to remote"
                 );
             }
-        }
 
         new_roles.insert(name.clone(), new_role);
     }
@@ -238,11 +234,9 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
             if let Some(vol) = map
                 .values_mut()
                 .find(|v| v.management.as_ref().is_some_and(|m| m.name == *name))
-            {
-                if let Some(ref mut mgmt) = vol.management {
+                && let Some(ref mut mgmt) = vol.management {
                     mgmt.role = *role;
                 }
-            }
         }
     }
 

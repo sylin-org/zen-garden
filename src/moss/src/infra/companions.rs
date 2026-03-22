@@ -127,7 +127,7 @@ impl RuntimeLedger {
     }
 
     /// Get running Companion info
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn get(&self, companion_id: &str) -> Option<(u32, u16)> {
         self.running.get(companion_id).copied()
     }
@@ -199,7 +199,7 @@ impl PortLedger {
     }
 
     /// Get port for an Companion (if assigned)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn get(&self, companion_id: &str) -> Option<u16> {
         self.assignments.get(companion_id).copied()
     }
@@ -466,13 +466,13 @@ impl CompanionRegistry {
     }
 
     /// Get all registered Companions
-    pub async fn list(&self) -> Vec<RegisteredCompanion> {
+    pub(crate) async fn list_registered(&self) -> Vec<RegisteredCompanion> {
         let companions = self.companions.read().await;
         companions.values().cloned().collect()
     }
 
-    /// Get a specific Companion by ID
-    pub async fn get(&self, id: &str) -> Option<RegisteredCompanion> {
+    /// Get a specific Companion by ID (returns infra type)
+    pub(crate) async fn get_registered(&self, id: &str) -> Option<RegisteredCompanion> {
         let companions = self.companions.read().await;
         companions.get(id).cloned()
     }
@@ -538,12 +538,11 @@ impl CompanionRegistry {
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
-        if c.is_running() {
-            if let Some(pid) = c.pid {
+        if c.is_running()
+            && let Some(pid) = c.pid {
                 info!(companion = %id, pid = pid, "Companion already running");
                 return Ok(pid);
             }
-        }
 
         // Port was assigned during registration
         let port = c
@@ -792,8 +791,8 @@ impl CompanionRegistry {
             .get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
-        if let Some(pid) = c.pid {
-            if is_process_alive(pid) {
+        if let Some(pid) = c.pid
+            && is_process_alive(pid) {
                 info!(companion = %id, pid = pid, "Stopping Companion");
 
                 // Try graceful shutdown first via process handle
@@ -811,7 +810,6 @@ impl CompanionRegistry {
 
                 info!(companion = %id, "Companion stopped");
             }
-        }
 
         c.process = None;
         c.pid = None;
@@ -836,12 +834,11 @@ impl CompanionRegistry {
     pub async fn sigterm_all(&self) {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
-            if let Some(pid) = c.pid {
-                if is_process_alive(pid) {
+            if let Some(pid) = c.pid
+                && is_process_alive(pid) {
                     info!(companion = %id, pid = pid, "Sending SIGTERM to Companion");
                     sigterm_process_by_pid(pid);
                 }
-            }
         }
     }
 
@@ -852,12 +849,11 @@ impl CompanionRegistry {
     pub async fn kill_all_survivors(&self) {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
-            if let Some(pid) = c.pid {
-                if is_process_alive(pid) {
+            if let Some(pid) = c.pid
+                && is_process_alive(pid) {
                     warn!(companion = %id, pid = pid, "Companion still alive after drain, sending SIGKILL");
                     kill_process_by_pid(pid);
                 }
-            }
         }
     }
 
@@ -907,7 +903,6 @@ impl CompanionRegistry {
     }
 }
 
-#[async_trait::async_trait]
 impl crate::domain::traits::CompanionOps for CompanionRegistry {
     async fn scan_and_autostart(&self, moss_endpoint: &str) -> Result<(usize, usize)> {
         CompanionRegistry::scan_and_autostart(self, moss_endpoint).await
@@ -918,7 +913,7 @@ impl crate::domain::traits::CompanionOps for CompanionRegistry {
     }
 
     async fn list(&self) -> Vec<crate::domain::traits::companion_ops::CompanionInfo> {
-        let companions = CompanionRegistry::list(self).await;
+        let companions = CompanionRegistry::list_registered(self).await;
         companions
             .into_iter()
             .map(|c| {
@@ -937,7 +932,7 @@ impl crate::domain::traits::CompanionOps for CompanionRegistry {
     }
 
     async fn get(&self, id: &str) -> Option<crate::domain::traits::companion_ops::CompanionInfo> {
-        CompanionRegistry::get(self, id).await.map(|c| {
+        CompanionRegistry::get_registered(self, id).await.map(|c| {
             let running = c.is_running();
             let pid = c.pid();
             let port = c.port();
@@ -951,10 +946,7 @@ impl crate::domain::traits::CompanionOps for CompanionRegistry {
         })
     }
 
-    async fn get_manifest(
-        &self,
-        id: &str,
-    ) -> Option<garden_common::command_manifest::CommandManifest> {
+    async fn get_manifest(&self, id: &str) -> Option<CommandManifest> {
         CompanionRegistry::get_manifest(self, id).await
     }
 

@@ -7,7 +7,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use async_trait::async_trait;
 
 /// Borrow an external service
 pub struct BorrowCommand {
@@ -26,61 +25,62 @@ impl BorrowCommand {
     }
 }
 
-#[async_trait]
 impl Command for BorrowCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let url = ctx.api_v1_url("stone/offerings/borrow")?;
-        let response = ctx
-            .client
-            .post(&url)
-            .json(&serde_json::json!({
-                "name": self.name,
-                "url": self.from_url
-            }))
-            .send()
-            .await?;
-        let status = response.status();
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let url = ctx.api_v1_url("stone/offerings/borrow")?;
+            let response = ctx
+                .client
+                .post(&url)
+                .json(&serde_json::json!({
+                    "name": self.name,
+                    "url": self.from_url
+                }))
+                .send()
+                .await?;
+            let status = response.status();
 
-        match status {
-            s if s.is_success() => {
-                println!(
-                    "{}{} Borrowed service '{}' from {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("ok", ctx.term.supports_color),
-                    self.name,
-                    self.from_url
-                );
+            match status {
+                s if s.is_success() => {
+                    println!(
+                        "{}{} Borrowed service '{}' from {}",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("ok", ctx.term.supports_color),
+                        self.name,
+                        self.from_url
+                    );
+                }
+                reqwest::StatusCode::CONFLICT => {
+                    eprintln!(
+                        "{}{} Service '{}' is already borrowed",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("warn", ctx.term.supports_color),
+                        self.name
+                    );
+                }
+                reqwest::StatusCode::BAD_REQUEST => {
+                    eprintln!(
+                        "{}{} Invalid URL: {}",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        self.from_url
+                    );
+                }
+                _ => {
+                    eprintln!(
+                        "{}{} Failed to borrow: {}",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        status
+                    );
+                }
             }
-            reqwest::StatusCode::CONFLICT => {
-                eprintln!(
-                    "{}{} Service '{}' is already borrowed",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("warn", ctx.term.supports_color),
-                    self.name
-                );
-            }
-            reqwest::StatusCode::BAD_REQUEST => {
-                eprintln!(
-                    "{}{} Invalid URL: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    self.from_url
-                );
-            }
-            _ => {
-                eprintln!(
-                    "{}{} Failed to borrow: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::BORROW, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::BORROW, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

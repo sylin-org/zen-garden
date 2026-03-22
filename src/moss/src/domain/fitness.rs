@@ -51,11 +51,10 @@ pub fn compute_fitness_score(
     offering_count: usize,
 ) -> Option<i16> {
     // Pinned → always wins
-    if let Some(ref orch) = offering.orchestration {
-        if orch.pinned {
+    if let Some(ref orch) = offering.orchestration
+        && orch.pinned {
             return Some(FITNESS_SCORE_PINNED);
         }
-    }
 
     // Use the existing per-stone compatibility evaluation for eligibility.
     // A "fail" decision means the stone cannot host this offering at all.

@@ -3,6 +3,7 @@
 //! Connects to Moss SSE endpoint and dispatches events to handler.
 
 use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -20,10 +21,9 @@ pub struct SseEvent {
 /// Trait for handling SSE events
 ///
 /// Implement this to react to presence events from Moss.
-#[async_trait::async_trait]
 pub trait EventHandler: Send + Sync + 'static {
     /// Handle an incoming SSE event
-    async fn on_event(&self, event: SseEvent);
+    fn on_event(&self, event: SseEvent) -> impl Future<Output = ()> + Send;
 }
 
 /// SSE client configuration

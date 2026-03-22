@@ -212,11 +212,10 @@ pub async fn task_scheduler_loop(
     );
 
     // Run initial check if catchup is enabled
-    if config.catchup_on_start {
-        if let Err(e) = run_scheduler_iteration(&state).await {
+    if config.catchup_on_start
+        && let Err(e) = run_scheduler_iteration(&state).await {
             tracing::error!(error = ?e, "Failed to run initial task check");
         }
-    }
 
     let mut interval = tokio::time::interval(config.check_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

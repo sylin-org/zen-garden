@@ -12,7 +12,6 @@ use crate::commands::Command;
 use crate::context::Runtime;
 use crate::ui::rendering as ui;
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 
 // ============================================================================
 // Types
@@ -105,7 +104,6 @@ impl ManifestCommand {
 // Runtime trait
 // ============================================================================
 
-#[async_trait]
 impl Command for ManifestCommand {
     fn name(&self) -> &'static str {
         cmd::MANIFEST_CMD
@@ -122,31 +120,33 @@ impl Command for ManifestCommand {
         false
     }
 
-    async fn execute(&self, ctx: &Runtime) -> Result<()> {
-        match &self.action {
-            ManifestAction::Init {
-                image_ref,
-                output_dir,
-                name,
-                category,
-            } => {
-                execute_init(
-                    ctx,
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            match &self.action {
+                ManifestAction::Init {
                     image_ref,
-                    output_dir.as_deref(),
-                    name.as_deref(),
-                    category.as_deref(),
-                )
-                .await
+                    output_dir,
+                    name,
+                    category,
+                } => {
+                    execute_init(
+                        ctx,
+                        image_ref,
+                        output_dir.as_deref(),
+                        name.as_deref(),
+                        category.as_deref(),
+                    )
+                    .await
+                }
+                ManifestAction::Validate { path } => execute_validate(path).await,
+                ManifestAction::Test { path } => execute_test(ctx, path).await,
+                ManifestAction::Export {
+                    offering,
+                    output_dir,
+                } => execute_export(ctx, offering, output_dir.as_deref()).await,
+                ManifestAction::Enrich { path, auto } => execute_enrich(path, *auto).await,
             }
-            ManifestAction::Validate { path } => execute_validate(path).await,
-            ManifestAction::Test { path } => execute_test(ctx, path).await,
-            ManifestAction::Export {
-                offering,
-                output_dir,
-            } => execute_export(ctx, offering, output_dir.as_deref()).await,
-            ManifestAction::Enrich { path, auto } => execute_enrich(path, *auto).await,
-        }
+        })
     }
 }
 
@@ -534,15 +534,14 @@ async fn execute_export(ctx: &Runtime, offering: &str, output_dir: Option<&str>)
 
     let mut written = Vec::new();
     for (key, filename) in &files {
-        if let Some(content) = body.get(key).and_then(|v| v.as_str()) {
-            if !content.is_empty() {
+        if let Some(content) = body.get(key).and_then(|v| v.as_str())
+            && !content.is_empty() {
                 let path = std::path::Path::new(dir).join(filename);
                 tokio::fs::write(&path, content)
                     .await
                     .with_context(|| format!("Failed to write {}", path.display()))?;
                 written.push(filename.clone());
             }
-        }
     }
 
     if !ctx.quiet {

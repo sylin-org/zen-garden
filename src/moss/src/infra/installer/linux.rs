@@ -293,9 +293,9 @@ Environment=\"PORT={port}\"
 # Security hardening
 NoNewPrivileges=false
 PrivateTmp=true
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=false
-ReadWritePaths=/etc/zen-garden /var/lib/zen-garden /home/stone/bin /usr/local/bin /etc/hostname /etc/hosts /etc/docker /etc/network /run/network /etc/resolv.conf
+ReadWritePaths=/usr/local/bin
 
 # Resource limits
 LimitNOFILE=65536

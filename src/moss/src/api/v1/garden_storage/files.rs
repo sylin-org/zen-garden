@@ -187,17 +187,15 @@ async fn check_proxy_loop_guard(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), Response> {
-    if is_proxied(headers) {
-        if let Some(local) = StorageRoute::find_local(name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(headers)
+        && let Some(local) = StorageRoute::find_local(name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
     Ok(())
 }
 
@@ -293,14 +291,13 @@ async fn get_file_v1_inner(
     }
 
     // Check if path points to a directory
-    if let Ok(meta) = handle.metadata(path).await {
-        if meta.is_dir {
+    if let Ok(meta) = handle.metadata(path).await
+        && meta.is_dir {
             return match list_recursive(&handle, path, depth).await {
                 Ok(entries) => dir_list_response(path, entries),
                 Err(e) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string()),
             };
         }
-    }
 
     // File read — streaming response (A11j)
     let size = match handle.file_size(path).await {
@@ -368,17 +365,15 @@ pub async fn put_file_v1(
         return Err(err(status, "INVALID_PATH", msg));
     }
 
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -432,17 +427,15 @@ pub async fn delete_file_v1(
         return Err(err(status, "INVALID_PATH", msg));
     }
 
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,

@@ -63,7 +63,7 @@ pub struct SweepRun {
 /// Everything a sweeper needs — thin wrapper around AppState
 pub struct Sweep<'a> {
     pub state: &'a AppState,
-    pub task_persistence: &'a dyn crate::domain::traits::TaskRegistryPersistence,
+    pub task_persistence: &'a crate::infra::TaskStore,
 }
 
 // ============================================================================
@@ -73,7 +73,7 @@ pub struct Sweep<'a> {
 /// Run all sweepers sequentially, collect results
 pub async fn run_sweep(
     state: &AppState,
-    task_persistence: &dyn crate::domain::traits::TaskRegistryPersistence,
+    task_persistence: &crate::infra::TaskStore,
 ) -> SweepRun {
     let ctx = Sweep {
         state,

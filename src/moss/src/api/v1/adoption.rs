@@ -51,10 +51,9 @@ pub async fn list_adoptable_v1(
         }
 
         // Try detection (this will use cached results if available)
-        let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> =
-            std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
-                state.platform.docker.clone(),
-            ));
+        let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
+            state.platform.docker.clone(),
+        ));
         let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
         match orchestrator.detect(offering).await {
             Ok(result) if result.detected && result.stable => {
@@ -136,7 +135,7 @@ pub async fn adopt_offering_v1(
     }
 
     // Detect offering
-    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> = std::sync::Arc::new(
+    let detector = std::sync::Arc::new(
         crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
     );
     let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
@@ -169,7 +168,7 @@ pub async fn adopt_offering_v1(
         port_map: std::collections::HashMap::new(),
     };
 
-    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> = std::sync::Arc::new(
+    let detector = std::sync::Arc::new(
         crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
     );
     let connectivity = ConnectivityOrchestrator::new(detector);

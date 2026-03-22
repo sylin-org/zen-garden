@@ -32,7 +32,7 @@ pub use beacon::{broadcast_beacon, broadcast_if_has_storage, build_beacon};
 pub use handle::{FileEntry, FileMeta, RouterError, StorageHandle, StorageResolver};
 pub use objects::{ListResult, ObjectMetadata, ObjectStore, PutResult};
 pub use os_platform::OsPlatform;
-pub use s3_listener::S3ListenerManager;
+pub use s3_listener::S3Listeners;
 pub use signpost::refresh_signpost;
 pub use store::ContentStore;
 pub use watcher::StorageWatcherSet;

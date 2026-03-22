@@ -19,18 +19,18 @@ fn get_windows_fallback_paths(program: &str) -> Vec<String> {
     let mut paths = Vec::new();
 
     // Get LOCALAPPDATA for user-installed programs
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        if program == "ollama" {
-            // Standard Ollama install path
-            paths.push(format!("{}\\Programs\\Ollama\\ollama.exe", local_app_data));
-        }
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA")
+        && program == "ollama"
+    {
+        // Standard Ollama install path
+        paths.push(format!("{}\\Programs\\Ollama\\ollama.exe", local_app_data));
     }
 
     // Common Program Files locations
-    if let Ok(program_files) = std::env::var("ProgramFiles") {
-        if program == "ollama" {
-            paths.push(format!("{}\\Ollama\\ollama.exe", program_files));
-        }
+    if let Ok(program_files) = std::env::var("ProgramFiles")
+        && program == "ollama"
+    {
+        paths.push(format!("{}\\Ollama\\ollama.exe", program_files));
     }
 
     paths
@@ -232,12 +232,11 @@ fn extract_version(text: &str) -> Option<String> {
     ];
 
     for pattern_str in &patterns {
-        if let Ok(re) = Regex::new(pattern_str) {
-            if let Some(caps) = re.captures(text) {
-                if let Some(version) = caps.get(1) {
-                    return Some(version.as_str().to_string());
-                }
-            }
+        if let Ok(re) = Regex::new(pattern_str)
+            && let Some(caps) = re.captures(text)
+            && let Some(version) = caps.get(1)
+        {
+            return Some(version.as_str().to_string());
         }
     }
 

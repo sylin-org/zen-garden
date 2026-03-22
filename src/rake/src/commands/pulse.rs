@@ -16,7 +16,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::ui::gauge;
 use crate::ui::rendering::{self, TerminalInfo};
-use async_trait::async_trait;
 use colored::Colorize;
 use futures_util::StreamExt;
 use garden_common::presence::{
@@ -58,11 +57,12 @@ impl PulseCommand {
     }
 }
 
-#[async_trait]
 impl Command for PulseCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?.to_string();
-        run_pulse_monitor(&ctx.client, &endpoint, &ctx.term).await
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?.to_string();
+            run_pulse_monitor(&ctx.client, &endpoint, &ctx.term).await
+        })
     }
 
     fn show_stone_header(&self) -> bool {
@@ -518,9 +518,9 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
 fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) {
     match event_type {
         "stone.load.updated" => {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(payload_value) = parsed.get("data") {
-                    if let Ok(payload) =
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+                && let Some(payload_value) = parsed.get("data")
+                    && let Ok(payload) =
                         serde_json::from_value::<StoneLoadUpdatedPayload>(payload_value.clone())
                     {
                         state.apply_load_update(payload);
@@ -551,8 +551,6 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                             detail_items: details,
                         });
                     }
-                }
-            }
         }
         "stone.health.changed" => {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
@@ -728,8 +726,8 @@ fn process_transport_event(state: &mut MonitorState, transport_type: &str, data:
 /// Extract a short entity name from transport event data.
 fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String {
     // Try payload_preview first, then summary parsing
-    if let Some(preview) = parsed.get("payload_preview") {
-        if let Some(name) = preview
+    if let Some(preview) = parsed.get("payload_preview")
+        && let Some(name) = preview
             .get("name")
             .or_else(|| preview.get("stone_name"))
             .or_else(|| preview.get("requester_name"))
@@ -738,7 +736,6 @@ fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String
         {
             return shorten_stone_name(name).to_string();
         }
-    }
 
     // Parse from "from" address as last resort
     if let Some(from) = parsed.get("from").and_then(|f| f.as_str()) {
@@ -802,8 +799,8 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
                 // Tuple variants: {"offering_primary": "weaviate:dev"} → "offering primary (weaviate:dev)"
                 if let Some(s) = et.as_str() {
                     details.push(s.replace('_', " "));
-                } else if let Some(obj) = et.as_object() {
-                    if let Some(key) = obj.keys().next() {
+                } else if let Some(obj) = et.as_object()
+                    && let Some(key) = obj.keys().next() {
                         let val = obj[key].as_str().unwrap_or("");
                         if val.is_empty() {
                             details.push(key.replace('_', " "));
@@ -811,7 +808,6 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
                             details.push(format!("{} ({})", key.replace('_', " "), val));
                         }
                     }
-                }
             }
             ("election req".to_string(), details)
         }

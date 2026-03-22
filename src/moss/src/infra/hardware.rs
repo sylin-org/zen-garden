@@ -236,7 +236,7 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
     let system_manufacturer = detect_system_manufacturer();
     let system_product = detect_system_product();
 
-    if let (Some(ref mfr), Some(ref prod)) = (&system_manufacturer, &system_product) {
+    if let (Some(mfr), Some(prod)) = (&system_manufacturer, &system_product) {
         tracing::info!(manufacturer = %mfr, product = %prod, "Detected system identity");
     }
 

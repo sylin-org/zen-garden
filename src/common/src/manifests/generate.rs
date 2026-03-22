@@ -180,16 +180,15 @@ fn extract_description(inspection: &serde_json::Value) -> String {
         if let Some(desc) = labels
             .get("org.opencontainers.image.description")
             .and_then(|v| v.as_str())
+            && !desc.is_empty()
         {
-            if !desc.is_empty() {
-                return desc.to_string();
-            }
+            return desc.to_string();
         }
         // Fallback: description label
-        if let Some(desc) = labels.get("description").and_then(|v| v.as_str()) {
-            if !desc.is_empty() {
-                return desc.to_string();
-            }
+        if let Some(desc) = labels.get("description").and_then(|v| v.as_str())
+            && !desc.is_empty()
+        {
+            return desc.to_string();
         }
     }
     String::new()
@@ -240,25 +239,25 @@ fn build_snippet_yaml(
     }
 
     // Healthcheck
-    if let Some(hc) = healthcheck {
-        if !hc.is_null() {
-            yaml.push_str("healthcheck:\n");
-            if let Some(test) = hc.get("test").and_then(|v| v.as_array()) {
-                let parts: Vec<&str> = test.iter().filter_map(|v| v.as_str()).collect();
-                if !parts.is_empty() {
-                    let formatted: Vec<String> = parts.iter().map(|p| format!("\"{p}\"")).collect();
-                    yaml.push_str(&format!("  test: [{}]\n", formatted.join(", ")));
-                }
+    if let Some(hc) = healthcheck
+        && !hc.is_null()
+    {
+        yaml.push_str("healthcheck:\n");
+        if let Some(test) = hc.get("test").and_then(|v| v.as_array()) {
+            let parts: Vec<&str> = test.iter().filter_map(|v| v.as_str()).collect();
+            if !parts.is_empty() {
+                let formatted: Vec<String> = parts.iter().map(|p| format!("\"{p}\"")).collect();
+                yaml.push_str(&format!("  test: [{}]\n", formatted.join(", ")));
             }
-            if let Some(interval) = hc.get("interval_ns").and_then(|v| v.as_i64()) {
-                yaml.push_str(&format!("  interval: {}s\n", interval / 1_000_000_000));
-            }
-            if let Some(timeout) = hc.get("timeout_ns").and_then(|v| v.as_i64()) {
-                yaml.push_str(&format!("  timeout: {}s\n", timeout / 1_000_000_000));
-            }
-            if let Some(retries) = hc.get("retries").and_then(|v| v.as_i64()) {
-                yaml.push_str(&format!("  retries: {retries}\n"));
-            }
+        }
+        if let Some(interval) = hc.get("interval_ns").and_then(|v| v.as_i64()) {
+            yaml.push_str(&format!("  interval: {}s\n", interval / 1_000_000_000));
+        }
+        if let Some(timeout) = hc.get("timeout_ns").and_then(|v| v.as_i64()) {
+            yaml.push_str(&format!("  timeout: {}s\n", timeout / 1_000_000_000));
+        }
+        if let Some(retries) = hc.get("retries").and_then(|v| v.as_i64()) {
+            yaml.push_str(&format!("  retries: {retries}\n"));
         }
     }
 

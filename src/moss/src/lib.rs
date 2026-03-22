@@ -23,6 +23,9 @@ pub mod mdns;
 // App state for HTTP handlers
 pub mod app_state;
 
+// Test support — available to integration tests (tests/ directory)
+pub mod testing;
+
 // Re-export AppState and related types
 pub use app_state::{
     AppState, CompiledOffering, Job, JobStatus, OfferingsFingerprint, OfferingsIndex,

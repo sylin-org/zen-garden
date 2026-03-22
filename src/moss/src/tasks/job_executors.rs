@@ -266,7 +266,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 
     // First pass: collect offerings that need guidance
     // For backfilling, we use the manifest's ports since existing offerings may only have a single port stored
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     let offerings_needing_guidance: Vec<(
         String,
         String,
@@ -888,8 +888,8 @@ pub async fn install_service_task(
     ));
 
     // Assign initial orchestration role for elected offerings (ORCH-0006)
-    if compiled.coordination.is_elected() {
-        if let Err(e) =
+    if compiled.coordination.is_elected()
+        && let Err(e) =
             crate::tasks::offering_orchestration::assign_initial_role(state, &offering_id, offering)
                 .await
         {
@@ -899,7 +899,6 @@ pub async fn install_service_task(
                 "Failed to assign initial orchestration role (non-fatal)"
             );
         }
-    }
 
     // Register scheduled tasks from manifest
     if !compiled.tasks.is_empty() {
@@ -1024,8 +1023,8 @@ pub async fn install_image_direct_task(
     // Step 3: Check for curated alternative (advisory only — log it)
     {
         let idx_guard = state.offerings_index.read().await;
-        if let Some(idx) = idx_guard.as_ref() {
-            if let Some(alt) =
+        if let Some(idx) = idx_guard.as_ref()
+            && let Some(alt) =
                 offering_resolution::check_curated_collision(image_ref, &idx.offerings)
             {
                 tracing::info!(
@@ -1044,7 +1043,6 @@ pub async fn install_image_direct_task(
                     service_name,
                 );
             }
-        }
     }
 
     // Step 4: Build ContainerSpec and deploy

@@ -28,7 +28,9 @@ pub use orchestration::*;
 pub use pond::*;
 pub use ports_catalog::*;
 pub use service::*;
+pub use peer_address::*;
 pub use task::*;
+pub use topology::*;
 
 #[cfg(test)]
 mod tests {

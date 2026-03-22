@@ -558,11 +558,10 @@ impl ContentStore {
         let changelog_path = self.mount_root.join(CHANGELOG_REL);
 
         // Ensure .zen-garden/ exists
-        if let Some(parent) = changelog_path.parent() {
-            if !parent.exists() {
+        if let Some(parent) = changelog_path.parent()
+            && !parent.exists() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
-        }
 
         // Serialize + newline
         let line = match serde_json::to_string(entry) {
@@ -697,11 +696,11 @@ impl ContentStore {
         // If the caller provided a cursor but the changelog's oldest entry is
         // newer than that cursor, the requested history has been compacted away.
         // Signal full_sync_required so the Dormant reconciles from scratch.
-        if let Some(requested) = since {
-            if !requested.is_empty() {
+        if let Some(requested) = since
+            && !requested.is_empty() {
                 let all = self.read_changelog().await?;
-                if let Some(oldest) = all.first() {
-                    if requested < oldest.c.as_str() {
+                if let Some(oldest) = all.first()
+                    && requested < oldest.c.as_str() {
                         warn!(
                             requested_cursor = %requested,
                             oldest_cursor = %oldest.c,
@@ -713,9 +712,7 @@ impl ContentStore {
                             full_sync_required: true,
                         });
                     }
-                }
             }
-        }
 
         let cursor = raw
             .last()
@@ -986,11 +983,10 @@ impl ContentStore {
 
         // Build changelog JSONL in memory, then append in one write
         let changelog_path = self.mount_root.join(CHANGELOG_REL);
-        if let Some(parent) = changelog_path.parent() {
-            if !parent.exists() {
+        if let Some(parent) = changelog_path.parent()
+            && !parent.exists() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-        }
 
         let mut buf = String::new();
         for entry in &entries {
@@ -1046,11 +1042,10 @@ fn walk_content_files(root: &Path) -> Result<Vec<ChangelogEntry>> {
             let path = entry.path();
 
             // Skip the dotfolder and the visible symlink
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name == ".zen-garden" || name == "Zen Garden" {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && (name == ".zen-garden" || name == "Zen Garden") {
                     continue;
                 }
-            }
 
             let ft = match entry.file_type() {
                 Ok(ft) => ft,
@@ -1138,7 +1133,6 @@ fn decrypt(dek: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
     Ok(plaintext)
 }
 
-#[async_trait::async_trait]
 impl crate::domain::traits::content_store::ContentStoreOps for ContentStore {
     async fn read(&self, rel: &Path) -> Result<Vec<u8>> {
         ContentStore::read(self, rel).await
@@ -1169,22 +1163,21 @@ impl crate::domain::traits::content_store::ContentStoreOps for ContentStore {
 // Trait implementations
 // ============================================================================
 
-#[async_trait::async_trait]
 impl crate::domain::traits::ManagementStoreOps for ContentStore {
     async fn read_pin(&self) -> Option<String> {
-        self.read_pin().await
+        ContentStore::read_pin(self).await
     }
 
     async fn write_pin(&self, pin_id: &str) -> Result<()> {
-        self.write_pin(pin_id).await
+        ContentStore::write_pin(self, pin_id).await
     }
 
     async fn delete_pin(&self) -> Result<()> {
-        self.delete_pin().await
+        ContentStore::delete_pin(self).await
     }
 
     async fn snapshot_lkg(&self) -> Result<()> {
-        self.snapshot_lkg().await
+        ContentStore::snapshot_lkg(self).await
     }
 }
 

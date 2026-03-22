@@ -120,15 +120,13 @@ pub async fn handle_webdav(State(state): State<AppState>, request: Request) -> R
                 &state.current.storage.volumes,
             )
             .await
-            {
-                if local.role != garden_common::storage::StorageRole::Primary {
+                && local.role != garden_common::storage::StorageRole::Primary {
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
                         "Proxied request reached a non-primary stone",
                     )
                         .into_response();
                 }
-            }
         }
 
         serve_local(&handle, storage_name, &method, &rel_path, request).await
@@ -164,11 +162,10 @@ async fn serve_local(
     let status = response.status();
 
     // Record changelog for successful mutations
-    if is_write_method(method) && status.is_success() {
-        if let Some(content_store) = handle.content_store_for_write() {
+    if is_write_method(method) && status.is_success()
+        && let Some(content_store) = handle.content_store_for_write() {
             record_changelog(&content_store, method, rel_path).await;
         }
-    }
 
     if status.is_success() {
         debug!(

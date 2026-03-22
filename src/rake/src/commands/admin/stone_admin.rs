@@ -9,7 +9,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use async_trait::async_trait;
 use std::time::Duration;
 
 // ============================================================================
@@ -29,144 +28,145 @@ impl RouseCommand {
     }
 }
 
-#[async_trait]
 impl Command for RouseCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let stone_path = urlencoding::encode(&self.stone_name);
-        let url = ctx.api_v1_url(&format!("admin/stone/{}/wake", stone_path))?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let stone_path = urlencoding::encode(&self.stone_name);
+            let url = ctx.api_v1_url(&format!("admin/stone/{}/wake", stone_path))?;
 
-        println!(
-            "{}{} Rousing {}...",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("info", ctx.term.supports_color),
-            self.stone_name
-        );
+            println!(
+                "{}{} Rousing {}...",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("info", ctx.term.supports_color),
+                self.stone_name
+            );
 
-        let response = ctx
-            .client
-            .post(&url)
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await?;
+            let response = ctx
+                .client
+                .post(&url)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await?;
 
-        let status = response.status();
+            let status = response.status();
 
-        match status {
-            s if s.is_success() => {
-                if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let message = body
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Wake-on-LAN packet sent");
-                    let mac = body.get("mac").and_then(|v| v.as_str());
-                    let stone_status = body.get("status").and_then(|v| v.as_str());
+            match status {
+                s if s.is_success() => {
+                    if let Ok(body) = response.json::<serde_json::Value>().await {
+                        let message = body
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Wake-on-LAN packet sent");
+                        let mac = body.get("mac").and_then(|v| v.as_str());
+                        let stone_status = body.get("status").and_then(|v| v.as_str());
 
-                    println!(
-                        "{}{} {}",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color),
-                        message
-                    );
-
-                    if let Some(mac_addr) = mac {
                         println!(
-                            "{}   MAC: {}",
+                            "{}{} {}",
                             " ".repeat(ui::constants::DEFAULT_INDENT),
-                            mac_addr
+                            ui::status_indicator("ok", ctx.term.supports_color),
+                            message
                         );
-                    }
 
-                    if let Some(status) = stone_status {
+                        if let Some(mac_addr) = mac {
+                            println!(
+                                "{}   MAC: {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                mac_addr
+                            );
+                        }
+
+                        if let Some(status) = stone_status {
+                            println!(
+                                "{}   Status was: {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                status
+                            );
+                        }
+                    } else {
                         println!(
-                            "{}   Status was: {}",
+                            "{}{} Wake-on-LAN packet sent to {}",
                             " ".repeat(ui::constants::DEFAULT_INDENT),
-                            status
+                            ui::status_indicator("ok", ctx.term.supports_color),
+                            self.stone_name
                         );
                     }
-                } else {
-                    println!(
-                        "{}{} Wake-on-LAN packet sent to {}",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color),
-                        self.stone_name
-                    );
                 }
-            }
-            reqwest::StatusCode::NOT_FOUND => {
-                if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let error = body
-                        .get("error")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Stone not found");
-                    let hint = body.get("hint").and_then(|v| v.as_str());
+                reqwest::StatusCode::NOT_FOUND => {
+                    if let Ok(body) = response.json::<serde_json::Value>().await {
+                        let error = body
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Stone not found");
+                        let hint = body.get("hint").and_then(|v| v.as_str());
 
-                    eprintln!(
-                        "{}{} {}",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", ctx.term.supports_color),
-                        error
-                    );
-
-                    if let Some(h) = hint {
                         eprintln!(
-                            "{}   Hint: {}",
+                            "{}{} {}",
                             " ".repeat(ui::constants::DEFAULT_INDENT),
-                            h
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            error
                         );
-                    }
-                } else {
-                    eprintln!(
-                        "{}{} Stone '{}' not found in topology cache",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", ctx.term.supports_color),
-                        self.stone_name
-                    );
-                }
-            }
-            reqwest::StatusCode::BAD_REQUEST => {
-                if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let error = body
-                        .get("error")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("No MAC address");
-                    let hint = body.get("hint").and_then(|v| v.as_str());
 
-                    eprintln!(
-                        "{}{} {}",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", ctx.term.supports_color),
-                        error
-                    );
-
-                    if let Some(h) = hint {
+                        if let Some(h) = hint {
+                            eprintln!(
+                                "{}   Hint: {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                h
+                            );
+                        }
+                    } else {
                         eprintln!(
-                            "{}   Hint: {}",
+                            "{}{} Stone '{}' not found in topology cache",
                             " ".repeat(ui::constants::DEFAULT_INDENT),
-                            h
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            self.stone_name
                         );
                     }
-                } else {
+                }
+                reqwest::StatusCode::BAD_REQUEST => {
+                    if let Ok(body) = response.json::<serde_json::Value>().await {
+                        let error = body
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("No MAC address");
+                        let hint = body.get("hint").and_then(|v| v.as_str());
+
+                        eprintln!(
+                            "{}{} {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            error
+                        );
+
+                        if let Some(h) = hint {
+                            eprintln!(
+                                "{}   Hint: {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                h
+                            );
+                        }
+                    } else {
+                        eprintln!(
+                            "{}{} Stone '{}' has no MAC address cached",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            self.stone_name
+                        );
+                    }
+                }
+                _ => {
                     eprintln!(
-                        "{}{} Stone '{}' has no MAC address cached",
+                        "{}{} Failed to send WoL packet: HTTP {}",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
                         ui::status_indicator("error", ctx.term.supports_color),
-                        self.stone_name
+                        status
                     );
                 }
             }
-            _ => {
-                eprintln!(
-                    "{}{} Failed to send WoL packet: HTTP {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
 
-        suggestions::print_suggestions("stone wake", self.quiet);
+            suggestions::print_suggestions("stone wake", self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -189,61 +189,62 @@ impl SlumberCommand {
     }
 }
 
-#[async_trait]
 impl Command for SlumberCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let url = ctx.api_v1_url("admin/stone/shutdown")?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let url = ctx.api_v1_url("admin/stone/shutdown")?;
 
-        println!(
-            "{}{} Requesting stone to enter slumber...",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("warn", ctx.term.supports_color)
-        );
+            println!(
+                "{}{} Requesting stone to enter slumber...",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("warn", ctx.term.supports_color)
+            );
 
-        let response = ctx
-            .client
-            .post(&url)
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await?;
+            let response = ctx
+                .client
+                .post(&url)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await?;
 
-        let status = response.status();
+            let status = response.status();
 
-        match status {
-            s if s.is_success() => {
-                if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let message = body
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Shutdown initiated");
+            match status {
+                s if s.is_success() => {
+                    if let Ok(body) = response.json::<serde_json::Value>().await {
+                        let message = body
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Shutdown initiated");
 
-                    println!(
-                        "{}{} {}",
+                        println!(
+                            "{}{} {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("ok", ctx.term.supports_color),
+                            message
+                        );
+                    } else {
+                        println!(
+                            "{}{} Stone entering slumber...",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("ok", ctx.term.supports_color)
+                        );
+                    }
+                }
+                _ => {
+                    eprintln!(
+                        "{}{} Failed to initiate shutdown: HTTP {}",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color),
-                        message
-                    );
-                } else {
-                    println!(
-                        "{}{} Stone entering slumber...",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color)
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        status
                     );
                 }
             }
-            _ => {
-                eprintln!(
-                    "{}{} Failed to initiate shutdown: HTTP {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
 
-        suggestions::print_suggestions("stone shutdown", self.quiet);
+            suggestions::print_suggestions("stone shutdown", self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -266,61 +267,62 @@ impl StirCommand {
     }
 }
 
-#[async_trait]
 impl Command for StirCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let url = ctx.api_v1_url("admin/stone/reboot")?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let url = ctx.api_v1_url("admin/stone/reboot")?;
 
-        println!(
-            "{}{} Requesting stone to stir (reboot)...",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("warn", ctx.term.supports_color)
-        );
+            println!(
+                "{}{} Requesting stone to stir (reboot)...",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("warn", ctx.term.supports_color)
+            );
 
-        let response = ctx
-            .client
-            .post(&url)
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await?;
+            let response = ctx
+                .client
+                .post(&url)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await?;
 
-        let status = response.status();
+            let status = response.status();
 
-        match status {
-            s if s.is_success() => {
-                if let Ok(body) = response.json::<serde_json::Value>().await {
-                    let message = body
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Reboot initiated");
+            match status {
+                s if s.is_success() => {
+                    if let Ok(body) = response.json::<serde_json::Value>().await {
+                        let message = body
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Reboot initiated");
 
-                    println!(
-                        "{}{} {}",
+                        println!(
+                            "{}{} {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("ok", ctx.term.supports_color),
+                            message
+                        );
+                    } else {
+                        println!(
+                            "{}{} Stone stirring...",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("ok", ctx.term.supports_color)
+                        );
+                    }
+                }
+                _ => {
+                    eprintln!(
+                        "{}{} Failed to initiate reboot: HTTP {}",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color),
-                        message
-                    );
-                } else {
-                    println!(
-                        "{}{} Stone stirring...",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color)
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        status
                     );
                 }
             }
-            _ => {
-                eprintln!(
-                    "{}{} Failed to initiate reboot: HTTP {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
 
-        suggestions::print_suggestions("stone reboot", self.quiet);
+            suggestions::print_suggestions("stone reboot", self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

@@ -91,7 +91,7 @@ impl Runtime {
     }
 
     /// Create context with all options including automation flags
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn with_automation(
         client: reqwest::Client,
         endpoint: Option<String>,

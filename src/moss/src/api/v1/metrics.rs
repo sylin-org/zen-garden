@@ -10,9 +10,10 @@
 //! If collection fails, a fallback with zero values is returned.
 
 use crate::api::responses::ApiResponse;
-use crate::AppState;
+use crate::domain::Current;
 use axum::{extract::State, Json};
 use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, StoneResources};
+use std::sync::Arc;
 
 /// GET /metrics - Real-time system resource metrics
 ///
@@ -21,9 +22,9 @@ use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, Sto
 ///
 /// # Fallback Behavior
 /// If metrics not yet collected, returns a fallback response with zero values.
-pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<MetricsSnapshot>> {
+pub async fn get_metrics(State(current): State<Arc<Current>>) -> Json<ApiResponse<MetricsSnapshot>> {
     let resources = {
-        let resources_guard = state.current.metrics.system.read().await;
+        let resources_guard = current.metrics.system.read().await;
         resources_guard
             .as_ref()
             .cloned()
@@ -73,7 +74,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<Metr
                 })
         });
 
-    let network = state.current.metrics.network.read().await.clone();
+    let network = current.metrics.network.read().await.clone();
 
     let snapshot = MetricsSnapshot {
         timestamp: chrono::Utc::now().to_rfc3339(),

@@ -115,11 +115,10 @@ impl From<anyhow::Error> for RouterError {
 /// Classify an `anyhow::Error` as `NotFound` or `Other` based on the I/O error kind.
 fn classify_error(e: anyhow::Error, context: &str) -> RouterError {
     // Walk the error chain for an io::ErrorKind::NotFound
-    if let Some(io_err) = e.chain().find_map(|c| c.downcast_ref::<std::io::Error>()) {
-        if io_err.kind() == std::io::ErrorKind::NotFound {
+    if let Some(io_err) = e.chain().find_map(|c| c.downcast_ref::<std::io::Error>())
+        && io_err.kind() == std::io::ErrorKind::NotFound {
             return RouterError::NotFound(context.to_string());
         }
-    }
     RouterError::Other(e)
 }
 

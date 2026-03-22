@@ -65,8 +65,8 @@ pub struct SeedBankSelector {
 }
 
 impl SeedBankSelector {
-    fn name(&self) -> Option<String> {
-        self.seed_bank.clone()
+    fn name(&self) -> Option<&str> {
+        self.seed_bank.as_deref()
     }
 }
 
@@ -81,7 +81,7 @@ fn get_storage_name(headers: &HeaderMap, selector: &SeedBankSelector) -> Option<
             return Some(trimmed.to_string());
         }
     }
-    selector.name()
+    selector.name().map(|s| s.to_string())
 }
 
 fn has_path_traversal(value: &str) -> bool {
@@ -160,40 +160,32 @@ enum ConditionalResult {
 /// 4. If-Modified-Since → 304 if not modified since date
 fn evaluate_conditionals(headers: &HeaderMap, etag: &str, last_modified: &str) -> ConditionalResult {
     // If-Match: proceed only if ETag matches
-    if let Some(val) = headers.get(header::IF_MATCH).and_then(|v| v.to_str().ok()) {
-        if !etag_matches(val, etag) {
+    if let Some(val) = headers.get(header::IF_MATCH).and_then(|v| v.to_str().ok())
+        && !etag_matches(val, etag) {
             return ConditionalResult::PreconditionFailed;
         }
-    }
 
     // If-Unmodified-Since: proceed only if not modified after date
-    if let Some(val) = headers.get(header::IF_UNMODIFIED_SINCE).and_then(|v| v.to_str().ok()) {
-        if let Ok(since) = chrono::DateTime::parse_from_rfc2822(val) {
-            if let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified) {
-                if modified > since {
+    if let Some(val) = headers.get(header::IF_UNMODIFIED_SINCE).and_then(|v| v.to_str().ok())
+        && let Ok(since) = chrono::DateTime::parse_from_rfc2822(val)
+            && let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified)
+                && modified > since {
                     return ConditionalResult::PreconditionFailed;
                 }
-            }
-        }
-    }
 
     // If-None-Match: 304 if ETag matches
-    if let Some(val) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
-        if etag_matches(val, etag) {
+    if let Some(val) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok())
+        && etag_matches(val, etag) {
             return ConditionalResult::NotModified;
         }
-    }
 
     // If-Modified-Since: 304 if not modified since date
-    if let Some(val) = headers.get(header::IF_MODIFIED_SINCE).and_then(|v| v.to_str().ok()) {
-        if let Ok(since) = chrono::DateTime::parse_from_rfc2822(val) {
-            if let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified) {
-                if modified <= since {
+    if let Some(val) = headers.get(header::IF_MODIFIED_SINCE).and_then(|v| v.to_str().ok())
+        && let Ok(since) = chrono::DateTime::parse_from_rfc2822(val)
+            && let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified)
+                && modified <= since {
                     return ConditionalResult::NotModified;
                 }
-            }
-        }
-    }
 
     ConditionalResult::Proceed
 }
@@ -216,11 +208,10 @@ fn extract_custom_metadata(headers: &HeaderMap) -> std::collections::HashMap<Str
     let mut meta = std::collections::HashMap::new();
     for (name, value) in headers.iter() {
         let key = name.as_str();
-        if let Some(stripped) = key.strip_prefix("x-amz-meta-") {
-            if let Ok(val) = value.to_str() {
+        if let Some(stripped) = key.strip_prefix("x-amz-meta-")
+            && let Ok(val) = value.to_str() {
                 meta.insert(stripped.to_string(), val.to_string());
             }
-        }
     }
     meta
 }
@@ -267,6 +258,25 @@ async fn check_presign_token(
     }
 }
 
+/// Safely build an HTTP response, returning an XML error on builder failure.
+///
+/// `Response::builder().body()` can fail if invalid header values were inserted
+/// (e.g., non-ASCII custom metadata). This wrapper prevents panics from `.unwrap()`.
+fn build_response(
+    builder: axum::http::response::Builder,
+    body: impl Into<axum::body::Body>,
+) -> Response {
+    builder.body(body.into()).unwrap_or_else(|e| {
+        tracing::error!(error = %e, "Failed to build HTTP response");
+        // Minimal fallback — avoids recursion through xml_error → build_response
+        Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body("Internal Server Error".into())
+            .expect("minimal error response cannot fail")
+    })
+}
+
 /// Build XML error response
 fn xml_error(status: StatusCode, code: &str, message: &str) -> Response {
     let body = to_s3_xml(&s3_xml::S3Error {
@@ -274,11 +284,12 @@ fn xml_error(status: StatusCode, code: &str, message: &str) -> Response {
         message: message.to_string(),
     });
 
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "application/xml")
-        .body(body.into())
-        .unwrap()
+    build_response(
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/xml"),
+        body,
+    )
 }
 
 async fn proxy_s3_request(
@@ -289,7 +300,13 @@ async fn proxy_s3_request(
     headers: &HeaderMap,
     body: Option<Bytes>,
 ) -> Response {
-    let client = reqwest::Client::new();
+    static S3_PROXY_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("S3 proxy HTTP client")
+    });
+    let client = &*S3_PROXY_CLIENT;
     let url = format!(
         "{}/{}",
         endpoint.trim_end_matches('/'),
@@ -336,7 +353,7 @@ async fn proxy_s3_request(
         }
     }
 
-    builder.body(body.into()).unwrap()
+    build_response(builder, body)
 }
 
 // ============================================================================
@@ -418,7 +435,7 @@ pub async fn put_object(
             }
         }
     } else {
-        let target = handle.proxy_target().unwrap();
+        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -572,9 +589,11 @@ pub async fn get_object(
                         .header(header::LAST_MODIFIED, &meta.last_modified)
                         .header(header::ACCEPT_RANGES, "bytes");
                     for (k, v) in &meta.custom_metadata {
-                        builder = builder.header(format!("x-amz-meta-{}", k), v);
+                        if let Ok(val) = axum::http::HeaderValue::from_str(v) {
+                            builder = builder.header(format!("x-amz-meta-{}", k), val);
+                        }
                     }
-                    builder.body(data.into()).unwrap()
+                    build_response(builder, data)
                 }
                 Ok(None) => xml_error(
                     StatusCode::NOT_FOUND,
@@ -592,7 +611,7 @@ pub async fn get_object(
             }
         }
     } else {
-        let target = handle.proxy_target().unwrap();
+        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -698,21 +717,23 @@ pub async fn head_object(
                     .header(header::LAST_MODIFIED, &meta.last_modified)
                     .header(header::ACCEPT_RANGES, "bytes");
                 for (k, v) in &meta.custom_metadata {
-                    builder = builder.header(format!("x-amz-meta-{}", k), v);
+                    if let Ok(val) = axum::http::HeaderValue::from_str(v) {
+                        builder = builder.header(format!("x-amz-meta-{}", k), val);
+                    }
                 }
-                builder.body("".into()).unwrap()
+                build_response(builder, "")
             }
-            Ok(None) => Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body("".into())
-                .unwrap(),
-            Err(_) => Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body("".into())
-                .unwrap(),
+            Ok(None) => build_response(
+                Response::builder().status(StatusCode::NOT_FOUND),
+                "",
+            ),
+            Err(_) => build_response(
+                Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR),
+                "",
+            ),
         }
     } else {
-        let target = handle.proxy_target().unwrap();
+        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -804,7 +825,7 @@ pub async fn delete_object(
             }
         }
     } else {
-        let target = handle.proxy_target().unwrap();
+        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -873,7 +894,7 @@ pub async fn list_buckets(
             }
         }
     } else {
-        let target = handle.proxy_target().unwrap();
+        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -1023,7 +1044,7 @@ pub async fn list_objects(
             }
         }
     } else {
-        let target = handle.proxy_target().unwrap();
+        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
         let mut query_params = Vec::new();
         if is_v2 {
             query_params.push(("list-type".to_string(), "2".to_string()));
@@ -1120,7 +1141,7 @@ pub async fn create_bucket(
             }
         }
     } else {
-        let target = handle.proxy_target().unwrap();
+        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -1305,7 +1326,7 @@ pub async fn complete_or_initiate_multipart(
     if let Some(resp) = validate_bucket(&bucket) {
         return resp;
     }
-    let _key = key.trim_start_matches('/');
+    // key from path is validated at entry; completion uses upload.key from manifest
 
     let selector = SeedBankSelector { seed_bank: query.seed_bank.clone() };
     let selected = get_storage_name(&headers, &selector)

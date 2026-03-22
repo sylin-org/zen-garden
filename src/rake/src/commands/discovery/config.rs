@@ -13,7 +13,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::{extract_json_field, Runtime};
 use crate::ui::rendering as ui;
 use anyhow::Context;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// Service configuration response
@@ -97,91 +96,92 @@ impl ConfigCommand {
 // Reuse find command's response types for API compatibility
 use super::find::{FoundService, ServiceDiscoveryResponse};
 
-#[async_trait]
 impl Command for ConfigCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::api_utils::{is_suspicious, sanitize_fqn_input, ApiResponse};
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use garden_common::api_utils::{is_suspicious, sanitize_fqn_input, ApiResponse};
 
-        // Validate service name
-        if is_suspicious(&self.service) {
-            anyhow::bail!("Service name contains invalid patterns");
-        }
+            // Validate service name
+            if is_suspicious(&self.service) {
+                anyhow::bail!("Service name contains invalid patterns");
+            }
 
-        let sanitized = sanitize_fqn_input(&self.service).into_value();
+            let sanitized = sanitize_fqn_input(&self.service).into_value();
 
-        // Use the find endpoint with exact name match
-        let url = format!(
-            "{}?q={}",
-            ctx.api_v1_url("garden/services")?,
-            urlencoding::encode(&sanitized)
-        );
+            // Use the find endpoint with exact name match
+            let url = format!(
+                "{}?q={}",
+                ctx.api_v1_url("garden/services")?,
+                urlencoding::encode(&sanitized)
+            );
 
-        tracing::debug!(service = %sanitized, url = %url, "ConfigCommand: querying service");
+            tracing::debug!(service = %sanitized, url = %url, "ConfigCommand: querying service");
 
-        let response = ctx
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to connect to moss")?;
+            let response = ctx
+                .client
+                .get(&url)
+                .send()
+                .await
+                .context("Failed to connect to moss")?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("API error ({}): {}", status, body);
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                anyhow::bail!("API error ({}): {}", status, body);
+            }
 
-        let api_response: ApiResponse<ServiceDiscoveryResponse> =
-            response.json().await.context("Failed to parse response")?;
+            let api_response: ApiResponse<ServiceDiscoveryResponse> =
+                response.json().await.context("Failed to parse response")?;
 
-        let discovery = api_response.data;
+            let discovery = api_response.data;
 
-        // Check if service was found
-        if !discovery.found || discovery.services.is_empty() {
-            if self.json_output || self.field.is_some() {
-                // For automation, just exit with code 1
-                eprintln!("Service '{}' not found", self.service);
+            // Check if service was found
+            if !discovery.found || discovery.services.is_empty() {
+                if self.json_output || self.field.is_some() {
+                    // For automation, just exit with code 1
+                    eprintln!("Service '{}' not found", self.service);
+                    std::process::exit(1);
+                }
+                println!(
+                    "{}Service '{}' not found",
+                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    self.service
+                );
+                println!();
+                println!("{}Suggestions:", " ".repeat(ui::constants::DEFAULT_INDENT));
+                println!(
+                    "{}  garden-rake find {}              # Search garden-wide",
+                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    self.service
+                );
+                println!(
+                    "{}  garden-rake offer {} --ensure   # Auto-provision",
+                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    self.service
+                );
                 std::process::exit(1);
             }
-            println!(
-                "{}Service '{}' not found",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                self.service
-            );
-            println!();
-            println!("{}Suggestions:", " ".repeat(ui::constants::DEFAULT_INDENT));
-            println!(
-                "{}  garden-rake find {}              # Search garden-wide",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                self.service
-            );
-            println!(
-                "{}  garden-rake offer {} --ensure   # Auto-provision",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                self.service
-            );
-            std::process::exit(1);
-        }
 
-        // Get first matching service
-        let svc = &discovery.services[0];
+            // Get first matching service
+            let svc = &discovery.services[0];
 
-        // Build config response
-        let config = self.build_config(svc, ctx);
+            // Build config response
+            let config = self.build_config(svc, ctx);
 
-        // Handle field extraction
-        if let Some(ref field_path) = self.field {
-            return self.render_field(&config, field_path);
-        }
+            // Handle field extraction
+            if let Some(ref field_path) = self.field {
+                return self.render_field(&config, field_path);
+            }
 
-        // Handle output format
-        if self.json_output {
-            self.render_json(&config)?;
-        } else {
-            self.render_human(&config, ctx);
-        }
+            // Handle output format
+            if self.json_output {
+                self.render_json(&config)?;
+            } else {
+                self.render_human(&config, ctx);
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

@@ -294,8 +294,9 @@ pub enum JobManagerError {
 mod tests {
     use super::*;
     use crate::traits::job_executor::JobResult;
-    use async_trait::async_trait;
     use serde_json::{json, Value};
+    use std::future::Future;
+    use std::pin::Pin;
     use tempfile::TempDir;
 
     // Mock executor for testing
@@ -304,22 +305,25 @@ mod tests {
         should_succeed: bool,
     }
 
-    #[async_trait]
     impl JobExecutor for MockExecutor {
         fn job_type(&self) -> &str {
             &self.job_type
         }
 
-        async fn execute(
-            &self,
-            _job_id: &str,
+        fn execute<'a>(
+            &'a self,
+            _job_id: &'a str,
             _input: Value,
-        ) -> Result<JobResult, JobExecutionError> {
-            if self.should_succeed {
-                Ok(JobResult::success("Mock success"))
-            } else {
-                Ok(JobResult::failure("Mock failure"))
-            }
+        ) -> Pin<Box<dyn Future<Output = Result<JobResult, JobExecutionError>> + Send + 'a>>
+        {
+            let should_succeed = self.should_succeed;
+            Box::pin(async move {
+                if should_succeed {
+                    Ok(JobResult::success("Mock success"))
+                } else {
+                    Ok(JobResult::failure("Mock failure"))
+                }
+            })
         }
 
         fn validate_input(&self, _input: &Value) -> Result<(), JobExecutionError> {

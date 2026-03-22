@@ -323,7 +323,7 @@ impl NurturingStore {
     pub async fn replicate_to_seed_bank(
         &self,
         offering_id: &str,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
         storage_name: &str,
         stone_id: &str,
@@ -446,7 +446,7 @@ impl NurturingStore {
     /// List remote snapshots on a seed bank
     pub async fn list_remote_snapshots(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
         self.load_remote_index(store, seed_bank_id).await
@@ -463,7 +463,7 @@ impl NurturingStore {
     /// * `harvest_id` - Optional specific harvest (defaults to latest)
     pub async fn restore_from_seed_bank(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
         offering_id: &str,
         harvest_id: Option<&str>,
@@ -527,7 +527,7 @@ impl NurturingStore {
     /// Delete a remote snapshot from a seed bank
     pub async fn delete_remote_snapshot(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
         harvest_id: &str,
     ) -> Result<bool> {
@@ -555,7 +555,7 @@ impl NurturingStore {
     /// Load the remote nurturing index from a seed bank
     async fn load_remote_index(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
         let index_rel = memories_index_rel();
@@ -573,7 +573,7 @@ impl NurturingStore {
     /// Save the remote nurturing index to a seed bank
     async fn save_remote_index(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         index: &RemoteNurturingIndex,
     ) -> Result<()> {
         let json =
@@ -589,7 +589,7 @@ impl NurturingStore {
 
     async fn store_offering_manifest(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         manifest: &MemoriesOfferingManifest,
     ) -> Result<()> {
         let json = serde_json::to_string_pretty(manifest)
@@ -656,7 +656,6 @@ fn memories_rel_path(object_key: &str) -> PathBuf {
     Path::new(paths::STORAGE_MEMORIES_DIR).join(object_key)
 }
 
-#[async_trait::async_trait]
 impl crate::domain::traits::NurturingStoreOps for NurturingStore {
     async fn load_index(&self) -> Result<NurturingIndex> {
         NurturingStore::load_index(self).await
@@ -692,7 +691,7 @@ impl crate::domain::traits::NurturingStoreOps for NurturingStore {
     async fn replicate_to_seed_bank(
         &self,
         offering_id: &str,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
         storage_name: &str,
         stone_id: &str,
@@ -712,7 +711,7 @@ impl crate::domain::traits::NurturingStoreOps for NurturingStore {
 
     async fn list_remote_snapshots(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
     ) -> Result<RemoteNurturingIndex> {
         NurturingStore::list_remote_snapshots(self, store, seed_bank_id).await
@@ -720,7 +719,7 @@ impl crate::domain::traits::NurturingStoreOps for NurturingStore {
 
     async fn restore_from_seed_bank(
         &self,
-        store: &dyn crate::domain::traits::ContentStoreOps,
+        store: &(impl crate::domain::traits::ContentStoreOps + ?Sized),
         seed_bank_id: &str,
         offering_id: &str,
         harvest_id: Option<&str>,

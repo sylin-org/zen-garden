@@ -4,8 +4,8 @@
 //! volume scanning, disk usage, mount/unmount, device probing.
 
 use anyhow::Result;
-use async_trait::async_trait;
 use garden_common::storage::{DeviceState, StorageManifest};
+use std::future::Future;
 
 use crate::domain::storage::{DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot};
 
@@ -13,7 +13,6 @@ use crate::domain::storage::{DiskUsage, MediumSnapshot, UnmountedDevice, VolumeS
 ///
 /// Domain code depends on this trait; the infra layer implements it
 /// by delegating to platform-specific syscalls and commands.
-#[async_trait]
 pub trait StoragePlatform: Send + Sync {
     // ---- Sync queries (cheap, no spawning required) ----
 
@@ -57,11 +56,18 @@ pub trait StoragePlatform: Send + Sync {
     // ---- Async operations (I/O, process spawning) ----
 
     /// Temp-mount a device, read manifest, unmount.
-    async fn probe_device_manifest(&self, device: &str) -> Result<Option<StorageManifest>>;
+    fn probe_device_manifest(
+        &self,
+        device: &str,
+    ) -> impl Future<Output = Result<Option<StorageManifest>>> + Send;
 
     /// Lazy unmount — detach filesystem immediately.
-    async fn unmount_lazy(&self, path: &str) -> Result<()>;
+    fn unmount_lazy(&self, path: &str) -> impl Future<Output = Result<()>> + Send;
 
     /// Mount a block device at the given path.
-    async fn mount_device(&self, device: &str, mount_path: &str) -> Result<()>;
+    fn mount_device(
+        &self,
+        device: &str,
+        mount_path: &str,
+    ) -> impl Future<Output = Result<()>> + Send;
 }

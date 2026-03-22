@@ -332,7 +332,7 @@ fn default_true() -> bool {
 impl StorageInfo {
     /// Create a new StorageInfo with all required fields.
     /// Deprecated backward-compat fields are set to None internally.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         name: String,

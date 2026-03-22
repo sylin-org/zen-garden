@@ -4,7 +4,6 @@
 
 use crate::domain::traits::ServiceRuntime;
 use anyhow::Result;
-use async_trait::async_trait;
 use chrono::Utc;
 use garden_common::events::{DomainEvent, EventBus, ServiceEvent};
 use garden_common::traits::job_executor::{JobExecutionError, JobExecutor, JobResult};
@@ -12,16 +11,16 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// Service manager handles service lifecycle
-pub struct ServiceLifecycle {
-    container_runtime: Arc<dyn ServiceRuntime>,
+pub struct ServiceLifecycle<R: ServiceRuntime = crate::infra::container::ContainerRuntime> {
+    container_runtime: Arc<R>,
     event_bus: Arc<EventBus>,
     stone: String,
 }
 
-impl ServiceLifecycle {
+impl<R: ServiceRuntime> ServiceLifecycle<R> {
     /// Create a new service manager
     pub fn new(
-        container_runtime: Arc<dyn ServiceRuntime>,
+        container_runtime: Arc<R>,
         event_bus: Arc<EventBus>,
         stone: String,
     ) -> Self {
@@ -95,48 +94,53 @@ impl ServiceLifecycle {
 /// Install service job executor
 ///
 /// Handles long-running service installation as background job
-pub struct InstallServiceExecutor {
-    _service_manager: Arc<ServiceLifecycle>,
+pub struct InstallServiceExecutor<R: ServiceRuntime = crate::infra::container::ContainerRuntime> {
+    _service_manager: Arc<ServiceLifecycle<R>>,
 }
 
-impl InstallServiceExecutor {
-    pub fn new(service_manager: Arc<ServiceLifecycle>) -> Self {
+impl<R: ServiceRuntime> InstallServiceExecutor<R> {
+    pub fn new(service_manager: Arc<ServiceLifecycle<R>>) -> Self {
         Self {
             _service_manager: service_manager,
         }
     }
 }
 
-#[async_trait]
-impl JobExecutor for InstallServiceExecutor {
+impl<R: ServiceRuntime + 'static> JobExecutor for InstallServiceExecutor<R> {
     fn job_type(&self) -> &str {
         "install-service"
     }
 
-    async fn execute(&self, job_id: &str, input: Value) -> Result<JobResult, JobExecutionError> {
-        let service_name = input
-            .get("service_name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| JobExecutionError::InvalidInput("Missing service_name".into()))?;
+    fn execute<'a>(
+        &'a self,
+        job_id: &'a str,
+        input: Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<JobResult, JobExecutionError>> + Send + 'a>> {
+        Box::pin(async move {
+            let service_name = input
+                .get("service_name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| JobExecutionError::InvalidInput("Missing service_name".into()))?;
 
-        let offering = input
-            .get("offering")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| JobExecutionError::InvalidInput("Missing offering".into()))?;
+            let offering = input
+                .get("offering")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| JobExecutionError::InvalidInput("Missing offering".into()))?;
 
-        tracing::info!(
-            job_id,
-            service_name,
-            offering,
-            "Starting service installation"
-        );
+            tracing::info!(
+                job_id,
+                service_name,
+                offering,
+                "Starting service installation"
+            );
 
-        // TODO: Implement full installation logic
-        // For now, return success
-        Ok(JobResult::success(format!(
-            "Service {} installed successfully",
-            service_name
-        )))
+            // TODO: Implement full installation logic
+            // For now, return success
+            Ok(JobResult::success(format!(
+                "Service {} installed successfully",
+                service_name
+            )))
+        })
     }
 
     fn validate_input(&self, input: &Value) -> Result<(), JobExecutionError> {

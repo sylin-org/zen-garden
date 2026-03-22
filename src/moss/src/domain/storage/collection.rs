@@ -42,10 +42,10 @@ pub fn new_volumes() -> Volumes {
 /// When a device reappears at a different path (e.g., `/dev/sdb1` → `/dev/sdc1`),
 /// the old entry is removed and replaced by the new one, preserving the management
 /// state by matching on the manifest ID (GUIDv7) instead of the device path.
-pub async fn reconcile(
+pub async fn reconcile<S: ManagementStoreOps + 'static>(
     volumes: &Volumes,
     snapshots: &[VolumeSnapshot],
-    make_store: &(dyn Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync),
+    make_store: &(dyn Fn(PathBuf) -> Arc<S> + Send + Sync),
 ) {
     let current_paths: std::collections::HashSet<&str> =
         snapshots.iter().map(|s| s.path.as_str()).collect();
@@ -118,17 +118,16 @@ pub async fn reconcile(
         .collect();
 
     for path in departed {
-        if let Some(vol) = map.get_mut(&path) {
-            if vol.state != VolumeState::Offline {
+        if let Some(vol) = map.get_mut(&path)
+            && vol.state != VolumeState::Offline {
                 info!(path = %path, name = %vol.display_name(), "Volume went offline");
                 vol.state = VolumeState::Offline;
             }
-        }
     }
 }
 
 /// Probe health on all volumes. Offline volumes are skipped by [`Volume::probe_health`].
-pub async fn health_tick_all(volumes: &Volumes, platform: &dyn StoragePlatform) {
+pub async fn health_tick_all(volumes: &Volumes, platform: &(impl StoragePlatform + ?Sized)) {
     let mut map = volumes.write().await;
     for vol in map.values_mut() {
         vol.probe_health(platform);
@@ -136,10 +135,10 @@ pub async fn health_tick_all(volumes: &Volumes, platform: &dyn StoragePlatform) 
 }
 
 /// Initial scan: enumerate OS volumes, classify, populate the map.
-pub async fn initial_scan(
+pub async fn initial_scan<P: StoragePlatform + 'static, S: ManagementStoreOps + 'static>(
     volumes: &Volumes,
-    platform: Arc<dyn StoragePlatform>,
-    make_store: &(dyn Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync),
+    platform: Arc<P>,
+    make_store: &(dyn Fn(PathBuf) -> Arc<S> + Send + Sync),
 ) {
     let p = platform.clone();
     let snapshots = match tokio::task::spawn_blocking(move || p.scan_volumes()).await {
@@ -159,7 +158,7 @@ pub async fn initial_scan(
     reconcile(volumes, &snapshots, make_store).await;
 
     // Probe disk usage for all volumes
-    health_tick_all(volumes, &*platform).await;
+    health_tick_all(volumes, platform.as_ref()).await;
 
     let map = volumes.read().await;
     let managed = map.values().filter(|v| v.is_managed()).count();
@@ -263,29 +262,10 @@ pub async fn name_id_pairs(volumes: &Volumes) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::traits::ManagementStoreOps;
+    use crate::infra::storage::ContentStore;
 
-    /// Noop management store for tests (volumes have no manifest, so classify is a no-op).
-    struct NoopManagementStore;
-
-    #[async_trait::async_trait]
-    impl ManagementStoreOps for NoopManagementStore {
-        async fn read_pin(&self) -> Option<String> {
-            None
-        }
-        async fn write_pin(&self, _pin_id: &str) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn delete_pin(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn snapshot_lkg(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn test_store_factory() -> impl Fn(PathBuf) -> Arc<dyn ManagementStoreOps> {
-        |_path| Arc::new(NoopManagementStore)
+    fn test_store_factory() -> impl Fn(PathBuf) -> Arc<ContentStore> {
+        |path| Arc::new(ContentStore::new(path, None))
     }
 
     fn make_snapshot(path: &str, mount: &str, removable: bool) -> VolumeSnapshot {

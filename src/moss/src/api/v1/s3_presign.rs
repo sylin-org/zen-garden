@@ -14,7 +14,7 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::Response,
+    response::{IntoResponse, Response},
     Json,
 };
 use hmac::{Hmac, Mac};
@@ -107,11 +107,7 @@ pub async fn generate_presigned_url(
         expires_at: expires_at.to_rfc3339(),
     };
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(serde_json::to_string(&resp).unwrap().into())
-        .unwrap()
+    (StatusCode::OK, Json(resp)).into_response()
 }
 
 /// Validate a presigned token on an incoming S3 request.
@@ -139,6 +135,30 @@ pub fn validate_presign_token(
     Ok(())
 }
 
+/// Resolve pond-or-stone key material for cryptographic derivation.
+///
+/// Two-tier:
+/// - **Pond active + CA fingerprint available**: CA fingerprint (garden-scoped,
+///   portable across stones in the pond).
+/// - **Fallback**: stone_id (stone-scoped).
+///
+/// Used by both presigned URL generation and S3 credential derivation.
+pub(crate) async fn resolve_key_material(state: &AppState) -> String {
+    if state.security.pond.active.load(Ordering::Relaxed)
+        && let Ok(handle) = state.discovery.koi.certmesh()
+            && let Ok(core) = handle.core() {
+                let status = core.certmesh_status().await;
+                if let Some(ref fp) = status.ca_fingerprint
+                    && !fp.is_empty() {
+                        debug!("Key material: pond CA fingerprint (garden-scoped)");
+                        return fp.clone();
+                    }
+            }
+
+    debug!("Key material: stone_id (stone-scoped)");
+    state.current.stone.id.clone()
+}
+
 /// Derive the HMAC secret for presigned URLs from AppState.
 ///
 /// Two-tier:
@@ -146,24 +166,8 @@ pub fn validate_presign_token(
 ///   Presigned URLs are portable across all stones in the pond.
 /// - **Fallback**: stone-scoped secret from stone_id.
 pub async fn derive_presign_secret(state: &AppState) -> Vec<u8> {
-    // Try pond CA fingerprint first
-    if state.security.pond.active.load(Ordering::Relaxed) {
-        if let Ok(handle) = state.discovery.koi.certmesh() {
-            if let Ok(core) = handle.core() {
-                let status = core.certmesh_status().await;
-                if let Some(ref fp) = status.ca_fingerprint {
-                    if !fp.is_empty() {
-                        debug!("Presign secret: pond CA fingerprint (garden-scoped)");
-                        return derive_secret_from_material(fp);
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback: stone_id
-    debug!("Presign secret: stone_id (stone-scoped)");
-    derive_secret_from_material(&state.current.stone.id)
+    let material = resolve_key_material(state).await;
+    derive_secret_from_material(&material)
 }
 
 /// Derive HMAC secret from arbitrary key material.

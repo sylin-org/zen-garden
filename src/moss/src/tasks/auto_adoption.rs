@@ -57,7 +57,7 @@ use tokio_util::sync::CancellationToken;
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
-    let detector: std::sync::Arc<dyn crate::domain::traits::ServiceDetector> = std::sync::Arc::new(
+    let detector = std::sync::Arc::new(
         crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
     );
     let orchestrator = DetectionOrchestrator::new(detector.clone());

@@ -3,7 +3,7 @@
 //! Handles server binding, graceful shutdown, and error handling.
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use crate::domain::traits::CompanionOps;
+use crate::infra::companions::CompanionRegistry;
 use axum::Router;
 use garden_common::console::{
     BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo,
@@ -123,7 +123,7 @@ pub type ShutdownCallback = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> 
 /// 5. Topology flush, sd_notify STOPPING, process::exit(0)
 ///
 /// Admin/deploy shutdowns call `shutdown_token.cancel()` directly — same cascade.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn run(
     listener: TcpListener,
     app: Router,
@@ -135,7 +135,7 @@ pub async fn run(
     shutdown_callback: Option<ShutdownCallback>,
     boot_banner: Option<BootBannerInfo>,
     shutdown_banner: Option<ShutdownBannerInfo>,
-    companion_registry: Option<Arc<dyn CompanionOps>>,
+    companion_registry: Option<Arc<CompanionRegistry>>,
 ) -> anyhow::Result<()> {
     let addr = listener.local_addr()?;
 

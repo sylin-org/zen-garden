@@ -138,27 +138,41 @@ mod tests {
         // Should return false when var not set
         assert!(!has_var("NONEXISTENT_VAR_12345"));
 
-        // Set a test var and verify
-        env::set_var("TEST_VAR_12345", "value");
+        // SAFETY: Test-only; no concurrent env var access in this test.
+        unsafe {
+            env::set_var("TEST_VAR_12345", "value");
+        }
         assert!(has_var("TEST_VAR_12345"));
-        env::remove_var("TEST_VAR_12345");
+        unsafe {
+            env::remove_var("TEST_VAR_12345");
+        }
     }
 
     #[test]
     fn test_env_config_flags() {
-        // Test is_no_color with NO_COLOR
-        env::set_var(keys::NO_COLOR, "1");
+        // SAFETY: Test-only; no concurrent env var access in this test.
+        unsafe {
+            env::set_var(keys::NO_COLOR, "1");
+        }
         assert!(EnvConfig::is_no_color());
-        env::remove_var(keys::NO_COLOR);
+        unsafe {
+            env::remove_var(keys::NO_COLOR);
+        }
 
-        // Test is_no_color with GARDEN_NO_COLOR
-        env::set_var(keys::GARDEN_NO_COLOR, "1");
+        unsafe {
+            env::set_var(keys::GARDEN_NO_COLOR, "1");
+        }
         assert!(EnvConfig::is_no_color());
-        env::remove_var(keys::GARDEN_NO_COLOR);
+        unsafe {
+            env::remove_var(keys::GARDEN_NO_COLOR);
+        }
 
-        // Test other flags
-        env::set_var(keys::GARDEN_QUIET, "1");
+        unsafe {
+            env::set_var(keys::GARDEN_QUIET, "1");
+        }
         assert!(EnvConfig::is_quiet());
-        env::remove_var(keys::GARDEN_QUIET);
+        unsafe {
+            env::remove_var(keys::GARDEN_QUIET);
+        }
     }
 }

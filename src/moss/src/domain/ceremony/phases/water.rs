@@ -3,6 +3,7 @@
 //! Starts the newly created container and waits for it to become healthy.
 //! If health check fails and auto_rollback is enabled, restores from harvest.
 
+use crate::domain::traits::HarvestOps;
 use crate::AppState;
 use anyhow::{Context, Result};
 use std::time::Duration;

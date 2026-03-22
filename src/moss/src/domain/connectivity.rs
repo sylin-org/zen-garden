@@ -20,8 +20,9 @@ use crate::domain::traits::ServiceDetector;
 use garden_common::detection::{detect_by_http_probe, DetectionResult};
 
 /// Connectivity orchestration with caching and enforcement cooldowns
-pub struct ConnectivityOrchestrator {
-    detector: Arc<dyn ServiceDetector>,
+pub struct ConnectivityOrchestrator<D: ServiceDetector = crate::infra::detection::ContainerDetector>
+{
+    detector: Arc<D>,
     cache: Arc<DashMap<String, CachedCheck>>,
     last_enforced: Arc<DashMap<String, Instant>>,
     attempts: Arc<DashMap<String, EnforceState>>,
@@ -93,8 +94,8 @@ impl ConnectivityOutcome {
     }
 }
 
-impl ConnectivityOrchestrator {
-    pub fn new(detector: Arc<dyn ServiceDetector>) -> Self {
+impl<D: ServiceDetector> ConnectivityOrchestrator<D> {
+    pub fn new(detector: Arc<D>) -> Self {
         Self {
             detector,
             cache: Arc::new(DashMap::new()),
@@ -235,14 +236,13 @@ impl ConnectivityOrchestrator {
     ) -> Result<CheckResult> {
         for (idx, rule) in rules.checks.iter().enumerate() {
             let cache_key = format!("{}:{}:{}", offering, context.os, idx);
-            if let Some(cached) = self.cache.get(&cache_key) {
-                if cached.cached_at.elapsed() < cached.ttl {
+            if let Some(cached) = self.cache.get(&cache_key)
+                && cached.cached_at.elapsed() < cached.ttl {
                     if !cached.ok {
                         return Ok(CheckResult::failed(cached.details.clone()));
                     }
                     continue;
                 }
-            }
 
             let result = self.execute_check(rule, context).await?;
 

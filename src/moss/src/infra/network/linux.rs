@@ -23,7 +23,9 @@
 
 use super::{NetworkPlatform, StaticIpApply};
 use crate::domain::NetworkError;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 
 /// ifupdown config directory
 const IFUPDOWN_CONFIG_DIR: &str = "/etc/network/interfaces.d";
@@ -83,7 +85,6 @@ pub fn detect_linux_platform() -> Option<Box<dyn NetworkPlatform>> {
 /// Uses ifdown/ifup to apply changes. Standard on Debian systems.
 pub struct LinuxIfupdown;
 
-#[async_trait::async_trait]
 impl NetworkPlatform for LinuxIfupdown {
     fn name(&self) -> &'static str {
         "ifupdown"
@@ -95,151 +96,170 @@ impl NetworkPlatform for LinuxIfupdown {
             && std::path::Path::new(IFUPDOWN_CONFIG_DIR).exists()
     }
 
-    async fn apply_static(&self, config: &StaticIpApply) -> Result<(), NetworkError> {
-        // Step 1: Write config file for persistence (on next boot)
-        let cfg_content = generate_ifupdown_config(config);
-        let temp_path = "/tmp/zen-garden-network-config.tmp";
-        tokio::fs::write(temp_path, &cfg_content)
-            .await
-            .map_err(|e| {
-                NetworkError::ApplyFailed(format!("Failed to write temp config: {}", e))
-            })?;
+    fn apply_static<'a>(
+        &'a self,
+        config: &'a StaticIpApply,
+    ) -> Pin<Box<dyn Future<Output = Result<(), NetworkError>> + Send + 'a>> {
+        Box::pin(async move {
+            // Step 1: Write config file for persistence (on next boot)
+            let cfg_content = generate_ifupdown_config(config);
+            let temp_path = "/tmp/zen-garden-network-config.tmp";
+            tokio::fs::write(temp_path, &cfg_content)
+                .await
+                .map_err(|e| {
+                    NetworkError::ApplyFailed(format!("Failed to write temp config: {}", e))
+                })?;
 
-        let output = tokio::process::Command::new("sudo")
-            .args(["cp", temp_path, IFUPDOWN_CONFIG_FILE])
-            .output()
-            .await
-            .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e)))?;
-
-        let _ = tokio::fs::remove_file(temp_path).await;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NetworkError::ApplyFailed(format!(
-                "sudo cp to {} failed: {}",
-                IFUPDOWN_CONFIG_FILE, stderr
-            )));
-        }
-
-        tracing::debug!(path = IFUPDOWN_CONFIG_FILE, "Wrote ifupdown config file");
-
-        // Step 2: Add static IP as SECONDARY address (keeps DHCP as fallback)
-        //
-        // IMPORTANT: We do NOT stop dhcpcd or flush existing addresses.
-        // This ensures the stone remains reachable via DHCP if the static IP
-        // has a conflict or other issue. Both IPs work simultaneously.
-        //
-        // The config file (Step 1) ensures persistence across reboots.
-
-        // Add static IP as secondary address
-        let addr_cidr = format!("{}/{}", config.address, config.prefix_length);
-        let output = tokio::process::Command::new("sudo")
-            .args(["ip", "addr", "add", &addr_cidr, "dev", &config.interface])
-            .output()
-            .await
-            .map_err(|e| NetworkError::ApplyFailed(format!("Failed to add address: {}", e)))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // RTNETLINK answers: File exists is OK - address already there
-            if !stderr.contains("File exists") {
-                return Err(NetworkError::ApplyFailed(format!(
-                    "ip addr add {} failed: {}",
-                    addr_cidr, stderr
-                )));
-            }
-        }
-
-        // Ensure interface is up
-        let _ = tokio::process::Command::new("sudo")
-            .args(["ip", "link", "set", &config.interface, "up"])
-            .output()
-            .await;
-
-        // Step 3: Routes and DNS
-        //
-        // We do NOT modify routes or DNS at runtime - DHCP's settings remain active.
-        // This keeps the stone fully reachable. The config file (Step 1) ensures
-        // the full static configuration (including gateway/DNS) applies on reboot.
-        //
-        // For offerings like Pi-hole that need specific DNS behavior, they manage
-        // their own DNS configuration after deployment.
-
-        tracing::info!(
-            interface = %config.interface,
-            address = %config.address,
-            dhcp_preserved = true,
-            "Static IP added as secondary address (DHCP preserved as fallback)"
-        );
-
-        Ok(())
-    }
-
-    async fn apply_dhcp(&self, interface: &str) -> Result<(), NetworkError> {
-        // Step 1: Read our config file to get the static IP before removing it
-        let config_path = PathBuf::from(IFUPDOWN_CONFIG_FILE);
-        let mut static_ip_to_remove: Option<String> = None;
-
-        if config_path.exists() {
-            // Try to parse the static IP from our config file
-            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                // Look for "address X.X.X.X/Y" line
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("address ") {
-                        static_ip_to_remove =
-                            Some(trimmed.trim_start_matches("address ").to_string());
-                        break;
-                    }
-                }
-            }
-
-            // Remove the config file
             let output = tokio::process::Command::new("sudo")
-                .args(["rm", "-f", IFUPDOWN_CONFIG_FILE])
+                .args(["cp", temp_path, IFUPDOWN_CONFIG_FILE])
                 .output()
                 .await
-                .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e)))?;
+                .map_err(|e| {
+                    NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e))
+                })?;
+
+            let _ = tokio::fs::remove_file(temp_path).await;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(NetworkError::ApplyFailed(format!(
-                    "sudo rm {} failed: {}",
+                    "sudo cp to {} failed: {}",
                     IFUPDOWN_CONFIG_FILE, stderr
                 )));
             }
 
-            tracing::debug!(path = IFUPDOWN_CONFIG_FILE, "Removed static IP config file");
-        }
+            tracing::debug!(path = IFUPDOWN_CONFIG_FILE, "Wrote ifupdown config file");
 
-        // Step 2: Remove only the specific static IP we added (not the DHCP address)
-        if let Some(addr) = static_ip_to_remove {
+            // Step 2: Add static IP as SECONDARY address (keeps DHCP as fallback)
+            //
+            // IMPORTANT: We do NOT stop dhcpcd or flush existing addresses.
+            // This ensures the stone remains reachable via DHCP if the static IP
+            // has a conflict or other issue. Both IPs work simultaneously.
+            //
+            // The config file (Step 1) ensures persistence across reboots.
+
+            // Add static IP as secondary address
+            let addr_cidr = format!("{}/{}", config.address, config.prefix_length);
             let output = tokio::process::Command::new("sudo")
-                .args(["ip", "addr", "del", &addr, "dev", interface])
+                .args(["ip", "addr", "add", &addr_cidr, "dev", &config.interface])
+                .output()
+                .await
+                .map_err(|e| {
+                    NetworkError::ApplyFailed(format!("Failed to add address: {}", e))
+                })?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // RTNETLINK answers: File exists is OK - address already there
+                if !stderr.contains("File exists") {
+                    return Err(NetworkError::ApplyFailed(format!(
+                        "ip addr add {} failed: {}",
+                        addr_cidr, stderr
+                    )));
+                }
+            }
+
+            // Ensure interface is up
+            let _ = tokio::process::Command::new("sudo")
+                .args(["ip", "link", "set", &config.interface, "up"])
                 .output()
                 .await;
 
-            match output {
-                Ok(o) if o.status.success() => {
-                    tracing::debug!(address = %addr, interface = %interface, "Removed static IP");
-                }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    // "Cannot assign requested address" means IP wasn't there - that's OK
-                    if !stderr.contains("Cannot assign") {
-                        tracing::warn!(address = %addr, error = %stderr, "Failed to remove static IP");
+            // Step 3: Routes and DNS
+            //
+            // We do NOT modify routes or DNS at runtime - DHCP's settings remain active.
+            // This keeps the stone fully reachable. The config file (Step 1) ensures
+            // the full static configuration (including gateway/DNS) applies on reboot.
+            //
+            // For offerings like Pi-hole that need specific DNS behavior, they manage
+            // their own DNS configuration after deployment.
+
+            tracing::info!(
+                interface = %config.interface,
+                address = %config.address,
+                dhcp_preserved = true,
+                "Static IP added as secondary address (DHCP preserved as fallback)"
+            );
+
+            Ok(())
+        })
+    }
+
+    fn apply_dhcp<'a>(
+        &'a self,
+        interface: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), NetworkError>> + Send + 'a>> {
+        Box::pin(async move {
+            // Step 1: Read our config file to get the static IP before removing it
+            let config_path = PathBuf::from(IFUPDOWN_CONFIG_FILE);
+            let mut static_ip_to_remove: Option<String> = None;
+
+            if config_path.exists() {
+                // Try to parse the static IP from our config file
+                if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+                    // Look for "address X.X.X.X/Y" line
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("address ") {
+                            static_ip_to_remove =
+                                Some(trimmed.trim_start_matches("address ").to_string());
+                            break;
+                        }
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(address = %addr, error = %e, "Failed to run ip addr del");
+
+                // Remove the config file
+                let output = tokio::process::Command::new("sudo")
+                    .args(["rm", "-f", IFUPDOWN_CONFIG_FILE])
+                    .output()
+                    .await
+                    .map_err(|e| {
+                        NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e))
+                    })?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(NetworkError::ApplyFailed(format!(
+                        "sudo rm {} failed: {}",
+                        IFUPDOWN_CONFIG_FILE, stderr
+                    )));
+                }
+
+                tracing::debug!(
+                    path = IFUPDOWN_CONFIG_FILE,
+                    "Removed static IP config file"
+                );
+            }
+
+            // Step 2: Remove only the specific static IP we added (not the DHCP address)
+            if let Some(addr) = static_ip_to_remove {
+                let output = tokio::process::Command::new("sudo")
+                    .args(["ip", "addr", "del", &addr, "dev", interface])
+                    .output()
+                    .await;
+
+                match output {
+                    Ok(o) if o.status.success() => {
+                        tracing::debug!(address = %addr, interface = %interface, "Removed static IP");
+                    }
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        // "Cannot assign requested address" means IP wasn't there - that's OK
+                        if !stderr.contains("Cannot assign") {
+                            tracing::warn!(address = %addr, error = %stderr, "Failed to remove static IP");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(address = %addr, error = %e, "Failed to run ip addr del");
+                    }
                 }
             }
-        }
 
-        // DHCP is still running (we never stopped it), so no need to restart dhcpcd
-        tracing::info!(interface = %interface, "Reverted to DHCP-only (static IP removed)");
+            // DHCP is still running (we never stopped it), so no need to restart dhcpcd
+            tracing::info!(interface = %interface, "Reverted to DHCP-only (static IP removed)");
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -281,7 +301,6 @@ iface {interface} inet static
 /// Uses high priority (99) to override any DHCP configuration.
 pub struct LinuxNetplan;
 
-#[async_trait::async_trait]
 impl NetworkPlatform for LinuxNetplan {
     fn name(&self) -> &'static str {
         "netplan"
@@ -291,90 +310,46 @@ impl NetworkPlatform for LinuxNetplan {
         std::path::Path::new(NETPLAN_BINARY).exists()
     }
 
-    async fn apply_static(&self, config: &StaticIpApply) -> Result<(), NetworkError> {
-        // Generate netplan YAML
-        let yaml = generate_netplan_yaml(config);
+    fn apply_static<'a>(
+        &'a self,
+        config: &'a StaticIpApply,
+    ) -> Pin<Box<dyn Future<Output = Result<(), NetworkError>> + Send + 'a>> {
+        Box::pin(async move {
+            // Generate netplan YAML
+            let yaml = generate_netplan_yaml(config);
 
-        // Write to temp file first, then sudo cp to final location
-        let temp_path = "/tmp/zen-garden-netplan-config.tmp";
-        tokio::fs::write(temp_path, &yaml).await.map_err(|e| {
-            NetworkError::ApplyFailed(format!("Failed to write temp netplan config: {}", e))
-        })?;
-
-        // Copy to final location via sudo
-        let output = tokio::process::Command::new("sudo")
-            .args(["cp", temp_path, NETPLAN_CONFIG_PATH])
-            .output()
-            .await
-            .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e)))?;
-
-        // Clean up temp file
-        let _ = tokio::fs::remove_file(temp_path).await;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NetworkError::ApplyFailed(format!(
-                "sudo cp to {} failed: {}",
-                NETPLAN_CONFIG_PATH, stderr
-            )));
-        }
-
-        tracing::debug!(
-            path = NETPLAN_CONFIG_PATH,
-            "Wrote netplan config file via sudo cp"
-        );
-
-        // Apply configuration via sudo
-        let output = tokio::process::Command::new("sudo")
-            .args([NETPLAN_BINARY, "apply"])
-            .output()
-            .await
-            .map_err(|e| {
-                NetworkError::ApplyFailed(format!("Failed to run sudo netplan apply: {}", e))
+            // Write to temp file first, then sudo cp to final location
+            let temp_path = "/tmp/zen-garden-netplan-config.tmp";
+            tokio::fs::write(temp_path, &yaml).await.map_err(|e| {
+                NetworkError::ApplyFailed(format!("Failed to write temp netplan config: {}", e))
             })?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NetworkError::ApplyFailed(format!(
-                "netplan apply failed: {}",
-                stderr
-            )));
-        }
-
-        tracing::info!(
-            interface = %config.interface,
-            address = %config.address,
-            "netplan configuration applied"
-        );
-
-        Ok(())
-    }
-
-    async fn apply_dhcp(&self, interface: &str) -> Result<(), NetworkError> {
-        let config_path = PathBuf::from(NETPLAN_CONFIG_PATH);
-
-        // Remove our config file if it exists (via sudo since we run as non-root)
-        if config_path.exists() {
+            // Copy to final location via sudo
             let output = tokio::process::Command::new("sudo")
-                .args(["rm", "-f", NETPLAN_CONFIG_PATH])
+                .args(["cp", temp_path, NETPLAN_CONFIG_PATH])
                 .output()
                 .await
-                .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e)))?;
+                .map_err(|e| {
+                    NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e))
+                })?;
+
+            // Clean up temp file
+            let _ = tokio::fs::remove_file(temp_path).await;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(NetworkError::ApplyFailed(format!(
-                    "sudo rm {} failed: {}",
+                    "sudo cp to {} failed: {}",
                     NETPLAN_CONFIG_PATH, stderr
                 )));
             }
 
             tracing::debug!(
                 path = NETPLAN_CONFIG_PATH,
-                "Removed netplan config file via sudo"
+                "Wrote netplan config file via sudo cp"
             );
 
-            // Apply to revert to DHCP (underlying config should have DHCP)
+            // Apply configuration via sudo
             let output = tokio::process::Command::new("sudo")
                 .args([NETPLAN_BINARY, "apply"])
                 .output()
@@ -390,11 +365,72 @@ impl NetworkPlatform for LinuxNetplan {
                     stderr
                 )));
             }
-        }
 
-        tracing::info!(interface = %interface, "Reverted to DHCP via netplan");
+            tracing::info!(
+                interface = %config.interface,
+                address = %config.address,
+                "netplan configuration applied"
+            );
 
-        Ok(())
+            Ok(())
+        })
+    }
+
+    fn apply_dhcp<'a>(
+        &'a self,
+        interface: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), NetworkError>> + Send + 'a>> {
+        Box::pin(async move {
+            let config_path = PathBuf::from(NETPLAN_CONFIG_PATH);
+
+            // Remove our config file if it exists (via sudo since we run as non-root)
+            if config_path.exists() {
+                let output = tokio::process::Command::new("sudo")
+                    .args(["rm", "-f", NETPLAN_CONFIG_PATH])
+                    .output()
+                    .await
+                    .map_err(|e| {
+                        NetworkError::ApplyFailed(format!("Failed to run sudo rm: {}", e))
+                    })?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(NetworkError::ApplyFailed(format!(
+                        "sudo rm {} failed: {}",
+                        NETPLAN_CONFIG_PATH, stderr
+                    )));
+                }
+
+                tracing::debug!(
+                    path = NETPLAN_CONFIG_PATH,
+                    "Removed netplan config file via sudo"
+                );
+
+                // Apply to revert to DHCP (underlying config should have DHCP)
+                let output = tokio::process::Command::new("sudo")
+                    .args([NETPLAN_BINARY, "apply"])
+                    .output()
+                    .await
+                    .map_err(|e| {
+                        NetworkError::ApplyFailed(format!(
+                            "Failed to run sudo netplan apply: {}",
+                            e
+                        ))
+                    })?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(NetworkError::ApplyFailed(format!(
+                        "netplan apply failed: {}",
+                        stderr
+                    )));
+                }
+            }
+
+            tracing::info!(interface = %interface, "Reverted to DHCP via netplan");
+
+            Ok(())
+        })
     }
 }
 
@@ -443,7 +479,6 @@ network:
 /// This is a stub implementation for Phase 4.
 pub struct LinuxNetwork;
 
-#[async_trait::async_trait]
 impl NetworkPlatform for LinuxNetwork {
     fn name(&self) -> &'static str {
         "NetworkManager"
@@ -453,30 +488,40 @@ impl NetworkPlatform for LinuxNetwork {
         std::path::Path::new(NMCLI_BINARY).exists()
     }
 
-    async fn apply_static(&self, config: &StaticIpApply) -> Result<(), NetworkError> {
-        // Phase 4 implementation
-        // nmcli connection modify "Wired connection 1" ipv4.method manual ipv4.addresses "192.168.1.100/24" ipv4.gateway "192.168.1.1" ipv4.dns "8.8.8.8"
-        // nmcli connection up "Wired connection 1"
+    fn apply_static<'a>(
+        &'a self,
+        config: &'a StaticIpApply,
+    ) -> Pin<Box<dyn Future<Output = Result<(), NetworkError>> + Send + 'a>> {
+        Box::pin(async move {
+            // Phase 4 implementation
+            // nmcli connection modify "Wired connection 1" ipv4.method manual ipv4.addresses "192.168.1.100/24" ipv4.gateway "192.168.1.1" ipv4.dns "8.8.8.8"
+            // nmcli connection up "Wired connection 1"
 
-        tracing::warn!(
-            interface = %config.interface,
-            "NetworkManager static IP not yet implemented (Phase 4)"
-        );
+            tracing::warn!(
+                interface = %config.interface,
+                "NetworkManager static IP not yet implemented (Phase 4)"
+            );
 
-        Err(NetworkError::PlatformNotSupported(
-            "NetworkManager support coming in Phase 4".to_string(),
-        ))
+            Err(NetworkError::PlatformNotSupported(
+                "NetworkManager support coming in Phase 4".to_string(),
+            ))
+        })
     }
 
-    async fn apply_dhcp(&self, interface: &str) -> Result<(), NetworkError> {
-        tracing::warn!(
-            interface = %interface,
-            "NetworkManager DHCP revert not yet implemented (Phase 4)"
-        );
+    fn apply_dhcp<'a>(
+        &'a self,
+        interface: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), NetworkError>> + Send + 'a>> {
+        Box::pin(async move {
+            tracing::warn!(
+                interface = %interface,
+                "NetworkManager DHCP revert not yet implemented (Phase 4)"
+            );
 
-        Err(NetworkError::PlatformNotSupported(
-            "NetworkManager support coming in Phase 4".to_string(),
-        ))
+            Err(NetworkError::PlatformNotSupported(
+                "NetworkManager support coming in Phase 4".to_string(),
+            ))
+        })
     }
 }
 

@@ -1,67 +1,69 @@
 //! Companion registry operations trait.
 
 use anyhow::Result;
-use async_trait::async_trait;
 use garden_common::command_manifest::CommandManifest;
+use std::future::Future;
 
 /// Companion registry operations.
 ///
 /// The domain layer holds `Arc<dyn CompanionOps>` so it never depends
 /// on the concrete `CompanionRegistry` in infra. API and task code
 /// accesses companions through this trait.
-#[async_trait]
 pub trait CompanionOps: Send + Sync {
     // ── Discovery & Registration ─────────────────────────────────────
 
     /// Scan companion directory and auto-start enabled companions.
-    async fn scan_and_autostart(&self, moss_endpoint: &str) -> Result<(usize, usize)>;
+    fn scan_and_autostart(
+        &self,
+        moss_endpoint: &str,
+    ) -> impl Future<Output = Result<(usize, usize)>> + Send;
 
     /// Rescan companion directory (clear and rebuild).
-    async fn refresh_all(&self) -> Result<usize>;
+    fn refresh_all(&self) -> impl Future<Output = Result<usize>> + Send;
 
     // ── Query ────────────────────────────────────────────────────────
 
     /// List all registered companions (id, manifest, running state).
-    async fn list(&self) -> Vec<CompanionInfo>;
+    fn list(&self) -> impl Future<Output = Vec<CompanionInfo>> + Send;
 
     /// Get a companion by ID.
-    async fn get(&self, id: &str) -> Option<CompanionInfo>;
+    fn get(&self, id: &str) -> impl Future<Output = Option<CompanionInfo>> + Send;
 
     /// Get a companion's command manifest.
-    async fn get_manifest(&self, id: &str) -> Option<CommandManifest>;
+    fn get_manifest(&self, id: &str) -> impl Future<Output = Option<CommandManifest>> + Send;
 
     /// Check if a companion is running.
-    async fn is_running(&self, id: &str) -> bool;
+    fn is_running(&self, id: &str) -> impl Future<Output = bool> + Send;
 
     // ── Lifecycle ────────────────────────────────────────────────────
 
     /// Start a companion process.
-    async fn start(&self, id: &str, moss_endpoint: &str) -> Result<u32>;
+    fn start(&self, id: &str, moss_endpoint: &str) -> impl Future<Output = Result<u32>> + Send;
 
     /// Stop a companion process.
-    async fn stop(&self, id: &str) -> Result<()>;
+    fn stop(&self, id: &str) -> impl Future<Output = Result<()>> + Send;
 
     /// Stop and disable a companion (no auto-start on boot).
-    async fn stop_and_disable(&self, id: &str) -> Result<()>;
+    fn stop_and_disable(&self, id: &str) -> impl Future<Output = Result<()>> + Send;
 
     /// Enable a companion for auto-start.
-    async fn enable(&self, id: &str) -> Result<()>;
+    fn enable(&self, id: &str) -> impl Future<Output = Result<()>> + Send;
 
     /// Stop all companion processes.
-    async fn stop_all(&self) -> Vec<(String, Result<()>)>;
+    fn stop_all(&self) -> impl Future<Output = Vec<(String, Result<()>)>> + Send;
 
     // ── Process Management ───────────────────────────────────────────
 
     /// Reap terminated companion processes (prevent zombies).
-    async fn reap_terminated(&self) -> usize;
+    fn reap_terminated(&self) -> impl Future<Output = usize> + Send;
 
     // ── Shutdown ─────────────────────────────────────────────────────
 
     /// Send SIGTERM to all companion processes.
-    async fn sigterm_all(&self);
+    fn sigterm_all(&self) -> impl Future<Output = ()> + Send;
 
     /// Force-kill any still-running companion processes.
-    async fn kill_all_survivors(&self);
+    fn kill_all_survivors(&self) -> impl Future<Output = ()> + Send;
 }
 
 /// Domain-visible companion information.

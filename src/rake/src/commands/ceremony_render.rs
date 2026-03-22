@@ -369,13 +369,12 @@ fn collect_select_one(prompt: &Prompt) -> anyhow::Result<String> {
             return Ok(value.clone());
         }
 
-        if let Ok(n) = trimmed.parse::<usize>() {
-            if n >= 1 && n <= prompt.options.len() {
+        if let Ok(n) = trimmed.parse::<usize>()
+            && n >= 1 && n <= prompt.options.len() {
                 let opt = &prompt.options[n - 1];
                 println!("  {} {}\n", "✓".green(), opt.label);
                 return Ok(opt.value.clone());
             }
-        }
 
         for opt in &prompt.options {
             if trimmed == opt.value.to_ascii_lowercase()

@@ -19,9 +19,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal", "syn
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# Async trait (stable async trait support)
-async-trait = "0.1"
-
 # HTTP server
 axum.workspace = true
 
@@ -36,6 +33,9 @@ clap = { workspace = true, features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-tempfile = "3"
+tempfile.workspace = true

@@ -79,10 +79,10 @@ impl<K: Hash + Eq + Clone> Debouncer<K> {
         let now = Instant::now();
 
         // Check if this key recently triggered
-        if let Some(last_time) = state.events.get(key) {
-            if now.duration_since(*last_time) < self.duration {
-                return false;
-            }
+        if let Some(last_time) = state.events.get(key)
+            && now.duration_since(*last_time) < self.duration
+        {
+            return false;
         }
 
         // Record this event

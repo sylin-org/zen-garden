@@ -10,7 +10,6 @@ use crate::domain::harvest::{HarvestManifest, VolumeArchive};
 use crate::domain::traits::HarvestOps;
 use crate::infra::HarvestStore;
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use garden_common::infra::archive;
 use garden_common::offerings::OfferingFqn;
 use std::path::Path;
@@ -267,7 +266,6 @@ impl OsHarvestOps {
     }
 }
 
-#[async_trait]
 impl HarvestOps for OsHarvestOps {
     async fn create_harvest(
         &self,
@@ -275,14 +273,7 @@ impl HarvestOps for OsHarvestOps {
         source_stone: &str,
         commit_image: bool,
     ) -> Result<HarvestManifest> {
-        create_harvest(
-            &self.docker,
-            &self.store,
-            offering,
-            source_stone,
-            commit_image,
-        )
-        .await
+        create_harvest(&self.docker, &self.store, offering, source_stone, commit_image).await
     }
 
     async fn restore_harvest(&self, harvest_id: &str) -> Result<()> {

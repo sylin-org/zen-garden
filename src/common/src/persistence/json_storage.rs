@@ -2,7 +2,6 @@
 
 use super::atomic_file::{atomic_write_file, delete_file, file_exists, read_file};
 use crate::traits::persistence::{PersistenceError, PersistenceProvider};
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -30,7 +29,6 @@ impl<T> JsonStorage<T> {
     }
 }
 
-#[async_trait]
 impl<T> PersistenceProvider<T> for JsonStorage<T>
 where
     T: Serialize + for<'de> Deserialize<'de> + Send + Sync,

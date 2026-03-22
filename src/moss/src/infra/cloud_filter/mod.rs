@@ -222,7 +222,7 @@ async fn snapshot_storage(
 ///
 /// Registers the sync root, connects the filter, and spawns background
 /// tasks for placeholder reconciliation and ingest (write-back).
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn start(
     volumes: Volumes,
     registry: GardenRegistry,
@@ -344,7 +344,7 @@ pub fn unregister() -> Result<()> {
 /// - `ToolDelta` (storage category) — remote stone storage appearing or
 ///   departing in the garden registry (immediate, no heartbeat lag)
 /// - 60s heartbeat — resilience catch-all for any missed events
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn storage_watcher(
     volumes: Volumes,
     registry: GardenRegistry,
@@ -478,7 +478,7 @@ async fn storage_watcher(
 /// ### `notify`
 /// Pass `false` on the startup reconcile to seed state without firing any
 /// events.  Pass `true` for all event-driven and heartbeat passes.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn reconcile_placeholders(
     volumes: &Volumes,
     registry: &GardenRegistry,
@@ -738,14 +738,13 @@ async fn scan_existing_placeholders(sync_root_path: &Path) -> HashSet<String> {
     };
 
     while let Ok(Some(entry)) = dir.next_entry().await {
-        if let Ok(ft) = entry.file_type().await {
-            if ft.is_dir() {
+        if let Ok(ft) = entry.file_type().await
+            && ft.is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !garden_common::constants::storage::share::is_blocked_name(&name) {
                     names.insert(name);
                 }
             }
-        }
     }
 
     names

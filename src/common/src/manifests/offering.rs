@@ -407,7 +407,7 @@ struct ServiceConfig {
     #[serde(default)]
     ports: HashMap<String, (u16, u16)>,
     #[serde(default)]
-    environment: Option<serde_yaml::Value>,
+    environment: Option<serde_yml::Value>,
     #[serde(default)]
     volumes: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_command")]
@@ -548,12 +548,12 @@ impl Offering {
             return port;
         }
         // Try parsing managed config for port
-        if let Some(ref managed) = self.managed {
-            if let Ok(template) = self.parse_managed_template(managed) {
-                let port = template.default_host_port();
-                if port != 30000 {
-                    return port;
-                }
+        if let Some(ref managed) = self.managed
+            && let Ok(template) = self.parse_managed_template(managed)
+        {
+            let port = template.default_host_port();
+            if port != 30000 {
+                return port;
             }
         }
         8080 // Generic default
@@ -582,12 +582,12 @@ impl Offering {
         let yaml = managed.snippet_yaml.replace("\r\n", "\n");
 
         // Try parsing as snippet format first (direct service config)
-        if let Ok(service_config) = serde_yaml::from_str::<ServiceConfig>(&yaml) {
+        if let Ok(service_config) = serde_yml::from_str::<ServiceConfig>(&yaml) {
             return Ok(self.service_config_to_template(service_config));
         }
 
         // Fallback: try parsing as compose file (services: wrapper)
-        let compose: ComposeFile = serde_yaml::from_str(&yaml).with_context(|| {
+        let compose: ComposeFile = serde_yml::from_str(&yaml).with_context(|| {
             format!(
                 "Failed to parse YAML for '{}'. First 100 chars: {}",
                 self.name,
@@ -606,11 +606,11 @@ impl Offering {
 
     fn service_config_to_template(&self, config: ServiceConfig) -> ServiceTemplate {
         let environment = match &config.environment {
-            Some(serde_yaml::Value::Sequence(list)) => list
+            Some(serde_yml::Value::Sequence(list)) => list
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect(),
-            Some(serde_yaml::Value::Mapping(map)) => map
+            Some(serde_yml::Value::Mapping(map)) => map
                 .iter()
                 .filter_map(|(k, v)| {
                     let key = k.as_str()?;
@@ -853,7 +853,7 @@ impl OfferingRegistry {
         let content = crate::utils::strings::strip_bom(&content_raw);
 
         // Parse the manifest YAML
-        let manifest: ManifestFile = serde_yaml::from_str(content)
+        let manifest: ManifestFile = serde_yml::from_str(content)
             .with_context(|| format!("Failed to parse: {}", manifest_path.display()))?;
 
         Ok(Offering {
@@ -878,7 +878,7 @@ impl OfferingRegistry {
             .with_context(|| format!("Failed to read: {}", adopted_path.display()))?;
         let content = crate::utils::strings::strip_bom(&content_raw);
 
-        let adopted_file: AdoptedFile = serde_yaml::from_str(content)
+        let adopted_file: AdoptedFile = serde_yml::from_str(content)
             .with_context(|| format!("Failed to parse: {}", adopted_path.display()))?;
         let guidance = Self::load_adopted_guidance(dir, name);
 
@@ -896,7 +896,7 @@ impl OfferingRegistry {
         // Adopted YAML fields override frontmatter where both exist
         let metadata = OfferingMetadata {
             description: adopted_file.description.or(fm_metadata.description),
-            tags: if adopted_file.tags.as_ref().map_or(true, |t| t.is_empty()) {
+            tags: if adopted_file.tags.as_ref().is_none_or(|t| t.is_empty()) {
                 fm_metadata.tags
             } else {
                 adopted_file.tags.unwrap_or_default()
@@ -938,7 +938,7 @@ impl OfferingRegistry {
         }
         std::fs::read_to_string(&path).ok().and_then(|yaml| {
             let yaml = crate::utils::strings::strip_bom(&yaml);
-            serde_yaml::from_str(yaml).ok()
+            serde_yml::from_str(yaml).ok()
         })
     }
 
@@ -1018,7 +1018,7 @@ impl OfferingRegistry {
 
         let compatibility = compatibility_content
             .map(crate::utils::strings::strip_bom)
-            .and_then(|yaml| serde_yaml::from_str(yaml).ok());
+            .and_then(|yaml| serde_yml::from_str(yaml).ok());
 
         let (metadata, connection, fm_coordination, manageable_env) = frontmatter_content
             .map(crate::utils::strings::strip_bom)

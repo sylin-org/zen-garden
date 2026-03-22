@@ -6,7 +6,6 @@
 use crate::domain::ceremony::{Ceremony, CeremonyId};
 use crate::domain::traits::CeremonyPersistence;
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use std::path::PathBuf;
 
 /// Persistent journal for ceremony state
@@ -186,14 +185,12 @@ impl CeremonyJournal {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if let Ok(json) = tokio::fs::read_to_string(&path).await {
-                if let Ok(ceremony) = serde_json::from_str::<Ceremony>(&json) {
-                    if ceremony.completed_at.map(|t| t < cutoff).unwrap_or(false) {
+            if let Ok(json) = tokio::fs::read_to_string(&path).await
+                && let Ok(ceremony) = serde_json::from_str::<Ceremony>(&json)
+                    && ceremony.completed_at.map(|t| t < cutoff).unwrap_or(false) {
                         tokio::fs::remove_file(&path).await?;
                         pruned += 1;
                     }
-                }
-            }
         }
 
         if pruned > 0 {
@@ -204,7 +201,6 @@ impl CeremonyJournal {
     }
 }
 
-#[async_trait]
 impl CeremonyPersistence for CeremonyJournal {
     async fn persist(&self, ceremony: &Ceremony) -> Result<()> {
         CeremonyJournal::persist(self, ceremony).await

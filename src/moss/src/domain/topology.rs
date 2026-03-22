@@ -251,13 +251,12 @@ pub async fn maintain_and_persist(
     }
 
     // Flush to disk if dirty
-    if dirty.swap(false, Ordering::Relaxed) {
-        if let Err(e) = persist_topology(cache, self_entry).await {
+    if dirty.swap(false, Ordering::Relaxed)
+        && let Err(e) = persist_topology(cache, self_entry).await {
             tracing::warn!(error = %e, "Failed to persist topology to disk");
             // Re-dirty so next cycle retries
             mark_dirty(dirty);
         }
-    }
 
     (marked, evicted)
 }
@@ -274,8 +273,8 @@ pub async fn prune_stale_stones(cache: &TopologyCache, _stale_threshold_minutes:
 /// Returns true if the stone was found and marked offline.
 pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
     let mut map = cache.write().await;
-    if let Some(entry) = map.get_mut(stone_id) {
-        if entry.status != StoneStatus::Offline {
+    if let Some(entry) = map.get_mut(stone_id)
+        && entry.status != StoneStatus::Offline {
             entry.status = StoneStatus::Offline;
             // Set health to dormant so UI (observe) renders consistently.
             // The last-known health is no longer meaningful once the stone
@@ -287,7 +286,6 @@ pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
             );
             return true;
         }
-    }
     false
 }
 
@@ -652,7 +650,8 @@ mod tests {
 
         // Override shared_data_dir so topology_dir resolves to our temp dir
         let original = std::env::var("GARDEN_SHARED_DATA_DIR").ok();
-        std::env::set_var("GARDEN_SHARED_DATA_DIR", temp_dir.to_str().unwrap());
+        // SAFETY: Test-only; no concurrent env var access in this test.
+        unsafe { std::env::set_var("GARDEN_SHARED_DATA_DIR", temp_dir.to_str().unwrap()) };
 
         let result = persist_topology(&cache, &self_entry).await;
         assert!(result.is_ok());
@@ -669,8 +668,9 @@ mod tests {
         // Cleanup
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         match original {
-            Some(val) => std::env::set_var("GARDEN_SHARED_DATA_DIR", val),
-            None => std::env::remove_var("GARDEN_SHARED_DATA_DIR"),
+            // SAFETY: Test cleanup — restoring original env var.
+            Some(val) => unsafe { std::env::set_var("GARDEN_SHARED_DATA_DIR", val) },
+            None => unsafe { std::env::remove_var("GARDEN_SHARED_DATA_DIR") },
         }
     }
 }

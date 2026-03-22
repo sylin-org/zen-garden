@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use garden_common::presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
-use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
+use garden_companion_sdk::{CompanionState, EventHandler, SseEvent};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
@@ -74,7 +74,7 @@ pub(crate) struct StorageSummary {
 #[derive(Debug, Deserialize)]
 pub(crate) struct OfferingState {
     pub(crate) name: String,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) status: String,
     #[serde(default)]
     pub(crate) health: String,
@@ -89,7 +89,6 @@ struct ServiceEvent {
 /// Stone tended event payload
 #[derive(Debug, Deserialize)]
 struct TendedEvent {
-    #[allow(dead_code)]
     by: Option<String>,
 }
 
@@ -181,7 +180,6 @@ impl FireflyEvents {
     }
 }
 
-#[async_trait]
 impl EventHandler for FireflyEvents {
     async fn on_event(&self, event: SseEvent) {
         // Update enabled state in animation context

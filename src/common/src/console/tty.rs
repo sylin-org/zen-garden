@@ -40,10 +40,10 @@ pub async fn ensure_etc_writable() -> Result<bool> {
                         .output()
                         .await;
 
-                    if let Ok(result) = output {
-                        if result.status.success() {
-                            tracing::info!("Attempted remount of root filesystem as read-write");
-                        }
+                    if let Ok(result) = output
+                        && result.status.success()
+                    {
+                        tracing::info!("Attempted remount of root filesystem as read-write");
                     }
                 }
 
@@ -405,10 +405,10 @@ async fn generate_unique_name_from_dictionary(
     adjectives: &[&str],
     nouns: &[&str],
 ) -> Result<String> {
-    use rand::seq::SliceRandom;
+    use rand::prelude::IndexedRandom;
     use rand::SeedableRng;
     // Use StdRng which is Send-safe for background tasks
-    let mut rng = rand::rngs::StdRng::from_entropy();
+    let mut rng = rand::rngs::StdRng::from_os_rng();
 
     // Try 10 random combinations
     for attempt in 1..=10 {
@@ -488,10 +488,10 @@ pub async fn set_hostname(runtime: &dyn PlatformRuntime, name: &str) -> Result<(
 pub async fn get_hostname() -> Result<String> {
     #[cfg(target_os = "windows")]
     {
-        if let Ok(name) = std::env::var("COMPUTERNAME") {
-            if !name.is_empty() {
-                return Ok(name.to_lowercase());
-            }
+        if let Ok(name) = std::env::var("COMPUTERNAME")
+            && !name.is_empty()
+        {
+            return Ok(name.to_lowercase());
         }
 
         match tokio::process::Command::new("hostname").output().await {

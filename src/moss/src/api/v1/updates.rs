@@ -878,12 +878,11 @@ async fn check_offering_updates(
                     continue;
                 }
                 let tag_image = format!("{}:{}", base_image, tag);
-                if let Ok(tag_digest) = get_image_digest(&tag_image, &config).await {
-                    if tag_digest != current_digest {
+                if let Ok(tag_digest) = get_image_digest(&tag_image, &config).await
+                    && tag_digest != current_digest {
                         found_newer = Some(tag.clone());
                         break;
                     }
-                }
             }
             found_newer
         } else {
@@ -1008,8 +1007,8 @@ async fn check_firmware_updates(
         };
 
         // Apply manifest constraints only to tested (manifest-matched) devices
-        if is_manifest_device {
-            if let Some(firmware_cfg) = manifest_config {
+        if is_manifest_device
+            && let Some(firmware_cfg) = manifest_config {
                 // Check AC power requirement
                 if firmware_cfg.requires_ac_power.unwrap_or(false) && !is_on_ac_power().await {
                     results.push(Err(BlockedUpdate {
@@ -1024,8 +1023,8 @@ async fn check_firmware_updates(
                 // Check version constraints
                 if let Some(ref versions) = firmware_cfg.versions {
                     // Warn if trying to go below minimum
-                    if let Some(ref minimum) = versions.minimum {
-                        if version_less_than(&fw.available_version, minimum) {
+                    if let Some(ref minimum) = versions.minimum
+                        && version_less_than(&fw.available_version, minimum) {
                             results.push(Err(BlockedUpdate {
                                 update,
                                 reason: format!(
@@ -1035,21 +1034,18 @@ async fn check_firmware_updates(
                             }));
                             continue;
                         }
-                    }
 
                     // Log version context
-                    if let Some(ref recommended) = versions.recommended {
-                        if version_less_than(&fw.available_version, recommended) {
+                    if let Some(ref recommended) = versions.recommended
+                        && version_less_than(&fw.available_version, recommended) {
                             tracing::info!(
                                 available = %fw.available_version,
                                 recommended = %recommended,
                                 "Update available but not yet at recommended version"
                             );
                         }
-                    }
                 }
             }
-        }
 
         results.push(Ok(update));
     }

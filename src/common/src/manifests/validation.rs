@@ -74,7 +74,7 @@ pub fn validate_snippet(content: &str, filename: &str) -> Vec<ValidationFinding>
     let mut findings = Vec::new();
 
     // Parse YAML
-    let value: serde_yaml::Value = match serde_yaml::from_str(content) {
+    let value: serde_yml::Value = match serde_yml::from_str(content) {
         Ok(v) => v,
         Err(e) => {
             findings.push(ValidationFinding {
@@ -113,7 +113,7 @@ pub fn validate_snippet(content: &str, filename: &str) -> Vec<ValidationFinding>
         }
         Some(img) => {
             // SCHEMA002: Empty image value
-            if img.as_str().map_or(true, |s| s.trim().is_empty()) {
+            if img.as_str().is_none_or(|s| s.trim().is_empty()) {
                 findings.push(ValidationFinding {
                     file: filename.to_string(),
                     line: 0,
@@ -139,56 +139,56 @@ pub fn validate_snippet(content: &str, filename: &str) -> Vec<ValidationFinding>
     // --- Security rules ---
 
     // SEC001: privileged
-    if let Some(priv_val) = service.get("privileged") {
-        if priv_val.as_bool() == Some(true) {
-            findings.push(ValidationFinding {
-                file: filename.to_string(),
-                line: 0,
-                severity: Severity::Error,
-                code: "SEC001".to_string(),
-                message: "Container runs in privileged mode — this is a security risk".to_string(),
-            });
-        }
+    if let Some(priv_val) = service.get("privileged")
+        && priv_val.as_bool() == Some(true)
+    {
+        findings.push(ValidationFinding {
+            file: filename.to_string(),
+            line: 0,
+            severity: Severity::Error,
+            code: "SEC001".to_string(),
+            message: "Container runs in privileged mode — this is a security risk".to_string(),
+        });
     }
 
     // SEC002: host network
-    if let Some(net) = service.get("network_mode") {
-        if net.as_str() == Some("host") {
-            findings.push(ValidationFinding {
-                file: filename.to_string(),
-                line: 0,
-                severity: Severity::Error,
-                code: "SEC002".to_string(),
-                message: "Container uses host networking — bypasses network isolation".to_string(),
-            });
-        }
+    if let Some(net) = service.get("network_mode")
+        && net.as_str() == Some("host")
+    {
+        findings.push(ValidationFinding {
+            file: filename.to_string(),
+            line: 0,
+            severity: Severity::Error,
+            code: "SEC002".to_string(),
+            message: "Container uses host networking — bypasses network isolation".to_string(),
+        });
     }
 
     // SEC003: Sensitive volume mounts
-    if let Some(volumes) = service.get("volumes") {
-        if let Some(vols) = volumes.as_sequence() {
-            for vol in vols {
-                let vol_str = vol.as_str().unwrap_or("");
-                // Volume format: "source:target[:options]" or just "target"
-                let target = vol_str
-                    .split(':')
-                    .nth(1)
-                    .unwrap_or(vol_str)
-                    .trim_end_matches(":ro")
-                    .trim_end_matches(":rw");
+    if let Some(volumes) = service.get("volumes")
+        && let Some(vols) = volumes.as_sequence()
+    {
+        for vol in vols {
+            let vol_str = vol.as_str().unwrap_or("");
+            // Volume format: "source:target[:options]" or just "target"
+            let target = vol_str
+                .split(':')
+                .nth(1)
+                .unwrap_or(vol_str)
+                .trim_end_matches(":ro")
+                .trim_end_matches(":rw");
 
-                for sensitive in SENSITIVE_MOUNTS {
-                    if target == *sensitive {
-                        findings.push(ValidationFinding {
-                            file: filename.to_string(),
-                            line: 0,
-                            severity: Severity::Error,
-                            code: "SEC003".to_string(),
-                            message: format!(
-                                "Sensitive volume mount to '{sensitive}' — potential host compromise"
-                            ),
-                        });
-                    }
+            for sensitive in SENSITIVE_MOUNTS {
+                if target == *sensitive {
+                    findings.push(ValidationFinding {
+                        file: filename.to_string(),
+                        line: 0,
+                        severity: Severity::Error,
+                        code: "SEC003".to_string(),
+                        message: format!(
+                            "Sensitive volume mount to '{sensitive}' — potential host compromise"
+                        ),
+                    });
                 }
             }
         }
@@ -202,7 +202,7 @@ pub fn validate_snippet(content: &str, filename: &str) -> Vec<ValidationFinding>
 
 /// Validate port definitions in a snippet.
 fn validate_ports(
-    service: &serde_yaml::Value,
+    service: &serde_yml::Value,
     filename: &str,
     findings: &mut Vec<ValidationFinding>,
 ) {
@@ -252,14 +252,14 @@ fn validate_ports(
 /// Supports:
 /// - `[host, container]` (array of two integers)
 /// - `"host:container"` (string format)
-fn extract_port_pair(v: &serde_yaml::Value) -> Option<(u16, u16)> {
+fn extract_port_pair(v: &serde_yml::Value) -> Option<(u16, u16)> {
     // Array format: [8080, 80]
-    if let Some(seq) = v.as_sequence() {
-        if seq.len() == 2 {
-            let host = seq[0].as_u64()? as u16;
-            let container = seq[1].as_u64()? as u16;
-            return Some((host, container));
-        }
+    if let Some(seq) = v.as_sequence()
+        && seq.len() == 2
+    {
+        let host = seq[0].as_u64()? as u16;
+        let container = seq[1].as_u64()? as u16;
+        return Some((host, container));
     }
     // String format: "8080:80"
     if let Some(s) = v.as_str() {
@@ -324,16 +324,16 @@ pub fn validate_frontmatter(content: &str, filename: &str) -> Vec<ValidationFind
     }
 
     // FM004: Port range
-    if let Some(port) = value.get("port").and_then(|p| p.as_u64()) {
-        if port == 0 || port > 65535 {
-            findings.push(ValidationFinding {
-                file: filename.to_string(),
-                line: 0,
-                severity: Severity::Error,
-                code: "FM004".to_string(),
-                message: format!("Port {port} is outside valid range (1–65535)"),
-            });
-        }
+    if let Some(port) = value.get("port").and_then(|p| p.as_u64())
+        && (port == 0 || port > 65535)
+    {
+        findings.push(ValidationFinding {
+            file: filename.to_string(),
+            line: 0,
+            severity: Severity::Error,
+            code: "FM004".to_string(),
+            message: format!("Port {port} is outside valid range (1–65535)"),
+        });
     }
 
     findings
@@ -348,7 +348,7 @@ pub fn validate_compatibility(content: &str, filename: &str) -> Vec<ValidationFi
     let mut findings = Vec::new();
 
     // Parse YAML
-    let value: serde_yaml::Value = match serde_yaml::from_str(content) {
+    let value: serde_yml::Value = match serde_yml::from_str(content) {
         Ok(v) => v,
         Err(e) => {
             findings.push(ValidationFinding {

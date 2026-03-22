@@ -1,4 +1,5 @@
 use crate::domain::tools::{stream_event_type_for_delta, ToolQuery, ToolsSnapshotPayload};
+use crate::domain::Tool;
 use crate::{bad_request, AppState};
 use axum::{
     extract::{Query, State},
@@ -12,6 +13,7 @@ use garden_common::tools::event_types;
 use garden_common::tools::{CapabilitySelector, GardenTool, ToolDelta};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
@@ -43,14 +45,14 @@ pub struct ToolsSnapshotResponse {
 }
 
 pub async fn list_garden_tools_v1(
-    State(state): State<AppState>,
+    State(tool): State<Arc<Tool>>,
     Query(query): Query<ToolsQueryParams>,
 ) -> crate::api::ApiResult<ToolsSnapshotResponse> {
     let filter = parse_query(&query)?;
     let since = query.since.unwrap_or(0);
 
     let (cursor, tools, replay) = {
-        let reg = state.tool.registry.read().await;
+        let reg = tool.registry.read().await;
         let (cursor, tools) = reg.snapshot(&filter);
         let replay = if since > 0 {
             reg.deltas_since(since, &filter)
@@ -82,11 +84,10 @@ pub async fn stream_garden_tools_v1(
 
     let (snapshot_cursor, snapshot_tools, replay) = {
         let reg = state.tool.registry.read().await;
-        if resume_cursor == 0 {
-            if let Some(last_event_id) = extract_last_event_id(&headers) {
+        if resume_cursor == 0
+            && let Some(last_event_id) = extract_last_event_id(&headers) {
                 resume_cursor = parse_resume_cursor(last_event_id, &reg);
             }
-        }
 
         let (cursor, tools) = reg.snapshot(&filter);
         let replay = if resume_cursor > 0 {

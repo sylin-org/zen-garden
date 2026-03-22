@@ -117,7 +117,6 @@ impl Channel {
 /// Mixer state for a single channel
 struct ChannelState {
     sink: Sink,
-    #[allow(dead_code)]
     volume: f32,
 }
 
@@ -129,8 +128,11 @@ pub struct Mixer {
 }
 
 // SAFETY: OutputStream doesn't need to be held, only OutputStreamHandle
-// which is Send+Sync safe
+// which is Send+Sync safe. The Arc<RwLock<_>> fields are also Send+Sync.
 unsafe impl Send for Mixer {}
+// SAFETY: Mixer only holds Arc<RwLock<_>> fields (which are Sync) and
+// OutputStreamHandle which is used via the Send-safe stream. Access to
+// shared state is guarded by the RwLock.
 unsafe impl Sync for Mixer {}
 
 impl Mixer {
@@ -149,7 +151,7 @@ impl Mixer {
     }
 
     /// Play sample on channel from file path
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub async fn play(&self, channel: Channel, sample_path: &str, looping: bool) -> Result<()> {
         let file = std::fs::File::open(sample_path)?;
         let source = rodio::Decoder::new(std::io::BufReader::new(file))?;
@@ -223,7 +225,7 @@ impl Mixer {
     }
 
     /// Set channel volume
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub async fn set_channel_volume(&self, channel: Channel, volume: f32) {
         let idx = channel as usize;
         let mut channels = self.channels.write().await;

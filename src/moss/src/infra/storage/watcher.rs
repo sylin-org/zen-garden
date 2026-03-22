@@ -69,7 +69,6 @@ struct ActiveWatcher {
     /// Cancels this specific watcher.
     cancel: CancellationToken,
     /// Storage name (for logging).
-    #[allow(dead_code)]
     name: String,
 }
 
@@ -309,11 +308,10 @@ async fn flush_changelog_batch(
     let changelog_path = mount_path.join(".zen-garden/changelog.jsonl");
 
     // Ensure directory exists
-    if let Some(parent) = changelog_path.parent() {
-        if !parent.exists() {
+    if let Some(parent) = changelog_path.parent()
+        && !parent.exists() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
-    }
 
     let mut creates = 0u32;
     let mut modifies = 0u32;

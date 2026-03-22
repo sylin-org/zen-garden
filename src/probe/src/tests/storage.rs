@@ -29,8 +29,8 @@ fn extract_bank_info(bank: &Value) -> Option<(String, String)> {
 
 async fn select_seed_bank(garden: &LiveGarden) -> Option<SelectedSeedBank> {
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/storage/banks").await {
-            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/storage/banks").await
+            && let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     if let Some((id, name)) = extract_bank_info(bank) {
                         return Some(SelectedSeedBank {
@@ -41,7 +41,6 @@ async fn select_seed_bank(garden: &LiveGarden) -> Option<SelectedSeedBank> {
                     }
                 }
             }
-        }
     }
 
     None

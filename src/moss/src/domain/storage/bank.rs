@@ -17,17 +17,17 @@ use super::{Volume, VolumeSnapshot, VolumeState, Volumes};
 ///
 /// The monitor detects and measures; the bank classifies, registers,
 /// and emits domain events.
-pub struct StorageBank {
+pub struct StorageBank<S: ManagementStoreOps + 'static = crate::infra::storage::ContentStore> {
     volumes: Volumes,
     changed: tokio::sync::broadcast::Sender<StorageChanged>,
-    make_store: Box<dyn Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync>,
+    make_store: Box<dyn Fn(PathBuf) -> Arc<S> + Send + Sync>,
 }
 
-impl StorageBank {
+impl<S: ManagementStoreOps + 'static> StorageBank<S> {
     pub fn new(
         volumes: Volumes,
         changed: tokio::sync::broadcast::Sender<StorageChanged>,
-        make_store: impl Fn(PathBuf) -> Arc<dyn ManagementStoreOps> + Send + Sync + 'static,
+        make_store: impl Fn(PathBuf) -> Arc<S> + Send + Sync + 'static,
     ) -> Arc<Self> {
         Arc::new(Self {
             volumes,

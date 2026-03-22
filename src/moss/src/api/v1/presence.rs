@@ -16,6 +16,7 @@ use serde::Deserialize;
 use std::convert::Infallible;
 use tokio_stream::StreamExt;
 
+use crate::domain::traits::CompanionOps;
 use crate::domain::StoneEvent;
 use crate::infra::PulseEvent;
 use crate::AppState;

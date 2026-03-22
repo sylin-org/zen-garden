@@ -63,11 +63,11 @@ impl TimerConfig {
     #[cfg(any(target_os = "linux", test))]
     fn systemd_interval(&self) -> String {
         let secs = self.interval.as_secs();
-        if secs >= 86400 && secs % 86400 == 0 {
+        if secs >= 86400 && secs.is_multiple_of(86400) {
             format!("{}d", secs / 86400)
-        } else if secs >= 3600 && secs % 3600 == 0 {
+        } else if secs >= 3600 && secs.is_multiple_of(3600) {
             format!("{}h", secs / 3600)
-        } else if secs >= 60 && secs % 60 == 0 {
+        } else if secs >= 60 && secs.is_multiple_of(60) {
             format!("{}m", secs / 60)
         } else {
             format!("{}s", secs)
@@ -78,7 +78,7 @@ impl TimerConfig {
     #[cfg(target_os = "linux")]
     fn systemd_random_delay(&self) -> String {
         let secs = self.randomized_delay.as_secs();
-        if secs >= 60 && secs % 60 == 0 {
+        if secs >= 60 && secs.is_multiple_of(60) {
             format!("{}m", secs / 60)
         } else {
             format!("{}s", secs)
@@ -600,12 +600,12 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
         let mut tasks = Vec::new();
 
         for line in stdout.lines() {
-            if line.contains("ZenGarden-Nurturing-") {
-                if let Some(name) = line.split(':').next_back() {
-                    let name = name.trim();
-                    if let Some(offering) = name.strip_prefix("ZenGarden-Nurturing-") {
-                        tasks.push(offering.to_string());
-                    }
+            if line.contains("ZenGarden-Nurturing-")
+                && let Some(name) = line.split(':').next_back()
+            {
+                let name = name.trim();
+                if let Some(offering) = name.strip_prefix("ZenGarden-Nurturing-") {
+                    tasks.push(offering.to_string());
                 }
             }
         }

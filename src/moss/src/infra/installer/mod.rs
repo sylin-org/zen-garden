@@ -483,11 +483,10 @@ fn resolve_work_directory(exe_path: &Path, exe_dir: &Path) -> anyhow::Result<(Pa
 
 fn cleanup_removable_temp(temp_dir: &Path) -> anyhow::Result<()> {
     // Only clean up directories we created (prefixed with zen-garden-install-)
-    if let Some(name) = temp_dir.file_name().and_then(|n| n.to_str()) {
-        if name.starts_with("zen-garden-install-") {
+    if let Some(name) = temp_dir.file_name().and_then(|n| n.to_str())
+        && name.starts_with("zen-garden-install-") {
             std::fs::remove_dir_all(temp_dir)?;
         }
-    }
     Ok(())
 }
 
@@ -591,12 +590,11 @@ fn start_and_verify() -> anyhow::Result<()> {
 
     for _ in 0..10 {
         std::thread::sleep(std::time::Duration::from_secs(1));
-        if let Ok(response) = ureq_get(&health_url) {
-            if response {
+        if let Ok(response) = ureq_get(&health_url)
+            && response {
                 healthy = true;
                 break;
             }
-        }
     }
 
     if healthy {

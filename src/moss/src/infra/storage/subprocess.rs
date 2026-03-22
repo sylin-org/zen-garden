@@ -64,7 +64,7 @@ async fn read_handle<R: tokio::io::AsyncReadExt + Unpin>(handle: Option<R>) -> V
 /// let output = run_sudo_timed(&["mount", "/dev/sdb1", "/mnt/sb"], Duration::from_secs(30)).await?;
 /// ```
 #[cfg(target_os = "linux")]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub async fn run_sudo_timed(args: &[&str], timeout: Duration) -> Result<Output, SubprocessError> {
     use std::process::Stdio;
     use tokio::process::Command;
@@ -104,7 +104,7 @@ pub async fn run_sudo_timed(args: &[&str], timeout: Duration) -> Result<Output, 
 
 /// Run an arbitrary command with a deadline (async).
 #[cfg(target_os = "linux")]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub async fn run_command_timed(
     program: &str,
     args: &[&str],

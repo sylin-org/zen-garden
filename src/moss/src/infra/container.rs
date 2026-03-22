@@ -6,7 +6,6 @@
 use crate::docker::Client;
 use crate::domain::traits::ServiceRuntime;
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use garden_common::{ContainerResources, ServiceHealthStatus, ServiceStatus};
 
 /// Container runtime for service management
@@ -91,7 +90,6 @@ impl ContainerRuntime {
     }
 }
 
-#[async_trait]
 impl ServiceRuntime for ContainerRuntime {
     async fn is_healthy(&self) -> bool {
         ContainerRuntime::is_healthy(self).await
@@ -126,8 +124,8 @@ impl ServiceRuntime for ContainerRuntime {
     }
 
     async fn restart_service(&self, service_name: &str) -> Result<()> {
-        self.stop_service(service_name).await?;
-        self.start_service(service_name).await
+        ContainerRuntime::stop_service(self, service_name).await?;
+        ContainerRuntime::start_service(self, service_name).await
     }
 
     async fn remove_service(&self, service_name: &str) -> Result<()> {

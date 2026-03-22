@@ -263,7 +263,7 @@ impl ObjectStore {
         let prefix = prefix.unwrap_or("");
         let delimiter = delimiter.map(|s| s.to_string());
 
-        let mut contents = vec![];
+        let mut contents = Vec::with_capacity(max_keys);
         let mut common_prefixes = std::collections::HashSet::new();
 
         // Recursively list all files
@@ -322,15 +322,14 @@ impl ObjectStore {
             .context("Failed to read storage root directory")?;
 
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.path().is_dir() {
-                if let Some(name) = entry.file_name().to_str() {
+            if entry.path().is_dir()
+                && let Some(name) = entry.file_name().to_str() {
                     // Skip dotfolders (.zen-garden, .Trash, etc.)
                     if name.starts_with('.') {
                         continue;
                     }
                     buckets.push(name.to_string());
                 }
-            }
         }
 
         buckets.sort();
@@ -351,7 +350,7 @@ impl ObjectStore {
     ///
     /// Directory walking uses the filesystem directly (just listing entries).
     /// Content reads for metadata go through ContentStore.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn walk_directory<'a>(
         &'a self,
         base_path: &'a Path,

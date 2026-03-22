@@ -13,7 +13,7 @@ use crate::domain::traits::StoragePlatform;
 /// Scans for unmounted removable devices, probes each for a manifest, and mounts
 /// to the canonical path. Returns the count mounted.
 /// Emits no StorageChanged events — VolumeMonitor detects the mount and calls StorageBank.
-pub async fn auto_mount_unmounted(platform: &dyn StoragePlatform) -> usize {
+pub async fn auto_mount_unmounted(platform: &(impl StoragePlatform + ?Sized)) -> usize {
     let unmounted = platform.list_unmounted_removable();
     if unmounted.is_empty() {
         return 0;

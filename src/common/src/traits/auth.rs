@@ -5,7 +5,6 @@
 //!
 //! This design allows auth to be added without refactoring the API layer.
 
-use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// Authentication context after successful auth
@@ -42,13 +41,12 @@ pub enum AuthError {
 /// Implementations:
 /// - NoAuth: Always succeeds, assigns default stone context
 /// - JwtAuth (future): Validates JWT tokens from Pond keystone
-#[async_trait]
 pub trait AuthProvider: Send + Sync {
     /// Authenticate a request from Authorization header value
     ///
     /// For NoAuth: Returns default context
     /// For JwtAuth: Validates JWT, extracts claims
-    async fn authenticate(&self, auth_header: Option<&str>) -> Result<Auth, AuthError>;
+    fn authenticate(&self, auth_header: Option<&str>) -> impl std::future::Future<Output = Result<Auth, AuthError>> + Send;
 
     /// Check if a context has admin permissions
     ///

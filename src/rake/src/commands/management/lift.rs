@@ -8,7 +8,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use async_trait::async_trait;
 
 /// Lift target type
 pub enum LiftTarget {
@@ -51,24 +50,25 @@ impl LiftCommand {
     }
 }
 
-#[async_trait]
 impl Command for LiftCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?;
 
-        match &self.target {
-            LiftTarget::Keystone => {
-                execute_lift_keystone(ctx, endpoint).await?;
+            match &self.target {
+                LiftTarget::Keystone => {
+                    execute_lift_keystone(ctx, endpoint).await?;
+                }
+                LiftTarget::Stone { name } => {
+                    execute_lift_stone(ctx, endpoint, name).await?;
+                }
             }
-            LiftTarget::Stone { name } => {
-                execute_lift_stone(ctx, endpoint, name).await?;
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions("lift", self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions("lift", self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

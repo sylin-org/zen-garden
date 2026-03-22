@@ -1055,6 +1055,9 @@ mod windows {
 
         // Get all drive letter strings
         let mut buf = [0u16; 256];
+        // SAFETY: `buf` is a stack-allocated [u16; 256] valid for writes.
+        // `buf.len() as u32` correctly represents the buffer capacity.
+        // The function writes at most `buf.len()` wide chars including null terminators.
         let len = unsafe { GetLogicalDriveStringsW(buf.len() as u32, buf.as_mut_ptr()) };
         if len == 0 {
             warn!("GetLogicalDriveStringsW failed");
@@ -1069,6 +1072,8 @@ mod windows {
                     let drive: Vec<u16> = buf[start..=i].to_vec();
                     let drive_str = String::from_utf16_lossy(&buf[start..i]);
 
+                    // SAFETY: `drive` is a null-terminated wide string (includes the null
+                    // from buf[start..=i]). GetDriveTypeW only reads the pointer.
                     let drive_type = unsafe { GetDriveTypeW(drive.as_ptr()) };
 
                     // Only removable and fixed drives (skip network, CDROM, etc.)
@@ -1111,6 +1116,8 @@ mod windows {
         use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
 
         let wide = to_wide(path);
+        // SAFETY: `wide` is a null-terminated wide string produced by `to_wide`.
+        // GetDriveTypeW only reads the pointer.
         let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
         drive_type == DRIVE_REMOVABLE || is_usb_bus(path)
     }
@@ -1123,6 +1130,9 @@ mod windows {
         let mut total_bytes: u64 = 0;
         let mut total_free_bytes: u64 = 0;
 
+        // SAFETY: `wide` is a null-terminated wide string from `to_wide`.
+        // All three out-pointers are to stack-allocated u64s with valid lifetimes
+        // that outlive the call. The function writes exactly 8 bytes to each.
         let ok = unsafe {
             GetDiskFreeSpaceExW(
                 wide.as_ptr(),
@@ -1146,6 +1156,11 @@ mod windows {
         use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW;
 
         let mut label_buf = [0u16; 256];
+        // SAFETY: `drive_wide` is a null-terminated wide string (caller ensures this).
+        // `label_buf` is a stack-allocated [u16; 256] valid for writes; its length is
+        // passed correctly. Null pointers are explicitly passed for unused out-params
+        // (serial number, max component length, filesystem flags, filesystem name),
+        // which the Win32 API accepts as "don't write these".
         let ok = unsafe {
             GetVolumeInformationW(
                 drive_wide.as_ptr(),
@@ -1206,6 +1221,10 @@ mod windows {
         let device_path = format!("\\\\.\\{}", letter);
         let wide = to_wide(&device_path);
 
+        // SAFETY: `wide` is a null-terminated wide string from `to_wide`.
+        // All parameters are valid constants. Security attributes is null (default).
+        // The handle is checked against INVALID_HANDLE_VALUE immediately below
+        // and closed via `CloseHandle` before the function returns.
         let handle = unsafe {
             CreateFileW(
                 wide.as_ptr(),
@@ -1240,6 +1259,10 @@ mod windows {
         let mut out_buf = [0u8; 256];
         let mut bytes_returned: u32 = 0;
 
+        // SAFETY: `handle` is valid (checked against INVALID_HANDLE_VALUE above).
+        // `query` is a #[repr(C)] struct with the correct layout for STORAGE_PROPERTY_QUERY.
+        // `out_buf` is a stack-allocated [u8; 256] large enough for STORAGE_DEVICE_DESCRIPTOR.
+        // `bytes_returned` is a valid mutable u32 pointer. Overlapped is null (synchronous).
         let ok = unsafe {
             DeviceIoControl(
                 handle,
@@ -1253,6 +1276,8 @@ mod windows {
             )
         };
 
+        // SAFETY: `handle` was opened by `CreateFileW` above and has not been closed yet.
+        // After this call, the handle is invalid and must not be used.
         unsafe { CloseHandle(handle) };
 
         if ok == 0 || bytes_returned < 28 {

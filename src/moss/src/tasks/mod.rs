@@ -14,6 +14,7 @@
 //! All tasks are non-blocking and composable.
 //! Spawn with tokio::spawn() and communicate via channels/shared state.
 
+pub mod adoption;
 pub mod announcer;
 pub mod auto_adoption;
 pub mod coordinator;
@@ -24,16 +25,21 @@ pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;
+pub mod lantern;
 pub mod metrics_collector;
 pub mod network_monitor;
 pub mod nurturing_scheduler;
 pub mod offering_orchestration;
 pub mod presence_monitor;
+pub mod registry;
 pub mod state_provider;
 pub mod storage_orchestration;
 pub mod storage_replication;
+pub mod storage_tasks;
 pub mod storage_tick_aggregator;
+pub mod supervisor;
 pub mod task_scheduler;
+pub mod topology;
 
 pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;

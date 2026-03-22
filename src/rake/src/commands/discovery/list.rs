@@ -8,7 +8,6 @@ use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering::{self as ui, TerminalInfo};
 use anyhow::Context;
-use async_trait::async_trait;
 use colored::Colorize;
 use garden_common::constants::CATEGORY_ORCHESTRATOR;
 use garden_common::SubCapability;
@@ -30,37 +29,38 @@ impl ListCommand {
     }
 }
 
-#[async_trait]
 impl Command for ListCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let url = ctx.api_v1_url("stone/services")?;
-        let response = ctx.client.get(&url).send().await?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let url = ctx.api_v1_url("stone/services")?;
+            let response = ctx.client.get(&url).send().await?;
 
-        let api_response: ApiResponse<ServiceDiscoveryResponse> = response
-            .json()
-            .await
-            .context("Failed to parse services response")?;
+            let api_response: ApiResponse<ServiceDiscoveryResponse> = response
+                .json()
+                .await
+                .context("Failed to parse services response")?;
 
-        let services = api_response.data.services;
+            let services = api_response.data.services;
 
-        if services.is_empty() {
-            println!(
-                "{}",
-                ui::empty_state(
-                    "No services installed",
-                    Some("Use: garden-rake offer <service>")
-                )
-            );
-        } else {
-            println!("{}", ui::section_header("SERVICES", &ctx.term));
-            println!();
-            render_services_table(&services, &ctx.term);
-        }
+            if services.is_empty() {
+                println!(
+                    "{}",
+                    ui::empty_state(
+                        "No services installed",
+                        Some("Use: garden-rake offer <service>")
+                    )
+                );
+            } else {
+                println!("{}", ui::section_header("SERVICES", &ctx.term));
+                println!();
+                render_services_table(&services, &ctx.term);
+            }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIST, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::LIST, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

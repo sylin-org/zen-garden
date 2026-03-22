@@ -9,7 +9,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use async_trait::async_trait;
 use garden_common::GardenApiResponse;
 use std::collections::HashMap;
 
@@ -43,24 +42,25 @@ impl TemplateCommand {
     }
 }
 
-#[async_trait]
 impl Command for TemplateCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?;
 
-        match &self.action {
-            TemplateAction::List => {
-                list_templates(&ctx.client, endpoint).await?;
+            match &self.action {
+                TemplateAction::List => {
+                    list_templates(&ctx.client, endpoint).await?;
+                }
+                TemplateAction::Show { name } => {
+                    show_template(&ctx.client, endpoint, name).await?;
+                }
             }
-            TemplateAction::Show { name } => {
-                show_template(&ctx.client, endpoint, name).await?;
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::TEMPLATE, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::TEMPLATE, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -145,7 +145,7 @@ async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> 
             let body: serde_json::Value = response.json().await?;
             if let Some(content) = body.get("content").and_then(|c| c.as_str()) {
                 // Parse the YAML to extract metadata
-                let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(content);
+                let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(content);
 
                 println!("\nTemplate: {}", name);
 
@@ -165,8 +165,8 @@ async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> 
                     }
 
                     // Ports
-                    if let Some(ports) = yaml.get("ports").and_then(|p| p.as_sequence()) {
-                        if !ports.is_empty() {
+                    if let Some(ports) = yaml.get("ports").and_then(|p| p.as_sequence())
+                        && !ports.is_empty() {
                             println!("\nPorts:");
                             for port in ports {
                                 if let Some(port_str) = port.as_str() {
@@ -181,17 +181,16 @@ async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> 
                                 }
                             }
                         }
-                    }
 
                     // Environment variables
                     if let Some(env) = yaml.get("environment") {
                         let env_vars = match env {
-                            serde_yaml::Value::Sequence(seq) => seq
+                            serde_yml::Value::Sequence(seq) => seq
                                 .iter()
                                 .filter_map(|v| v.as_str())
                                 .map(|s| s.to_string())
                                 .collect::<Vec<_>>(),
-                            serde_yaml::Value::Mapping(map) => map
+                            serde_yml::Value::Mapping(map) => map
                                 .iter()
                                 .map(|(k, v)| {
                                     format!(
@@ -217,8 +216,8 @@ async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> 
                     }
 
                     // Volumes
-                    if let Some(volumes) = yaml.get("volumes").and_then(|v| v.as_sequence()) {
-                        if !volumes.is_empty() {
+                    if let Some(volumes) = yaml.get("volumes").and_then(|v| v.as_sequence())
+                        && !volumes.is_empty() {
                             println!("\nVolumes:");
                             for vol in volumes {
                                 if let Some(vol_str) = vol.as_str() {
@@ -233,11 +232,10 @@ async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> 
                                 }
                             }
                         }
-                    }
 
                     // Networks
-                    if let Some(networks) = yaml.get("networks").and_then(|n| n.as_sequence()) {
-                        if !networks.is_empty() {
+                    if let Some(networks) = yaml.get("networks").and_then(|n| n.as_sequence())
+                        && !networks.is_empty() {
                             println!("\nNetworks:");
                             for net in networks {
                                 if let Some(net_str) = net.as_str() {
@@ -245,7 +243,6 @@ async fn show_template(client: &reqwest::Client, endpoint: &str, name: &str) -> 
                                 }
                             }
                         }
-                    }
                 }
 
                 // Show raw YAML content

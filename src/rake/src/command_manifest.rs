@@ -9,12 +9,11 @@
 //! 2. Add a handler in commands/ and wire it in route.rs
 
 use crate::arg_spec::{at_arg, at_arg_global, yes_flag, ArgSpec, SubDef};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::collections::HashMap;
 
 /// Command name constants - single source of truth for command identifiers.
 /// Use these constants instead of string literals when referencing commands.
-#[allow(dead_code)]
 pub mod cmd {
     /// Tend subcommand targets
     pub mod tend_target {
@@ -213,7 +212,7 @@ impl CommandManifest {
 }
 
 /// Global command manifest - initialized at program start
-pub static MANIFEST: Lazy<CommandManifest> = Lazy::new(|| {
+pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
     let mut manifest = CommandManifest::new();
 
     // === DISCOVERY COMMANDS ===

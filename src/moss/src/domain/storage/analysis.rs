@@ -59,7 +59,7 @@ pub fn validate_manifest(zen_dir: &Path) -> Result<StorageManifest> {
 /// rules (allowed mount paths, device state) into a single result.
 pub fn analyze_device(
     device_path: &str,
-    platform: &dyn StoragePlatform,
+    platform: &(impl StoragePlatform + ?Sized),
 ) -> Result<StorageDetectedInfo> {
     let removable = platform.is_removable(device_path);
     let capacity_bytes = platform.device_capacity(device_path);
@@ -76,12 +76,11 @@ pub fn analyze_device(
     if !removable {
         eligible = false;
         ineligible_reason = Some("Device is not removable".to_string());
-    } else if let Some(ref mount) = mount_path {
-        if !is_allowed_mount(mount) {
+    } else if let Some(ref mount) = mount_path
+        && !is_allowed_mount(mount) {
             eligible = false;
             ineligible_reason = Some(format!("Mount path {} is not in allowed location", mount));
         }
-    }
 
     if !state.is_eligible() && ineligible_reason.is_none() {
         ineligible_reason = Some(format!("Device state is {}", state));

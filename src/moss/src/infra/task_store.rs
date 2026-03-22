@@ -12,7 +12,6 @@
 //! ```
 
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use garden_common::{ScheduledTask, TaskDefinition, TaskResult};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -25,7 +24,7 @@ pub struct TaskStore {
     /// Path to task registry
     registry_path: PathBuf,
     /// Path to task history directory (reserved for future use)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     history_dir: PathBuf,
 }
 
@@ -226,7 +225,6 @@ impl TaskStore {
     }
 }
 
-#[async_trait]
 impl crate::domain::traits::TaskRegistryPersistence for TaskStore {
     async fn load_registry(&self) -> Result<TaskRegistry> {
         TaskStore::load_registry(self).await

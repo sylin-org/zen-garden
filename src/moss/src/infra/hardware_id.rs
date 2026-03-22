@@ -298,13 +298,11 @@ async fn get_mac_address_string() -> Result<String> {
         for line in stdout.lines() {
             if line.contains("link/ether") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if let Some(mac_idx) = parts.iter().position(|&s| s == "link/ether") {
-                    if let Some(mac) = parts.get(mac_idx + 1) {
-                        if is_valid_mac(mac) {
+                if let Some(mac_idx) = parts.iter().position(|&s| s == "link/ether")
+                    && let Some(mac) = parts.get(mac_idx + 1)
+                        && is_valid_mac(mac) {
                             macs.push(mac.to_lowercase());
                         }
-                    }
-                }
             }
         }
     }

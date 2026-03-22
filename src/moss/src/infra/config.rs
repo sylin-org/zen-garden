@@ -128,13 +128,11 @@ impl AdoptionConfig {
         }
 
         // Check for USB/removable media deployment
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Ok(is_removable) = crate::infra::is_running_from_removable_media(&exe_path) {
-                if is_removable {
+        if let Ok(exe_path) = std::env::current_exe()
+            && let Ok(is_removable) = crate::infra::is_running_from_removable_media(&exe_path)
+                && is_removable {
                     return false; // USB Moss: self-contained, no auto-adoption
                 }
-            }
-        }
 
         // Regular deployment: enable auto-adoption by default
         true
@@ -160,11 +158,10 @@ impl AdoptionConfig {
         use regex::Regex;
 
         for pattern in &self.exclude {
-            if let Ok(re) = Regex::new(pattern) {
-                if re.is_match(offering) {
+            if let Ok(re) = Regex::new(pattern)
+                && re.is_match(offering) {
                     return true;
                 }
-            }
         }
         false
     }

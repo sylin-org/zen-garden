@@ -8,6 +8,7 @@
 //! Composed with compatibility module for rule evaluation.
 
 use crate::domain::compatibility::{compile_compatibility, CompiledCompatibility};
+use crate::domain::traits::OfferingsCachePersistence;
 use anyhow::Result;
 use garden_common::manifests::ManifestRegistry;
 use garden_common::manifests::NetworkRequirements;
@@ -185,7 +186,7 @@ pub fn manifests_hash(registry: &ManifestRegistry) -> Result<String> {
 pub async fn ensure_offerings_index(
     state: &crate::AppState,
     force_rebuild: bool,
-    cache: &dyn crate::domain::traits::OfferingsCachePersistence,
+    cache: &crate::infra::persistence::OsOfferingsCache,
 ) -> Result<()> {
     if !force_rebuild {
         let existing = state.offerings_index.read().await;
@@ -199,8 +200,8 @@ pub async fn ensure_offerings_index(
     let cached_caps_ref = cached_caps.as_ref();
 
     // Try disk cache first (best-effort)
-    if !force_rebuild {
-        if let Some(on_disk) = cache.load_cache().await? {
+    if !force_rebuild
+        && let Some(on_disk) = cache.load_cache().await? {
             let current = OfferingsFingerprint {
                 moss_version: moss_version_string(),
                 capabilities_hash: current_capabilities_hash(cached_caps_ref),
@@ -212,7 +213,6 @@ pub async fn ensure_offerings_index(
                 return Ok(());
             }
         }
-    }
 
     let rebuilt = rebuild_offerings_index(&state.manifest_registry, cached_caps_ref)?;
     cache.save_cache(&rebuilt).await?;
@@ -235,7 +235,7 @@ pub async fn ensure_offerings_index(
 pub async fn get_compiled_offering(
     state: &crate::AppState,
     offering: &str,
-    cache: &dyn crate::domain::traits::OfferingsCachePersistence,
+    cache: &crate::infra::persistence::OsOfferingsCache,
 ) -> Result<Option<CompiledOffering>> {
     ensure_offerings_index(state, false, cache).await?;
     let guard = state.offerings_index.read().await;

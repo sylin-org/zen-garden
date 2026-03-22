@@ -241,7 +241,7 @@ impl Ceremony {
     ) -> Self {
         // Use timestamp + random suffix to ensure unique IDs
         let now = Utc::now();
-        let random_suffix: u16 = rand::thread_rng().gen();
+        let random_suffix: u16 = rand::rng().random();
         let target_part = ceremony_type
             .target()
             .map(|t| format!("-{}", &t[..t.len().min(8)]))

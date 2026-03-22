@@ -142,12 +142,11 @@ pub fn read_manifest_overlay(manifests_dir: &Path, relative_path: &str) -> Optio
     let fs_path = manifests_dir.join(relative_path);
 
     // 1. Check filesystem first
-    if fs_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&fs_path) {
+    if fs_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&fs_path) {
             debug!(path = %relative_path, source = "filesystem", "Loaded manifest");
             return Some(content);
         }
-    }
 
     // 2. Fall back to embedded
     if let Some(content) = EmbeddedManifests::get_string(relative_path) {
@@ -190,8 +189,8 @@ pub fn list_all_manifests(manifests_dir: &Path) -> Vec<ManifestSource> {
             .into_iter()
             .filter_map(|e| e.ok())
         {
-            if entry.file_type().is_file() {
-                if let Ok(relative) = entry.path().strip_prefix(manifests_dir) {
+            if entry.file_type().is_file()
+                && let Ok(relative) = entry.path().strip_prefix(manifests_dir) {
                     let relative_str = relative.to_string_lossy().replace('\\', "/");
                     manifests.insert(
                         relative_str.clone(),
@@ -201,7 +200,6 @@ pub fn list_all_manifests(manifests_dir: &Path) -> Vec<ManifestSource> {
                         },
                     );
                 }
-            }
         }
     }
 
@@ -586,7 +584,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                 serde_json::from_str::<FrontmatterData>(json).ok()
             });
 
-        match serde_yaml::from_str::<AdoptedFile>(content) {
+        match serde_yml::from_str::<AdoptedFile>(content) {
             Ok(file) => {
                 let fm = frontmatter.as_ref();
                 let offering = Offering {
@@ -778,9 +776,9 @@ fn post_process_seed(raw: &[u8]) -> Vec<u8> {
 /// Generate a cryptographically random hex string of `len` characters.
 fn generate_hex_secret(len: usize) -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..len)
-        .map(|_| format!("{:x}", rng.gen::<u8>() % 16))
+        .map(|_| format!("{:x}", rng.random::<u8>() % 16))
         .collect()
 }
 

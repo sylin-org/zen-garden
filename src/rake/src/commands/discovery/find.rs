@@ -11,7 +11,6 @@ use crate::context::{extract_json_field, Runtime};
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use anyhow::Context;
-use async_trait::async_trait;
 use futures_util::StreamExt;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{
@@ -119,54 +118,55 @@ struct ToolsSnapshotEvent {
 // Use shared ApiResponse from garden-common
 use garden_common::api_utils::ApiResponse;
 
-#[async_trait]
 impl Command for FindCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::api_utils::{is_suspicious, sanitize_query};
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use garden_common::api_utils::{is_suspicious, sanitize_query};
 
-        // Reject suspicious patterns client-side
-        if is_suspicious(&self.query) {
-            anyhow::bail!("Query contains invalid patterns");
-        }
-
-        // Sanitize query input
-        let sanitized_query = sanitize_query(&self.query).into_value();
-        let discovery = self
-            .query_services(ctx, &sanitized_query, self.fresh)
-            .await?;
-
-        // Handle not found case
-        if !discovery.found {
-            return self.handle_not_found(ctx).await;
-        }
-
-        // Field extraction mode: extract specific field and output just that value
-        if let Some(ref field_path) = self.field {
-            return self.render_field(&discovery, field_path);
-        }
-
-        // Render output based on format
-        match self.format {
-            FindOutputFormat::Human => {
-                self.render_human(&discovery, ctx);
+            // Reject suspicious patterns client-side
+            if is_suspicious(&self.query) {
+                anyhow::bail!("Query contains invalid patterns");
             }
-            FindOutputFormat::Json => {
-                self.render_json(&discovery)?;
-            }
-            FindOutputFormat::Uri => {
-                self.render_uri(&discovery, false);
-            }
-            FindOutputFormat::UriIp => {
-                self.render_uri(&discovery, true);
-            }
-        }
 
-        // Self-teaching suggestions (unless quiet or non-human format)
-        if self.format == FindOutputFormat::Human {
-            suggestions::print_suggestions(cmd::FIND, self.quiet);
-        }
+            // Sanitize query input
+            let sanitized_query = sanitize_query(&self.query).into_value();
+            let discovery = self
+                .query_services(ctx, &sanitized_query, self.fresh)
+                .await?;
 
-        Ok(())
+            // Handle not found case
+            if !discovery.found {
+                return self.handle_not_found(ctx).await;
+            }
+
+            // Field extraction mode: extract specific field and output just that value
+            if let Some(ref field_path) = self.field {
+                return self.render_field(&discovery, field_path);
+            }
+
+            // Render output based on format
+            match self.format {
+                FindOutputFormat::Human => {
+                    self.render_human(&discovery, ctx);
+                }
+                FindOutputFormat::Json => {
+                    self.render_json(&discovery)?;
+                }
+                FindOutputFormat::Uri => {
+                    self.render_uri(&discovery, false);
+                }
+                FindOutputFormat::UriIp => {
+                    self.render_uri(&discovery, true);
+                }
+            }
+
+            // Self-teaching suggestions (unless quiet or non-human format)
+            if self.format == FindOutputFormat::Human {
+                suggestions::print_suggestions(cmd::FIND, self.quiet);
+            }
+
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -709,28 +709,24 @@ impl FindCommand {
 
                 let data = data_lines.join("\n");
                 if event_name == tools_event_types::TOOLS_SNAPSHOT {
-                    if let Ok(snapshot) = serde_json::from_str::<ToolsSnapshotEvent>(&data) {
-                        if snapshot.tools.iter().any(|tool| {
+                    if let Ok(snapshot) = serde_json::from_str::<ToolsSnapshotEvent>(&data)
+                        && snapshot.tools.iter().any(|tool| {
                             garden_common::tools::fqid_matches(fqid, tool)
                                 && tool_ready(tool, requirements)
                         }) {
                             return Ok(());
                         }
-                    }
                     continue;
                 }
 
-                if event_name == tools_event_types::TOOL_UPSERT {
-                    if let Ok(delta) = serde_json::from_str::<ToolDelta>(&data) {
-                        if let Some(tool) = delta.tool.as_ref() {
-                            if garden_common::tools::fqid_matches(fqid, tool)
+                if event_name == tools_event_types::TOOL_UPSERT
+                    && let Ok(delta) = serde_json::from_str::<ToolDelta>(&data)
+                        && let Some(tool) = delta.tool.as_ref()
+                            && garden_common::tools::fqid_matches(fqid, tool)
                                 && tool_ready(tool, requirements)
                             {
                                 return Ok(());
                             }
-                        }
-                    }
-                }
             }
         }
 

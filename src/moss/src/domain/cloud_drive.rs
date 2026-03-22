@@ -67,7 +67,7 @@ pub enum DriveAction {
 /// * `is_known_storage` — whether `old_storage` is a known (local or remote) storage
 /// * `source_path`      — original filesystem path of the source
 /// * `sync_root_path`   — the sync root base path
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn classify_rename(
     source_in_scope: bool,
     target_in_scope: bool,

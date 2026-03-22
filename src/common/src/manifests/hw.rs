@@ -151,29 +151,29 @@ impl HwManifests {
                     let path = entry.path();
 
                     // Only process .manifest.yaml files
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name.ends_with(".manifest.yaml") {
-                            let model_name = name.trim_end_matches(".manifest.yaml");
-                            let key = format!("{}/{}", vendor, model_name);
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                        && name.ends_with(".manifest.yaml")
+                    {
+                        let model_name = name.trim_end_matches(".manifest.yaml");
+                        let key = format!("{}/{}", vendor, model_name);
 
-                            match Self::load_entry(&vendor_dir, vendor, model_name) {
-                                Ok(hw_entry) => {
-                                    vendors_set.insert(vendor.clone());
-                                    entries.insert(key, hw_entry);
-                                    tracing::debug!(
-                                        vendor = vendor,
-                                        model = model_name,
-                                        "Loaded hardware manifest"
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        vendor = vendor,
-                                        model = model_name,
-                                        error = %e,
-                                        "Failed to load hardware manifest"
-                                    );
-                                }
+                        match Self::load_entry(&vendor_dir, vendor, model_name) {
+                            Ok(hw_entry) => {
+                                vendors_set.insert(vendor.clone());
+                                entries.insert(key, hw_entry);
+                                tracing::debug!(
+                                    vendor = vendor,
+                                    model = model_name,
+                                    "Loaded hardware manifest"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    vendor = vendor,
+                                    model = model_name,
+                                    error = %e,
+                                    "Failed to load hardware manifest"
+                                );
                             }
                         }
                     }
@@ -199,7 +199,7 @@ impl HwManifests {
         let manifest_yaml = crate::utils::strings::strip_bom(&manifest_yaml_raw).to_string();
 
         // Parse manifest
-        let manifest = match serde_yaml::from_str::<HwManifestData>(&manifest_yaml) {
+        let manifest = match serde_yml::from_str::<HwManifestData>(&manifest_yaml) {
             Ok(m) => Some(m),
             Err(e) => {
                 tracing::warn!(
@@ -305,30 +305,31 @@ impl HwEntry {
 
     /// Check if this hardware matches the given dmidecode values
     pub fn matches_dmidecode(&self, manufacturer: &str, product_name: &str) -> bool {
-        if let Some(ref manifest) = self.manifest {
-            if let Some(ref identity) = manifest.identity {
-                // Check manufacturer
-                if let Some(ref mfr) = identity.system_manufacturer {
-                    if !manufacturer.contains(mfr) && mfr != manufacturer {
-                        return false;
+        if let Some(ref manifest) = self.manifest
+            && let Some(ref identity) = manifest.identity
+        {
+            // Check manufacturer
+            if let Some(ref mfr) = identity.system_manufacturer
+                && !manufacturer.contains(mfr)
+                && mfr != manufacturer
+            {
+                return false;
+            }
+
+            // Check product name patterns
+            if let Some(ref patterns) = identity.system_product_name_patterns {
+                for pattern in patterns {
+                    if product_name.contains(pattern) {
+                        return true;
                     }
                 }
+            }
 
-                // Check product name patterns
-                if let Some(ref patterns) = identity.system_product_name_patterns {
-                    for pattern in patterns {
-                        if product_name.contains(pattern) {
-                            return true;
-                        }
-                    }
-                }
-
-                // Check version patterns as fallback
-                if let Some(ref patterns) = identity.system_version_patterns {
-                    for pattern in patterns {
-                        if product_name.contains(pattern) {
-                            return true;
-                        }
+            // Check version patterns as fallback
+            if let Some(ref patterns) = identity.system_version_patterns {
+                for pattern in patterns {
+                    if product_name.contains(pattern) {
+                        return true;
                     }
                 }
             }

@@ -267,11 +267,10 @@ impl Animation {
 
     /// Check if override has expired
     pub fn update_override(&mut self) {
-        if let Some((ref override_type, start)) = self.active_override {
-            if start.elapsed() >= override_type.duration() {
+        if let Some((ref override_type, start)) = self.active_override
+            && start.elapsed() >= override_type.duration() {
                 self.active_override = None;
             }
-        }
     }
 }
 
@@ -329,7 +328,7 @@ impl AnimationEngine {
             prev_lit: [false; TOTAL_PIXELS],
             was_in_override: false,
             swarm_frame: 0,
-            rng: StdRng::from_entropy(),
+            rng: StdRng::from_os_rng(),
         }
     }
 
@@ -473,7 +472,7 @@ impl AnimationEngine {
             .occupied
             .iter()
             .enumerate()
-            .filter(|(_, &occ)| !occ)
+            .filter(|&(_, &occ)| !occ)
             .map(|(i, _)| i)
             .collect();
 
@@ -482,7 +481,7 @@ impl AnimationEngine {
         }
 
         // Pick random position
-        let idx = available[self.rng.gen_range(0..available.len())];
+        let idx = available[self.rng.random_range(0..available.len())];
         let x = (idx % GRID_SIZE as usize) as u8;
         let y = (idx / GRID_SIZE as usize) as u8;
 
@@ -498,7 +497,7 @@ impl AnimationEngine {
 
     /// Pick firefly color based on context
     fn pick_color(&mut self, has_seed_bank: bool, has_services: bool) -> (u8, u8, u8) {
-        let roll: f32 = self.rng.gen();
+        let roll: f32 = self.rng.random();
 
         // 10% chance for green if seed-bank connected
         if has_seed_bank && roll < 0.10 {
@@ -647,7 +646,7 @@ impl AnimationEngine {
                 let y = start_y as f32
                     + (CENTER.1 as f32 - start_y as f32) * ease_in_out(move_progress);
 
-                let flicker = ((frame + i * 13) % 4) != 0;
+                let flicker = !(frame + i * 13).is_multiple_of(4);
                 if flicker {
                     let brightness =
                         0.5 + 0.5 * ((frame as f32 * 0.3 + i as f32).sin() * 0.5 + 0.5);
@@ -730,7 +729,7 @@ impl AnimationEngine {
                 let y = CENTER.1 as f32 + angle.sin() * dist;
 
                 if (0.0..=4.0).contains(&x) && (0.0..=4.0).contains(&y) {
-                    let flicker = ((frame + i * 7) % 3) != 0;
+                    let flicker = !(frame + i * 7).is_multiple_of(3);
                     if flicker {
                         let _ = self.connection.with_device(|serial| {
                             serial.pixel(x.round() as u8, y.round() as u8, r, g, b)
@@ -754,7 +753,7 @@ impl AnimationEngine {
                 let y = CENTER.1 as f32 + angle.sin() * dist;
 
                 let fade = (1.0 - disperse_progress).max(0.0);
-                let flicker = ((frame + i * 11) % 4) != 0;
+                let flicker = !(frame + i * 11).is_multiple_of(4);
 
                 if (0.0..=4.0).contains(&x) && (0.0..=4.0).contains(&y) && flicker && fade > 0.1 {
                     let (r, g, b) = STORAGE_AMBER;

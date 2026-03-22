@@ -18,6 +18,7 @@ use std::hash::{Hash, Hasher};
 use garden_common::storage::StorageRole;
 
 use crate::app_state::AppState;
+use crate::domain::traits::CompanionOps;
 use crate::cli;
 use crate::domain::topology;
 

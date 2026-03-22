@@ -6,6 +6,9 @@ rust-version.workspace = true
 authors.workspace = true
 description = "Visual status indicator companion for Zen Garden (Waveshare RP2040-Matrix)"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "garden-firefly"
 path = "src/main.rs"
@@ -29,4 +32,4 @@ serde_json.workspace = true
 serialport = "4.3"
 
 # Random for firefly animation
-rand = "0.8"
+rand = "0.9"

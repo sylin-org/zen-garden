@@ -76,11 +76,10 @@ pub fn get_current_compat_capabilities(
     cached: Option<&HardwareCapabilities>,
 ) -> CompatCheckCapabilities {
     // Use cached capabilities if detection is complete
-    if let Some(caps) = cached {
-        if caps.detection_status == DetectionStatus::Complete {
+    if let Some(caps) = cached
+        && caps.detection_status == DetectionStatus::Complete {
             return build_from_cached(caps);
         }
-    }
 
     // Fall back to live detection (expensive — shells out to docker, nvidia-smi, etc.)
     build_from_live_detection()

@@ -24,9 +24,9 @@ Environment="PORT=7185"
 # Security hardening
 NoNewPrivileges=false
 PrivateTmp=true
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=false
-ReadWritePaths=/etc/zen-garden /var/lib/zen-garden /home/{{USERNAME}}/bin /usr/local/bin /etc/hostname /etc/hosts /etc/docker /etc/network /run/network /etc/resolv.conf /etc/systemd/resolved.conf.d
+ReadWritePaths=/usr/local/bin
 
 # Resource limits
 LimitNOFILE=65536

@@ -9,7 +9,6 @@
 use crate::docker::Client;
 use crate::domain::traits::ServiceDetector;
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use garden_common::detection::DetectionResult;
 use garden_common::manifests::ContainerInspectDetection;
 use regex::Regex;
@@ -26,7 +25,6 @@ impl ContainerDetector {
     }
 }
 
-#[async_trait]
 impl ServiceDetector for ContainerDetector {
     async fn detect_by_container_inspect(
         &self,
@@ -81,8 +79,8 @@ pub async fn detect_by_container_inspect(
         }
 
         // Check image pattern if specified
-        if let Some(ref image_re) = image_re {
-            if !image_re.is_match(&container.image) {
+        if let Some(ref image_re) = image_re
+            && !image_re.is_match(&container.image) {
                 tracing::debug!(
                     container = %container_name,
                     image = %container.image,
@@ -90,7 +88,6 @@ pub async fn detect_by_container_inspect(
                 );
                 continue;
             }
-        }
 
         // Check if container is running
         let is_running = container.state.to_lowercase() == "running";

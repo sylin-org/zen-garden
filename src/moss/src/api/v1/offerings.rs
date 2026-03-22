@@ -108,8 +108,8 @@ pub async fn list_offerings_v1(
     }
 
     // Add available offerings (not yet installed) - only if catalog loaded
-    if query.state.as_deref() != Some("installed") {
-        if let Some(offerings_index) = offerings_index {
+    if query.state.as_deref() != Some("installed")
+        && let Some(offerings_index) = offerings_index {
             for offering in &offerings_index.offerings {
                 if !installed.contains_key(&offering.name) {
                     offerings.push(OfferingView {
@@ -129,7 +129,6 @@ pub async fn list_offerings_v1(
                 }
             }
         }
-    }
 
     let suggestions = if catalog_building {
         Some(vec![
@@ -579,22 +578,19 @@ fn load_taxonomy_dictionary() -> TaxonomyDictionary {
     let data_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir());
     let fs_path = data_dir.join("manifests").join("taxonomy.dictionary.yaml");
 
-    if fs_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&fs_path) {
-            if let Ok(dict) = serde_yaml::from_str::<TaxonomyDictionary>(&content) {
+    if fs_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&fs_path)
+            && let Ok(dict) = serde_yml::from_str::<TaxonomyDictionary>(&content) {
                 tracing::debug!("Loaded taxonomy dictionary from filesystem: {:?}", fs_path);
                 return dict;
             }
-        }
-    }
 
     // Fall back to embedded
-    if let Some(content) = EmbeddedManifests::get_string("taxonomy.dictionary.yaml") {
-        if let Ok(dict) = serde_yaml::from_str::<TaxonomyDictionary>(&content) {
+    if let Some(content) = EmbeddedManifests::get_string("taxonomy.dictionary.yaml")
+        && let Ok(dict) = serde_yml::from_str::<TaxonomyDictionary>(&content) {
             tracing::debug!("Loaded taxonomy dictionary from embedded assets");
             return dict;
         }
-    }
 
     tracing::warn!("Failed to load taxonomy dictionary, using empty");
     TaxonomyDictionary::default()
@@ -753,8 +749,8 @@ pub async fn test_manifest_v1(
     }
 
     // Parse snippet to extract the image field
-    let snippet_value: serde_yaml::Value =
-        serde_yaml::from_str(&payload.snippet_yaml).map_err(|e| {
+    let snippet_value: serde_yml::Value =
+        serde_yml::from_str(&payload.snippet_yaml).map_err(|e| {
             bad_request(
                 "INVALID_SNIPPET",
                 format!("Failed to parse snippet YAML: {}", e),
@@ -836,7 +832,7 @@ pub async fn export_offering_manifest_v1(
         let compatibility_yaml = offering
             .compatibility
             .as_ref()
-            .map(|c| serde_yaml::to_string(c).unwrap_or_default())
+            .map(|c| serde_yml::to_string(c).unwrap_or_default())
             .unwrap_or_default();
 
         let guidance_md = offering.guidance.clone().unwrap_or_default();

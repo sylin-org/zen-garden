@@ -1,6 +1,5 @@
 //! Ceremony coordination — pond init/join/unlock ceremony infrastructure.
 
-use crate::domain::traits::CeremonyPersistence;
 use crate::domain::CeremonyRegistry;
 use std::sync::Arc;
 
@@ -13,5 +12,5 @@ pub struct Ceremony {
     /// In-memory active ceremony registry.
     pub registry: Arc<CeremonyRegistry>,
     /// Persistent journal for crash recovery.
-    pub journal: Arc<dyn CeremonyPersistence>,
+    pub journal: Arc<crate::infra::CeremonyJournal>,
 }

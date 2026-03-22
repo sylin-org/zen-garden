@@ -2,12 +2,15 @@
 //! Provides Companion registry and command proxy functionality
 
 use crate::app_state::AppState;
+use crate::domain::Companion;
+use crate::domain::traits::CompanionOps;
 use crate::{internal, not_found};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
+use std::sync::Arc;
 use garden_common::command_manifest::{CommandManifest, CommandResponse, CompanionCommandRequest};
 use serde::{Deserialize, Serialize};
 
@@ -32,13 +35,13 @@ pub struct CompanionListResponse {
 /// GET /api/v1/stone/Companions
 /// Returns list of available Companions with running status
 pub async fn get_companions(
-    State(state): State<AppState>,
+    State(companion): State<Arc<Companion>>,
 ) -> crate::api::ApiResult<CompanionListResponse> {
-    let companions = state.companion.registry.list().await;
+    let companions = companion.registry.list().await;
 
     let mut summaries = Vec::new();
     for a in companions {
-        let running = state.companion.registry.is_running(&a.id).await;
+        let running = companion.registry.is_running(&a.id).await;
         summaries.push(CompanionSummary {
             id: a.manifest.id.clone(),
             name: a.manifest.name.clone(),
@@ -67,10 +70,10 @@ pub struct CompanionDetailResponse {
 }
 
 pub async fn get_companion_manifest(
-    State(state): State<AppState>,
+    State(companion): State<Arc<Companion>>,
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionDetailResponse> {
-    match state.companion.registry.get(&companion_id).await {
+    match companion.registry.get(&companion_id).await {
         Some(c) => crate::api::ok(CompanionDetailResponse {
             manifest: c.manifest.clone(),
             running: c.running,
@@ -389,11 +392,10 @@ pub async fn start_companion(
 /// When user explicitly stops an Companion, it should stay off until
 /// manually started again. This persists the disabled state.
 pub async fn stop_companion(
-    State(state): State<AppState>,
+    State(companion): State<Arc<Companion>>,
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionLifecycleResponse> {
-    match state
-        .companion
+    match companion
         .registry
         .stop_and_disable(&companion_id)
         .await
@@ -417,15 +419,15 @@ pub async fn stop_companion(
 /// POST /api/v1/stone/companions/refresh
 /// Re-scan Companions directory
 pub async fn refresh_companions(
-    State(state): State<AppState>,
+    State(companion): State<Arc<Companion>>,
 ) -> crate::api::ApiResult<CompanionListResponse> {
-    match state.companion.registry.refresh_all().await {
+    match companion.registry.refresh_all().await {
         Ok(_) => {
             // Return updated list with running status
-            let companions = state.companion.registry.list().await;
+            let companions = companion.registry.list().await;
             let mut summaries = Vec::new();
             for a in companions {
-                let running = state.companion.registry.is_running(&a.id).await;
+                let running = companion.registry.is_running(&a.id).await;
                 summaries.push(CompanionSummary {
                     id: a.manifest.id.clone(),
                     name: a.manifest.name.clone(),

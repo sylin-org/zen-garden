@@ -10,7 +10,7 @@
 //!
 //! All names follow the pattern `{entity}-{adjective}-{noun}`.
 
-use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 use rand::SeedableRng;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -167,7 +167,7 @@ const POND_NOUNS: &[&str] = &[
 /// No collision detection needed — pond names are decorative identifiers
 /// that the user can change at any time without consequences.
 pub fn generate_pond_name() -> String {
-    let mut rng = rand::rngs::StdRng::from_entropy();
+    let mut rng = rand::rngs::StdRng::from_os_rng();
     let adjective = POND_ADJECTIVES.choose(&mut rng).unwrap();
     let noun = POND_NOUNS.choose(&mut rng).unwrap();
     format!("pond-{}-{}", adjective, noun)

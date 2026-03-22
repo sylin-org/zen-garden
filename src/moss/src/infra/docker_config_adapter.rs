@@ -4,12 +4,10 @@
 use crate::domain::traits::DockerConfigOps;
 use crate::infra::docker_config;
 use anyhow::Result;
-use async_trait::async_trait;
 
 /// Concrete `DockerConfigOps` backed by filesystem operations on daemon.json.
 pub struct OsDockerConfig;
 
-#[async_trait]
 impl DockerConfigOps for OsDockerConfig {
     async fn read_insecure_registries(&self) -> Result<Vec<String>> {
         docker_config::read_insecure_registries().await

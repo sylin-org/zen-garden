@@ -658,7 +658,7 @@ impl StoneEvent {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn load_updated(
         cpu_percent: f64,
         memory_percent: f64,

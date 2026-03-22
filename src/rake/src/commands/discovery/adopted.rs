@@ -6,7 +6,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use async_trait::async_trait;
 
 /// List adopted services
 pub struct AdoptedCommand {
@@ -19,59 +18,60 @@ impl AdoptedCommand {
     }
 }
 
-#[async_trait]
 impl Command for AdoptedCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let url = ctx.api_v1_url("stone/offerings/adopted")?;
-        let response = ctx.client.get(&url).send().await?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let url = ctx.api_v1_url("stone/offerings/adopted")?;
+            let response = ctx.client.get(&url).send().await?;
 
-        if response.status().is_success() {
-            let body: serde_json::Value = response.json().await?;
-            let adopted = body.get("data").and_then(|d| d.as_array());
+            if response.status().is_success() {
+                let body: serde_json::Value = response.json().await?;
+                let adopted = body.get("data").and_then(|d| d.as_array());
 
-            if let Some(list) = adopted {
-                if list.is_empty() {
-                    println!(
-                        "{}No adopted services",
-                        " ".repeat(ui::constants::DEFAULT_INDENT)
-                    );
-                } else {
-                    println!(
-                        "{}Adopted services:",
-                        " ".repeat(ui::constants::DEFAULT_INDENT)
-                    );
-                    for svc in list {
-                        let name = svc
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let offering = svc.get("offering").and_then(|v| v.as_str()).unwrap_or("");
-                        if !offering.is_empty() && offering != name {
-                            println!(
-                                "{}  {} (from: {})",
-                                " ".repeat(ui::constants::DEFAULT_INDENT),
-                                name,
-                                offering
-                            );
-                        } else {
-                            println!("{}  {}", " ".repeat(ui::constants::DEFAULT_INDENT), name);
+                if let Some(list) = adopted {
+                    if list.is_empty() {
+                        println!(
+                            "{}No adopted services",
+                            " ".repeat(ui::constants::DEFAULT_INDENT)
+                        );
+                    } else {
+                        println!(
+                            "{}Adopted services:",
+                            " ".repeat(ui::constants::DEFAULT_INDENT)
+                        );
+                        for svc in list {
+                            let name = svc
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let offering = svc.get("offering").and_then(|v| v.as_str()).unwrap_or("");
+                            if !offering.is_empty() && offering != name {
+                                println!(
+                                    "{}  {} (from: {})",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                                    name,
+                                    offering
+                                );
+                            } else {
+                                println!("{}  {}", " ".repeat(ui::constants::DEFAULT_INDENT), name);
+                            }
                         }
                     }
                 }
+            } else {
+                eprintln!(
+                    "{}{} Failed to list adopted services: {}",
+                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    ui::status_indicator("error", ctx.term.supports_color),
+                    response.status()
+                );
             }
-        } else {
-            eprintln!(
-                "{}{} Failed to list adopted services: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions("adopted", self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions("adopted", self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

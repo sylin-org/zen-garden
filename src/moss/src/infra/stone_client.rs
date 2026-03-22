@@ -27,7 +27,6 @@
 
 use crate::domain::traits::PondClient;
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use garden_common::PeerAddress;
 use reqwest::Method;
 use std::path::PathBuf;
@@ -223,7 +222,6 @@ impl StoneClient {
 // reqwest::Client is Clone + Send + Sync, so StoneClient can be shared via Arc.
 // The RwLock is std::sync (not tokio) since we only hold it for Clone operations.
 
-#[async_trait]
 impl PondClient for StoneClient {
     fn get(&self, address: &PeerAddress, path: &str) -> reqwest::RequestBuilder {
         StoneClient::get(self, address, path)

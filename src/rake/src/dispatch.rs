@@ -150,12 +150,11 @@ impl Runtime {
     /// Build a [`StoneBag`] for the given endpoint, seeding from the
     /// tending cache when the endpoints match.
     fn build_bag(&self, endpoint: &str) -> StoneBag {
-        if let Ok(state) = tending::read_tending() {
-            if state.endpoint == endpoint && state.capabilities.is_some() {
+        if let Ok(state) = tending::read_tending()
+            && state.endpoint == endpoint && state.capabilities.is_some() {
                 tracing::debug!(stone = %state.stone_name, "StoneBag: seeded from tending cache");
                 return StoneBag::from_tending(&state, self.client.clone());
             }
-        }
         StoneBag::new(self.client.clone(), endpoint.to_string())
     }
 }

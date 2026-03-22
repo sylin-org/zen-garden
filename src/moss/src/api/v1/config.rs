@@ -193,11 +193,10 @@ pub async fn patch_config_v1(
     let patches = patches_after.clone();
     state
         .update_offering_by_name(&service_name, false, |o| {
-            if o.is_managed() {
-                if let Some(managed) = o.managed_data_mut() {
+            if o.is_managed()
+                && let Some(managed) = o.managed_data_mut() {
                     managed.config_patches = patches;
                 }
-            }
             false // config patches are detail-only, don't trigger sync
         })
         .await;
@@ -274,11 +273,10 @@ pub async fn delete_config_v1(
     let patches = patches_after.clone();
     state
         .update_offering_by_name(&service_name, false, |o| {
-            if o.is_managed() {
-                if let Some(managed) = o.managed_data_mut() {
+            if o.is_managed()
+                && let Some(managed) = o.managed_data_mut() {
                     managed.config_patches = patches;
                 }
-            }
             false // config patches are detail-only, don't trigger sync
         })
         .await;

@@ -253,8 +253,8 @@ pub async fn get_catalog(
     let mut runtime_files: HashMap<String, Vec<(String, String)>> = HashMap::new();
     let mut runtime_categories: HashMap<String, String> = HashMap::new();
 
-    if sw_dir.exists() {
-        if let Ok(categories) = tokio::fs::read_dir(&sw_dir).await {
+    if sw_dir.exists()
+        && let Ok(categories) = tokio::fs::read_dir(&sw_dir).await {
             let mut cats = categories;
             while let Ok(Some(cat_entry)) = cats.next_entry().await {
                 let cat_path = cat_entry.path();
@@ -289,7 +289,6 @@ pub async fn get_catalog(
                 }
             }
         }
-    }
 
     // 3. Get installed offerings from AppState
     let (installed_names, installed_running) = {
@@ -523,18 +522,16 @@ fn offering_category_dir(offering: &str) -> String {
             continue;
         }
         let parts: Vec<&str> = path_str.split('/').collect();
-        if parts.len() >= 3 {
-            if let Some(filename) = parts.last() {
-                if filename.starts_with(offering) {
+        if parts.len() >= 3
+            && let Some(filename) = parts.last()
+                && filename.starts_with(offering) {
                     return parts[1].to_string();
                 }
-            }
-        }
     }
     // Fallback: check runtime dir
     let rt_dir = PathBuf::from(runtime_manifests_dir()).join("sw");
-    if rt_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&rt_dir) {
+    if rt_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&rt_dir) {
             for entry in entries.flatten() {
                 let cat_path = entry.path();
                 if !cat_path.is_dir() {
@@ -554,7 +551,6 @@ fn offering_category_dir(offering: &str) -> String {
                 }
             }
         }
-    }
     "custom".to_string()
 }
 
@@ -585,15 +581,14 @@ pub async fn get_file(
     }
 
     // Fall back to embedded
-    if let Some(embedded_path) = find_embedded_path(&params.offering, suffix) {
-        if let Some(content) = EmbeddedManifests::get_string(&embedded_path) {
+    if let Some(embedded_path) = find_embedded_path(&params.offering, suffix)
+        && let Some(content) = EmbeddedManifests::get_string(&embedded_path) {
             return Ok((
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
                 content,
             ));
         }
-    }
 
     Err(not_found(
         "FILE_NOT_FOUND",

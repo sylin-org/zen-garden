@@ -142,8 +142,8 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             // Port reconciliation: detect if Docker port bindings differ from registry.
             // Prefer the port matching the existing registry port (the manifest's primary
             // port), so multi-port services don't randomly switch to a secondary port.
-            if new_status == OfferingStatus::Running {
-                if let Ok(docker_ports) = state.platform.docker.get_container_ports(&name).await {
+            if new_status == OfferingStatus::Running
+                && let Ok(docker_ports) = state.platform.docker.get_container_ports(&name).await {
                     let current_port = {
                         let offerings = state.offerings.read().await;
                         offerings
@@ -158,8 +158,8 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                             .or(docker_ports.first())
                             .map(|(h, _)| *h);
 
-                        if let Some(actual_host_port) = best_port {
-                            if current_port != actual_host_port {
+                        if let Some(actual_host_port) = best_port
+                            && current_port != actual_host_port {
                                 tracing::info!(
                                     offering = %name,
                                     registry_port = current_port,
@@ -174,16 +174,14 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                                     .await;
                                 state_changed = true;
                             }
-                        }
                     }
                 }
-            }
 
             // Protocol reconciliation: ensure the protocol matches the manifest/category
             // definition. Corrects stale "tcp" entries from before protocol inference was
             // wired into installation (self-heal on upgrade).
-            if new_status == OfferingStatus::Running {
-                if let Some(template) = state.manifest_registry.get_offering(&name) {
+            if new_status == OfferingStatus::Running
+                && let Some(template) = state.manifest_registry.get_offering(&name) {
                     let expected_protocol =
                         crate::domain::connection::infer_protocol_from_manifest_metadata(
                             &name,
@@ -198,8 +196,8 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                             .find(|o| o.offering_id == offering_id)
                             .map(|o| o.location.protocol.clone())
                     };
-                    if let Some(current_protocol) = current_protocol {
-                        if current_protocol != expected_protocol {
+                    if let Some(current_protocol) = current_protocol
+                        && current_protocol != expected_protocol {
                             tracing::info!(
                                 offering = %name,
                                 old_protocol = %current_protocol,
@@ -214,9 +212,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                                 .await;
                             state_changed = true;
                         }
-                    }
                 }
-            }
         }
 
         // TOPO-0002: Check running managed containers for missing topology mount.

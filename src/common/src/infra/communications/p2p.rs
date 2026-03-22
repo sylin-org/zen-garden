@@ -70,7 +70,7 @@
 //! - [discovery-transport.md](../../../../docs/discovery-transport.md)
 
 use anyhow::{Context, Result};
-use network_interface::{NetworkInterface as NI, NetworkInterfaceConfig};
+use if_addrs::{IfAddr, get_if_addrs};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -114,16 +114,16 @@ impl DiscoveryConfig {
     fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(port_str) = std::env::var("DISCOVERY_PORT") {
-            if let Ok(port) = port_str.parse() {
-                config.port = port;
-            }
+        if let Ok(port_str) = std::env::var("DISCOVERY_PORT")
+            && let Ok(port) = port_str.parse()
+        {
+            config.port = port;
         }
 
-        if let Ok(group_str) = std::env::var("DISCOVERY_MCAST_GROUP") {
-            if let Ok(group) = group_str.parse() {
-                config.mcast_group = group;
-            }
+        if let Ok(group_str) = std::env::var("DISCOVERY_MCAST_GROUP")
+            && let Ok(group) = group_str.parse()
+        {
+            config.mcast_group = group;
         }
 
         if let Ok(val) = std::env::var("DISCOVERY_ENABLE_BCAST_FALLBACK") {
@@ -145,27 +145,7 @@ impl DiscoveryConfig {
 struct NetworkInterface {
     name: String,
     ip: Ipv4Addr,
-    netmask: Option<Ipv4Addr>,
     broadcast: Option<Ipv4Addr>,
-}
-
-impl NetworkInterface {
-    /// Compute directed broadcast address from IP and netmask
-    fn compute_broadcast(&self) -> Option<Ipv4Addr> {
-        if let Some(netmask) = self.netmask {
-            let ip_octets = self.ip.octets();
-            let mask_octets = netmask.octets();
-            let broadcast = [
-                ip_octets[0] | !mask_octets[0],
-                ip_octets[1] | !mask_octets[1],
-                ip_octets[2] | !mask_octets[2],
-                ip_octets[3] | !mask_octets[3],
-            ];
-            Some(Ipv4Addr::from(broadcast))
-        } else {
-            None
-        }
-    }
 }
 
 /// Known virtual adapter MAC OUI prefixes (first 3 bytes)
@@ -240,10 +220,10 @@ fn is_virtual_interface_name(name: &str) -> bool {
 /// Check if interface is virtual using MAC OUI + name heuristics
 fn is_virtual_interface(name: &str, mac: Option<&str>, ip: &Ipv4Addr) -> bool {
     // Primary: MAC OUI detection (most reliable)
-    if let Some(mac_addr) = mac {
-        if is_virtual_mac(mac_addr) {
-            return true;
-        }
+    if let Some(mac_addr) = mac
+        && is_virtual_mac(mac_addr)
+    {
+        return true;
     }
 
     // Secondary: Name pattern matching (fallback)
@@ -263,7 +243,7 @@ fn is_virtual_interface(name: &str, mac: Option<&str>, ip: &Ipv4Addr) -> bool {
 
 /// Enumerate eligible network interfaces for discovery
 fn enumerate_eligible_interfaces() -> Vec<NetworkInterface> {
-    let interfaces = match NI::show() {
+    let interfaces = match get_if_addrs() {
         Ok(ifaces) => ifaces,
         Err(e) => {
             tracing::warn!(error = ?e, "Failed to enumerate network interfaces");
@@ -275,60 +255,44 @@ fn enumerate_eligible_interfaces() -> Vec<NetworkInterface> {
 
     for iface in interfaces {
         // Extract IPv4 addresses from the interface
-        for addr in &iface.addr {
-            let network_interface::Addr::V4(v4_addr) = addr else {
-                continue;
-            };
+        let IfAddr::V4(ref v4_addr) = iface.addr else {
+            continue;
+        };
 
-            let ipv4 = v4_addr.ip;
+        let ipv4 = v4_addr.ip;
 
-            // Skip loopback
-            if ipv4.is_loopback() {
-                continue;
-            }
+        // Skip loopback
+        if ipv4.is_loopback() {
+            continue;
+        }
 
-            // Skip link-local (169.254.x.x)
-            if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
-                continue;
-            }
+        // Skip link-local (169.254.x.x)
+        if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+            continue;
+        }
 
-            // Skip virtual adapters (using MAC OUI + name heuristics)
-            if is_virtual_interface(&iface.name, iface.mac_addr.as_deref(), &ipv4) {
-                tracing::debug!(
-                    interface = %iface.name,
-                    ip = %ipv4,
-                    mac = ?iface.mac_addr,
-                    "Skipping virtual interface"
-                );
-                continue;
-            }
-
-            // Extract netmask
-            let netmask = v4_addr.netmask;
-
-            // Compute broadcast address
-            let temp_iface = NetworkInterface {
-                name: iface.name.clone(),
-                ip: ipv4,
-                netmask,
-                broadcast: None,
-            };
-            let broadcast = temp_iface.compute_broadcast();
-
-            tracing::trace!(
+        // Skip virtual adapters (using name heuristics — if-addrs does not
+        // expose MAC addresses, so MAC OUI detection is unavailable)
+        if is_virtual_interface(&iface.name, None, &ipv4) {
+            tracing::debug!(
                 interface = %iface.name,
                 ip = %ipv4,
-                mac = ?iface.mac_addr,
-                "Found eligible interface"
+                "Skipping virtual interface"
             );
-
-            eligible.push(NetworkInterface {
-                name: iface.name.clone(),
-                ip: ipv4,
-                netmask,
-                broadcast,
-            });
+            continue;
         }
+
+        tracing::trace!(
+            interface = %iface.name,
+            ip = %ipv4,
+            "Found eligible interface"
+        );
+
+        eligible.push(NetworkInterface {
+            name: iface.name,
+            ip: ipv4,
+            broadcast: v4_addr.broadcast,
+        });
     }
 
     if eligible.is_empty() {
@@ -425,7 +389,7 @@ static DEBOUNCE_CHANNELS: OnceCell<Mutex<HashMap<String, mpsc::UnboundedSender<V
 /// When registered (e.g., by moss when pond security is active), this hook
 /// is called on every outbound `UdpAnnouncement` just before serialization.
 /// The enricher typically adds `signature` and `sender_cert` fields.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 static ENVELOPE_ENRICHER: OnceLock<Box<dyn Fn(&mut UdpAnnouncement) + Send + Sync>> =
     OnceLock::new();
 
@@ -434,7 +398,7 @@ static ENVELOPE_ENRICHER: OnceLock<Box<dyn Fn(&mut UdpAnnouncement) + Send + Syn
 /// When registered, this hook is called on every received `UdpAnnouncement`
 /// after deduplication but before dispatch. If it returns `false`, the
 /// announcement is dropped silently (logged at debug level).
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 static ENVELOPE_VERIFIER: OnceLock<Box<dyn Fn(&UdpAnnouncement) -> bool + Send + Sync>> =
     OnceLock::new();
 
@@ -446,7 +410,7 @@ static ENVELOPE_VERIFIER: OnceLock<Box<dyn Fn(&UdpAnnouncement) -> bool + Send +
 /// Typically used to add ECDSA signatures when pond security is active.
 ///
 /// Can only be called once (first-wins). Returns `Err` if already set.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub fn set_envelope_enricher(
     enricher: Box<dyn Fn(&mut UdpAnnouncement) + Send + Sync>,
 ) -> Result<(), Box<dyn Fn(&mut UdpAnnouncement) + Send + Sync>> {
@@ -461,7 +425,7 @@ pub fn set_envelope_enricher(
 /// Typically verifies ECDSA signature + cert chain when pond security is active.
 ///
 /// Can only be called once (first-wins). Returns `Err` if already set.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub fn set_envelope_verifier(
     verifier: Box<dyn Fn(&UdpAnnouncement) -> bool + Send + Sync>,
 ) -> Result<(), Box<dyn Fn(&UdpAnnouncement) -> bool + Send + Sync>> {
@@ -988,25 +952,25 @@ async fn send_udp_packet(announcement_type: &str, payload_bytes: &[u8]) -> Resul
         }
 
         // 2. Directed broadcast fallback (if enabled)
-        if config.enable_bcast_fallback {
-            if let Some(bcast_ip) = sender.interface.broadcast {
-                let bcast_addr = SocketAddr::new(IpAddr::V4(bcast_ip), config.port);
-                match sender.socket.send_to(&data, &bcast_addr).await {
-                    Ok(_) => {
-                        sent_count += 1;
-                        tracing::trace!(
-                            interface = %sender.interface.name,
-                            target = %bcast_addr,
-                            "Directed broadcast sent"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            error = ?e,
-                            interface = %sender.interface.name,
-                            "Directed broadcast failed"
-                        );
-                    }
+        if config.enable_bcast_fallback
+            && let Some(bcast_ip) = sender.interface.broadcast
+        {
+            let bcast_addr = SocketAddr::new(IpAddr::V4(bcast_ip), config.port);
+            match sender.socket.send_to(&data, &bcast_addr).await {
+                Ok(_) => {
+                    sent_count += 1;
+                    tracing::trace!(
+                        interface = %sender.interface.name,
+                        target = %bcast_addr,
+                        "Directed broadcast sent"
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        error = ?e,
+                        interface = %sender.interface.name,
+                        "Directed broadcast failed"
+                    );
                 }
             }
         }
@@ -1052,27 +1016,27 @@ async fn udp_receiver_loop(
             Ok((len, addr)) => {
                 if let Ok(announcement) = serde_json::from_slice::<UdpAnnouncement>(&buf[..len]) {
                     // Deduplicate if msg_id is present
-                    if let Some(ref msg_id) = announcement.msg_id {
-                        if dedup_cache.is_duplicate(msg_id) {
-                            tracing::trace!(
-                                msg_id = %msg_id,
-                                source = ?addr,
-                                "Duplicate message ignored"
-                            );
-                            continue;
-                        }
+                    if let Some(ref msg_id) = announcement.msg_id
+                        && dedup_cache.is_duplicate(msg_id)
+                    {
+                        tracing::trace!(
+                            msg_id = %msg_id,
+                            source = ?addr,
+                            "Duplicate message ignored"
+                        );
+                        continue;
                     }
 
                     // Run envelope verifier (e.g., signature check for pond security)
-                    if let Some(verifier) = ENVELOPE_VERIFIER.get() {
-                        if !verifier(&announcement) {
-                            tracing::debug!(
-                                announcement_type = %announcement.announcement_type,
-                                source = ?addr,
-                                "Announcement rejected by envelope verifier"
-                            );
-                            continue;
-                        }
+                    if let Some(verifier) = ENVELOPE_VERIFIER.get()
+                        && !verifier(&announcement)
+                    {
+                        tracing::debug!(
+                            announcement_type = %announcement.announcement_type,
+                            source = ?addr,
+                            "Announcement rejected by envelope verifier"
+                        );
+                        continue;
                     }
 
                     let event = InternalUdpEvent {
@@ -1143,6 +1107,10 @@ async fn create_multicast_receiver(addr: &str, config: &DiscoveryConfig) -> Resu
             const SIO_UDP_CONNRESET: u32 = 0x9800000C;
             let mut bytes_returned: u32 = 0;
             let enable: u32 = 0;
+            // SAFETY: `sock` is a valid raw socket handle obtained from `socket.as_raw_socket()`.
+            // `enable` is a stack-allocated u32 valid for the duration of the call.
+            // `bytes_returned` is a stack-allocated u32 valid for the duration of the call.
+            // WSAIoctl with SIO_UDP_CONNRESET is documented to be safe with these argument types.
             unsafe {
                 let sock = socket.as_raw_socket() as usize;
                 let result = windows_sys::Win32::Networking::WinSock::WSAIoctl(
@@ -1269,45 +1237,6 @@ async fn create_interface_sender(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_compute_broadcast_slash_24() {
-        let iface = NetworkInterface {
-            name: "eth0".to_string(),
-            ip: Ipv4Addr::new(192, 168, 1, 10),
-            netmask: Some(Ipv4Addr::new(255, 255, 255, 0)),
-            broadcast: None,
-        };
-
-        let bcast = iface.compute_broadcast().unwrap();
-        assert_eq!(bcast, Ipv4Addr::new(192, 168, 1, 255));
-    }
-
-    #[test]
-    fn test_compute_broadcast_slash_20() {
-        let iface = NetworkInterface {
-            name: "eth0".to_string(),
-            ip: Ipv4Addr::new(192, 168, 32, 10),
-            netmask: Some(Ipv4Addr::new(255, 255, 240, 0)),
-            broadcast: None,
-        };
-
-        let bcast = iface.compute_broadcast().unwrap();
-        assert_eq!(bcast, Ipv4Addr::new(192, 168, 47, 255));
-    }
-
-    #[test]
-    fn test_compute_broadcast_slash_16() {
-        let iface = NetworkInterface {
-            name: "eth0".to_string(),
-            ip: Ipv4Addr::new(10, 0, 5, 100),
-            netmask: Some(Ipv4Addr::new(255, 255, 0, 0)),
-            broadcast: None,
-        };
-
-        let bcast = iface.compute_broadcast().unwrap();
-        assert_eq!(bcast, Ipv4Addr::new(10, 0, 255, 255));
-    }
 
     #[test]
     fn test_is_virtual_interface_by_name() {

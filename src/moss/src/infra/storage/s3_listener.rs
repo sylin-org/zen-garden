@@ -57,7 +57,7 @@ pub struct S3PortAssignment {
 }
 
 /// Manages per-storage S3 listeners
-pub struct S3ListenerManager {
+pub struct S3Listeners {
     /// Port assignments: replica_set_name → assignment
     assignments: Arc<RwLock<HashMap<String, S3PortAssignment>>>,
     /// Cancellation tokens per replica set (to disarm individual listeners)
@@ -68,7 +68,7 @@ pub struct S3ListenerManager {
     shutdown_token: CancellationToken,
 }
 
-impl S3ListenerManager {
+impl S3Listeners {
     pub fn new(shutdown_token: CancellationToken) -> Self {
         Self {
             assignments: Arc::new(RwLock::new(HashMap::new())),
@@ -139,6 +139,14 @@ impl S3ListenerManager {
     ///
     /// Spawns a new HTTP listener on the allocated port with S3 routes at root `/`.
     /// Returns the assigned port, or None if allocation fails.
+    ///
+    /// # Thread Safety
+    ///
+    /// Port allocation (`allocate_port`) and assignment are not atomic — the port
+    /// is read under a read lock, then the assignment is written under a separate
+    /// write lock. This is safe because `arm` is only called from the storage
+    /// orchestration task (single-threaded). If concurrent callers are needed in
+    /// the future, allocation and assignment should use a single write lock.
     pub async fn arm(
         &self,
         replica_set_name: &str,
@@ -335,10 +343,11 @@ async fn s3_list_buckets(
 ) -> Response {
     use crate::api::v1::s3_gateway;
     let mut headers = headers;
-    headers.insert(
-        garden_common::constants::headers::HEADER_SEED_BANK,
-        s3.replica_set_name.parse().unwrap(),
-    );
+    // replica_set_name is already passed via SeedBankSelector query param below;
+    // only set the header if the value is valid ASCII.
+    if let Ok(val) = s3.replica_set_name.parse::<axum::http::HeaderValue>() {
+        headers.insert(garden_common::constants::headers::HEADER_SEED_BANK, val);
+    }
     s3_gateway::list_buckets(
         axum::extract::State(s3.app_state),
         Query(s3_gateway::SeedBankSelector { seed_bank: Some(s3.replica_set_name) }),
@@ -545,14 +554,14 @@ mod tests {
     #[tokio::test]
     async fn manager_port_catalog_empty_initially() {
         let token = CancellationToken::new();
-        let mgr = S3ListenerManager::new(token);
+        let mgr = S3Listeners::new(token);
         assert!(mgr.port_catalog().await.is_empty());
     }
 
     #[tokio::test]
     async fn allocate_port_deterministic() {
         let token = CancellationToken::new();
-        let mgr = S3ListenerManager::new(token);
+        let mgr = S3Listeners::new(token);
 
         let p1 = mgr.allocate_port("storage").await.unwrap();
         let p2 = mgr.allocate_port("storage").await.unwrap();

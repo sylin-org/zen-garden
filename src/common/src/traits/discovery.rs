@@ -6,7 +6,6 @@
 //! 3. Tended stone from config.json
 //! 4. UDP broadcast discovery
 
-use async_trait::async_trait;
 use std::time::Duration;
 
 /// Discovery result containing stone endpoint
@@ -38,14 +37,13 @@ pub enum DiscoveryError {
 }
 
 /// Stone discovery provider
-#[async_trait]
 pub trait DiscoveryProvider: Send + Sync {
     /// Discover stones via UDP broadcast
     ///
     /// Sends broadcast on port 3999, waits for responses.
     /// Returns all discovered stones within timeout.
-    async fn discover_all(&self, timeout: Duration)
-        -> Result<Vec<DiscoveryResult>, DiscoveryError>;
+    fn discover_all(&self, timeout: Duration)
+        -> impl std::future::Future<Output = Result<Vec<DiscoveryResult>, DiscoveryError>> + Send;
 
     /// Find a specific stone by name
     ///
@@ -54,7 +52,7 @@ pub trait DiscoveryProvider: Send + Sync {
     /// 2. Try UDP broadcast to find stone by name
     /// 3. Check tended stone from config
     /// 4. Check GARDEN_STONE environment variable
-    async fn find_stone(&self, stone_name: &str) -> Result<DiscoveryResult, DiscoveryError>;
+    fn find_stone(&self, stone_name: &str) -> impl std::future::Future<Output = Result<DiscoveryResult, DiscoveryError>> + Send;
 
     /// Resolve stone endpoint using priority chain
     ///
@@ -63,8 +61,8 @@ pub trait DiscoveryProvider: Send + Sync {
     /// 2. GARDEN_STONE env var
     /// 3. Tended stone from config
     /// 4. UDP broadcast (first responder)
-    async fn resolve_stone(
+    fn resolve_stone(
         &self,
         explicit_target: Option<&str>,
-    ) -> Result<DiscoveryResult, DiscoveryError>;
+    ) -> impl std::future::Future<Output = Result<DiscoveryResult, DiscoveryError>> + Send;
 }

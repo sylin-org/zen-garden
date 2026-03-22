@@ -2,18 +2,19 @@
 //!
 //! GET /api/v1/manifest - Returns complete API manifest
 
-use crate::AppState;
+use crate::domain::Current;
 use axum::{extract::State, http::StatusCode, Json};
 use garden_common::api_manifest::{ApiManifest, EndpointSpec};
+use std::sync::Arc;
 
 /// GET /api/v1/manifest - Return complete API manifest
 pub async fn get_api_manifest_v1(
-    State(state): State<AppState>,
+    State(current): State<Arc<Current>>,
 ) -> Result<Json<ApiManifest>, StatusCode> {
     // Build base URL from stone name and API port
     let base_url = format!(
         "http://{}:{}",
-        state.current.stone.name, state.current.api_port
+        current.stone.name, current.api_port
     );
 
     // Generate manifest from registry
@@ -23,7 +24,7 @@ pub async fn get_api_manifest_v1(
 }
 
 /// Build complete API manifest with all endpoints
-#[allow(clippy::vec_init_then_push)]
+#[expect(clippy::vec_init_then_push)]
 fn build_manifest(base_url: &str) -> ApiManifest {
     let mut endpoints = Vec::new();
 

@@ -23,7 +23,6 @@ use axum::{
 };
 use garden_common::api_utils::ApiErrorResponse;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::Ordering;
 use tower::ServiceExt;
 
 /// Embedded pond ceremony UI — single-page app served at `/pond`
@@ -268,78 +267,18 @@ fn get_certmesh_core(
 
 /// Refresh the pond_active flag from certmesh state.
 ///
-/// A stone is "pond active" if either:
-/// 1. It is the cornerstone (CA initialized and unlocked), OR
-/// 2. It is an enrolled member (has cert + key from a prior enrollment)
+/// Delegates to domain function. Kept as a thin wrapper so existing callers
+/// in this module continue to work without a path change.
 async fn refresh_pond_active(state: &AppState) {
-    // Cornerstone path: CA initialized and unlocked
-    if let Ok(handle) = state.discovery.koi.certmesh() {
-        if let Ok(core) = handle.core() {
-            let status = core.certmesh_status().await;
-            if status.ca_initialized && !status.ca_locked {
-                state.security.pond.active.store(true, Ordering::Relaxed);
-                return;
-            }
-        }
-    }
-
-    // Enrolled member path: check for enrollment certs on disk
-    let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
-        .join("koi")
-        .join("certs")
-        .join(&state.current.stone.name);
-    if certs_dir.join("cert.pem").exists() && certs_dir.join("key.pem").exists() {
-        state.security.pond.active.store(true, Ordering::Relaxed);
-    }
+    crate::domain::security::pond_lifecycle::refresh_pond_active(state).await;
 }
 
 /// Notify the system that enrollment state changed.
 ///
-/// Updates `pond_active`, updates `PondState`, emits `PondEvent::EnrollmentChanged`
-/// on the EventBus, and re-registers mDNS. The enrollment-change listener
-/// (spawned at boot) reacts by starting/stopping HTTPS + chirp signing.
+/// Delegates to domain function. Kept as a thin wrapper so existing callers
+/// in this module continue to work without a path change.
 async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone: Option<String>) {
-    // Update flags
-    state
-        .security
-        .pond
-        .active
-        .store(enrolled, Ordering::Relaxed);
-    if enrolled {
-        state
-            .security
-            .pond
-            .state
-            .set_enrolled(cornerstone.clone())
-            .await;
-    } else {
-        state.security.pond.state.set_unenrolled().await;
-    }
-
-    // Emit domain event — listener handles HTTPS + chirps
-    state
-        .event_bus
-        .emit(crate::domain::PondEvent::enrollment_changed(
-            enrolled,
-            cornerstone,
-        ));
-
-    // Re-register mDNS with/without pond TXT properties
-    if let Some(ref mdns) = state.discovery.mdns {
-        let (ip, mac) = garden_common::infra::network::get_local_ip_and_mac();
-        if ip != "127.0.0.1" && !ip.is_empty() {
-            let _ = mdns.reregister(&ip, mac.as_deref()).await;
-        }
-    }
-
-    // Register certmesh CA service on mDNS if this is the cornerstone
-    if enrolled {
-        crate::mdns::register_certmesh_service(
-            &state.discovery.koi,
-            garden_common::constants::MOSS_HTTP,
-        )
-        .await;
-    }
+    crate::domain::security::pond_lifecycle::notify_enrollment_changed(state, enrolled, cornerstone).await;
 }
 
 // ============================================================================
@@ -368,148 +307,35 @@ pub async fn pond_init_v1(
     State(state): State<AppState>,
     Json(payload): Json<PondInitRequest>,
 ) -> PondResult<PondInitResponse> {
+    use crate::domain::security::pond_lifecycle::{self, PondInitInput};
+
     let core = get_certmesh_core(&state)?;
 
-    // Translate trust profile from pond vocabulary
-    let profile = match payload.profile.as_deref() {
-        Some("just-me") | Some("1") | None => koi_certmesh::profiles::TrustProfile::JustMe,
-        Some("my-team") | Some("2") => koi_certmesh::profiles::TrustProfile::MyTeam,
-        Some("my-organization") | Some("3") => koi_certmesh::profiles::TrustProfile::MyOrganization,
-        Some(other) => {
-            return Err(bad_request(
-                "INVALID_PROFILE",
-                format!(
-                    "Unknown trust profile: '{other}'. Valid: just-me, my-team, my-organization"
-                ),
-            ))
-        }
+    let input = PondInitInput {
+        passphrase: payload.passphrase,
+        profile: payload.profile,
+        name: payload.name,
     };
 
-    // Generate cryptographic entropy for CA creation
-    let entropy = {
-        use rand::RngCore;
-        let mut buf = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut buf);
-        hex::encode(buf)
-    };
-
-    // Call the certmesh create handler via its HTTP routes (in-process, no network).
-    // CA creation logic lives exclusively in certmesh's HTTP handler to avoid
-    // divergence between two code paths, so we invoke it via tower::Service.
-    let create_req = koi_certmesh::protocol::CreateCaRequest {
-        passphrase: payload.passphrase.clone(),
-        entropy_hex: entropy,
-        profile,
-        operator: None,
-        enrollment_open: None,
-        requires_approval: None,
-        totp_secret_hex: None,
-    };
-
-    let body = serde_json::to_vec(&create_req).map_err(|e| {
-        internal(
-            "SERIALIZE_ERROR",
-            format!("Failed to build certmesh request: {e}"),
-        )
-    })?;
-
-    let http_req = axum::http::Request::builder()
-        .method("POST")
-        .uri("/create")
-        .header("content-type", "application/json")
-        .body(axum::body::Body::from(body))
-        .expect("valid request");
-
-    let response = core
-        .http_routes()
-        .oneshot(http_req)
-        .await
-        .expect("Router is infallible");
-
-    let status_code = response.status();
-    let resp_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+    let result = pond_lifecycle::init(&state, core, input)
         .await
         .map_err(|e| {
-            internal(
-                "RESPONSE_READ_ERROR",
-                format!("Failed to read certmesh response: {e}"),
-            )
+            let msg = format!("{e}");
+            if msg.contains("Unknown trust profile") {
+                bad_request("INVALID_PROFILE", msg)
+            } else {
+                internal("POND_INIT_FAILED", msg)
+            }
         })?;
-
-    if !status_code.is_success() {
-        let error_text = String::from_utf8_lossy(&resp_bytes);
-        tracing::error!(status = %status_code, body = %error_text, "Certmesh CA creation failed");
-        return Err(internal(
-            "CA_CREATION_FAILED",
-            format!("Failed to create CA: {error_text}"),
-        ));
-    }
-
-    let create_resp: koi_certmesh::protocol::CreateCaResponse = serde_json::from_slice(&resp_bytes)
-        .map_err(|e| {
-            internal(
-                "PARSE_ERROR",
-                format!("Failed to parse certmesh response: {e}"),
-            )
-        })?;
-
-    // Extract TOTP URI from auth setup
-    let totp_uri = match &create_resp.auth_setup {
-        koi_crypto::auth::AuthSetup::Totp { totp_uri } => Some(totp_uri.clone()),
-        _ => None,
-    };
-
-    // Update pond state
-    refresh_pond_active(&state).await;
-
-    // ── Auto-unlock: domain-driven decision ─────────────────────────
-    // The trust profile determines whether the passphrase is saved for
-    // automatic unlock on reboot.  This is the single source of truth —
-    // identical to the ceremony path.
-    if let Err(e) =
-        koi_certmesh::CertmeshCore::configure_auto_unlock_for_profile(profile, &payload.passphrase)
-    {
-        tracing::warn!(error = %e, "Failed to configure auto-unlock (pond will require manual unlock on reboot)");
-    }
-
-    // Generate or use provided pond name
-    let pond_name = match payload.name {
-        Some(ref name) if crate::domain::naming::is_valid_pond_name(name) => name.clone(),
-        Some(ref name) if !name.is_empty() => {
-            // User gave a name but not in pond-x-y format — prefix it
-            format!("pond-{}", name.to_lowercase().replace(' ', "-"))
-        }
-        _ => crate::domain::naming::generate_pond_name(),
-    };
-
-    // Persist pond metadata and update state
-    state.security.pond.state.set_name(pond_name.clone()).await;
-    let metadata = crate::domain::PondMetadata {
-        name: Some(pond_name.clone()),
-    };
-    if let Err(e) = crate::domain::save_pond_metadata(&metadata) {
-        tracing::warn!(error = %e, "Failed to persist pond metadata");
-    }
-
-    // Notify enrollment change — listener starts HTTPS + chirp signing
-    notify_enrollment_changed(&state, true, Some(state.current.stone.name.clone())).await;
-
-    tracing::info!(
-        cornerstone = %state.current.stone.name,
-        pond_name = %pond_name,
-        profile = ?profile,
-        fingerprint = %create_resp.ca_fingerprint,
-        "Pond initialized — keystone placed"
-    );
 
     crate::api::ok(PondInitResponse {
-        cornerstone: state.current.stone.name.clone(),
-        keystone_path: koi_certmesh::ca::ca_dir().display().to_string(),
+        cornerstone: result.cornerstone,
+        keystone_path: result.keystone_path,
         certificate_expires: "30 days".to_string(),
         status: "active".to_string(),
-        totp_uri,
-        ca_fingerprint: create_resp.ca_fingerprint,
-        name: pond_name,
+        totp_uri: result.totp_uri,
+        ca_fingerprint: result.ca_fingerprint,
+        name: result.pond_name,
     })
 }
 
@@ -1669,13 +1495,12 @@ pub async fn pond_enroll_client_v1(
     let join_resp = core.enroll(&join_req).await.map_err(certmesh_err)?;
 
     // Update the member's role to Client in the roster
-    if let Ok(handle) = state.discovery.koi.certmesh() {
-        if let Ok(core) = handle.core() {
+    if let Ok(handle) = state.discovery.koi.certmesh()
+        && let Ok(core) = handle.core() {
             let _ = core
                 .set_member_role(&payload.hostname, koi_certmesh::roster::MemberRole::Client)
                 .await;
         }
-    }
 
     // Determine cert expiry from roster
     let cert_expires = {

@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Cached Lantern discovery result
-static LANTERN_CACHE: once_cell::sync::Lazy<Arc<Mutex<Option<Option<String>>>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(None)));
+static LANTERN_CACHE: std::sync::LazyLock<Arc<Mutex<Option<Option<String>>>>> =
+    std::sync::LazyLock::new(|| Arc::new(Mutex::new(None)));
 
 /// Start background Lantern discovery (non-blocking)
 /// Returns immediately, result will be cached for future use

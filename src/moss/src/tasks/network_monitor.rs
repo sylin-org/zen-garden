@@ -169,7 +169,6 @@ fn is_disconnected(ip: &str) -> bool {
 
 /// Check if IP is a valid LAN address (not loopback, not Docker bridge)
 /// Used by Lantern integration to validate IPs before registration
-#[allow(dead_code)]
 pub fn is_valid_lan_ip(ip: &str) -> bool {
     if is_disconnected(ip) {
         return false;

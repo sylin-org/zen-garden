@@ -3,6 +3,7 @@ use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::events::OfferingEvent;
 use crate::domain::service_lifecycle;
 use crate::{bad_request, conflict, internal, not_found, AppState};
+use std::sync::Arc;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -147,15 +148,14 @@ pub async fn find_services_v1(
     );
 
     // Sanitize and validate inputs - reject suspicious patterns
-    if let Some(ref q) = query.q {
-        if is_suspicious(q) {
+    if let Some(ref q) = query.q
+        && is_suspicious(q) {
             tracing::warn!(query = %q, "Suspicious query pattern detected");
             return Err(bad_request(
                 "INVALID_QUERY",
                 "Query contains invalid patterns".to_string(),
             ));
         }
-    }
 
     let response = if query.has_search_params() {
         // Search mode: filter/search across garden
@@ -352,132 +352,24 @@ pub async fn nourish_service_v1(
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+    use crate::domain::service_lifecycle::{self, NourishOutcome};
+
     let service_name = normalize_service_name(&service)?;
 
-    // Find and validate the service
-    let (offering_id, offering, old_version) = {
-        let offerings = state.offerings.read().await;
-        let o = offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .ok_or_else(|| {
-                not_found(
-                    "SERVICE_NOT_FOUND",
-                    format!("Service '{}' not found", service_name),
-                )
-            })?;
-
-        if o.status == OfferingStatus::Maintenance {
-            let ctx = Suggestion::from_headers(&headers, "nourish_service");
-            let suggestions = generate_suggestions(&ctx);
-            return Ok(Json(ApiResponse {
-                data: ServiceActionResponse {
-                    service: service_name,
-                    action: "nourish".to_string(),
-                    status: "maintenance".to_string(),
-                    message: "Service under maintenance, retry later".to_string(),
-                },
-                suggestions,
-            }));
-        }
-
-        (o.offering_id.clone(), o.offering.clone(), o.version.clone())
-    };
-
-    // Mark as Maintenance via gateway (syncs self_entry)
-    state
-        .update_offering(&offering_id, true, |o| {
-            o.status = OfferingStatus::Maintenance;
-            true
-        })
-        .await;
-
-    // Load template for upgrade
-    let entry = state.manifest_registry.sw.get(&offering).ok_or_else(|| {
-        not_found(
-            "TEMPLATE_NOT_FOUND",
-            format!("Template for '{}' not found", offering),
-        )
-    })?;
-    let template = entry.parse_template().map_err(|e| {
-        // Restore status on error via gateway (syncs self_entry)
-        let recovery_state = state.clone();
-        let recovery_id = offering_id.clone();
-        tokio::spawn(async move {
-            recovery_state
-                .update_offering(&recovery_id, true, |o| {
-                    o.status = OfferingStatus::Running;
-                    true
-                })
-                .await;
-        });
-        internal(
-            "TEMPLATE_LOAD_FAILED",
-            format!("Failed to load template: {}", e),
-        )
-    })?;
-
-    // Perform Docker upgrade
-    let ports = template.ports_vec();
-    let spec = crate::docker::ContainerSpec {
-        image: template.image.clone(),
-        command: template.command,
-        ports,
-        environment: template.environment,
-        volumes: template.volumes,
-        config_files: template.config_files,
-    };
-    if let Err(e) = state
-        .platform
-        .docker
-        .upgrade_service(&service_name, &spec, Some(&state.console))
+    let outcome = service_lifecycle::nourish(&state, &service_name)
         .await
-    {
-        tracing::error!(error = ?e, service = %service_name, "Docker upgrade failed");
-        // Restore status via gateway (syncs self_entry)
-        state
-            .update_offering(&offering_id, true, |o| {
-                o.status = OfferingStatus::Running;
-                true
-            })
-            .await;
-        return Err(internal(
-            "UPGRADE_FAILED",
-            format!("Failed to upgrade: {}", e),
-        ));
-    }
+        .map_err(|e| lifecycle_error("NOURISH_FAILED", &e))?;
 
-    let new_version = template
-        .image
-        .split(':')
-        .next_back()
-        .unwrap_or("latest")
-        .to_string();
-    let new_image = template.image.clone();
-
-    // Update status and version via gateway (syncs self_entry + persists)
-    let nv = new_version.clone();
-    state
-        .update_offering(&offering_id, true, |o| {
-            o.status = OfferingStatus::Running;
-            o.version = nv;
-            true
-        })
-        .await;
-
-    // Emit offering lifecycle event (old_image reconstructed from old_version)
-    let old_image = format!(
-        "{}:{}",
-        template.image.split(':').next().unwrap_or(&offering),
-        old_version
-    );
-    state.event_bus.emit(OfferingEvent::updated(
-        &offering_id,
-        &service_name,
-        state.stone_name(),
-        &old_image,
-        &new_image,
-    ));
+    let (status, message) = match outcome {
+        NourishOutcome::Maintenance => (
+            "maintenance",
+            "Service under maintenance, retry later",
+        ),
+        NourishOutcome::Upgraded => (
+            "upgraded",
+            "Service upgraded successfully",
+        ),
+    };
 
     let ctx = Suggestion::from_headers(&headers, "nourish_service");
     let suggestions = generate_suggestions(&ctx);
@@ -486,8 +378,8 @@ pub async fn nourish_service_v1(
         data: ServiceActionResponse {
             service: service_name,
             action: "nourish".to_string(),
-            status: "upgraded".to_string(),
-            message: "Service upgraded successfully".to_string(),
+            status: status.to_string(),
+            message: message.to_string(),
         },
         suggestions,
     }))
@@ -552,7 +444,7 @@ pub async fn destroy_service_v1(
 
 /// GET /api/v1/services/manifests - List all service manifests
 pub async fn list_manifests_v1(
-    State(state): State<AppState>,
+    State(manifest_registry): State<Arc<crate::infra::ManifestRegistry>>,
 ) -> Result<
     (
         StatusCode,
@@ -560,8 +452,7 @@ pub async fn list_manifests_v1(
     ),
     (StatusCode, Json<ApiErrorResponse>),
 > {
-    let manifests: Vec<_> = state
-        .manifest_registry
+    let manifests: Vec<_> = manifest_registry
         .sw
         .entries
         .values()
@@ -579,7 +470,7 @@ pub async fn list_manifests_v1(
 
 /// GET /api/v1/services/:name/manifest - Get specific manifest YAML
 pub async fn get_manifest_v1(
-    State(state): State<AppState>,
+    State(manifest_registry): State<Arc<crate::infra::ManifestRegistry>>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<ApiErrorResponse>)> {
     let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
@@ -590,8 +481,7 @@ pub async fn get_manifest_v1(
     })?;
     let offering_type = offering_fqn.offering.clone();
 
-    let entry = state
-        .manifest_registry
+    let entry = manifest_registry
         .sw
         .get(&offering_type)
         .ok_or_else(|| {

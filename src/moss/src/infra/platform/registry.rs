@@ -70,6 +70,9 @@ pub fn broadcast_environment_change() {
     // "Environment\0" as a wide string
     let env_wide: Vec<u16> = "Environment\0".encode_utf16().collect();
 
+    // SAFETY: `HWND_BROADCAST` is a well-known sentinel value accepted by SendMessageTimeoutW.
+    // `env_wide` is a null-terminated wide string that remains valid for the duration of the call.
+    // `_result` is a stack-allocated usize for the return value, valid for the duration of the call.
     unsafe {
         let mut _result: usize = 0;
         SendMessageTimeoutW(

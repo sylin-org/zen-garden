@@ -200,11 +200,10 @@ fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
         });
     }
 
-    if let Ok(fqn) = OfferingFqn::parse(&name_lower) {
-        if fqn.offering == offering_lower {
+    if let Ok(fqn) = OfferingFqn::parse(&name_lower)
+        && fqn.offering == offering_lower {
             return fqn;
         }
-    }
 
     OfferingFqn::with_instance(&offering_lower, &name_lower).unwrap_or(OfferingFqn {
         source: None,

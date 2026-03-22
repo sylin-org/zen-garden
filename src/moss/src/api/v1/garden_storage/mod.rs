@@ -477,46 +477,27 @@ fn extract_host(endpoint: &str) -> Option<String> {
 
 /// Generate deterministic S3 credentials for a replica set.
 ///
-/// Two-tier:
-/// - **Pond active**: HMAC(ca_fingerprint, "s3-cred:{replica_set}") — garden-scoped
-/// - **No pond**: HMAC(stone_id, "s3-cred:{replica_set}") — stone-scoped
+/// Uses `resolve_key_material` for the two-tier key derivation
+/// (pond CA fingerprint → stone_id fallback), then HMAC-derives
+/// access and secret keys scoped to the replica set name.
 async fn generate_s3_credentials(replica_set: &str, state: &AppState) -> (String, String) {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
-    use std::sync::atomic::Ordering;
 
     type HmacSha256 = Hmac<Sha256>;
 
-    // Determine key material (pond CA fingerprint or stone_id)
-    let key_material = if state.security.pond.active.load(Ordering::Relaxed) {
-        if let Ok(handle) = state.discovery.koi.certmesh() {
-            if let Ok(core) = handle.core() {
-                let status = core.certmesh_status().await;
-                if let Some(ref fp) = status.ca_fingerprint {
-                    fp.clone()
-                } else {
-                    state.current.stone.id.clone()
-                }
-            } else {
-                state.current.stone.id.clone()
-            }
-        } else {
-            state.current.stone.id.clone()
-        }
-    } else {
-        state.current.stone.id.clone()
-    };
+    let key_material = crate::api::v1::s3_presign::resolve_key_material(state).await;
 
     // Access key: first 20 chars of HMAC(material, "s3-access:{name}")
     let access_msg = format!("s3-access:{}", replica_set);
-    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).unwrap();
+    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).expect("HMAC key length");
     mac.update(access_msg.as_bytes());
     let access_key = hex::encode(mac.finalize().into_bytes());
     let access_key = access_key[..20].to_uppercase();
 
     // Secret key: first 40 chars of HMAC(material, "s3-secret:{name}")
     let secret_msg = format!("s3-secret:{}", replica_set);
-    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).unwrap();
+    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).expect("HMAC key length");
     mac.update(secret_msg.as_bytes());
     let secret_key = hex::encode(mac.finalize().into_bytes());
     let secret_key = secret_key[..40].to_string();

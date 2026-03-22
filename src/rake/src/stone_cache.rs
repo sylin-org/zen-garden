@@ -26,7 +26,7 @@ impl DiscoveredStone {
     }
 
     /// Convert from common KnownStone (requires fetching capabilities)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn from_known(known: &KnownStone, capabilities: HardwareCapabilities) -> Self {
         Self {
             endpoint: known.endpoint.clone(),

@@ -8,6 +8,7 @@
 //! - [`collection`] — `Volumes` map, reconcile, initial scan, query helpers
 //! - [`medium`] — `Medium`, `Media` (physical disk layer, host-only)
 //! - [`bank`] — `StorageBank` (domain bridge for physical storage events)
+//! - [`health`] — seed bank validation and health assessment
 //! - [`automount`] — auto-mount unmounted managed devices
 //! - [`analysis`] — device eligibility for `storage add`
 //! - [`platform_types`] — OS-agnostic value types (`VolumeSnapshot`, `DiskUsage`, etc.)
@@ -16,6 +17,7 @@ pub mod analysis;
 pub mod automount;
 pub mod bank;
 pub mod collection;
+pub mod health;
 pub mod medium;
 pub mod platform_types;
 pub mod volume;
@@ -39,6 +41,12 @@ pub use bank::StorageBank;
 
 // Analysis
 pub use analysis::{analyze_device, is_allowed_mount, validate_manifest};
+
+// Health
+pub use health::{
+    assess_storage_health, is_mount_readonly, validate_seed_bank_layout, SeedBankHealth,
+    StorageHealth,
+};
 
 // Automount
 pub use automount::auto_mount_unmounted;

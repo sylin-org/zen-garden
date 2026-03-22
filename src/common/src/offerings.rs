@@ -953,3 +953,67 @@ mod fqn_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Regex for valid offering/instance segments: lowercase start,
+    // alphanumeric with single hyphens (no --, no trailing -).
+    const VALID_SEGMENT: &str = "[a-z]([a-z0-9](-[a-z0-9])?){0,10}";
+
+    proptest! {
+        /// OfferingFqn::parse must never panic on arbitrary input.
+        /// It may return Ok or Err, but panicking is a bug.
+        #[test]
+        fn parse_never_panics(s in "\\PC{0,100}") {
+            let _ = OfferingFqn::parse(&s);
+        }
+
+        /// Roundtrip: construct a valid FQN string, parse it, verify the
+        /// offering name is preserved. Instance is only preserved when it
+        /// differs from the offering name (canonicalization strips self-instances).
+        #[test]
+        fn roundtrip_fqn(
+            offering in VALID_SEGMENT,
+            instance in VALID_SEGMENT,
+        ) {
+            let fqn_str = format!("{offering}::{instance}");
+            let parsed = OfferingFqn::parse(&fqn_str).unwrap();
+            prop_assert_eq!(&parsed.offering, &offering);
+            // Instance is canonicalized: "mongodb::mongodb" -> instance=None
+            if offering == instance {
+                prop_assert!(parsed.instance.is_none());
+            } else {
+                prop_assert_eq!(parsed.instance.as_deref(), Some(instance.as_str()));
+            }
+        }
+
+        /// Display -> parse roundtrip: fqn() output must re-parse to an equal FQN.
+        #[test]
+        fn display_roundtrip(offering in VALID_SEGMENT) {
+            let fqn = OfferingFqn::parse(&offering).unwrap();
+            let displayed = fqn.fqn();
+            let reparsed = OfferingFqn::parse(&displayed).unwrap();
+            prop_assert_eq!(fqn.offering, reparsed.offering);
+            prop_assert_eq!(fqn.instance, reparsed.instance);
+        }
+
+        /// encoded_for_container must never contain characters forbidden in
+        /// Docker container names (only [a-zA-Z0-9_.-] are allowed).
+        #[test]
+        fn encoded_for_container_is_docker_safe(offering in VALID_SEGMENT) {
+            let fqn = OfferingFqn::parse(&offering).unwrap();
+            let encoded = fqn.encoded_for_container();
+            for ch in encoded.chars() {
+                prop_assert!(
+                    ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '-',
+                    "illegal char '{}' in encoded container name: {}",
+                    ch,
+                    encoded
+                );
+            }
+        }
+    }
+}

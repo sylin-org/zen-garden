@@ -196,6 +196,8 @@ fn set_sync_status(sync_root_path: &Path, message: Option<&str>) -> windows::cor
         .collect();
 
     match message {
+        // SAFETY: `path_wide` is a null-terminated wide string valid for the duration of this call.
+        // `PCWSTR::from_raw` wraps the pointer without taking ownership; the Vec keeps it alive.
         None => unsafe { CfReportSyncStatus(PCWSTR::from_raw(path_wide.as_ptr()), None) },
         Some(msg) => {
             let desc_wide: Vec<u16> = msg.encode_utf16().collect();

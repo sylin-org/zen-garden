@@ -31,12 +31,11 @@ pub struct AuditAccessEntry {
 /// Append an audit entry to the local audit log (best effort).
 pub async fn log_access(entry: &AuditAccessEntry) {
     let path = garden_common::constants::paths::audit_log_path();
-    if let Some(parent) = std::path::Path::new(&path).parent() {
-        if let Err(e) = tokio::fs::create_dir_all(parent).await {
+    if let Some(parent) = std::path::Path::new(&path).parent()
+        && let Err(e) = tokio::fs::create_dir_all(parent).await {
             tracing::warn!(path = %path, error = ?e, "Failed to create audit log directory");
             return;
         }
-    }
 
     let line = match serde_json::to_string(entry) {
         Ok(json) => format!("{}\n", json),

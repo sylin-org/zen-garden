@@ -3,7 +3,6 @@
 //! Phase 1 (v0.1.0): NoAuth - always succeeds
 //! Phase 2 (v0.2.0+): JWT validation with Pond keystone
 
-use async_trait::async_trait;
 use garden_common::traits::auth::{Auth, AuthError, AuthProvider};
 
 /// No authentication - always succeeds
@@ -23,7 +22,6 @@ impl NoAuth {
     }
 }
 
-#[async_trait]
 impl AuthProvider for NoAuth {
     async fn authenticate(&self, _auth_header: Option<&str>) -> Result<Auth, AuthError> {
         // Always succeed with default context

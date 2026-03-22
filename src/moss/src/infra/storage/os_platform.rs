@@ -2,7 +2,6 @@
 //! by delegating to the platform-specific free functions in `platform.rs`.
 
 use anyhow::Result;
-use async_trait::async_trait;
 use garden_common::storage::{DeviceState, StorageManifest};
 
 use crate::domain::storage::{DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot};
@@ -13,7 +12,6 @@ use super::platform;
 /// Stateless adapter wrapping OS-level storage operations.
 pub struct OsPlatform;
 
-#[async_trait]
 impl StoragePlatform for OsPlatform {
     fn disk_usage(&self, path: &str) -> Option<DiskUsage> {
         platform::disk_usage(path)

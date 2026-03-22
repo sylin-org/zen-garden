@@ -103,13 +103,11 @@ impl ColorSupport {
     }
 
     /// Create with colors explicitly enabled (for testing)
-    #[allow(dead_code)]
     pub fn enabled() -> Self {
         Self { enabled: true }
     }
 
     /// Create with colors explicitly disabled
-    #[allow(dead_code)]
     pub fn disabled() -> Self {
         Self { enabled: false }
     }

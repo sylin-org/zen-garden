@@ -44,16 +44,23 @@ impl MultipartStore {
         }
     }
 
-    fn upload_dir(&self, upload_id: &str) -> PathBuf {
-        self.base_path.join(upload_id)
+    fn validate_upload_id(upload_id: &str) -> Result<()> {
+        uuid::Uuid::parse_str(upload_id)
+            .map_err(|_| anyhow::anyhow!("Invalid upload ID: expected UUID format"))?;
+        Ok(())
     }
 
-    fn manifest_path(&self, upload_id: &str) -> PathBuf {
-        self.upload_dir(upload_id).join("manifest.json")
+    fn upload_dir(&self, upload_id: &str) -> Result<PathBuf> {
+        Self::validate_upload_id(upload_id)?;
+        Ok(self.base_path.join(upload_id))
     }
 
-    fn part_path(&self, upload_id: &str, part_number: u16) -> PathBuf {
-        self.upload_dir(upload_id).join(format!("{:05}", part_number))
+    fn manifest_path(&self, upload_id: &str) -> Result<PathBuf> {
+        Ok(self.upload_dir(upload_id)?.join("manifest.json"))
+    }
+
+    fn part_path(&self, upload_id: &str, part_number: u16) -> Result<PathBuf> {
+        Ok(self.upload_dir(upload_id)?.join(format!("{:05}", part_number)))
     }
 
     /// Initiate a new multipart upload. Returns the upload ID.
@@ -73,13 +80,14 @@ impl MultipartStore {
             parts: HashMap::new(),
         };
 
-        let dir = self.upload_dir(&upload_id);
+        // upload_id is self-generated UUID — safe to use directly
+        let dir = self.base_path.join(&upload_id);
         tokio::fs::create_dir_all(&dir)
             .await
             .context("Failed to create multipart upload directory")?;
 
         let manifest = serde_json::to_string_pretty(&upload)?;
-        tokio::fs::write(self.manifest_path(&upload_id), manifest)
+        tokio::fs::write(dir.join("manifest.json"), manifest)
             .await
             .context("Failed to write multipart manifest")?;
 
@@ -97,7 +105,7 @@ impl MultipartStore {
         let mut upload = self.load_manifest(upload_id).await?;
 
         // Write part data
-        let part_file = self.part_path(upload_id, part_number);
+        let part_file = self.part_path(upload_id, part_number)?;
         tokio::fs::write(&part_file, data)
             .await
             .context("Failed to write part data")?;
@@ -120,7 +128,17 @@ impl MultipartStore {
         Ok(etag)
     }
 
+    /// Maximum assembled object size for in-memory completion (500 MB).
+    ///
+    /// `complete` loads all parts into memory before writing. For objects larger
+    /// than this limit, a streaming implementation should write parts sequentially
+    /// to the final file. See STORAGE-0016 §2e streaming TODO.
+    const MAX_ASSEMBLED_SIZE: u64 = 500 * 1024 * 1024;
+
     /// Complete the upload: concatenate parts in order, return assembled data.
+    ///
+    /// **Memory**: Currently loads all parts into memory before writing.
+    /// Objects exceeding `MAX_ASSEMBLED_SIZE` (500 MB) are rejected.
     pub async fn complete(
         &self,
         upload_id: &str,
@@ -129,16 +147,26 @@ impl MultipartStore {
         let upload = self.load_manifest(upload_id).await?;
 
         // Validate all requested parts exist
+        let mut total_size: u64 = 0;
         for pn in part_numbers {
-            if !upload.parts.contains_key(pn) {
-                anyhow::bail!("Part {} not found in upload {}", pn, upload_id);
+            match upload.parts.get(pn) {
+                Some(part) => total_size += part.size,
+                None => anyhow::bail!("Part {} not found in upload {}", pn, upload_id),
             }
         }
 
+        if total_size > Self::MAX_ASSEMBLED_SIZE {
+            anyhow::bail!(
+                "Assembled object too large for in-memory completion ({} MB, max {} MB)",
+                total_size / (1024 * 1024),
+                Self::MAX_ASSEMBLED_SIZE / (1024 * 1024),
+            );
+        }
+
         // Concatenate parts in order
-        let mut assembled = Vec::new();
+        let mut assembled = Vec::with_capacity(total_size as usize);
         for pn in part_numbers {
-            let part_file = self.part_path(upload_id, *pn);
+            let part_file = self.part_path(upload_id, *pn)?;
             let data = tokio::fs::read(&part_file)
                 .await
                 .context(format!("Failed to read part {}", pn))?;
@@ -157,7 +185,7 @@ impl MultipartStore {
 
     /// Abort and clean up an upload
     pub async fn abort(&self, upload_id: &str) -> Result<()> {
-        let dir = self.upload_dir(upload_id);
+        let dir = self.upload_dir(upload_id)?;
         if dir.exists() {
             tokio::fs::remove_dir_all(&dir)
                 .await
@@ -182,17 +210,16 @@ impl MultipartStore {
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let upload_id = entry.file_name().to_string_lossy().to_string();
-            if let Ok(upload) = self.load_manifest(&upload_id).await {
-                if upload.created_at < cutoff {
+            if let Ok(upload) = self.load_manifest(&upload_id).await
+                && upload.created_at < cutoff {
                     warn!(upload_id = %upload_id, created = %upload.created_at, "GC: removing expired multipart upload");
                     let _ = self.abort(&upload_id).await;
                 }
-            }
         }
     }
 
     async fn load_manifest(&self, upload_id: &str) -> Result<MultipartUpload> {
-        let path = self.manifest_path(upload_id);
+        let path = self.manifest_path(upload_id)?;
         let data = tokio::fs::read_to_string(&path)
             .await
             .context("Upload not found or manifest unreadable")?;
@@ -203,7 +230,7 @@ impl MultipartStore {
 
     async fn save_manifest(&self, upload_id: &str, upload: &MultipartUpload) -> Result<()> {
         let manifest = serde_json::to_string_pretty(upload)?;
-        tokio::fs::write(self.manifest_path(upload_id), manifest)
+        tokio::fs::write(self.manifest_path(upload_id)?, manifest)
             .await
             .context("Failed to write multipart manifest")?;
         Ok(())
@@ -225,7 +252,7 @@ mod tests {
 
         let id = store.initiate("bucket", "key.dat", "application/octet-stream").await.unwrap();
         assert!(!id.is_empty());
-        assert!(store.manifest_path(&id).exists());
+        assert!(store.manifest_path(&id).unwrap().exists());
     }
 
     #[tokio::test]
@@ -238,7 +265,7 @@ mod tests {
         assert!(!etag.is_empty());
 
         // Part file should exist
-        assert!(store.part_path(&id, 1).exists());
+        assert!(store.part_path(&id, 1).unwrap().exists());
     }
 
     #[tokio::test]
@@ -275,9 +302,34 @@ mod tests {
 
         let id = store.initiate("b", "k", "text/plain").await.unwrap();
         store.upload_part(&id, 1, b"data").await.unwrap();
-        assert!(store.upload_dir(&id).exists());
+        assert!(store.upload_dir(&id).unwrap().exists());
 
         store.abort(&id).await.unwrap();
-        assert!(!store.upload_dir(&id).exists());
+        assert!(!store.upload_dir(&id).unwrap().exists());
+    }
+
+    #[tokio::test]
+    async fn multipart_rejects_traversal_upload_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = MultipartStore::new(tmp.path());
+
+        let result = store.upload_part("../../../etc/passwd", 1, b"data").await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Invalid upload ID"),
+            "Should reject path traversal"
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_rejects_non_uuid_upload_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = MultipartStore::new(tmp.path());
+
+        let result = store.abort("not-a-uuid").await;
+        assert!(result.is_err());
+
+        let result = store.complete("hello world", &[1]).await;
+        assert!(result.is_err());
     }
 }

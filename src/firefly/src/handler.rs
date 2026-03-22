@@ -2,7 +2,7 @@
 //!
 //! Implements the SDK's CommandHandler trait for Firefly-specific commands.
 
-use garden_companion_sdk::{async_trait, CommandHandler, CommandResponse, CompanionState};
+use garden_companion_sdk::{CommandHandler, CommandResponse, CompanionState};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -31,7 +31,6 @@ impl FireflyCommands {
     }
 }
 
-#[async_trait]
 impl CommandHandler for FireflyCommands {
     async fn handle(&self, args: &[String]) -> CommandResponse {
         if args.is_empty() {

@@ -50,29 +50,25 @@ pub struct ToolQuery {
 
 impl ToolQuery {
     pub fn matches_tool(&self, tool: &GardenTool) -> bool {
-        if let Some(ref fqid) = self.fqid {
-            if !fqid_matches(fqid, tool) {
+        if let Some(ref fqid) = self.fqid
+            && !fqid_matches(fqid, tool) {
                 return false;
             }
-        }
 
-        if let Some(ref category) = self.category {
-            if !tool.tool.category.eq_ignore_ascii_case(category) {
+        if let Some(ref category) = self.category
+            && !tool.tool.category.eq_ignore_ascii_case(category) {
                 return false;
             }
-        }
 
-        if let Some(ref status) = self.status {
-            if !tool.service.status.eq_ignore_ascii_case(status) {
+        if let Some(ref status) = self.status
+            && !tool.service.status.eq_ignore_ascii_case(status) {
                 return false;
             }
-        }
 
-        if let Some(ref stone_id) = self.stone_id {
-            if !tool.stone.id.eq_ignore_ascii_case(stone_id) {
+        if let Some(ref stone_id) = self.stone_id
+            && !tool.stone.id.eq_ignore_ascii_case(stone_id) {
                 return false;
             }
-        }
 
         for selector in &self.capabilities {
             if !tool.has_capability(&selector.cap_type, &selector.item) {
@@ -84,8 +80,8 @@ impl ToolQuery {
     }
 
     pub fn matches_delta(&self, delta: &ToolDelta) -> bool {
-        if let Some(ref fqid) = self.fqid {
-            if !delta.fqid.eq_ignore_ascii_case(fqid) {
+        if let Some(ref fqid) = self.fqid
+            && !delta.fqid.eq_ignore_ascii_case(fqid) {
                 if let Some(ref tool) = delta.tool {
                     if !fqid_matches(fqid, tool) {
                         return false;
@@ -94,7 +90,6 @@ impl ToolQuery {
                     return false;
                 }
             }
-        }
 
         match delta.kind {
             ToolDeltaKind::Upsert => delta
@@ -250,15 +245,14 @@ impl GardenRegistryInner {
     ) -> Option<ToolDelta> {
         let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
 
-        if let Some(existing) = self.entries.get_mut(&key) {
-            if tool_equivalent(&existing.tool, &tool) && existing.origin == origin {
+        if let Some(existing) = self.entries.get_mut(&key)
+            && tool_equivalent(&existing.tool, &tool) && existing.origin == origin {
                 // Content unchanged — just refresh TTL silently if applicable.
                 if expires_at.is_some() {
                     existing.expires_at = expires_at;
                 }
                 return None;
             }
-        }
 
         let version = self.entries.get(&key).map(|e| e.version + 1).unwrap_or(1);
 

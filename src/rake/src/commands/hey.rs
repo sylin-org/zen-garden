@@ -7,7 +7,6 @@
 //! Rake is a thin pass-through. All args after Companion name are passed raw.
 //! The Companion owns its command structure and validation.
 
-use async_trait::async_trait;
 
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
@@ -125,7 +124,6 @@ pub struct HeyTellCommand {
     pub args: Vec<String>,
 }
 
-#[async_trait]
 impl Command for HeyTellCommand {
     fn name(&self) -> &'static str {
         "hey"
@@ -139,18 +137,20 @@ impl Command for HeyTellCommand {
         false
     }
 
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let (cmd, target_stone) = parse_hey_command(&self.args);
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let (cmd, target_stone) = parse_hey_command(&self.args);
 
-        // Determine endpoint - use target stone if specified, else tended
-        let endpoint = if let Some(stone) = &target_stone {
-            // Resolve stone name to endpoint via discovery or direct
-            resolve_stone_endpoint(stone).await?
-        } else {
-            ctx.endpoint()?.to_string()
-        };
+            // Determine endpoint - use target stone if specified, else tended
+            let endpoint = if let Some(stone) = &target_stone {
+                // Resolve stone name to endpoint via discovery or direct
+                resolve_stone_endpoint(stone).await?
+            } else {
+                ctx.endpoint()?.to_string()
+            };
 
-        execute_hey_command(cmd, &endpoint, ctx).await
+            execute_hey_command(cmd, &endpoint, ctx).await
+        })
     }
 }
 

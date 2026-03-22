@@ -5,7 +5,7 @@
 //! encryption, notification, and mount-path resolution transparently.
 
 use anyhow::Result;
-use async_trait::async_trait;
+use std::future::Future;
 use std::path::Path;
 
 /// Path-based content store operations.
@@ -13,23 +13,22 @@ use std::path::Path;
 /// Used by domain and API code to interact with storage banks
 /// without depending on the concrete `ContentStore` in infra.
 /// The implementor handles encryption and replication notifications.
-#[async_trait]
 pub trait ContentStoreOps: Send + Sync {
     /// Read binary data from a relative path.
-    async fn read(&self, rel: &Path) -> Result<Vec<u8>>;
+    fn read(&self, rel: &Path) -> impl Future<Output = Result<Vec<u8>>> + Send;
 
     /// Write binary data to a relative path.
-    async fn write(&self, rel: &Path, data: &[u8]) -> Result<()>;
+    fn write(&self, rel: &Path, data: &[u8]) -> impl Future<Output = Result<()>> + Send;
 
     /// Read UTF-8 text from a relative path.
-    async fn read_string(&self, rel: &Path) -> Result<String>;
+    fn read_string(&self, rel: &Path) -> impl Future<Output = Result<String>> + Send;
 
     /// Write UTF-8 text to a relative path.
-    async fn write_string(&self, rel: &Path, data: &str) -> Result<()>;
+    fn write_string(&self, rel: &Path, data: &str) -> impl Future<Output = Result<()>> + Send;
 
     /// Delete a file at a relative path. Returns true if file existed.
-    async fn delete(&self, rel: &Path) -> Result<bool>;
+    fn delete(&self, rel: &Path) -> impl Future<Output = Result<bool>> + Send;
 
     /// Check if a file exists at a relative path.
-    async fn exists(&self, rel: &Path) -> bool;
+    fn exists(&self, rel: &Path) -> impl Future<Output = bool> + Send;
 }

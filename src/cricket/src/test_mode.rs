@@ -142,8 +142,8 @@ async fn event_loop(mixer: &Arc<Mixer>, tunes: &Tunes, bindings: &[KeyBinding]) 
 
     loop {
         // Wait for key event
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(KeyEvent {
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(KeyEvent {
                 code, modifiers, ..
             }) = event::read()?
             {
@@ -206,7 +206,6 @@ async fn event_loop(mixer: &Arc<Mixer>, tunes: &Tunes, bindings: &[KeyBinding]) 
                     _ => {}
                 }
             }
-        }
     }
 
     Ok(())

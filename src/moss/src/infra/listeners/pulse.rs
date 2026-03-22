@@ -511,7 +511,6 @@ impl PulseDomainBridge {
     }
 }
 
-#[async_trait::async_trait]
 impl EventListener for PulseDomainBridge {
     async fn on_event(&self, event: &DomainEvent) {
         let pulse = DomainPulse::from_domain_event(event);

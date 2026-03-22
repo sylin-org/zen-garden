@@ -11,7 +11,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use async_trait::async_trait;
 
 /// Console mode action
 pub enum MakeActionType {
@@ -37,31 +36,32 @@ impl MakeCommand {
     }
 }
 
-#[async_trait]
 impl Command for MakeCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?;
-        let url = format!("{}/api/v1/console/mode", endpoint.trim_end_matches('/'));
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?;
+            let url = format!("{}/api/v1/console/mode", endpoint.trim_end_matches('/'));
 
-        match &self.action {
-            MakeActionType::Sing { forever } => {
-                execute_make_sing(ctx, &url, *forever).await?;
+            match &self.action {
+                MakeActionType::Sing { forever } => {
+                    execute_make_sing(ctx, &url, *forever).await?;
+                }
+                MakeActionType::Quiet => {
+                    execute_make_quiet(ctx, &url).await?;
+                }
+                MakeActionType::Silent => {
+                    execute_make_silent(ctx, &url).await?;
+                }
+                MakeActionType::Minimal => {
+                    execute_make_minimal(ctx, &url).await?;
+                }
             }
-            MakeActionType::Quiet => {
-                execute_make_quiet(ctx, &url).await?;
-            }
-            MakeActionType::Silent => {
-                execute_make_silent(ctx, &url).await?;
-            }
-            MakeActionType::Minimal => {
-                execute_make_minimal(ctx, &url).await?;
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::MAKE, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::MAKE, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

@@ -20,7 +20,7 @@ pub struct StorageOrchestration {
 
     /// Per-storage S3 listeners (STORAGE-0016).
     /// Arms a dedicated S3-compatible HTTP port per managed storage.
-    pub s3_listeners: Arc<crate::infra::storage::S3ListenerManager>,
+    pub s3_listeners: Arc<crate::infra::storage::S3Listeners>,
 }
 
 impl StorageOrchestration {

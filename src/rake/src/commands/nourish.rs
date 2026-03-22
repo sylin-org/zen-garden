@@ -215,23 +215,23 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
                 .updates
                 .available
                 .iter()
-                .filter(|u| matches!(u, Update::Moss { .. }))
+                .filter(|u: &&Update| matches!(*u, Update::Moss { .. }))
                 .collect();
 
             let offerings: Vec<_> = stone
                 .updates
                 .available
                 .iter()
-                .filter(|u| matches!(u, Update::Offering { .. }))
+                .filter(|u: &&Update| matches!(*u, Update::Offering { .. }))
                 .collect();
 
             let firmware_tested: Vec<_> = stone
                 .updates
                 .available
                 .iter()
-                .filter(|u| {
+                .filter(|u: &&Update| {
                     matches!(
-                        u,
+                        *u,
                         Update::Firmware {
                             confidence: FirmwareConfidence::Tested,
                             ..
@@ -244,9 +244,9 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
                 .updates
                 .available
                 .iter()
-                .filter(|u| {
+                .filter(|u: &&Update| {
                     matches!(
-                        u,
+                        *u,
                         Update::Firmware {
                             confidence: FirmwareConfidence::Suggested,
                             ..
@@ -358,7 +358,7 @@ fn display_nourishment(response: &GardenNourishmentResponse, queried_stone: &str
                 .updates
                 .available
                 .iter()
-                .any(|update| matches!(update, Update::Firmware { .. }))
+                .any(|update: &Update| matches!(*update, Update::Firmware { .. }))
         });
         if has_firmware {
             println!("Use [A] to apply all, [O] for offerings only, [F] for firmware only");

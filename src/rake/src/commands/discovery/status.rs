@@ -222,8 +222,8 @@ impl Command for StatusCommand {
                         let simple: Vec<String> = gpu
                             .ai_runtimes
                             .iter()
-                            .filter(|r| !r.contains(':'))
-                            .map(|r| {
+                            .filter(|r: &&String| !r.contains(':'))
+                            .map(|r: &String| {
                                 // Special case formatting
                                 match r.as_str() {
                                     "directml" => "DirectML".to_string(),

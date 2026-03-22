@@ -806,11 +806,11 @@ impl Command for NurturingListCommand {
                         for bank in &banks.data {
                             let bank_name = bank
                                 .get("name")
-                                .and_then(|n| n.as_str())
+                                .and_then(|n: &serde_json::Value| n.as_str())
                                 .unwrap_or("unknown");
                             let online = bank
                                 .get("online")
-                                .and_then(|o| o.as_bool())
+                                .and_then(|o: &serde_json::Value| o.as_bool())
                                 .unwrap_or(false);
 
                             if !online {

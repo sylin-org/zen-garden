@@ -6,31 +6,11 @@ use reqwest;
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
 
-/// Standard JSON API response wrapper for Garden component APIs
-/// Wraps successful data responses with optional suggestions
-/// Note: This is for structured JSON APIs, not SSE or raw HTTP responses
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct GardenApiResponse<T> {
-    pub data: T,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub suggestions: Option<Vec<String>>,
-}
-
-impl<T> GardenApiResponse<T> {
-    pub fn new(data: T) -> Self {
-        Self {
-            data,
-            suggestions: None,
-        }
-    }
-
-    pub fn with_suggestions(data: T, suggestions: Vec<String>) -> Self {
-        Self {
-            data,
-            suggestions: Some(suggestions),
-        }
-    }
-}
+/// Type alias for backward compatibility.
+///
+/// New code should use [`crate::api_utils::ApiResponse<T>`] directly.
+/// This alias exists so existing call sites keep compiling without changes.
+pub type GardenApiResponse<T> = crate::api_utils::ApiResponse<T>;
 
 /// HTTP client for interacting with Zen Garden component APIs (Moss, Lantern, etc.)
 /// Provides consistent endpoint handling, request building, and response parsing

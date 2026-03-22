@@ -1082,7 +1082,7 @@ fn paint_header(state: &MonitorState, layout: &Layout) -> Vec<String> {
 
     let right_parts: Vec<&str> = [health_str.as_str(), uptime_str.as_str(), epm_str.as_str()]
         .iter()
-        .filter(|s| !s.is_empty())
+        .filter(|s: &&&str| !s.is_empty())
         .copied()
         .collect();
     let right_plain = right_parts.join("  ");

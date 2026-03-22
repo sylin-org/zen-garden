@@ -132,16 +132,12 @@ impl Command for AddStorageCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage add command"))?;
-            let base = endpoint.trim_end_matches('/');
+            let api = ctx.stone_api()?;
 
             // Resolve target — if not provided, list candidates and let user pick
             let target = match &self.target {
                 Some(t) => t.clone(),
-                None => self.pick_target(ctx, base).await?,
+                None => self.pick_target(ctx, api.endpoint()).await?,
             };
 
             let is_block_device = target.starts_with("/dev/");
@@ -176,9 +172,9 @@ impl Command for AddStorageCommand {
             };
 
             // POST /api/v1/stone/storage/add
-            let url = format!("{}/api/v1/stone/storage/add", base);
-            let response = ctx
-                .client
+            let url = format!("{}/api/v1/stone/storage/add", api.endpoint());
+            let response = api
+                .http()
                 .post(&url)
                 .json(&request)
                 .send()
@@ -234,9 +230,10 @@ impl AddStorageCommand {
     async fn pick_target(&self, ctx: &Runtime, base: &str) -> anyhow::Result<String> {
         use crate::ui::rendering as ui;
 
+        let api = ctx.stone_api()?;
         let url = format!("{}/api/v1/stone/storage/candidates", base);
-        let response = ctx
-            .client
+        let response = api
+            .http()
             .get(&url)
             .send()
             .await
@@ -365,17 +362,14 @@ impl Command for ReleaseStorageCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for release command"))?;
-            let base = endpoint.trim_end_matches('/');
+            let api = ctx.stone_api()?;
+            let base = api.endpoint();
 
             // "all" → bulk release
             if self.name == "all" {
                 let url = format!("{}/api/v1/stone/storage/release-all", base);
-                let response = ctx
-                    .client
+                let response = api
+                    .http()
                     .post(&url)
                     .send()
                     .await
@@ -418,8 +412,8 @@ impl Command for ReleaseStorageCommand {
             }
 
             let url = format!("{}/api/v1/stone/storage/banks/{}/release", base, self.name);
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .post(&url)
                 .send()
                 .await
@@ -485,18 +479,15 @@ impl Command for ListStorageCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage list command"))?;
+            let api = ctx.stone_api()?;
 
             // Fetch local storages
             let banks_url = format!(
                 "{}/api/v1/stone/storage/banks",
-                endpoint.trim_end_matches('/')
+                api.endpoint()
             );
-            let banks_response = ctx
-                .client
+            let banks_response = api
+                .http()
                 .get(&banks_url)
                 .send()
                 .await
@@ -515,8 +506,8 @@ impl Command for ListStorageCommand {
                 .data;
 
             // Fetch garden-wide overview (includes roles from beacons)
-            let overview_url = format!("{}/api/v1/stone/storage", endpoint.trim_end_matches('/'));
-            let garden_banks: Vec<GardenBankInfo> = match ctx.client.get(&overview_url).send().await {
+            let overview_url = format!("{}/api/v1/stone/storage", api.endpoint());
+            let garden_banks: Vec<GardenBankInfo> = match api.http().get(&overview_url).send().await {
                 Ok(resp) if resp.status().is_success() => resp
                     .json::<ApiResponse<StorageOverview>>()
                     .await
@@ -529,9 +520,9 @@ impl Command for ListStorageCommand {
             let candidates: Option<CandidatesResponse> = {
                 let cand_url = format!(
                     "{}/api/v1/stone/storage/candidates",
-                    endpoint.trim_end_matches('/')
+                    api.endpoint()
                 );
-                match ctx.client.get(&cand_url).send().await {
+                match api.http().get(&cand_url).send().await {
                     Ok(resp) if resp.status().is_success() => {
                         resp.json::<CandidatesResponse>().await.ok()
                     }
@@ -716,19 +707,16 @@ impl Command for PinStorageCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for pin command"))?;
+            let api = ctx.stone_api()?;
 
             let url = format!(
                 "{}/api/v1/stone/storage/banks/{}/pin",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 self.name
             );
 
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .post(&url)
                 .send()
                 .await
@@ -777,19 +765,16 @@ impl Command for UnpinStorageCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for unpin command"))?;
+            let api = ctx.stone_api()?;
 
             let url = format!(
                 "{}/api/v1/stone/storage/banks/{}/unpin",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 self.name
             );
 
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .post(&url)
                 .send()
                 .await
@@ -892,10 +877,7 @@ impl Command for StorePutCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
             // Read file content
             let data = tokio::fs::read(&self.file)
@@ -911,13 +893,13 @@ impl Command for StorePutCommand {
             let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
             let url = format!(
                 "{}/api/v1/storage/s3/{}/{}",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 bucket,
                 key
             );
 
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .put(&url)
                 .header("Content-Type", &content_type)
                 .body(data.clone())
@@ -991,22 +973,19 @@ impl Command for StoreGetCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
             let url = format!(
                 "{}/api/v1/storage/s3/{}/{}",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 bucket,
                 key
             );
 
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .get(&url)
                 .send()
                 .await
@@ -1142,10 +1121,7 @@ impl Command for StoreListCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, prefix) = apply_app_prefix_for_list(&self.bucket, self.prefix.clone(), app);
@@ -1166,13 +1142,13 @@ impl Command for StoreListCommand {
 
             let url = format!(
                 "{}/api/v1/storage/s3/{}{}",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 bucket,
                 query_string
             );
 
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .get(&url)
                 .send()
                 .await
@@ -1343,22 +1319,19 @@ impl Command for StoreDeleteCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
             let url = format!(
                 "{}/api/v1/storage/s3/{}/{}",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 bucket,
                 key
             );
 
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .delete(&url)
                 .send()
                 .await
@@ -1413,22 +1386,19 @@ impl Command for StoreHeadCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
             let url = format!(
                 "{}/api/v1/storage/s3/{}/{}",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 bucket,
                 key
             );
 
-            let response = ctx
-                .client
+            let response = api
+                .http()
                 .head(&url)
                 .send()
                 .await
@@ -1510,18 +1480,15 @@ impl Command for StorageStatusCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage status command"))?;
+            let api = ctx.stone_api()?;
 
             // Fetch local banks
             let banks_url = format!(
                 "{}/api/v1/stone/storage/banks",
-                endpoint.trim_end_matches('/')
+                api.endpoint()
             );
-            let banks_response = ctx
-                .client
+            let banks_response = api
+                .http()
                 .get(&banks_url)
                 .send()
                 .await
@@ -1540,8 +1507,8 @@ impl Command for StorageStatusCommand {
                 .data;
 
             // Fetch garden-wide overview for roles
-            let overview_url = format!("{}/api/v1/stone/storage", endpoint.trim_end_matches('/'));
-            let garden_banks: Vec<GardenBankInfo> = match ctx.client.get(&overview_url).send().await {
+            let overview_url = format!("{}/api/v1/stone/storage", api.endpoint());
+            let garden_banks: Vec<GardenBankInfo> = match api.http().get(&overview_url).send().await {
                 Ok(resp) if resp.status().is_success() => resp
                     .json::<ApiResponse<StorageOverview>>()
                     .await

@@ -53,7 +53,7 @@ serde_yml = "0.0.12"
 
 # HTTP
 axum = "0.8"
-reqwest = { version = "0.13", default-features = false, features = ["json", "webpki-roots", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "webpki-roots", "stream", "rustls"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 
 # CLI

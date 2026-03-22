@@ -43,7 +43,7 @@ pub use companion::{Companion, Manifest};
 
 // ── Explicit re-exports (narrowed from wildcard dumps) ──────────────
 
-pub use client::{GardenApiResponse, GardenHttpClient};
+pub use client::{GardenApiResponse, GardenHttpClient, StoneApi, StoneApiError};
 pub use types::peer_address::PeerAddress;
 pub use types::topology::TopologyEntry;
 pub use utils::{format_bytes, format_uptime};

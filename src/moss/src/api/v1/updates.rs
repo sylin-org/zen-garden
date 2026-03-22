@@ -206,7 +206,7 @@ pub async fn execute_garden(
     for task in check_tasks {
         if let Ok((stone_name, endpoint, Some(check_response))) = task.await {
             // Check if this stone has updates matching the scope
-            let has_matching_updates = check_response.updates.available.iter().any(|update| {
+            let has_matching_updates = check_response.updates.available.iter().any(|update: &Update| {
                 matches!(
                     (&request.scope, update),
                     (UpdateScope::All, _)

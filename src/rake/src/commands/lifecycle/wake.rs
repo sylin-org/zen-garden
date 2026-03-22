@@ -23,13 +23,11 @@ impl WakeCommand {
 impl Command for WakeCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let service_path = urlencoding::encode(&self.service);
-            let url = ctx.api_v1_url(&format!("stone/services/{}/wake", service_path))?;
-            let response = ctx.client.post(&url).send().await?;
-            let status = response.status();
+            let api = ctx.stone_api()?;
+            let result = api.services().wake(&self.service).await;
 
-            match status {
-                s if s.is_success() => {
+            match result {
+                Ok(response) => {
                     if let Ok(body) = response.json::<serde_json::Value>().await {
                         let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
                         let api_status = body
@@ -73,7 +71,7 @@ impl Command for WakeCommand {
                         );
                     }
                 }
-                reqwest::StatusCode::NOT_FOUND => {
+                Err(ref e) if e.is_not_found() => {
                     eprintln!(
                         "{}{} Service '{}' not found",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -81,28 +79,13 @@ impl Command for WakeCommand {
                         self.service
                     );
                 }
-                _ => {
-                    let detail = response
-                        .json::<serde_json::Value>()
-                        .await
-                        .ok()
-                        .and_then(|body| crate::api::responses::extract_error_message(&body));
-                    if let Some(msg) = detail {
-                        eprintln!(
-                            "{}{} Failed: {} - {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("error", ctx.term.supports_color),
-                            status,
-                            msg
-                        );
-                    } else {
-                        eprintln!(
-                            "{}{} Failed: {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("error", ctx.term.supports_color),
-                            status
-                        );
-                    }
+                Err(e) => {
+                    eprintln!(
+                        "{}{} Failed: {}",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        e.display_message()
+                    );
                 }
             }
 

@@ -697,8 +697,8 @@ pub fn compact_ai(caps: &garden_common::types::HardwareCapabilities) -> String {
             let base: Vec<&str> = ai
                 .runtimes
                 .iter()
-                .filter(|r| !r.contains(':'))
-                .map(|r| match r.as_str() {
+                .filter(|r: &&String| !r.contains(':'))
+                .map(|r: &String| match r.as_str() {
                     "cuda" => "CUDA",
                     "rocm" => "ROCm",
                     "directml" => "DML",

@@ -4,6 +4,7 @@
 //! This eliminates repetitive setup code in each command.
 
 use crate::ui::rendering::{OutputWriter, TerminalInfo};
+use garden_common::client::StoneApi;
 
 /// Global output format for automation-friendly output
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,6 +63,11 @@ pub struct Runtime {
     pub output_format: OutputFormat,
     /// Optional field path for extracting single values (e.g., "connection.uris[0]")
     pub field: Option<String>,
+    /// Typed Stone API client (ARCH-0012)
+    ///
+    /// Available when an endpoint is resolved. Provides typed methods
+    /// for all Stone REST endpoints, replacing raw `ctx.client.get(url)` patterns.
+    pub api: Option<StoneApi>,
 }
 
 impl Runtime {
@@ -76,6 +82,7 @@ impl Runtime {
     ) -> Self {
         let term = TerminalInfo::detect();
         let output = OutputWriter::new();
+        let api = Some(StoneApi::new(client.clone(), endpoint.clone()));
         Self {
             client,
             endpoint: Some(endpoint),
@@ -87,6 +94,7 @@ impl Runtime {
             output,
             output_format: OutputFormat::default(),
             field: None,
+            api,
         }
     }
 
@@ -104,6 +112,9 @@ impl Runtime {
     ) -> Self {
         let term = TerminalInfo::detect();
         let output = OutputWriter::new();
+        let api = endpoint
+            .as_ref()
+            .map(|ep| StoneApi::new(client.clone(), ep.clone()));
         Self {
             client,
             endpoint,
@@ -115,6 +126,7 @@ impl Runtime {
             output,
             output_format,
             field,
+            api,
         }
     }
 
@@ -138,6 +150,7 @@ impl Runtime {
             output,
             output_format: OutputFormat::default(),
             field: None,
+            api: None,
         }
     }
 
@@ -145,6 +158,13 @@ impl Runtime {
     pub fn endpoint(&self) -> anyhow::Result<&str> {
         self.endpoint
             .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No stone endpoint available"))
+    }
+
+    /// Get the typed Stone API client, returning error if no endpoint resolved.
+    pub fn stone_api(&self) -> anyhow::Result<&StoneApi> {
+        self.api
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No stone endpoint available"))
     }
 

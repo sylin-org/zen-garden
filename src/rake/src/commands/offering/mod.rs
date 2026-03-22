@@ -138,7 +138,7 @@ pub fn stone_prefer_score(prefer: &[String], caps: Option<&HardwareCapabilities>
         .disk
         .as_ref()
         .and_then(|d| d.disk_type.as_ref())
-        .map(|s| s.to_lowercase());
+        .map(|s: &String| s.to_lowercase());
 
     let mut score = 0i32;
     for p in prefer {

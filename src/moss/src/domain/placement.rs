@@ -447,14 +447,10 @@ async fn fetch_remote_offerings(
     endpoint: &str,
     timeout: Duration,
 ) -> Result<Vec<CompiledOffering>> {
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()
-        .context("Failed to build HTTP client")?;
-
     let offerings_url = format!("{}/api/v1/offerings", endpoint.trim_end_matches('/'));
-    let response = client
+    let response = crate::http::HTTP
         .get(&offerings_url)
+        .timeout(timeout)
         .send()
         .await
         .context("Failed to fetch offerings from remote stone")?;

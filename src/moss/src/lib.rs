@@ -18,6 +18,7 @@ pub mod tasks;
 // Core modules
 pub mod announcement;
 pub mod docker;
+pub mod http;
 pub mod mdns;
 
 // App state for HTTP handlers

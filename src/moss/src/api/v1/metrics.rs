@@ -110,5 +110,6 @@ fn create_fallback_resources() -> StoneResources {
         storage: Vec::new(),
         uptime_seconds: 0,
         uptime_friendly: "0s".to_string(),
+        cpu_temperature: None,
     }
 }

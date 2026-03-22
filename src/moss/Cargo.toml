@@ -115,7 +115,6 @@ cloud-filter = "0.0.6"
 nt-time = "0.8"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["process", "signal"] }
 udev = "0.9"
 libc = "0.2"
 sd-notify = "0.4"

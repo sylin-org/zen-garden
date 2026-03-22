@@ -55,16 +55,12 @@ pub fn get_local_metrics() -> Result<StoneMetrics> {
 /// Uses the `/metrics` endpoint for real-time data.
 /// Architecture is fetched from `/capabilities` since it's not in metrics.
 pub async fn fetch_stone_metrics(endpoint: &str, timeout: Duration) -> Result<StoneMetrics> {
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()
-        .context("Failed to build HTTP client")?;
-
     let base = endpoint.trim_end_matches('/');
     let metrics_url = format!("{}/metrics", base);
 
-    let response = client
+    let response = crate::http::HTTP
         .get(&metrics_url)
+        .timeout(timeout)
         .send()
         .await
         .context("Failed to fetch /metrics")?;
@@ -87,7 +83,7 @@ pub async fn fetch_stone_metrics(endpoint: &str, timeout: Duration) -> Result<St
     let snapshot = api_response.data;
 
     // Architecture from /capabilities (not in metrics)
-    let architecture = fetch_architecture(&client, base)
+    let architecture = fetch_architecture(&crate::http::HTTP, base)
         .await
         .unwrap_or_else(|_| std::env::consts::ARCH.to_string());
 
@@ -205,6 +201,7 @@ mod tests {
             }],
             uptime_seconds: 10000,
             uptime_friendly: "2h 46m".to_string(),
+            cpu_temperature: Some(42.0),
         }
     }
 
@@ -251,6 +248,7 @@ mod tests {
             }],
             uptime_seconds: 5000,
             uptime_friendly: "1h 23m".to_string(),
+            cpu_temperature: Some(65.0),
         };
 
         let metrics = normalize_metrics(&resources, "aarch64", &DiskType::HDD);

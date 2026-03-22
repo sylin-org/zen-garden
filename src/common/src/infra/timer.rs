@@ -14,7 +14,16 @@
 //! ```
 
 use anyhow::{Context, Result};
+use std::sync::LazyLock;
 use std::time::Duration;
+
+/// Shared HTTP client for timer trigger requests.
+static TIMER_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("timer HTTP client")
+});
 
 /// Timer configuration for nurturing schedules
 #[derive(Debug, Clone)]
@@ -250,8 +259,7 @@ impl PlatformTimer {
             self.api_base_url, offering_name
         );
 
-        let client = reqwest::Client::new();
-        let response = client.post(&url).send().await;
+        let response = TIMER_HTTP.post(&url).send().await;
 
         match response {
             Ok(resp) if resp.status().is_success() => Ok(TimerResult::success(

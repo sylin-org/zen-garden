@@ -12,6 +12,10 @@ pub use spec::{ContainerSpec, LogLine};
 
 use anyhow::{Context, Result};
 use bollard::Docker as BollardDocker;
+use bollard::models::EventMessage;
+use bollard::query_parameters::EventsOptionsBuilder;
+use futures_util::Stream;
+use std::collections::HashMap;
 
 use spec::ContainerNetworking;
 
@@ -71,6 +75,31 @@ impl Client {
             .ok()?;
 
         network.ipam?.config?.into_iter().find_map(|c| c.gateway)
+    }
+
+    /// Subscribe to Docker container lifecycle events.
+    ///
+    /// Returns a stream of `EventMessage` filtered to container-type events
+    /// with actions: start, stop, die, kill, destroy, health_status.
+    /// The caller drives the stream and handles reconnection on error.
+    pub fn container_events(&self) -> impl Stream<Item = Result<EventMessage, bollard::errors::Error>> {
+        let filters = HashMap::from([
+            ("type".to_string(), vec!["container".to_string()]),
+            (
+                "event".to_string(),
+                vec![
+                    "start".to_string(),
+                    "stop".to_string(),
+                    "die".to_string(),
+                    "kill".to_string(),
+                    "destroy".to_string(),
+                    "health_status".to_string(),
+                ],
+            ),
+        ]);
+
+        let options = EventsOptionsBuilder::new().filters(&filters).build();
+        self.docker.events(Some(options))
     }
 
     /// Build container networking configuration.

@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, ContainerCreateResponse, HostConfig, PortBinding};
 use bollard::query_parameters::{
-    CreateContainerOptions, KillContainerOptions, RemoveContainerOptions,
-    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+    CreateContainerOptions, InspectContainerOptions, KillContainerOptions,
+    RemoveContainerOptions, RestartContainerOptions, StartContainerOptions,
+    StopContainerOptions,
 };
 use garden_common::console::{self, ConsolePrinter};
 use std::collections::HashMap;
@@ -288,6 +289,11 @@ impl Client {
             .await
             .context("Failed to remove container for recreate")?;
 
+        // Verify the container is fully removed before creating the replacement.
+        // Docker's remove API can return before the container is fully cleaned up,
+        // which causes "name already in use" errors on the subsequent create.
+        self.await_container_removed(&container_name).await?;
+
         tracing::info!(service = %name, "Old container removed (volumes preserved)");
 
         // Scan Docker port occupancy (old container just removed, so its ports are freed)
@@ -513,5 +519,47 @@ impl Client {
         };
 
         Ok((config, ()))
+    }
+
+    /// Wait for a container to be fully removed after a `remove_container` call.
+    ///
+    /// Docker's remove API can return before the container metadata is fully
+    /// cleaned up. Re-creating a container with the same name immediately after
+    /// removal can hit "name already in use" races. This method polls
+    /// `inspect_container` until it returns 404 (not found), with a bounded
+    /// retry to avoid infinite loops.
+    async fn await_container_removed(&self, container_name: &str) -> Result<()> {
+        const MAX_ATTEMPTS: u32 = 10;
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            match self
+                .docker
+                .inspect_container(container_name, None::<InspectContainerOptions>)
+                .await
+            {
+                // Container still exists — wait and retry
+                Ok(_) => {
+                    tracing::debug!(
+                        container = %container_name,
+                        attempt,
+                        "Container still present after remove, waiting"
+                    );
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+                // 404 Not Found — container is gone (expected path)
+                Err(_) => return Ok(()),
+            }
+        }
+
+        // If we exhausted retries, warn but don't fail — the create call will
+        // produce a clear error if the name is still taken.
+        tracing::warn!(
+            container = %container_name,
+            "Container still visible after {} removal checks ({:.1}s); proceeding anyway",
+            MAX_ATTEMPTS,
+            MAX_ATTEMPTS as f64 * POLL_INTERVAL.as_secs_f64()
+        );
+        Ok(())
     }
 }

@@ -4,9 +4,16 @@
 
 use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::task::JoinHandle;
+
+/// Shared HTTP client for SSE connections (no overall timeout since streams are long-lived).
+static SSE_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .build()
+        .expect("SSE HTTP client")
+});
 
 /// Parsed SSE event
 #[derive(Debug, Clone)]
@@ -133,8 +140,7 @@ impl SseClient {
         endpoint: &str,
         handler: &Arc<H>,
     ) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
-        let response = client
+        let response = SSE_HTTP
             .get(endpoint)
             .header("Accept", "text/event-stream")
             .send()

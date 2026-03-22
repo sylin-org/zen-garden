@@ -191,20 +191,8 @@ async fn execute_companion_command_local(
 
     // Forward command to Companion's command server
     let url = format!("http://127.0.0.1:{}/command", port);
-    let client = reqwest::Client::builder()
-        .timeout(garden_common::constants::timeouts::companion_command_timeout())
-        .build()
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(CommandResponse::error(format!(
-                    "Failed to create HTTP client: {}",
-                    e
-                ))),
-            )
-        })?;
 
-    match client.post(&url).json(&request).send().await {
+    match crate::http::COMPANION.post(&url).json(&request).send().await {
         Ok(resp) => {
             let status = resp.status();
             match resp.json::<CommandResponse>().await {
@@ -291,10 +279,7 @@ async fn broadcast_to_topology(
     );
 
     // Fan out requests in parallel
-    let client = reqwest::Client::builder()
-        .timeout(garden_common::constants::timeouts::companion_command_timeout())
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let client = crate::http::COMPANION.clone();
 
     let futures: Vec<_> = other_stones
         .iter()

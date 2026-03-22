@@ -355,6 +355,17 @@ pub fn start_health_monitor(state: AppState, token: CancellationToken) {
     });
 }
 
+/// Start Docker container events stream monitor
+///
+/// Subscribes to Docker's event stream for real-time container state changes,
+/// supplementing the health monitor's 30-second polling with immediate
+/// notifications of container crashes, restarts, and health transitions.
+pub fn start_docker_events(state: AppState, token: CancellationToken) {
+    tokio::spawn(async move {
+        super::docker_events::docker_events_task(state, token).await;
+    });
+}
+
 /// Start caretaking maintenance sweep (hourly background task)
 ///
 /// Runs all domain sweepers sequentially every hour (5 min delay after boot).
@@ -463,6 +474,9 @@ pub async fn start_all_background_tasks(
 
     // Start health monitoring
     start_health_monitor(state.clone(), token.child_token());
+
+    // Start Docker events stream monitor (real-time container state changes)
+    start_docker_events(state.clone(), token.child_token());
 
     // Start scheduled task scheduler
     start_task_scheduler(state.clone(), token.child_token());
@@ -1049,12 +1063,19 @@ pub(crate) async fn start_background_tasks(
     // Phase 16: Pre-install manifest handling
     crate::bootstrap::run::start_preinstall_handler(&state).await;
 
-    // Phase 17: Health monitoring and auto-adoption
+    // Phase 17: Health monitoring, Docker events, and auto-adoption
     {
         let state = state.clone();
         let token = shutdown_token.child_token();
         supervisor.spawn("health-monitor", async move {
             health_monitor_task(state, token).await;
+        });
+    }
+    {
+        let state = state.clone();
+        let token = shutdown_token.child_token();
+        supervisor.spawn("docker-events", async move {
+            crate::tasks::docker_events::docker_events_task(state, token).await;
         });
     }
     {

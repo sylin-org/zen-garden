@@ -19,6 +19,7 @@ pub mod announcer;
 pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
+pub mod docker_events;
 pub mod discovery_handler;
 pub mod docker;
 pub mod election_service;
@@ -45,12 +46,13 @@ pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;
 pub use coordinator::{
     start_all_background_tasks, start_auto_adoption, start_auto_adoption_with_config,
-    start_catalog_builder, start_discovery_listener, start_hardware_detection,
-    start_health_monitor, start_lantern_registration, start_registry_loader,
-    start_registry_maintenance, start_topology_maintenance,
+    start_catalog_builder, start_discovery_listener, start_docker_events,
+    start_hardware_detection, start_health_monitor, start_lantern_registration,
+    start_registry_loader, start_registry_maintenance, start_topology_maintenance,
 };
 pub use discovery::lantern_registration_loop;
 pub use docker::{Config as DockerMonitorConfig, Event as DockerEvent, Monitor as DockerMonitor};
+pub use docker_events::docker_events_task;
 pub use hardware_detection::detect_capabilities_background;
 pub use health_monitor::health_monitor_task;
 pub use job_executors::{

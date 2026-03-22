@@ -66,6 +66,11 @@ pub struct StoneResources {
     pub storage: Vec<StorageMetrics>, // All mounted disks with live usage
     pub uptime_seconds: u64,
     pub uptime_friendly: String,
+    /// CPU package temperature in degrees Celsius.
+    /// Available on Linux (hwmon/coretemp) and ARM stones with thermal sensors.
+    /// `None` when the platform or hardware does not expose thermal data.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cpu_temperature: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

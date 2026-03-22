@@ -115,10 +115,7 @@ pub async fn check_garden(
         .map(|entry| {
             let endpoint = entry.address.http_base();
             let stone_name = entry.stone_name.clone();
-            let client = reqwest::Client::builder()
-                .timeout(garden_common::constants::timeouts::nourishment_timeout())
-                .build()
-                .unwrap();
+            let client = crate::http::HTTP.clone();
 
             tokio::spawn(
                 async move { query_stone_nourishment(&client, &endpoint, &stone_name).await },
@@ -189,16 +186,11 @@ pub async fn execute_garden(
     // Step 1: Query all stones for their pending updates
     let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
 
-    let client = reqwest::Client::builder()
-        .timeout(garden_common::constants::timeouts::nourishment_timeout())
-        .build()
-        .unwrap();
-
     // Query each stone for updates
     let check_tasks: Vec<_> = entries
         .iter()
         .map(|entry| {
-            let client = client.clone();
+            let client = crate::http::HTTP.clone();
             let endpoint = entry.address.http_base();
             let stone_name = entry.stone_name.clone();
 
@@ -246,7 +238,7 @@ pub async fn execute_garden(
     let dispatch_tasks: Vec<_> = affected_stones
         .iter()
         .map(|(stone_name, endpoint)| {
-            let client = client.clone();
+            let client = crate::http::HTTP.clone();
             let stone_name = stone_name.clone();
             let endpoint = endpoint.clone();
             let request = request.clone();

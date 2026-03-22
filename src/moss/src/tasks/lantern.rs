@@ -85,7 +85,6 @@ pub async fn start_lantern_registration(
                         );
 
                         // Immediate re-registration (don't wait for next heartbeat)
-                        let client = reqwest::Client::new();
                         let register_url = format!("{}/api/register", change_lantern);
                         let request = garden_common::RegisterRequest {
                             stone_id: Some(change_stone_id.clone()),
@@ -94,7 +93,7 @@ pub async fn start_lantern_registration(
                             services: vec![],
                         };
 
-                        match client.post(&register_url).json(&request).send().await {
+                        match crate::http::HTTP.post(&register_url).json(&request).send().await {
                             Ok(resp) if resp.status().is_success() => {
                                 tracing::info!("Re-registered with Lantern after IP change");
                             }
@@ -115,7 +114,6 @@ pub async fn start_lantern_registration(
                         );
 
                         // Immediate re-registration (don't wait for next heartbeat)
-                        let client = reqwest::Client::new();
                         let register_url = format!("{}/api/register", change_lantern);
                         let request = garden_common::RegisterRequest {
                             stone_id: Some(change_stone_id.clone()),
@@ -124,7 +122,7 @@ pub async fn start_lantern_registration(
                             services: vec![],
                         };
 
-                        match client.post(&register_url).json(&request).send().await {
+                        match crate::http::HTTP.post(&register_url).json(&request).send().await {
                             Ok(resp) if resp.status().is_success() => {
                                 tracing::info!("Re-registered with Lantern after reconnect");
                             }

@@ -197,16 +197,11 @@ async fn proxy_webdav(endpoint: &str, storage_name: &str, request: Request) -> R
         .unwrap_or_default();
     let url = format!("{}{}{}", endpoint.trim_end_matches('/'), path, query);
 
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_default();
-
     // Map the HTTP method — reqwest doesn't know WebDAV methods natively
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
         .unwrap_or(reqwest::Method::GET);
 
-    let mut req = client.request(method, &url);
+    let mut req = crate::http::INSECURE_PROXY.request(method, &url);
     req = req.header(HEADER_ZEN_PROXIED, "true");
 
     // Forward all headers except host

@@ -114,13 +114,12 @@ async fn proxy_memories_request(
     requesting_stone_id: &str,
     requesting_stone_name: &str,
 ) -> Response {
-    let client = reqwest::Client::new();
     let url = format!(
         "{}/{}",
         target.endpoint.trim_end_matches('/'),
         path.trim_start_matches('/')
     );
-    let mut request = client.request(method, url);
+    let mut request = crate::http::HTTP.request(method, url);
 
     if let Some(user_agent) = headers
         .get(header::USER_AGENT)

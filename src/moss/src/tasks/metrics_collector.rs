@@ -50,6 +50,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 storage,
                 uptime_seconds,
                 uptime_friendly: uptime_friendly.clone(),
+                cpu_temperature: garden_common::metrics::system::get_cpu_temperature(),
             });
             tracing::debug!(
                 cpu = cpu.usage_percent,
@@ -127,6 +128,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                             resources.memory = memory;
                             resources.uptime_seconds = uptime_seconds;
                             resources.uptime_friendly = uptime_friendly;
+                            resources.cpu_temperature = garden_common::metrics::system::get_cpu_temperature();
                         } else {
                             // First fast update, initialize with placeholder disk
                             tracing::warn!("Fast metrics collected but no disk data yet");

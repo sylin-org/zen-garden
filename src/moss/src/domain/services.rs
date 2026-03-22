@@ -24,14 +24,10 @@ pub async fn get_local_service_count(state: &crate::AppState) -> Result<usize> {
 ///
 /// Calls the `/api/v1/services` endpoint and counts running services.
 pub async fn fetch_remote_service_count(endpoint: &str, timeout: Duration) -> Result<usize> {
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()
-        .context("Failed to build HTTP client")?;
-
     let services_url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
-    let response = client
+    let response = crate::http::HTTP
         .get(&services_url)
+        .timeout(timeout)
         .send()
         .await
         .context("Failed to fetch services from remote stone")?;

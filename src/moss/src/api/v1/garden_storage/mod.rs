@@ -218,11 +218,6 @@ pub(crate) async fn proxy_request(
     headers: &HeaderMap,
     body: Option<Bytes>,
 ) -> Response {
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_default();
-
     let url = format!(
         "{}/{}{}",
         target.endpoint.trim_end_matches('/'),
@@ -234,7 +229,7 @@ pub(crate) async fn proxy_request(
         }
     );
 
-    let mut request = client.request(method, &url);
+    let mut request = crate::http::INSECURE_PROXY.request(method, &url);
     request = request.header(HEADER_ZEN_PROXIED, "true");
 
     if let Some(content_type) = headers

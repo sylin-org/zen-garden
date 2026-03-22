@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 #[cfg(target_os = "linux")]
 use std::fs;
 use std::process::Command;
-use sysinfo::{Networks, System};
+use sysinfo::{Components, Networks, System};
 
 /// Collect CPU model and features from /proc/cpuinfo (Linux) or WMI (Windows)
 pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
@@ -138,8 +138,9 @@ fn get_cpu_info_windows() -> Result<(String, Vec<String>, String)> {
 /// Fast collection suitable for high-frequency polling (5s intervals).
 /// Only accesses in-memory kernel structures, no I/O.
 pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
-    let mut system = System::new_all();
-    system.refresh_all();
+    let mut system = System::new();
+    system.refresh_cpu_all();
+    system.refresh_memory();
 
     // CPU metrics
     let usage_percent = system.global_cpu_usage();
@@ -173,6 +174,30 @@ pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
     let uptime_friendly = format_uptime(uptime_seconds);
 
     Ok((cpu, memory, uptime_seconds, uptime_friendly))
+}
+
+/// Read the CPU package temperature from hardware thermal sensors.
+///
+/// Scans `sysinfo::Components` for labels containing "CPU", "Package",
+/// "Tctl", or "coretemp" (common on x86 and ARM). Returns the first
+/// matching sensor's temperature in degrees Celsius, or `None` if no
+/// CPU thermal sensor is found (e.g. VMs, some Windows configurations).
+///
+/// Especially valuable for ARM stones with passive cooling where thermal
+/// throttling is a real operational concern.
+pub fn get_cpu_temperature() -> Option<f32> {
+    let components = Components::new_with_refreshed_list();
+    components
+        .list()
+        .iter()
+        .find(|c| {
+            let label = c.label().to_lowercase();
+            label.contains("cpu")
+                || label.contains("package")
+                || label.contains("tctl")
+                || label.contains("coretemp")
+        })
+        .and_then(|c| c.temperature())
 }
 
 /// Collect storage metrics for all mounted disks (slower, involves filesystem stat calls)
@@ -319,6 +344,7 @@ pub fn calculate_network_rate(
 pub fn collect_stone_resources() -> Result<StoneResources> {
     let (cpu, memory, uptime_seconds, uptime_friendly) = get_fast_metrics()?;
     let storage = get_storage_metrics()?;
+    let cpu_temperature = get_cpu_temperature();
 
     Ok(StoneResources {
         cpu,
@@ -326,6 +352,7 @@ pub fn collect_stone_resources() -> Result<StoneResources> {
         storage,
         uptime_seconds,
         uptime_friendly,
+        cpu_temperature,
     })
 }
 
@@ -336,8 +363,9 @@ pub fn get_stone_resources() -> Result<StoneResources> {
 
 #[expect(dead_code)]
 fn collect_stone_resources_original() -> Result<StoneResources> {
-    let mut system = System::new_all();
-    system.refresh_all();
+    let mut system = System::new();
+    system.refresh_cpu_all();
+    system.refresh_memory();
 
     // CPU metrics
     let usage_percent = system.global_cpu_usage();
@@ -407,6 +435,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
         storage: vec![], // Legacy function - use get_storage_metrics() instead
         uptime_seconds,
         uptime_friendly,
+        cpu_temperature: get_cpu_temperature(),
     })
 }
 

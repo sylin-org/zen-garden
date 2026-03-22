@@ -876,7 +876,7 @@ impl CompanionRegistry {
                 // Try graceful HTTP shutdown first
                 if let Some(port) = self.get_port(&id).await {
                     let shutdown_url = format!("http://127.0.0.1:{}/shutdown", port);
-                    match reqwest::Client::new()
+                    match crate::http::COMPANION
                         .post(&shutdown_url)
                         .timeout(std::time::Duration::from_secs(2))
                         .send()

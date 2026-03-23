@@ -302,11 +302,16 @@ impl ContentStore {
 
         // Changelog: old path deleted, new path created
         if !old_rel.starts_with(".zen-garden/") {
-            self.append_changelog(&ChangelogEntry::deleted(old_rel)).await;
+            self.append_changelog(&ChangelogEntry::deleted(old_rel))
+                .await;
         }
         if !new_rel.starts_with(".zen-garden/") {
-            let size = tokio::fs::metadata(&dst).await.map(|m| m.len()).unwrap_or(0);
-            self.append_changelog(&ChangelogEntry::created(new_rel, size)).await;
+            let size = tokio::fs::metadata(&dst)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
+            self.append_changelog(&ChangelogEntry::created(new_rel, size))
+                .await;
         }
 
         debug!(old = %old_rel, new = %new_rel, "renamed on mount");
@@ -514,13 +519,7 @@ impl ContentStore {
 
         tokio::fs::rename(&tmp_path, &full_path)
             .await
-            .with_context(|| {
-                format!(
-                    "rename {} → {}",
-                    tmp_path.display(),
-                    full_path.display()
-                )
-            })?;
+            .with_context(|| format!("rename {} → {}", tmp_path.display(), full_path.display()))?;
 
         debug!(path = %rel, size = bytes_written, "streaming write complete");
 
@@ -559,11 +558,10 @@ impl ContentStore {
         let changelog_path = self.mount_root.join(CHANGELOG_REL);
 
         // Ensure .zen-garden/ exists
-        if let Some(parent) = changelog_path.parent() {
-            if !parent.exists() {
+        if let Some(parent) = changelog_path.parent()
+            && !parent.exists() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
-        }
 
         // Serialize + newline
         let line = match serde_json::to_string(entry) {
@@ -698,11 +696,11 @@ impl ContentStore {
         // If the caller provided a cursor but the changelog's oldest entry is
         // newer than that cursor, the requested history has been compacted away.
         // Signal full_sync_required so the Dormant reconciles from scratch.
-        if let Some(requested) = since {
-            if !requested.is_empty() {
+        if let Some(requested) = since
+            && !requested.is_empty() {
                 let all = self.read_changelog().await?;
-                if let Some(oldest) = all.first() {
-                    if requested < oldest.c.as_str() {
+                if let Some(oldest) = all.first()
+                    && requested < oldest.c.as_str() {
                         warn!(
                             requested_cursor = %requested,
                             oldest_cursor = %oldest.c,
@@ -714,9 +712,7 @@ impl ContentStore {
                             full_sync_required: true,
                         });
                     }
-                }
             }
-        }
 
         let cursor = raw
             .last()
@@ -987,11 +983,10 @@ impl ContentStore {
 
         // Build changelog JSONL in memory, then append in one write
         let changelog_path = self.mount_root.join(CHANGELOG_REL);
-        if let Some(parent) = changelog_path.parent() {
-            if !parent.exists() {
+        if let Some(parent) = changelog_path.parent()
+            && !parent.exists() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-        }
 
         let mut buf = String::new();
         for entry in &entries {
@@ -1047,11 +1042,10 @@ fn walk_content_files(root: &Path) -> Result<Vec<ChangelogEntry>> {
             let path = entry.path();
 
             // Skip the dotfolder and the visible symlink
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name == ".zen-garden" || name == "Zen Garden" {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && (name == ".zen-garden" || name == "Zen Garden") {
                     continue;
                 }
-            }
 
             let ft = match entry.file_type() {
                 Ok(ft) => ft,
@@ -1137,6 +1131,54 @@ fn decrypt(dek: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
         .map_err(|_| anyhow::anyhow!("Decryption failed — wrong key or corrupted data"))?;
 
     Ok(plaintext)
+}
+
+impl crate::domain::traits::content_store::ContentStoreOps for ContentStore {
+    async fn read(&self, rel: &Path) -> Result<Vec<u8>> {
+        ContentStore::read(self, rel).await
+    }
+
+    async fn write(&self, rel: &Path, data: &[u8]) -> Result<()> {
+        ContentStore::write(self, rel, data).await
+    }
+
+    async fn read_string(&self, rel: &Path) -> Result<String> {
+        ContentStore::read_string(self, rel).await
+    }
+
+    async fn write_string(&self, rel: &Path, data: &str) -> Result<()> {
+        ContentStore::write_string(self, rel, data).await
+    }
+
+    async fn delete(&self, rel: &Path) -> Result<bool> {
+        ContentStore::delete(self, rel).await
+    }
+
+    async fn exists(&self, rel: &Path) -> bool {
+        ContentStore::exists(self, rel).await
+    }
+}
+
+// ============================================================================
+// Trait implementations
+// ============================================================================
+
+impl crate::domain::traits::ManagementStoreOps for ContentStore {
+    async fn read_pin(&self) -> Option<String> {
+        ContentStore::read_pin(self).await
+    }
+
+    async fn write_pin(&self, pin_id: &str) -> Result<()> {
+        ContentStore::write_pin(self, pin_id).await
+    }
+
+    async fn delete_pin(&self) -> Result<()> {
+        ContentStore::delete_pin(self).await
+    }
+
+    async fn snapshot_lkg(&self) -> Result<()> {
+        ContentStore::snapshot_lkg(self).await
+    }
 }
 
 // ============================================================================
@@ -1478,8 +1520,11 @@ mod tests {
     async fn test_notify_tx_fires_on_write() {
         let tmp = TempDir::new().unwrap();
         let (tx, mut rx) = tokio::sync::broadcast::channel::<StorageTick>(16);
-        let store =
-            ContentStore::new_public(tmp.path()).with_notifications("test-bank".to_string(), "rs-test".to_string(), tx);
+        let store = ContentStore::new_public(tmp.path()).with_notifications(
+            "test-bank".to_string(),
+            "rs-test".to_string(),
+            tx,
+        );
 
         tokio::fs::create_dir_all(tmp.path().join(".zen-garden"))
             .await
@@ -1849,7 +1894,11 @@ mod tests {
         std::fs::write(root.join("docs/notes.txt"), b"some notes").unwrap();
 
         let entries = walk_content_files(root).unwrap();
-        assert_eq!(entries.len(), 2, "Should find 2 user files, skip .zen-garden and Zen Garden");
+        assert_eq!(
+            entries.len(),
+            2,
+            "Should find 2 user files, skip .zen-garden and Zen Garden"
+        );
 
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert!(paths.contains(&"photo.jpg") || paths.contains(&"photo.jpg"));
@@ -1889,10 +1938,8 @@ mod tests {
         let paths: std::collections::HashSet<&str> =
             entries.iter().map(|e| e.path.as_str()).collect();
         // Normalize path separators for Windows
-        let paths_normalized: std::collections::HashSet<String> = paths
-            .iter()
-            .map(|p| p.replace('\\', "/"))
-            .collect();
+        let paths_normalized: std::collections::HashSet<String> =
+            paths.iter().map(|p| p.replace('\\', "/")).collect();
         assert!(paths_normalized.contains("a/b/c/deep.txt"));
         assert!(paths_normalized.contains("a/top.txt"));
     }

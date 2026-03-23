@@ -1,17 +1,20 @@
 //! Service discovery domain logic
 //!
 //! Provides service discovery across the garden with connection string resolution.
-//! Supports search by name, category, or tags with cache-first architecture.
+//! Supports search by name, category, or tags.
+//!
+//! All discovery queries go through the unified tool registry (TOOLS-0003).
+//! The registry holds all entries — Local, Gateway, and Announced — so a single
+//! `snapshot(&query)` replaces the previous three-stage pipeline.
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
-use crate::domain::connection::{self, ResolvedConnection};
-use crate::domain::{topology, TopologyEntry};
+use crate::domain::connection::ResolvedConnection;
+use crate::domain::garden_registry::ToolQuery;
 use crate::AppState;
 use garden_common::manifests::get_category_registry;
-use garden_common::{OfferingStatus, ServiceStatus};
+use garden_common::tools::GardenTool;
 
 /// Search criteria for service discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,8 +113,8 @@ impl ServiceSearchCriteria {
 
         // Check for sub-capability syntax: name[item]
         // E.g., "ollama[llama2,mistral]"
-        if let Some((name_part, rest)) = query.split_once('[') {
-            if let Some(item) = rest.strip_suffix(']') {
+        if let Some((name_part, rest)) = query.split_once('[')
+            && let Some(item) = rest.strip_suffix(']') {
                 let required_capabilities = parse_capability_requirements(item);
                 if !required_capabilities.is_empty() {
                     return Self::by_name_with_sub_capabilities(
@@ -120,7 +123,6 @@ impl ServiceSearchCriteria {
                     );
                 }
             }
-        }
 
         // Check for category prefix
         if let Some(cat) = query
@@ -214,197 +216,32 @@ fn parse_capability_requirements(input: &str) -> Vec<SubCapabilityFilter> {
         .collect()
 }
 
-/// Found service with connection information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FoundService {
-    /// Unique identifier for this offering instance (GUIDv7)
-    /// Survives renames, migrations, used for backup keying.
-    #[serde(default)]
-    pub offering_id: String,
+// Re-export response types from garden-common (canonical definitions)
+pub use garden_common::discovery::{FoundService, ServiceDiscoveryResponse, StoneRef};
 
-    /// Service name
-    pub name: String,
+// ── Registry-backed discovery ────────────────────────────────────────────────
 
-    /// Offering type (e.g., "mongodb", "redis")
-    pub offering: String,
-
-    /// Service category
-    pub category: String,
-
-    /// Service tags
-    pub tags: Vec<String>,
-
-    /// Current status
-    pub status: String,
-
-    /// Stone hosting this service
-    pub stone: StoneRef,
-
-    /// Resolved connection information
-    pub connection: ResolvedConnection,
-
-    /// Sub-capabilities (e.g., models, collections)
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub sub_capabilities: Vec<garden_common::SubCapability>,
-}
-
-/// Reference to a stone
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoneRef {
-    pub id: String,
-    pub name: String,
-    pub endpoint: String,
-}
-
-/// Service discovery response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceDiscoveryResponse {
-    /// Whether services were found
-    pub found: bool,
-
-    /// Found services
-    pub services: Vec<FoundService>,
-
-    /// Data source ("cache" or "fresh")
-    pub source: String,
-
-    /// Cache age in seconds (if from cache)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_age_seconds: Option<u64>,
-
-    /// Response timestamp
-    pub timestamp: DateTime<Utc>,
-}
-
-/// Find services matching criteria on local stone
+/// List all local services for the `/api/v1/stone/services` endpoint.
 ///
-/// Zero-latency local search using offerings and offerings index.
-pub async fn find_local_services(
-    criteria: &ServiceSearchCriteria,
-    state: &AppState,
-) -> Vec<FoundService> {
-    let self_endpoint = state.current.topology.self_entry.read().await.address.http_base();
-    let offerings = state.offerings.read().await;
-    let offerings_index = state.offerings_index.read().await;
-
-    let mut results = Vec::new();
-
-    for offering in offerings.iter() {
-        // Skip non-running offerings
-        if offering.status != OfferingStatus::Running {
-            continue;
-        }
-
-        // Get offering metadata (category, tags)
-        let (category, tags) = offerings_index
-            .as_ref()
-            .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
-            .map(|o| (o.category.clone(), o.tags.clone()))
-            .unwrap_or_else(|| (offering.offering.clone(), vec![]));
-
-        // Check if matches criteria
-        if !matches_criteria(
-            criteria,
-            &offering.name.to_string(),
-            &offering.offering,
-            &category,
-            &tags,
-            &offering.sub_capabilities,
-        ) {
-            continue;
-        }
-
-        // Resolve connection
-        let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
-        let port = offering.location.port;
-
-        let connection_profile = state
-            .manifest_registry
-            .get_offering(&offering.offering)
-            .and_then(|entry| entry.connection.as_ref());
-        let uri_template = connection::select_uri_template(connection_profile, &category);
-
-        let conn = connection::resolve_connection(
-            &state.current.stone.name,
-            &self_endpoint,
-            port,
-            &protocol,
-            uri_template.as_deref(),
-        );
-
-        results.push(FoundService {
-            offering_id: offering.offering_id.clone(),
-            name: offering.name.to_string(),
-            offering: offering.offering.clone(),
-            category,
-            tags,
-            status: format!("{}", offering.status),
-            stone: StoneRef {
-                id: state.current.stone.id.clone(),
-                name: state.current.stone.name.clone(),
-                endpoint: self_endpoint.clone(),
-            },
-            connection: conn,
-            sub_capabilities: offering.sub_capabilities.clone(),
-        });
-    }
-
-    results
-}
-
-/// List all local services (regardless of criteria) for the unified /api/v1/services endpoint
-///
-/// Returns all offerings from unified registry with full connection info.
-/// Includes both running and non-running offerings.
+/// Returns all offerings on this stone from the tool registry.
+/// Includes both running and non-running entries.
 pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryResponse {
-    let self_endpoint = state.current.topology.self_entry.read().await.address.http_base();
-    let offerings = state.offerings.read().await;
-    let offerings_index = state.offerings_index.read().await;
+    let query = ToolQuery {
+        stone_id: Some(state.current.stone.id.clone()),
+        ..Default::default()
+    };
 
-    let mut services = Vec::new();
+    let tools = {
+        let reg = state.tool.registry.read().await;
+        let (_, tools) = reg.snapshot(&query);
+        tools
+    };
 
-    for offering in offerings.iter() {
-        // Get offering metadata (category, tags)
-        let (category, tags) = offerings_index
-            .as_ref()
-            .and_then(|idx| idx.offerings.iter().find(|o| o.name == offering.offering))
-            .map(|o| (o.category.clone(), o.tags.clone()))
-            .unwrap_or_else(|| (offering.offering.clone(), vec![]));
-
-        // Resolve connection
-        let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
-        let port = offering.location.port;
-
-        let connection_profile = state
-            .manifest_registry
-            .get_offering(&offering.offering)
-            .and_then(|entry| entry.connection.as_ref());
-        let uri_template = connection::select_uri_template(connection_profile, &category);
-
-        let conn = connection::resolve_connection(
-            &state.current.stone.name,
-            &self_endpoint,
-            port,
-            &protocol,
-            uri_template.as_deref(),
-        );
-
-        services.push(FoundService {
-            offering_id: offering.offering_id.clone(),
-            name: offering.name.to_string(),
-            offering: offering.offering.clone(),
-            category,
-            tags,
-            status: format!("{}", offering.status),
-            stone: StoneRef {
-                id: state.current.stone.id.clone(),
-                name: state.current.stone.name.clone(),
-                endpoint: self_endpoint.clone(),
-            },
-            connection: conn,
-            sub_capabilities: offering.sub_capabilities.clone(),
-        });
-    }
+    let services: Vec<FoundService> = tools
+        .into_iter()
+        .filter(|t| t.tool.category != garden_common::constants::CATEGORY_STORAGE)
+        .map(garden_tool_to_found_service)
+        .collect();
 
     ServiceDiscoveryResponse {
         found: !services.is_empty(),
@@ -415,104 +252,38 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
     }
 }
 
-/// Find services across the garden (local + remote stones)
+/// Find services across the garden (all origins: Local, Gateway, Announced).
 ///
-/// Always checks both local registry and topology cache.
-/// The `fresh` parameter controls whether to do active network discovery
-/// (UDP broadcast) in addition to checking the cache.
+/// Single registry query replaces the previous three-stage pipeline
+/// (gateway check + local offerings + topology cache).
 pub async fn find_services(
     criteria: &ServiceSearchCriteria,
     state: &AppState,
-    fresh: bool,
 ) -> ServiceDiscoveryResponse {
     let start = std::time::Instant::now();
-    let mut all_services = Vec::new();
 
-    // ── Gateway check (ORCH-0004) ────────────────────────────────
-    // Gateways appear first (structural priority — routed endpoint before raw).
-    // Query by category (not origin) so both local and announced entries appear.
+    // Build ToolQuery from criteria (coarse filter the registry can evaluate)
+    let query = criteria_to_tool_query(criteria);
 
-    {
+    // Single registry query — all origins (Local, Gateway, Announced)
+    let tools = {
         let reg = state.tool.registry.read().await;
-        let (_, orchestrator_tools) = reg.snapshot(&crate::domain::ToolQuery {
-            category: Some("orchestrator".to_string()),
-            ..Default::default()
-        });
-        for tool in &orchestrator_tools {
-            let offering = &tool.tool.tool_type;
-            let gw_category = &tool.tool.category;
-            let gw_tags = if tool.tool.tags.is_empty() {
-                vec!["orchestrator".to_string()]
-            } else {
-                tool.tool.tags.clone()
-            };
+        let (_, tools) = reg.snapshot(&query);
+        tools
+    };
 
-            if !matches_criteria(
-                criteria,
-                &tool.fqid,
-                offering,
-                gw_category,
-                &gw_tags,
-                &[],
-            ) {
-                continue;
-            }
+    // Convert GardenTool -> FoundService, applying fine-grained filters
+    let mut all_services: Vec<FoundService> = tools
+        .into_iter()
+        // Exclude seed-banks — they have their own API path
+        .filter(|t| t.tool.category != garden_common::constants::CATEGORY_STORAGE)
+        // Fine-grained criteria that ToolQuery cannot express (tags, sub-capabilities,
+        // partial name/offering match)
+        .filter(|t| matches_search_criteria(criteria, t))
+        .map(garden_tool_to_found_service)
+        .collect();
 
-            // Use preserved source fields — no URI parsing needed.
-            let svc = &tool.service;
-            let conn = ResolvedConnection {
-                hostname: svc.hostname.clone().unwrap_or_else(|| tool.stone.name.clone()),
-                ip: svc.ip.clone().unwrap_or_default(),
-                port: svc.port.unwrap_or(0),
-                protocol: svc.protocol.clone(),
-                uris: svc.uris.clone(),
-            };
-
-            all_services.push(FoundService {
-                offering_id: String::new(),
-                name: tool.fqid.clone(),
-                offering: offering.clone(),
-                category: gw_category.to_string(),
-                tags: gw_tags,
-                status: garden_common::SERVICE_RUNNING.to_string(),
-                stone: StoneRef {
-                    id: tool.stone.id.clone(),
-                    name: tool.stone.name.clone(),
-                    endpoint: tool.stone.endpoint.clone(),
-                },
-                connection: conn,
-                sub_capabilities: vec![],
-            });
-        }
-    }
-
-    // TOOLS-0003: Remote gateways are now in the registry (via tools beacon).
-    // The topology cache gateway path is removed — the registry is the single
-    // source of truth for gateway entries. The old path duplicated entries
-    // because chirped gateways appeared on every stone's topology entry.
-
-    // 1. Search local stone first (zero latency)
-    let local_services = find_local_services(criteria, state).await;
-    all_services.extend(local_services);
-
-    // 2. Always check topology cache for remote services
-    // The cache is populated by chirps from other stones
-    let cached_services = find_services_in_topology_cache(criteria, state).await;
-    all_services.extend(cached_services);
-
-    // 3. If fresh requested, do active network discovery
-    // This triggers UDP broadcast and waits for responses
-    if fresh {
-        // TODO: Implement active discovery that triggers UDP broadcast
-        // For now, fresh just ensures we check the cache (which we always do now)
-        tracing::debug!("Fresh mode: topology cache already checked");
-    }
-
-    // ── Sort results ─────────────────────────────────────────────
-    // Ordering contract (all callers — CLI, API, etc.):
-    //   1. Exact name matches first, partial (offering-level) matches after.
-    //   2. Within each match-quality tier, orchestrators before data services.
-    //   3. Stable tie-break by service name then stone name.
+    // Sort per discovery ordering contract
     sort_found_services(&mut all_services, criteria);
 
     let elapsed = start.elapsed();
@@ -535,94 +306,117 @@ pub async fn find_services(
     ServiceDiscoveryResponse {
         found: !all_services.is_empty(),
         services: all_services,
-        source: if fresh { "fresh" } else { "cache" }.to_string(),
+        source: "registry".to_string(),
         cache_age_seconds,
         timestamp: Utc::now(),
     }
 }
 
-/// Find services from topology cache (populated by chirps from other stones)
+// ── Conversion helpers ───────────────────────────────────────────────────────
+
+/// Convert `ServiceSearchCriteria` to `ToolQuery` for coarse registry filtering.
 ///
-/// This is the primary method for cross-garden discovery.
-/// Each stone chirps its services every 30s, and we cache that data.
-/// No network requests needed - just read from cache.
-async fn find_services_in_topology_cache(
-    criteria: &ServiceSearchCriteria,
-    state: &AppState,
-) -> Vec<FoundService> {
-    let stones = topology::get_online_stones(&state.current.topology.cache).await;
-    let mut results = Vec::new();
+/// Only maps fields that `ToolQuery` can natively filter (fqid, category, status).
+/// Tag matching and sub-capability filtering happen post-query in
+/// `matches_search_criteria`.
+fn criteria_to_tool_query(criteria: &ServiceSearchCriteria) -> ToolQuery {
+    ToolQuery {
+        // For name searches, use fqid filter (bare name = type match in fqid_matches)
+        fqid: criteria.name.clone(),
+        // For category searches, use category filter
+        category: criteria.category.clone(),
+        // Only return running services for discovery
+        status: Some(garden_common::constants::SERVICE_RUNNING.to_string()),
+        ..Default::default()
+    }
+}
 
-    for stone in stones {
-        // Skip self — local services are already covered by find_local_services
-        if stone.stone_id == state.current.stone.id {
-            continue;
-        }
-
-        // Skip if no services (stone hasn't chirped yet or has none)
-        if stone.services.is_empty() {
-            continue;
-        }
-
-        for svc in &stone.services {
-            // Only include running services
-            if svc.status != garden_common::SERVICE_RUNNING {
-                continue;
-            }
-
-            // Check if matches criteria
-            // Note: Remote services don't include sub_capabilities in chirps yet
-            // Sub-capability filtering only works for local services
-            if !matches_criteria(criteria, &svc.name.to_string(), &svc.offering, &svc.category, &[], &[]) {
-                continue;
-            }
-
-            // Infer protocol and resolve connection
-            let protocol = connection::infer_protocol(&svc.offering, &svc.category, state).await;
-
-            // PORT-0001: Use actual remapped port from chirp if available,
-            // otherwise fall back to manifest default.
-            let port = if let Some(&p) = svc.ports.get("default") {
-                p
-            } else {
-                get_offering_port(&svc.offering, state).await
-            };
-            let connection_profile = state
-                .manifest_registry
-                .get_offering(&svc.offering)
-                .and_then(|entry| entry.connection.as_ref());
-            let uri_template = connection::select_uri_template(connection_profile, &svc.category);
-
-            let conn = connection::resolve_connection(
-                &stone.stone_name,
-                &stone.address.http_base(),
-                port,
-                &protocol,
-                uri_template.as_deref(),
-            );
-
-            results.push(FoundService {
-                offering_id: svc.offering_id.clone(),
-                name: svc.name.to_string(),
-                offering: svc.offering.clone(),
-                category: svc.category.clone(),
-                tags: vec![],
-                status: svc.status.clone(),
-                stone: StoneRef {
-                    id: stone.stone_id.clone(),
-                    name: stone.stone_name.clone(),
-                    endpoint: stone.address.http_base(),
-                },
-                connection: conn,
-                sub_capabilities: vec![], // Remote services don't include sub_capabilities in chirps
-            });
+/// Fine-grained filtering that `ToolQuery` cannot express.
+///
+/// `ToolQuery` already handles fqid (name/offering-type) and category matching.
+/// This function checks the remaining criteria dimensions:
+/// - Tag matching (tags live on the tool, not in ToolQuery)
+/// - Sub-capability matching (AND semantics across capability types)
+fn matches_search_criteria(criteria: &ServiceSearchCriteria, tool: &GardenTool) -> bool {
+    // Tag match (any tag matches)
+    if let Some(ref search_tag) = criteria.tag {
+        let lower_search = search_tag.to_lowercase();
+        let has_tag = tool
+            .tool
+            .tags
+            .iter()
+            .any(|t| t.to_lowercase() == lower_search);
+        // Orchestrators implicitly carry their category as a tag
+        let implicit_tag = tool.tool.category.to_lowercase() == lower_search;
+        if !has_tag && !implicit_tag {
+            return false;
         }
     }
 
-    results
+    // Required sub-capabilities (AND semantics)
+    for filter in &criteria.required_capabilities {
+        let lower_item = filter.item.to_lowercase();
+
+        let has_cap = tool.capabilities.iter().any(|cap| {
+            if let Some(ref cap_type) = filter.cap_type
+                && cap.cap_type.to_lowercase() != cap_type.to_lowercase() {
+                    return false;
+                }
+            cap.items.iter().any(|i| i.to_lowercase() == lower_item)
+        });
+
+        if !has_cap {
+            return false;
+        }
+    }
+
+    true
 }
 
-/// Get default port from offering manifest
+/// Convert a `GardenTool` to `FoundService` for API compatibility.
+fn garden_tool_to_found_service(tool: GardenTool) -> FoundService {
+    let svc = &tool.service;
+    let conn = ResolvedConnection {
+        hostname: svc
+            .hostname
+            .clone()
+            .unwrap_or_else(|| tool.stone.name.clone()),
+        ip: svc.ip.clone().unwrap_or_default(),
+        port: svc.port.unwrap_or(0),
+        protocol: svc.protocol.clone(),
+        uris: svc.uris.clone(),
+    };
+
+    // Convert Capability -> SubCapability (same structure, different type names)
+    let sub_capabilities: Vec<garden_common::SubCapability> = tool
+        .capabilities
+        .iter()
+        .map(|cap| garden_common::SubCapability {
+            cap_type: cap.cap_type.clone(),
+            items: cap.items.clone(),
+            discovered_at: None,
+        })
+        .collect();
+
+    FoundService {
+        offering_id: tool.tool.id.clone(),
+        name: tool.fqid.clone(),
+        offering: tool.tool.tool_type.clone(),
+        category: tool.tool.category.clone(),
+        tags: tool.tool.tags.clone(),
+        status: tool.service.status.clone(),
+        stone: StoneRef {
+            id: tool.stone.id,
+            name: tool.stone.name,
+            endpoint: tool.stone.endpoint,
+        },
+        connection: conn,
+        sub_capabilities,
+        source: tool.tool.source.clone(),
+    }
+}
+
+/// Get default port from offering manifest.
 ///
 /// Looks up the offering and returns the default port.
 /// Returns 8080 as fallback if not found.
@@ -642,134 +436,6 @@ pub async fn get_offering_port(offering: &str, state: &AppState) -> u16 {
     8080
 }
 
-/// Find services on remote stones via HTTP requests (legacy, slower)
-///
-/// This is the fallback method that makes HTTP requests to each stone.
-/// Prefer find_services_in_topology_cache for better performance.
-#[allow(dead_code)]
-async fn find_remote_services(
-    criteria: &ServiceSearchCriteria,
-    state: &AppState,
-) -> Vec<FoundService> {
-    let stones = topology::get_online_stones(&state.current.topology.cache).await;
-    let mut results = Vec::new();
-
-    // Query each remote stone in parallel
-    let timeout = Duration::from_secs(2);
-    let tasks: Vec<_> = stones
-        .into_iter()
-        .map(|stone| {
-            let criteria = criteria.clone();
-            let state = state.clone();
-            tokio::spawn(async move {
-                fetch_remote_services(
-                    &stone.address.http_base(),
-                    &criteria,
-                    &stone,
-                    timeout,
-                    &state,
-                )
-                .await
-            })
-        })
-        .collect();
-
-    for task in tasks {
-        match task.await {
-            Ok(Ok(services)) => results.extend(services),
-            Ok(Err(e)) => {
-                tracing::debug!(error = ?e, "Failed to fetch services from remote stone");
-            }
-            Err(e) => {
-                tracing::debug!(error = ?e, "Task join error while fetching remote services");
-            }
-        }
-    }
-
-    results
-}
-
-/// Fetch services from a single remote stone
-async fn fetch_remote_services(
-    endpoint: &str,
-    criteria: &ServiceSearchCriteria,
-    stone: &TopologyEntry,
-    timeout: Duration,
-    state: &AppState,
-) -> anyhow::Result<Vec<FoundService>> {
-    let client = reqwest::Client::builder().timeout(timeout).build()?;
-
-    // Build query URL
-    let mut url = format!("{}/api/v1/services", endpoint.trim_end_matches('/'));
-    let mut query_params = Vec::new();
-
-    if let Some(ref name) = criteria.name {
-        query_params.push(format!("name={}", name));
-    }
-    if let Some(ref category) = criteria.category {
-        query_params.push(format!("category={}", category));
-    }
-    if let Some(ref tag) = criteria.tag {
-        query_params.push(format!("tag={}", tag));
-    }
-
-    if !query_params.is_empty() {
-        url = format!("{}?{}", url, query_params.join("&"));
-    }
-
-    let response = client.get(&url).send().await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Remote stone returned error: {}", response.status());
-    }
-
-    // Parse response
-    let services: Vec<garden_common::ServiceInfo> = response.json().await?;
-
-    // Convert to FoundService with connection resolution
-    let mut results = Vec::new();
-    for service in services {
-        if service.status != ServiceStatus::Running {
-            continue;
-        }
-
-        // Infer protocol and resolve connection
-        let category = service.offering.clone(); // Use offering as category fallback
-        let protocol = connection::infer_protocol(&service.offering, &category, state).await;
-        let connection_profile = state
-            .manifest_registry
-            .get_offering(&service.offering)
-            .and_then(|entry| entry.connection.as_ref());
-        let uri_template = connection::select_uri_template(connection_profile, &category);
-
-        let conn = connection::resolve_connection(
-            &stone.stone_name,
-            &stone.address.http_base(),
-            service.ports.native,
-            &protocol,
-            uri_template.as_deref(),
-        );
-
-        results.push(FoundService {
-            offering_id: service.offering_id,
-            name: service.name,
-            offering: service.offering,
-            category,
-            tags: vec![],
-            status: format!("{:?}", service.status),
-            stone: StoneRef {
-                id: stone.stone_id.clone(),
-                name: stone.stone_name.clone(),
-                endpoint: stone.address.http_base(),
-            },
-            connection: conn,
-            sub_capabilities: service.sub_capabilities,
-        });
-    }
-
-    Ok(results)
-}
-
 /// Sort found services according to the discovery ordering contract.
 ///
 /// For name-based searches:
@@ -778,9 +444,9 @@ async fn fetch_remote_services(
 ///   3. Within each tier, orchestrators (category == "orchestrator") first.
 ///   4. Stable tie-break: service name, then stone name.
 ///
-/// For non-name searches (category, tag) the collection order from the
-/// gateway → local → cache pipeline already has orchestrators first, so we
-/// only apply the stable tie-break.
+/// For non-name searches (category, tag) the registry's built-in sort
+/// (category priority -> fqid -> stone name) already applies, so we only
+/// apply the stable tie-break.
 fn sort_found_services(services: &mut [FoundService], criteria: &ServiceSearchCriteria) {
     if let Some(ref search_name) = criteria.name {
         let lower_search = search_name.to_lowercase();
@@ -810,11 +476,12 @@ fn sort_found_services(services: &mut [FoundService], criteria: &ServiceSearchCr
             a.name.cmp(&b.name).then(a.stone.name.cmp(&b.stone.name))
         });
     }
-    // Non-name searches: orchestrators are already first via collection order;
+    // Non-name searches: orchestrators are already first via registry sort;
     // no additional reordering needed.
 }
 
-/// Check if a service matches the search criteria
+/// Check if a service matches the search criteria (used by tests).
+#[cfg(test)]
 fn matches_criteria(
     criteria: &ServiceSearchCriteria,
     name: &str,
@@ -1194,6 +861,7 @@ mod tests {
                 uris: vec![],
             },
             sub_capabilities: vec![],
+            source: String::new(),
         }
     }
 
@@ -1246,5 +914,163 @@ mod tests {
 
         let after: Vec<String> = services.iter().map(|s| s.name.clone()).collect();
         assert_eq!(original_order, after, "category search should not reorder");
+    }
+
+    #[test]
+    fn test_criteria_to_tool_query_name() {
+        let criteria = ServiceSearchCriteria::by_name("mongodb");
+        let query = criteria_to_tool_query(&criteria);
+        assert_eq!(query.fqid, Some("mongodb".to_string()));
+        assert!(query.category.is_none());
+        assert_eq!(query.status, Some("running".to_string()));
+        assert!(query.stone_id.is_none());
+    }
+
+    #[test]
+    fn test_criteria_to_tool_query_category() {
+        let criteria = ServiceSearchCriteria::by_category("database");
+        let query = criteria_to_tool_query(&criteria);
+        assert!(query.fqid.is_none());
+        assert_eq!(query.category, Some("database".to_string()));
+        assert_eq!(query.status, Some("running".to_string()));
+    }
+
+    #[test]
+    fn test_matches_search_criteria_tag() {
+        use garden_common::tools::{GardenTool, ServiceInfo, Stone, ToolIdentity};
+
+        let tool = GardenTool {
+            fqid: "mongodb".to_string(),
+            tool: ToolIdentity {
+                name: String::new(),
+                tool_type: "mongodb".to_string(),
+                category: "offering".to_string(),
+                id: "test-id".to_string(),
+                tags: vec!["nosql".to_string(), "document".to_string()],
+                source: String::new(),
+            },
+            stone: Stone {
+                id: "stone-a".to_string(),
+                name: "stone-a".to_string(),
+                endpoint: "http://stone-a:7185".to_string(),
+            },
+            service: ServiceInfo {
+                status: "running".to_string(),
+                ready: true,
+                protocol: "mongodb".to_string(),
+                uris: Vec::new(),
+                hostname: None,
+                ip: None,
+                port: Some(27017),
+                uri_template: None,
+            },
+            capabilities: Vec::new(),
+            storage: None,
+        };
+
+        let criteria = ServiceSearchCriteria::by_tag("nosql");
+        assert!(matches_search_criteria(&criteria, &tool));
+
+        let criteria = ServiceSearchCriteria::by_tag("relational");
+        assert!(!matches_search_criteria(&criteria, &tool));
+    }
+
+    #[test]
+    fn test_matches_search_criteria_sub_capability() {
+        use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
+
+        let tool = GardenTool {
+            fqid: "ollama".to_string(),
+            tool: ToolIdentity {
+                name: String::new(),
+                tool_type: "ollama".to_string(),
+                category: "offering".to_string(),
+                id: "test-id".to_string(),
+                tags: Vec::new(),
+                source: String::new(),
+            },
+            stone: Stone {
+                id: "stone-a".to_string(),
+                name: "stone-a".to_string(),
+                endpoint: "http://stone-a:7185".to_string(),
+            },
+            service: ServiceInfo {
+                status: "running".to_string(),
+                ready: true,
+                protocol: "ollama".to_string(),
+                uris: Vec::new(),
+                hostname: None,
+                ip: None,
+                port: Some(11434),
+                uri_template: None,
+            },
+            capabilities: vec![Capability {
+                cap_type: "model".to_string(),
+                items: vec!["llama2".to_string(), "mistral".to_string()],
+            }],
+            storage: None,
+        };
+
+        let criteria = ServiceSearchCriteria::by_sub_capability(Some("model"), "llama2");
+        assert!(matches_search_criteria(&criteria, &tool));
+
+        let criteria = ServiceSearchCriteria::by_sub_capability(Some("model"), "gpt-4");
+        assert!(!matches_search_criteria(&criteria, &tool));
+    }
+
+    #[test]
+    fn test_garden_tool_to_found_service() {
+        use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
+
+        let tool = GardenTool {
+            fqid: "mongodb::prod".to_string(),
+            tool: ToolIdentity {
+                name: "prod".to_string(),
+                tool_type: "mongodb".to_string(),
+                category: "offering".to_string(),
+                id: "uid-123".to_string(),
+                tags: vec!["database".to_string()],
+                source: String::new(),
+            },
+            stone: Stone {
+                id: "stone-a".to_string(),
+                name: "stone-a".to_string(),
+                endpoint: "http://stone-a:7185".to_string(),
+            },
+            service: ServiceInfo {
+                status: "running".to_string(),
+                ready: true,
+                protocol: "mongodb".to_string(),
+                uris: vec!["mongodb://stone-a:27017".to_string()],
+                hostname: Some("stone-a.local".to_string()),
+                ip: Some("192.168.1.10".to_string()),
+                port: Some(27017),
+                uri_template: None,
+            },
+            capabilities: vec![Capability {
+                cap_type: "collection".to_string(),
+                items: vec!["users".to_string()],
+            }],
+            storage: None,
+        };
+
+        let found = garden_tool_to_found_service(tool);
+
+        assert_eq!(found.name, "mongodb::prod");
+        assert_eq!(found.offering, "mongodb");
+        assert_eq!(found.category, "offering");
+        assert_eq!(found.offering_id, "uid-123");
+        assert_eq!(found.tags, vec!["database".to_string()]);
+        assert_eq!(found.status, "running");
+        assert_eq!(found.stone.id, "stone-a");
+        assert_eq!(found.stone.name, "stone-a");
+        assert_eq!(found.connection.hostname, "stone-a.local");
+        assert_eq!(found.connection.ip, "192.168.1.10");
+        assert_eq!(found.connection.port, 27017);
+        assert_eq!(found.connection.protocol, "mongodb");
+        assert_eq!(found.connection.uris, vec!["mongodb://stone-a:27017"]);
+        assert_eq!(found.sub_capabilities.len(), 1);
+        assert_eq!(found.sub_capabilities[0].cap_type, "collection");
+        assert_eq!(found.sub_capabilities[0].items, vec!["users"]);
     }
 }

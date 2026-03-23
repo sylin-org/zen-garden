@@ -2,7 +2,7 @@
 //!
 //! Handles presence events from Moss and triggers audio playback.
 
-use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
+use garden_companion_sdk::{CompanionState, EventHandler, SseEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -32,11 +32,10 @@ impl DebounceState {
         let now = Instant::now();
         let debounce = Duration::from_millis(debounce_ms);
 
-        if let Some(last) = self.last_fired.get(event_type) {
-            if now.duration_since(*last) < debounce {
+        if let Some(last) = self.last_fired.get(event_type)
+            && now.duration_since(*last) < debounce {
                 return false;
             }
-        }
 
         self.last_fired.insert(event_type.to_string(), now);
         true
@@ -55,11 +54,7 @@ pub struct CricketEvents {
 
 impl CricketEvents {
     /// Create a new event handler
-    pub fn new(
-        mixer: Arc<Mixer>,
-        tunes: Arc<Tunes>,
-        state: Arc<CompanionState>,
-    ) -> Self {
+    pub fn new(mixer: Arc<Mixer>, tunes: Arc<Tunes>, state: Arc<CompanionState>) -> Self {
         Self {
             mixer,
             tunes,
@@ -69,7 +64,6 @@ impl CricketEvents {
     }
 }
 
-#[async_trait]
 impl EventHandler for CricketEvents {
     async fn on_event(&self, event: SseEvent) {
         // Skip processing if disabled (user ran "off" command)

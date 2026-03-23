@@ -1,4 +1,4 @@
-﻿//! Lazy-fetching bag for stone metadata.
+//! Lazy-fetching bag for stone metadata.
 //!
 //! Caches capabilities so they are fetched **at most once** per command
 //! invocation.  When constructed via [`StoneBag::from_tending`], the
@@ -58,10 +58,7 @@ impl StoneBag {
     ///
     /// If the tending file contains cached capabilities they are used
     /// directly, making `stone_name()` and `is_reachable()` free.
-    pub fn from_tending(
-        tending: &crate::tending::TendingState,
-        client: reqwest::Client,
-    ) -> Self {
+    pub fn from_tending(tending: &crate::tending::TendingState, client: reqwest::Client) -> Self {
         let bag = Self {
             client,
             endpoint: tending.endpoint.clone(),

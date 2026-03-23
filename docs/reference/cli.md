@@ -2,6 +2,8 @@
 
 Complete command reference for `garden-rake`, the Zen Garden management CLI.
 
+All commands follow a single grammar: `verb [noun] [--flags]`.
+
 ---
 
 ## Quick Start
@@ -74,8 +76,6 @@ garden-rake observe --offering mongodb,redis     # Filter by offerings
 | `<stone>` | No | Filter to a specific stone |
 | `--offering <NAMES>` | No | Comma-separated offering filter |
 
-**Zen alias:** `garden` (e.g., `garden-rake garden`)
-
 ### `status`
 
 Get detailed status of the tended (or targeted) stone.
@@ -88,8 +88,6 @@ garden-rake status --at stone-01
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--at <ENDPOINT>` | No | Target stone |
-
-**Zen alias:** `touch`
 
 ### `list`
 
@@ -128,20 +126,6 @@ garden-rake watch stone stone-01 logs                # Stream all logs from a st
 | `offering <name> logs [--timestamps]` | Stream logs for a specific offering |
 | `stone <name> logs [--timestamps]` | Stream all logs from a stone |
 
-### `presence`
-
-Stream real-time presence events (service started/stopped, stone health changes).
-
-```bash
-garden-rake presence                         # Tended stone
-garden-rake presence stone-01                # Specific stone
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<stone>` | No | Stone name (omit for tended stone) |
-| `--at <ENDPOINT>` | No | Explicit endpoint |
-
 ### `find`
 
 Find running services across the garden by name, category, or tag.
@@ -152,17 +136,15 @@ garden-rake find c:database                  # By category
 garden-rake find t:nosql                     # By tag
 garden-rake find mongodb --format uri        # Just the connection string
 garden-rake find mongodb --format uri-ip     # Connection string with IP fallback
-garden-rake find mongodb --wishful           # Auto-provision if not found
+garden-rake find mongodb --ensure            # Auto-provision if not found
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `<query>` | Yes | Search query (name, `c:category`, or `t:tag`) |
 | `--format <FMT>` | No | Output: `human` (default), `json`, `uri`, `uri-ip` |
-| `--wishful` | No | Auto-provision the service if not found |
+| `--ensure` | No | Auto-provision the service if not found |
 | `--at <ENDPOINT>` | No | Target stone |
-
-**Zen keyword:** `wishfully` (e.g., `garden-rake find mongodb wishfully`)
 
 ### `config`
 
@@ -179,6 +161,22 @@ garden-rake config mongodb --field connection.uri       # Just the URI
 | `<service>` | Yes | Service name to query |
 | `--at <ENDPOINT>` | No | Target stone |
 
+### `logs`
+
+Shortcut for streaming offering container logs (equivalent to `watch offering <name> logs`).
+
+```bash
+garden-rake logs mongodb                     # Stream logs for mongodb
+garden-rake logs mongodb --timestamps        # With timestamps
+garden-rake logs mongodb --at stone-01       # From a specific stone
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<service>` | Yes | Service name to stream logs for |
+| `--timestamps` | No | Include timestamps in log output |
+| `--at <ENDPOINT>` | No | Target stone |
+
 ---
 
 ## Service Lifecycle Commands
@@ -191,7 +189,6 @@ Browse the offering catalog or install a service.
 garden-rake offer                                # List all offerings by category
 garden-rake offer mongodb                        # Install mongodb
 garden-rake offer mongodb info                   # Show details + compatibility
-garden-rake offer mongodb somewhere              # Get placement recommendation
 garden-rake offer mongodb --prefer ssd,nvme      # Bias for hardware preferences
 garden-rake offer mongodb --anywhere-on-fail     # Try all stones if local fails
 garden-rake offer mongodb --placement-mode auto  # Auto-place without prompting
@@ -206,7 +203,7 @@ garden-rake offer mongodb --placement-mode auto  # Auto-place without prompting
 | `--placement-mode <MODE>` | No | `interactive` (default) or `auto` |
 | `--at <ENDPOINT>` | No | Target stone |
 
-**Zen aliases:** `explore` (lists offerings)
+**Alias:** `explore`
 
 ### `rest`
 
@@ -243,12 +240,14 @@ Upgrade a service (or all services) to the latest image.
 ```bash
 garden-rake upgrade mongodb                  # Upgrade one service
 garden-rake upgrade --all                    # Upgrade all services on stone
+garden-rake upgrade --garden                 # Cross-stone upgrade for all stones
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `<service>` | No | Service name (omit with `--all`) |
 | `--all` | No | Upgrade all services on stone |
+| `--garden` | No | Garden-wide upgrade across all stones |
 | `--at <ENDPOINT>` | No | Target stone |
 
 ### `remove`
@@ -257,13 +256,13 @@ Soft-delete a service. The container is preserved as a stray (can be re-adopted)
 
 ```bash
 garden-rake remove mongodb
-garden-rake remove mongodb --force           # Skip confirmation
+garden-rake remove mongodb --yes             # Skip confirmation
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `<service>` | Yes | Service name to remove |
-| `--force` | No | Skip confirmation prompt |
+| `--yes` | No | Skip confirmation prompt |
 | `--at <ENDPOINT>` | No | Target stone (alias: `--on`) |
 
 ### `uproot`
@@ -272,32 +271,14 @@ Hard-delete a service. The container is destroyed permanently and cannot be reco
 
 ```bash
 garden-rake uproot mongodb
-garden-rake uproot mongodb --force           # Skip confirmation
+garden-rake uproot mongodb --yes             # Skip confirmation
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `<service>` | Yes | Service name to destroy |
-| `--force` | No | Skip confirmation prompt |
+| `--yes` | No | Skip confirmation prompt |
 | `--at <ENDPOINT>` | No | Target stone (alias: `--on`) |
-
-### `nourish`
-
-Check and apply updates for Docker offerings and system firmware.
-
-```bash
-garden-rake nourish                              # Garden-wide check, interactive
-garden-rake nourish --stone stone-01             # Specific stone
-garden-rake nourish --updates-only               # Check only, don't apply
-garden-rake nourish --auto-confirm               # Apply all without prompting
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `--stone <STONE>` | No | Target specific stone (omit for garden-wide) |
-| `--updates-only` | No | Only check for updates, don't apply |
-| `--auto-confirm` | No | Apply all updates automatically |
-| `--at <ENDPOINT>` | No | Target stone |
 
 ---
 
@@ -308,7 +289,7 @@ garden-rake nourish --auto-confirm               # Apply all without prompting
 Adopt an existing container into Zen Garden management.
 
 ```bash
-garden-rake locate strays                    # List adoptable containers first
+garden-rake list --strays                    # List adoptable containers first
 garden-rake adopt my-mongodb-container       # Adopt a container
 ```
 
@@ -329,28 +310,6 @@ garden-rake release mongodb
 |----------|----------|-------------|
 | `<service>` | Yes | Service name to release |
 | `--at <ENDPOINT>` | No | Target stone (alias: `--on`) |
-
-### `locate strays`
-
-List containers on a stone that are not managed by Zen Garden (available for adoption).
-
-```bash
-garden-rake locate strays
-garden-rake locate strays --at stone-01
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `--at <ENDPOINT>` | No | Target stone (alias: `--on`) |
-
-### `adopted`
-
-List all adopted services on a stone.
-
-```bash
-garden-rake adopted
-garden-rake adopted --at stone-01
-```
 
 ### `borrow`
 
@@ -380,12 +339,14 @@ garden-rake return redis
 | `<name>` | Yes | Name of the borrowed service to unregister |
 | `--at <ENDPOINT>` | No | Target stone (alias: `--on`) |
 
-### `borrowed`
+### Listing filters
 
-List all borrowed (external) services registered on a stone.
+The `list` command supports filters for adoption and borrowing status:
 
 ```bash
-garden-rake borrowed
+garden-rake list --adopted                   # List adopted services only
+garden-rake list --borrowed                  # List borrowed services only
+garden-rake list --strays                    # List containers available for adoption
 ```
 
 ---
@@ -408,6 +369,8 @@ garden-rake capabilities ollama mirror to stone-02         # Mirror to another s
 garden-rake capabilities ollama mirror from stone-01 to stone-02
 ```
 
+**Alias:** `cap`
+
 **Subcommands:**
 
 | Subcommand | Arguments | Description |
@@ -417,6 +380,117 @@ garden-rake capabilities ollama mirror from stone-01 to stone-02
 | `remove` | `<offering> <name> [--type TYPE]` | Remove a capability |
 | `refresh` | `<offering> [--type TYPE] [--dry-run]` | Update all capabilities |
 | `mirror` | `<offering> from <stone> [to <stone>]` | Mirror capabilities between stones |
+
+---
+
+## Stone Administration Commands
+
+### `stone wake`
+
+Wake a sleeping stone via Wake-on-LAN magic packet.
+
+```bash
+garden-rake stone wake oak                       # Wake stone 'oak'
+garden-rake stone wake oak --at cedar            # Send WoL from 'cedar'
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<stone>` | Yes | Stone name to wake |
+| `--at <ENDPOINT>` | No | Stone to send WoL packet from |
+
+### `stone shutdown`
+
+Power off (shut down) a stone.
+
+```bash
+garden-rake stone shutdown                       # Shut down tended stone
+garden-rake stone shutdown oak                   # Shut down 'oak' by name
+garden-rake stone shutdown --at oak              # Same as above
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<stone>` | No | Stone name, ID, or URL (omit for tended stone) |
+| `--at <ENDPOINT>` | No | Alternative to positional argument |
+
+### `stone reboot`
+
+Reboot a stone.
+
+```bash
+garden-rake stone reboot                         # Reboot tended stone
+garden-rake stone reboot oak                     # Reboot 'oak' by name
+garden-rake stone reboot --at oak                # Same as above
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<stone>` | No | Stone name, ID, or URL (omit for tended stone) |
+| `--at <ENDPOINT>` | No | Alternative to positional argument |
+
+### `stone install`
+
+Install Moss as a system service. Requires administrator/root privileges.
+
+```bash
+garden-rake stone install                        # Install on local stone
+garden-rake stone install --at stone-01          # Install on specific stone
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--at <ENDPOINT>` | No | Target stone |
+
+### `stone verbosity`
+
+Control console output verbosity on a stone.
+
+```bash
+garden-rake stone verbosity sing                 # Verbose output (30-min timeout)
+garden-rake stone verbosity sing --forever       # Verbose output permanently
+garden-rake stone verbosity quiet                # Reset to default (informative)
+garden-rake stone verbosity silent               # No console output
+garden-rake stone verbosity minimal              # Critical events only
+```
+
+**Verbosity modes:**
+
+| Mode | Description |
+|------|-------------|
+| `sing` | Full debug output (verbose). Times out after 30 minutes unless `--forever` is used. |
+| `quiet` | Major lifecycle events (default/informative) |
+| `minimal` | Critical events only |
+| `silent` | No console output (for headless/service use) |
+
+### `stone reconcile`
+
+Force Moss to reconcile its service registry with existing Docker containers.
+
+```bash
+garden-rake stone reconcile                      # Adopt any missing containers
+garden-rake stone reconcile --drop-invalid       # Also remove invalid containers
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--drop-invalid` | No | Remove `zen-offering-*` containers that don't map to a known template |
+| `--at <ENDPOINT>` | No | Target stone |
+
+### `stone refresh`
+
+Update the `garden-moss` or `garden-rake` binary on a remote stone (development use).
+
+```bash
+garden-rake stone refresh moss --from ./target/release/garden-moss
+garden-rake stone refresh rake --from ./dist/linux-x64/garden-rake
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<component>` | Yes | `moss` or `rake` |
+| `--from <PATH>` | Yes | Path to the binary file |
+| `--at <ENDPOINT>` | No | Target stone |
 
 ---
 
@@ -440,113 +514,65 @@ garden-rake tend --clear                         # Stop tending
 | `<target>` | No | `this`, `local`, `auto`, or endpoint URL |
 | `--clear` | No | Clear tending state |
 
-### `reconcile`
-
-Force Moss to reconcile its service registry with existing Docker containers.
-
-```bash
-garden-rake reconcile                            # Adopt any missing containers
-garden-rake reconcile --drop-invalid             # Also remove invalid containers
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `--drop-invalid` | No | Remove `zen-offering-*` containers that don't map to a known template |
-| `--at <ENDPOINT>` | No | Target stone |
-
-### `refresh`
-
-Update the `garden-moss` or `garden-rake` binary on a remote stone (development use).
-
-```bash
-garden-rake refresh moss --from ./target/release/garden-moss
-garden-rake refresh rake --from ./dist/linux-x64/garden-rake
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<component>` | Yes | `moss` or `rake` |
-| `--from <PATH>` | Yes | Path to the binary file |
-| `--at <ENDPOINT>` | No | Target stone |
-
----
-
-## Console Output Commands
-
-### `make stone`
-
-Control console output verbosity on a stone.
-
-```bash
-garden-rake make stone sing                      # Verbose output (30-min timeout)
-garden-rake make stone sing --forever            # Verbose output permanently
-garden-rake make stone quiet                     # Reset to default (informative)
-garden-rake make stone silent                    # No console output
-garden-rake make stone minimal                   # Critical events only
-```
-
-**Verbosity modes:**
-
-| Mode | Description |
-|------|-------------|
-| `sing` | Full debug output (verbose). Times out after 30 minutes unless `--forever` is used. |
-| `quiet` | Major lifecycle events (default/informative) |
-| `minimal` | Critical events only |
-| `silent` | No console output (for headless/service use) |
-
 ---
 
 ## Pond Security Commands
 
 Pond commands manage multi-stone trust relationships via koi-certmesh.
 
-### `pond` (normative syntax)
-
-```bash
-garden-rake pond init --passphrase "my secret"                  # Initialize pond (place keystone)
-garden-rake pond init --passphrase "my secret" --profile my-team  # With trust profile
-garden-rake pond status                                          # Show pond status
-garden-rake pond invite --passphrase "my secret"                 # Open enrollment, generate TOTP URI
-garden-rake pond join ABC123                                     # Join pond with TOTP code
-garden-rake pond unlock --passphrase "my secret"                 # Unlock CA after restart
-garden-rake pond promote --passphrase "my secret"                # Promote stone to standby CA
-garden-rake pond rename pond-glacial-heron                       # Rename pond
-garden-rake pond rename                                          # Auto-generate new name
-garden-rake pond remove                                          # Destroy pond (drain)
-garden-rake pond untrust stone-02                                # Revoke a stone's certificate
-```
-
-### Zen syntax equivalents
-
-| Zen Syntax | Normative Equivalent |
-|------------|---------------------|
-| `place keystone --passphrase "secret"` | `pond init --passphrase "secret"` |
-| `place keystone --passphrase "secret" --profile my-team` | `pond init --passphrase "secret" --profile my-team` |
-| `place stone --code ABC123` | `pond join ABC123` |
-| `invite --passphrase "secret"` | `pond invite --passphrase "secret"` |
-| `lift keystone` | `pond remove` |
-| `lift stone stone-02` | `pond untrust stone-02` |
-
 ### `pond init`
 
 Initialize the pond by creating a CA and placing the keystone.
+
+```bash
+garden-rake pond init --passphrase "my secret"
+garden-rake pond init --passphrase "my secret" --profile my-team
+```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--passphrase <PASS>` | Yes | Encrypts the CA private key |
 | `--profile <PROFILE>` | No | Trust profile: `just-me` (default), `my-team`, `my-organization` |
 
+### `pond status`
+
+Show pond status and membership.
+
+```bash
+garden-rake pond status
+```
+
 ### `pond invite`
 
 Open enrollment window and generate a TOTP URI for stone admission.
+
+```bash
+garden-rake pond invite --passphrase "my secret"
+```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--passphrase <PASS>` | Yes | CA passphrase to authorize the operation |
 
+### `pond join`
+
+Join an existing pond with a TOTP code.
+
+```bash
+garden-rake pond join ABC123
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<code>` | Yes | TOTP code from the keystone's invite |
+
 ### `pond unlock`
 
 Unlock the CA private key after a Moss restart.
+
+```bash
+garden-rake pond unlock --passphrase "my secret"
+```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
@@ -556,78 +582,48 @@ Unlock the CA private key after a Moss restart.
 
 Change the pond's display name.
 
+```bash
+garden-rake pond rename pond-glacial-heron       # Set specific name
+garden-rake pond rename                          # Auto-generate new name
+```
+
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `<name>` | No | New name (`pond-{adj}-{noun}` format). Omit to auto-generate. |
 
-Pond names are decorative identifiers — renaming has no effect on certificates or security. Names follow a water theme (e.g. `pond-moonlit-basin`, `pond-glacial-heron`, `pond-shallow-lotus`).
+Pond names are decorative identifiers -- renaming has no effect on certificates or security. Names follow a water theme (e.g. `pond-moonlit-basin`, `pond-glacial-heron`, `pond-shallow-lotus`).
 
 ### `pond promote`
 
 Promote this stone to standby CA (receive CA key material).
 
+```bash
+garden-rake pond promote --passphrase "my secret"
+```
+
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--passphrase <PASS>` | Yes | CA passphrase |
 
----
+### `pond drain`
 
-## Stone Administration Commands
-
-### `rouse`
-
-Wake a sleeping stone via Wake-on-LAN magic packet.
+Destroy the pond and revoke all certificates.
 
 ```bash
-garden-rake rouse oak                            # Wake stone 'oak'
-garden-rake rouse oak --at cedar                 # Send WoL from 'cedar'
+garden-rake pond drain
+```
+
+### `pond untrust`
+
+Revoke a stone's certificate and remove it from the pond.
+
+```bash
+garden-rake pond untrust stone-02
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `<stone>` | Yes | Stone name to wake |
-| `--at <ENDPOINT>` | No | Stone to send WoL packet from |
-
-### `slumber`
-
-Power off (shut down) a stone.
-
-```bash
-garden-rake slumber                              # Shut down tended stone
-garden-rake slumber oak                          # Shut down 'oak' by name
-garden-rake slumber --at oak                     # Same as above
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<stone>` | No | Stone name, ID, or URL (omit for tended stone) |
-| `--at <ENDPOINT>` | No | Alternative to positional argument |
-
-### `stir`
-
-Reboot a stone.
-
-```bash
-garden-rake stir                                 # Reboot tended stone
-garden-rake stir oak                             # Reboot 'oak' by name
-garden-rake stir --at oak                        # Same as above
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<stone>` | No | Stone name, ID, or URL (omit for tended stone) |
-| `--at <ENDPOINT>` | No | Alternative to positional argument |
-
-### `take-root` / `install-service`
-
-Install Moss as a Windows system service. Requires administrator privileges.
-
-```bash
-garden-rake take-root                            # Zen syntax
-garden-rake take-root at stone-01                # On specific stone
-garden-rake install-service                      # Normative syntax
-garden-rake install-service --at stone-01        # On specific stone
-```
+| `<stone>` | Yes | Stone name to revoke |
 
 ---
 
@@ -749,42 +745,68 @@ garden-rake store head mydata config.json                  # Show metadata
 
 ---
 
-## Nurturing (Backup) Commands
+## Backup Commands
 
-### `nurturing`
+### `backup status`
 
-Manage backup operations for offerings.
+Show backup status for offerings.
 
 ```bash
-garden-rake nurturing status                     # Backup status for all offerings
-garden-rake nurturing status mongodb             # Detailed status for mongodb
-garden-rake nurturing list mongodb               # List all backups for mongodb
-garden-rake nurturing list mongodb --local       # Local backups only
-garden-rake nurturing list mongodb --remote      # Remote backups only
-garden-rake nurturing trigger mongodb            # Trigger backup for mongodb
-garden-rake nurturing trigger-all                # Trigger backup for all offerings
+garden-rake backup status                        # All offerings
+garden-rake backup status mongodb                # Specific offering
 ```
 
-**Subcommands:**
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<offering>` | No | Offering name (omit for all) |
 
-| Subcommand | Arguments | Description |
-|------------|-----------|-------------|
-| `status` | `[offering]` | Show backup status (all or specific) |
-| `list` | `<offering> [--local] [--remote]` | List backups for an offering |
-| `trigger` | `<offering>` | Trigger backup for one offering |
-| `trigger-all` | | Trigger backup for all offerings |
+### `backup list`
 
-### `restore`
-
-Restore an offering from a nurturing backup.
+List backups for an offering.
 
 ```bash
-garden-rake restore mongodb                              # From current slot
-garden-rake restore mongodb from slot A                  # From slot A
-garden-rake restore mongodb from slot B                  # From slot B
-garden-rake restore mongodb from seed-bank garden-data   # From seed bank
-garden-rake restore mongodb --dry-run                    # Preview only
-garden-rake restore mongodb --harvest-id abc123          # Specific harvest
+garden-rake backup list mongodb                  # All backups
+garden-rake backup list mongodb --local          # Local backups only
+garden-rake backup list mongodb --remote         # Remote backups only
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<offering>` | Yes | Offering name |
+| `--local` | No | Local backups only |
+| `--remote` | No | Remote backups only |
+
+### `backup trigger`
+
+Trigger a backup for one offering.
+
+```bash
+garden-rake backup trigger mongodb
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<offering>` | Yes | Offering name to back up |
+
+### `backup trigger-all`
+
+Trigger backups for all offerings.
+
+```bash
+garden-rake backup trigger-all
+```
+
+### `backup restore`
+
+Restore an offering from a backup.
+
+```bash
+garden-rake backup restore mongodb                              # From current slot
+garden-rake backup restore mongodb from slot A                  # From slot A
+garden-rake backup restore mongodb from slot B                  # From slot B
+garden-rake backup restore mongodb from seed-bank garden-data   # From seed bank
+garden-rake backup restore mongodb --dry-run                    # Preview only
+garden-rake backup restore mongodb --harvest-id abc123          # Specific harvest
 ```
 
 | Argument | Required | Description |
@@ -806,10 +828,8 @@ Browse the built-in command directory with descriptions and examples.
 
 ```bash
 garden-rake commands                             # Show all commands by category
-garden-rake commands take-root                   # Detailed info for a command
+garden-rake commands stone install               # Detailed info for a command
 garden-rake commands --category system           # Filter by category
-garden-rake commands --zen                       # Show only zen syntax
-garden-rake commands --normative                 # Show only normative syntax
 ```
 
 ### `api`
@@ -863,26 +883,6 @@ Run guided workflows (scaffolded, not yet implemented).
 garden-rake ceremony bootstrap                   # First-time setup wizard
 garden-rake ceremony migrate                     # Service migration workflow
 ```
-
----
-
-## Zen Syntax Aliases
-
-Zen Garden supports natural-language-inspired syntax alongside normative CLI conventions. Both forms are interchangeable.
-
-| Zen Syntax | Normative Equivalent | Description |
-|------------|---------------------|-------------|
-| `explore` | `offer` | List offerings |
-| `touch` | `status` | Inspect stone |
-| `garden` | `observe` | View entire garden |
-| `mongodb on stone-01` | `--at stone-01` | Target a stone |
-| `find mongodb wishfully` | `find mongodb --wishful` | Auto-provision |
-| `mongodb somewhere` | `offer mongodb --placement-mode interactive` | Placement recommendation |
-| `place keystone` | `pond init` | Initialize pond |
-| `place stone --code X` | `pond join X` | Join pond |
-| `invite` | `pond invite` | Generate invitation |
-| `lift stone X` | `pond untrust X` | Remove stone from pond |
-| `take-root` | `install-service` | Install as system service |
 
 ---
 

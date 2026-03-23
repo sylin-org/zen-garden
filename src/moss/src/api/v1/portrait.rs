@@ -18,6 +18,7 @@ use std::hash::{Hash, Hasher};
 use garden_common::storage::StorageRole;
 
 use crate::app_state::AppState;
+use crate::domain::traits::CompanionOps;
 use crate::cli;
 use crate::domain::topology;
 
@@ -378,11 +379,14 @@ pub async fn get_portrait_data(
     let role = "STONE".to_string();
 
     // Build endpoint URL
-    let endpoint = format!("http://{}:{}", state.current.stone.name, state.current.api_port);
+    let endpoint = format!(
+        "http://{}:{}",
+        state.current.stone.name, state.current.api_port
+    );
 
     // Get uptime from resources
     let uptime = {
-        let resources = state.current.system_resources.read().await;
+        let resources = state.current.metrics.system.read().await;
         resources
             .as_ref()
             .map(|r| r.uptime_friendly.clone())
@@ -433,11 +437,11 @@ pub async fn get_portrait_data(
     // === Foundation (system resources) ===
     // NOTE: All metrics read from cache - no I/O allowed here
     let foundation = {
-        let resources = state.current.system_resources.read().await;
+        let resources = state.current.metrics.system.read().await;
 
         // Read network metrics from cache (populated by health_monitor task)
         let network = {
-            let cached = state.network_metrics_cache.read().await;
+            let cached = state.current.metrics.network.read().await;
             cached.as_ref().map(|m| FoundationNetwork {
                 rx_bytes: m.total_rx_bytes,
                 tx_bytes: m.total_tx_bytes,
@@ -586,13 +590,12 @@ pub async fn get_portrait_data(
         let adapters = state.companion.registry.list().await;
         let mut result = Vec::new();
         for adapter in adapters {
-            let running = state.companion.registry.is_running(&adapter.id).await;
             result.push(PortraitCompanion {
                 id: adapter.manifest.id.clone(),
                 name: adapter.manifest.name.clone(),
                 description: adapter.manifest.description.clone(),
-                port: adapter.port(),
-                status: if running {
+                port: adapter.port,
+                status: if adapter.running {
                     "running".into()
                 } else {
                     "stopped".into()
@@ -665,7 +668,11 @@ pub async fn get_portrait_data(
 
     // === Pond ===
     let pond = {
-        let active = state.security.pond.active.load(std::sync::atomic::Ordering::Relaxed);
+        let active = state
+            .security
+            .pond
+            .active
+            .load(std::sync::atomic::Ordering::Relaxed);
         let name = state.security.pond.state.name().await;
         // Stone count from horizon (discovered peers + self if enrolled)
         let stone_count = if active { horizon.count.max(1) } else { 0 };

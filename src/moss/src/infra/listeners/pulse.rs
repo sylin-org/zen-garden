@@ -13,15 +13,17 @@
 //! - `/api/v1/stone/presence/stream` — filtered domain-only, translated to
 //!   Companion vocabulary (backward-compatible with Firefly/Cricket)
 
-use crate::domain::events::{DomainEvent, JobEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent};
+use crate::domain::events::{
+    DomainEvent, JobEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent,
+};
 use crate::infra::event_bus::EventListener;
 use chrono::Utc;
-use garden_common::infra::communications::announcement_types;
-use garden_common::{
-    presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload},
+use garden_common::constants::{
     EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED, EVENT_RENAMED,
     EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED, SSE_LEVEL_INFO,
 };
+use garden_common::infra::communications::announcement_types;
+use garden_common::presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
 use serde::Serialize;
 use std::net::SocketAddr;
 use tokio::sync::broadcast;
@@ -143,6 +145,40 @@ impl DomainPulse {
                 "name": name,
                 "device": device,
             })),
+            StorageEvent::StorageReleased { name, .. } => Some(serde_json::json!({
+                "name": name,
+            })),
+            StorageEvent::StorageSensed { name, roles, .. } => Some(serde_json::json!({
+                "name": name,
+                "roles": roles,
+            })),
+            StorageEvent::StorageRenamed {
+                replica_set_id,
+                new_name,
+                ..
+            } => Some(serde_json::json!({
+                "replica_set_id": replica_set_id,
+                "new_name": new_name,
+            })),
+            StorageEvent::StorageRoleChanged {
+                device_id,
+                replica_set_id,
+                new_role,
+                ..
+            } => Some(serde_json::json!({
+                "device_id": device_id,
+                "replica_set_id": replica_set_id,
+                "new_role": new_role,
+            })),
+            StorageEvent::StoragePinChanged {
+                device_id,
+                replica_set_id,
+                ..
+            } => Some(serde_json::json!({
+                "device_id": device_id,
+                "replica_set_id": replica_set_id,
+            })),
+            StorageEvent::StorageReclassified { .. } => None,
             StorageEvent::SyncStarted { name, .. } => Some(serde_json::json!({ "name": name })),
             StorageEvent::SyncCompleted { name, success, .. } => {
                 Some(serde_json::json!({ "name": name, "success": success }))
@@ -339,10 +375,7 @@ fn summarize_transport(announcement_type: &str, payload: &serde_json::Value) -> 
     match announcement_type {
         announcement_types::STONE_CHIRP => {
             let name = payload["name"].as_str().unwrap_or("?");
-            let svc_count = payload["services"]
-                .as_array()
-                .map(|a| a.len())
-                .unwrap_or(0);
+            let svc_count = payload["services"].as_array().map(|a| a.len()).unwrap_or(0);
             format!("Chirp from {} ({} services)", name, svc_count)
         }
         announcement_types::STONE_GOODBYE => {
@@ -383,10 +416,7 @@ fn summarize_transport(announcement_type: &str, payload: &serde_json::Value) -> 
                 .as_str()
                 .or_else(|| payload["name"].as_str())
                 .unwrap_or("?");
-            let banks = payload["banks"]
-                .as_array()
-                .map(|a| a.len())
-                .unwrap_or(0);
+            let banks = payload["banks"].as_array().map(|a| a.len()).unwrap_or(0);
             format!("Storage beacon from {} ({} banks)", name, banks)
         }
         announcement_types::TOOLS_BEACON => {
@@ -481,7 +511,6 @@ impl PulseDomainBridge {
     }
 }
 
-#[async_trait::async_trait]
 impl EventListener for PulseDomainBridge {
     async fn on_event(&self, event: &DomainEvent) {
         let pulse = DomainPulse::from_domain_event(event);
@@ -637,7 +666,10 @@ mod tests {
     #[test]
     fn test_domain_pulse_from_storage_detected() {
         let event = DomainEvent::Storage(StorageEvent::storage_detected(
-            "/dev/sdc1", "has_data", 500, 200,
+            "/dev/sdc1",
+            "has_data",
+            500,
+            200,
         ));
         let pulse = DomainPulse::from_domain_event(&event);
 

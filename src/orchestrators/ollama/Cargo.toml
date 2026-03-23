@@ -1,8 +1,8 @@
 [package]
 name = "zen-garden-ollama-orchestrator"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.75"
+edition = "2024"
+rust-version = "1.92"
 authors = ["Koan Framework"]
 description = "Ollama Orchestrator — VRAM-aware Ollama orchestration for Zen Garden"
 
@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 garden-common = { path = "../../common" }
+orchestrator-common = { path = "../common" }
 
 # Core
 anyhow = "1.0"

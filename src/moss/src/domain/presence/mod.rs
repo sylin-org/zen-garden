@@ -12,5 +12,5 @@ pub struct Presence {
     pub elections: Arc<crate::tasks::election_service::Elections>,
 
     /// Notification registry — tag flags compiled into UDP chirp announcements.
-    pub notifications: Arc<garden_common::NotificationRegistry>,
+    pub notifications: Arc<garden_common::notifications::NotificationRegistry>,
 }

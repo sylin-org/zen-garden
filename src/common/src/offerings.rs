@@ -202,10 +202,7 @@ impl OfferingFqn {
     }
 
     /// Create a curated offering FQN with a named instance.
-    pub fn with_instance(
-        offering: &str,
-        instance: &str,
-    ) -> Result<Self, OfferingFqnError> {
+    pub fn with_instance(offering: &str, instance: &str) -> Result<Self, OfferingFqnError> {
         let offering = validate_fqn_segment(offering, "offering")?;
         let instance = validate_fqn_segment(instance, "instance")?;
         let instance = if instance == offering {
@@ -288,6 +285,20 @@ impl OfferingFqn {
         }
 
         s
+    }
+
+    /// Compare the FQN to a string without allocating.
+    ///
+    /// For the common case (no source scheme, no instance), this is a direct
+    /// `&str` comparison with zero allocation. For offerings with a source
+    /// scheme or instance suffix, falls back to constructing the FQN string.
+    pub fn fqn_eq(&self, other: &str) -> bool {
+        // Fast path: curated offering, default instance → FQN is just the offering name
+        if self.source.is_none() && self.instance.is_none() {
+            return self.offering == other;
+        }
+        // Slow path: construct the full FQN string for comparison
+        self.fqn() == other
     }
 
     /// Return the instance name if present, otherwise the offering name.
@@ -426,7 +437,10 @@ impl OfferingFqn {
         let after_scheme = &input[scheme.len()..];
         if after_scheme.is_empty() {
             return Err(OfferingFqnError {
-                message: format!("Missing value after '{}' source scheme", scheme.trim_end_matches(':')),
+                message: format!(
+                    "Missing value after '{}' source scheme",
+                    scheme.trim_end_matches(':')
+                ),
             });
         }
 
@@ -466,11 +480,11 @@ impl OfferingFqn {
             }
             "repo:" => {
                 // repo:community/bookstack → repo="community", offering="bookstack"
-                let (repo, offering_name) = name_part.rsplit_once('/').ok_or_else(|| {
-                    OfferingFqnError {
-                        message: "Repo source requires format 'repo:namespace/offering'".to_string(),
-                    }
-                })?;
+                let (repo, offering_name) =
+                    name_part.rsplit_once('/').ok_or_else(|| OfferingFqnError {
+                        message: "Repo source requires format 'repo:namespace/offering'"
+                            .to_string(),
+                    })?;
                 let repo = repo.trim().to_string();
                 let offering = validate_fqn_segment(offering_name, "offering")?;
                 Ok(Self {
@@ -715,7 +729,10 @@ mod fqn_tests {
     #[test]
     fn parse_repo_source() {
         let fqn = OfferingFqn::parse("repo:community/bookstack").unwrap();
-        assert_eq!(fqn.source, Some(OfferingSource::Repo("community".to_string())));
+        assert_eq!(
+            fqn.source,
+            Some(OfferingSource::Repo("community".to_string()))
+        );
         assert_eq!(fqn.offering, "bookstack");
         assert!(fqn.instance.is_none());
         assert_eq!(fqn.fqn(), "repo:community/bookstack");
@@ -724,7 +741,10 @@ mod fqn_tests {
     #[test]
     fn parse_repo_source_with_instance() {
         let fqn = OfferingFqn::parse("repo:community/bookstack::dev").unwrap();
-        assert_eq!(fqn.source, Some(OfferingSource::Repo("community".to_string())));
+        assert_eq!(
+            fqn.source,
+            Some(OfferingSource::Repo("community".to_string()))
+        );
         assert_eq!(fqn.offering, "bookstack");
         assert_eq!(fqn.instance.as_deref(), Some("dev"));
         assert_eq!(fqn.fqn(), "repo:community/bookstack::dev");
@@ -923,10 +943,77 @@ mod fqn_tests {
 
     #[test]
     fn image_ref_sanitization() {
-        assert_eq!(sanitize_image_ref_for_container("nginx:latest"), "nginx-latest");
+        assert_eq!(
+            sanitize_image_ref_for_container("nginx:latest"),
+            "nginx-latest"
+        );
         assert_eq!(
             sanitize_image_ref_for_container("ghcr.io/org/app:v2"),
             "ghcr.io-org-app-v2"
         );
+    }
+}
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Regex for valid offering/instance segments: lowercase start,
+    // alphanumeric with single hyphens (no --, no trailing -).
+    const VALID_SEGMENT: &str = "[a-z]([a-z0-9](-[a-z0-9])?){0,10}";
+
+    proptest! {
+        /// OfferingFqn::parse must never panic on arbitrary input.
+        /// It may return Ok or Err, but panicking is a bug.
+        #[test]
+        fn parse_never_panics(s in "\\PC{0,100}") {
+            let _ = OfferingFqn::parse(&s);
+        }
+
+        /// Roundtrip: construct a valid FQN string, parse it, verify the
+        /// offering name is preserved. Instance is only preserved when it
+        /// differs from the offering name (canonicalization strips self-instances).
+        #[test]
+        fn roundtrip_fqn(
+            offering in VALID_SEGMENT,
+            instance in VALID_SEGMENT,
+        ) {
+            let fqn_str = format!("{offering}::{instance}");
+            let parsed = OfferingFqn::parse(&fqn_str).unwrap();
+            prop_assert_eq!(&parsed.offering, &offering);
+            // Instance is canonicalized: "mongodb::mongodb" -> instance=None
+            if offering == instance {
+                prop_assert!(parsed.instance.is_none());
+            } else {
+                prop_assert_eq!(parsed.instance.as_deref(), Some(instance.as_str()));
+            }
+        }
+
+        /// Display -> parse roundtrip: fqn() output must re-parse to an equal FQN.
+        #[test]
+        fn display_roundtrip(offering in VALID_SEGMENT) {
+            let fqn = OfferingFqn::parse(&offering).unwrap();
+            let displayed = fqn.fqn();
+            let reparsed = OfferingFqn::parse(&displayed).unwrap();
+            prop_assert_eq!(fqn.offering, reparsed.offering);
+            prop_assert_eq!(fqn.instance, reparsed.instance);
+        }
+
+        /// encoded_for_container must never contain characters forbidden in
+        /// Docker container names (only [a-zA-Z0-9_.-] are allowed).
+        #[test]
+        fn encoded_for_container_is_docker_safe(offering in VALID_SEGMENT) {
+            let fqn = OfferingFqn::parse(&offering).unwrap();
+            let encoded = fqn.encoded_for_container();
+            for ch in encoded.chars() {
+                prop_assert!(
+                    ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '-',
+                    "illegal char '{}' in encoded container name: {}",
+                    ch,
+                    encoded
+                );
+            }
+        }
     }
 }

@@ -6,9 +6,9 @@ last_verified: 2026-02-05
 canonical: true
 ---
 
-# Storage + Nurturing API Guide
+# Storage + Backup API Guide
 
-This guide explains how to use the **storage** and **nurturing** APIs, from simple operations to advanced, cross‑stone workflows.
+This guide explains how to use the **storage** and **backup** APIs, from simple operations to advanced, cross‑stone workflows.
 
 If you are new to seed banks, see `docs/guides/seed-banks.md` for device setup and terminology.
 
@@ -19,8 +19,8 @@ If you are new to seed banks, see `docs/guides/seed-banks.md` for device setup a
 Use these APIs for different purposes:
 
 - **Storage**: app/user data (object storage under `garden/storage` on seed banks)
-- **Nurturing**: offering backups (A/B local snapshots, replication to seed banks)
-- **Memories**: read‑only access to nurturing snapshots for hydration and external orchestrators
+- **Backup**: offering snapshots (A/B local snapshots, replication to seed banks)
+- **Memories**: read‑only access to backup snapshots for hydration and external orchestrators
 
 Three scopes exist:
 
@@ -63,7 +63,7 @@ curl http://stone-01:7185/api/v1/stone/storage/bank
 curl http://stone-01:7185/api/v1/storage
 ```
 
-### List available nurturing snapshots via memories
+### List available backup snapshots via memories
 
 ```bash
 curl http://stone-01:7185/api/v1/memories
@@ -303,12 +303,12 @@ The same `X-Seed-Bank` header or `seed-bank` query param is supported here.
 
 ---
 
-## 7. Nurturing Basics (Local A/B Snapshots)
+## 7. Backup Basics (Local A/B Snapshots)
 
 ### 7.1 List all offerings with slots
 
 ```bash
-curl http://stone-01:7185/api/v1/stone/nurturing
+curl http://stone-01:7185/api/v1/stone/snapshots
 ```
 
 ### 7.2 Create a snapshot (A/B rotation)
@@ -317,13 +317,13 @@ curl http://stone-01:7185/api/v1/stone/nurturing
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"commit_image": true}' \
-  http://stone-01:7185/api/v1/stone/nurturing/immich
+  http://stone-01:7185/api/v1/stone/snapshots/immich
 ```
 
 ### 7.3 Inspect slots for an offering
 
 ```bash
-curl http://stone-01:7185/api/v1/stone/nurturing/immich
+curl http://stone-01:7185/api/v1/stone/snapshots/immich
 ```
 
 ### 7.4 Restore from a slot
@@ -332,12 +332,12 @@ curl http://stone-01:7185/api/v1/stone/nurturing/immich
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"slot":"A"}' \
-  http://stone-01:7185/api/v1/stone/nurturing/immich/restore
+  http://stone-01:7185/api/v1/stone/snapshots/immich/restore
 ```
 
 ---
 
-## 8. Nurturing + Seed Banks (Replication)
+## 8. Backup + Seed Banks (Replication)
 
 Replication is **stone‑local**. The seed bank must be attached to the stone performing the operation.
 
@@ -347,13 +347,13 @@ Replication is **stone‑local**. The seed bank must be attached to the stone pe
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"seed_bank":"seed-swift-shore"}' \
-  http://stone-01:7185/api/v1/stone/nurturing/immich/replicate
+  http://stone-01:7185/api/v1/stone/snapshots/immich/replicate
 ```
 
 ### 8.2 List remote snapshots stored on a seed bank
 
 ```bash
-curl http://stone-01:7185/api/v1/stone/nurturing/remote/seed-swift-shore
+curl http://stone-01:7185/api/v1/stone/snapshots/remote/seed-swift-shore
 ```
 
 ### 8.3 Restore from a seed bank
@@ -362,7 +362,7 @@ curl http://stone-01:7185/api/v1/stone/nurturing/remote/seed-swift-shore
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"seed_bank":"seed-swift-shore","harvest_id":null}' \
-  http://stone-01:7185/api/v1/stone/nurturing/immich/restore-remote
+  http://stone-01:7185/api/v1/stone/snapshots/immich/restore-remote
 ```
 
 ---
@@ -408,7 +408,7 @@ Optional seed bank selection:
 
 ---
 
-## 10. Nurturing Automation (Triggers)
+## 10. Backup Automation (Triggers)
 
 These endpoints are designed for timers (systemd/Task Scheduler) and run the **full workflow**:
 
@@ -417,13 +417,13 @@ Local snapshot → seed bank routing → replication.
 ### 10.1 Trigger one offering
 
 ```bash
-curl -X POST http://stone-01:7185/api/v1/nurturing/immich/trigger
+curl -X POST http://stone-01:7185/api/v1/snapshots/immich/trigger
 ```
 
 ### 10.2 Trigger all offerings
 
 ```bash
-curl -X POST http://stone-01:7185/api/v1/nurturing/trigger-all
+curl -X POST http://stone-01:7185/api/v1/snapshots/trigger-all
 ```
 
 ---
@@ -445,7 +445,7 @@ Likely causes:
 - Using seed bank **name** where **id** is required
 - Seed bank is connected to a different stone
 
-### Nurturing replication fails
+### Backup replication fails
 
 Likely causes:
 
@@ -454,7 +454,7 @@ Likely causes:
 
 ---
 
-## 12. API Summary (Storage + Nurturing)
+## 12. API Summary (Storage + Backup)
 
 Storage (garden‑tier — name-based, Primary‑or‑proxy):
 
@@ -483,15 +483,15 @@ Storage (SDK gateway — convenience):
 - `PUT /api/v1/storage/s3/{bucket}/{key}`
 - `GET /api/v1/storage/s3/{bucket}/{key}`
 
-Nurturing (stone‑local):
+Backup (stone‑local):
 
-- `GET /api/v1/stone/nurturing`
-- `GET /api/v1/stone/nurturing/{offering}`
-- `POST /api/v1/stone/nurturing/{offering}`
-- `POST /api/v1/stone/nurturing/{offering}/restore`
-- `POST /api/v1/stone/nurturing/{offering}/replicate`
-- `POST /api/v1/stone/nurturing/{offering}/restore-remote`
-- `GET /api/v1/stone/nurturing/remote/{seed_bank}`
+- `GET /api/v1/stone/snapshots`
+- `GET /api/v1/stone/snapshots/{offering}`
+- `POST /api/v1/stone/snapshots/{offering}`
+- `POST /api/v1/stone/snapshots/{offering}/restore`
+- `POST /api/v1/stone/snapshots/{offering}/replicate`
+- `POST /api/v1/stone/snapshots/{offering}/restore-remote`
+- `GET /api/v1/stone/snapshots/remote/{seed_bank}`
 
 Memories (garden‑wide, read‑only):
 
@@ -502,4 +502,4 @@ Memories (garden‑wide, read‑only):
 
 ---
 
-*This guide reflects the live implementation and aligns with the current storage/nurturing design.*
+*This guide reflects the live implementation and aligns with the current storage/backup design.*

@@ -70,7 +70,7 @@ impl Clone for Elections {
 }
 
 /// Pending election state for candidates
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct PendingElection {
     election_id: String,
     timer_handle: Option<tokio::task::JoinHandle<()>>,
@@ -93,7 +93,7 @@ pub trait FitnessProvider: Send + Sync {
     /// Returns `Some(score)` if eligible, `None` if ineligible (don't respond).
     /// Score range: `[-1000, 1000]`. `1001` = pinned (always wins).
     /// Also returns `pin_timestamp` if pinned.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn compute_fitness(
         &self,
         offering_fqn: &str,
@@ -385,8 +385,8 @@ impl Elections {
         );
 
         let mut pending = self.pending.write().await;
-        if let Some(mut election) = pending.remove(&result.election_id) {
-            if let Some(handle) = election.timer_handle.take() {
+        if let Some(mut election) = pending.remove(&result.election_id)
+            && let Some(handle) = election.timer_handle.take() {
                 handle.abort();
                 tracing::info!(
                     election_id = %result.election_id,
@@ -394,7 +394,6 @@ impl Elections {
                     "Cancelled our candidacy timer (election won by another)"
                 );
             }
-        }
 
         Ok(())
     }

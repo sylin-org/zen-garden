@@ -28,7 +28,7 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | POST | `/api/v1/stone/services/:service/restart` | Restart |
 | POST | `/api/v1/stone/services/:service/rest` | Stop |
 | POST | `/api/v1/stone/services/:service/wake` | Start |
-| POST | `/api/v1/stone/services/:service/nourish` | Update |
+| POST | `/api/v1/stone/services/:service/upgrade` | Upgrade |
 | GET | `/api/v1/stone/services/:service/logs` | Stream logs (SSE) |
 | GET | `/api/v1/stone/services/:service/env` | Read env vars + manageable list |
 | PATCH | `/api/v1/stone/services/:service/env` | Set/delete env vars (allowlist) |
@@ -76,12 +76,12 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/stone/metrics` | Prometheus metrics |
 | GET | `/health` | Health check |
 
-### Nourishment (Local)
+### Updates (Local)
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET | `/api/v1/stone/nourishment` | Pending updates |
-| POST | `/api/v1/stone/nourishment/execute` | Execute updates |
-| GET | `/api/v1/stone/nourishment/stream/:job_id` | SSE stream |
+| GET | `/api/v1/stone/updates` | Pending updates |
+| POST | `/api/v1/stone/updates/execute` | Execute updates |
+| GET | `/api/v1/stone/updates/stream/:job_id` | SSE stream |
 
 ### Logs (Daemon)
 | Method | Endpoint | Purpose |
@@ -118,8 +118,8 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/api/v1/garden/services?q={query}` | Find services across garden |
-| GET | `/api/v1/garden/nourishment` | Aggregate updates |
-| POST | `/api/v1/garden/nourishment/execute` | Dispatch to affected stones |
+| GET | `/api/v1/garden/updates` | Aggregate updates |
+| POST | `/api/v1/garden/updates/execute` | Dispatch to affected stones |
 | GET | `/api/v1/garden/observe` | Aggregate topology |
 
 ### Garden Storage (STORAGE-0009)
@@ -137,10 +137,10 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | PUT | `/api/v1/garden/storage/{name}/objects/*path` | Write S3 object |
 | DELETE | `/api/v1/garden/storage/{name}/objects/*path` | Delete S3 object |
 | HEAD | `/api/v1/garden/storage/{name}/objects/*path` | S3 object metadata |
-| GET | `/api/v1/garden/storage/{name}/memories` | List offerings with harvests |
-| GET | `/api/v1/garden/storage/{name}/memories/{offering}` | List offering snapshots |
-| GET | `/api/v1/garden/storage/{name}/memories/{offering}/manifest` | Offering manifest |
-| GET | `/api/v1/garden/storage/{name}/memories/{offering}/{harvest}` | Download snapshot |
+| GET | `/api/v1/garden/storage/{name}/snapshots` | List offerings with snapshots |
+| GET | `/api/v1/garden/storage/{name}/snapshots/{offering}` | List offering snapshots |
+| GET | `/api/v1/garden/storage/{name}/snapshots/{offering}/manifest` | Offering manifest |
+| GET | `/api/v1/garden/storage/{name}/snapshots/{offering}/{harvest}` | Download snapshot |
 
 ### WebDAV (STORAGE-0009 Phase 3)
 
@@ -213,7 +213,7 @@ All other paths are proxied to Ollama with smart routing.
 - `depth=3` - 3 levels deep
 - `depth=all` - Full recursive
 
-**Nourishment execute**:
+**Updates execute**:
 ```json
 {"scope": "all"}        // All updates
 {"scope": "offerings"}  // Software only

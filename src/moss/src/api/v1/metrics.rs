@@ -10,9 +10,10 @@
 //! If collection fails, a fallback with zero values is returned.
 
 use crate::api::responses::ApiResponse;
-use crate::AppState;
+use crate::domain::Current;
 use axum::{extract::State, Json};
 use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, StoneResources};
+use std::sync::Arc;
 
 /// GET /metrics - Real-time system resource metrics
 ///
@@ -21,13 +22,14 @@ use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, Sto
 ///
 /// # Fallback Behavior
 /// If metrics not yet collected, returns a fallback response with zero values.
-pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<MetricsSnapshot>> {
-    let resources_guard = state.current.system_resources.read().await;
-    let resources = resources_guard
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(create_fallback_resources);
-    drop(resources_guard);
+pub async fn get_metrics(State(current): State<Arc<Current>>) -> Json<ApiResponse<MetricsSnapshot>> {
+    let resources = {
+        let resources_guard = current.metrics.system.read().await;
+        resources_guard
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(create_fallback_resources)
+    };
 
     // Convert primary storage mount to DiskMetrics for backward compatibility
     let disk = resources
@@ -72,7 +74,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<Metr
                 })
         });
 
-    let network = state.network_metrics_cache.read().await.clone();
+    let network = current.metrics.network.read().await.clone();
 
     let snapshot = MetricsSnapshot {
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -83,10 +85,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<ApiResponse<Metr
         uptime_seconds: resources.uptime_seconds,
     };
 
-    Json(ApiResponse {
-        data: snapshot,
-        suggestions: None,
-    })
+    Json(ApiResponse::new(snapshot))
 }
 
 /// Create fallback resource metrics with zero values
@@ -111,5 +110,6 @@ fn create_fallback_resources() -> StoneResources {
         storage: Vec::new(),
         uptime_seconds: 0,
         uptime_friendly: "0s".to_string(),
+        cpu_temperature: None,
     }
 }

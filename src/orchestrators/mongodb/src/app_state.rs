@@ -66,7 +66,7 @@ impl AppState {
         data_dir: String,
         shutdown: CancellationToken,
     ) -> Self {
-        let (dashboard_tx, _) = broadcast::channel(256);
+        let (dashboard_tx, _) = broadcast::channel(garden_common::constants::channels::SSE_DASHBOARD);
 
         Self {
             offering_name,

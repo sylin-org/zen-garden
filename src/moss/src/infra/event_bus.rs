@@ -77,12 +77,11 @@ impl Default for EventBus {
 ///
 /// Implement this trait to create custom event listeners.
 /// The listener runs in its own task and processes events asynchronously.
-#[async_trait::async_trait]
 pub trait EventListener: Send + Sync + 'static {
     /// Handle an incoming event
     ///
     /// Called for each event received. Should not block for long periods.
-    async fn on_event(&self, event: &DomainEvent);
+    fn on_event(&self, event: &DomainEvent) -> impl std::future::Future<Output = ()> + Send;
 
     /// Listener name for logging
     fn name(&self) -> &'static str;
@@ -139,7 +138,6 @@ mod tests {
         count: AtomicUsize,
     }
 
-    #[async_trait::async_trait]
     impl EventListener for CountingListener {
         async fn on_event(&self, _event: &DomainEvent) {
             self.count.fetch_add(1, Ordering::SeqCst);

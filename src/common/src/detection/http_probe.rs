@@ -96,12 +96,11 @@ async fn extract_version_from_response(response: &reqwest::Response) -> Option<S
     let version_headers = ["x-version", "server", "x-powered-by", "x-api-version"];
 
     for header_name in &version_headers {
-        if let Some(value) = headers.get(*header_name) {
-            if let Ok(value_str) = value.to_str() {
-                if let Some(version) = extract_version_from_text(value_str) {
-                    return Some(version);
-                }
-            }
+        if let Some(value) = headers.get(*header_name)
+            && let Ok(value_str) = value.to_str()
+            && let Some(version) = extract_version_from_text(value_str)
+        {
+            return Some(version);
         }
     }
 
@@ -119,12 +118,11 @@ fn extract_version_from_text(text: &str) -> Option<String> {
     ];
 
     for pattern_str in &patterns {
-        if let Ok(re) = Regex::new(pattern_str) {
-            if let Some(caps) = re.captures(text) {
-                if let Some(version) = caps.get(1) {
-                    return Some(version.as_str().to_string());
-                }
-            }
+        if let Ok(re) = Regex::new(pattern_str)
+            && let Some(caps) = re.captures(text)
+            && let Some(version) = caps.get(1)
+        {
+            return Some(version.as_str().to_string());
         }
     }
 

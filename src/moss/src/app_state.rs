@@ -13,11 +13,10 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{FqnHandler, Orchestration, Security, Tool};
+use crate::domain::{Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
-use garden_common::NetworkMetrics;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -105,13 +104,8 @@ pub struct AppState {
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
 
-
     /// Garden-wide tool registry and delta stream (ARCH-0004).
     pub tool: Arc<Tool>,
-
-    /// FQN handler registry — processes registered to handle FIND requests for a given FQN
-    /// (ARCH-0004). Ephemeral, TTL-based; handlers refresh every 30 seconds.
-    pub fqn_handler: Arc<FqnHandler>,
 
     /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
     pub security: Arc<Security>,
@@ -125,32 +119,74 @@ pub struct AppState {
     /// Companion domain — registry of external companions (Cricket, Firefly, etc.)
     pub companion: Arc<crate::domain::Companion>,
 
-
     // === Cached Metrics (updated by background tasks, read-only for endpoints) ===
     // IMPORTANT: These caches exist to keep API endpoints fast (<10ms).
     // Endpoints MUST NOT perform I/O - they read from these caches only.
     // Background tasks are responsible for keeping caches fresh.
-
-
-    /// Cached network metrics (updated every 5s by health_monitor task)
-    pub network_metrics_cache: Arc<RwLock<Option<NetworkMetrics>>>,
-
-    /// Cached GPU utilization percentage (FIREFLY-0003)
-    /// Updated every 5s by metrics_collector. None = no GPU or query failed.
-    pub gpu_utilization: Arc<RwLock<Option<f32>>>,
-
     /// Log broadcast channel (for live SSE log streaming)
     pub log: tokio::sync::broadcast::Sender<String>,
 
     /// Subsystem readiness state
     pub subsystems: SubSystems,
 
-
-
     /// Orchestration coordination plane — tick signals, nudge, rescan,
     /// nurturing stores, nourishment job channels (ARCH-0004).
     pub orchestration: Arc<Orchestration>,
+}
 
+// ============================================================================
+// FromRef — handler dependency extraction (code standards §6)
+// ============================================================================
+
+// Each impl extracts a narrow dependency from AppState. Handlers declare only
+// what they need: `State(companion): State<Arc<Companion>>` instead of full AppState.
+
+impl axum::extract::FromRef<AppState> for Arc<crate::domain::Current> {
+    fn from_ref(state: &AppState) -> Self { state.current.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<crate::domain::Platform> {
+    fn from_ref(state: &AppState) -> Self { state.platform.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<Tool> {
+    fn from_ref(state: &AppState) -> Self { state.tool.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<Security> {
+    fn from_ref(state: &AppState) -> Self { state.security.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<crate::domain::Discovery> {
+    fn from_ref(state: &AppState) -> Self { state.discovery.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<crate::domain::Presence> {
+    fn from_ref(state: &AppState) -> Self { state.presence.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<crate::domain::Companion> {
+    fn from_ref(state: &AppState) -> Self { state.companion.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<Orchestration> {
+    fn from_ref(state: &AppState) -> Self { state.orchestration.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<ManifestRegistry> {
+    fn from_ref(state: &AppState) -> Self { state.manifest_registry.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for EventBus {
+    fn from_ref(state: &AppState) -> Self { state.event_bus.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for CancellationToken {
+    fn from_ref(state: &AppState) -> Self { state.shutdown_token.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<ConsolePrinter> {
+    fn from_ref(state: &AppState) -> Self { state.console.clone() }
 }
 
 // ============================================================================
@@ -208,6 +244,21 @@ impl Default for DockerSubSystem {
 }
 
 impl AppState {
+    /// Subscribe to the live log stream.
+    ///
+    /// Returns a broadcast receiver of log lines for SSE streaming.
+    pub fn log_stream(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.log.subscribe()
+    }
+
+    /// Subscribe to the unified pulse event stream.
+    ///
+    /// Returns a broadcast receiver of [`PulseEvent`] (domain + transport events).
+    /// Consumers: pulse SSE (full firehose), presence SSE (domain-only, translated).
+    pub fn pulse_stream(&self) -> tokio::sync::broadcast::Receiver<PulseEvent> {
+        self.pulse.subscribe()
+    }
+
     /// Request the volume watcher to re-scan and re-classify all volumes.
     ///
     /// Non-blocking. If the channel is full (a rescan is already pending),
@@ -294,7 +345,7 @@ impl AppState {
         }
 
         if broadcast_beacon {
-            let endpoint = self.current.topology.self_entry.read().await.address.http_base();
+            let endpoint = self.current.address.read().await.http_base();
             if endpoint.trim().is_empty() {
                 return;
             }
@@ -311,103 +362,113 @@ impl AppState {
         }
     }
 
-    /// Sync self_entry services and tags from offerings and notifications
+    /// Build the self topology entry on demand from source domains.
     ///
-    /// Converts Offering → TopologyServiceEntry and updates self_entry.
-    /// Also compiles notification tags for cross-stone awareness.
-    /// Optionally triggers immediate chirp announcement (if network is ready).
-    /// Called after any offerings modification.
-    pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
-        let offerings = self.offerings.read().await;
-        let mut topology_services =
-            garden_common::TopologyServiceEntry::from_offerings(&offerings);
-
-        // Fix up categories from the compiled offerings index.
-        // Offering doesn't carry its category, so from_offering() falls back to the
-        // offering name. Patch with the real category from the registry so that
-        // chirps carry the correct value and protocol inference works on peers.
-        if let Some(index) = self.offerings_index.read().await.as_ref() {
-            for svc in &mut topology_services {
-                if let Some(compiled) = index.offerings.iter().find(|c| c.name == svc.offering) {
-                    svc.category = compiled.category.clone();
-                }
-            }
-        }
-
-        // Compile notification tags for cross-stone awareness
+    /// Replaces the mutable self_entry cache. Reads from:
+    /// - current.stone (identity)
+    /// - current.address (network)
+    /// - current.health (status)
+    /// - current.mac (MAC address)
+    /// - current.capabilities (hardware)
+    /// - offerings (local offerings -> TopologyServiceEntry)
+    /// - presence.notifications (tags)
+    pub async fn build_self_entry(&self) -> garden_common::TopologyEntry {
+        let address = self.current.address.read().await.clone();
+        let health = self.current.health.read().await.clone();
+        let mac = self.current.mac.read().await.clone();
+        let capabilities = self.current.capabilities.read().await.clone();
         let tags = self.presence.notifications.compile();
 
-        // TOOLS-0003: Gateways are no longer carried in chirps.
-        // They propagate via the tools beacon / registry path exclusively.
+        // Build services from offerings
+        let offerings = self.offerings.read().await;
+        let services = garden_common::TopologyServiceEntry::from_offerings(&offerings);
+        drop(offerings);
 
-        {
-            let mut entry = self.current.topology.self_entry.write().await;
-            entry.services = topology_services;
-            entry.tags = tags;
-            entry.gateways = vec![]; // Empty — registry beacon is the single path
-            entry.last_seen = chrono::Utc::now();
+        garden_common::TopologyEntry {
+            stone_id: self.current.stone.id.clone(),
+            stone_name: self.current.stone.name.clone(),
+            address,
+            moss_version: crate::version_string(),
+            mac,
+            health,
+            capabilities,
+            services,
+            status: garden_common::StoneStatus::Online,
+            discovered_at: chrono::Utc::now(),
+            last_seen: chrono::Utc::now(),
+            tags,
+            gateways: vec![], // TOOLS-0003: registry beacon is the single path
         }
+    }
 
-        tracing::debug!(
-            count = offerings.len(),
-            "Synced self_entry services from offerings"
-        );
-
+    /// Sync services and optionally chirp.
+    ///
+    /// With `build_self_entry()` assembling the topology entry on demand,
+    /// this method only needs to trigger an immediate chirp when requested.
+    /// Called after any offerings modification.
+    pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.current.topology.self_entry.read().await.clone();
+            let entry = self.build_self_entry().await;
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
             }
         }
     }
 
-    /// Sync self_entry capabilities from the capabilities cache.
+    /// Chirp after capabilities change.
     ///
-    /// Called after background hardware detection completes to ensure
-    /// chirps carry the freshly-detected hardware data instead of the
-    /// stale skeleton/cache loaded at boot.
+    /// With `build_self_entry()` reading capabilities from `current.capabilities`
+    /// directly, this method only needs to trigger a chirp so peers see the update.
     pub(crate) async fn sync_self_capabilities(&self, auto_chirp: bool) {
-        let caps = self.current.capabilities.read().await.clone();
-
-        {
-            let mut entry = self.current.topology.self_entry.write().await;
-            entry.capabilities = caps;
-            entry.last_seen = chrono::Utc::now();
-        }
-
-        tracing::info!("Synced self_entry capabilities from background detection");
+        tracing::info!("Capabilities updated — build_self_entry will read fresh data");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.current.topology.self_entry.read().await.clone();
+            let entry = self.build_self_entry().await;
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after capabilities sync");
             }
         }
     }
 
-    /// Add or update a single offering
+    // ========================================================================
+    // Offering Mutation Gateway
+    // ========================================================================
+
+    /// Single offering mutation gateway.
     ///
-    /// Immediately syncs to self_entry and triggers chirp.
-    /// This is the primary method for offering state changes.
+    /// All offering mutations go through this method. The closure receives
+    /// `&mut Vec<Offering>` and returns `(R, bool)` — the result for the
+    /// caller, plus a `changed` flag. If changed, the post-mutation
+    /// invariant runs: sync_self_services + persist_offerings.
+    async fn mutate_offerings<F, R>(&self, auto_chirp: bool, mutator: F) -> R
+    where
+        F: FnOnce(&mut Vec<Offering>) -> (R, bool),
+    {
+        let (result, changed) = {
+            let mut offerings = self.offerings.write().await;
+            mutator(&mut offerings)
+        };
+        if changed {
+            self.sync_self_services(auto_chirp).await;
+            if let Err(e) = self.persist_offerings().await {
+                tracing::error!(error = ?e, "Failed to persist offerings");
+            }
+        }
+        result
+    }
+
+    /// Add or update a single offering.
     ///
     /// Dedup guard: matches by `offering_id` first, then by FQN (`name`).
-    /// This prevents duplicate entries when callers generate a fresh GUID
-    /// for an offering that already exists in the registry.
     pub async fn upsert_offering(&self, mut offering: Offering, auto_chirp: bool) {
         offering.touch();
-        {
-            let mut offerings = self.offerings.write().await;
+        self.mutate_offerings(auto_chirp, |offerings| {
             if let Some(pos) = offerings
                 .iter()
                 .position(|o| o.offering_id == offering.offering_id)
             {
-                // Exact ID match — update in place
                 offerings[pos] = offering;
-            } else if let Some(pos) = offerings
-                .iter()
-                .position(|o| o.name == offering.name)
-            {
-                // FQN match — same service, different ID (e.g. re-adoption)
+            } else if let Some(pos) = offerings.iter().position(|o| o.name == offering.name) {
                 tracing::info!(
                     name = %offering.name,
                     old_id = %offerings[pos].offering_id,
@@ -418,61 +479,38 @@ impl AppState {
             } else {
                 offerings.push(offering);
             }
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after upsert");
-        }
+            ((), true)
+        })
+        .await;
     }
 
-    /// Remove an offering by ID
-    ///
-    /// Immediately syncs to self_entry and triggers chirp.
+    /// Remove an offering by ID.
     pub async fn remove_offering(&self, offering_id: &str, auto_chirp: bool) {
-        {
-            let mut offerings = self.offerings.write().await;
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let before = offerings.len();
             offerings.retain(|o| o.offering_id != offering_id);
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after removal");
-        }
+            ((), offerings.len() != before)
+        })
+        .await;
     }
 
-    /// Remove an offering by name
-    ///
-    /// Immediately syncs to self_entry and triggers chirp.
+    /// Remove an offering by name (FQN).
     pub async fn remove_service(&self, service_name: &str, auto_chirp: bool) {
-        {
-            let mut offerings = self.offerings.write().await;
-            offerings.retain(|o| o.name.to_string() != service_name);
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after removal");
-        }
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let before = offerings.len();
+            offerings.retain(|o| !o.name.fqn_eq(service_name));
+            ((), offerings.len() != before)
+        })
+        .await;
     }
 
-    /// Coalesce duplicate offerings by FQN (name)
-    ///
-    /// When multiple entries share the same `name`, keeps the one that
-    /// was most recently updated (or registered). This is a self-heal
-    /// mechanism for registries that accumulated duplicates before the
-    /// FQN dedup guard was added to `upsert_offering`.
+    /// Coalesce duplicate offerings by FQN, keeping the most recently updated.
     ///
     /// Returns the number of duplicates removed.
     pub async fn coalesce_duplicate_offerings(&self) -> usize {
-        let removed = {
-            let mut offerings = self.offerings.write().await;
+        self.mutate_offerings(true, |offerings| {
             let before = offerings.len();
 
-            // Build a map of FQN → best index (most recently updated)
             let mut best: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             for (i, o) in offerings.iter().enumerate() {
@@ -497,135 +535,72 @@ impl AppState {
                 k
             });
 
-            before - offerings.len()
-        };
-
-        if removed > 0 {
-            tracing::warn!(
-                removed,
-                "Coalesced duplicate offerings by FQN"
-            );
-            self.sync_self_services(true).await;
-            if let Err(e) = self.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist offerings after coalesce");
+            let removed = before - offerings.len();
+            if removed > 0 {
+                tracing::warn!(removed, "Coalesced duplicate offerings by FQN");
             }
-        }
-
-        removed
+            (removed, removed > 0)
+        })
+        .await
     }
 
-    /// Batch update offerings (for reconciliation)
-    ///
-    /// Replaces entire offerings registry and triggers chirp.
-    pub async fn replace_offerings(&self, offerings: Vec<Offering>, auto_chirp: bool) {
-        {
-            let mut registry = self.offerings.write().await;
-            *registry = offerings;
-        }
-
-        self.sync_self_services(auto_chirp).await;
-
-        if let Err(e) = self.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after batch update");
-        }
+    /// Replace entire offerings registry.
+    pub async fn replace_offerings(&self, new_offerings: Vec<Offering>, auto_chirp: bool) {
+        self.mutate_offerings(auto_chirp, |offerings| {
+            *offerings = new_offerings;
+            ((), true)
+        })
+        .await;
     }
-
-    // ========================================================================
-    // Offering Gateway Methods
-    // ========================================================================
 
     /// Update a single offering by ID via a closure.
     ///
-    /// This is the preferred way to mutate an existing offering's operational
-    /// state (status, health, port, role, etc.).  The closure receives `&mut Offering`
-    /// and returns `true` if it made changes.
-    ///
-    /// After a successful mutation, `self_entry` is synced automatically so
-    /// chirps carry current data.  Pass `auto_chirp = true` for immediate
-    /// broadcast (status changes) or `false` to let the periodic announcer
-    /// pick it up (detail-only changes).
-    pub async fn update_offering<F>(
-        &self,
-        offering_id: &str,
-        auto_chirp: bool,
-        mutator: F,
-    ) -> bool
+    /// The closure receives `&mut Offering` and returns `true` if it made changes.
+    /// Pass `auto_chirp = true` for immediate broadcast, `false` to let the
+    /// periodic announcer pick it up.
+    pub async fn update_offering<F>(&self, offering_id: &str, auto_chirp: bool, mutator: F) -> bool
     where
         F: FnOnce(&mut Offering) -> bool,
     {
-        let changed = {
-            let mut offerings = self.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.offering_id == offering_id) {
-                mutator(o)
-            } else {
-                false
-            }
-        };
-
-        if changed {
-            self.sync_self_services(auto_chirp).await;
-        }
-
-        changed
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let changed = offerings
+                .iter_mut()
+                .find(|o| o.offering_id == offering_id)
+                .map(mutator)
+                .unwrap_or(false);
+            (changed, changed)
+        })
+        .await
     }
 
     /// Update a single offering by name (FQN) via a closure.
-    ///
-    /// Same semantics as `update_offering` but looks up by `offering.name`.
-    pub async fn update_offering_by_name<F>(
-        &self,
-        name: &str,
-        auto_chirp: bool,
-        mutator: F,
-    ) -> bool
+    pub async fn update_offering_by_name<F>(&self, name: &str, auto_chirp: bool, mutator: F) -> bool
     where
         F: FnOnce(&mut Offering) -> bool,
     {
-        let changed = {
-            let mut offerings = self.offerings.write().await;
-            if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
-                mutator(o)
-            } else {
-                false
-            }
-        };
-
-        if changed {
-            self.sync_self_services(auto_chirp).await;
-        }
-
-        changed
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let changed = offerings
+                .iter_mut()
+                .find(|o| o.name.fqn_eq(name))
+                .map(mutator)
+                .unwrap_or(false);
+            (changed, changed)
+        })
+        .await
     }
 
     /// Batch-update offerings via a closure over the entire vec.
     ///
-    /// The closure receives `&mut Vec<Offering>` and returns the count of
-    /// offerings it changed.  If > 0, self_entry is synced and offerings
-    /// are persisted to disk automatically.
-    ///
-    /// Use this for bulk operations like the health monitor's iterate-all
-    /// pattern where acquiring/releasing the lock per-offering is wasteful.
-    pub async fn update_offerings_batch<F>(
-        &self,
-        mutator: F,
-        auto_chirp: bool,
-    ) -> usize
+    /// The closure returns the count of offerings changed.
+    pub async fn update_offerings_batch<F>(&self, mutator: F, auto_chirp: bool) -> usize
     where
         F: FnOnce(&mut Vec<Offering>) -> usize,
     {
-        let changed = {
-            let mut offerings = self.offerings.write().await;
-            mutator(&mut offerings)
-        };
-
-        if changed > 0 {
-            self.sync_self_services(auto_chirp).await;
-            if let Err(e) = self.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist after batch update");
-            }
-        }
-
-        changed
+        self.mutate_offerings(auto_chirp, |offerings| {
+            let changed = mutator(offerings);
+            (changed, changed > 0)
+        })
+        .await
     }
 
     // ========================================================================
@@ -676,7 +651,7 @@ impl AppState {
             .read()
             .await
             .iter()
-            .find(|o| o.name.to_string().eq_ignore_ascii_case(name))
+            .find(|o| o.name.fqn_eq(name))
             .cloned()
     }
 
@@ -700,15 +675,14 @@ impl AppState {
     /// - `auto_chirp`: If true, broadcasts updated state immediately (if network is ready)
     pub async fn update_stone_health(&self, health: String, auto_chirp: bool) {
         {
-            let mut entry = self.current.topology.self_entry.write().await;
-            entry.health = health.clone();
-            entry.last_seen = chrono::Utc::now();
+            let mut h = self.current.health.write().await;
+            *h = health.clone();
         }
 
         tracing::debug!(health = %health, "Updated stone health");
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.current.topology.self_entry.read().await.clone();
+            let entry = self.build_self_entry().await;
             if let Err(e) = crate::announcement::announce(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after health update");
             }
@@ -719,7 +693,7 @@ impl AppState {
     ///
     /// Called when the means to resolve this stone changes (IP address, MAC address).
     /// This is different from service changes - resolution changes require:
-    /// 1. Update self_entry with new endpoint and MAC
+    /// 1. Update current.address and current.mac
     /// 2. Re-register mDNS service (updates TXT records and triggers re-announcement)
     /// 3. Send UDP chirp with updated topology entry
     ///
@@ -735,31 +709,32 @@ impl AppState {
         // Get fresh MAC address (may have changed with network)
         let (_, new_mac) = garden_common::infra::network::get_local_ip_and_mac();
 
-        // Update self_entry with new endpoint and MAC
+        // Update current.address and current.mac (source fields)
         {
-            let mut entry = self.current.topology.self_entry.write().await;
-            let old_tls_port = entry.address.tls_port;
-            let new_ip: std::net::IpAddr = new_ip
-                .parse()
-                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            let old_tls_port = self.current.address.read().await.tls_port;
+            let new_ip: std::net::IpAddr = match new_ip.parse() {
+                Ok(ip) => ip,
+                Err(e) => {
+                    tracing::warn!(raw = %new_ip, error = %e, "Failed to parse new IP — skipping resolution change");
+                    return;
+                }
+            };
             let mut new_addr = garden_common::PeerAddress::new(new_ip, self.current.api_port);
             if let Some(tp) = old_tls_port {
                 new_addr = new_addr.with_tls(tp);
             }
-            entry.address = new_addr;
-            entry.mac = new_mac.clone();
-            entry.last_seen = chrono::Utc::now();
+            *self.current.address.write().await = new_addr;
+            *self.current.mac.write().await = new_mac.clone();
         }
 
         // Re-register mDNS with updated IP and MAC
-        if let Some(ref mdns) = self.discovery.mdns {
-            if let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await {
+        if let Some(ref mdns) = self.discovery.mdns
+            && let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await {
                 tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
             }
-        }
 
         // Immediately chirp the updated entry via UDP
-        let entry = self.current.topology.self_entry.read().await.clone();
+        let entry = self.build_self_entry().await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to chirp after resolution change");
         } else {
@@ -803,10 +778,17 @@ impl AppState {
     ///
     /// Subscribers (beacon, cloud filter, watcher, coordinator, projector)
     /// react by pulling fresh state from AppState boundary methods.
-    /// Also triggers an immediate tools projection refresh so the registry
-    /// stays coherent with storage state.
+    /// Also emits through EventBus so PulseDomainBridge translates the event
+    /// for SSE consumers, and triggers an immediate tools projection refresh
+    /// so the registry stays coherent with storage state.
     pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
         tracing::debug!(event = ?event, "Storage domain event");
+
+        // Bridge to EventBus so PulseDomainBridge sees storage events.
+        let storage_event = crate::domain::events::StorageEvent::from(&event);
+        self.event_bus.emit(storage_event);
+
+        // Dedicated broadcast channel for infra subscribers (beacon, cloud filter, etc.)
         let _ = self.current.storage.changed.send(event);
 
         // Storage mutations affect the tools projection (seed-bank entries).
@@ -831,7 +813,7 @@ impl AppState {
     /// then sends a UDP STORAGE_BEACON announcement. This is the single
     /// codepath for beacon broadcasting — callers should not inline this logic.
     pub async fn broadcast_storage_beacon(&self) {
-        let endpoint = self.current.topology.self_entry.read().await.address.http_base();
+        let endpoint = self.current.address.read().await.http_base();
         let roles = crate::domain::storage::roles_snapshot(&self.current.storage.volumes).await;
         let pins = crate::domain::storage::pins_snapshot(&self.current.storage.volumes).await;
         if let Err(e) = crate::infra::storage::broadcast_beacon(
@@ -847,5 +829,4 @@ impl AppState {
             tracing::warn!(error = %e, "Failed to broadcast storage beacon");
         }
     }
-
 }

@@ -6,8 +6,8 @@
 use axum::{
     extract::State,
     http::{header, StatusCode},
-    response::{Html, IntoResponse},
     response::sse::{Event, KeepAlive, Sse},
+    response::{Html, IntoResponse},
 };
 use futures_util::stream::Stream;
 use std::convert::Infallible;
@@ -55,39 +55,35 @@ pub async fn stream_pulse(
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
     // Subscribe to pulse channel
-    let rx = state.pulse.subscribe();
+    let rx = state.pulse_stream();
 
     // Snapshot first, then full firehose
     let inner = futures_util::stream::once(async move {
-        Event::default()
-            .event("pulse.snapshot")
-            .data(snapshot_json)
+        Event::default().event("pulse.snapshot").data(snapshot_json)
     })
-    .chain(
-        tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|result| {
-            match result {
-                Ok(pulse_event) => {
-                    let (event_type, data) = match &pulse_event {
-                        PulseEvent::Domain(d) => {
-                            let etype = format!("domain.{}", d.event_type);
-                            let data = serde_json::to_string(d).unwrap_or_default();
-                            (etype, data)
-                        }
-                        PulseEvent::Transport(t) => {
-                            let etype = format!("transport.{}", t.announcement_type);
-                            let data = serde_json::to_string(t).unwrap_or_default();
-                            (etype, data)
-                        }
-                    };
-                    Some(Event::default().event(event_type).data(data))
-                }
-                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                    tracing::warn!("Pulse client lagged {} events", n);
-                    None
-                }
+    .chain(tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
+        |result| match result {
+            Ok(pulse_event) => {
+                let (event_type, data) = match &pulse_event {
+                    PulseEvent::Domain(d) => {
+                        let etype = format!("domain.{}", d.event_type);
+                        let data = serde_json::to_string(d).unwrap_or_default();
+                        (etype, data)
+                    }
+                    PulseEvent::Transport(t) => {
+                        let etype = format!("transport.{}", t.announcement_type);
+                        let data = serde_json::to_string(t).unwrap_or_default();
+                        (etype, data)
+                    }
+                };
+                Some(Event::default().event(event_type).data(data))
             }
-        }),
-    );
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                tracing::warn!("Pulse client lagged {} events", n);
+                None
+            }
+        },
+    ));
 
     // MOSS-0004: Wrap in cancellation-aware stream
     let stream = async_stream::stream! {

@@ -2,6 +2,8 @@
 //!
 //! Implement [`CommandHandler`] to process commands from Moss.
 
+use std::future::Future;
+
 // Re-export CommandResponse for convenience
 pub use garden_common::command_manifest::CommandResponse;
 
@@ -17,7 +19,6 @@ pub use garden_common::command_manifest::CommandResponse;
 ///
 /// struct MyHandler;
 ///
-/// #[async_trait]
 /// impl CommandHandler for MyHandler {
 ///     async fn handle(&self, args: &[String]) -> CommandResponse {
 ///         let cmd = args.first().map(|s| s.as_str()).unwrap_or("");
@@ -31,7 +32,6 @@ pub use garden_common::command_manifest::CommandResponse;
 ///     }
 /// }
 /// ```
-#[async_trait::async_trait]
 pub trait CommandHandler: Send + Sync + 'static {
     /// Handle a command
     ///
@@ -42,13 +42,13 @@ pub trait CommandHandler: Send + Sync + 'static {
     /// # Returns
     ///
     /// A [`CommandResponse`] indicating success/failure and output
-    async fn handle(&self, args: &[String]) -> CommandResponse;
+    fn handle(&self, args: &[String]) -> impl Future<Output = CommandResponse> + Send;
 
     /// Optional: Called before shutdown
     ///
     /// Override this to perform cleanup when the Companion is shutting down.
-    async fn on_shutdown(&self) {
-        // Default: no-op
+    fn on_shutdown(&self) -> impl Future<Output = ()> + Send {
+        async {}
     }
 }
 

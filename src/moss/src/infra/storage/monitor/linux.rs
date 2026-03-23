@@ -51,8 +51,7 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                 for v in &current {
                     if !known.contains(&v.path) {
                         debug!(path = %v.path, "Volume appeared (polling)");
-                        let (used_bytes, _) =
-                            measure_usage(&v.mount_path, v.capacity_bytes);
+                        let (used_bytes, _) = measure_usage(&v.mount_path, v.capacity_bytes);
 
                         let event = PhysicalStorageEvent::Connected {
                             device_path: v.path.clone(),
@@ -77,9 +76,7 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                     if !in_proc || !dev_present {
                         debug!(path = %path, "Volume disappeared (polling)");
                         if tx
-                            .send(PhysicalStorageEvent::Disconnected {
-                                path: path.clone(),
-                            })
+                            .send(PhysicalStorageEvent::Disconnected { path: path.clone() })
                             .await
                             .is_err()
                         {
@@ -142,6 +139,9 @@ fn run_udev_watcher(
             revents: 0,
         };
 
+        // SAFETY: `pollfd` is stack-allocated and valid for the duration of the call.
+        // `fd` is a valid file descriptor owned by `socket`. Timeout (5000ms) is positive.
+        // The function writes only to `pollfd.revents`, which is in our stack frame.
         let ret = unsafe { libc::poll(&mut pollfd, 1, 5000) };
         if ret < 0 {
             let err = std::io::Error::last_os_error();
@@ -182,9 +182,7 @@ fn run_udev_watcher(
                 }
                 udev::EventType::Remove => {
                     debug!(device = %devnode, "udev: block device removed");
-                    let _ = tx.blocking_send(PhysicalStorageEvent::Disconnected {
-                        path: devnode,
-                    });
+                    let _ = tx.blocking_send(PhysicalStorageEvent::Disconnected { path: devnode });
                 }
                 _ => {}
             }

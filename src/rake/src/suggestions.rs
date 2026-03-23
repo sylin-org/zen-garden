@@ -15,9 +15,9 @@ pub fn get_suggestions(command_name: &str) -> Vec<String> {
     cmd.see_also
         .iter()
         .filter_map(|related| {
-            MANIFEST.get(related).map(|related_cmd| {
-                format!("{:<16} {}", related_cmd.zen_name, related_cmd.description)
-            })
+            MANIFEST
+                .get(related)
+                .map(|related_cmd| format!("{:<16} {}", related_cmd.name, related_cmd.description))
         })
         .collect()
 }
@@ -33,7 +33,7 @@ pub fn print_suggestions(command_name: &str, quiet: bool) {
         return;
     }
 
-    let indent = garden_common::ui::rendering::constants::DEFAULT_INDENT;
+    let indent = crate::ui::rendering::constants::DEFAULT_INDENT;
     println!();
     println!("{}Related commands:", " ".repeat(indent));
     for suggestion in suggestions.iter().take(3) {

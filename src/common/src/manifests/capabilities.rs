@@ -364,8 +364,8 @@ pub enum OutputFormat {
 
 impl CapabilityManifest {
     /// Parse a capability manifest from YAML string
-    pub fn from_yaml(yaml: &str) -> Result<Self, serde_yaml::Error> {
-        serde_yaml::from_str(yaml)
+    pub fn from_yaml(yaml: &str) -> Result<Self, serde_yml::Error> {
+        serde_yml::from_str(yaml)
     }
 
     /// Get capability type config by type name

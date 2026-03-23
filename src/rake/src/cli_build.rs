@@ -1,12 +1,10 @@
-﻿//! CLI builder — generates Clap application from the command manifest
+//! CLI builder — generates Clap application from the command manifest
 //!
-//! This module bridges the declarative CommandManifest with Clap's builder API.
-//! Instead of derive macros, the Clap command tree is built programmatically
-//! from manifest data, making the manifest the single source of truth.
+//! Bridges the declarative CommandManifest with Clap's builder API.
+//! Single grammar: `verb [noun] [--flags]`. No dual syntax, no normalization.
 
 use crate::arg_spec::{ArgKind, ArgSpec, SubDef};
-use crate::command_manifest::{CommandDef, CommandManifest, OnStoneMapping};
-use std::collections::{HashMap, HashSet};
+use crate::command_manifest::{CommandDef, CommandManifest};
 
 /// Global flags extracted from top-level Clap parsing
 #[derive(Debug, Clone)]
@@ -34,7 +32,11 @@ impl Default for GlobalFlags {
 pub fn build_clap_app(manifest: &CommandManifest) -> clap::Command {
     let mut app = clap::Command::new("garden-rake")
         .about("Zen Garden management CLI - run without arguments to see command directory")
-        .version(concat!(env!("CARGO_PKG_VERSION"), ".", env!("BUILD_NUMBER")))
+        .version(concat!(
+            env!("CARGO_PKG_VERSION"),
+            ".",
+            env!("BUILD_NUMBER")
+        ))
         .subcommand_required(false)
         .arg_required_else_help(false)
         .disable_help_subcommand(true);
@@ -47,14 +49,14 @@ pub fn build_clap_app(manifest: &CommandManifest) -> clap::Command {
                 .long("quiet")
                 .global(true)
                 .action(clap::ArgAction::SetTrue)
-                .help("Suppress suggestions (zen: quietly, env: GARDEN_QUIET)"),
+                .help("Suppress suggestions (env: GARDEN_QUIET)"),
         )
         .arg(
             clap::Arg::new("fresh")
                 .long("fresh")
                 .global(true)
                 .action(clap::ArgAction::SetTrue)
-                .help("Clear cached tending and force fresh discovery (zen: fresh)"),
+                .help("Clear cached tending and force fresh discovery"),
         )
         .arg(
             clap::Arg::new("verbose")
@@ -70,7 +72,7 @@ pub fn build_clap_app(manifest: &CommandManifest) -> clap::Command {
                 .long("output")
                 .global(true)
                 .default_value("human")
-                .help("Output format for automation (human, json)"),
+                .help("Output format (human, json)"),
         )
         .arg(
             clap::Arg::new("field")
@@ -94,7 +96,6 @@ fn build_subcommand(def: &CommandDef) -> clap::Command {
         .about(def.description)
         .long_about(def.long_description);
 
-    // Set command-level flags
     if def.hidden {
         cmd = cmd.hide(true);
     }
@@ -102,17 +103,9 @@ fn build_subcommand(def: &CommandDef) -> clap::Command {
         cmd = cmd.subcommand_negates_reqs(true);
     }
 
-    // Add zen name as alias if different from canonical name
-    if def.zen_name != def.name {
-        cmd = cmd.visible_alias(def.zen_name);
-    }
-
-    // Add normative name as alias if different
-    // (Only simple single-word normative names work as Clap aliases)
-    if let Some(norm) = def.normative_name {
-        if !norm.contains(' ') && norm != def.name {
-            cmd = cmd.visible_alias(norm);
-        }
+    // Add visible aliases (e.g., "explore" for offer, "cap" for capabilities)
+    for alias in def.aliases {
+        cmd = cmd.visible_alias(alias);
     }
 
     // Add arguments from ArgSpec
@@ -134,7 +127,6 @@ fn build_arg(spec: &ArgSpec) -> clap::Arg {
 
     match spec.kind {
         ArgKind::Positional => {
-            // No .long() — positional args don't have flag names
             if spec.required {
                 arg = arg.required(true);
             }
@@ -149,17 +141,13 @@ fn build_arg(spec: &ArgSpec) -> clap::Arg {
             arg = arg.long(spec.name).action(clap::ArgAction::Count);
         }
         ArgKind::MultiOption => {
-            arg = arg
-                .long(spec.name)
-                .action(clap::ArgAction::Append);
+            arg = arg.long(spec.name).action(clap::ArgAction::Append);
             if let Some(d) = spec.value_delimiter {
                 arg = arg.value_delimiter(d);
             }
         }
         ArgKind::Trailing => {
-            arg = arg
-                .trailing_var_arg(true)
-                .num_args(0..);
+            arg = arg.trailing_var_arg(true).num_args(0..);
             if spec.allow_hyphen_values {
                 arg = arg.allow_hyphen_values(true);
             }
@@ -201,167 +189,6 @@ fn build_sub(sub: &SubDef) -> clap::Command {
     cmd
 }
 
-// ============================================================================
-// Alias Index — unified lookup for all command names (Proposal D)
-// ============================================================================
-
-/// Unified name resolution index — single source for all alias lookups.
-///
-/// Replaces the old `build_zen_lookup` + `build_normative_lookup` +
-/// `find_by_any_name` with a single O(1) index built once at startup.
-pub struct AliasIndex {
-    /// Maps any known name → canonical command name
-    to_canonical: HashMap<&'static str, &'static str>,
-    /// Set of zen verbs (for parser style detection)
-    zen_verbs: HashSet<&'static str>,
-}
-
-impl AliasIndex {
-    /// Build from the manifest — consolidates zen names, aliases, and normative names.
-    pub fn build(manifest: &CommandManifest) -> Self {
-        let mut to_canonical = HashMap::new();
-        let mut zen_verbs = HashSet::new();
-
-        for cmd in manifest.all_sorted() {
-            // Primary name always maps to itself
-            to_canonical.insert(cmd.name, cmd.name);
-
-            // Zen name
-            to_canonical.insert(cmd.zen_name, cmd.name);
-            zen_verbs.insert(cmd.zen_name);
-
-            // Zen aliases
-            for alias in cmd.zen_aliases {
-                to_canonical.insert(alias, cmd.name);
-                zen_verbs.insert(alias);
-            }
-
-            // Normative name (single-word only — multi-word like "services status" aren't Clap subcommands)
-            if let Some(norm) = cmd.normative_name {
-                if !norm.contains(' ') {
-                    to_canonical.insert(norm, cmd.name);
-                }
-            }
-        }
-
-        Self {
-            to_canonical,
-            zen_verbs,
-        }
-    }
-
-    /// Resolve any name (zen, alias, normative, canonical) to the canonical command name.
-    pub fn resolve(&self, name: &str) -> Option<&'static str> {
-        self.to_canonical.get(name).copied()
-    }
-
-    /// Check if a word is a zen verb (for parser style detection).
-    pub fn is_zen_verb(&self, word: &str) -> bool {
-        self.zen_verbs.contains(word)
-    }
-
-    /// Get the full set of zen verbs.
-    pub fn zen_verbs(&self) -> &HashSet<&'static str> {
-        &self.zen_verbs
-    }
-
-    /// Get all known verbs (zen + normative + canonical) for parser detection.
-    pub fn all_known_verbs(&self) -> HashSet<&'static str> {
-        self.to_canonical.keys().copied().collect()
-    }
-}
-
-/// Normalize zen syntax to Clap-parseable args using manifest data.
-///
-/// Converts zen verb + positional keywords into normative args that Clap can parse.
-/// The `on <stone>` mapping is now driven by `CommandDef.on_stone_mapping` instead
-/// of a hardcoded match statement.
-pub fn normalize_zen_to_clap(
-    parsed: &garden_common::cli::parser::ParsedCommand,
-    alias_index: &AliasIndex,
-    manifest: &CommandManifest,
-) -> anyhow::Result<Vec<String>> {
-    let canonical = alias_index
-        .resolve(&parsed.verb)
-        .ok_or_else(|| anyhow::anyhow!("Unknown zen verb: {}", parsed.verb))?;
-
-    // Look up the command def for on_stone_mapping
-    let cmd_def = manifest.get(canonical);
-    let on_stone = cmd_def
-        .map(|d| d.on_stone_mapping)
-        .unwrap_or(OnStoneMapping::ToAtFlag);
-
-    let mut args = Vec::new();
-    args.push(canonical.to_string());
-
-    // Verb-specific arg structure transformations.
-    // Most verbs just pass args through; a few need special handling.
-    match parsed.verb.as_str() {
-        // "explore" → "offer" with no args (list mode)
-        "explore" => {}
-        // "capabilities" zen syntax: `capabilities ollama mirror from stone-02`
-        // Clap expects: `capabilities mirror ollama`
-        "capabilities" if parsed.args.len() >= 2 && parsed.args[1] == "mirror" => {
-            let offering = parsed.args[0].clone();
-            args.push("mirror".to_string());
-            args.push(offering);
-            args.extend(parsed.args[2..].to_vec());
-        }
-        // Default: pass all positional args through
-        _ => {
-            args.extend(parsed.args.clone());
-        }
-    }
-
-    // Map `on <stone>` according to the manifest's on_stone_mapping (Proposal C)
-    if let Some(stone) = &parsed.keywords.on_stone {
-        match on_stone {
-            OnStoneMapping::ToAtFlag => {
-                args.push("--at".to_string());
-                args.push(stone.clone());
-            }
-            OnStoneMapping::ToPositional => {
-                args.push(stone.clone());
-            }
-            OnStoneMapping::Ignore => {}
-        }
-    }
-
-    // Handle "somewhere" → --placement-mode
-    if parsed.keywords.somewhere {
-        let mode = if parsed.keywords.quietly {
-            "auto"
-        } else {
-            "interactive"
-        };
-        args.push("--placement-mode".to_string());
-        args.push(mode.to_string());
-    }
-
-    // Handle "from" → --from (for borrow command)
-    if let Some(url) = &parsed.keywords.from_url {
-        args.push("--from".to_string());
-        args.push(url.clone());
-    }
-
-    // Handle "wishfully" → --wishful
-    if parsed.keywords.wishfully {
-        args.push("--wishful".to_string());
-    }
-
-    // Handle "quietly" → --quiet
-    if parsed.keywords.quietly {
-        args.push("--quiet".to_string());
-    }
-
-    // Handle "fresh" → --fresh
-    if parsed.keywords.fresh {
-        args.push("--fresh".to_string());
-    }
-
-    Ok(args)
-}
-
 /// Extract global flags from top-level ArgMatches
 pub fn extract_global_flags(matches: &clap::ArgMatches) -> GlobalFlags {
     GlobalFlags {
@@ -379,9 +206,7 @@ pub fn extract_global_flags(matches: &clap::ArgMatches) -> GlobalFlags {
     }
 }
 
-/// Count verbosity flags from raw args (before Clap parsing)
-///
-/// Supports: -v, -vv, -vvv, -vvvv, --verbose (counted per occurrence)
+/// Count verbosity flags from raw args (before Clap parsing, for tracing init)
 pub fn count_verbosity(args: &[String]) -> u8 {
     let mut count = 0u8;
     for arg in args {

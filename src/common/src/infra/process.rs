@@ -107,17 +107,16 @@ pub fn check_process_exists(process_name: &str) -> bool {
                 "/NH",
             ])
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    if let Some(pid_str) = line.split(',').nth(1) {
-                        let pid_str = pid_str.trim_matches('"').trim();
-                        if let Ok(pid) = pid_str.parse::<u32>() {
-                            if pid != current_pid {
-                                return true;
-                            }
-                        }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some(pid_str) = line.split(',').nth(1) {
+                    let pid_str = pid_str.trim_matches('"').trim();
+                    if let Ok(pid) = pid_str.parse::<u32>()
+                        && pid != current_pid
+                    {
+                        return true;
                     }
                 }
             }
@@ -125,7 +124,7 @@ pub fn check_process_exists(process_name: &str) -> bool {
         false
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         use std::process::Command;
         let current_pid = std::process::id();
@@ -180,20 +179,20 @@ pub fn kill_process(process_name: &str) -> Result<()> {
             for line in stdout.lines() {
                 if let Some(pid_str) = line.split(',').nth(1) {
                     let pid_str = pid_str.trim_matches('"').trim();
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        if pid != current_pid {
-                            tracing::info!("Killing {} process: PID {}", process_name, pid);
-                            let _ = Command::new("taskkill")
-                                .args(["/PID", &pid.to_string(), "/F"])
-                                .output();
-                        }
+                    if let Ok(pid) = pid_str.parse::<u32>()
+                        && pid != current_pid
+                    {
+                        tracing::info!("Killing {} process: PID {}", process_name, pid);
+                        let _ = Command::new("taskkill")
+                            .args(["/PID", &pid.to_string(), "/F"])
+                            .output();
                     }
                 }
             }
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         use std::process::Command;
         let current_pid = std::process::id();

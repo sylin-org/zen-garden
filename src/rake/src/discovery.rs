@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Cached Lantern discovery result
-static LANTERN_CACHE: once_cell::sync::Lazy<Arc<Mutex<Option<Option<String>>>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(None)));
+static LANTERN_CACHE: std::sync::LazyLock<Arc<Mutex<Option<Option<String>>>>> =
+    std::sync::LazyLock::new(|| Arc::new(Mutex::new(None)));
 
 /// Start background Lantern discovery (non-blocking)
 /// Returns immediately, result will be cached for future use
@@ -230,7 +230,7 @@ where
 ///
 /// # Returns
 /// Vector of discovered stone responses
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub fn discover_moss_mdns(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
     use mdns_sd::{ServiceDaemon, ServiceEvent};
     use std::time::Instant;
@@ -320,7 +320,7 @@ pub fn discover_moss_mdns(timeout: Duration) -> Result<Vec<DiscoveryResponse>> {
 /// Discover Moss instances via mDNS with streaming callback (Linux only)
 ///
 /// Like `discover_moss_mdns` but invokes callback immediately for each discovery.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub fn discover_moss_mdns_stream<F>(timeout: Duration, mut on_discovered: F) -> Result<usize>
 where
     F: FnMut(DiscoveryResponse, std::time::Instant),
@@ -539,7 +539,7 @@ pub async fn discover_moss_auto(timeout: Duration) -> Result<Vec<DiscoveryRespon
     let seen_endpoints = Arc::new(Mutex::new(HashSet::new()));
 
     // On Linux, run mDNS and UDP in parallel
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         let mdns_results = results.clone();
         let mdns_seen = seen_endpoints.clone();
@@ -620,7 +620,7 @@ where
     let total_count = Arc::new(Mutex::new(0usize));
 
     // On Linux, run mDNS and UDP in parallel
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         let mdns_seen = seen_endpoints.clone();
         let mdns_callback = callback.clone();

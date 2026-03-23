@@ -34,8 +34,8 @@ pub async fn run_aggregation(
             let topo = topology.read().await;
             topo.stones
                 .iter()
-                .filter(|(_, entry)| entry.status == garden_common::StoneStatus::Online)
-                .map(|(key, entry)| (key.clone(), entry.address.http_base()))
+                .filter(|(_, entry): &(&String, &garden_common::types::topology::TopologyEntry)| entry.status == garden_common::StoneStatus::Online)
+                .map(|(key, entry): (&String, &garden_common::types::topology::TopologyEntry)| (key.clone(), entry.address.http_base()))
                 .collect()
         };
 

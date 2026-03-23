@@ -18,7 +18,6 @@
 //!
 //! struct MyHandler;
 //!
-//! #[async_trait]
 //! impl CommandHandler for MyHandler {
 //!     async fn handle(&self, args: &[String]) -> CommandResponse {
 //!         match args.first().map(|s| s.as_str()) {
@@ -66,7 +65,6 @@ pub mod prelude {
     pub use crate::sse::{EventHandler, SseClient, SseEvent};
     pub use crate::state::CompanionState;
     pub use anyhow::Result;
-    pub use async_trait::async_trait;
     pub use garden_common::command_manifest::CommandResponse;
 }
 
@@ -76,9 +74,6 @@ pub use handler::CommandHandler;
 pub use runtime::CompanionRuntime;
 pub use sse::{EventHandler, SseClient, SseEvent};
 pub use state::CompanionState;
-
-// Re-export async_trait for implementors
-pub use async_trait::async_trait;
 
 // Re-export from garden_common for convenience
 pub use garden_common::command_manifest::{

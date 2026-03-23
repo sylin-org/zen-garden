@@ -24,13 +24,11 @@ impl Suggestion {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_service(mut self, service: String) -> Self {
         self.service_name = Some(service);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_success(mut self, success: bool) -> Self {
         self.success = success;
         self

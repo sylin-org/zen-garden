@@ -192,14 +192,21 @@ where
 
 /// Persist ceremony state to journal
 async fn persist_ceremony(state: &AppState, ceremony: &Ceremony) -> Result<()> {
-    state.security.pond.ceremony.journal.persist(ceremony).await.map_err(|e| {
-        tracing::error!(
-            ceremony_id = %ceremony.id,
-            error = %e,
-            "Failed to persist ceremony state"
-        );
-        e
-    })
+    state
+        .security
+        .pond
+        .ceremony
+        .journal
+        .persist(ceremony)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                ceremony_id = %ceremony.id,
+                error = %e,
+                "Failed to persist ceremony state"
+            );
+            e
+        })
 }
 
 #[cfg(test)]

@@ -266,7 +266,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 
     // First pass: collect offerings that need guidance
     // For backfilling, we use the manifest's ports since existing offerings may only have a single port stored
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     let offerings_needing_guidance: Vec<(
         String,
         String,
@@ -368,14 +368,16 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
     for (offering_id, name, offering_type, ports) in offerings_needing_guidance {
         if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip) {
             // Guidance is detail-only (not in chirps), so no sync needed
-            state.update_offering(&offering_id, false, |o| {
-                if let Some(ref mut managed) = o.managed_data_mut() {
-                    managed.guidance = Some(guidance);
-                    updated += 1;
-                    tracing::debug!(offering = %name, "Backfilled guidance");
-                }
-                false // detail-only, no chirp impact
-            }).await;
+            state
+                .update_offering(&offering_id, false, |o| {
+                    if let Some(ref mut managed) = o.managed_data_mut() {
+                        managed.guidance = Some(guidance);
+                        updated += 1;
+                        tracing::debug!(offering = %name, "Backfilled guidance");
+                    }
+                    false // detail-only, no chirp impact
+                })
+                .await;
         }
     }
 
@@ -383,27 +385,21 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         if let Some(guidance) =
             build_adopted_guidance(state, &name, &offering_type, port, static_ip)
         {
-            state.update_offering(&offering_id, false, |o| {
-                if let Some(ref mut adopted) = o.adopted_data_mut() {
-                    adopted.guidance = Some(guidance);
-                    updated += 1;
-                    tracing::debug!(offering = %name, "Backfilled adopted guidance");
-                }
-                false // detail-only, no chirp impact
-            }).await;
+            state
+                .update_offering(&offering_id, false, |o| {
+                    if let Some(ref mut adopted) = o.adopted_data_mut() {
+                        adopted.guidance = Some(guidance);
+                        updated += 1;
+                        tracing::debug!(offering = %name, "Backfilled adopted guidance");
+                    }
+                    false // detail-only, no chirp impact
+                })
+                .await;
         }
     }
 
-    // Persist if we made changes
     if updated > 0 {
-        if let Err(e) = state.persist_offerings().await {
-            tracing::error!(error = ?e, "Failed to persist offerings after guidance backfill");
-        } else {
-            tracing::info!(
-                count = updated,
-                "Guidance backfill complete, offerings persisted"
-            );
-        }
+        tracing::info!(count = updated, "Guidance backfill complete");
     }
 
     updated
@@ -470,7 +466,13 @@ pub async fn install_service_task(
         offering_type,
         "Resolving compiled offering config"
     );
-    let compiled = match get_compiled_offering(state, offering_type).await {
+    let compiled = match get_compiled_offering(
+        state,
+        offering_type,
+        &crate::infra::persistence::OsOfferingsCache,
+    )
+    .await
+    {
         Ok(Some(o)) => o,
         Ok(None) => {
             state.console.emit(console::ConsoleEvent::new(
@@ -732,13 +734,17 @@ pub async fn install_service_task(
     let spec = crate::docker::ContainerSpec {
         image: compiled.image.clone(),
         command: None,
-        ports: manifest_ports_named.iter().map(|(_, h, c)| (*h, *c)).collect(),
+        ports: manifest_ports_named
+            .iter()
+            .map(|(_, h, c)| (*h, *c))
+            .collect(),
         environment: compiled.environment,
         volumes: compiled.volumes,
         config_files: vec![],
     };
     let actual_ports = match state
-        .platform.docker
+        .platform
+        .docker
         .install_service(offering, &spec, Some(&state.console))
         .await
     {
@@ -809,23 +815,27 @@ pub async fn install_service_task(
     let update_protocol = offering_protocol.clone();
     let update_guidance = guidance.clone();
     let update_port_map = port_map.clone();
-    let updated = state.update_offering_by_name(offering, false, |o| {
-        o.status = OfferingStatus::Running;
-        o.health = ServiceHealthStatus::Healthy;
-        o.version = update_version;
-        o.location.port = actual_port;
-        o.location.protocol = update_protocol;
-        o.location.port_map = update_port_map;
-        if let Some(ref mut managed) = o.managed_data_mut() {
-            managed.job_id = None;
-            managed.guidance = update_guidance;
-        }
-        true
-    }).await;
+    let updated = state
+        .update_offering_by_name(offering, false, |o| {
+            o.status = OfferingStatus::Running;
+            o.health = ServiceHealthStatus::Healthy;
+            o.version = update_version;
+            o.location.port = actual_port;
+            o.location.protocol = update_protocol;
+            o.location.port_map = update_port_map;
+            if let Some(ref mut managed) = o.managed_data_mut() {
+                managed.job_id = None;
+                managed.guidance = update_guidance;
+            }
+            true
+        })
+        .await;
 
     let offering_id = if updated {
         let offerings = state.offerings.read().await;
-        offerings.iter().find(|o| o.name.to_string() == offering)
+        offerings
+            .iter()
+            .find(|o| o.name.to_string() == offering)
             .map(|o| o.offering_id.clone())
             .unwrap_or_default()
     } else {
@@ -840,6 +850,7 @@ pub async fn install_service_task(
                 image_ref: None,
             }),
             offering: offering_type.to_string(),
+            category: compiled.category.clone(),
             version: image_version.clone(),
             status: OfferingStatus::Running,
             health: ServiceHealthStatus::Healthy,
@@ -867,7 +878,6 @@ pub async fn install_service_task(
 
     // Sync + chirp so topology reflects the change immediately
     state.sync_self_services(true).await;
-    let _ = state.persist_offerings().await;
 
     // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
     state.event_bus.emit(OfferingEvent::deployed(
@@ -878,8 +888,8 @@ pub async fn install_service_task(
     ));
 
     // Assign initial orchestration role for elected offerings (ORCH-0006)
-    if compiled.coordination.is_elected() {
-        if let Err(e) =
+    if compiled.coordination.is_elected()
+        && let Err(e) =
             crate::tasks::offering_orchestration::assign_initial_role(state, &offering_id, offering)
                 .await
         {
@@ -889,7 +899,6 @@ pub async fn install_service_task(
                 "Failed to assign initial orchestration role (non-fatal)"
             );
         }
-    }
 
     // Register scheduled tasks from manifest
     if !compiled.tasks.is_empty() {
@@ -962,10 +971,19 @@ pub async fn install_image_direct_task(
     state.console.emit(console::ConsoleEvent::new(
         console::EventCategory::Jobs,
         console::EventStatus::Started,
-        format!("Image-direct install {} (job: {})", service_name, &job_id[..8]),
+        format!(
+            "Image-direct install {} (job: {})",
+            service_name,
+            &job_id[..8]
+        ),
     ));
     emit_job_started(state, job_id, service_name, "install");
-    tracing::info!(job_id, service_name, image_ref, "Starting image-direct installation");
+    tracing::info!(
+        job_id,
+        service_name,
+        image_ref,
+        "Starting image-direct installation"
+    );
 
     // Step 1: Pull and inspect image
     emit_job_progress(
@@ -1005,8 +1023,10 @@ pub async fn install_image_direct_task(
     // Step 3: Check for curated alternative (advisory only — log it)
     {
         let idx_guard = state.offerings_index.read().await;
-        if let Some(idx) = idx_guard.as_ref() {
-            if let Some(alt) = offering_resolution::check_curated_collision(image_ref, &idx.offerings) {
+        if let Some(idx) = idx_guard.as_ref()
+            && let Some(alt) =
+                offering_resolution::check_curated_collision(image_ref, &idx.offerings)
+            {
                 tracing::info!(
                     image_ref,
                     curated = %alt.offering_name,
@@ -1023,7 +1043,6 @@ pub async fn install_image_direct_task(
                     service_name,
                 );
             }
-        }
     }
 
     // Step 4: Build ContainerSpec and deploy
@@ -1031,13 +1050,18 @@ pub async fn install_image_direct_task(
     emit_job_progress(
         state,
         "info",
-        format!("Deploying container with {} port(s), {} volume(s)", resolved.ports.len(), resolved.volumes.len()),
+        format!(
+            "Deploying container with {} port(s), {} volume(s)",
+            resolved.ports.len(),
+            resolved.volumes.len()
+        ),
         job_id,
         service_name,
     );
 
     let actual_ports = match state
-        .platform.docker
+        .platform
+        .docker
         .install_service(service_name, &spec, Some(&state.console))
         .await
     {
@@ -1063,11 +1087,7 @@ pub async fn install_image_direct_task(
     };
 
     // Step 5: Determine actual port and protocol
-    let primary_port = resolved
-        .ports
-        .first()
-        .map(|(_, h, _)| *h)
-        .unwrap_or(0);
+    let primary_port = resolved.ports.first().map(|(_, h, _)| *h).unwrap_or(0);
     let actual_port = actual_ports
         .iter()
         .find(|(h, _)| *h == primary_port)
@@ -1115,8 +1135,6 @@ pub async fn install_image_direct_task(
         })
         .await;
 
-    let _ = state.persist_offerings().await;
-
     // Emit deployed event
     state.event_bus.emit(OfferingEvent::deployed(
         service_name,
@@ -1138,10 +1156,19 @@ pub async fn install_image_direct_task(
     state.console.emit(console::ConsoleEvent::new(
         console::EventCategory::Jobs,
         console::EventStatus::Completed,
-        format!("Image-direct install {} (job: {})", service_name, &job_id[..8]),
+        format!(
+            "Image-direct install {} (job: {})",
+            service_name,
+            &job_id[..8]
+        ),
     ));
 
-    tracing::info!(job_id, service_name, image_ref, "Image-direct installation completed");
+    tracing::info!(
+        job_id,
+        service_name,
+        image_ref,
+        "Image-direct installation completed"
+    );
 }
 
 /// Execute batch service installation in background
@@ -1219,7 +1246,13 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let service_name = offering_fqn.fqn();
         let offering_type = offering_fqn.offering.clone();
 
-        let compiled = match get_compiled_offering(state, &offering_type).await {
+        let compiled = match get_compiled_offering(
+            state,
+            &offering_type,
+            &crate::infra::persistence::OsOfferingsCache,
+        )
+        .await
+        {
             Ok(Some(o)) => o,
             Ok(None) => {
                 let mut jobs = state.jobs.write().await;
@@ -1306,13 +1339,17 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let spec = crate::docker::ContainerSpec {
             image: compiled.image.clone(),
             command: None,
-            ports: manifest_ports_named.iter().map(|(_, h, c)| (*h, *c)).collect(),
+            ports: manifest_ports_named
+                .iter()
+                .map(|(_, h, c)| (*h, *c))
+                .collect(),
             environment: compiled.environment,
             volumes: compiled.volumes,
             config_files: vec![],
         };
         let actual_ports = match state
-            .platform.docker
+            .platform
+            .docker
             .install_service(&service_name, &spec, Some(&state.console))
             .await
         {
@@ -1365,6 +1402,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
                 image_ref: None,
             }),
             offering: offering_type.to_string(),
+            category: compiled.category.clone(),
             version: image_version,
             status: OfferingStatus::Running,
             health: ServiceHealthStatus::Healthy,
@@ -1726,9 +1764,7 @@ async fn offering_to_service_info_for_refresh(
             .or_else(|| offering.adopted_data().and_then(|a| a.guidance.clone())),
         customized_by: offering
             .managed_data()
-            .map(|m| {
-                crate::domain::config_compose::patch_owners(&m.config_patches)
-            })
+            .map(|m| crate::domain::config_compose::patch_owners(&m.config_patches))
             .unwrap_or_default(),
     }
 }

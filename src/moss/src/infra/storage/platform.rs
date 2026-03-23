@@ -8,171 +8,20 @@
 //! never emit domain events. They report what the OS sees.
 //! Hotplug detection is handled by the `monitor` module (STORAGE-0014).
 
-use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-// ============================================================================
-// Types (platform-agnostic)
-// ============================================================================
-
-/// Snapshot of a volume as seen by the OS.
-///
-/// No domain concepts — just what the platform reports.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VolumeSnapshot {
-    /// Device identifier: `/dev/sdb1` on Linux, `E:\` on Windows.
-    pub path: String,
-
-    /// Where the volume's content is accessible.
-    /// On Linux this is the mount point (e.g. `/mnt/usb`).
-    /// On Windows this equals `path` (drive letter IS the mount).
-    pub mount_path: String,
-
-    /// Filesystem label if available (e.g. "SANDISK_32GB").
-    pub label: Option<String>,
-
-    /// Total capacity in bytes.
-    pub capacity_bytes: u64,
-
-    /// Whether the OS considers this removable (USB, SD card, etc.).
-    pub removable: bool,
-}
-
-/// Disk usage result.
-#[derive(Debug, Clone, Copy)]
-pub struct DiskUsage {
-    pub used_bytes: u64,
-    pub available_bytes: u64,
-}
-
-impl DiskUsage {
-    pub fn total(&self) -> u64 {
-        self.used_bytes + self.available_bytes
-    }
-}
+// Value types live in domain; re-exported here for backward compatibility
+// with infra consumers and external callers.
+pub use crate::domain::storage::platform_types::{
+    BusType, DiskUsage, MediumCondition, MediumSnapshot, PartitionSnapshot, UnmountedDevice,
+    VolumeSnapshot,
+};
 
 // ============================================================================
-// Medium types — physical disk layer (host-only)
+// Value types re-exported from domain::storage::platform_types
+// (VolumeSnapshot, DiskUsage, BusType, MediumCondition, PartitionSnapshot,
+//  MediumSnapshot, UnmountedDevice)
 // ============================================================================
-
-/// Bus type of the physical connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum BusType {
-    Usb,
-    Sata,
-    Nvme,
-    Scsi,
-    /// SD card, eMMC
-    Mmc,
-    Unknown,
-}
-
-impl std::fmt::Display for BusType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Usb => write!(f, "USB"),
-            Self::Sata => write!(f, "SATA"),
-            Self::Nvme => write!(f, "NVMe"),
-            Self::Scsi => write!(f, "SCSI"),
-            Self::Mmc => write!(f, "MMC"),
-            Self::Unknown => write!(f, "Unknown"),
-        }
-    }
-}
-
-/// Condition of a physical medium.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MediumCondition {
-    /// No partition table. Brand new or wiped disk.
-    Raw,
-    /// Has a partition table with 1+ partitions.
-    Partitioned,
-    /// Device is offline or reporting I/O errors.
-    Unreadable,
-}
-
-impl std::fmt::Display for MediumCondition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Raw => write!(f, "raw"),
-            Self::Partitioned => write!(f, "partitioned"),
-            Self::Unreadable => write!(f, "unreadable"),
-        }
-    }
-}
-
-// Conversions to shared API types (garden_common::storage)
-impl From<BusType> for garden_common::storage::BusType {
-    fn from(b: BusType) -> Self {
-        match b {
-            BusType::Usb => Self::Usb,
-            BusType::Sata => Self::Sata,
-            BusType::Nvme => Self::Nvme,
-            BusType::Scsi => Self::Scsi,
-            BusType::Mmc => Self::Mmc,
-            BusType::Unknown => Self::Unknown,
-        }
-    }
-}
-
-impl From<MediumCondition> for garden_common::storage::MediumCondition {
-    fn from(c: MediumCondition) -> Self {
-        match c {
-            MediumCondition::Raw => Self::Raw,
-            MediumCondition::Partitioned => Self::Partitioned,
-            MediumCondition::Unreadable => Self::Unreadable,
-        }
-    }
-}
-
-/// A partition on a physical medium.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PartitionSnapshot {
-    /// Partition number (1-based).
-    pub index: u32,
-    /// Size in bytes.
-    pub size_bytes: u64,
-    /// Filesystem type if known (e.g., "NTFS", "ext4").
-    pub filesystem: Option<String>,
-    /// Drive letter (Windows) or mount point (Linux), if assigned.
-    pub mount_path: Option<String>,
-    /// Volume label if available.
-    pub label: Option<String>,
-}
-
-/// Snapshot of a physical storage medium (disk) as seen by the OS.
-///
-/// Represents the whole disk, not a partition. A medium can have 0 or more
-/// partitions. Host-only — never broadcast to the garden.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MediumSnapshot {
-    /// OS-level device identifier.
-    /// Windows: `\\.\PhysicalDrive2`, Linux: `/dev/sdb`
-    pub device_id: String,
-
-    /// Vendor/model name (e.g., "SanDisk Portable SSD").
-    pub model: Option<String>,
-
-    /// Serial number if available.
-    pub serial: Option<String>,
-
-    /// Physical bus type.
-    pub bus_type: BusType,
-
-    /// Total size in bytes (entire disk).
-    pub size_bytes: u64,
-
-    /// Whether the medium is external/removable.
-    pub removable: bool,
-
-    /// Physical condition.
-    pub condition: MediumCondition,
-
-    /// Partitions on this medium.
-    pub partitions: Vec<PartitionSnapshot>,
-}
 
 // ============================================================================
 // Cross-platform API
@@ -213,7 +62,6 @@ pub fn disk_usage(path: &str) -> Option<DiskUsage> {
         None
     }
 }
-
 
 /// Scan physical storage media (disks).
 ///
@@ -414,19 +262,6 @@ pub fn probe_device_state(
     }
 }
 
-/// An unmounted removable device that could potentially be a managed storage.
-#[derive(Debug, Clone)]
-pub struct UnmountedDevice {
-    /// Device path (e.g., `/dev/sdb1`).
-    pub device: String,
-    /// Device name (e.g., `sdb1`).
-    pub name: String,
-    /// Capacity in bytes (from sysfs).
-    pub capacity_bytes: u64,
-    /// Filesystem label if available.
-    pub label: Option<String>,
-}
-
 /// List unmounted removable devices that could potentially be managed storage.
 ///
 /// Linux: scans `/sys/block` for removable devices with unmounted partitions.
@@ -622,9 +457,7 @@ mod linux {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        name.chars()
-            .take_while(|c| !c.is_ascii_digit())
-            .collect()
+        name.chars().take_while(|c| !c.is_ascii_digit()).collect()
     }
 
     pub(super) fn capacity_from_sysfs(device_path: &str) -> Option<u64> {
@@ -715,10 +548,8 @@ mod linux {
                 if output.status.success() {
                     let result = check_mount_contents(&temp_mount);
 
-                    let _ =
-                        run_command_timed_sync("sudo", &["umount", &temp_mount], mount_timeout);
-                    let _ =
-                        run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
+                    let _ = run_command_timed_sync("sudo", &["umount", &temp_mount], mount_timeout);
+                    let _ = run_command_timed_sync("sudo", &["rmdir", &temp_mount], mount_timeout);
 
                     return result;
                 }
@@ -776,17 +607,24 @@ mod linux {
 
         tokio::fs::create_dir_all(mount_path).await?;
 
-        let output =
-            run_sudo_timed_quiet(&["mount", device, mount_path], timeouts::subprocess_mount_timeout())
-                .await
-                .context("mount command failed or timed out")?;
+        let output = run_sudo_timed_quiet(
+            &["mount", device, mount_path],
+            timeouts::subprocess_mount_timeout(),
+        )
+        .await
+        .context("mount command failed or timed out")?;
 
         if output.status.success() {
             tracing::info!(device = %device, mount = %mount_path, "Mounted device");
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("mount {} -> {} failed: {}", device, mount_path, stderr.trim())
+            anyhow::bail!(
+                "mount {} -> {} failed: {}",
+                device,
+                mount_path,
+                stderr.trim()
+            )
         }
     }
 
@@ -794,10 +632,12 @@ mod linux {
         use super::super::subprocess::run_sudo_timed_quiet;
         use garden_common::constants::timeouts;
 
-        let output =
-            run_sudo_timed_quiet(&["umount", mount_path], timeouts::subprocess_mount_timeout())
-                .await
-                .context("umount command failed or timed out")?;
+        let output = run_sudo_timed_quiet(
+            &["umount", mount_path],
+            timeouts::subprocess_mount_timeout(),
+        )
+        .await
+        .context("umount command failed or timed out")?;
 
         if output.status.success() {
             tracing::info!(mount = %mount_path, "Unmounted");
@@ -853,7 +693,8 @@ mod linux {
                 let manifest_path = format!("{}/.zen-garden/manifest.json", temp_mount);
                 let manifest = if let Ok(content) = tokio::fs::read_to_string(&manifest_path).await
                 {
-                    match serde_json::from_str::<garden_common::storage::StorageManifest>(&content) {
+                    match serde_json::from_str::<garden_common::storage::StorageManifest>(&content)
+                    {
                         Ok(m) => {
                             debug!(device = %device, name = %m.name, id = %m.id, "Probed manifest");
                             Some(m)
@@ -1116,8 +957,14 @@ mod linux {
                 continue;
             }
 
-            let model = dev.get("model").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
-            let serial = dev.get("serial").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+            let model = dev
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
+            let serial = dev
+                .get("serial")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
             let tran = dev.get("tran").and_then(|v| v.as_str()).unwrap_or("");
             let size = dev.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
             let rm = dev.get("rm").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1137,9 +984,7 @@ mod linux {
 
             let (condition, partitions) = match children {
                 None => (MediumCondition::Raw, Vec::new()),
-                Some(parts) if parts.is_empty() => {
-                    (MediumCondition::Raw, Vec::new())
-                }
+                Some(parts) if parts.is_empty() => (MediumCondition::Raw, Vec::new()),
                 Some(parts) => {
                     let parts_vec: Vec<PartitionSnapshot> = parts
                         .iter()
@@ -1204,14 +1049,15 @@ mod windows {
     const DRIVE_FIXED: u32 = 3;
 
     pub fn scan_volumes() -> Vec<VolumeSnapshot> {
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetDriveTypeW, GetLogicalDriveStringsW,
-        };
+        use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDriveStringsW};
 
         let mut results = Vec::new();
 
         // Get all drive letter strings
         let mut buf = [0u16; 256];
+        // SAFETY: `buf` is a stack-allocated [u16; 256] valid for writes.
+        // `buf.len() as u32` correctly represents the buffer capacity.
+        // The function writes at most `buf.len()` wide chars including null terminators.
         let len = unsafe { GetLogicalDriveStringsW(buf.len() as u32, buf.as_mut_ptr()) };
         if len == 0 {
             warn!("GetLogicalDriveStringsW failed");
@@ -1226,6 +1072,8 @@ mod windows {
                     let drive: Vec<u16> = buf[start..=i].to_vec();
                     let drive_str = String::from_utf16_lossy(&buf[start..i]);
 
+                    // SAFETY: `drive` is a null-terminated wide string (includes the null
+                    // from buf[start..=i]). GetDriveTypeW only reads the pointer.
                     let drive_type = unsafe { GetDriveTypeW(drive.as_ptr()) };
 
                     // Only removable and fixed drives (skip network, CDROM, etc.)
@@ -1268,6 +1116,8 @@ mod windows {
         use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
 
         let wide = to_wide(path);
+        // SAFETY: `wide` is a null-terminated wide string produced by `to_wide`.
+        // GetDriveTypeW only reads the pointer.
         let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
         drive_type == DRIVE_REMOVABLE || is_usb_bus(path)
     }
@@ -1280,6 +1130,9 @@ mod windows {
         let mut total_bytes: u64 = 0;
         let mut total_free_bytes: u64 = 0;
 
+        // SAFETY: `wide` is a null-terminated wide string from `to_wide`.
+        // All three out-pointers are to stack-allocated u64s with valid lifetimes
+        // that outlive the call. The function writes exactly 8 bytes to each.
         let ok = unsafe {
             GetDiskFreeSpaceExW(
                 wide.as_ptr(),
@@ -1303,6 +1156,11 @@ mod windows {
         use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW;
 
         let mut label_buf = [0u16; 256];
+        // SAFETY: `drive_wide` is a null-terminated wide string (caller ensures this).
+        // `label_buf` is a stack-allocated [u16; 256] valid for writes; its length is
+        // passed correctly. Null pointers are explicitly passed for unused out-params
+        // (serial number, max component length, filesystem flags, filesystem name),
+        // which the Win32 API accepts as "don't write these".
         let ok = unsafe {
             GetVolumeInformationW(
                 drive_wide.as_ptr(),
@@ -1363,6 +1221,10 @@ mod windows {
         let device_path = format!("\\\\.\\{}", letter);
         let wide = to_wide(&device_path);
 
+        // SAFETY: `wide` is a null-terminated wide string from `to_wide`.
+        // All parameters are valid constants. Security attributes is null (default).
+        // The handle is checked against INVALID_HANDLE_VALUE immediately below
+        // and closed via `CloseHandle` before the function returns.
         let handle = unsafe {
             CreateFileW(
                 wide.as_ptr(),
@@ -1397,6 +1259,10 @@ mod windows {
         let mut out_buf = [0u8; 256];
         let mut bytes_returned: u32 = 0;
 
+        // SAFETY: `handle` is valid (checked against INVALID_HANDLE_VALUE above).
+        // `query` is a #[repr(C)] struct with the correct layout for STORAGE_PROPERTY_QUERY.
+        // `out_buf` is a stack-allocated [u8; 256] large enough for STORAGE_DEVICE_DESCRIPTOR.
+        // `bytes_returned` is a valid mutable u32 pointer. Overlapped is null (synchronous).
         let ok = unsafe {
             DeviceIoControl(
                 handle,
@@ -1410,6 +1276,8 @@ mod windows {
             )
         };
 
+        // SAFETY: `handle` was opened by `CreateFileW` above and has not been closed yet.
+        // After this call, the handle is invalid and must not be used.
         unsafe { CloseHandle(handle) };
 
         if ok == 0 || bytes_returned < 28 {
@@ -1549,12 +1417,24 @@ $disks | ConvertTo-Json -Depth 3 -Compress
                 continue;
             }
 
-            let model = disk.get("Model").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
-            let serial = disk.get("Serial").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+            let model = disk
+                .get("Model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
+            let serial = disk
+                .get("Serial")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string());
             let bus_str = disk.get("BusType").and_then(|v| v.as_str()).unwrap_or("");
             let size = disk.get("SizeBytes").and_then(|v| v.as_u64()).unwrap_or(0);
-            let style = disk.get("Style").and_then(|v| v.as_str()).unwrap_or("Unknown");
-            let status = disk.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown");
+            let style = disk
+                .get("Style")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let status = disk
+                .get("Status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
 
             let bus_type = match bus_str {
                 "USB" => BusType::Usb,
@@ -1671,7 +1551,10 @@ mod tests {
     #[test]
     fn test_scan_volumes_finds_drives() {
         let volumes = scan_volumes();
-        assert!(!volumes.is_empty(), "scan_volumes should find at least one volume");
+        assert!(
+            !volumes.is_empty(),
+            "scan_volumes should find at least one volume"
+        );
     }
 
     /// Verify USB bus type detection via IOCTL.

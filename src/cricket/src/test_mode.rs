@@ -135,19 +135,15 @@ fn draw_ui(
 }
 
 /// Main event loop
-async fn event_loop(
-    mixer: &Arc<Mixer>,
-    tunes: &Tunes,
-    bindings: &[KeyBinding],
-) -> Result<()> {
+async fn event_loop(mixer: &Arc<Mixer>, tunes: &Tunes, bindings: &[KeyBinding]) -> Result<()> {
     let mut stdout = stdout();
     let status_line = (bindings.len() + 15) as u16;
     let mut current_volume: u8 = 70;
 
     loop {
         // Wait for key event
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(KeyEvent {
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(KeyEvent {
                 code, modifiers, ..
             }) = event::read()?
             {
@@ -210,7 +206,6 @@ async fn event_loop(
                     _ => {}
                 }
             }
-        }
     }
 
     Ok(())

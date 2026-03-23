@@ -390,12 +390,10 @@ mod tests {
     fn two_patches_non_overlapping_env() {
         let tmpl = test_template();
         let mut p1 = patch("owner-a");
-        p1.environment
-            .insert("A".to_string(), "1".to_string());
+        p1.environment.insert("A".to_string(), "1".to_string());
 
         let mut p2 = patch("owner-b");
-        p2.environment
-            .insert("B".to_string(), "2".to_string());
+        p2.environment.insert("B".to_string(), "2".to_string());
 
         let eff = compose(&tmpl, &[p1, p2]).unwrap();
         assert!(eff.environment.contains(&"A=1".to_string()));

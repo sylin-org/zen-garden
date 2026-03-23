@@ -312,8 +312,8 @@ pub mod validation {
         }
 
         // Get index file content to verify offering is tracked
-        if let Ok(content) = ssh.exec(stone, &format!("cat {} 2>/dev/null", index_path)) {
-            if content.success {
+        if let Ok(content) = ssh.exec(stone, &format!("cat {} 2>/dev/null", index_path))
+            && content.success {
                 let has_offering = content.stdout.contains(offering_id);
                 result.add_check(
                     &format!(
@@ -323,7 +323,6 @@ pub mod validation {
                     has_offering,
                 );
             }
-        }
 
         Ok(result)
     }
@@ -368,13 +367,12 @@ pub mod validation {
         result.add_check("Harvest tarball exists", tarball_exists);
 
         // Get tarball size if it exists
-        if tarball_exists {
-            if let Ok(Some(size)) = ssh.file_size(stone, &tarball_path) {
+        if tarball_exists
+            && let Ok(Some(size)) = ssh.file_size(stone, &tarball_path) {
                 result
                     .metadata
                     .insert("tarball_size_bytes".to_string(), size.to_string());
             }
-        }
 
         // List all harvests for this offering
         if let Ok(files) = ssh.list_files(stone, &offering_path) {

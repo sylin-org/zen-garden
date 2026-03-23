@@ -8,6 +8,9 @@
 .env
 /samples
 
+# Proptest regression files (generated on failure, not committed)
+**/proptest-regressions/
+
 # Runtime artifacts (generated during operation)
 .zen-garden/
 rake-errors.txt

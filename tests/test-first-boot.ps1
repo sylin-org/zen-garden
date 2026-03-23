@@ -15,9 +15,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "`n╔══════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host   "║   First-Boot Console Test                   ║" -ForegroundColor Cyan
-Write-Host   "╚══════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+Write-Host "`n+==============================================+" -ForegroundColor Cyan
+Write-Host   "|   First-Boot Console Test                   |" -ForegroundColor Cyan
+Write-Host   "+==============================================+`n" -ForegroundColor Cyan
 
 # Check if binary exists
 $mossBinary = ".\dist\linux-x64\garden-moss"
@@ -80,9 +80,9 @@ $testScript = @"
 set -e
 
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║   Running First-Boot Test                   ║"
-echo "╚══════════════════════════════════════════════╝"
+echo "+==============================================+"
+echo "|   Running First-Boot Test                   |"
+echo "+==============================================+"
 echo ""
 
 # Check initial config
@@ -140,13 +140,13 @@ if (-not $KeepContainer) {
     Write-Host "  [OK] Cleanup complete" -ForegroundColor Green
 }
 
-Write-Host "`n╔══════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host   "║   Test Summary                               ║" -ForegroundColor Cyan
-Write-Host   "╚══════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+Write-Host "`n+==============================================+" -ForegroundColor Cyan
+Write-Host   "|   Test Summary                               |" -ForegroundColor Cyan
+Write-Host   "+==============================================+`n" -ForegroundColor Cyan
 Write-Host "  The test verified:" -ForegroundColor White
-Write-Host "    ✓ Binary loads without crashes" -ForegroundColor Green
-Write-Host "    ✓ First-run detection logic executes" -ForegroundColor Green
-Write-Host "    ✓ Console module compiles correctly" -ForegroundColor Green
+Write-Host "    OK Binary loads without crashes" -ForegroundColor Green
+Write-Host "    OK First-run detection logic executes" -ForegroundColor Green
+Write-Host "    OK Console module compiles correctly" -ForegroundColor Green
 Write-Host ""
 Write-Host "  For full testing with TTY output:" -ForegroundColor Yellow
 Write-Host "    Deploy to a physical Stone via NewStone-linux-x64.ps1" -ForegroundColor Yellow

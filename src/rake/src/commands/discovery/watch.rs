@@ -10,9 +10,8 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::discovery;
 use crate::suggestions;
-use async_trait::async_trait;
+use crate::ui::rendering as ui;
 use futures_util::StreamExt;
-use garden_common::ui::rendering as ui;
 use garden_common::{GardenApiResponse, HardwareCapabilities};
 use std::time::Duration;
 
@@ -44,10 +43,7 @@ impl WatchCommand {
 
     /// Create for offering log watching
     pub fn offering_logs(name: String, timestamps: bool, quiet: bool) -> Self {
-        Self::new(
-            WatchTargetType::OfferingLogs { name, timestamps },
-            quiet,
-        )
+        Self::new(WatchTargetType::OfferingLogs { name, timestamps }, quiet)
     }
 
     /// Create for stone log watching
@@ -56,29 +52,30 @@ impl WatchCommand {
     }
 }
 
-#[async_trait]
 impl Command for WatchCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        match &self.target {
-            WatchTargetType::Events { until } => {
-                let endpoint = ctx.endpoint()?;
-                watch_events(&ctx.client, endpoint, until.clone()).await?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            match &self.target {
+                WatchTargetType::Events { until } => {
+                    let endpoint = ctx.endpoint()?;
+                    watch_events(&ctx.client, endpoint, until.clone()).await?;
+                }
+                WatchTargetType::OfferingLogs { name, timestamps } => {
+                    let endpoint = ctx.endpoint()?;
+                    watch_offering_logs(&ctx.client, endpoint, name, *timestamps).await?;
+                }
+                WatchTargetType::StoneLogs { name, timestamps } => {
+                    // Stone logs need special resolution by stone name
+                    let endpoint = resolve_stone_endpoint(&ctx.client, name, &ctx.term).await?;
+                    watch_stone_logs(&endpoint, name, *timestamps).await?;
+                }
             }
-            WatchTargetType::OfferingLogs { name, timestamps } => {
-                let endpoint = ctx.endpoint()?;
-                watch_offering_logs(&ctx.client, endpoint, name, *timestamps).await?;
-            }
-            WatchTargetType::StoneLogs { name, timestamps } => {
-                // Stone logs need special resolution by stone name
-                let endpoint = resolve_stone_endpoint(&ctx.client, name, &ctx.term).await?;
-                watch_stone_logs(&endpoint, name, *timestamps).await?;
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::WATCH, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::WATCH, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -110,14 +107,11 @@ async fn resolve_stone_endpoint(
     for response in endpoints {
         let ep = response.address.http_base();
         let caps_url = format!("{}/api/v1/stone/capabilities", ep.trim_end_matches('/'));
-        if let Ok(resp) = client.get(&caps_url).send().await {
-            if let Ok(caps_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await
-            {
-                if caps_response.data.stone_name.to_lowercase() == stone_name.to_lowercase() {
+        if let Ok(resp) = client.get(&caps_url).send().await
+            && let Ok(caps_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await
+                && caps_response.data.stone_name.to_lowercase() == stone_name.to_lowercase() {
                     return Ok(ep.clone());
                 }
-            }
-        }
     }
 
     eprintln!(
@@ -290,22 +284,20 @@ async fn watch_events(
                                 println!("{}{} {}", time_part, symbol, message);
 
                                 // Check until pattern
-                                if let Some(ref pattern) = until_pattern {
-                                    if message.contains(pattern) {
+                                if let Some(ref pattern) = until_pattern
+                                    && message.contains(pattern) {
                                         println!("\nv Pattern '{}' found, exiting\n", pattern);
                                         return Ok(());
                                     }
-                                }
                             } else {
                                 // Raw event data - add wall-clock timestamp
                                 println!("[{}] o {}", ui::format_wall_clock(), data);
 
-                                if let Some(ref pattern) = until_pattern {
-                                    if data.contains(pattern) {
+                                if let Some(ref pattern) = until_pattern
+                                    && data.contains(pattern) {
                                         println!("\nv Pattern '{}' found, exiting\n", pattern);
                                         return Ok(());
                                     }
-                                }
                             }
                         }
                     }

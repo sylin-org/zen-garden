@@ -3,73 +3,6 @@
 use crate::PlatformRuntime;
 use anyhow::{Context, Result};
 
-/// Ensure /etc is writable with retries for early-boot timing issues
-/// Returns Ok(true) if writeable, Ok(false) if permanently read-only
-pub async fn ensure_etc_writable() -> Result<bool> {
-    const MAX_RETRIES: u32 = 10;
-    const RETRY_DELAY_MS: u64 = 500;
-
-    let test_path = "/etc/.moss-write-test";
-
-    for attempt in 1..=MAX_RETRIES {
-        match std::fs::write(test_path, "test") {
-            Ok(_) => {
-                // Writable - cleanup test file
-                let _ = std::fs::remove_file(test_path);
-                if attempt > 1 {
-                    tracing::info!(attempt, "/etc became writable after retries");
-                }
-                return Ok(true);
-            }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::PermissionDenied
-                    || e.raw_os_error() == Some(30) =>
-            {
-                // EROFS = 30
-
-                if attempt == 1 {
-                    tracing::warn!(
-                        "/etc is not yet writable, will retry (may be early boot timing)"
-                    );
-                }
-
-                // On first attempt, try remounting
-                if attempt == 1 {
-                    let output = tokio::process::Command::new("mount")
-                        .args(["-o", "remount,rw", "/"])
-                        .output()
-                        .await;
-
-                    if let Ok(result) = output {
-                        if result.status.success() {
-                            tracing::info!("Attempted remount of root filesystem as read-write");
-                        }
-                    }
-                }
-
-                // Wait before retry unless it's the last attempt
-                if attempt < MAX_RETRIES {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
-                } else {
-                    tracing::error!(
-                        attempts = MAX_RETRIES,
-                        "/etc remained read-only after all retries"
-                    );
-                    return Ok(false);
-                }
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Unexpected error testing /etc writability: {}",
-                    e
-                ));
-            }
-        }
-    }
-
-    Ok(false)
-}
-
 // ================================================================================================
 // RIBBON INFRASTRUCTURE
 // ================================================================================================
@@ -144,7 +77,7 @@ pub async fn generate_unique_name(runtime: &dyn PlatformRuntime) -> Result<Strin
         generate_unique_name_windows(runtime).await
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         generate_unique_name_linux(runtime).await
     }
@@ -405,10 +338,10 @@ async fn generate_unique_name_from_dictionary(
     adjectives: &[&str],
     nouns: &[&str],
 ) -> Result<String> {
-    use rand::seq::SliceRandom;
+    use rand::prelude::IndexedRandom;
     use rand::SeedableRng;
     // Use StdRng which is Send-safe for background tasks
-    let mut rng = rand::rngs::StdRng::from_entropy();
+    let mut rng = rand::rngs::StdRng::from_os_rng();
 
     // Try 10 random combinations
     for attempt in 1..=10 {
@@ -488,10 +421,10 @@ pub async fn set_hostname(runtime: &dyn PlatformRuntime, name: &str) -> Result<(
 pub async fn get_hostname() -> Result<String> {
     #[cfg(target_os = "windows")]
     {
-        if let Ok(name) = std::env::var("COMPUTERNAME") {
-            if !name.is_empty() {
-                return Ok(name.to_lowercase());
-            }
+        if let Ok(name) = std::env::var("COMPUTERNAME")
+            && !name.is_empty()
+        {
+            return Ok(name.to_lowercase());
         }
 
         match tokio::process::Command::new("hostname").output().await {
@@ -507,7 +440,7 @@ pub async fn get_hostname() -> Result<String> {
         anyhow::bail!("Failed to get Windows hostname");
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         let content = tokio::fs::read_to_string("/etc/hostname")
             .await
@@ -632,31 +565,134 @@ pub async fn test_mdns_resolution(runtime: &dyn PlatformRuntime, stone_name: &st
     Ok(())
 }
 
-/// Write MOTD (Message of the Day) file
-pub fn write_motd(runtime: &dyn PlatformRuntime, stone_name: &str, url: &str) -> Result<()> {
-    runtime.display_wait("Creating message of the day");
+// ================================================================================================
+// MOTD TYPES
+// ================================================================================================
 
-    let motd_content = format!(
-        r#"
-╔══════════════════════════════════════╗
-║       Zen Garden Stone Ready         ║
-╚══════════════════════════════════════╝
+/// Information required to render the MOTD.
+pub struct MotdInfo {
+    pub stone_name: String,
+    pub ip: String,
+    pub port: u16,
+    pub version: String,
+    /// None if not enrolled in a pond.
+    pub pond_name: Option<String>,
+    pub cpu_cores: Option<usize>,
+    pub ram_mb: Option<u64>,
+    /// (model_name, vram_mb) — first GPU only, if present.
+    pub gpu: Option<(String, Option<u64>)>,
+    pub storage_sets: Vec<StorageSetSummary>,
+}
 
-  Stone Name: {}
-  Management URL: {}
-  Username: stone
-  Password: stone
+/// A replica set and its physical banks, for MOTD display.
+pub struct StorageSetSummary {
+    /// Replica set display name (e.g. "storage", "prod", "dev").
+    pub replica_set_name: String,
+    pub banks: Vec<BankSummary>,
+}
 
-  Run 'systemctl status garden-moss' to check service status
-  Visit {} to manage services
+/// A single physical storage bank, for MOTD display.
+pub struct BankSummary {
+    /// Physical device display name.
+    pub name: String,
+    pub used_bytes: u64,
+    pub capacity_bytes: u64,
+}
 
-"#,
-        stone_name, url, url
-    );
+// ================================================================================================
+// MOTD RENDERING
+// ================================================================================================
 
+/// Format a two-column MOTD row within 50 characters.
+///
+/// `indent` leading spaces are prepended. The left side is truncated if needed
+/// to keep the right side fully visible. When `right` is empty, the left side
+/// is returned as-is (no padding applied).
+#[cfg(target_os = "linux")]
+fn motd_row(left: &str, right: &str, indent: usize) -> String {
+    const MOTD_WIDTH: usize = 50;
+    let content = MOTD_WIDTH - indent;
+    if right.is_empty() {
+        return format!("{}{}", " ".repeat(indent), left);
+    }
+    let right_len = right.chars().count();
+    let left_max = content.saturating_sub(right_len);
+    let left_trimmed: String = left.chars().take(left_max).collect();
+    let pad = left_max.saturating_sub(left_trimmed.chars().count());
+    format!(
+        "{}{}{}{}",
+        " ".repeat(indent),
+        left_trimmed,
+        " ".repeat(pad),
+        right
+    )
+}
+
+/// Write MOTD (Message of the Day) to `/etc/motd`.
+///
+/// Linux-only. Writes a 50-character-wide banner showing stone identity,
+/// hardware summary, and storage layout. Best-effort — callers should log
+/// warnings on failure rather than propagating the error.
+#[cfg(target_os = "linux")]
+pub fn write_motd(info: &MotdInfo) -> Result<()> {
+    use crate::utils::{format_bytes, format_memory_mb};
+
+    let mut lines: Vec<String> = Vec::new();
+
+    lines.push(RIBBON_DIVIDER.to_string());
+
+    // Line 1: stone_name (left) + "Moss v{version}" (right)
+    let version_label = format!("Moss v{}", info.version);
+    lines.push(motd_row(&info.stone_name, &version_label, 2));
+
+    // Line 2: "{ip}:{port}" (left) + pond_name (right, omit if None)
+    let addr_label = format!("{}:{}", info.ip, info.port);
+    let pond_right = info.pond_name.as_deref().unwrap_or("");
+    lines.push(motd_row(&addr_label, pond_right, 2));
+
+    // Line 3: hardware — only if both cpu_cores and ram_mb are Some
+    if let (Some(cores), Some(ram)) = (info.cpu_cores, info.ram_mb) {
+        let hw_left = format!("{} cores / {}", cores, format_memory_mb(ram));
+        let gpu_right = match &info.gpu {
+            Some((model, Some(vram))) => {
+                let vram_gb = (*vram as f64) / 1024.0;
+                format!("{} / {:.0} GB", model, vram_gb)
+            }
+            Some((model, None)) => model.clone(),
+            None => String::new(),
+        };
+        lines.push(motd_row(&hw_left, &gpu_right, 2));
+    }
+
+    // Storage summary — only if there are managed sets
+    if !info.storage_sets.is_empty() {
+        let set_count = info.storage_sets.len();
+        let summary = format!(
+            "{} storage set{}",
+            set_count,
+            if set_count == 1 { "" } else { "s" }
+        );
+        lines.push(motd_row(&summary, "", 2));
+
+        for set in &info.storage_sets {
+            for bank in &set.banks {
+                let bank_left = format!("{}  ({})", set.replica_set_name, bank.name);
+                let bank_right = format!(
+                    "{} / {}",
+                    format_bytes(bank.used_bytes),
+                    format_bytes(bank.capacity_bytes)
+                );
+                lines.push(motd_row(&bank_left, &bank_right, 4));
+            }
+        }
+    }
+
+    lines.push(RIBBON_DIVIDER.to_string());
+    lines.push(String::new());
+
+    let motd_content = lines.join("\n");
     std::fs::write("/etc/motd", motd_content).context("Failed to write /etc/motd")?;
 
-    runtime.display_success("Message of the day created");
     Ok(())
 }
 

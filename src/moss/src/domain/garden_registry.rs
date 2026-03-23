@@ -20,6 +20,7 @@ use garden_common::tools::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 const DEFAULT_HISTORY_LIMIT: usize = 4096;
@@ -41,29 +42,33 @@ pub struct ToolQuery {
     pub category: Option<String>,
     /// Filter by status: `"running"`, `"degraded"`, `"stopped"`.
     pub status: Option<String>,
+    /// Filter by stone ID.
+    pub stone_id: Option<String>,
     /// Capability selectors (AND semantics).
     pub capabilities: Vec<CapabilitySelector>,
 }
 
 impl ToolQuery {
     pub fn matches_tool(&self, tool: &GardenTool) -> bool {
-        if let Some(ref fqid) = self.fqid {
-            if !fqid_matches(fqid, tool) {
+        if let Some(ref fqid) = self.fqid
+            && !fqid_matches(fqid, tool) {
                 return false;
             }
-        }
 
-        if let Some(ref category) = self.category {
-            if !tool.tool.category.eq_ignore_ascii_case(category) {
+        if let Some(ref category) = self.category
+            && !tool.tool.category.eq_ignore_ascii_case(category) {
                 return false;
             }
-        }
 
-        if let Some(ref status) = self.status {
-            if !tool.service.status.eq_ignore_ascii_case(status) {
+        if let Some(ref status) = self.status
+            && !tool.service.status.eq_ignore_ascii_case(status) {
                 return false;
             }
-        }
+
+        if let Some(ref stone_id) = self.stone_id
+            && !tool.stone.id.eq_ignore_ascii_case(stone_id) {
+                return false;
+            }
 
         for selector in &self.capabilities {
             if !tool.has_capability(&selector.cap_type, &selector.item) {
@@ -75,8 +80,8 @@ impl ToolQuery {
     }
 
     pub fn matches_delta(&self, delta: &ToolDelta) -> bool {
-        if let Some(ref fqid) = self.fqid {
-            if !delta.fqid.eq_ignore_ascii_case(fqid) {
+        if let Some(ref fqid) = self.fqid
+            && !delta.fqid.eq_ignore_ascii_case(fqid) {
                 if let Some(ref tool) = delta.tool {
                     if !fqid_matches(fqid, tool) {
                         return false;
@@ -85,7 +90,6 @@ impl ToolQuery {
                     return false;
                 }
             }
-        }
 
         match delta.kind {
             ToolDeltaKind::Upsert => delta
@@ -94,9 +98,7 @@ impl ToolQuery {
                 .map(|tool| self.matches_tool(tool))
                 .unwrap_or(false),
             ToolDeltaKind::Remove => {
-                (self.category.is_none()
-                    && self.status.is_none()
-                    && self.capabilities.is_empty())
+                (self.category.is_none() && self.status.is_none() && self.capabilities.is_empty())
                     || self.fqid.is_some()
             }
         }
@@ -105,11 +107,18 @@ impl ToolQuery {
 
 // ── Entry Origin ────────────────────────────────────────────────────────────
 
-/// Who wrote this entry — determines lifecycle and persistence rules.
+/// Who wrote this entry — each origin has exactly one lifecycle owner.
+///
+/// - `Local` — projected from offerings + storage. `reconcile_local` owns lifecycle.
+/// - `Gateway` — written directly by orchestrator registration. TTL reaping owns lifecycle.
+/// - `Announced` — received from remote stone. Beacon reconciliation owns lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryOrigin {
-    /// This stone's offerings or storage — persisted to disk.
+    /// Projected from local offerings or storage volumes.
     Local,
+    /// Registered directly by an orchestrator gateway (`PUT /api/v1/garden/gateway`).
+    /// TTL-managed — expires if not refreshed within the lease period.
+    Gateway,
     /// Received from a remote stone via beacon.
     Announced { stone_id: String },
 }
@@ -125,6 +134,8 @@ pub struct RegistryEntry {
     pub version: u64,
     /// Who wrote this entry.
     pub origin: EntryOrigin,
+    /// When this entry expires (Gateway entries only). `None` = permanent.
+    pub expires_at: Option<Instant>,
 }
 
 // ── Registry Core ───────────────────────────────────────────────────────────
@@ -222,19 +233,28 @@ impl GardenRegistryInner {
     ///
     /// This is the primary write method. All write adapters call this.
     pub fn upsert(&mut self, tool: GardenTool, origin: EntryOrigin) -> Option<ToolDelta> {
+        self.upsert_with_expiry(tool, origin, None)
+    }
+
+    /// Upsert with an optional expiry. Gateway entries use this to set TTL.
+    pub fn upsert_with_expiry(
+        &mut self,
+        tool: GardenTool,
+        origin: EntryOrigin,
+        expires_at: Option<Instant>,
+    ) -> Option<ToolDelta> {
         let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
 
-        if let Some(existing) = self.entries.get(&key) {
-            if tool_equivalent(&existing.tool, &tool) && existing.origin == origin {
+        if let Some(existing) = self.entries.get_mut(&key)
+            && tool_equivalent(&existing.tool, &tool) && existing.origin == origin {
+                // Content unchanged — just refresh TTL silently if applicable.
+                if expires_at.is_some() {
+                    existing.expires_at = expires_at;
+                }
                 return None;
             }
-        }
 
-        let version = self
-            .entries
-            .get(&key)
-            .map(|e| e.version + 1)
-            .unwrap_or(1);
+        let version = self.entries.get(&key).map(|e| e.version + 1).unwrap_or(1);
 
         self.entries.insert(
             key.clone(),
@@ -242,6 +262,7 @@ impl GardenRegistryInner {
                 tool: tool.clone(),
                 version,
                 origin,
+                expires_at,
             },
         );
 
@@ -301,9 +322,7 @@ impl GardenRegistryInner {
             .entries
             .iter()
             .filter(|(key, e)| {
-                e.tool.stone.id == local_stone_id
-                    && e.origin == origin
-                    && !seen_keys.contains(*key)
+                e.tool.stone.id == local_stone_id && e.origin == origin && !seen_keys.contains(*key)
             })
             .map(|(key, _)| key.clone())
             .collect();
@@ -381,8 +400,7 @@ impl GardenRegistryInner {
                         continue;
                     };
 
-                    let key =
-                        build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
+                    let key = build_tool_key(&tool.stone.id, &tool.fqid, &tool.tool.category);
 
                     if beacon.snapshot {
                         seen_keys.insert(key.clone());
@@ -400,11 +418,7 @@ impl GardenRegistryInner {
                         continue;
                     }
 
-                    let version = self
-                        .entries
-                        .get(&key)
-                        .map(|e| e.version + 1)
-                        .unwrap_or(1);
+                    let version = self.entries.get(&key).map(|e| e.version + 1).unwrap_or(1);
 
                     self.entries.insert(
                         key.clone(),
@@ -412,6 +426,7 @@ impl GardenRegistryInner {
                             tool: tool.clone(),
                             version,
                             origin: origin.clone(),
+                            expires_at: None,
                         },
                     );
 
@@ -543,11 +558,7 @@ impl GardenRegistryInner {
         });
 
         // Fallback: any replica on a different stone
-        let target = primary.or_else(|| {
-            replicas
-                .iter()
-                .find(|e| e.tool.stone.id != exclude_stone)
-        });
+        let target = primary.or_else(|| replicas.iter().find(|e| e.tool.stone.id != exclude_stone));
 
         target.map(|e| {
             (
@@ -564,10 +575,11 @@ impl GardenRegistryInner {
             .values()
             .filter(|e| {
                 e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE
-                    && e.tool
-                        .storage
-                        .as_ref()
-                        .is_some_and(|s| s.protocols.iter().any(|p| p == garden_common::constants::PROTOCOL_S3))
+                    && e.tool.storage.as_ref().is_some_and(|s| {
+                        s.protocols
+                            .iter()
+                            .any(|p| p == garden_common::constants::PROTOCOL_S3)
+                    })
             })
             .collect()
     }
@@ -575,7 +587,8 @@ impl GardenRegistryInner {
     /// Find a storage entry by seed bank ID across all stones.
     pub fn storage_by_id(&self, id: &str) -> Option<&RegistryEntry> {
         self.entries.values().find(|e| {
-            e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE && e.tool.tool.id == id
+            e.tool.tool.category == garden_common::constants::CATEGORY_STORAGE
+                && e.tool.tool.id == id
         })
     }
 
@@ -615,6 +628,61 @@ impl GardenRegistryInner {
             .values()
             .find(|e| e.tool.stone.id == stone_id)
             .map(|e| e.tool.stone.endpoint.as_str())
+    }
+
+    // ── Gateway Lifecycle ────────────────────────────────────────────────
+
+    /// Remove all expired gateway entries. Returns deltas for each removal.
+    pub fn reap_expired_gateways(&mut self) -> Vec<ToolDelta> {
+        let now = Instant::now();
+        let expired: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| {
+                e.origin == EntryOrigin::Gateway && e.expires_at.is_some_and(|t| t <= now)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        let mut removed = Vec::new();
+        for key in expired {
+            if let Some(delta) = self.remove(&key) {
+                removed.push(delta);
+            }
+        }
+        removed
+    }
+
+    /// Remove the gateway entry for a given offering on a given stone.
+    ///
+    /// Finds the entry by matching `EntryOrigin::Gateway` + `tool_type` + `stone_id`.
+    pub fn remove_gateway(&mut self, offering: &str, stone_id: &str) -> Option<ToolDelta> {
+        let key = self
+            .entries
+            .iter()
+            .find(|(_, e)| {
+                e.origin == EntryOrigin::Gateway
+                    && e.tool.stone.id == stone_id
+                    && e.tool.tool.tool_type.eq_ignore_ascii_case(offering)
+            })
+            .map(|(k, _)| k.clone());
+        key.and_then(|k| self.remove(&k))
+    }
+
+    /// Returns true if any gateway entry handles the given offering type.
+    pub fn handles_offering(&self, offering: &str) -> bool {
+        self.entries.values().any(|e| {
+            e.origin == EntryOrigin::Gateway && e.tool.tool.tool_type.eq_ignore_ascii_case(offering)
+        })
+    }
+
+    /// Returns the set of offering types that have registered gateway handlers.
+    pub fn handled_offerings(&self) -> std::collections::HashSet<String> {
+        self.entries
+            .values()
+            .filter(|e| e.origin == EntryOrigin::Gateway)
+            .map(|e| e.tool.tool.tool_type.clone())
+            .collect()
     }
 
     // ── Internals ───────────────────────────────────────────────────────
@@ -667,6 +735,7 @@ mod tests {
                 category: category.to_string(),
                 id: format!("uid-{}", fqid),
                 tags: Vec::new(),
+                source: String::new(),
             },
             stone: Stone {
                 id: stone_id.to_string(),
@@ -769,7 +838,12 @@ mod tests {
         reg.upsert(local, EntryOrigin::Local);
 
         let announced = sample_tool("mongodb", "orchestrator", "stone-b");
-        reg.upsert(announced, EntryOrigin::Announced { stone_id: "stone-b".to_string() });
+        reg.upsert(
+            announced,
+            EntryOrigin::Announced {
+                stone_id: "stone-b".to_string(),
+            },
+        );
 
         // Reconcile local with empty → removes offering, keeps announced
         let deltas = reg.reconcile_local("stone-a", vec![], EntryOrigin::Local);
@@ -785,7 +859,12 @@ mod tests {
         let tool1 = sample_tool("ollama", "offering", "stone-a");
         let tool2 = sample_tool("mongodb", "orchestrator", "stone-a");
         reg.upsert(tool1, EntryOrigin::Local);
-        reg.upsert(tool2, EntryOrigin::Announced { stone_id: "stone-a".to_string() });
+        reg.upsert(
+            tool2,
+            EntryOrigin::Announced {
+                stone_id: "stone-a".to_string(),
+            },
+        );
 
         let deltas = reg.remove_stone("stone-a");
         assert_eq!(deltas.len(), 2);
@@ -800,7 +879,12 @@ mod tests {
         let orchestrator = sample_tool("mongodb", "orchestrator", "stone-b");
 
         reg.upsert(offering, EntryOrigin::Local);
-        reg.upsert(orchestrator, EntryOrigin::Announced { stone_id: "stone-b".to_string() });
+        reg.upsert(
+            orchestrator,
+            EntryOrigin::Announced {
+                stone_id: "stone-b".to_string(),
+            },
+        );
 
         let (_, tools) = reg.snapshot(&ToolQuery::default());
         assert_eq!(tools.len(), 2);

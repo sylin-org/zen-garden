@@ -1,8 +1,8 @@
 [package]
 name = "garden-moss"
 version = "0.2.0"
-edition = "2021"
-rust-version = "1.75"
+edition.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "garden-moss"
@@ -10,52 +10,73 @@ path = "src/main.rs"
 
 [dependencies]
 garden-common = { path = "../common" }
-koi-embedded = { workspace = true }
-koi-common = { workspace = true }
-koi-certmesh = { workspace = true }
-koi-crypto = { workspace = true }
-# Reduced from "full" - server needs: multi-thread runtime, networking, signals, process spawning
-tokio = { version = "1.35", features = ["rt-multi-thread", "io-util", "net", "signal", "process", "fs", "sync", "time", "macros"] }
-axum = "0.8"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml = "0.9"
-bollard = "0.16"
-tracing = "0.1"
-tracing-appender = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1.0"
-base64 = "0.21"
-chrono = "0.4"
-clap = { version = "4.4", features = ["derive", "env"] }
-futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-regex = "1.10"
+koi-embedded.workspace = true
+koi-common.workspace = true
+koi-certmesh.workspace = true
+koi-crypto.workspace = true
+
+# Core
+anyhow.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+uuid = { workspace = true, features = ["v5", "v7"] }
+rand.workspace = true
+regex.workspace = true
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "io-util", "net", "signal", "process", "fs", "sync", "time", "macros"] }
+tokio-stream = { workspace = true, features = ["sync"] }
+tokio-util = "0.7"
+async-stream.workspace = true
+futures-util.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yml.workspace = true
+toml = "0.8"
+
+# HTTP / server
+axum.workspace = true
+reqwest = { workspace = true, features = ["json", "webpki-roots", "rustls", "query"] }
+tower = "0.5"
+tower-http = { workspace = true, features = ["trace", "cors"] }
+
+# TLS
 rustls = "0.23"
 rustls-pemfile = "2"
 tokio-rustls = "0.26"
-toml = "0.8"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
-tokio-util = "0.7"
-sysinfo = "0.30"
-local-ip-address = "0.6"
-uuid = { version = "1.6", features = ["v5", "v7"] }
-hostname = "0.4"
-rand = "0.8"
-async-stream = "0.3"
-blake3 = "1.5"
+
+# CLI
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Observability
+tracing.workspace = true
+tracing-appender = "0.2"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Docker
+bollard = "0.20"
+
+# Crypto / hashing
+blake3.workspace = true
+base64.workspace = true
 sha2 = "0.10"
-socket2 = "0.5"
-async-trait = "0.1"
-dashmap = "5.5"
+hmac = "0.12"
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
-walkdir = "2.4"
-url = "2.5"
-urlencoding = "2.1"
-cron = "0.12"
+
+# Networking
+socket2.workspace = true
+hostname.workspace = true
+url.workspace = true
+urlencoding.workspace = true
+
+# System
+sysinfo.workspace = true
+walkdir.workspace = true
+dashmap = "6"
+cron = "0.15"
 
 # WebDAV server (STORAGE-0009 Phase 3)
 dav-server = "0.11"
@@ -64,12 +85,13 @@ dav-server = "0.11"
 notify = "7"
 
 # S3 gateway
-md5 = "0.7"
+quick-xml = { version = "0.39", features = ["serialize"] }
+md5 = "0.8"
 hex = "0.4"
-mime_guess = "2.0"
+mime_guess.workspace = true
 
 # Embedded assets (manifests + default Companions)
-rust-embed = "8"
+rust-embed.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
@@ -82,9 +104,7 @@ windows-sys = { version = "0.52", features = [
 windows = { version = "0.52", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
-    # Phase 3: CfReportSyncStatus for Explorer info bar
     "Win32_Storage_CloudFilters",
-    # Phase 4: WinRT toast notifications
     "UI_Notifications",
     "Data_Xml_Dom",
 ] }
@@ -95,13 +115,27 @@ cloud-filter = "0.0.6"
 nt-time = "0.8"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.27", features = ["process", "signal"] }
 udev = "0.9"
 libc = "0.2"
 sd-notify = "0.4"
 
+[dependencies.tempfile]
+version = "3"
+
+# Archive extraction — in-process with per-entry path validation (BUILD-0004)
+[dependencies.tar]
+version = "0.4"
+
+[dependencies.flate2]
+version = "1"
+
+[lints]
+workspace = true
+
 [dev-dependencies]
-tempfile = "3.10"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [build-dependencies]
 garden-build-utils = { path = "../build-utils" }

@@ -23,7 +23,7 @@ pub struct DashboardEvent {
 /// keep-alives every 15 seconds.
 pub fn dashboard_sse_stream(
     tx: &broadcast::Sender<DashboardEvent>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Sse<impl Stream<Item = Result<Event, Infallible>> + use<>> {
     let rx = tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(event) => Some(Ok(Event::default()

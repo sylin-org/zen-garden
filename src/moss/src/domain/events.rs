@@ -9,10 +9,11 @@
 //! - Future: webhooks, audit logging, metrics
 
 use chrono::{DateTime, Utc};
-use garden_common::{
-    presence::event_types, OfferingRole, EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED,
-    EVENT_REMOVED, EVENT_RENAMED, EVENT_ROLE_CHANGED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
+use garden_common::constants::{
+    EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED, EVENT_RENAMED,
+    EVENT_ROLE_CHANGED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
 };
+use garden_common::{presence::event_types, OfferingRole};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -331,6 +332,38 @@ pub enum StorageEvent {
         device: String,
         timestamp: DateTime<Utc>,
     },
+    /// Storage released (unmounted, management cleared)
+    StorageReleased {
+        name: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Storage device sensed — recognised and being measured
+    StorageSensed {
+        name: String,
+        roles: Vec<String>,
+        timestamp: DateTime<Utc>,
+    },
+    /// A replica set was renamed
+    StorageRenamed {
+        replica_set_id: String,
+        new_name: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// A device's storage role changed (Primary, Dormant, etc.)
+    StorageRoleChanged {
+        device_id: String,
+        replica_set_id: String,
+        new_role: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// A pin state changed on a device
+    StoragePinChanged {
+        device_id: String,
+        replica_set_id: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Volumes reclassified (broad change)
+    StorageReclassified { timestamp: DateTime<Utc> },
     /// Sync started
     SyncStarted {
         name: String,
@@ -350,6 +383,12 @@ impl StorageEvent {
             Self::StorageConnected { .. } => event_types::STORAGE_CONNECTED,
             Self::StorageDetected { .. } => event_types::STORAGE_DETECTED,
             Self::StorageRemoved { .. } => event_types::STORAGE_REMOVED,
+            Self::StorageReleased { .. } => event_types::STORAGE_RELEASED,
+            Self::StorageSensed { .. } => event_types::STORAGE_SENSED,
+            Self::StorageRenamed { .. } => event_types::STORAGE_RENAMED,
+            Self::StorageRoleChanged { .. } => event_types::STORAGE_ROLE_CHANGED,
+            Self::StoragePinChanged { .. } => event_types::STORAGE_PIN_CHANGED,
+            Self::StorageReclassified { .. } => event_types::STORAGE_RECLASSIFIED,
             Self::SyncStarted { .. } => event_types::STORAGE_SYNC_STARTED,
             Self::SyncCompleted { .. } => event_types::STORAGE_SYNC_COMPLETED,
         }
@@ -366,6 +405,26 @@ impl StorageEvent {
             Self::StorageRemoved { name, .. } => {
                 format!("Storage '{}' removed", name)
             }
+            Self::StorageReleased { name, .. } => {
+                format!("Storage '{}' released", name)
+            }
+            Self::StorageSensed { name, .. } => {
+                format!("Storage '{}' sensed", name)
+            }
+            Self::StorageRenamed { new_name, .. } => {
+                format!("Storage renamed to '{}'", new_name)
+            }
+            Self::StorageRoleChanged {
+                replica_set_id,
+                new_role,
+                ..
+            } => {
+                format!("Storage '{}' role changed to {}", replica_set_id, new_role)
+            }
+            Self::StoragePinChanged { replica_set_id, .. } => {
+                format!("Storage '{}' pin changed", replica_set_id)
+            }
+            Self::StorageReclassified { .. } => "Storage volumes reclassified".to_string(),
             Self::SyncStarted { name, .. } => {
                 format!("Storage '{}' sync started", name)
             }
@@ -418,6 +477,89 @@ impl StorageEvent {
             name: name.into(),
             device: device.into(),
             timestamp: Utc::now(),
+        }
+    }
+}
+
+/// Convert a `StorageChanged` (infra broadcast) into a `StorageEvent` (domain event bus).
+///
+/// This bridges the two storage event systems: `StorageChanged` drives dedicated
+/// infra subscribers (beacon, cloud filter, watcher), while `StorageEvent` feeds
+/// the EventBus so PulseDomainBridge can translate them for SSE consumers.
+impl From<&garden_common::storage::StorageChanged> for StorageEvent {
+    fn from(changed: &garden_common::storage::StorageChanged) -> Self {
+        let now = Utc::now();
+        match changed {
+            garden_common::storage::StorageChanged::Added {
+                device_id,
+                replica_set_id,
+            } => Self::StorageConnected {
+                name: replica_set_id.clone(),
+                device: device_id.clone(),
+                mount_path: String::new(),
+                capacity_gb: 0,
+                roles: vec![],
+                timestamp: now,
+            },
+            garden_common::storage::StorageChanged::Removed {
+                device_id,
+                replica_set_id,
+            } => Self::StorageRemoved {
+                name: replica_set_id.clone(),
+                device: device_id.clone(),
+                timestamp: now,
+            },
+            garden_common::storage::StorageChanged::RoleChanged {
+                device_id,
+                replica_set_id,
+                new_role,
+            } => Self::StorageRoleChanged {
+                device_id: device_id.clone(),
+                replica_set_id: replica_set_id.clone(),
+                new_role: format!("{:?}", new_role),
+                timestamp: now,
+            },
+            garden_common::storage::StorageChanged::Renamed {
+                replica_set_id,
+                new_name,
+            } => Self::StorageRenamed {
+                replica_set_id: replica_set_id.clone(),
+                new_name: new_name.clone(),
+                timestamp: now,
+            },
+            garden_common::storage::StorageChanged::PinChanged {
+                device_id,
+                replica_set_id,
+            } => Self::StoragePinChanged {
+                device_id: device_id.clone(),
+                replica_set_id: replica_set_id.clone(),
+                timestamp: now,
+            },
+            garden_common::storage::StorageChanged::Reclassified => {
+                Self::StorageReclassified { timestamp: now }
+            }
+            garden_common::storage::StorageChanged::Sensed { name, roles } => Self::StorageSensed {
+                name: name.clone(),
+                roles: roles.clone(),
+                timestamp: now,
+            },
+            garden_common::storage::StorageChanged::Connected {
+                name,
+                roles,
+                used_bytes: _,
+                capacity_bytes,
+            } => Self::StorageConnected {
+                name: name.clone(),
+                device: String::new(),
+                mount_path: String::new(),
+                capacity_gb: capacity_bytes / (1024 * 1024 * 1024),
+                roles: roles.clone(),
+                timestamp: now,
+            },
+            garden_common::storage::StorageChanged::Released { name } => Self::StorageReleased {
+                name: name.clone(),
+                timestamp: now,
+            },
         }
     }
 }
@@ -516,7 +658,7 @@ impl StoneEvent {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn load_updated(
         cpu_percent: f64,
         memory_percent: f64,

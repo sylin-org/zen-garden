@@ -19,7 +19,7 @@ use garden_common::constants::timeouts::{metrics_disk_interval, metrics_fast_int
 use garden_common::metrics::system::{
     get_fast_metrics, get_gpu_utilization, get_network_metrics, get_storage_metrics,
 };
-use garden_common::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
+use garden_common::notifications::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 
 /// Run system metrics collector with dual intervals
 ///
@@ -43,13 +43,14 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
             // Also get initial storage metrics
             let storage = get_storage_metrics().unwrap_or_else(|_| Vec::new());
 
-            let mut cache = state.current.system_resources.write().await;
+            let mut cache = state.current.metrics.system.write().await;
             *cache = Some(garden_common::StoneResources {
                 cpu: cpu.clone(),
                 memory: memory.clone(),
                 storage,
                 uptime_seconds,
                 uptime_friendly: uptime_friendly.clone(),
+                cpu_temperature: garden_common::metrics::system::get_cpu_temperature(),
             });
             tracing::debug!(
                 cpu = cpu.usage_percent,
@@ -65,7 +66,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
     // Collect initial network metrics
     {
         let network = get_network_metrics();
-        let mut cache = state.network_metrics_cache.write().await;
+        let mut cache = state.current.metrics.network.write().await;
         *cache = Some(network);
         tracing::debug!("Initial network metrics collected");
     }
@@ -121,12 +122,13 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update CPU, memory, uptime (fast - in-memory kernel data)
                 match get_fast_metrics() {
                     Ok((cpu, memory, uptime_seconds, uptime_friendly)) => {
-                        let mut cache = state.current.system_resources.write().await;
+                        let mut cache = state.current.metrics.system.write().await;
                         if let Some(ref mut resources) = *cache {
                             resources.cpu = cpu;
                             resources.memory = memory;
                             resources.uptime_seconds = uptime_seconds;
                             resources.uptime_friendly = uptime_friendly;
+                            resources.cpu_temperature = garden_common::metrics::system::get_cpu_temperature();
                         } else {
                             // First fast update, initialize with placeholder disk
                             tracing::warn!("Fast metrics collected but no disk data yet");
@@ -146,7 +148,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update network metrics (fast - reads from kernel counters)
                 {
                     let network = get_network_metrics();
-                    let mut cache = state.network_metrics_cache.write().await;
+                    let mut cache = state.current.metrics.network.write().await;
                     *cache = Some(network);
                 }
 
@@ -155,7 +157,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                     let gpu_util = tokio::task::spawn_blocking(get_gpu_utilization)
                         .await
                         .unwrap_or(None);
-                    let mut cache = state.gpu_utilization.write().await;
+                    let mut cache = state.current.metrics.gpu.write().await;
                     *cache = gpu_util;
                 }
             }
@@ -164,7 +166,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 // Update storage metrics (slow - involves statvfs syscalls)
                 match get_storage_metrics() {
                     Ok(storage) => {
-                        let mut cache = state.current.system_resources.write().await;
+                        let mut cache = state.current.metrics.system.write().await;
                         if let Some(ref mut resources) = *cache {
                             resources.storage = storage;
                             let disk_count = resources.storage.len();

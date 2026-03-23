@@ -149,12 +149,10 @@ pub fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use garden_common::command_manifest::CommandResponse;
 
     struct TestHandler;
 
-    #[async_trait]
     impl CommandHandler for TestHandler {
         async fn handle(&self, _args: &[String]) -> CommandResponse {
             CommandResponse::success("OK")

@@ -142,8 +142,7 @@ async fn resolve_stone_name_to_endpoint(
             .timeout(Duration::from_secs(2))
             .send()
             .await
-        {
-            if let Ok(api_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
+            && let Ok(api_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
                 let caps = &api_response.data;
 
                 // Cache this stone for future lookups
@@ -157,13 +156,11 @@ async fn resolve_stone_name_to_endpoint(
                 }
 
                 // Match by stone_id (case-insensitive)
-                if let Some(ref stone_id) = caps.stone_id {
-                    if stone_id.eq_ignore_ascii_case(requested) {
+                if let Some(ref stone_id) = caps.stone_id
+                    && stone_id.eq_ignore_ascii_case(requested) {
                         return Ok(endpoint);
                     }
-                }
             }
-        }
     }
 
     // 4) Lantern fallback (cross-subnet / Windows-friendly)

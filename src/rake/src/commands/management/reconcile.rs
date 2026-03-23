@@ -6,8 +6,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 use std::time::Duration;
 
 /// Reconcile offerings with actual container state
@@ -25,48 +24,49 @@ impl ReconcileCommand {
     }
 }
 
-#[async_trait]
 impl Command for ReconcileCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let body = reconcile_system(&ctx.client, ctx.endpoint()?, self.drop_invalid).await?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let body = reconcile_system(&ctx.client, ctx.endpoint()?, self.drop_invalid).await?;
 
-        let adopted = body
-            .get("adopted")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
-        let dropped = body
-            .get("dropped_invalid")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
-        let left = body
-            .get("left_unregistered")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
+            let adopted = body
+                .get("adopted")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let dropped = body
+                .get("dropped_invalid")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let left = body
+                .get("left_unregistered")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
 
-        println!(
-            "{}{} Reconcile complete",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("ok", ctx.term.supports_color)
-        );
-        println!(
-            "{}  Adopted: {}",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            adopted
-        );
-        if self.drop_invalid {
-            println!("  Dropped invalid: {}", dropped);
-        }
-        if left > 0 {
-            println!("  Left unregistered: {}", left);
-        }
+            println!(
+                "{}{} Reconcile complete",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("ok", ctx.term.supports_color)
+            );
+            println!(
+                "{}  Adopted: {}",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                adopted
+            );
+            if self.drop_invalid {
+                println!("  Dropped invalid: {}", dropped);
+            }
+            if left > 0 {
+                println!("  Left unregistered: {}", left);
+            }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::RECONCILE, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::RECONCILE, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

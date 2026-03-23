@@ -21,7 +21,9 @@ use crate::domain::storage_service::StorageRoute;
 use crate::infra::storage::handle::{FileEntry, RouterError, StorageHandle, StorageResolver};
 use crate::AppState;
 
-use super::{err, error_response_raw, has_path_traversal, is_proxied, DirectoryEntry, DirectoryListResponse};
+use super::{
+    err, error_response_raw, has_path_traversal, is_proxied, DirectoryEntry, DirectoryListResponse,
+};
 
 // ============================================================================
 // Path validation
@@ -185,17 +187,15 @@ async fn check_proxy_loop_guard(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), Response> {
-    if is_proxied(headers) {
-        if let Some(local) = StorageRoute::find_local(name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(headers)
+        && let Some(local) = StorageRoute::find_local(name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
     Ok(())
 }
 
@@ -286,23 +286,18 @@ async fn get_file_v1_inner(
         let dir = path.trim_end_matches('/');
         return match list_recursive(&handle, dir, depth).await {
             Ok(entries) => dir_list_response(dir, entries),
-            Err(e) => {
-                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string())
-            }
+            Err(e) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string()),
         };
     }
 
     // Check if path points to a directory
-    if let Ok(meta) = handle.metadata(path).await {
-        if meta.is_dir {
+    if let Ok(meta) = handle.metadata(path).await
+        && meta.is_dir {
             return match list_recursive(&handle, path, depth).await {
                 Ok(entries) => dir_list_response(path, entries),
-                Err(e) => {
-                    error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string())
-                }
+                Err(e) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string()),
             };
         }
-    }
 
     // File read — streaming response (A11j)
     let size = match handle.file_size(path).await {
@@ -357,7 +352,7 @@ pub async fn put_file_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<ApiResponse<FileWriteResult>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<FileWriteResult> {
     let path = path.trim_start_matches('/');
     if path.is_empty() {
         return Err(err(
@@ -370,19 +365,15 @@ pub async fn put_file_v1(
         return Err(err(status, "INVALID_PATH", msg));
     }
 
-    if is_proxied(&headers) {
-        if let Some(local) =
-            StorageRoute::find_local(&name, &state.current.storage.volumes).await
-        {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -390,22 +381,28 @@ pub async fn put_file_v1(
         stone_id: &state.current.stone.id,
         tick: Some(state.orchestration.storage.tick.raw.clone()),
     };
-    let handle = resolver
-        .for_write(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     let size = body.len() as u64;
-    handle
-        .write(path, &body)
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "WRITE_FAILED", &e.to_string()))?;
+    handle.write(path, &body).await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "WRITE_FAILED",
+            &e.to_string(),
+        )
+    })?;
 
     debug!(storage = %name, path = %path, size, "garden PUT file");
-    Ok(Json(ApiResponse::new(FileWriteResult {
+    crate::api::ok(FileWriteResult {
         path: path.to_string(),
         size,
-    })))
+    })
 }
 
 // ============================================================================
@@ -430,19 +427,15 @@ pub async fn delete_file_v1(
         return Err(err(status, "INVALID_PATH", msg));
     }
 
-    if is_proxied(&headers) {
-        if let Some(local) =
-            StorageRoute::find_local(&name, &state.current.storage.volumes).await
-        {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -450,10 +443,13 @@ pub async fn delete_file_v1(
         stone_id: &state.current.stone.id,
         tick: Some(state.orchestration.storage.tick.raw.clone()),
     };
-    let handle = resolver
-        .for_write(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     // Determine if path is a directory or file
     let is_dir = handle
@@ -470,9 +466,11 @@ pub async fn delete_file_v1(
 
     result.map_err(|e| match e {
         RouterError::NotFound(_) => err(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found"),
-        RouterError::Other(inner) => {
-            err(StatusCode::INTERNAL_SERVER_ERROR, "DELETE_FAILED", &inner.to_string())
-        }
+        RouterError::Other(inner) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DELETE_FAILED",
+            &inner.to_string(),
+        ),
     })?;
 
     debug!(storage = %name, path = %path, "garden DELETE file");
@@ -520,10 +518,7 @@ pub async fn head_file_v1(
             let content_type = mime_guess::from_path(path)
                 .first_or_octet_stream()
                 .to_string();
-            let last_modified = meta
-                .modified
-                .map(|t| t.to_rfc3339())
-                .unwrap_or_default();
+            let last_modified = meta.modified.map(|t| t.to_rfc3339()).unwrap_or_default();
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, content_type)
@@ -535,12 +530,10 @@ pub async fn head_file_v1(
         Err(RouterError::NotFound(_)) => {
             error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
         }
-        Err(e) => {
-            error_response_raw(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "HEAD_FAILED",
-                &e.to_string(),
-            )
-        }
+        Err(e) => error_response_raw(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "HEAD_FAILED",
+            &e.to_string(),
+        ),
     }
 }

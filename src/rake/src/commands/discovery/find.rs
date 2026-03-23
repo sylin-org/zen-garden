@@ -3,21 +3,20 @@
 //! Finds running services across the garden and returns connection URIs.
 //! Supports search by name, category, or tags with cache-first architecture.
 //!
-//! Wishfully mode: Auto-provision if service not found and query matches a known offering.
+//! Ensurely mode: Provision if missing if service not found and query matches a known offering.
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::{extract_json_field, Runtime};
 use crate::suggestions;
+use crate::ui::rendering as ui;
 use anyhow::Context;
-use async_trait::async_trait;
 use futures_util::StreamExt;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{
     event_types as tools_event_types, parse_capability_wish, CapabilitySelector, GardenTool,
     ToolDelta,
 };
-use garden_common::ui::rendering as ui;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -58,8 +57,8 @@ pub struct FindCommand {
     pub quiet: bool,
     /// Fresh discovery (bypass cache)
     pub fresh: bool,
-    /// Wishfully mode (auto-provision if not found)
-    pub wishfully: bool,
+    /// Ensurely mode (auto-provision if not found)
+    pub ensure: bool,
     /// Optional field extraction path (e.g., "services[0].connection.uris[0]")
     pub field: Option<String>,
 }
@@ -70,14 +69,14 @@ impl FindCommand {
         format: FindOutputFormat,
         quiet: bool,
         fresh: bool,
-        wishfully: bool,
+        ensure: bool,
     ) -> Self {
         Self {
             query,
             format,
             quiet,
             fresh,
-            wishfully,
+            ensure,
             field: None,
         }
     }
@@ -88,7 +87,7 @@ impl FindCommand {
         format: FindOutputFormat,
         quiet: bool,
         fresh: bool,
-        wishfully: bool,
+        ensure: bool,
         field: Option<String>,
     ) -> Self {
         Self {
@@ -96,52 +95,19 @@ impl FindCommand {
             format,
             quiet,
             fresh,
-            wishfully,
+            ensure,
             field,
         }
     }
 }
 
-/// Stone reference in response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoneRef {
-    pub id: String,
-    pub name: String,
-    pub endpoint: String,
-}
+// Re-use canonical types from garden-common
+pub use garden_common::discovery::{
+    FoundService, ResolvedConnection, ServiceDiscoveryResponse, StoneRef,
+};
 
-/// Connection information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectionInfo {
-    pub hostname: String,
-    pub ip: String,
-    pub port: u16,
-    pub protocol: String,
-    pub uris: Vec<String>,
-}
-
-/// Found service
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FoundService {
-    pub name: String,
-    pub offering: String,
-    pub category: String,
-    pub tags: Vec<String>,
-    pub status: String,
-    pub stone: StoneRef,
-    pub connection: ConnectionInfo,
-}
-
-/// Service discovery response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceDiscoveryResponse {
-    pub found: bool,
-    pub services: Vec<FoundService>,
-    pub source: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_age_seconds: Option<u64>,
-    pub timestamp: String,
-}
+/// Backward-compat alias: rake previously named this `ConnectionInfo`
+pub type ConnectionInfo = ResolvedConnection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ToolsSnapshotEvent {
@@ -152,54 +118,55 @@ struct ToolsSnapshotEvent {
 // Use shared ApiResponse from garden-common
 use garden_common::api_utils::ApiResponse;
 
-#[async_trait]
 impl Command for FindCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::api_utils::{is_suspicious, sanitize_query};
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use garden_common::api_utils::{is_suspicious, sanitize_query};
 
-        // Reject suspicious patterns client-side
-        if is_suspicious(&self.query) {
-            anyhow::bail!("Query contains invalid patterns");
-        }
-
-        // Sanitize query input
-        let sanitized_query = sanitize_query(&self.query).into_value();
-        let discovery = self
-            .query_services(ctx, &sanitized_query, self.fresh)
-            .await?;
-
-        // Handle not found case
-        if !discovery.found {
-            return self.handle_not_found(ctx).await;
-        }
-
-        // Field extraction mode: extract specific field and output just that value
-        if let Some(ref field_path) = self.field {
-            return self.render_field(&discovery, field_path);
-        }
-
-        // Render output based on format
-        match self.format {
-            FindOutputFormat::Human => {
-                self.render_human(&discovery, ctx);
+            // Reject suspicious patterns client-side
+            if is_suspicious(&self.query) {
+                anyhow::bail!("Query contains invalid patterns");
             }
-            FindOutputFormat::Json => {
-                self.render_json(&discovery)?;
-            }
-            FindOutputFormat::Uri => {
-                self.render_uri(&discovery, false);
-            }
-            FindOutputFormat::UriIp => {
-                self.render_uri(&discovery, true);
-            }
-        }
 
-        // Self-teaching suggestions (unless quiet or non-human format)
-        if self.format == FindOutputFormat::Human {
-            suggestions::print_suggestions(cmd::FIND, self.quiet);
-        }
+            // Sanitize query input
+            let sanitized_query = sanitize_query(&self.query).into_value();
+            let discovery = self
+                .query_services(ctx, &sanitized_query, self.fresh)
+                .await?;
 
-        Ok(())
+            // Handle not found case
+            if !discovery.found {
+                return self.handle_not_found(ctx).await;
+            }
+
+            // Field extraction mode: extract specific field and output just that value
+            if let Some(ref field_path) = self.field {
+                return self.render_field(&discovery, field_path);
+            }
+
+            // Render output based on format
+            match self.format {
+                FindOutputFormat::Human => {
+                    self.render_human(&discovery, ctx);
+                }
+                FindOutputFormat::Json => {
+                    self.render_json(&discovery)?;
+                }
+                FindOutputFormat::Uri => {
+                    self.render_uri(&discovery, false);
+                }
+                FindOutputFormat::UriIp => {
+                    self.render_uri(&discovery, true);
+                }
+            }
+
+            // Self-teaching suggestions (unless quiet or non-human format)
+            if self.format == FindOutputFormat::Human {
+                suggestions::print_suggestions(cmd::FIND, self.quiet);
+            }
+
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -207,7 +174,7 @@ impl Command for FindCommand {
     }
 }
 
-/// Offering info for wishfully mode
+/// Offering info for ensure mode
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OfferingInfo {
     pub name: String,
@@ -290,11 +257,7 @@ impl FindCommand {
     }
 
     /// Check if the query matches a known offering
-    async fn check_offering_exists_for(
-        &self,
-        ctx: &Runtime,
-        query: &str,
-    ) -> Option<OfferingInfo> {
+    async fn check_offering_exists_for(&self, ctx: &Runtime, query: &str) -> Option<OfferingInfo> {
         let endpoint = ctx.endpoint.as_ref()?;
         let url = format!(
             "{}/api/v1/stone/offerings/{}",
@@ -424,20 +387,20 @@ impl FindCommand {
         self.query_services(ctx, &sanitized_query, true).await
     }
 
-    async fn handle_capability_wishfully(&self, ctx: &Runtime) -> anyhow::Result<bool> {
+    async fn handle_capability_ensure(&self, ctx: &Runtime) -> anyhow::Result<bool> {
         let query = self.query.trim();
         if !query.contains(':') && !query.contains('[') {
             return Ok(false);
         }
 
         // V2 FQN with "::" separator (e.g., "mongodb::prod") is an instance
-        // reference, not a capability wish — let the offering wishful path handle it.
+        // reference, not a capability wish — let the offering ensure path handle it.
         if query.contains("::") && !query.contains('[') {
             return Ok(false);
         }
 
         // If the raw query is itself a valid offering FQN, this is a classic
-        // offering wishful path and should not be interpreted as capability wish.
+        // offering ensure path and should not be interpreted as capability wish.
         if !query.contains('[') && self.check_offering_exists_for(ctx, query).await.is_some() {
             return Ok(false);
         }
@@ -746,28 +709,24 @@ impl FindCommand {
 
                 let data = data_lines.join("\n");
                 if event_name == tools_event_types::TOOLS_SNAPSHOT {
-                    if let Ok(snapshot) = serde_json::from_str::<ToolsSnapshotEvent>(&data) {
-                        if snapshot.tools.iter().any(|tool| {
+                    if let Ok(snapshot) = serde_json::from_str::<ToolsSnapshotEvent>(&data)
+                        && snapshot.tools.iter().any(|tool| {
                             garden_common::tools::fqid_matches(fqid, tool)
                                 && tool_ready(tool, requirements)
                         }) {
                             return Ok(());
                         }
-                    }
                     continue;
                 }
 
-                if event_name == tools_event_types::TOOL_UPSERT {
-                    if let Ok(delta) = serde_json::from_str::<ToolDelta>(&data) {
-                        if let Some(tool) = delta.tool.as_ref() {
-                            if garden_common::tools::fqid_matches(fqid, tool)
+                if event_name == tools_event_types::TOOL_UPSERT
+                    && let Ok(delta) = serde_json::from_str::<ToolDelta>(&data)
+                        && let Some(tool) = delta.tool.as_ref()
+                            && garden_common::tools::fqid_matches(fqid, tool)
                                 && tool_ready(tool, requirements)
                             {
                                 return Ok(());
                             }
-                        }
-                    }
-                }
             }
         }
 
@@ -776,9 +735,9 @@ impl FindCommand {
 
     /// Handle not found case
     async fn handle_not_found(&self, ctx: &Runtime) -> CommandResult {
-        if self.wishfully && self.is_name_search() {
+        if self.ensure && self.is_name_search() {
             if self.query.contains(':') || self.query.contains('[') {
-                match self.handle_capability_wishfully(ctx).await {
+                match self.handle_capability_ensure(ctx).await {
                     Ok(true) => return Ok(()),
                     Ok(false) => {}
                     Err(e) => {
@@ -791,7 +750,7 @@ impl FindCommand {
                             );
                             std::process::exit(3);
                         }
-                        tracing::debug!(error = ?e, "Capability wishful path failed, falling back to offering wishful");
+                        tracing::debug!(error = ?e, "Capability ensure path failed, falling back to offering ensure");
                     }
                 }
             }
@@ -898,21 +857,21 @@ impl FindCommand {
                     " ".repeat(ui::constants::DEFAULT_INDENT)
                 );
             }
-        } else if self.wishfully {
-            // Wishfully mode with category/tag search
+        } else if self.ensure {
+            // Ensurely mode with category/tag search
             println!(
                 "{}No running services found matching '{}'",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 self.query
             );
             println!(
-                "{}{} Wishfully mode requires a specific offering name",
+                "{}{} Ensurely mode requires a specific offering name",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("info", ctx.term.supports_color)
             );
             println!();
             println!(
-                "{}Try: garden-rake find mongodb wishfully",
+                "{}Try: garden-rake find mongodb --ensure",
                 " ".repeat(ui::constants::DEFAULT_INDENT)
             );
         } else {
@@ -924,7 +883,7 @@ impl FindCommand {
             println!();
             println!("{}Suggestions:", " ".repeat(ui::constants::DEFAULT_INDENT));
             println!(
-                "{}  garden-rake find {} wishfully  # Auto-provision {}",
+                "{}  garden-rake find {} ensure  # Provision if missing {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 self.query,
                 self.query

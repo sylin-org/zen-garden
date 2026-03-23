@@ -76,11 +76,10 @@ pub fn get_current_compat_capabilities(
     cached: Option<&HardwareCapabilities>,
 ) -> CompatCheckCapabilities {
     // Use cached capabilities if detection is complete
-    if let Some(caps) = cached {
-        if caps.detection_status == DetectionStatus::Complete {
+    if let Some(caps) = cached
+        && caps.detection_status == DetectionStatus::Complete {
             return build_from_cached(caps);
         }
-    }
 
     // Fall back to live detection (expensive — shells out to docker, nvidia-smi, etc.)
     build_from_live_detection()
@@ -168,25 +167,29 @@ fn build_from_live_detection() -> CompatCheckCapabilities {
 /// Evaluates rules and modifies template image if needed (fallback).
 /// Returns structured compatibility result.
 pub fn compile_compatibility(
-    template: &mut crate::infra::manifests::ServiceTemplate,
+    template: &mut garden_common::manifests::ServiceTemplate,
     cached_capabilities: Option<&HardwareCapabilities>,
 ) -> CompiledCompatibility {
     if let Some(rules) = &template.compatibility {
         let capabilities = get_current_compat_capabilities(cached_capabilities);
         match evaluate_compatibility(rules, &capabilities) {
             CompatibilityDecision::Pass => CompiledCompatibility {
-                decision: garden_common::COMPAT_PASS.to_string(),
+                decision: garden_common::constants::COMPAT_PASS.to_string(),
                 reason: None,
                 original_image: None,
                 fallback_image: None,
                 fallback_name: None,
                 suggestion: None,
             },
-            CompatibilityDecision::Fallback { image, name, reason } => {
+            CompatibilityDecision::Fallback {
+                image,
+                name,
+                reason,
+            } => {
                 let original_image = template.image.clone();
                 template.image = image.clone();
                 CompiledCompatibility {
-                    decision: garden_common::COMPAT_FALLBACK.to_string(),
+                    decision: garden_common::constants::COMPAT_FALLBACK.to_string(),
                     reason: Some(reason),
                     original_image: Some(original_image),
                     fallback_image: Some(image),
@@ -195,7 +198,7 @@ pub fn compile_compatibility(
                 }
             }
             CompatibilityDecision::Warning { reason, suggestion } => CompiledCompatibility {
-                decision: garden_common::COMPAT_WARNING.to_string(),
+                decision: garden_common::constants::COMPAT_WARNING.to_string(),
                 reason: Some(reason),
                 original_image: None,
                 fallback_image: None,
@@ -203,7 +206,7 @@ pub fn compile_compatibility(
                 suggestion,
             },
             CompatibilityDecision::Fail { reason, suggestion } => CompiledCompatibility {
-                decision: garden_common::COMPAT_FAIL.to_string(),
+                decision: garden_common::constants::COMPAT_FAIL.to_string(),
                 reason: Some(reason),
                 original_image: Some(template.image.clone()),
                 fallback_image: None,
@@ -213,7 +216,7 @@ pub fn compile_compatibility(
         }
     } else {
         CompiledCompatibility {
-            decision: garden_common::COMPAT_PASS.to_string(),
+            decision: garden_common::constants::COMPAT_PASS.to_string(),
             reason: None,
             original_image: None,
             fallback_image: None,

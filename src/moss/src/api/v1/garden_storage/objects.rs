@@ -49,17 +49,15 @@ pub async fn get_object_v1(
     Query(params): Query<ListQueryParams>,
     headers: HeaderMap,
 ) -> Response {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 );
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -118,9 +116,7 @@ pub async fn get_object_v1(
                     .body(data.into())
                     .unwrap()
             }
-            Ok(None) => {
-                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
-            }
+            Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found"),
             Err(e) => error_response_raw(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "GET_FAILED",
@@ -157,18 +153,16 @@ pub async fn put_object_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<ApiResponse<ObjectMeta>>, (StatusCode, Json<ApiErrorResponse>)> {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+) -> crate::api::ApiResult<ObjectMeta> {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -176,10 +170,13 @@ pub async fn put_object_v1(
         stone_id: &state.current.stone.id,
         tick: Some(state.orchestration.storage.tick.raw.clone()),
     };
-    let handle = resolver
-        .for_write(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
@@ -223,13 +220,13 @@ pub async fn put_object_v1(
 
         debug!(storage = %handle.storage_name(), key = %key, size = body.len(), "garden PUT object");
 
-        Ok(Json(ApiResponse::new(ObjectMeta {
+        crate::api::ok(ObjectMeta {
             key,
             size: body.len() as u64,
             content_type: content_type.to_string(),
             etag: result.etag,
             last_modified: chrono::Utc::now().to_rfc3339(),
-        })))
+        })
     } else {
         // Remote — proxy
         let target = handle.proxy_target().unwrap();
@@ -269,17 +266,15 @@ pub async fn delete_object_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return Err(err(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 ));
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -287,10 +282,13 @@ pub async fn delete_object_v1(
         stone_id: &state.current.stone.id,
         tick: Some(state.orchestration.storage.tick.raw.clone()),
     };
-    let handle = resolver
-        .for_write(&name)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "NO_STORAGE", &e.to_string()))?;
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
 
     let (bucket, key) = parse_object_path(&path);
     if bucket.is_empty() || key.is_empty() {
@@ -359,17 +357,15 @@ pub async fn head_object_v1(
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if is_proxied(&headers) {
-        if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-            if local.role != StorageRole::Primary {
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+            && local.role != StorageRole::Primary {
                 return error_response_raw(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "PROXY_LOOP",
                     "Proxied request reached a non-primary stone",
                 );
             }
-        }
-    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -421,9 +417,7 @@ pub async fn head_object_v1(
                 .header(header::LAST_MODIFIED, &meta.last_modified)
                 .body("".into())
                 .unwrap(),
-            Ok(None) => {
-                error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found")
-            }
+            Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found"),
             Err(e) => error_response_raw(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "HEAD_FAILED",

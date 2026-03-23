@@ -8,8 +8,9 @@
 //! Composed with compatibility module for rule evaluation.
 
 use crate::domain::compatibility::{compile_compatibility, CompiledCompatibility};
-use crate::infra::ManifestRegistry;
+use crate::domain::traits::OfferingsCachePersistence;
 use anyhow::Result;
+use garden_common::manifests::ManifestRegistry;
 use garden_common::manifests::NetworkRequirements;
 use garden_common::TaskDefinition;
 
@@ -182,7 +183,11 @@ pub fn manifests_hash(registry: &ManifestRegistry) -> Result<String> {
 /// - `load_offerings_cache()` for disk persistence (infra layer)
 /// - `rebuild_offerings_index()` for index generation (domain layer)
 /// - `save_offerings_cache()` for disk persistence (infra layer)
-pub async fn ensure_offerings_index(state: &crate::AppState, force_rebuild: bool) -> Result<()> {
+pub async fn ensure_offerings_index(
+    state: &crate::AppState,
+    force_rebuild: bool,
+    cache: &crate::infra::persistence::OsOfferingsCache,
+) -> Result<()> {
     if !force_rebuild {
         let existing = state.offerings_index.read().await;
         if existing.is_some() {
@@ -195,8 +200,8 @@ pub async fn ensure_offerings_index(state: &crate::AppState, force_rebuild: bool
     let cached_caps_ref = cached_caps.as_ref();
 
     // Try disk cache first (best-effort)
-    if !force_rebuild {
-        if let Some(on_disk) = crate::infra::load_offerings_cache::<OfferingsIndex>().await? {
+    if !force_rebuild
+        && let Some(on_disk) = cache.load_cache().await? {
             let current = OfferingsFingerprint {
                 moss_version: moss_version_string(),
                 capabilities_hash: current_capabilities_hash(cached_caps_ref),
@@ -208,10 +213,9 @@ pub async fn ensure_offerings_index(state: &crate::AppState, force_rebuild: bool
                 return Ok(());
             }
         }
-    }
 
     let rebuilt = rebuild_offerings_index(&state.manifest_registry, cached_caps_ref)?;
-    crate::infra::save_offerings_cache(&rebuilt).await?;
+    cache.save_cache(&rebuilt).await?;
     *state.offerings_index.write().await = Some(rebuilt);
     Ok(())
 }
@@ -231,8 +235,9 @@ pub async fn ensure_offerings_index(state: &crate::AppState, force_rebuild: bool
 pub async fn get_compiled_offering(
     state: &crate::AppState,
     offering: &str,
+    cache: &crate::infra::persistence::OsOfferingsCache,
 ) -> Result<Option<CompiledOffering>> {
-    ensure_offerings_index(state, false).await?;
+    ensure_offerings_index(state, false, cache).await?;
     let guard = state.offerings_index.read().await;
     Ok(guard
         .as_ref()

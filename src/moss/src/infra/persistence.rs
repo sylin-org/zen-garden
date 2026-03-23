@@ -88,6 +88,7 @@ mod normalize_tests {
             offering_id: "test-id".to_string(),
             name: OfferingFqn::parse(name).unwrap(),
             offering: offering_type.to_string(),
+            category: String::new(),
             version: "unknown".to_string(),
             status: OfferingStatus::Running,
             health: ServiceHealthStatus::Healthy,
@@ -123,10 +124,7 @@ mod normalize_tests {
         let mut offerings = vec![sample_offering("ollama@adopted", "ollama")];
         // name is already normalized by OfferingFqn::parse, offering matches → no change needed
         assert_eq!(offerings[0].name.offering, "ollama");
-        assert_eq!(
-            offerings[0].name.instance.as_deref(),
-            Some("adopted")
-        );
+        assert_eq!(offerings[0].name.instance.as_deref(), Some("adopted"));
         assert_eq!(offerings[0].name.to_string(), "ollama::adopted");
         let normalized = normalize_offering_identities(&mut offerings);
         assert_eq!(normalized, 0); // offering already matches
@@ -174,6 +172,19 @@ pub async fn save_offerings_cache<T: serde::Serialize>(cache: &T) -> Result<()> 
 
     let path = offerings_cache_path();
     atomic_write(&path, cache).await
+}
+
+/// Filesystem-backed offerings cache persistence.
+pub struct OsOfferingsCache;
+
+impl crate::domain::traits::OfferingsCachePersistence for OsOfferingsCache {
+    async fn load_cache(&self) -> Result<Option<crate::domain::offerings::OfferingsIndex>> {
+        load_offerings_cache().await
+    }
+
+    async fn save_cache(&self, cache: &crate::domain::offerings::OfferingsIndex) -> Result<()> {
+        save_offerings_cache(cache).await
+    }
 }
 
 // ============================================================================

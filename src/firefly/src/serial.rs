@@ -588,11 +588,10 @@ pub fn detect_device_type(port_name: &str) -> Result<FireflyDeviceType> {
 
     for port in &ports {
         // Case-insensitive comparison for Windows (COM3 vs com3)
-        if port.port_name.eq_ignore_ascii_case(port_name) {
-            if let serialport::SerialPortType::UsbPort(info) = &port.port_type {
+        if port.port_name.eq_ignore_ascii_case(port_name)
+            && let serialport::SerialPortType::UsbPort(info) = &port.port_type {
                 return Ok(FireflyDeviceType::from_vid(info.vid));
             }
-        }
     }
 
     Ok(FireflyDeviceType::Unknown)

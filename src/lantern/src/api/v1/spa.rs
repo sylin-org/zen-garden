@@ -26,7 +26,7 @@ pub async fn serve_index() -> impl IntoResponse {
     serve_embedded_file("index.html")
 }
 
-fn serve_embedded_file(path: &str) -> impl IntoResponse {
+fn serve_embedded_file(path: &str) -> impl IntoResponse + use<> {
     match FrontendAssets::get(path) {
         Some(file) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();

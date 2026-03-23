@@ -1,4 +1,4 @@
-﻿//! Cloud Filter provider — implements `Filter` for Windows CfApi callbacks
+//! Cloud Filter provider — implements `Filter` for Windows CfApi callbacks
 //! (STORAGE-0012, refactored per STORAGE-0015)
 //!
 //! Thin CfApi adapter — converts callback arguments to domain types and
@@ -90,7 +90,10 @@ impl ZenGardenProvider {
     ///
     /// Short-circuits on local match to avoid full enumeration (A11e).
     async fn is_known_storage(&self, name: &str) -> bool {
-        if StorageRoute::find_local(name, &self.volumes).await.is_some() {
+        if StorageRoute::find_local(name, &self.volumes)
+            .await
+            .is_some()
+        {
             return true;
         }
         let reg = self.registry.read().await;
@@ -196,12 +199,10 @@ impl Filter for ZenGardenProvider {
                 .await
                 .map_err(cfail)?;
             if !data.is_empty() {
-                ticket
-                    .write_at(&data, range.start)
-                    .map_err(|e| {
-                        warn!(error = %e, "write_at failed");
-                        CloudErrorKind::NotInSync
-                    })?;
+                ticket.write_at(&data, range.start).map_err(|e| {
+                    warn!(error = %e, "write_at failed");
+                    CloudErrorKind::NotInSync
+                })?;
             }
         }
 
@@ -484,7 +485,12 @@ impl Filter for ZenGardenProvider {
                 info!(storage = %storage, path = %path, "file moved out of sync root");
             }
 
-            DriveAction::RenameInStorage { storage, old, new, is_dir } => {
+            DriveAction::RenameInStorage {
+                storage,
+                old,
+                new,
+                is_dir,
+            } => {
                 let r = self.handle_write(&storage).await?;
                 r.rename(&old, &new, is_dir).await.map_err(cfail)?;
                 debug!(storage = %storage, old = %old, new = %new, is_dir, "renamed within storage");
@@ -568,7 +574,10 @@ impl Filter for ZenGardenProvider {
     // ---- State changes (attribute monitoring) ----
 
     async fn state_changed(&self, changes: Vec<PathBuf>) {
-        debug!(count = changes.len(), "state_changed: attribute changes detected");
+        debug!(
+            count = changes.len(),
+            "state_changed: attribute changes detected"
+        );
     }
 }
 

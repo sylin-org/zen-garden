@@ -73,7 +73,7 @@ A storage can carry one or more **roles**:
 
 | Role | Purpose |
 |------|---------|
-| `seed-bank` | Receives offering backups (harvests). Required for nurturing to target this storage. |
+| `seed-bank` | Receives offering snapshots. Required for backup to target this storage. |
 
 Roles are composable flags — a storage can be a seed-bank and hold user files at the same time. If you don't assign the seed-bank role, the storage is purely for user files and objects.
 
@@ -152,7 +152,7 @@ You'll see the adopted storage listed with its existing capacity and usage.
 │   ├── manifest.json          ← Identity and configuration
 │   ├── changelog.jsonl        ← Replication log (seeded with existing files)
 │   ├── storage/               ← S3 objects namespace
-│   └── memories/              ← Offering harvests (if seed-bank role)
+│   └── memories/              ← Offering snapshots (if seed-bank role)
 ├── Photos/                    ← Your existing data (untouched)
 ├── Videos/                    ← Your existing data (untouched)
 └── Documents/                 ← Your existing data (untouched)
@@ -359,13 +359,13 @@ curl "http://stone-name:7185/api/v1/garden/storage/family-photos/fs?path=Photos&
 curl "http://stone-name:7185/api/v1/garden/storage/family-photos/fs?depth=all"
 ```
 
-The REST API also handles objects (S3-style) and memories (offering harvests):
+The REST API also handles objects (S3-style) and memories (offering snapshots):
 
 ```bash
 # Objects (under .zen-garden/storage/)
 curl http://stone-name:7185/api/v1/garden/storage/family-photos/objects/bucket/key.dat
 
-# Memories (offering harvests)
+# Memories (offering snapshots)
 curl http://stone-name:7185/api/v1/garden/storage/backups/memories
 curl http://stone-name:7185/api/v1/garden/storage/backups/memories/immich
 ```
@@ -620,9 +620,9 @@ Keep one USB at home, take one offsite. Both carry offering backups.
 garden-rake storage prepare /dev/sdb --name offsite --roles seed-bank
 garden-rake storage prepare /dev/sdc --name offsite --roles seed-bank
 
-# Configure nurturing to target this storage
-garden-rake nurturing configure immich --seed-bank offsite
-garden-rake nurturing configure postgres --seed-bank offsite
+# Configure backup to target this storage
+garden-rake backup configure immich --seed-bank offsite
+garden-rake backup configure postgres --seed-bank offsite
 ```
 
 Nurturing writes to whichever `offsite` drive is plugged in. Swap drives weekly — the one at home replicates the latest state, and you take the updated one offsite.
@@ -681,7 +681,7 @@ Every managed storage has a `.zen-garden/` directory at its root. Here's what li
 ├── pin.json              # Present when this replica claims Primary (contains pin_id)
 ├── last_cursor           # Replication cursor (tracks sync position)
 ├── last-known-good/      # Resilience snapshot of the manifest
-├── memories/             # Offering harvests (only when seed-bank role is active)
+├── memories/             # Offering snapshots (only when seed-bank role is active)
 │   ├── immich/
 │   │   ├── manifest.json
 │   │   └── 2026-03-07T12-00-00Z.tar.gz
@@ -858,7 +858,7 @@ The signpost share appears in network browsers as a read-only folder containing 
 | GET | `/api/v1/garden/storage/{name}/fs` | Directory listing (`?path=&depth=N`) |
 | GET/PUT/DELETE/HEAD | `/api/v1/garden/storage/{name}/fs/*path` | User file operations |
 | GET/PUT/DELETE/HEAD | `/api/v1/garden/storage/{name}/objects/*path` | S3 object operations |
-| GET | `/api/v1/garden/storage/{name}/memories` | List offerings with harvests |
+| GET | `/api/v1/garden/storage/{name}/memories` | List offerings with snapshots |
 | GET | `/api/v1/garden/storage/{name}/memories/{offering}` | List snapshots |
 | GET | `/api/v1/garden/storage/{name}/memories/{offering}/{harvest}` | Download snapshot |
 
@@ -995,7 +995,7 @@ curl -X PROPFIND http://stone-name:7185/dav/my-storage/
 
 ## Further Reading
 
-- [Nurturing Guide](./nurturing.md) — Backup configuration and scheduling
+- [Backup Guide](./nurturing.md) — Backup configuration and scheduling
 - [First Stone](./first-stone.md) — Setting up your first stone
 - [Seed Banks Guide](./seed-banks.md) — Legacy seed bank setup (pre-STORAGE-0009)
 - [Troubleshooting](./troubleshooting.md) — General troubleshooting

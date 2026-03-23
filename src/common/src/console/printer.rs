@@ -37,10 +37,10 @@ impl EventDeduplicator {
             .retain(|_, last_seen| now.duration_since(*last_seen).as_secs() < self.ttl_seconds);
 
         // Check if we've seen this event recently
-        if let Some(last_seen) = self.seen.get(&key) {
-            if now.duration_since(*last_seen).as_secs() < self.ttl_seconds {
-                return false; // Suppress duplicate
-            }
+        if let Some(last_seen) = self.seen.get(&key)
+            && now.duration_since(*last_seen).as_secs() < self.ttl_seconds
+        {
+            return false; // Suppress duplicate
         }
 
         // Record this event
@@ -57,7 +57,6 @@ pub struct ConsolePrinter {
 }
 
 impl ConsolePrinter {
-    #[allow(dead_code)]
     pub fn new(mode: ConsoleMode) -> Self {
         Self::with_dedup_ttl(mode, 10)
     }
@@ -73,7 +72,6 @@ impl ConsolePrinter {
     }
 
     /// Create console printer with custom formatter (for SSE, API, etc.)
-    #[allow(dead_code)]
     pub fn with_formatter(
         mode: ConsoleMode,
         formatter: Box<dyn OutputFormatter + Send + Sync>,
@@ -158,8 +156,14 @@ impl ConsolePrinter {
                 // All high-level lifecycle events (exclude verbose-only).
                 // Connected/Disconnected are gated by category: Docker and Storage
                 // are user-visible; Services connections are not.
-                if matches!(event.status, EventStatus::Connected | EventStatus::Disconnected) {
-                    matches!(event.category, EventCategory::Docker | EventCategory::Storage)
+                if matches!(
+                    event.status,
+                    EventStatus::Connected | EventStatus::Disconnected
+                ) {
+                    matches!(
+                        event.category,
+                        EventCategory::Docker | EventCategory::Storage
+                    )
                 } else {
                     !matches!(
                         event.status,
@@ -220,7 +224,10 @@ impl ConsolePrinter {
 
         // Storage availability changes (managed storage plug/unplug)
         if matches!(event.category, EventCategory::Storage)
-            && matches!(event.status, EventStatus::Connected | EventStatus::Disconnected)
+            && matches!(
+                event.status,
+                EventStatus::Connected | EventStatus::Disconnected
+            )
         {
             return true;
         }

@@ -18,7 +18,6 @@
 
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
-use async_trait::async_trait;
 use garden_common::api_utils::ApiResponse;
 use garden_common::storage::{
     AddStorageRequest, CandidatesResponse, MediumAction, StorageInfo, StorageRole,
@@ -128,96 +127,93 @@ impl AddStorageCommand {
     }
 }
 
-#[async_trait]
 impl Command for AddStorageCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage add command"))?;
-        let base = endpoint.trim_end_matches('/');
+            let api = ctx.stone_api()?;
 
-        // Resolve target — if not provided, list candidates and let user pick
-        let target = match &self.target {
-            Some(t) => t.clone(),
-            None => self.pick_target(ctx, base).await?,
-        };
+            // Resolve target — if not provided, list candidates and let user pick
+            let target = match &self.target {
+                Some(t) => t.clone(),
+                None => self.pick_target(ctx, api.endpoint()).await?,
+            };
 
-        let is_block_device = target.starts_with("/dev/");
+            let is_block_device = target.starts_with("/dev/");
 
-        // Destructive format confirmation
-        if is_block_device && self.format && !self.yes {
-            println!(
-                "\n{} WARNING: This will FORMAT and ERASE ALL DATA on {}",
-                ui::status_indicator("warn", ctx.term.supports_color),
-                target
-            );
-            print!("Type 'yes' to continue: ");
-            io::stdout().flush()?;
+            // Destructive format confirmation
+            if is_block_device && self.format && !self.yes {
+                println!(
+                    "\n{} WARNING: This will FORMAT and ERASE ALL DATA on {}",
+                    ui::status_indicator("warn", ctx.term.supports_color),
+                    target
+                );
+                print!("Type 'yes' to continue: ");
+                io::stdout().flush()?;
 
-            let mut confirm = String::new();
-            io::stdin().read_line(&mut confirm)?;
+                let mut confirm = String::new();
+                io::stdin().read_line(&mut confirm)?;
 
-            if confirm.trim().to_lowercase() != "yes" {
-                println!("Cancelled.");
-                return Ok(());
+                if confirm.trim().to_lowercase() != "yes" {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
             }
-        }
 
-        // Build unified request
-        let request = AddStorageRequest {
-            target: target.clone(),
-            name: self.name.clone(),
-            format: self.format,
-            filesystem: self.filesystem.clone(),
-            encrypted: self.encrypted,
-            roles: self.roles.clone(),
-        };
+            // Build unified request
+            let request = AddStorageRequest {
+                target: target.clone(),
+                name: self.name.clone(),
+                format: self.format,
+                filesystem: self.filesystem.clone(),
+                encrypted: self.encrypted,
+                roles: self.roles.clone(),
+            };
 
-        // POST /api/v1/stone/storage/add
-        let url = format!("{}/api/v1/stone/storage/add", base);
-        let response = ctx
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to submit storage add request: {}", e))?;
+            // POST /api/v1/stone/storage/add
+            let url = format!("{}/api/v1/stone/storage/add", api.endpoint());
+            let response = api
+                .http()
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to submit storage add request: {}", e))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Storage add failed ({}): {}", status, text);
-        }
-
-        let result: AddStorageResponseData = response
-            .json::<ApiResponse<AddStorageResponseData>>()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-            .data;
-
-        if !self.quiet {
-            println!(
-                "\n{} Storage '{}' added successfully",
-                ui::status_indicator("success", ctx.term.supports_color),
-                result.name
-            );
-            println!("  Mount: {}", result.mount_path);
-            if result.formatted {
-                println!("  Formatted: yes ({})", self.filesystem);
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Storage add failed ({}): {}", status, text);
             }
-            if result.cataloged > 0 {
-                println!("  Cataloged: {} existing items", result.cataloged);
-            }
-            if let Some(ref job_id) = result.job_id {
-                println!("  Job ID: {}", job_id);
-                println!("\nTip: Use 'garden-rake watch' to monitor format progress");
-            }
-        }
 
-        Ok(())
+            let result: AddStorageResponseData = response
+                .json::<ApiResponse<AddStorageResponseData>>()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+                .data;
+
+            if !self.quiet {
+                println!(
+                    "\n{} Storage '{}' added successfully",
+                    ui::status_indicator("success", ctx.term.supports_color),
+                    result.name
+                );
+                println!("  Mount: {}", result.mount_path);
+                if result.formatted {
+                    println!("  Formatted: yes ({})", self.filesystem);
+                }
+                if result.cataloged > 0 {
+                    println!("  Cataloged: {} existing items", result.cataloged);
+                }
+                if let Some(ref job_id) = result.job_id {
+                    println!("  Job ID: {}", job_id);
+                    println!("\nTip: Use 'garden-rake watch' to monitor format progress");
+                }
+            }
+
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -232,11 +228,12 @@ impl Command for AddStorageCommand {
 impl AddStorageCommand {
     /// Interactive device selection when no target provided.
     async fn pick_target(&self, ctx: &Runtime, base: &str) -> anyhow::Result<String> {
-        use garden_common::ui::rendering as ui;
+        use crate::ui::rendering as ui;
 
+        let api = ctx.stone_api()?;
         let url = format!("{}/api/v1/stone/storage/candidates", base);
-        let response = ctx
-            .client
+        let response = api
+            .http()
             .get(&url)
             .send()
             .await
@@ -275,10 +272,16 @@ impl AddStorageCommand {
             let actionable: Vec<_> = resp
                 .media
                 .iter()
-                .filter(|m| matches!(m.suggested_action, MediumAction::NeedsPartition | MediumAction::NeedsFormat))
+                .filter(|m| {
+                    matches!(
+                        m.suggested_action,
+                        MediumAction::NeedsPartition | MediumAction::NeedsFormat
+                    )
+                })
                 .collect();
             if !actionable.is_empty() {
-                let mut msg = String::from("No ready volumes found, but detected physical media:\n");
+                let mut msg =
+                    String::from("No ready volumes found, but detected physical media:\n");
                 for m in &actionable {
                     msg.push_str(&format!(
                         "  {} ({}) — {}\n",
@@ -354,22 +357,63 @@ impl ReleaseStorageCommand {
     }
 }
 
-#[async_trait]
 impl Command for ReleaseStorageCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for release command"))?;
-        let base = endpoint.trim_end_matches('/');
+            let api = ctx.stone_api()?;
+            let base = api.endpoint();
 
-        // "all" → bulk release
-        if self.name == "all" {
-            let url = format!("{}/api/v1/stone/storage/release-all", base);
-            let response = ctx
-                .client
+            // "all" → bulk release
+            if self.name == "all" {
+                let url = format!("{}/api/v1/stone/storage/release-all", base);
+                let response = api
+                    .http()
+                    .post(&url)
+                    .send()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to release: {}", e))?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let text = response.text().await.unwrap_or_default();
+                    anyhow::bail!("Release failed ({}): {}", status, text);
+                }
+
+                let results: Vec<ReleaseResponse> = response
+                    .json::<ApiResponse<Vec<ReleaseResponse>>>()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+                    .data;
+
+                for r in &results {
+                    if r.released {
+                        println!(
+                            "{} Released: {}",
+                            ui::status_indicator("success", ctx.term.supports_color),
+                            r.name
+                        );
+                    } else {
+                        println!(
+                            "{} Failed: {} - {}",
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            r.name,
+                            r.message
+                        );
+                    }
+                }
+
+                println!(
+                    "\n{} You may now safely remove the devices.",
+                    ui::status_indicator("info", ctx.term.supports_color)
+                );
+                return Ok(());
+            }
+
+            let url = format!("{}/api/v1/stone/storage/banks/{}/release", base, self.name);
+            let response = api
+                .http()
                 .post(&url)
                 .send()
                 .await
@@ -381,67 +425,24 @@ impl Command for ReleaseStorageCommand {
                 anyhow::bail!("Release failed ({}): {}", status, text);
             }
 
-            let results: Vec<ReleaseResponse> = response
-                .json::<ApiResponse<Vec<ReleaseResponse>>>()
+            let result: ReleaseResponse = response
+                .json::<ApiResponse<ReleaseResponse>>()
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
                 .data;
 
-            for r in &results {
-                if r.released {
-                    println!(
-                        "{} Released: {}",
-                        ui::status_indicator("success", ctx.term.supports_color),
-                        r.name
-                    );
-                } else {
-                    println!(
-                        "{} Failed: {} - {}",
-                        ui::status_indicator("error", ctx.term.supports_color),
-                        r.name,
-                        r.message
-                    );
-                }
+            if result.released {
+                println!(
+                    "\n{} {} - You may now safely remove the device.",
+                    ui::status_indicator("success", ctx.term.supports_color),
+                    result.message
+                );
+            } else {
+                anyhow::bail!("Release failed: {}", result.message);
             }
 
-            println!(
-                "\n{} You may now safely remove the devices.",
-                ui::status_indicator("info", ctx.term.supports_color)
-            );
-            return Ok(());
-        }
-
-        let url = format!("{}/api/v1/stone/storage/banks/{}/release", base, self.name);
-        let response = ctx
-            .client
-            .post(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to release: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Release failed ({}): {}", status, text);
-        }
-
-        let result: ReleaseResponse = response
-            .json::<ApiResponse<ReleaseResponse>>()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-            .data;
-
-        if result.released {
-            println!(
-                "\n{} {} - You may now safely remove the device.",
-                ui::status_indicator("success", ctx.term.supports_color),
-                result.message
-            );
-        } else {
-            anyhow::bail!("Release failed: {}", result.message);
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -473,202 +474,200 @@ impl ListStorageCommand {
     }
 }
 
-#[async_trait]
 impl Command for ListStorageCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage list command"))?;
+            let api = ctx.stone_api()?;
 
-        // Fetch local storages
-        let banks_url = format!(
-            "{}/api/v1/stone/storage/banks",
-            endpoint.trim_end_matches('/')
-        );
-        let banks_response = ctx
-            .client
-            .get(&banks_url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch storages: {}", e))?;
-
-        if !banks_response.status().is_success() {
-            let status = banks_response.status();
-            let text = banks_response.text().await.unwrap_or_default();
-            anyhow::bail!("API error {}: {}", status, text);
-        }
-
-        let storages: Vec<StorageInfo> = banks_response
-            .json::<ApiResponse<Vec<StorageInfo>>>()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-            .data;
-
-        // Fetch garden-wide overview (includes roles from beacons)
-        let overview_url = format!("{}/api/v1/stone/storage", endpoint.trim_end_matches('/'));
-        let garden_banks: Vec<GardenBankInfo> = match ctx.client.get(&overview_url).send().await {
-            Ok(resp) if resp.status().is_success() => resp
-                .json::<ApiResponse<StorageOverview>>()
+            // Fetch local storages
+            let banks_url = format!(
+                "{}/api/v1/stone/storage/banks",
+                api.endpoint()
+            );
+            let banks_response = api
+                .http()
+                .get(&banks_url)
+                .send()
                 .await
-                .map(|r| r.data.garden_banks)
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
+                .map_err(|e| anyhow::anyhow!("Failed to fetch storages: {}", e))?;
 
-        // Fetch candidates (cross-platform)
-        let candidates: Option<CandidatesResponse> = {
-            let cand_url = format!(
-                "{}/api/v1/stone/storage/candidates",
-                endpoint.trim_end_matches('/')
-            );
-            match ctx.client.get(&cand_url).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    resp.json::<CandidatesResponse>().await.ok()
-                }
-                _ => None,
-            }
-        };
-
-        // Display storages — grouped by replica set name with volumes underneath
-        if storages.is_empty() && garden_banks.is_empty() {
-            println!(
-                "\n{} No managed storage found.",
-                ui::status_indicator("info", ctx.term.supports_color)
-            );
-        } else if !garden_banks.is_empty() {
-            // Group by replica set name (user-facing identity)
-            let mut by_name: std::collections::BTreeMap<String, Vec<&GardenBankInfo>> =
-                std::collections::BTreeMap::new();
-            for gb in &garden_banks {
-                by_name.entry(gb.name.clone()).or_default().push(gb);
+            if !banks_response.status().is_success() {
+                let status = banks_response.status();
+                let text = banks_response.text().await.unwrap_or_default();
+                anyhow::bail!("API error {}: {}", status, text);
             }
 
-            println!("\n{}", ui::section_header("STORAGE", &ctx.term));
-            for (name, replicas) in &by_name {
-                let replica_count = replicas.len();
-                let is_encrypted = replicas.iter().any(|r| r.encrypted);
-                let is_pinned = replicas.iter().any(|r| r.pinned);
+            let storages: Vec<StorageInfo> = banks_response
+                .json::<ApiResponse<Vec<StorageInfo>>>()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+                .data;
 
-                let enc_label = if is_encrypted { " [encrypted]" } else { "" };
-                let pin_label = if is_pinned { " pinned" } else { "" };
+            // Fetch garden-wide overview (includes roles from beacons)
+            let overview_url = format!("{}/api/v1/stone/storage", api.endpoint());
+            let garden_banks: Vec<GardenBankInfo> = match api.http().get(&overview_url).send().await {
+                Ok(resp) if resp.status().is_success() => resp
+                    .json::<ApiResponse<StorageOverview>>()
+                    .await
+                    .map(|r| r.data.garden_banks)
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
 
-                // Total capacity across all volumes in this replica set
-                let total_cap: u64 = replicas.iter().map(|r| r.capacity_bytes).sum();
-                let cap_str = format_bytes(total_cap);
-
-                println!(
-                    "\n  {} {}  ({} volume{}, {}){}{}",
-                    ui::status_indicator("success", ctx.term.supports_color),
-                    name,
-                    replica_count,
-                    if replica_count == 1 { "" } else { "s" },
-                    cap_str,
-                    enc_label,
-                    pin_label,
+            // Fetch candidates (cross-platform)
+            let candidates: Option<CandidatesResponse> = {
+                let cand_url = format!(
+                    "{}/api/v1/stone/storage/candidates",
+                    api.endpoint()
                 );
-
-                for r in replicas {
-                    let vol_name = if r.volume_name.is_empty() {
-                        &r.id[..8.min(r.id.len())]
-                    } else {
-                        &r.volume_name
-                    };
-                    let role_tag = match r.role {
-                        StorageRole::Primary => " [primary]",
-                        StorageRole::Dormant => " [dormant]",
-                    };
-                    let cap = format_bytes(r.capacity_bytes);
-                    println!(
-                        "      {} — {} ({}){}",
-                        vol_name,
-                        r.stone_name,
-                        cap,
-                        role_tag,
-                    );
+                match api.http().get(&cand_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        resp.json::<CandidatesResponse>().await.ok()
+                    }
+                    _ => None,
                 }
-            }
-        } else {
-            // Fallback: only local storages (no garden view)
-            println!("\n{}", ui::section_header("STORAGE", &ctx.term));
-            for sb in &storages {
-                let status = if sb.online {
-                    ui::status_indicator("success", ctx.term.supports_color)
-                } else {
-                    ui::status_indicator("warn", ctx.term.supports_color)
-                };
-                let visibility = format!("{:?}", sb.visibility).to_lowercase();
-                let enc = if sb.encrypted { " [encrypted]" } else { "" };
+            };
+
+            // Display storages — grouped by replica set name with volumes underneath
+            if storages.is_empty() && garden_banks.is_empty() {
                 println!(
-                    "  {} {} ({}) - {} - {}{}",
-                    status,
-                    sb.name,
-                    visibility,
-                    format_bytes(sb.capacity_bytes),
-                    if sb.online { "mounted" } else { "offline" },
-                    enc,
+                    "\n{} No managed storage found.",
+                    ui::status_indicator("info", ctx.term.supports_color)
                 );
-            }
-        }
-
-        // Display candidates
-        if let Some(ref cands) = candidates {
-            // Ready volumes (can be added immediately)
-            let eligible: Vec<_> = cands.spaces.iter().filter(|s| s.eligible).collect();
-            if !eligible.is_empty() {
-                println!("\n{}", ui::section_header("ELIGIBLE DEVICES", &ctx.term));
-                for s in &eligible {
-                    let label = s.label.as_deref().unwrap_or("");
-                    let mount = s.mount_path.as_deref().unwrap_or(&s.device);
-                    println!(
-                        "  {} {} - {} {} (use: storage add {})",
-                        ui::status_indicator("info", ctx.term.supports_color),
-                        mount,
-                        format_bytes(s.capacity_bytes),
-                        label,
-                        mount,
-                    );
+            } else if !garden_banks.is_empty() {
+                // Group by replica set name (user-facing identity)
+                let mut by_name: std::collections::BTreeMap<String, Vec<&GardenBankInfo>> =
+                    std::collections::BTreeMap::new();
+                for gb in &garden_banks {
+                    by_name.entry(gb.name.clone()).or_default().push(gb);
                 }
-            }
 
-            // Physical media needing action
-            let actionable: Vec<_> = cands
-                .media
-                .iter()
-                .filter(|m| {
-                    matches!(
-                        m.suggested_action,
-                        MediumAction::NeedsPartition | MediumAction::NeedsFormat
-                    )
-                })
-                .collect();
-            if !actionable.is_empty() {
-                println!("\n{}", ui::section_header("PHYSICAL MEDIA (needs setup)", &ctx.term));
-                for m in &actionable {
-                    let name = m.model.as_deref().unwrap_or(&m.device_id);
+                println!("\n{}", ui::section_header("STORAGE", &ctx.term));
+                for (name, replicas) in &by_name {
+                    let replica_count = replicas.len();
+                    let is_encrypted = replicas.iter().any(|r| r.encrypted);
+                    let is_pinned = replicas.iter().any(|r| r.pinned);
+
+                    let enc_label = if is_encrypted { " [encrypted]" } else { "" };
+                    let pin_label = if is_pinned { " pinned" } else { "" };
+
+                    // Total capacity across all volumes in this replica set
+                    let total_cap: u64 = replicas.iter().map(|r| r.capacity_bytes).sum();
+                    let cap_str = format_bytes(total_cap);
+
                     println!(
-                        "  {} {} - {} via {} — {}",
-                        ui::status_indicator("warn", ctx.term.supports_color),
+                        "\n  {} {}  ({} volume{}, {}){}{}",
+                        ui::status_indicator("success", ctx.term.supports_color),
                         name,
-                        format_bytes(m.size_bytes),
-                        m.bus_type,
-                        m.suggested_action,
+                        replica_count,
+                        if replica_count == 1 { "" } else { "s" },
+                        cap_str,
+                        enc_label,
+                        pin_label,
+                    );
+
+                    for r in replicas {
+                        let vol_name = if r.volume_name.is_empty() {
+                            &r.id[..8.min(r.id.len())]
+                        } else {
+                            &r.volume_name
+                        };
+                        let role_tag = match r.role {
+                            StorageRole::Primary => " [primary]",
+                            StorageRole::Dormant => " [dormant]",
+                        };
+                        let cap = format_bytes(r.capacity_bytes);
+                        println!(
+                            "      {} — {} ({}){}",
+                            vol_name, r.stone_name, cap, role_tag,
+                        );
+                    }
+                }
+            } else {
+                // Fallback: only local storages (no garden view)
+                println!("\n{}", ui::section_header("STORAGE", &ctx.term));
+                for sb in &storages {
+                    let status = if sb.online {
+                        ui::status_indicator("success", ctx.term.supports_color)
+                    } else {
+                        ui::status_indicator("warn", ctx.term.supports_color)
+                    };
+                    let visibility = format!("{:?}", sb.visibility).to_lowercase();
+                    let enc = if sb.encrypted { " [encrypted]" } else { "" };
+                    println!(
+                        "  {} {} ({}) - {} - {}{}",
+                        status,
+                        sb.name,
+                        visibility,
+                        format_bytes(sb.capacity_bytes),
+                        if sb.online { "mounted" } else { "offline" },
+                        enc,
                     );
                 }
             }
-        }
 
-        let has_candidates = candidates
-            .as_ref()
-            .map(|c| !c.spaces.is_empty() || !c.media.is_empty())
-            .unwrap_or(false);
-        if storages.is_empty() && garden_banks.is_empty() && !has_candidates {
-            println!("\nTip: Insert a USB drive to see available devices");
-        }
+            // Display candidates
+            if let Some(ref cands) = candidates {
+                // Ready volumes (can be added immediately)
+                let eligible: Vec<_> = cands.spaces.iter().filter(|s| s.eligible).collect();
+                if !eligible.is_empty() {
+                    println!("\n{}", ui::section_header("ELIGIBLE DEVICES", &ctx.term));
+                    for s in &eligible {
+                        let label = s.label.as_deref().unwrap_or("");
+                        let mount = s.mount_path.as_deref().unwrap_or(&s.device);
+                        println!(
+                            "  {} {} - {} {} (use: storage add {})",
+                            ui::status_indicator("info", ctx.term.supports_color),
+                            mount,
+                            format_bytes(s.capacity_bytes),
+                            label,
+                            mount,
+                        );
+                    }
+                }
 
-        Ok(())
+                // Physical media needing action
+                let actionable: Vec<_> = cands
+                    .media
+                    .iter()
+                    .filter(|m| {
+                        matches!(
+                            m.suggested_action,
+                            MediumAction::NeedsPartition | MediumAction::NeedsFormat
+                        )
+                    })
+                    .collect();
+                if !actionable.is_empty() {
+                    println!(
+                        "\n{}",
+                        ui::section_header("PHYSICAL MEDIA (needs setup)", &ctx.term)
+                    );
+                    for m in &actionable {
+                        let name = m.model.as_deref().unwrap_or(&m.device_id);
+                        println!(
+                            "  {} {} - {} via {} — {}",
+                            ui::status_indicator("warn", ctx.term.supports_color),
+                            name,
+                            format_bytes(m.size_bytes),
+                            m.bus_type,
+                            m.suggested_action,
+                        );
+                    }
+                }
+            }
+
+            let has_candidates = candidates
+                .as_ref()
+                .map(|c| !c.spaces.is_empty() || !c.media.is_empty())
+                .unwrap_or(false);
+            if storages.is_empty() && garden_banks.is_empty() && !has_candidates {
+                println!("\nTip: Insert a USB drive to see available devices");
+            }
+
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -703,48 +702,46 @@ impl PinStorageCommand {
     }
 }
 
-#[async_trait]
 impl Command for PinStorageCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for pin command"))?;
+            let api = ctx.stone_api()?;
 
-        let url = format!(
-            "{}/api/v1/stone/storage/banks/{}/pin",
-            endpoint.trim_end_matches('/'),
-            self.name
-        );
+            let url = format!(
+                "{}/api/v1/stone/storage/banks/{}/pin",
+                api.endpoint(),
+                self.name
+            );
 
-        let response = ctx
-            .client
-            .post(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to pin: {}", e))?;
+            let response = api
+                .http()
+                .post(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to pin: {}", e))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Pin failed ({}): {}", status, text);
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Pin failed ({}): {}", status, text);
+            }
 
-        let result: PinStorageResponse = response
-            .json::<ApiResponse<PinStorageResponse>>()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-            .data;
+            let result: PinStorageResponse = response
+                .json::<ApiResponse<PinStorageResponse>>()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+                .data;
 
-        println!(
-            "\n{} {}",
-            ui::status_indicator("success", ctx.term.supports_color),
-            result.message
-        );
+            println!(
+                "\n{} {}",
+                ui::status_indicator("success", ctx.term.supports_color),
+                result.message
+            );
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -763,48 +760,46 @@ impl UnpinStorageCommand {
     }
 }
 
-#[async_trait]
 impl Command for UnpinStorageCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for unpin command"))?;
+            let api = ctx.stone_api()?;
 
-        let url = format!(
-            "{}/api/v1/stone/storage/banks/{}/unpin",
-            endpoint.trim_end_matches('/'),
-            self.name
-        );
+            let url = format!(
+                "{}/api/v1/stone/storage/banks/{}/unpin",
+                api.endpoint(),
+                self.name
+            );
 
-        let response = ctx
-            .client
-            .post(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to unpin: {}", e))?;
+            let response = api
+                .http()
+                .post(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to unpin: {}", e))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Unpin failed ({}): {}", status, text);
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Unpin failed ({}): {}", status, text);
+            }
 
-        let result: PinStorageResponse = response
-            .json::<ApiResponse<PinStorageResponse>>()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-            .data;
+            let result: PinStorageResponse = response
+                .json::<ApiResponse<PinStorageResponse>>()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+                .data;
 
-        println!(
-            "\n{} {}",
-            ui::status_indicator("success", ctx.term.supports_color),
-            result.message
-        );
+            println!(
+                "\n{} {}",
+                ui::status_indicator("success", ctx.term.supports_color),
+                result.message
+            );
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -877,69 +872,67 @@ impl StorePutCommand {
     }
 }
 
-#[async_trait]
 impl Command for StorePutCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
-        // Read file content
-        let data = tokio::fs::read(&self.file)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", self.file.display(), e))?;
+            // Read file content
+            let data = tokio::fs::read(&self.file)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", self.file.display(), e))?;
 
-        // Guess content type
-        let content_type = mime_guess::from_path(&self.file)
-            .first_or_octet_stream()
-            .to_string();
+            // Guess content type
+            let content_type = mime_guess::from_path(&self.file)
+                .first_or_octet_stream()
+                .to_string();
 
-        let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
-        let url = format!(
-            "{}/api/v1/storage/s3/{}/{}",
-            endpoint.trim_end_matches('/'),
-            bucket,
-            key
-        );
-
-        let response = ctx
-            .client
-            .put(&url)
-            .header("Content-Type", &content_type)
-            .body(data.clone())
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to upload: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Upload failed ({}): {}", status, text);
-        }
-
-        let etag = response
-            .headers()
-            .get("etag")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(unknown)");
-
-        if !self.quiet {
-            println!(
-                "{} Stored {} ({} bytes) → {}/{}",
-                ui::status_indicator("success", ctx.term.supports_color),
-                self.file.display(),
-                data.len(),
-                self.bucket,
-                self.key
+            let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
+            let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+            let url = format!(
+                "{}/api/v1/storage/s3/{}/{}",
+                api.endpoint(),
+                bucket,
+                key
             );
-            println!("  ETag: {}", etag);
-        }
 
-        Ok(())
+            let response = api
+                .http()
+                .put(&url)
+                .header("Content-Type", &content_type)
+                .body(data.clone())
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to upload: {}", e))?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Upload failed ({}): {}", status, text);
+            }
+
+            let etag = response
+                .headers()
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("(unknown)");
+
+            if !self.quiet {
+                println!(
+                    "{} Stored {} ({} bytes) → {}/{}",
+                    ui::status_indicator("success", ctx.term.supports_color),
+                    self.file.display(),
+                    data.len(),
+                    self.bucket,
+                    self.key
+                );
+                println!("  ETag: {}", etag);
+            }
+
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -975,88 +968,85 @@ impl StoreGetCommand {
     }
 }
 
-#[async_trait]
 impl Command for StoreGetCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
-        let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
-        let url = format!(
-            "{}/api/v1/storage/s3/{}/{}",
-            endpoint.trim_end_matches('/'),
-            bucket,
-            key
-        );
+            let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
+            let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+            let url = format!(
+                "{}/api/v1/storage/s3/{}/{}",
+                api.endpoint(),
+                bucket,
+                key
+            );
 
-        let response = ctx
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch: {}", e))?;
+            let response = api
+                .http()
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to fetch: {}", e))?;
 
-        if response.status().as_u16() == 404 {
-            anyhow::bail!("Object not found: {}/{}", self.bucket, self.key);
-        }
+            if response.status().as_u16() == 404 {
+                anyhow::bail!("Object not found: {}/{}", self.bucket, self.key);
+            }
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Download failed ({}): {}", status, text);
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Download failed ({}): {}", status, text);
+            }
 
-        // Extract header values before consuming response
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_string();
+            // Extract header values before consuming response
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
 
-        let data = response
-            .bytes()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+            let data = response
+                .bytes()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
 
-        if let Some(ref output) = self.output {
-            // Write to file
-            if let Some(parent) = output.parent() {
-                if !parent.as_os_str().is_empty() {
-                    tokio::fs::create_dir_all(parent)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to create directory: {}", e))?;
+            if let Some(ref output) = self.output {
+                // Write to file
+                if let Some(parent) = output.parent()
+                    && !parent.as_os_str().is_empty() {
+                        tokio::fs::create_dir_all(parent)
+                            .await
+                            .map_err(|e| anyhow::anyhow!("Failed to create directory: {}", e))?;
+                    }
+                tokio::fs::write(output, &data)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to write file: {}", e))?;
+
+                if !self.quiet {
+                    println!(
+                        "{} Downloaded {}/{} → {} ({} bytes)",
+                        ui::status_indicator("success", ctx.term.supports_color),
+                        self.bucket,
+                        self.key,
+                        output.display(),
+                        data.len()
+                    );
+                }
+            } else {
+                // Write to stdout
+                if content_type.starts_with("text/") || content_type == "application/json" {
+                    print!("{}", String::from_utf8_lossy(&data));
+                } else {
+                    std::io::stdout().write_all(&data)?;
                 }
             }
-            tokio::fs::write(output, &data)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to write file: {}", e))?;
 
-            if !self.quiet {
-                println!(
-                    "{} Downloaded {}/{} → {} ({} bytes)",
-                    ui::status_indicator("success", ctx.term.supports_color),
-                    self.bucket,
-                    self.key,
-                    output.display(),
-                    data.len()
-                );
-            }
-        } else {
-            // Write to stdout
-            if content_type.starts_with("text/") || content_type == "application/json" {
-                print!("{}", String::from_utf8_lossy(&data));
-            } else {
-                std::io::stdout().write_all(&data)?;
-            }
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -1108,7 +1098,7 @@ struct ListBucketResult {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct S3Object {
     #[serde(rename = "Key")]
     key: String,
@@ -1126,94 +1116,92 @@ struct CommonPrefix {
     prefix: String,
 }
 
-#[async_trait]
 impl Command for StoreListCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
-        let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let (bucket, prefix) = apply_app_prefix_for_list(&self.bucket, self.prefix.clone(), app);
+            let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
+            let (bucket, prefix) = apply_app_prefix_for_list(&self.bucket, self.prefix.clone(), app);
 
-        let mut query_parts = Vec::new();
-        if let Some(ref prefix) = prefix {
-            query_parts.push(format!("prefix={}", urlencoding::encode(prefix)));
-        }
-        if let Some(ref delimiter) = self.delimiter {
-            query_parts.push(format!("delimiter={}", urlencoding::encode(delimiter)));
-        }
+            let mut query_parts = Vec::new();
+            if let Some(ref prefix) = prefix {
+                query_parts.push(format!("prefix={}", urlencoding::encode(prefix)));
+            }
+            if let Some(ref delimiter) = self.delimiter {
+                query_parts.push(format!("delimiter={}", urlencoding::encode(delimiter)));
+            }
 
-        let query_string = if query_parts.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", query_parts.join("&"))
-        };
+            let query_string = if query_parts.is_empty() {
+                String::new()
+            } else {
+                format!("?{}", query_parts.join("&"))
+            };
 
-        let url = format!(
-            "{}/api/v1/storage/s3/{}{}",
-            endpoint.trim_end_matches('/'),
-            bucket,
-            query_string
-        );
-
-        let response = ctx
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("List failed ({}): {}", status, text);
-        }
-
-        // Parse XML response
-        let text = response
-            .text()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
-
-        // Simple XML parsing (the response is well-formed S3 XML)
-        let result = parse_list_bucket_result(&text)?;
-
-        if result.contents.is_empty() && result.common_prefixes.is_empty() {
-            println!(
-                "{} No objects found in bucket '{}'",
-                ui::status_indicator("info", ctx.term.supports_color),
-                self.bucket
+            let url = format!(
+                "{}/api/v1/storage/s3/{}{}",
+                api.endpoint(),
+                bucket,
+                query_string
             );
-            return Ok(());
-        }
 
-        // Display common prefixes (directories)
-        for cp in &result.common_prefixes {
-            println!("  PRE {}", cp.prefix);
-        }
+            let response = api
+                .http()
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to list: {}", e))?;
 
-        // Display objects
-        for obj in &result.contents {
-            println!(
-                "{:>12}  {}  {}",
-                format_bytes(obj.size),
-                &obj.last_modified[..10], // Just the date
-                obj.key
-            );
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("List failed ({}): {}", status, text);
+            }
 
-        if result.is_truncated {
-            println!(
-                "\n{} Results truncated. Use marker to continue.",
-                ui::status_indicator("warn", ctx.term.supports_color)
-            );
-        }
+            // Parse XML response
+            let text = response
+                .text()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
 
-        Ok(())
+            // Simple XML parsing (the response is well-formed S3 XML)
+            let result = parse_list_bucket_result(&text)?;
+
+            if result.contents.is_empty() && result.common_prefixes.is_empty() {
+                println!(
+                    "{} No objects found in bucket '{}'",
+                    ui::status_indicator("info", ctx.term.supports_color),
+                    self.bucket
+                );
+                return Ok(());
+            }
+
+            // Display common prefixes (directories)
+            for cp in &result.common_prefixes {
+                println!("  PRE {}", cp.prefix);
+            }
+
+            // Display objects
+            for obj in &result.contents {
+                println!(
+                    "{:>12}  {}  {}",
+                    format_bytes(obj.size),
+                    &obj.last_modified[..10], // Just the date
+                    obj.key
+                );
+            }
+
+            if result.is_truncated {
+                println!(
+                    "\n{} Results truncated. Use marker to continue.",
+                    ui::status_indicator("warn", ctx.term.supports_color)
+                );
+            }
+
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -1234,12 +1222,11 @@ fn parse_list_bucket_result(xml: &str) -> anyhow::Result<ListBucketResult> {
     };
 
     // Parse IsTruncated
-    if let Some(start) = xml.find("<IsTruncated>") {
-        if let Some(end) = xml[start..].find("</IsTruncated>") {
+    if let Some(start) = xml.find("<IsTruncated>")
+        && let Some(end) = xml[start..].find("</IsTruncated>") {
             let value = &xml[start + 13..start + end];
             result.is_truncated = value == "true";
         }
-    }
 
     // Parse Contents
     let mut search_start = 0;
@@ -1327,48 +1314,46 @@ impl StoreDeleteCommand {
     }
 }
 
-#[async_trait]
 impl Command for StoreDeleteCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
-        let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
-        let url = format!(
-            "{}/api/v1/storage/s3/{}/{}",
-            endpoint.trim_end_matches('/'),
-            bucket,
-            key
-        );
-
-        let response = ctx
-            .client
-            .delete(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to delete: {}", e))?;
-
-        if !response.status().is_success() && response.status().as_u16() != 204 {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Delete failed ({}): {}", status, text);
-        }
-
-        if !self.quiet {
-            println!(
-                "{} Deleted {}/{}",
-                ui::status_indicator("success", ctx.term.supports_color),
-                self.bucket,
-                self.key
+            let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
+            let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+            let url = format!(
+                "{}/api/v1/storage/s3/{}/{}",
+                api.endpoint(),
+                bucket,
+                key
             );
-        }
 
-        Ok(())
+            let response = api
+                .http()
+                .delete(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to delete: {}", e))?;
+
+            if !response.status().is_success() && response.status().as_u16() != 204 {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Delete failed ({}): {}", status, text);
+            }
+
+            if !self.quiet {
+                println!(
+                    "{} Deleted {}/{}",
+                    ui::status_indicator("success", ctx.term.supports_color),
+                    self.bucket,
+                    self.key
+                );
+            }
+
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -1396,71 +1381,69 @@ impl StoreHeadCommand {
     }
 }
 
-#[async_trait]
 impl Command for StoreHeadCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for store command"))?;
+            let api = ctx.stone_api()?;
 
-        let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
-        let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
-        let url = format!(
-            "{}/api/v1/storage/s3/{}/{}",
-            endpoint.trim_end_matches('/'),
-            bucket,
-            key
-        );
+            let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
+            let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
+            let url = format!(
+                "{}/api/v1/storage/s3/{}/{}",
+                api.endpoint(),
+                bucket,
+                key
+            );
 
-        let response = ctx
-            .client
-            .head(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to head: {}", e))?;
+            let response = api
+                .http()
+                .head(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to head: {}", e))?;
 
-        if response.status().as_u16() == 404 {
-            anyhow::bail!("Object not found: {}/{}", self.bucket, self.key);
-        }
+            if response.status().as_u16() == 404 {
+                anyhow::bail!("Object not found: {}/{}", self.bucket, self.key);
+            }
 
-        if !response.status().is_success() {
-            anyhow::bail!("HEAD failed: {}", response.status());
-        }
+            if !response.status().is_success() {
+                anyhow::bail!("HEAD failed: {}", response.status());
+            }
 
-        let headers = response.headers();
+            let headers = response.headers();
 
-        let content_type = headers
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(unknown)");
-        let content_length = headers
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(unknown)");
-        let etag = headers
-            .get("etag")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(unknown)");
-        let last_modified = headers
-            .get("last-modified")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(unknown)");
+            let content_type = headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("(unknown)");
+            let content_length = headers
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("(unknown)");
+            let etag = headers
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("(unknown)");
+            let last_modified = headers
+                .get("last-modified")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("(unknown)");
 
-        println!(
-            "{} {}/{}",
-            ui::status_indicator("info", ctx.term.supports_color),
-            self.bucket,
-            self.key
-        );
-        println!("  Content-Type:   {}", content_type);
-        println!("  Content-Length: {} bytes", content_length);
-        println!("  ETag:           {}", etag);
-        println!("  Last-Modified:  {}", last_modified);
+            println!(
+                "{} {}/{}",
+                ui::status_indicator("info", ctx.term.supports_color),
+                self.bucket,
+                self.key
+            );
+            println!("  Content-Type:   {}", content_type);
+            println!("  Content-Length: {} bytes", content_length);
+            println!("  ETag:           {}", etag);
+            println!("  Last-Modified:  {}", last_modified);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -1492,177 +1475,155 @@ impl Default for StorageStatusCommand {
     }
 }
 
-#[async_trait]
 impl Command for StorageStatusCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        use garden_common::ui::rendering as ui;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
 
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Endpoint required for storage status command"))?;
+            let api = ctx.stone_api()?;
 
-        // Fetch local banks
-        let banks_url = format!(
-            "{}/api/v1/stone/storage/banks",
-            endpoint.trim_end_matches('/')
-        );
-        let banks_response = ctx
-            .client
-            .get(&banks_url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch storage banks: {}", e))?;
-
-        if !banks_response.status().is_success() {
-            let status = banks_response.status();
-            let text = banks_response.text().await.unwrap_or_default();
-            anyhow::bail!("API error {}: {}", status, text);
-        }
-
-        let banks: Vec<StorageInfo> = banks_response
-            .json::<ApiResponse<Vec<StorageInfo>>>()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-            .data;
-
-        // Fetch garden-wide overview for roles
-        let overview_url = format!("{}/api/v1/stone/storage", endpoint.trim_end_matches('/'));
-        let garden_banks: Vec<GardenBankInfo> = match ctx.client.get(&overview_url).send().await {
-            Ok(resp) if resp.status().is_success() => resp
-                .json::<ApiResponse<StorageOverview>>()
+            // Fetch local banks
+            let banks_url = format!(
+                "{}/api/v1/stone/storage/banks",
+                api.endpoint()
+            );
+            let banks_response = api
+                .http()
+                .get(&banks_url)
+                .send()
                 .await
-                .map(|r| r.data.garden_banks)
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
+                .map_err(|e| anyhow::anyhow!("Failed to fetch storage banks: {}", e))?;
 
-        if banks.is_empty() && garden_banks.is_empty() {
-            println!(
-                "\n{} No managed storage found.",
-                ui::status_indicator("info", ctx.term.supports_color)
-            );
-            println!("\nTip: Use 'garden-rake storage add <device-or-path>' to add storage");
-            return Ok(());
-        }
-
-        println!("\n{}", ui::section_header("STORAGE STATUS", &ctx.term));
-
-        // Build a role lookup from garden banks
-        let mut role_map: std::collections::HashMap<String, StorageRole> =
-            std::collections::HashMap::new();
-        let mut pin_map: std::collections::HashMap<String, bool> =
-            std::collections::HashMap::new();
-        for gb in &garden_banks {
-            if gb.is_local {
-                role_map.insert(gb.id.clone(), gb.role);
-                pin_map.insert(gb.id.clone(), gb.pinned);
+            if !banks_response.status().is_success() {
+                let status = banks_response.status();
+                let text = banks_response.text().await.unwrap_or_default();
+                anyhow::bail!("API error {}: {}", status, text);
             }
-        }
 
-        // Totals
-        let mut total_capacity: u64 = 0;
-        let mut total_used: u64 = 0;
+            let banks: Vec<StorageInfo> = banks_response
+                .json::<ApiResponse<Vec<StorageInfo>>>()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
+                .data;
 
-        for bank in &banks {
-            let role = role_map
-                .get(&bank.id)
-                .copied()
-                .unwrap_or(StorageRole::Dormant);
-            let pinned = pin_map.get(&bank.id).copied().unwrap_or(false);
-
-            let status_icon = if bank.online {
-                ui::status_indicator("success", ctx.term.supports_color)
-            } else {
-                ui::status_indicator("error", ctx.term.supports_color)
+            // Fetch garden-wide overview for roles
+            let overview_url = format!("{}/api/v1/stone/storage", api.endpoint());
+            let garden_banks: Vec<GardenBankInfo> = match api.http().get(&overview_url).send().await {
+                Ok(resp) if resp.status().is_success() => resp
+                    .json::<ApiResponse<StorageOverview>>()
+                    .await
+                    .map(|r| r.data.garden_banks)
+                    .unwrap_or_default(),
+                _ => Vec::new(),
             };
 
-            let available = bank.capacity_bytes.saturating_sub(bank.used_bytes);
-            let usage_pct = if bank.capacity_bytes > 0 {
-                (bank.used_bytes as f64 / bank.capacity_bytes as f64 * 100.0) as u32
-            } else {
-                0
-            };
+            if banks.is_empty() && garden_banks.is_empty() {
+                println!(
+                    "\n{} No managed storage found.",
+                    ui::status_indicator("info", ctx.term.supports_color)
+                );
+                println!("\nTip: Use 'garden-rake storage add <device-or-path>' to add storage");
+                return Ok(());
+            }
 
-            let pin_label = if pinned { " ★ pinned" } else { "" };
-            let enc_label = if bank.encrypted { " [encrypted]" } else { "" };
-            let roles_label = if bank.roles.is_empty() {
-                String::new()
-            } else {
-                format!("  roles: {}", bank.roles.join(", "))
-            };
+            println!("\n{}", ui::section_header("STORAGE STATUS", &ctx.term));
 
-            println!(
-                "\n  {} {}  ({}){}{}\n",
-                status_icon,
-                bank.name,
-                role,
-                pin_label,
-                enc_label,
-            );
-            println!(
-                "    Capacity:   {}",
-                format_bytes(bank.capacity_bytes)
-            );
-            println!(
-                "    Used:       {} ({}%)",
-                format_bytes(bank.used_bytes),
-                usage_pct,
-            );
-            println!(
-                "    Available:  {}",
-                format_bytes(available)
-            );
-            println!(
-                "    Device:     {}",
-                bank.device
-            );
-            println!(
-                "    Mount:      {}",
-                bank.mount_path
-            );
-            println!(
-                "    Visibility: {}",
-                bank.visibility,
-            );
-            if !bank.replica_set_id.is_empty() {
-                let rs_display = if bank.replica_set_name.is_empty() {
-                    "storage".to_string()
+            // Build a role lookup from garden banks
+            let mut role_map: std::collections::HashMap<String, StorageRole> =
+                std::collections::HashMap::new();
+            let mut pin_map: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+            for gb in &garden_banks {
+                if gb.is_local {
+                    role_map.insert(gb.id.clone(), gb.role);
+                    pin_map.insert(gb.id.clone(), gb.pinned);
+                }
+            }
+
+            // Totals
+            let mut total_capacity: u64 = 0;
+            let mut total_used: u64 = 0;
+
+            for bank in &banks {
+                let role = role_map
+                    .get(&bank.id)
+                    .copied()
+                    .unwrap_or(StorageRole::Dormant);
+                let pinned = pin_map.get(&bank.id).copied().unwrap_or(false);
+
+                let status_icon = if bank.online {
+                    ui::status_indicator("success", ctx.term.supports_color)
                 } else {
-                    bank.replica_set_name.clone()
+                    ui::status_indicator("error", ctx.term.supports_color)
                 };
-                let rs_short = StorageInfo::short_id(&bank.replica_set_id);
-                println!("    Replica set: {} ({})", rs_display, rs_short);
+
+                let available = bank.capacity_bytes.saturating_sub(bank.used_bytes);
+                let usage_pct = if bank.capacity_bytes > 0 {
+                    (bank.used_bytes as f64 / bank.capacity_bytes as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+
+                let pin_label = if pinned { " ★ pinned" } else { "" };
+                let enc_label = if bank.encrypted { " [encrypted]" } else { "" };
+                let roles_label = if bank.roles.is_empty() {
+                    String::new()
+                } else {
+                    format!("  roles: {}", bank.roles.join(", "))
+                };
+
+                println!(
+                    "\n  {} {}  ({}){}{}\n",
+                    status_icon, bank.name, role, pin_label, enc_label,
+                );
+                println!("    Capacity:   {}", format_bytes(bank.capacity_bytes));
+                println!(
+                    "    Used:       {} ({}%)",
+                    format_bytes(bank.used_bytes),
+                    usage_pct,
+                );
+                println!("    Available:  {}", format_bytes(available));
+                println!("    Device:     {}", bank.device);
+                println!("    Mount:      {}", bank.mount_path);
+                println!("    Visibility: {}", bank.visibility,);
+                if !bank.replica_set_id.is_empty() {
+                    let rs_display = if bank.replica_set_name.is_empty() {
+                        "storage".to_string()
+                    } else {
+                        bank.replica_set_name.clone()
+                    };
+                    let rs_short = StorageInfo::short_id(&bank.replica_set_id);
+                    println!("    Replica set: {} ({})", rs_display, rs_short);
+                }
+                if !roles_label.is_empty() {
+                    println!("   {}", roles_label);
+                }
+
+                total_capacity += bank.capacity_bytes;
+                total_used += bank.used_bytes;
             }
-            if !roles_label.is_empty() {
-                println!("   {}", roles_label);
+
+            // Summary line
+            if banks.len() > 1 {
+                let total_available = total_capacity.saturating_sub(total_used);
+                let total_pct = if total_capacity > 0 {
+                    (total_used as f64 / total_capacity as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+                println!("\n{}", ui::section_header("TOTALS", &ctx.term));
+                println!(
+                    "  {} storage{}: {} used of {} ({}% used, {} available)",
+                    banks.len(),
+                    if banks.len() == 1 { "" } else { "s" },
+                    format_bytes(total_used),
+                    format_bytes(total_capacity),
+                    total_pct,
+                    format_bytes(total_available),
+                );
             }
 
-            total_capacity += bank.capacity_bytes;
-            total_used += bank.used_bytes;
-        }
-
-        // Summary line
-        if banks.len() > 1 {
-            let total_available = total_capacity.saturating_sub(total_used);
-            let total_pct = if total_capacity > 0 {
-                (total_used as f64 / total_capacity as f64 * 100.0) as u32
-            } else {
-                0
-            };
-            println!("\n{}", ui::section_header("TOTALS", &ctx.term));
-            println!(
-                "  {} storage{}: {} used of {} ({}% used, {} available)",
-                banks.len(),
-                if banks.len() == 1 { "" } else { "s" },
-                format_bytes(total_used),
-                format_bytes(total_capacity),
-                total_pct,
-                format_bytes(total_available),
-            );
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -1673,4 +1634,3 @@ impl Command for StorageStatusCommand {
         "storage-status"
     }
 }
-

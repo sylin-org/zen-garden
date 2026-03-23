@@ -4,6 +4,7 @@
 //! detected and handled on restart. Uses simple JSON files.
 
 use crate::domain::ceremony::{Ceremony, CeremonyId};
+use crate::domain::traits::CeremonyPersistence;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
@@ -184,14 +185,12 @@ impl CeremonyJournal {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if let Ok(json) = tokio::fs::read_to_string(&path).await {
-                if let Ok(ceremony) = serde_json::from_str::<Ceremony>(&json) {
-                    if ceremony.completed_at.map(|t| t < cutoff).unwrap_or(false) {
+            if let Ok(json) = tokio::fs::read_to_string(&path).await
+                && let Ok(ceremony) = serde_json::from_str::<Ceremony>(&json)
+                    && ceremony.completed_at.map(|t| t < cutoff).unwrap_or(false) {
                         tokio::fs::remove_file(&path).await?;
                         pruned += 1;
                     }
-                }
-            }
         }
 
         if pruned > 0 {
@@ -199,6 +198,28 @@ impl CeremonyJournal {
         }
 
         Ok(pruned)
+    }
+}
+
+impl CeremonyPersistence for CeremonyJournal {
+    async fn persist(&self, ceremony: &Ceremony) -> Result<()> {
+        CeremonyJournal::persist(self, ceremony).await
+    }
+
+    async fn load_active(&self) -> Result<Vec<Ceremony>> {
+        CeremonyJournal::load_active(self).await
+    }
+
+    async fn load(&self, id: &CeremonyId) -> Result<Option<Ceremony>> {
+        CeremonyJournal::load(self, id).await
+    }
+
+    async fn remove(&self, id: &CeremonyId) -> Result<()> {
+        CeremonyJournal::remove(self, id).await
+    }
+
+    async fn prune_archive(&self, older_than: chrono::Duration) -> Result<usize> {
+        CeremonyJournal::prune_archive(self, older_than).await
     }
 }
 

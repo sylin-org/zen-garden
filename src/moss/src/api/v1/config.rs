@@ -11,16 +11,14 @@
 //! - `DELETE /api/v1/stone/services/{service}/config?owner=..` — remove a patch
 
 use crate::domain::config_compose;
-use crate::{error_response, AppState};
+use crate::{bad_request, conflict, internal, not_found, AppState};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use garden_common::{
-    api_utils::ApiErrorResponse,
-    manifests::offering::ServiceTemplate,
-    offerings::OfferingFqn,
+    api_utils::ApiErrorResponse, manifests::offering::ServiceTemplate, offerings::OfferingFqn,
     types::ConfigPatch,
 };
 use serde::{Deserialize, Serialize};
@@ -93,11 +91,9 @@ pub async fn get_config_v1(
             .iter()
             .find(|o| o.name.fqn() == service_name && o.is_managed())
             .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
+                not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Managed service '{}' not found", service_name),
-                    None,
                 )
             })?;
 
@@ -120,14 +116,8 @@ pub async fn get_config_v1(
 
     let template = get_service_template(&state, &service_name)?;
 
-    let effective = config_compose::compose(&template, &patches).map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "COMPOSE_ERROR",
-            format!("Failed to compose config: {}", e),
-            None,
-        )
-    })?;
+    let effective = config_compose::compose(&template, &patches)
+        .map_err(|e| internal("COMPOSE_ERROR", format!("Failed to compose config: {}", e)))?;
 
     Ok(Json(build_response(effective, filtered_patches, &template)))
 }
@@ -144,11 +134,9 @@ pub async fn patch_config_v1(
     let service_name = normalize_service_name(&service)?;
 
     if request.owner.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
+        return Err(bad_request(
             "OWNER_REQUIRED",
-            "The 'owner' field is required and cannot be empty".to_string(),
-            None,
+            "The 'owner' field is required and cannot be empty",
         ));
     }
 
@@ -170,11 +158,9 @@ pub async fn patch_config_v1(
             .iter()
             .find(|o| o.name.fqn() == service_name && o.is_managed())
             .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
+                not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Managed service '{}' not found", service_name),
-                    None,
                 )
             })?;
 
@@ -184,14 +170,8 @@ pub async fn patch_config_v1(
             .unwrap_or_default();
 
         // Validate against existing patches from OTHER owners
-        config_compose::validate_patch(&existing, &new_patch).map_err(|e| {
-            error_response(
-                StatusCode::CONFLICT,
-                "PATCH_CONFLICT",
-                e.to_string(),
-                None,
-            )
-        })?;
+        config_compose::validate_patch(&existing, &new_patch)
+            .map_err(|e| conflict("PATCH_CONFLICT", e.to_string()))?;
 
         // Replace existing from same owner, or append
         let mut updated: Vec<ConfigPatch> = existing
@@ -206,30 +186,20 @@ pub async fn patch_config_v1(
     let template = get_service_template(&state, &service_name)?;
 
     // Compose effective config with the new patch list
-    let effective = config_compose::compose(&template, &patches_after).map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "COMPOSE_ERROR",
-            format!("Failed to compose config: {}", e),
-            None,
-        )
-    })?;
+    let effective = config_compose::compose(&template, &patches_after)
+        .map_err(|e| internal("COMPOSE_ERROR", format!("Failed to compose config: {}", e)))?;
 
     // Write patches to the offering via gateway (detail-only, no chirp sync)
     let patches = patches_after.clone();
-    state.update_offering_by_name(&service_name, false, |o| {
-        if o.is_managed() {
-            if let Some(managed) = o.managed_data_mut() {
-                managed.config_patches = patches;
-            }
-        }
-        false // config patches are detail-only, don't trigger sync
-    }).await;
-
-    // Persist
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after config patch");
-    }
+    state
+        .update_offering_by_name(&service_name, false, |o| {
+            if o.is_managed()
+                && let Some(managed) = o.managed_data_mut() {
+                    managed.config_patches = patches;
+                }
+            false // config patches are detail-only, don't trigger sync
+        })
+        .await;
 
     tracing::info!(
         service = %service_name,
@@ -255,11 +225,9 @@ pub async fn delete_config_v1(
     let service_name = normalize_service_name(&service)?;
 
     let owner = query.owner.as_deref().ok_or_else(|| {
-        error_response(
-            StatusCode::BAD_REQUEST,
+        bad_request(
             "OWNER_REQUIRED",
-            "Query parameter 'owner' is required for DELETE".to_string(),
-            None,
+            "Query parameter 'owner' is required for DELETE",
         )
     })?;
 
@@ -270,11 +238,9 @@ pub async fn delete_config_v1(
             .iter()
             .find(|o| o.name.fqn() == service_name && o.is_managed())
             .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
+                not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Managed service '{}' not found", service_name),
-                    None,
                 )
             })?;
 
@@ -285,50 +251,35 @@ pub async fn delete_config_v1(
 
         let had_patch = existing.iter().any(|p| p.owner == owner);
 
-        let updated: Vec<ConfigPatch> = existing
-            .into_iter()
-            .filter(|p| p.owner != owner)
-            .collect();
+        let updated: Vec<ConfigPatch> = existing.into_iter().filter(|p| p.owner != owner).collect();
 
         (updated, had_patch)
     };
 
     if !had_patch {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
+        return Err(not_found(
             "PATCH_NOT_FOUND",
             format!("No config patch from owner '{}' found", owner),
-            None,
         ));
     }
 
     let template = get_service_template(&state, &service_name)?;
 
     // Compose effective config without the removed patch
-    let effective = config_compose::compose(&template, &patches_after).map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "COMPOSE_ERROR",
-            format!("Failed to compose config: {}", e),
-            None,
-        )
-    })?;
+    let effective = config_compose::compose(&template, &patches_after)
+        .map_err(|e| internal("COMPOSE_ERROR", format!("Failed to compose config: {}", e)))?;
 
     // Write updated patches via gateway (detail-only, no chirp sync)
     let patches = patches_after.clone();
-    state.update_offering_by_name(&service_name, false, |o| {
-        if o.is_managed() {
-            if let Some(managed) = o.managed_data_mut() {
-                managed.config_patches = patches;
-            }
-        }
-        false // config patches are detail-only, don't trigger sync
-    }).await;
-
-    // Persist
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after config unpatch");
-    }
+    state
+        .update_offering_by_name(&service_name, false, |o| {
+            if o.is_managed()
+                && let Some(managed) = o.managed_data_mut() {
+                    managed.config_patches = patches;
+                }
+            false // config patches are detail-only, don't trigger sync
+        })
+        .await;
 
     tracing::info!(
         service = %service_name,
@@ -346,17 +297,13 @@ pub async fn delete_config_v1(
 // Helpers
 // ============================================================================
 
-fn normalize_service_name(
-    service: &str,
-) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
+fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
     OfferingFqn::parse(service)
         .map(|fqn| fqn.fqn())
         .map_err(|e| {
-            error_response(
-                StatusCode::BAD_REQUEST,
+            bad_request(
                 "INVALID_SERVICE_NAME",
                 format!("Invalid service name '{}': {}", service, e),
-                None,
             )
         })
 }
@@ -379,20 +326,16 @@ fn get_service_template(
         .manifest_registry
         .get_offering(&base_name)
         .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
+            not_found(
                 "TEMPLATE_NOT_FOUND",
                 format!("No manifest template for '{}'", name),
-                None,
             )
         })?;
 
     manifest.parse_template().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        internal(
             "TEMPLATE_PARSE_ERROR",
             format!("Failed to parse template for '{}': {}", name, e),
-            None,
         )
     })
 }
@@ -459,7 +402,12 @@ async fn maybe_cycle_container(
 
     // Step 2: Check if container spec changes require recreation
     let desired_spec = effective_to_container_spec(effective);
-    let needs_recreate = match state.platform.docker.needs_cycle(service_name, &desired_spec).await {
+    let needs_recreate = match state
+        .platform
+        .docker
+        .needs_cycle(service_name, &desired_spec)
+        .await
+    {
         Ok(needs) => needs,
         Err(e) => {
             tracing::warn!(service = %service_name, error = ?e, "Could not check if cycle needed");
@@ -476,7 +424,13 @@ async fn maybe_cycle_container(
             .map(|fqn| fqn.offering.clone())
             .unwrap_or_else(|_| service_name.to_string());
 
-        match crate::get_compiled_offering(state, &offering_type).await {
+        match crate::get_compiled_offering(
+            state,
+            &offering_type,
+            &crate::infra::persistence::OsOfferingsCache,
+        )
+        .await
+        {
             Ok(Some(compiled)) if compiled.image != resolved_spec.image => {
                 tracing::info!(
                     service = %service_name,
@@ -497,7 +451,12 @@ async fn maybe_cycle_container(
         }
 
         tracing::info!(service = %service_name, "Config change requires container recreation");
-        if let Err(e) = state.platform.docker.recreate_service(service_name, &resolved_spec).await {
+        if let Err(e) = state
+            .platform
+            .docker
+            .recreate_service(service_name, &resolved_spec)
+            .await
+        {
             tracing::error!(
                 service = %service_name,
                 error = ?e,
@@ -539,7 +498,9 @@ async fn write_config_files(
         let host_path = format!("{}/{}", host_dir, filename);
 
         // Read existing content to check if it actually changed
-        let existing = tokio::fs::read_to_string(&host_path).await.unwrap_or_default();
+        let existing = tokio::fs::read_to_string(&host_path)
+            .await
+            .unwrap_or_default();
         if existing == content {
             continue;
         }
@@ -603,7 +564,12 @@ async fn apply_config_reload(
         }
     } else if let Some(sig) = signal {
         tracing::info!(service = %service_name, signal = %sig, "Sending signal for config reload");
-        if let Err(e) = state.platform.docker.signal_container(service_name, &sig).await {
+        if let Err(e) = state
+            .platform
+            .docker
+            .signal_container(service_name, &sig)
+            .await
+        {
             tracing::error!(
                 service = %service_name,
                 error = ?e,

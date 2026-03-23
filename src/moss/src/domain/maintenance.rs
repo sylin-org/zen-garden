@@ -63,6 +63,7 @@ pub struct SweepRun {
 /// Everything a sweeper needs — thin wrapper around AppState
 pub struct Sweep<'a> {
     pub state: &'a AppState,
+    pub task_persistence: &'a crate::infra::TaskStore,
 }
 
 // ============================================================================
@@ -70,8 +71,14 @@ pub struct Sweep<'a> {
 // ============================================================================
 
 /// Run all sweepers sequentially, collect results
-pub async fn run_sweep(state: &AppState) -> SweepRun {
-    let ctx = Sweep { state };
+pub async fn run_sweep(
+    state: &AppState,
+    task_persistence: &crate::infra::TaskStore,
+) -> SweepRun {
+    let ctx = Sweep {
+        state,
+        task_persistence,
+    };
     let start = std::time::Instant::now();
 
     let reports = vec![
@@ -336,9 +343,7 @@ async fn sweep_binaries(_ctx: &Sweep<'_>) -> SweepReport {
 /// - Its offering no longer exists in the registry, AND
 /// - Its last_run is older than 30 days
 async fn sweep_task_history(ctx: &Sweep<'_>) -> SweepReport {
-    let task_store = crate::infra::TaskStore::new();
-
-    let mut registry = match task_store.load_registry().await {
+    let mut registry = match ctx.task_persistence.load_registry().await {
         Ok(r) => r,
         Err(e) => {
             return SweepReport {
@@ -392,7 +397,7 @@ async fn sweep_task_history(ctx: &Sweep<'_>) -> SweepReport {
     }
 
     // Persist cleaned registry
-    if let Err(e) = task_store.save_registry(&registry).await {
+    if let Err(e) = ctx.task_persistence.save_registry(&registry).await {
         return SweepReport {
             domain: "task_history".into(),
             status: SweepStatus::Degraded,

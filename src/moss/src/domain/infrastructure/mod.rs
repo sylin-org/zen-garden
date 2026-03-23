@@ -38,11 +38,12 @@ mod docker_registry;
 pub use docker_registry::DockerRegistry;
 
 use anyhow::Result;
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::domain::topology::TopologyCache;
-use crate::infra::ManifestRegistry;
+use garden_common::manifests::ManifestRegistry;
 
 /// An instance of a matching offering discovered in the garden topology
 #[derive(Debug, Clone)]
@@ -79,7 +80,6 @@ impl OfferingInstance {
 /// 2. Know what local infrastructure to configure (via `sync`)
 ///
 /// Handlers only affect LOCAL infrastructure - they never contact other Stones.
-#[async_trait]
 pub trait InfrastructureHandler: Send + Sync {
     /// Handler identifier for logging and debugging
     fn name(&self) -> &'static str;
@@ -99,7 +99,10 @@ pub trait InfrastructureHandler: Send + Sync {
     /// 3. Apply changes only if needed
     ///
     /// If `instances` is empty, all matching offerings have been removed - clean up.
-    async fn sync(&self, instances: &[OfferingInstance]) -> Result<()>;
+    fn sync<'a>(
+        &'a self,
+        instances: &'a [OfferingInstance],
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 }
 
 /// Registry of all infrastructure handlers
@@ -232,7 +235,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl InfrastructureHandler for TestHandler {
         fn name(&self) -> &'static str {
             self.name
@@ -242,9 +244,14 @@ mod tests {
             offering == self.match_offering
         }
 
-        async fn sync(&self, _instances: &[OfferingInstance]) -> Result<()> {
-            self.sync_count.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+        fn sync<'a>(
+            &'a self,
+            _instances: &'a [OfferingInstance],
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+            Box::pin(async move {
+                self.sync_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
         }
     }
 

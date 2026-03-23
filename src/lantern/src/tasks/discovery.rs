@@ -86,11 +86,10 @@ fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option<Dis
     let https_port = txt.get("https_port").and_then(|v| v.parse::<u16>().ok());
 
     let mut address = garden_common::PeerAddress::new(ip_addr, port);
-    if pond_active {
-        if let Some(tp) = https_port {
+    if pond_active
+        && let Some(tp) = https_port {
             address = address.with_tls(tp);
         }
-    }
 
     Some(DiscoveredStone {
         stone_id: txt.get("stone_id").cloned(),

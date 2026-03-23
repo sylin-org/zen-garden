@@ -17,9 +17,8 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::enrollment;
 use crate::suggestions;
+use crate::ui::rendering as ui;
 use anyhow::Context;
-use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
 
 /// Pond action to perform
 pub enum PondActionType {
@@ -67,74 +66,75 @@ impl PondCommand {
     }
 }
 
-#[async_trait]
 impl Command for PondCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        // Enroll and Trust are local operations — they don't require
-        // a tended stone endpoint.
-        match &self.action {
-            PondActionType::Enroll => {
-                execute_pond_enroll(ctx).await?;
-                if !ctx.wants_json() {
-                    suggestions::print_suggestions(cmd::POND, self.quiet);
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Enroll and Trust are local operations — they don't require
+            // a tended stone endpoint.
+            match &self.action {
+                PondActionType::Enroll => {
+                    execute_pond_enroll(ctx).await?;
+                    if !ctx.wants_json() {
+                        suggestions::print_suggestions(cmd::POND, self.quiet);
+                    }
+                    return Ok(());
                 }
-                return Ok(());
-            }
-            PondActionType::Trust => {
-                execute_pond_trust(ctx).await?;
-                if !ctx.wants_json() {
-                    suggestions::print_suggestions(cmd::POND, self.quiet);
+                PondActionType::Trust => {
+                    execute_pond_trust(ctx).await?;
+                    if !ctx.wants_json() {
+                        suggestions::print_suggestions(cmd::POND, self.quiet);
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+                _ => {}
             }
-            _ => {}
-        }
 
-        let endpoint = ctx.endpoint()?;
+            let endpoint = ctx.endpoint()?;
 
-        match &self.action {
-            PondActionType::Init {
-                passphrase,
-                profile,
-            } => {
-                execute_pond_init(ctx, endpoint, passphrase.clone(), profile.clone()).await?;
+            match &self.action {
+                PondActionType::Init {
+                    passphrase,
+                    profile,
+                } => {
+                    execute_pond_init(ctx, endpoint, passphrase.clone(), profile.clone()).await?;
+                }
+                PondActionType::Status => {
+                    execute_pond_status(ctx, endpoint).await?;
+                }
+                PondActionType::Invite { passphrase } => {
+                    execute_pond_invite(ctx, endpoint, passphrase.clone()).await?;
+                }
+                PondActionType::Join { code } => {
+                    execute_pond_join(ctx, endpoint, code).await?;
+                }
+                PondActionType::Enroll | PondActionType::Trust => {
+                    // Already handled above (no endpoint needed)
+                    unreachable!();
+                }
+                PondActionType::Unlock { passphrase, totp } => {
+                    execute_pond_unlock(ctx, endpoint, passphrase.clone(), totp.clone()).await?;
+                }
+                PondActionType::Remove => {
+                    execute_pond_remove(ctx, endpoint).await?;
+                }
+                PondActionType::Untrust { stone_name } => {
+                    execute_pond_untrust(ctx, endpoint, stone_name).await?;
+                }
+                PondActionType::Promote { passphrase } => {
+                    execute_pond_promote(ctx, endpoint, passphrase.clone()).await?;
+                }
+                PondActionType::Rename { name } => {
+                    execute_pond_rename(ctx, endpoint, name.clone()).await?;
+                }
             }
-            PondActionType::Status => {
-                execute_pond_status(ctx, endpoint).await?;
-            }
-            PondActionType::Invite { passphrase } => {
-                execute_pond_invite(ctx, endpoint, passphrase.clone()).await?;
-            }
-            PondActionType::Join { code } => {
-                execute_pond_join(ctx, endpoint, code).await?;
-            }
-            PondActionType::Enroll | PondActionType::Trust => {
-                // Already handled above (no endpoint needed)
-                unreachable!();
-            }
-            PondActionType::Unlock { passphrase, totp } => {
-                execute_pond_unlock(ctx, endpoint, passphrase.clone(), totp.clone()).await?;
-            }
-            PondActionType::Remove => {
-                execute_pond_remove(ctx, endpoint).await?;
-            }
-            PondActionType::Untrust { stone_name } => {
-                execute_pond_untrust(ctx, endpoint, stone_name).await?;
-            }
-            PondActionType::Promote { passphrase } => {
-                execute_pond_promote(ctx, endpoint, passphrase.clone()).await?;
-            }
-            PondActionType::Rename { name } => {
-                execute_pond_rename(ctx, endpoint, name.clone()).await?;
-            }
-        }
 
-        // Self-teaching suggestions (suppress in JSON mode)
-        if !ctx.wants_json() {
-            suggestions::print_suggestions(cmd::POND, self.quiet);
-        }
+            // Self-teaching suggestions (suppress in JSON mode)
+            if !ctx.wants_json() {
+                suggestions::print_suggestions(cmd::POND, self.quiet);
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -337,8 +337,8 @@ async fn execute_pond_invite(
 
     match ctx.client.post(&url).json(&payload).send().await {
         Ok(response) if response.status().is_success() => {
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(data) = body.get("data") {
+            if let Ok(body) = response.json::<serde_json::Value>().await
+                && let Some(data) = body.get("data") {
                     println!(
                         "{}{} Enrollment invitation generated",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -358,7 +358,6 @@ async fn execute_pond_invite(
                         println!("   From: {}", inviter);
                     }
                 }
-            }
         }
         Ok(response) => {
             eprintln!(
@@ -392,8 +391,8 @@ async fn execute_pond_join(ctx: &Runtime, endpoint: &str, code: &str) -> anyhow:
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("ok", ctx.term.supports_color)
             );
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(data) = body.get("data") {
+            if let Ok(body) = response.json::<serde_json::Value>().await
+                && let Some(data) = body.get("data") {
                     if let Some(stone_name) = data.get("stone_name").and_then(|s| s.as_str()) {
                         println!("   Stone: {}", stone_name);
                     }
@@ -404,7 +403,6 @@ async fn execute_pond_join(ctx: &Runtime, endpoint: &str, code: &str) -> anyhow:
                         println!("   CA fingerprint: {}", fp);
                     }
                 }
-            }
         }
         Ok(response) => {
             eprintln!(
@@ -443,8 +441,8 @@ async fn execute_pond_enroll(ctx: &Runtime) -> anyhow::Result<()> {
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
 
-    if enrollment::is_enrolled(&hostname) {
-        if let Some(meta) = enrollment::load_enrollment(&hostname) {
+    if enrollment::is_enrolled(&hostname)
+        && let Some(meta) = enrollment::load_enrollment(&hostname) {
             println!(
                 "{}{} Already enrolled in pond '{}'",
                 indent,
@@ -457,7 +455,6 @@ async fn execute_pond_enroll(ctx: &Runtime) -> anyhow::Result<()> {
             println!("   Cert expires: {}", meta.cert_expires);
             return Ok(());
         }
-    }
 
     // 2. Admin privilege check (advisory — enrollment works without admin,
     //    but OS trust store installation will be skipped)
@@ -548,8 +545,13 @@ async fn execute_pond_enroll(ctx: &Runtime) -> anyhow::Result<()> {
 
     let mut sans = vec![format!("{}.local", hostname)];
     // Add local IPs as SANs
-    if let Ok(ip) = local_ip_address::local_ip() {
-        sans.push(ip.to_string());
+    if let Ok(addrs) = if_addrs::get_if_addrs() {
+        for iface in addrs {
+            if !iface.is_loopback() && let std::net::IpAddr::V4(ipv4) = iface.addr.ip() {
+                    sans.push(ipv4.to_string());
+                    break;
+            }
+        }
     }
 
     let payload = serde_json::json!({
@@ -948,13 +950,11 @@ async fn execute_pond_promote(
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("ok", ctx.term.supports_color)
             );
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(data) = body.get("data") {
-                    if let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
+            if let Ok(body) = response.json::<serde_json::Value>().await
+                && let Some(data) = body.get("data")
+                    && let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
                         println!("   CA fingerprint: {}", fp);
                     }
-                }
-            }
         }
         Ok(response) => {
             let status = response.status();
@@ -993,8 +993,8 @@ async fn execute_pond_rename(
 
     match ctx.client.put(&url).json(&payload).send().await {
         Ok(response) if response.status().is_success() => {
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(data) = body.get("data") {
+            if let Ok(body) = response.json::<serde_json::Value>().await
+                && let Some(data) = body.get("data") {
                     let new_name = data
                         .get("name")
                         .and_then(|n| n.as_str())
@@ -1006,7 +1006,6 @@ async fn execute_pond_rename(
                         new_name
                     );
                 }
-            }
         }
         Ok(response) => {
             let status = response.status();

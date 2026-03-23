@@ -6,32 +6,14 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
+use crate::ui::rendering::{self as ui, TerminalInfo};
 use anyhow::Context;
-use async_trait::async_trait;
-use garden_common::ui::rendering::{self as ui, TerminalInfo};
+use colored::Colorize;
+use garden_common::constants::CATEGORY_ORCHESTRATOR;
 use garden_common::SubCapability;
-use serde::Deserialize;
 
-/// Service discovery response (matches moss ServiceDiscoveryResponse)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ServiceDiscoveryResponse {
-    found: bool,
-    services: Vec<FoundService>,
-    source: String,
-}
-
-/// Found service (matches moss FoundService)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct FoundService {
-    name: String,
-    offering: String,
-    category: String,
-    status: String,
-    #[serde(default)]
-    sub_capabilities: Vec<SubCapability>,
-}
+// Re-use canonical types from garden-common
+use garden_common::discovery::{FoundService, ServiceDiscoveryResponse};
 
 // Use shared ApiResponse from garden-common
 use garden_common::api_utils::ApiResponse;
@@ -47,37 +29,38 @@ impl ListCommand {
     }
 }
 
-#[async_trait]
 impl Command for ListCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let url = ctx.api_v1_url("stone/services")?;
-        let response = ctx.client.get(&url).send().await?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let url = ctx.api_v1_url("stone/services")?;
+            let response = ctx.client.get(&url).send().await?;
 
-        let api_response: ApiResponse<ServiceDiscoveryResponse> = response
-            .json()
-            .await
-            .context("Failed to parse services response")?;
+            let api_response: ApiResponse<ServiceDiscoveryResponse> = response
+                .json()
+                .await
+                .context("Failed to parse services response")?;
 
-        let services = api_response.data.services;
+            let services = api_response.data.services;
 
-        if services.is_empty() {
-            println!(
-                "{}",
-                ui::empty_state(
-                    "No services installed",
-                    Some("Use: garden-rake offer <service>")
-                )
-            );
-        } else {
-            println!("{}", ui::section_header("SERVICES", &ctx.term));
-            println!();
-            render_services_table(&services, &ctx.term);
-        }
+            if services.is_empty() {
+                println!(
+                    "{}",
+                    ui::empty_state(
+                        "No services installed",
+                        Some("Use: garden-rake offer <service>")
+                    )
+                );
+            } else {
+                println!("{}", ui::section_header("SERVICES", &ctx.term));
+                println!();
+                render_services_table(&services, &ctx.term);
+            }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIST, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::LIST, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -107,16 +90,36 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
     let mut stopped_count = 0;
 
     for svc in services {
-        let status_lower = svc.status.to_lowercase();
-        if status_lower.contains(garden_common::SERVICE_RUNNING) {
-            running_count += 1;
-        } else {
-            stopped_count += 1;
+        let is_registered = svc.category == CATEGORY_ORCHESTRATOR;
+
+        if !is_registered {
+            let status_lower = svc.status.to_lowercase();
+            if status_lower.contains(garden_common::constants::SERVICE_RUNNING) {
+                running_count += 1;
+            } else {
+                stopped_count += 1;
+            }
         }
 
-        let status_display = ui::status_indicator(&status_lower, term.supports_color);
-        let offering_display = if svc.offering.is_empty() {
-            garden_common::VALUE_UNKNOWN.to_string()
+        let status_display = if is_registered {
+            if term.supports_color {
+                "[registered]".blue().to_string()
+            } else {
+                "[registered]".to_string()
+            }
+        } else {
+            let status_lower = svc.status.to_lowercase();
+            ui::status_indicator(&status_lower, term.supports_color)
+        };
+
+        let offering_display = if is_registered {
+            if svc.source.is_empty() {
+                CATEGORY_ORCHESTRATOR.to_string()
+            } else {
+                svc.source.clone()
+            }
+        } else if svc.offering.is_empty() {
+            garden_common::constants::VALUE_UNKNOWN.to_string()
         } else {
             svc.offering.clone()
         };
@@ -141,13 +144,31 @@ fn render_services_table(services: &[FoundService], term: &TerminalInfo) {
 
     println!("{}", table.render());
     println!();
-    println!(
-        "{}  {} services ({} running, {} stopped)",
-        " ".repeat(ui::constants::DEFAULT_INDENT),
-        services.len(),
-        running_count,
-        stopped_count
-    );
+
+    let registered_count = services
+        .iter()
+        .filter(|s| s.category == CATEGORY_ORCHESTRATOR)
+        .count();
+    let offering_count = services.len() - registered_count;
+
+    if registered_count > 0 {
+        println!(
+            "{}  {} services ({} running, {} stopped) + {} registered",
+            " ".repeat(ui::constants::DEFAULT_INDENT),
+            offering_count,
+            running_count,
+            stopped_count,
+            registered_count,
+        );
+    } else {
+        println!(
+            "{}  {} services ({} running, {} stopped)",
+            " ".repeat(ui::constants::DEFAULT_INDENT),
+            offering_count,
+            running_count,
+            stopped_count,
+        );
+    }
 }
 
 /// Format capability summary (e.g., "12 models", "3 ext.")

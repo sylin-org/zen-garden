@@ -103,10 +103,10 @@ impl CategoryRegistry {
                 return true;
             }
             // Check parent relationship
-            if let Some(children) = self.parent_map.get(resolved) {
-                if children.iter().any(|c| c.to_lowercase() == category_lower) {
-                    return true;
-                }
+            if let Some(children) = self.parent_map.get(resolved)
+                && children.iter().any(|c| c.to_lowercase() == category_lower)
+            {
+                return true;
             }
         }
 
@@ -192,10 +192,10 @@ pub fn get_category_registry() -> &'static CategoryRegistry {
         ]);
 
         for path in paths {
-            if let Ok(registry) = load_categories(path) {
-                if !registry.categories.is_empty() {
-                    return registry;
-                }
+            if let Ok(registry) = load_categories(path)
+                && !registry.categories.is_empty()
+            {
+                return registry;
             }
         }
 

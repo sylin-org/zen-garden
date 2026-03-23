@@ -16,12 +16,13 @@ use serde::Deserialize;
 use std::convert::Infallible;
 use tokio_stream::StreamExt;
 
+use crate::domain::traits::CompanionOps;
 use crate::domain::StoneEvent;
 use crate::infra::PulseEvent;
 use crate::AppState;
 use garden_common::presence::{
-    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot,
-    StorageSummary, StoneState,
+    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StoneState,
+    StoragePresence,
 };
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +69,7 @@ pub async fn stream_stone_presence(
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
     // Subscribe to pulse channel (unified domain + transport events)
-    let rx = state.pulse.subscribe();
+    let rx = state.pulse_stream();
 
     // Create the inner event stream: snapshot first, then filtered domain events
     let inner = futures_util::stream::once(async move {
@@ -146,7 +147,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // Get real metrics from system monitor (fallback to zeros if not yet collected)
     let (cpu_percent, memory_percent, disk_percent) = {
-        let resources = state.current.system_resources.read().await;
+        let resources = state.current.metrics.system.read().await;
         if let Some(ref res) = *resources {
             // Use primary mount point (root or largest disk) for summary disk %
             let primary_disk_percent = res
@@ -169,17 +170,22 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: GPU utilization
     let gpu_percent = {
-        let gpu = state.gpu_utilization.read().await;
+        let gpu = state.current.metrics.gpu.read().await;
         gpu.unwrap_or(0.0) as f64
     };
     let gpu_active = gpu_percent > 10.0;
 
     // FIREFLY-0003: Network rates
     let (net_rx, net_tx) = {
-        let network = state.network_metrics_cache.read().await;
+        let network = state.current.metrics.network.read().await;
         network
             .as_ref()
-            .map(|n| (n.rx_bytes_per_sec.unwrap_or(0), n.tx_bytes_per_sec.unwrap_or(0)))
+            .map(|n| {
+                (
+                    n.rx_bytes_per_sec.unwrap_or(0),
+                    n.tx_bytes_per_sec.unwrap_or(0),
+                )
+            })
             .unwrap_or((0, 0))
     };
 
@@ -191,18 +197,14 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             .unwrap_or(false)
     };
 
-    let has_cricket = state
-        .companion.registry
-        .get("cricket")
-        .await
-        .is_some();
+    let has_cricket = state.companion.registry.get("cricket").await.is_some();
 
     // FIREFLY-0003: Seed bank summary (only if one is plugged in)
     let seed_bank = {
         let map = state.current.storage.volumes.read().await;
         map.values().find_map(|v| {
             let mgmt = v.management.as_ref()?;
-            Some(StorageSummary {
+            Some(StoragePresence {
                 name: mgmt.name.clone(),
                 used_gb: v.used_bytes / 1_073_741_824,
                 total_gb: v.capacity_bytes / 1_073_741_824,
@@ -227,7 +229,9 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             disk_percent,
             uptime_seconds: uptime,
             pond_active: state
-                .security.pond.active
+                .security
+                .pond
+                .active
                 .load(std::sync::atomic::Ordering::Relaxed),
             // FIREFLY-0003 fields
             io_percent: 0.0, // Placeholder until I/O collection is implemented

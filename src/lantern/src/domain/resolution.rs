@@ -3,7 +3,8 @@
 //! Finds online stones that provide a requested service type.
 //! Pure domain logic — reads from GardenTopology, no I/O.
 
-use garden_common::{ResolveResponse, ResolveServiceInfo, StoneStatus, SERVICE_RUNNING};
+use garden_common::constants::SERVICE_RUNNING;
+use garden_common::{ResolveResponse, ResolveServiceInfo, StoneStatus};
 
 use super::topology::GardenTopology;
 

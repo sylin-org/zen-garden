@@ -33,16 +33,16 @@
 //! or `all` for recursive).  Listing is a metadata query on `/fs`, while content
 //! operations use the `/fs/{*path}` wildcard.
 
+pub mod audit;
 pub mod files;
-pub mod memories;
 pub mod objects;
+pub mod snapshots;
 
 pub use files::{delete_file_v1, get_file_v1, head_file_v1, list_fs_v1, put_file_v1};
-pub use memories::{
-    download_snapshot_v1, get_offering_manifest_v1, list_memories_v1,
-    list_offering_snapshots_v1,
-};
 pub use objects::{delete_object_v1, get_object_v1, head_object_v1, put_object_v1};
+pub use snapshots::{
+    download_snapshot_v1, get_offering_manifest_v1, list_memories_v1, list_offering_snapshots_v1,
+};
 
 use axum::{
     body::Bytes,
@@ -51,7 +51,7 @@ use axum::{
     response::Response,
     Json,
 };
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::api_utils::ApiErrorResponse;
 use garden_common::storage::StorageRole;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -104,11 +104,31 @@ pub struct StorageInstance {
     pub roles: Vec<String>,
 }
 
+/// S3 connection details for a storage replica set.
+///
+/// Included in the discovery response so clients get everything needed
+/// to connect via standard S3 in a single API call.
+#[derive(Debug, Serialize)]
+pub struct S3Connection {
+    /// S3 endpoint (host:port). Standard S3 at root /.
+    pub endpoint: String,
+    /// Access key for S3 authentication.
+    pub access_key: String,
+    /// Secret key for S3 authentication.
+    pub secret_key: String,
+    /// Region (always "zen-garden" for Moss-hosted storage).
+    pub region: String,
+}
+
 /// Response for the discovery endpoint.
 #[derive(Debug, Serialize)]
 pub struct StorageDiscovery {
     pub name: String,
     pub instances: Vec<StorageInstance>,
+    /// S3 connection details for the primary instance.
+    /// Present when at least one instance has an armed S3 listener.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3Connection>,
 }
 
 /// Summary of a storage visible across the garden.
@@ -198,11 +218,6 @@ pub(crate) async fn proxy_request(
     headers: &HeaderMap,
     body: Option<Bytes>,
 ) -> Response {
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_default();
-
     let url = format!(
         "{}/{}{}",
         target.endpoint.trim_end_matches('/'),
@@ -214,7 +229,7 @@ pub(crate) async fn proxy_request(
         }
     );
 
-    let mut request = client.request(method, &url);
+    let mut request = crate::http::INSECURE_PROXY.request(method, &url);
     request = request.header(HEADER_ZEN_PROXIED, "true");
 
     if let Some(content_type) = headers
@@ -266,7 +281,7 @@ pub(crate) async fn proxy_request(
 /// Groups by storage name — each name may have multiple replicas.
 pub async fn list_storages_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<GardenStorageSummary>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<GardenStorageSummary>> {
     let mut by_name: std::collections::HashMap<String, GardenStorageSummary> =
         std::collections::HashMap::new();
 
@@ -300,12 +315,12 @@ pub async fn list_storages_v1(
                 name: name.clone(),
                 replica_count: 0,
                 primary_stone: None,
-                roles: sm
-                    .map(|s| s.roles.clone())
-                    .unwrap_or_default(),
+                roles: sm.map(|s| s.roles.clone()).unwrap_or_default(),
             });
         entry.replica_count += 1;
-        if sm.and_then(|s| s.role.as_deref()) == Some(garden_common::constants::ROLE_PRIMARY) && entry.primary_stone.is_none() {
+        if sm.and_then(|s| s.role.as_deref()) == Some(garden_common::constants::ROLE_PRIMARY)
+            && entry.primary_stone.is_none()
+        {
             entry.primary_stone = Some(storage_entry.tool.stone.name.clone());
         }
     }
@@ -314,7 +329,7 @@ pub async fn list_storages_v1(
     storages.sort_by(|a, b| a.name.cmp(&b.name));
 
     info!(count = storages.len(), "Listed garden storages");
-    Ok(Json(ApiResponse::new(storages)))
+    crate::api::ok(storages)
 }
 
 // ============================================================================
@@ -327,29 +342,26 @@ pub async fn list_storages_v1(
 pub async fn discover_v1(
     State(state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
-) -> Result<Json<ApiResponse<StorageDiscovery>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageDiscovery> {
     let mut instances = Vec::new();
 
     // Check local storages
     if let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await {
-        let map = state.current.storage.volumes.read().await;
-        let (pin_id, roles) = map
-            .values()
-            .find_map(|v| {
-                let m = v.management.as_ref()?;
-                if m.name == name {
-                    Some((
-                        v.pin_id().map(|s| s.to_string()),
-                        m.roles.clone(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-        drop(map);
+        let (pin_id, roles) = {
+            let map = state.current.storage.volumes.read().await;
+            map.values()
+                .find_map(|v| {
+                    let m = v.management.as_ref()?;
+                    if m.name == name {
+                        Some((v.pin_id().map(|s| s.to_string()), m.roles.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        };
 
-        let local_endpoint = state.current.topology.self_entry.read().await.address.http_base();
+        let local_endpoint = state.current.address.read().await.http_base();
 
         instances.push(StorageInstance {
             stone_id: state.current.stone.id.clone(),
@@ -399,5 +411,91 @@ pub async fn discover_v1(
         ));
     }
 
-    Ok(Json(ApiResponse::new(StorageDiscovery { name, instances })))
+    // Build S3 connection block for the primary instance
+    let s3 = build_s3_connection(&name, &instances, &state).await;
+
+    crate::api::ok(StorageDiscovery { name, instances, s3 })
+}
+
+/// Build S3 connection details for a replica set's primary instance.
+///
+/// Resolves the S3 port from the port catalog and generates credentials.
+/// Credentials are deterministic per replica set:
+/// - **Unsigned mode**: derived from stone_id + replica set name (stable, not validated)
+/// - **Pond active**: derived from pond CA fingerprint + replica set name (garden-scoped)
+async fn build_s3_connection(
+    replica_set: &str,
+    instances: &[StorageInstance],
+    state: &AppState,
+) -> Option<S3Connection> {
+    // Find primary instance (or first available)
+    let primary = instances
+        .iter()
+        .find(|i| matches!(i.role, StorageRole::Primary))
+        .or_else(|| instances.first())?;
+
+    // S3 block is only populated when this stone hosts the storage.
+    // Remote primaries: client follows the instance endpoint and asks that stone directly.
+    if primary.stone_id != state.current.stone.id {
+        return None;
+    }
+
+    let catalog = state.orchestration.storage.s3_listeners.port_catalog().await;
+    let port = catalog.get(replica_set).copied()
+        .or_else(|| catalog.values().next().copied())?;
+
+    // Build endpoint from the primary's stone endpoint host + S3 port
+    let host = extract_host(&primary.endpoint).unwrap_or_else(|| "localhost".to_string());
+
+    let endpoint = format!("{}:{}", host, port);
+
+    // Generate credentials
+    let (access_key, secret_key) = generate_s3_credentials(replica_set, state).await;
+
+    Some(S3Connection {
+        endpoint,
+        access_key,
+        secret_key,
+        region: "zen-garden".to_string(),
+    })
+}
+
+/// Extract host from an endpoint string like "http://192.168.1.174:7185".
+fn extract_host(endpoint: &str) -> Option<String> {
+    let stripped = endpoint
+        .strip_prefix("https://")
+        .or_else(|| endpoint.strip_prefix("http://"))
+        .unwrap_or(endpoint);
+    let host = stripped.split(':').next()?;
+    if host.is_empty() { None } else { Some(host.to_string()) }
+}
+
+/// Generate deterministic S3 credentials for a replica set.
+///
+/// Uses `resolve_key_material` for the two-tier key derivation
+/// (pond CA fingerprint → stone_id fallback), then HMAC-derives
+/// access and secret keys scoped to the replica set name.
+async fn generate_s3_credentials(replica_set: &str, state: &AppState) -> (String, String) {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    type HmacSha256 = Hmac<Sha256>;
+
+    let key_material = crate::api::v1::s3_presign::resolve_key_material(state).await;
+
+    // Access key: first 20 chars of HMAC(material, "s3-access:{name}")
+    let access_msg = format!("s3-access:{}", replica_set);
+    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).expect("HMAC key length");
+    mac.update(access_msg.as_bytes());
+    let access_key = hex::encode(mac.finalize().into_bytes());
+    let access_key = access_key[..20].to_uppercase();
+
+    // Secret key: first 40 chars of HMAC(material, "s3-secret:{name}")
+    let secret_msg = format!("s3-secret:{}", replica_set);
+    let mut mac = HmacSha256::new_from_slice(key_material.as_bytes()).expect("HMAC key length");
+    mac.update(secret_msg.as_bytes());
+    let secret_key = hex::encode(mac.finalize().into_bytes());
+    let secret_key = secret_key[..40].to_string();
+
+    (access_key, secret_key)
 }

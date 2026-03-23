@@ -42,9 +42,9 @@ $WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
 $DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
 $LINUX_DIR = Join-Path $DIST_DIR "linux-x64"
 
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   Zen Garden Cross-Compilation Build              ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+Write-Host "`n+====================================================+" -ForegroundColor Cyan
+Write-Host "|   Zen Garden Cross-Compilation Build              |" -ForegroundColor Cyan
+Write-Host "+====================================================+`n" -ForegroundColor Cyan
 
 # Check if cross is installed
 $crossInstalled = Get-Command cross -ErrorAction SilentlyContinue
@@ -55,13 +55,13 @@ if (-not $crossInstalled) {
         Write-Error "Failed to install cross-rs"
         exit 1
     }
-    Write-Host "✓ cross-rs installed`n" -ForegroundColor Green
+    Write-Host "OK cross-rs installed`n" -ForegroundColor Green
 }
 
 # Check Docker
 try {
     docker version | Out-Null
-    Write-Host "✓ Docker available`n" -ForegroundColor Green
+    Write-Host "OK Docker available`n" -ForegroundColor Green
 } catch {
     Write-Error "Docker not available. Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
     exit 1
@@ -115,9 +115,9 @@ if (Test-Path $crossTargetPath) {
 Push-Location $WORKSPACE_ROOT
 try {
     Write-Host "Building Linux binaries with cross-rs..." -ForegroundColor Cyan
-    Write-Host "  → garden-moss (daemon)"
-    Write-Host "  → garden-lantern (registry)"
-    Write-Host "  → garden-rake (CLI)`n"
+    Write-Host "  -> garden-moss (daemon)"
+    Write-Host "  -> garden-lantern (registry)"
+    Write-Host "  -> garden-rake (CLI)`n"
 
     # Use separate target directory for cross to avoid permission issues on Windows
     $env:CROSS_TARGET_DIR = Join-Path $WORKSPACE_ROOT "target\cross"
@@ -146,21 +146,21 @@ try {
     Copy-Item "$sourcePath\garden-moss" "$LINUX_DIR\garden-moss" -Force
     Copy-Item "$sourcePath\garden-rake" "$LINUX_DIR\garden-rake" -Force
     
-    Write-Host "`n✓ Build complete`n" -ForegroundColor Green
+    Write-Host "`nOK Build complete`n" -ForegroundColor Green
 
 } finally {
     Pop-Location
 }
 
 # Display results
-Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║   Build Complete!                                  ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+Write-Host "+====================================================+" -ForegroundColor Green
+Write-Host "|   Build Complete!                                  |" -ForegroundColor Green
+Write-Host "+====================================================+`n" -ForegroundColor Green
 
 Write-Host "Artifacts in $LINUX_DIR`:" -ForegroundColor Cyan
 Get-ChildItem $LINUX_DIR -ErrorAction SilentlyContinue | ForEach-Object {
     $sizeMB = [math]::Round($_.Length / 1MB, 2)
-    Write-Host ("  ✓ {0,-20} {1,10} MB" -f $_.Name, $sizeMB) -ForegroundColor Green
+    Write-Host ("  OK {0,-20} {1,10} MB" -f $_.Name, $sizeMB) -ForegroundColor Green
 }
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow

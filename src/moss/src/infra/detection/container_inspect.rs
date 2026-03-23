@@ -7,10 +7,32 @@
 //! - Running state verification
 
 use crate::docker::Client;
+use crate::domain::traits::ServiceDetector;
 use anyhow::{Context, Result};
 use garden_common::detection::DetectionResult;
 use garden_common::manifests::ContainerInspectDetection;
 use regex::Regex;
+use std::sync::Arc;
+
+/// Concrete container-based service detector backed by Docker.
+pub struct ContainerDetector {
+    docker: Arc<Client>,
+}
+
+impl ContainerDetector {
+    pub fn new(docker: Arc<Client>) -> Self {
+        Self { docker }
+    }
+}
+
+impl ServiceDetector for ContainerDetector {
+    async fn detect_by_container_inspect(
+        &self,
+        config: &ContainerInspectDetection,
+    ) -> Result<DetectionResult> {
+        detect_by_container_inspect(&self.docker, config).await
+    }
+}
 
 /// Detect service by inspecting Client containers
 ///
@@ -57,8 +79,8 @@ pub async fn detect_by_container_inspect(
         }
 
         // Check image pattern if specified
-        if let Some(ref image_re) = image_re {
-            if !image_re.is_match(&container.image) {
+        if let Some(ref image_re) = image_re
+            && !image_re.is_match(&container.image) {
                 tracing::debug!(
                     container = %container_name,
                     image = %container.image,
@@ -66,7 +88,6 @@ pub async fn detect_by_container_inspect(
                 );
                 continue;
             }
-        }
 
         // Check if container is running
         let is_running = container.state.to_lowercase() == "running";

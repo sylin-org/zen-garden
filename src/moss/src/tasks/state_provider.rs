@@ -23,7 +23,10 @@ impl MossStateProvider {
 
         // Basic identity
         fields.insert("stone_id".to_string(), json!(self.state.current.stone.id));
-        fields.insert("stone_name".to_string(), json!(self.state.current.stone.name));
+        fields.insert(
+            "stone_name".to_string(),
+            json!(self.state.current.stone.name),
+        );
 
         // Version
         fields.insert("moss_version".to_string(), json!(version_string()));
@@ -32,8 +35,8 @@ impl MossStateProvider {
         let uptime_secs = self.state.start_time.elapsed().as_secs();
         fields.insert("uptime".to_string(), json!(uptime_secs));
 
-        // Health (from self_entry)
-        let health = self.state.current.topology.self_entry.read().await.health.clone();
+        // Health (from current.health)
+        let health = self.state.current.health.read().await.clone();
         fields.insert("health".to_string(), json!(health));
 
         // Offering count
@@ -50,7 +53,10 @@ impl super::election_service::StateProvider for MossStateProvider {
         // Async criteria evaluation should use get_state_async() instead
         let mut fields = HashMap::new();
         fields.insert("stone_id".to_string(), json!(self.state.current.stone.id));
-        fields.insert("stone_name".to_string(), json!(self.state.current.stone.name));
+        fields.insert(
+            "stone_name".to_string(),
+            json!(self.state.current.stone.name),
+        );
         fields.insert("moss_version".to_string(), json!(version_string()));
         fields
     }
@@ -100,13 +106,11 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // Find the running offering by FQN
             let offering = self.state.find_offering(&fqn).await?;
 
-            // ORCH-0008: if an active gateway claims handler_for this offering
-            // type, this stone is ineligible — the handler owns the lifecycle.
-            // Check if an orchestrator handles this offering (suppress elections)
+            // ORCH-0008: if a registered gateway handles this offering type,
+            // this stone is ineligible — the gateway owns the lifecycle.
             {
-                let reg = self.state.fqn_handler.registry.read().await;
-                let handled = reg.handles_offering(&offering.offering);
-                if handled {
+                let reg = self.state.tool.registry.read().await;
+                if reg.handles_offering(&offering.offering) {
                     return None;
                 }
             }
@@ -127,7 +131,7 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             let compat = compatibility.unwrap_or_else(|| {
                 // Index not built yet or offering not in manifest — assume pass
                 crate::domain::compatibility::CompiledCompatibility {
-                    decision: garden_common::COMPAT_PASS.to_string(),
+                    decision: garden_common::constants::COMPAT_PASS.to_string(),
                     reason: None,
                     original_image: None,
                     fallback_image: None,

@@ -65,7 +65,8 @@ pub fn is_running_from_removable_media(exe_path: &std::path::Path) -> anyhow::Re
         .chain(std::iter::once(0))
         .collect();
 
-    // Call GetDriveTypeW
+    // SAFETY: `wide` is a null-terminated wide string valid for the duration of the call.
+    // GetDriveTypeW only reads the pointer; it does not retain it after returning.
     let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
 
     // DRIVE_REMOVABLE = 2, DRIVE_CDROM = 5

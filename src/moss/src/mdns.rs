@@ -283,7 +283,7 @@ pub async fn register_certmesh_service(koi_handle: &std::sync::Arc<KoiHandle>, h
 ///
 /// If `current_ip` is a loopback address, the handle is created but
 /// registration is deferred until a valid IP is available (via `reregister()`).
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn announce_moss(
     koi_handle: Arc<KoiHandle>,
     stone_id: Option<&str>,
@@ -440,11 +440,10 @@ pub fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option
     let https_port = txt.get("https_port").and_then(|v| v.parse::<u16>().ok());
 
     let mut address = garden_common::PeerAddress::new(ip.parse().ok()?, port);
-    if pond_active {
-        if let Some(tp) = https_port {
+    if pond_active
+        && let Some(tp) = https_port {
             address = address.with_tls(tp);
         }
-    }
 
     Some(DiscoveredStone {
         stone_id: txt.get("stone_id").cloned(),

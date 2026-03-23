@@ -14,37 +14,45 @@
 //! All tasks are non-blocking and composable.
 //! Spawn with tokio::spawn() and communicate via channels/shared state.
 
+pub mod adoption;
 pub mod announcer;
 pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
+pub mod docker_events;
 pub mod discovery_handler;
 pub mod docker;
 pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;
+pub mod lantern;
 pub mod metrics_collector;
 pub mod network_monitor;
 pub mod nurturing_scheduler;
 pub mod offering_orchestration;
 pub mod presence_monitor;
+pub mod registry;
+pub mod state_provider;
 pub mod storage_orchestration;
 pub mod storage_replication;
-pub mod state_provider;
+pub mod storage_tasks;
 pub mod storage_tick_aggregator;
+pub mod supervisor;
 pub mod task_scheduler;
+pub mod topology;
 
 pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;
 pub use coordinator::{
     start_all_background_tasks, start_auto_adoption, start_auto_adoption_with_config,
-    start_catalog_builder, start_discovery_listener,
+    start_catalog_builder, start_discovery_listener, start_docker_events,
     start_hardware_detection, start_health_monitor, start_lantern_registration,
     start_registry_loader, start_registry_maintenance, start_topology_maintenance,
 };
 pub use discovery::lantern_registration_loop;
-pub use docker::{Event as DockerEvent, Monitor as DockerMonitor, Config as DockerMonitorConfig};
+pub use docker::{Config as DockerMonitorConfig, Event as DockerEvent, Monitor as DockerMonitor};
+pub use docker_events::docker_events_task;
 pub use hardware_detection::detect_capabilities_background;
 pub use health_monitor::health_monitor_task;
 pub use job_executors::{
@@ -52,7 +60,7 @@ pub use job_executors::{
     install_batch_task, install_image_direct_task, install_service_task, refresh_capabilities_task,
 };
 pub use metrics_collector::run_metrics_collector;
-pub use network_monitor::{NetworkEvent, Network, NetworkConfig};
+pub use network_monitor::{Network, NetworkConfig, NetworkEvent};
 pub use nurturing_scheduler::{
     trigger_all_nurturing, trigger_nurturing, NurturingScheduler, NurturingWorkflowConfig,
     NurturingWorkflowResult, ReplicationAttempt, RoutingStrategy,

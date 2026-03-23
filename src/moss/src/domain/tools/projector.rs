@@ -1,72 +1,69 @@
-//! Tools projector — builds GardenTool snapshots from service discovery and storage.
+//! Tools projector — builds GardenTool snapshots from offerings and storage.
 //!
-//! TOOLS-0002: Offerings are projected through `find_services()` (same path as
-//! garden-rake find) to get gateway/orchestrator-aware resolution.
+//! Reads `state.offerings` directly and calls `connection::resolve_connection()`
+//! for URI composition. No FoundService intermediate.
 //! Seed-banks are projected directly from the seed bank lifecycle objects.
 
-use crate::domain::service_discovery::{self, FoundService};
+use crate::domain::connection;
 use crate::domain::storage::VolumeState;
 use crate::AppState;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
+use garden_common::Offering;
 use std::collections::BTreeSet;
 
 /// Project all local tools (offerings + seed-banks) as GardenTool instances.
 ///
-/// Offerings go through the services path (gateway/orchestrator aware).
-/// Seed-banks are projected directly from the storage beacon cache.
+/// Three sources feed the projection:
+/// 1. **Offerings** — read directly from `state.offerings`.
+/// 2. **Gateways** — written directly to `tool.registry` with `EntryOrigin::Gateway`
+///    by the gateway API. Not projected here — `reconcile_local` only touches
+///    `Local` entries, so `Gateway` entries survive.
+/// 3. **Seed-banks** — from the unified volume store.
 pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     let mut tools = Vec::new();
 
-    // ── Offerings via service discovery (TOOLS-0002) ─────────────
-    let svc_response = service_discovery::list_all_local_services(state).await;
-    for svc in svc_response.services {
-        tools.push(found_service_to_garden_tool(svc));
+    let endpoint = state.current.address.read().await.http_base();
+    let stone = Stone {
+        id: state.current.stone.id.clone(),
+        name: state.current.stone.name.clone(),
+        endpoint: endpoint.clone(),
+    };
+
+    // ── Offerings (direct read, no service_discovery) ─────────
+    {
+        let offerings = state.offerings.read().await;
+        for offering in offerings.iter() {
+            tools.push(offering_to_garden_tool(offering, &stone, state).await);
+        }
     }
 
-    // ── Gateway / orchestrator entries ───────────────────────────
-    // Gateways are written directly to the registry with EntryOrigin::Registered
-    // by the gateway API (PUT /api/v1/garden/gateway). They are NOT projected
-    // here — the reconcile_local() call skips Registered entries.
-
     // ── Managed storages from unified volumes ────────────────────
-    let endpoint = state.current.topology.self_entry.read().await.address.http_base();
     let managed_vols: Vec<_> = {
         let map = state.current.storage.volumes.read().await;
-        map.values()
-            .filter(|v| v.is_managed())
-            .cloned()
-            .collect()
+        map.values().filter(|v| v.is_managed()).cloned().collect()
     };
 
     for vol in &managed_vols {
-        let mgmt = vol.management.as_ref().unwrap(); // safe: filtered above
+        let Some(mgmt) = vol.management.as_ref() else {
+            continue;
+        };
         let (status, ready) = volume_state_to_readiness(&vol.state);
         let visibility_str = mgmt.visibility.to_string();
 
-        // fqid = replica set display name (used for grouping replicas and Explorer folders).
-        // Users see replica set names, not individual volume names.
-        // The stable GUID lives in StorageMetadata.replica_set_id.
         let fqid = mgmt.display_name().to_string();
 
-        // Local storages always support s3 + storage protocols
-        let protocols = vec![garden_common::constants::PROTOCOL_S3.to_string(), garden_common::constants::PROTOCOL_STORAGE.to_string()];
+        let protocols = vec![
+            garden_common::constants::PROTOCOL_S3.to_string(),
+            garden_common::constants::PROTOCOL_STORAGE.to_string(),
+        ];
         let protocol = garden_common::constants::PROTOCOL_S3.to_string();
 
-        let mut uris = Vec::new();
-        uris.push(format!(
-            "{}/api/v1/storage",
-            endpoint.trim_end_matches('/')
-        ));
-        uris.push(format!(
-            "{}/api/v1/storage/s3",
-            endpoint.trim_end_matches('/')
-        ));
-        uris = uris
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let base = endpoint.trim_end_matches('/');
+        let uris = vec![
+            format!("{base}/api/v1/storage"),
+            format!("{base}/api/v1/storage/s3"),
+        ];
 
         tools.push(GardenTool {
             fqid,
@@ -76,12 +73,9 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                 category: garden_common::constants::CATEGORY_STORAGE.to_string(),
                 id: mgmt.id.clone(),
                 tags: Vec::new(),
+                source: String::new(),
             },
-            stone: Stone {
-                id: state.current.stone.id.clone(),
-                name: state.current.stone.name.clone(),
-                endpoint: endpoint.clone(),
-            },
+            stone: stone.clone(),
             service: ServiceInfo {
                 status: status.to_string(),
                 ready,
@@ -111,12 +105,42 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     tools
 }
 
-/// Convert a `FoundService` (from service discovery) into a `GardenTool`.
-fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
-    let fqn = parse_fqn_for_fqid(&svc.name, &svc.offering);
+/// Build a GardenTool directly from an Offering.
+///
+/// Calls `connection::infer_protocol()` and `connection::resolve_connection()`
+/// for URI composition. Category comes from `offering.category` (Phase 0).
+async fn offering_to_garden_tool(
+    offering: &Offering,
+    stone: &Stone,
+    state: &AppState,
+) -> GardenTool {
+    let fqn = parse_fqn_for_fqid(&offering.name.to_string(), &offering.offering);
     let fqid = fqn.fqn();
 
-    let capabilities: Vec<Capability> = svc
+    let category = if offering.category.is_empty() {
+        offering.offering.clone()
+    } else {
+        offering.category.clone()
+    };
+
+    let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
+    let port = offering.location.port;
+
+    let connection_profile = state
+        .manifest_registry
+        .get_offering(&offering.offering)
+        .and_then(|entry| entry.connection.as_ref());
+    let template = connection::select_uri_template(connection_profile, &category);
+
+    let conn = connection::resolve_connection(
+        &stone.name,
+        &stone.endpoint,
+        port,
+        &protocol,
+        template.as_deref(),
+    );
+
+    let capabilities: Vec<Capability> = offering
         .sub_capabilities
         .iter()
         .filter(|cap| !cap.cap_type.trim().is_empty())
@@ -134,28 +158,27 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
         .filter(|cap| !cap.items.is_empty())
         .collect();
 
+    let status_str = offering.status.to_string().to_ascii_lowercase();
+
     GardenTool {
-        fqid: fqid.clone(),
+        fqid,
         tool: ToolIdentity {
             name: fqn.instance.clone().unwrap_or_default(),
-            tool_type: svc.offering.to_ascii_lowercase(),
-            category: svc.category.to_ascii_lowercase(),
-            id: svc.offering_id,
-            tags: svc.tags,
+            tool_type: offering.offering.to_ascii_lowercase(),
+            category: category.to_ascii_lowercase(),
+            id: offering.offering_id.clone(),
+            tags: Vec::new(),
+            source: String::new(),
         },
-        stone: Stone {
-            id: svc.stone.id,
-            name: svc.stone.name,
-            endpoint: svc.stone.endpoint,
-        },
+        stone: stone.clone(),
         service: ServiceInfo {
-            status: svc.status.to_ascii_lowercase(),
-            ready: svc.status.eq_ignore_ascii_case(garden_common::SERVICE_RUNNING),
-            protocol: svc.connection.protocol,
-            uris: svc.connection.uris,
-            hostname: Some(svc.connection.hostname),
-            ip: Some(svc.connection.ip),
-            port: Some(svc.connection.port),
+            status: status_str.clone(),
+            ready: status_str == garden_common::constants::SERVICE_RUNNING,
+            protocol: conn.protocol,
+            uris: conn.uris,
+            hostname: Some(conn.hostname),
+            ip: Some(conn.ip),
+            port: Some(conn.port),
             uri_template: None,
         },
         capabilities,
@@ -164,14 +187,10 @@ fn found_service_to_garden_tool(svc: FoundService) -> GardenTool {
 }
 
 /// Parse an FQN from a service name and offering type.
-///
-/// Tries parsing `name` as an FQN first; falls back to constructing
-/// `offering::name` if the name is an unqualified instance identifier.
 fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     let name_lower = name.to_ascii_lowercase();
     let offering_lower = offering.to_ascii_lowercase();
 
-    // Default instance — name matches offering type
     if name_lower == offering_lower || name_lower.is_empty() {
         return OfferingFqn::new(&offering_lower).unwrap_or(OfferingFqn {
             source: None,
@@ -181,14 +200,11 @@ fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
         });
     }
 
-    // Already a qualified FQN (V2 "mongodb::prod" or V1 "mongodb:prod") — parse it
-    if let Ok(fqn) = OfferingFqn::parse(&name_lower) {
-        if fqn.offering == offering_lower {
+    if let Ok(fqn) = OfferingFqn::parse(&name_lower)
+        && fqn.offering == offering_lower {
             return fqn;
         }
-    }
 
-    // Bare instance name — construct qualified FQN
     OfferingFqn::with_instance(&offering_lower, &name_lower).unwrap_or(OfferingFqn {
         source: None,
         offering: offering_lower,
@@ -222,17 +238,14 @@ mod tests {
 
     #[test]
     fn fqid_named_instance() {
-        // Bare instance name
         let fqn = parse_fqn_for_fqid("prod", "mongodb");
         assert_eq!(fqn.fqn(), "mongodb::prod");
         assert_eq!(fqn.instance, Some("prod".to_string()));
 
-        // V2 qualified
         let fqn = parse_fqn_for_fqid("mongodb::prod", "mongodb");
         assert_eq!(fqn.fqn(), "mongodb::prod");
         assert_eq!(fqn.instance, Some("prod".to_string()));
 
-        // V1 legacy qualified (auto-normalized)
         let fqn = parse_fqn_for_fqid("mongodb:prod", "mongodb");
         assert_eq!(fqn.fqn(), "mongodb::prod");
         assert_eq!(fqn.instance, Some("prod".to_string()));

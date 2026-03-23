@@ -20,11 +20,11 @@ pub fn validate_name(name: &str) -> Result<(), String> {
         return Err(format!("Name too long: {} characters (max 64)", name.len()));
     }
 
-    if !name.chars().next().unwrap().is_ascii_alphanumeric() {
+    if !name.starts_with(|c: char| c.is_ascii_alphanumeric()) {
         return Err("Name must start with alphanumeric character".to_string());
     }
 
-    if !name.chars().last().unwrap().is_ascii_alphanumeric() {
+    if !name.ends_with(|c: char| c.is_ascii_alphanumeric()) {
         return Err("Name must end with alphanumeric character".to_string());
     }
 
@@ -73,12 +73,19 @@ pub fn validate_url(url: &str) -> Result<(), String> {
 }
 
 /// Validate path is safe (no parent directory traversal)
+///
+/// Uses `Path::components()` for semantic `..' detection — rejects `a/../b`
+/// but allows filenames like `readme..txt` that contain literal `..` substrings.
 pub fn validate_safe_path<P: AsRef<Path>>(path: P) -> Result<(), String> {
-    let path_str = path.as_ref().to_string_lossy();
+    use std::path::Component;
 
-    if path_str.contains("..") {
+    let path = path.as_ref();
+
+    if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path cannot contain '..' (parent directory)".to_string());
     }
+
+    let path_str = path.to_string_lossy();
 
     if path_str.starts_with('/') && !cfg!(target_os = "windows") {
         return Err("Path cannot be absolute".to_string());
@@ -152,6 +159,9 @@ mod tests {
     fn test_validate_safe_path() {
         assert!(validate_safe_path("data/file.txt").is_ok());
         assert!(validate_safe_path("subdir/data/file.txt").is_ok());
+        // Filenames containing ".." substring are safe (not a parent-dir component)
+        assert!(validate_safe_path("readme..txt").is_ok());
+        assert!(validate_safe_path("data/file..backup").is_ok());
 
         assert!(validate_safe_path("../etc/passwd").is_err());
         assert!(validate_safe_path("data/../etc/passwd").is_err());

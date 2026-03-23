@@ -4,12 +4,10 @@
 //! - place keystone: Initialize pond security (equivalent to pond init)
 //! - place stone --code <code>: Join pond with invitation code (equivalent to pond join)
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 
 /// Place target type
 pub enum PlaceTarget {
@@ -54,28 +52,29 @@ impl PlaceCommand {
     }
 }
 
-#[async_trait]
 impl Command for PlaceCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?;
 
-        match &self.target {
-            PlaceTarget::Keystone { passphrase } => {
-                execute_place_keystone(ctx, endpoint, passphrase.clone()).await?;
+            match &self.target {
+                PlaceTarget::Keystone { passphrase } => {
+                    execute_place_keystone(ctx, endpoint, passphrase.clone()).await?;
+                }
+                PlaceTarget::Stone { code } => {
+                    execute_place_stone(ctx, endpoint, code).await?;
+                }
             }
-            PlaceTarget::Stone { code } => {
-                execute_place_stone(ctx, endpoint, code).await?;
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::PLACE, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions("place", self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
-        cmd::PLACE
+        "place"
     }
 }
 
@@ -137,11 +136,7 @@ async fn execute_place_keystone(
     Ok(())
 }
 
-async fn execute_place_stone(
-    ctx: &Runtime,
-    endpoint: &str,
-    code: &str,
-) -> anyhow::Result<()> {
+async fn execute_place_stone(ctx: &Runtime, endpoint: &str, code: &str) -> anyhow::Result<()> {
     let url = format!("{}/api/v1/pond/join", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "code": code });
 
@@ -163,8 +158,8 @@ async fn execute_place_stone(
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("ok", ctx.term.supports_color)
             );
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(data) = body.get("data") {
+            if let Ok(body) = response.json::<serde_json::Value>().await
+                && let Some(data) = body.get("data") {
                     if let Some(stone_name) = data.get("stone_name").and_then(|s| s.as_str()) {
                         println!(
                             "{}Stone: {}",
@@ -180,7 +175,6 @@ async fn execute_place_stone(
                         );
                     }
                 }
-            }
         }
         Ok(response) => {
             eprintln!(

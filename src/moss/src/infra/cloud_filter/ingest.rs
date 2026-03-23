@@ -1,4 +1,4 @@
-﻿//! Sync root ingest — write-back path for Cloud Filter (STORAGE-0012)
+//! Sync root ingest — write-back path for Cloud Filter (STORAGE-0012)
 //!
 //! When a user pastes, drags, or saves a file into the Explorer "Zen Garden"
 //! sync root, this module detects the new file, copies it to the actual
@@ -164,11 +164,10 @@ fn should_ingest(path: &Path, sync_root_path: &Path) -> bool {
     {
         use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
-        if let Ok(meta) = std::fs::metadata(path) {
-            if meta.file_attributes() & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.file_attributes() & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
                 return false;
             }
-        }
     }
 
     true
@@ -190,11 +189,11 @@ async fn transfer_batch(
     let mut ingested = 0u32;
 
     for path in paths {
-        let (storage_name, remainder) =
-            match super::decompose_sync_root_path(path, sync_root_path) {
-                Some((s, r)) if !s.is_empty() && !r.as_os_str().is_empty() => (s, r),
-                _ => continue,
-            };
+        let (storage_name, remainder) = match super::decompose_sync_root_path(path, sync_root_path)
+        {
+            Some((s, r)) if !s.is_empty() && !r.as_os_str().is_empty() => (s, r),
+            _ => continue,
+        };
 
         let resolver = StorageResolver {
             volumes,
@@ -213,15 +212,14 @@ async fn transfer_batch(
         let rel_path = remainder.to_string_lossy().replace('\\', "/");
 
         // For local storages, check if content is already identical
-        if handle.is_local() {
-            if let Some(mp) = handle.mount_path() {
+        if handle.is_local()
+            && let Some(mp) = handle.mount_path() {
                 let target = mp.join(&remainder);
                 if target.exists() && files_match(path, &target).await {
                     mark_in_sync(path);
                     continue;
                 }
             }
-        }
 
         // Transfer via handle (handles both local and remote)
         if path.is_dir() {
@@ -420,10 +418,7 @@ fn mark_in_sync(path: &Path) {
         };
 
         let mut ph = Placeholder::from(file);
-        match ph.convert_to_placeholder(
-            ConvertOptions::default().mark_in_sync().force(),
-            None,
-        ) {
+        match ph.convert_to_placeholder(ConvertOptions::default().mark_in_sync().force(), None) {
             Ok(_) => debug!(path = %path.display(), "marked in-sync"),
             Err(e) => debug!(path = %path.display(), error = %e, "convert_to_placeholder failed"),
         }

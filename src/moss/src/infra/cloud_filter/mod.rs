@@ -124,7 +124,9 @@ pub(crate) async fn enumerate_storage_availability(
     registry: &GardenRegistry,
     local_stone_id: &str,
 ) -> HashMap<String, StorageAvailability> {
-    snapshot_storage(volumes, registry, local_stone_id).await.available_sets
+    snapshot_storage(volumes, registry, local_stone_id)
+        .await
+        .available_sets
 }
 
 async fn snapshot_storage(
@@ -149,7 +151,9 @@ async fn snapshot_storage(
                         .or_insert_with(|| StorageAvailability::online("this device", true));
                     ready_members.insert(
                         (local_stone_id.to_string(), fqid.clone()),
-                        StorageMember { stone_name: "this device".to_string() },
+                        StorageMember {
+                            stone_name: "this device".to_string(),
+                        },
                     );
                 }
             }
@@ -196,12 +200,18 @@ async fn snapshot_storage(
             // available_sets already has a local entry for this fqid.
             ready_members.insert(
                 (entry.tool.stone.id.clone(), fqid.clone()),
-                StorageMember { stone_name: entry.tool.stone.name.clone() },
+                StorageMember {
+                    stone_name: entry.tool.stone.name.clone(),
+                },
             );
         }
     }
 
-    StorageSnapshot { available_sets, ready_members, all_set_names }
+    StorageSnapshot {
+        available_sets,
+        ready_members,
+        all_set_names,
+    }
 }
 
 // ============================================================================
@@ -212,7 +222,7 @@ async fn snapshot_storage(
 ///
 /// Registers the sync root, connects the filter, and spawns background
 /// tasks for placeholder reconciliation and ingest (write-back).
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn start(
     volumes: Volumes,
     registry: GardenRegistry,
@@ -266,11 +276,7 @@ pub async fn start(
     // would deadlock on uncontended locks.
     let rt = tokio::runtime::Handle::current();
     let connection = Session::new()
-        .connect_async(
-            &sync_root_path,
-            provider,
-            move |future| rt.block_on(future),
-        )
+        .connect_async(&sync_root_path, provider, move |future| rt.block_on(future))
         .context("failed to connect Cloud Filter provider")?;
 
     info!(path = %sync_root_path.display(), "Cloud Filter provider connected");
@@ -338,7 +344,7 @@ pub fn unregister() -> Result<()> {
 /// - `ToolDelta` (storage category) — remote stone storage appearing or
 ///   departing in the garden registry (immediate, no heartbeat lag)
 /// - 60s heartbeat — resilience catch-all for any missed events
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn storage_watcher(
     volumes: Volumes,
     registry: GardenRegistry,
@@ -472,7 +478,7 @@ async fn storage_watcher(
 /// ### `notify`
 /// Pass `false` on the startup reconcile to seed state without firing any
 /// events.  Pass `true` for all event-driven and heartbeat passes.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn reconcile_placeholders(
     volumes: &Volumes,
     registry: &GardenRegistry,
@@ -632,7 +638,12 @@ async fn reconcile_placeholders(
     }
     for key in arrived_keys {
         if let Some(member) = snap.ready_members.get(&key) {
-            roster.insert(key, StorageMember { stone_name: member.stone_name.clone() });
+            roster.insert(
+                key,
+                StorageMember {
+                    stone_name: member.stone_name.clone(),
+                },
+            );
         }
     }
 
@@ -654,8 +665,12 @@ async fn purge_blocked_placeholders(sync_root_path: &Path) {
         Err(_) => return,
     };
     while let Ok(Some(entry)) = rd.next_entry().await {
-        let Ok(ft) = entry.file_type().await else { continue };
-        if !ft.is_dir() { continue; }
+        let Ok(ft) = entry.file_type().await else {
+            continue;
+        };
+        if !ft.is_dir() {
+            continue;
+        }
         let storage_dir = entry.path();
         for &name in blocked {
             let target = storage_dir.join(name);
@@ -693,7 +708,9 @@ async fn purge_stray_root_items(sync_root_path: &Path, known_sets: &HashSet<Stri
             continue;
         }
 
-        let Ok(ft) = entry.file_type().await else { continue };
+        let Ok(ft) = entry.file_type().await else {
+            continue;
+        };
         let path = entry.path();
 
         let result = if ft.is_dir() {
@@ -721,14 +738,13 @@ async fn scan_existing_placeholders(sync_root_path: &Path) -> HashSet<String> {
     };
 
     while let Ok(Some(entry)) = dir.next_entry().await {
-        if let Ok(ft) = entry.file_type().await {
-            if ft.is_dir() {
+        if let Ok(ft) = entry.file_type().await
+            && ft.is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !garden_common::constants::storage::share::is_blocked_name(&name) {
                     names.insert(name);
                 }
             }
-        }
     }
 
     names

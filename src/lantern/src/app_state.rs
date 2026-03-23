@@ -44,12 +44,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(
-        name: String,
-        api_port: u16,
-        koi_handle: Arc<koi_embedded::KoiHandle>,
-    ) -> Self {
-        let (sse, _) = broadcast::channel(256);
+    pub fn new(name: String, api_port: u16, koi_handle: Arc<koi_embedded::KoiHandle>) -> Self {
+        let (sse, _) = broadcast::channel(garden_common::constants::channels::SSE_DASHBOARD);
 
         Self {
             name,

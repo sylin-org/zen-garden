@@ -118,8 +118,8 @@ async fn test_offering_slots(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
 
     // Query each stone for its services
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await
+            && let Some(services) = resp
                 .get("data")
                 .and_then(|d| d.get("services"))
                 .and_then(|s| s.as_array())
@@ -133,7 +133,6 @@ async fn test_offering_slots(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
                     }
                 }
             }
-        }
         if found_offering.is_some() {
             break;
         }
@@ -205,8 +204,8 @@ async fn test_create_snapshot(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<B
     let mut target: Option<(String, String)> = None;
 
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await
+            && let Some(services) = resp
                 .get("data")
                 .and_then(|d| d.get("services"))
                 .and_then(|s| s.as_array())
@@ -220,7 +219,6 @@ async fn test_create_snapshot(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<B
                     }
                 }
             }
-        }
         if target.is_some() {
             break;
         }
@@ -412,8 +410,8 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
 
         // Now check what sub-capabilities exist (correct structure: data.services)
         let services_result = stone.get_json("/api/v1/stone/services").await;
-        if let Ok(resp) = services_result {
-            if let Some(services) = resp
+        if let Ok(resp) = services_result
+            && let Some(services) = resp
                 .get("data")
                 .and_then(|d| d.get("services"))
                 .and_then(|s| s.as_array())
@@ -424,8 +422,8 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                         .and_then(|n| n.as_str())
                         .unwrap_or("unknown");
 
-                    if let Some(caps) = svc.get("sub_capabilities").and_then(|c| c.as_array()) {
-                        if !caps.is_empty() {
+                    if let Some(caps) = svc.get("sub_capabilities").and_then(|c| c.as_array())
+                        && !caps.is_empty() {
                             for cap in caps {
                                 let cap_type = cap
                                     .get("type")
@@ -446,10 +444,8 @@ async fn test_subcap_discovery(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                                 total_capabilities += items;
                             }
                         }
-                    }
                 }
             }
-        }
     }
 
     bag.put("total_sub_capabilities", total_capabilities);
@@ -505,8 +501,8 @@ async fn test_find_with_subcap(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     let services_result = tended.get_json("/api/v1/garden/services").await;
     let mut test_queries: Vec<String> = Vec::new();
 
-    if let Ok(resp) = &services_result {
-        if let Some(services) = resp
+    if let Ok(resp) = &services_result
+        && let Some(services) = resp
             .get("data")
             .and_then(|d| d.get("services"))
             .and_then(|s| s.as_array())
@@ -518,14 +514,13 @@ async fn test_find_with_subcap(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                     for cap in caps {
                         let cap_type = cap.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-                        if let Some(items) = cap.get("items").and_then(|i| i.as_array()) {
-                            if let Some(first_item) = items.first().and_then(|i| i.as_str()) {
+                        if let Some(items) = cap.get("items").and_then(|i| i.as_array())
+                            && let Some(first_item) = items.first().and_then(|i| i.as_str()) {
                                 // Create test queries using different syntax
                                 test_queries.push(format!("{}[{}]", offering, first_item));
                                 test_queries.push(format!("{}:{}", cap_type, first_item));
                                 break;
                             }
-                        }
                     }
                 }
                 if test_queries.len() >= 2 {
@@ -533,7 +528,6 @@ async fn test_find_with_subcap(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                 }
             }
         }
-    }
 
     if test_queries.is_empty() {
         // Fall back to basic queries that should work
@@ -708,8 +702,8 @@ async fn test_remote_list(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
 
     for stone in &garden.stones {
         let result = stone.get_json("/api/v1/stone/storage/banks").await;
-        if let Ok(resp) = result {
-            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+        if let Ok(resp) = result
+            && let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     let id = bank.get("id").and_then(|i| i.as_str()).unwrap_or("");
                     let name = bank.get("name").and_then(|n| n.as_str()).unwrap_or(id);
@@ -718,7 +712,6 @@ async fn test_remote_list(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> 
                     }
                 }
             }
-        }
     }
 
     if seed_banks.is_empty() {
@@ -809,8 +802,8 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     let mut target: Option<(String, String, String)> = None; // (stone_name, offering_name, offering_id)
 
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await
+            && let Some(services) = resp
                 .get("data")
                 .and_then(|d| d.get("services"))
                 .and_then(|s| s.as_array())
@@ -833,7 +826,6 @@ async fn test_orchestration(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                     }
                 }
             }
-        }
         if target.is_some() {
             break;
         }
@@ -1224,8 +1216,8 @@ async fn test_trigger_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     let mut target: Option<(String, String)> = None; // (stone_name, offering_name)
 
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await
+            && let Some(services) = resp
                 .get("data")
                 .and_then(|d| d.get("services"))
                 .and_then(|s| s.as_array())
@@ -1240,7 +1232,6 @@ async fn test_trigger_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
                     }
                 }
             }
-        }
         if target.is_some() {
             break;
         }
@@ -1374,8 +1365,8 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
     let mut best_stone: Option<(String, usize)> = None; // (stone_name, service_count)
 
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await
+            && let Some(services) = resp
                 .get("data")
                 .and_then(|d| d.get("services"))
                 .and_then(|s| s.as_array())
@@ -1391,7 +1382,6 @@ async fn test_trigger_all_workflow(garden: Arc<LiveGarden>, mut bag: Bag) -> Res
                     best_stone = Some((stone.name.clone(), running_count));
                 }
             }
-        }
     }
 
     let (stone_name, service_count) = match best_stone {
@@ -1538,8 +1528,8 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
 
     for stone in &garden.stones {
         // First check for existing snapshots
-        if let Ok(resp) = stone.get_json("/api/v1/stone/nurturing").await {
-            if let Some(offerings) = resp
+        if let Ok(resp) = stone.get_json("/api/v1/stone/nurturing").await
+            && let Some(offerings) = resp
                 .get("data")
                 .and_then(|d| d.get("offerings"))
                 .and_then(|o| o.as_object())
@@ -1567,7 +1557,6 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                     }
                 }
             }
-        }
         if target.is_some() {
             break;
         }
@@ -1576,8 +1565,8 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
     // If no existing snapshot, create one first
     if target.is_none() {
         for stone in &garden.stones {
-            if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-                if let Some(services) = resp
+            if let Ok(resp) = stone.get_json("/api/v1/stone/services").await
+                && let Some(services) = resp
                     .get("data")
                     .and_then(|d| d.get("services"))
                     .and_then(|s| s.as_array())
@@ -1591,8 +1580,8 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                             let path = format!("/api/v1/stone/nurturing/{}", name);
                             let body = serde_json::json!({ "commit_image": false });
 
-                            if let Ok(create_resp) = stone.post_json(&path, &body).await {
-                                if let Some(slot) = create_resp
+                            if let Ok(create_resp) = stone.post_json(&path, &body).await
+                                && let Some(slot) = create_resp
                                     .get("data")
                                     .and_then(|d| d.get("slot"))
                                     .and_then(|s| s.as_str())
@@ -1610,11 +1599,9 @@ async fn test_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag
                                     );
                                     break;
                                 }
-                            }
                         }
                     }
                 }
-            }
             if target.is_some() {
                 break;
             }
@@ -1707,8 +1694,8 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
     for stone in &garden.stones {
         // Get seed banks
         let banks_result = stone.get_json("/api/v1/stone/storage/banks").await;
-        if let Ok(banks_resp) = banks_result {
-            if let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
+        if let Ok(banks_resp) = banks_result
+            && let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let online = bank
@@ -1722,13 +1709,12 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
 
                     // Get remote snapshots
                     let remote_path = format!("/api/v1/stone/nurturing/remote/{}", bank_name);
-                    if let Ok(remote_resp) = stone.get_json(&remote_path).await {
-                        if let Some(snapshots) = remote_resp
+                    if let Ok(remote_resp) = stone.get_json(&remote_path).await
+                        && let Some(snapshots) = remote_resp
                             .get("data")
                             .and_then(|d| d.get("snapshots"))
                             .and_then(|s| s.as_array())
-                        {
-                            if let Some(snap) = snapshots.first() {
+                            && let Some(snap) = snapshots.first() {
                                 let offering_id = snap
                                     .get("offering_id")
                                     .and_then(|o| o.as_str())
@@ -1741,8 +1727,7 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
                                 // Find the offering name from services
                                 if let Ok(services_resp) =
                                     stone.get_json("/api/v1/stone/services").await
-                                {
-                                    if let Some(services) = services_resp
+                                    && let Some(services) = services_resp
                                         .get("data")
                                         .and_then(|d| d.get("services"))
                                         .and_then(|s| s.as_array())
@@ -1769,16 +1754,12 @@ async fn test_restore_remote(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Ba
                                             }
                                         }
                                     }
-                                }
                             }
-                        }
-                    }
                     if target.is_some() {
                         break;
                     }
                 }
             }
-        }
         if target.is_some() {
             break;
         }
@@ -1882,8 +1863,8 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
     for stone in &garden.stones {
         // Get seed banks
         let banks_result = stone.get_json("/api/v1/stone/storage/banks").await;
-        if let Ok(banks_resp) = banks_result {
-            if let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
+        if let Ok(banks_resp) = banks_result
+            && let Some(banks) = banks_resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     let bank_name = bank.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let online = bank
@@ -1897,8 +1878,8 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
                     // Get remote snapshots
                     let remote_path = format!("/api/v1/stone/nurturing/remote/{}", bank_name);
-                    if let Ok(remote_resp) = stone.get_json(&remote_path).await {
-                        if let Some(snapshots) = remote_resp
+                    if let Ok(remote_resp) = stone.get_json(&remote_path).await
+                        && let Some(snapshots) = remote_resp
                             .get("data")
                             .and_then(|d| d.get("snapshots"))
                             .and_then(|s| s.as_array())
@@ -1943,10 +1924,8 @@ async fn test_retention_pruning(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
                                 })),
                             );
                         }
-                    }
                 }
             }
-        }
     }
 
     if violations.is_empty() {
@@ -2003,8 +1982,8 @@ async fn test_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
         let result = stone.get_json("/api/v1/stone/storage/banks").await;
         let duration = start.elapsed();
 
-        if let Ok(resp) = result {
-            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+        if let Ok(resp) = result
+            && let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     let mut bank_info = bank.clone();
                     bank_info["stone"] = serde_json::json!(stone.name);
@@ -2018,7 +1997,6 @@ async fn test_failover(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<Bag> {
                     StepResult::ok(),
                 );
             }
-        }
     }
 
     if all_banks.is_empty() {
@@ -2376,8 +2354,8 @@ async fn test_physical_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> R
             continue;
         }
 
-        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await {
-            if let Some(services) = resp
+        if let Ok(resp) = stone.get_json("/api/v1/stone/services").await
+            && let Some(services) = resp
                 .get("data")
                 .and_then(|d| d.get("services"))
                 .and_then(|s| s.as_array())
@@ -2400,7 +2378,6 @@ async fn test_physical_restore_local(garden: Arc<LiveGarden>, mut bag: Bag) -> R
                     }
                 }
             }
-        }
         if target.is_some() {
             break;
         }
@@ -2997,8 +2974,7 @@ async fn test_physical_retention(garden: Arc<LiveGarden>, mut bag: Bag) -> Resul
 
             // List offering directories on seed bank
             // Use the correct seed bank path: {mount}/garden/memories
-            let nurturing_path =
-                garden_common::constants::paths::storage_memories_dir(bank_mount);
+            let nurturing_path = garden_common::constants::paths::storage_memories_dir(bank_mount);
             let start = Instant::now();
             let offerings = ssh.list_files(stone, &nurturing_path).unwrap_or_default();
             let duration = start.elapsed();

@@ -50,19 +50,13 @@ pub async fn get_job_status(
     let jobs = state.jobs.read().await;
 
     match jobs.get(&job_id) {
-        Some(job) => (
-            StatusCode::OK,
-            Json(ApiResponse {
-                data: job.clone(),
-                suggestions: None,
-            }),
-        ),
+        Some(job) => (StatusCode::OK, Json(ApiResponse::new(job.clone()))),
         None => {
             // Job not found - return 404 with stub and helpful suggestion
             (
                 StatusCode::NOT_FOUND,
-                Json(ApiResponse {
-                    data: Job {
+                Json(ApiResponse::with_suggestions(
+                    Job {
                         id: job_id.clone(),
                         status: JobStatus::Failed,
                         offerings: vec![],
@@ -71,8 +65,8 @@ pub async fn get_job_status(
                         started_at: std::time::SystemTime::now(),
                         completed_at: Some(std::time::SystemTime::now()),
                     },
-                    suggestions: Some(vec!["Check job ID is correct".to_string()]),
-                }),
+                    vec!["Check job ID is correct".to_string()],
+                )),
             )
         }
     }
@@ -106,11 +100,5 @@ pub async fn list_jobs(State(state): State<AppState>) -> (StatusCode, Json<ApiRe
     let jobs = state.jobs.read().await;
     let job_list: Vec<Job> = jobs.values().cloned().collect();
 
-    (
-        StatusCode::OK,
-        Json(ApiResponse {
-            data: job_list,
-            suggestions: None,
-        }),
-    )
+    (StatusCode::OK, Json(ApiResponse::new(job_list)))
 }

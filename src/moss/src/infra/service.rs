@@ -298,8 +298,8 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
     // Remove retired tools: check staging for .retired markers and delete installed binaries.
     // This handles tools that were replaced by embedded functionality (e.g., koi → koi-embedded).
     let staging_tools_dir = staging_bin_dir.join("tools");
-    if staging_tools_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&staging_tools_dir) {
+    if staging_tools_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&staging_tools_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let marker_path = entry.path();
                 if marker_path
@@ -341,7 +341,6 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
                 }
             }
         }
-    }
 
     // Copy all staged binaries to install directory
     println!("Installing staged binaries...");

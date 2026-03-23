@@ -30,69 +30,67 @@ use tokio_util::sync::CancellationToken;
 ///
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
 pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
-    tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(30));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    tokio::spawn(periodic_announcer_task(state, token));
+    tracing::info!("Periodic announcer started (30s interval)");
+}
 
-        // Skip first tick (already announced at startup)
-        ticker.tick().await;
+/// Inner future for the periodic announcer, usable by both
+/// `start_periodic_announcer` and the `TaskSupervisor`.
+pub(crate) async fn periodic_announcer_task(state: AppState, token: CancellationToken) {
+    let mut ticker = interval(Duration::from_secs(30));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        let mut tick_count: u64 = 0;
+    // Skip first tick (already announced at startup)
+    ticker.tick().await;
 
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => {}
-                _ = token.cancelled() => {
-                    tracing::debug!("Periodic announcer shutting down (MOSS-0004)");
-                    break;
-                }
-            }
+    let mut tick_count: u64 = 0;
 
-            tick_count += 1;
-
-            // Check network readiness - skip if not ready
-            if !state.subsystems.network.ready.load(Ordering::Relaxed) {
-                tracing::trace!("Periodic announcement skipped (network not ready)");
-                continue;
-            }
-
-            // Refresh self_entry before chirping — this evicts expired gateways
-            // (TTL=60s) and ensures we never broadcast stale registrations.
-            state.sync_self_services(false).await;
-
-            // Read current self topology entry
-            let entry = state.current.topology.self_entry.read().await.clone();
-
-            // Always chirp — peers rely on periodic chirps as heartbeats
-            // to maintain online status in the topology cache.
-            match crate::announcement::announce(&entry).await {
-                Ok(()) => tracing::trace!("Periodic chirp sent"),
-                Err(e) => tracing::warn!(error = ?e, "Periodic announcement failed"),
-            }
-
-            // Every other tick (~60s): broadcast a snapshot tools beacon so
-            // remote registries can reconcile stale announced entries.
-            if tick_count % 2 == 0 {
-                let snapshot_deltas = {
-                    let reg = state.tool.registry.read().await;
-                    reg.local_snapshot_for_beacon(&state.current.stone.id)
-                };
-                let endpoint = state.current.topology.self_entry.read().await.address.http_base();
-                if !endpoint.trim().is_empty() {
-                    if let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
-                        &state.current.stone.id,
-                        &state.current.stone.name,
-                        &endpoint,
-                        snapshot_deltas,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %e, "Failed to broadcast periodic tools snapshot beacon");
-                    }
-                }
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {}
+            _ = token.cancelled() => {
+                tracing::debug!("Periodic announcer shutting down (MOSS-0004)");
+                break;
             }
         }
-    });
 
-    tracing::info!("Periodic announcer started (30s interval)");
+        tick_count += 1;
+
+        // Check network readiness - skip if not ready
+        if !state.subsystems.network.ready.load(Ordering::Relaxed) {
+            tracing::trace!("Periodic announcement skipped (network not ready)");
+            continue;
+        }
+
+        // Build the self topology entry on demand from source domains.
+        let entry = state.build_self_entry().await;
+
+        // Always chirp — peers rely on periodic chirps as heartbeats
+        // to maintain online status in the topology cache.
+        match crate::announcement::announce(&entry).await {
+            Ok(()) => tracing::trace!("Periodic chirp sent"),
+            Err(e) => tracing::warn!(error = ?e, "Periodic announcement failed"),
+        }
+
+        // Every other tick (~60s): broadcast a snapshot tools beacon so
+        // remote registries can reconcile stale announced entries.
+        if tick_count.is_multiple_of(2) {
+            let snapshot_deltas = {
+                let reg = state.tool.registry.read().await;
+                reg.local_snapshot_for_beacon(&state.current.stone.id)
+            };
+            let endpoint = state.current.address.read().await.http_base();
+            if !endpoint.trim().is_empty()
+                && let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
+                    &state.current.stone.id,
+                    &state.current.stone.name,
+                    &endpoint,
+                    snapshot_deltas,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "Failed to broadcast periodic tools snapshot beacon");
+                }
+        }
+    }
 }

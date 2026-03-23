@@ -1,10 +1,12 @@
 //! Zen Common Constants
 //! Centralized constants for ports, names, paths, timeouts, limits, and error codes
 
+pub mod channels;
 pub mod headers;
 pub mod limits;
 pub mod orchestration;
 pub mod paths;
+pub mod server;
 pub mod storage;
 pub mod timeouts;
 
@@ -15,7 +17,7 @@ pub mod timeouts;
 #[cfg(target_os = "windows")]
 pub const CONFIG_DIR: &str = ".zen-garden";
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub const CONFIG_DIR: &str = "/etc/zen-garden";
 
 // ============================================================================

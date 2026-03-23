@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy workspace root Cargo.toml (garden-common uses edition.workspace = true)
+COPY Cargo.toml /build/Cargo.toml
+
 # Copy only the crates we actually depend on
 COPY src/common/ /build/src/common/
 COPY src/orchestrators/common/ /build/src/orchestrators/common/

@@ -127,7 +127,7 @@ impl RuntimeLedger {
     }
 
     /// Get running Companion info
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn get(&self, companion_id: &str) -> Option<(u32, u16)> {
         self.running.get(companion_id).copied()
     }
@@ -199,7 +199,7 @@ impl PortLedger {
     }
 
     /// Get port for an Companion (if assigned)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn get(&self, companion_id: &str) -> Option<u16> {
         self.assignments.get(companion_id).copied()
     }
@@ -466,13 +466,13 @@ impl CompanionRegistry {
     }
 
     /// Get all registered Companions
-    pub async fn list(&self) -> Vec<RegisteredCompanion> {
+    pub(crate) async fn list_registered(&self) -> Vec<RegisteredCompanion> {
         let companions = self.companions.read().await;
         companions.values().cloned().collect()
     }
 
-    /// Get a specific Companion by ID
-    pub async fn get(&self, id: &str) -> Option<RegisteredCompanion> {
+    /// Get a specific Companion by ID (returns infra type)
+    pub(crate) async fn get_registered(&self, id: &str) -> Option<RegisteredCompanion> {
         let companions = self.companions.read().await;
         companions.get(id).cloned()
     }
@@ -538,12 +538,11 @@ impl CompanionRegistry {
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
-        if c.is_running() {
-            if let Some(pid) = c.pid {
+        if c.is_running()
+            && let Some(pid) = c.pid {
                 info!(companion = %id, pid = pid, "Companion already running");
                 return Ok(pid);
             }
-        }
 
         // Port was assigned during registration
         let port = c
@@ -792,8 +791,8 @@ impl CompanionRegistry {
             .get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
-        if let Some(pid) = c.pid {
-            if is_process_alive(pid) {
+        if let Some(pid) = c.pid
+            && is_process_alive(pid) {
                 info!(companion = %id, pid = pid, "Stopping Companion");
 
                 // Try graceful shutdown first via process handle
@@ -811,7 +810,6 @@ impl CompanionRegistry {
 
                 info!(companion = %id, "Companion stopped");
             }
-        }
 
         c.process = None;
         c.pid = None;
@@ -836,12 +834,11 @@ impl CompanionRegistry {
     pub async fn sigterm_all(&self) {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
-            if let Some(pid) = c.pid {
-                if is_process_alive(pid) {
+            if let Some(pid) = c.pid
+                && is_process_alive(pid) {
                     info!(companion = %id, pid = pid, "Sending SIGTERM to Companion");
                     sigterm_process_by_pid(pid);
                 }
-            }
         }
     }
 
@@ -852,12 +849,11 @@ impl CompanionRegistry {
     pub async fn kill_all_survivors(&self) {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
-            if let Some(pid) = c.pid {
-                if is_process_alive(pid) {
+            if let Some(pid) = c.pid
+                && is_process_alive(pid) {
                     warn!(companion = %id, pid = pid, "Companion still alive after drain, sending SIGKILL");
                     kill_process_by_pid(pid);
                 }
-            }
         }
     }
 
@@ -880,7 +876,7 @@ impl CompanionRegistry {
                 // Try graceful HTTP shutdown first
                 if let Some(port) = self.get_port(&id).await {
                     let shutdown_url = format!("http://127.0.0.1:{}/shutdown", port);
-                    match reqwest::Client::new()
+                    match crate::http::COMPANION
                         .post(&shutdown_url)
                         .timeout(std::time::Duration::from_secs(2))
                         .send()
@@ -904,6 +900,90 @@ impl CompanionRegistry {
         }
 
         results
+    }
+}
+
+impl crate::domain::traits::CompanionOps for CompanionRegistry {
+    async fn scan_and_autostart(&self, moss_endpoint: &str) -> Result<(usize, usize)> {
+        CompanionRegistry::scan_and_autostart(self, moss_endpoint).await
+    }
+
+    async fn refresh_all(&self) -> Result<usize> {
+        CompanionRegistry::refresh_all(self).await
+    }
+
+    async fn list(&self) -> Vec<crate::domain::traits::companion_ops::CompanionInfo> {
+        let companions = CompanionRegistry::list_registered(self).await;
+        companions
+            .into_iter()
+            .map(|c| {
+                let running = c.is_running();
+                let pid = c.pid();
+                let port = c.port();
+                crate::domain::traits::companion_ops::CompanionInfo {
+                    id: c.id,
+                    pid,
+                    port,
+                    manifest: c.manifest,
+                    running,
+                }
+            })
+            .collect()
+    }
+
+    async fn get(&self, id: &str) -> Option<crate::domain::traits::companion_ops::CompanionInfo> {
+        CompanionRegistry::get_registered(self, id).await.map(|c| {
+            let running = c.is_running();
+            let pid = c.pid();
+            let port = c.port();
+            crate::domain::traits::companion_ops::CompanionInfo {
+                id: c.id,
+                pid,
+                port,
+                manifest: c.manifest,
+                running,
+            }
+        })
+    }
+
+    async fn get_manifest(&self, id: &str) -> Option<CommandManifest> {
+        CompanionRegistry::get_manifest(self, id).await
+    }
+
+    async fn is_running(&self, id: &str) -> bool {
+        CompanionRegistry::is_running(self, id).await
+    }
+
+    async fn start(&self, id: &str, moss_endpoint: &str) -> Result<u32> {
+        CompanionRegistry::start(self, id, moss_endpoint).await
+    }
+
+    async fn stop(&self, id: &str) -> Result<()> {
+        CompanionRegistry::stop(self, id).await
+    }
+
+    async fn stop_and_disable(&self, id: &str) -> Result<()> {
+        CompanionRegistry::stop_and_disable(self, id).await
+    }
+
+    async fn enable(&self, id: &str) -> Result<()> {
+        CompanionRegistry::enable(self, id).await
+    }
+
+    async fn stop_all(&self) -> Vec<(String, Result<()>)> {
+        CompanionRegistry::stop_all(self).await
+    }
+
+    async fn reap_terminated(&self) -> usize {
+        CompanionRegistry::reap_terminated(self).await
+    }
+
+    async fn sigterm_all(&self) {
+        CompanionRegistry::sigterm_all(self).await
+    }
+
+    async fn kill_all_survivors(&self) {
+        CompanionRegistry::kill_all_survivors(self).await
     }
 }
 

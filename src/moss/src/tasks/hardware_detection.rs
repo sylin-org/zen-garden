@@ -402,10 +402,80 @@ pub async fn detect_capabilities_background(
     // but background detection never pushes updates to self_entry.
     state.sync_self_capabilities(true).await;
 
+    // Write MOTD with complete hardware capabilities now that detection is done.
+    #[cfg(target_os = "linux")]
+    {
+        use garden_common::console::{write_motd, BankSummary, MotdInfo, StorageSetSummary};
+        use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
+
+        let caps = state.current.capabilities.read().await.clone();
+        let stone_name = state.current.stone.name.clone();
+        let ip = state.current.address.read().await.ip_str();
+        let port = state.current.api_port;
+        let version = crate::version_string();
+        let pond_name = state.security.pond.state.name().await;
+
+        let (cpu_cores, ram_mb, gpu) = match &caps {
+            Some(c) => {
+                let cores = Some(c.hardware.cpu.cores);
+                let ram = Some(c.hardware.memory.total_mb);
+                let first_gpu = c.hardware.gpus.first().map(|g| (g.model.clone(), g.vram_mb));
+                (cores, ram, first_gpu)
+            }
+            None => (None, None, None),
+        };
+
+        let storage_sets = {
+            let volumes = state.current.storage.volumes.read().await;
+            let mut sets: std::collections::BTreeMap<String, Vec<BankSummary>> =
+                std::collections::BTreeMap::new();
+            for volume in volumes.values() {
+                if volume.state != crate::domain::storage::VolumeState::Online {
+                    continue;
+                }
+                if let Some(mgmt) = &volume.management {
+                    let set_name = if mgmt.replica_set_name.is_empty() {
+                        DEFAULT_REPLICA_SET_DISPLAY.to_string()
+                    } else {
+                        mgmt.replica_set_name.clone()
+                    };
+                    sets.entry(set_name).or_default().push(BankSummary {
+                        name: mgmt.name.clone(),
+                        used_bytes: volume.used_bytes,
+                        capacity_bytes: volume.capacity_bytes,
+                    });
+                }
+            }
+            sets.into_iter()
+                .map(|(replica_set_name, banks)| StorageSetSummary {
+                    replica_set_name,
+                    banks,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let info = MotdInfo {
+            stone_name,
+            ip,
+            port,
+            version,
+            pond_name,
+            cpu_cores,
+            ram_mb,
+            gpu,
+            storage_sets,
+        };
+        if let Err(e) = write_motd(&info) {
+            tracing::warn!(error = %e, "Failed to write MOTD after hardware detection");
+        }
+    }
+
     // Re-evaluate offerings index now that complete hardware is known
     // This ensures compatibility warnings update (e.g., no AI → no Ollama, no AVX → MongoDB warning)
     tracing::info!("Re-evaluating offerings compatibility with detected hardware...");
-    if let Err(e) = ensure_offerings_index(&state, true).await {
+    if let Err(e) =
+        ensure_offerings_index(&state, true, &crate::infra::persistence::OsOfferingsCache).await
+    {
         tracing::warn!(error = ?e, "Failed to rebuild offerings index after detection");
     } else {
         console.emit(console::ConsoleEvent::new(

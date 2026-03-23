@@ -7,16 +7,14 @@
 //! - View offering details
 
 use crate::command_manifest::cmd;
-use crate::context::Runtime;
 use crate::commands::Command;
+use crate::context::Runtime;
 use crate::discovery;
+use crate::ui::colors::CliFormatter;
+use crate::ui::rendering as ui;
 use anyhow::Result;
-use async_trait::async_trait;
 use garden_common::offerings::OfferingFqn;
-use garden_common::ui::rendering as ui;
-use garden_common::{
-    CliFormatter, GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo,
-};
+use garden_common::{GardenApiResponse, GardenHttpClient, HardwareCapabilities, ServiceInfo};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -140,7 +138,7 @@ pub fn stone_prefer_score(prefer: &[String], caps: Option<&HardwareCapabilities>
         .disk
         .as_ref()
         .and_then(|d| d.disk_type.as_ref())
-        .map(|s| s.to_lowercase());
+        .map(|s: &String| s.to_lowercase());
 
     let mut score = 0i32;
     for p in prefer {
@@ -303,7 +301,7 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
         let status_str = format!("{:?}", svc.status);
         if status_str
             .to_lowercase()
-            .contains(garden_common::SERVICE_RUNNING)
+            .contains(garden_common::constants::SERVICE_RUNNING)
         {
             running_count += 1;
         } else {
@@ -315,7 +313,7 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
             ui::truncate_name(&svc.name, ui::constants::MAX_SERVICE_NAME_LEN),
             status_display,
             if svc.offering.is_empty() {
-                garden_common::VALUE_UNKNOWN.to_string()
+                garden_common::constants::VALUE_UNKNOWN.to_string()
             } else {
                 svc.offering.clone()
             },
@@ -373,7 +371,7 @@ async fn print_offerings_index(client: &reqwest::Client, endpoint: &str) -> Resu
     // Filter out incompatible offerings (decision = "fail")
     let compatible_offerings: Vec<OfferingEntry> = offerings
         .into_iter()
-        .filter(|o| o.compatibility.decision != garden_common::COMPAT_FAIL)
+        .filter(|o| o.compatibility.decision != garden_common::constants::COMPAT_FAIL)
         .collect();
 
     if compatible_offerings.is_empty() {
@@ -391,7 +389,7 @@ async fn print_offerings_index(client: &reqwest::Client, endpoint: &str) -> Resu
     let mut by_category: BTreeMap<String, Vec<OfferingEntry>> = BTreeMap::new();
     let mut restricted_offerings: Vec<String> = Vec::new();
     for o in compatible_offerings {
-        if o.compatibility.decision == garden_common::COMPAT_FALLBACK {
+        if o.compatibility.decision == garden_common::constants::COMPAT_FALLBACK {
             restricted_offerings.push(o.name.clone());
         }
         by_category.entry(o.category.clone()).or_default().push(o);
@@ -408,7 +406,7 @@ async fn print_offerings_index(client: &reqwest::Client, endpoint: &str) -> Resu
         let grid_items: Vec<String> = items
             .iter()
             .map(|o| {
-                if o.compatibility.decision == garden_common::COMPAT_FALLBACK {
+                if o.compatibility.decision == garden_common::constants::COMPAT_FALLBACK {
                     format!("{}{}", o.name, ui::constants::LEGEND_SYMBOL)
                 } else {
                     o.name.clone()
@@ -476,10 +474,10 @@ async fn print_offering_info(
         let decision = compat
             .get("decision")
             .and_then(|v| v.as_str())
-            .unwrap_or(garden_common::COMPAT_PASS);
+            .unwrap_or(garden_common::constants::COMPAT_PASS);
         match decision {
-            garden_common::COMPAT_PASS => println!("Compatibility: pass"),
-            garden_common::COMPAT_FALLBACK => {
+            garden_common::constants::COMPAT_PASS => println!("Compatibility: pass"),
+            garden_common::constants::COMPAT_FALLBACK => {
                 let reason = compat
                     .get("reason")
                     .and_then(|v| v.as_str())
@@ -493,7 +491,7 @@ async fn print_offering_info(
                 }
                 println!("  Reason: {}", reason);
             }
-            garden_common::COMPAT_FAIL => {
+            garden_common::constants::COMPAT_FAIL => {
                 let reason = compat
                     .get("reason")
                     .and_then(|v| v.as_str())
@@ -509,8 +507,8 @@ async fn print_offering_info(
         }
     }
 
-    if let Some(ports) = body.get("ports").and_then(|v| v.as_array()) {
-        if !ports.is_empty() {
+    if let Some(ports) = body.get("ports").and_then(|v| v.as_array())
+        && !ports.is_empty() {
             println!("Ports:");
             for p in ports {
                 if let (Some(host), Some(container)) = (
@@ -521,7 +519,6 @@ async fn print_offering_info(
                 }
             }
         }
-    }
 
     Ok(())
 }
@@ -551,7 +548,7 @@ async fn print_offer_query_recommendations(
 
     println!("Top recommendations:");
     for (idx, o) in results.results.iter().enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+        let flag = if o.compatibility == garden_common::constants::COMPAT_FALLBACK {
             "(!) "
         } else {
             ""
@@ -622,7 +619,7 @@ async fn print_offer_anywhere_recommendations(
 
     println!("Top recommendations across stones:");
     for (idx, (_score, stone_name, ep, o)) in candidates.into_iter().take(3).enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+        let flag = if o.compatibility == garden_common::constants::COMPAT_FALLBACK {
             "(!) "
         } else {
             ""
@@ -686,7 +683,7 @@ async fn print_alternatives_for_failed_install(
 
     println!("\nAlternatives:");
     for (idx, o) in alternatives.iter().enumerate() {
-        let flag = if o.compatibility == garden_common::COMPAT_FALLBACK {
+        let flag = if o.compatibility == garden_common::constants::COMPAT_FALLBACK {
             "(!) "
         } else {
             ""
@@ -775,8 +772,8 @@ async fn stream_job_progress(
 
             // Check completion by querying service list
             let list_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
-            if let Ok(response) = client.get(&list_url).send().await {
-                if let Ok(value) = response.json::<serde_json::Value>().await {
+            if let Ok(response) = client.get(&list_url).send().await
+                && let Ok(value) = response.json::<serde_json::Value>().await {
                     let services: Vec<ServiceInfo> =
                         serde_json::from_value(value.get("data").cloned().unwrap_or(value))
                             .unwrap_or_default();
@@ -793,10 +790,9 @@ async fn stream_job_progress(
                         break;
                     }
                 }
-            }
 
             // Update progress display every 2 seconds
-            if elapsed.as_secs() % 2 == 0 && !quiet {
+            if elapsed.as_secs().is_multiple_of(2) && !quiet {
                 print!(
                     "\r{}Installing... [{}]",
                     " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -873,8 +869,8 @@ async fn stream_job_progress(
                     }
 
                     // Check for completion
-                    if status == garden_common::STATUS_COMPLETED
-                        || status == garden_common::STATUS_SUCCESS
+                    if status == garden_common::constants::STATUS_COMPLETED
+                        || status == garden_common::constants::STATUS_SUCCESS
                     {
                         if !quiet {
                             println!(
@@ -885,8 +881,8 @@ async fn stream_job_progress(
                             );
                         }
                         break;
-                    } else if status == garden_common::STATUS_FAILED
-                        || status == garden_common::STATUS_ERROR
+                    } else if status == garden_common::constants::STATUS_FAILED
+                        || status == garden_common::constants::STATUS_ERROR
                     {
                         println!(
                             "\n{}{} Installation failed: {}",
@@ -912,7 +908,7 @@ async fn stream_job_progress(
             }
             _ => {
                 // Network error or server issue, continue polling
-                if elapsed.as_secs() % 5 == 0 && !quiet {
+                if elapsed.as_secs().is_multiple_of(5) && !quiet {
                     print!(
                         "\r{}Checking progress... [{}]",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -1338,12 +1334,7 @@ impl OfferCommand {
         }
     }
 
-    pub fn install(
-        name: String,
-        prefer: Vec<String>,
-        anywhere_on_fail: bool,
-        quiet: bool,
-    ) -> Self {
+    pub fn install(name: String, prefer: Vec<String>, anywhere_on_fail: bool, quiet: bool) -> Self {
         Self {
             action: OfferAction::Install { name },
             prefer,
@@ -1379,7 +1370,12 @@ impl OfferCommand {
         }
     }
 
-    pub fn image(image_ref: String, instance: Option<String>, info_only: bool, quiet: bool) -> Self {
+    pub fn image(
+        image_ref: String,
+        instance: Option<String>,
+        info_only: bool,
+        quiet: bool,
+    ) -> Self {
         Self {
             action: OfferAction::Image {
                 image_ref,
@@ -1407,7 +1403,6 @@ impl OfferCommand {
     }
 }
 
-#[async_trait]
 impl Command for OfferCommand {
     fn requires_endpoint(&self) -> bool {
         !matches!(
@@ -1425,274 +1420,309 @@ impl Command for OfferCommand {
         cmd::OFFER
     }
 
-    async fn execute(&self, ctx: &Runtime) -> Result<()> {
-        let term = ui::TerminalInfo::detect();
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let term = ui::TerminalInfo::detect();
 
-        match &self.action {
-            OfferAction::List => {
-                let endpoint = ctx.endpoint.as_ref().expect("endpoint required for list");
-                print_offerings_index(&ctx.client, endpoint).await?;
-            }
-            OfferAction::Refresh => {
-                let endpoint = ctx
-                    .endpoint
-                    .as_ref()
-                    .expect("endpoint required for refresh");
-                refresh_offerings_index(&ctx.client, endpoint).await?;
-            }
-            OfferAction::Info { name } => {
-                let endpoint = ctx.endpoint.as_ref().expect("endpoint required for info");
-                print_offering_info(&ctx.client, endpoint, name).await?;
-            }
-            OfferAction::Query { query } => {
-                let endpoint = ctx.endpoint.as_ref().expect("endpoint required for query");
-                print_offer_query_recommendations(&ctx.client, endpoint, query, &self.prefer)
-                    .await?;
-            }
-            OfferAction::QueryAnywhere { query } => {
-                print_offer_anywhere_recommendations(&ctx.client, query, &self.prefer).await?;
-            }
-            OfferAction::PlacementRecommend { name, quiet } => {
-                handle_placement_recommendation(&ctx.client, name, *quiet).await?;
-            }
-            OfferAction::Install { name } => {
-                let endpoint = ctx
-                    .endpoint
-                    .as_ref()
-                    .expect("endpoint required for install");
-                let offering_fqn = OfferingFqn::parse(name)
-                    .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", name, e))?;
-                let service_name = offering_fqn.fqn();
-                let offering_type = offering_fqn.offering.clone();
-                // Check if service is already installed
-                let services_url =
-                    format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
-                if let Ok(response) = ctx.client.get(&services_url).send().await {
-                    if let Ok(json) = response.json::<serde_json::Value>().await {
-                        let services: Vec<ServiceInfo> =
-                            serde_json::from_value(json.get("data").cloned().unwrap_or(json))
-                                .unwrap_or_default();
-                        if let Some(existing) = services.iter().find(|s| s.name == service_name) {
-                            let status_str = format!("{:?}", existing.status).to_lowercase();
-                            let status_icon =
-                                ui::status_indicator(&status_str, term.supports_color);
-
-                            println!(
-                                "{}{} Service '{}' is already installed ({})",
-                                " ".repeat(ui::constants::DEFAULT_INDENT),
-                                status_icon,
-                                existing.name,
-                                status_str
-                            );
-                            println!();
-                            println!("{}Options:", " ".repeat(ui::constants::DEFAULT_INDENT));
-                            println!(
-                                "{}  • View details:  garden-rake show {}",
-                                " ".repeat(ui::constants::DEFAULT_INDENT * 2),
-                                existing.name
-                            );
-                            println!(
-                                "{}  • Remove service: garden-rake remove {}",
-                                " ".repeat(ui::constants::DEFAULT_INDENT * 2),
-                                existing.name
-                            );
-                            if status_str.contains(garden_common::SERVICE_STOPPED) {
-                                println!(
-                                    "{}  • Start service:  garden-rake start {}",
-                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
-                                    existing.name
-                                );
-                            } else if status_str.contains(garden_common::SERVICE_RUNNING) {
-                                println!(
-                                    "{}  • Stop service:   garden-rake stop {}",
-                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
-                                    existing.name
-                                );
-                                println!(
-                                    "{}  • Restart service: garden-rake restart {}",
-                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
-                                    existing.name
-                                );
-                            }
-                            return Ok(());
-                        }
-                    }
+            match &self.action {
+                OfferAction::List => {
+                    let endpoint = ctx.endpoint.as_ref().expect("endpoint required for list");
+                    print_offerings_index(&ctx.client, endpoint).await?;
                 }
+                OfferAction::Refresh => {
+                    let endpoint = ctx
+                        .endpoint
+                        .as_ref()
+                        .expect("endpoint required for refresh");
+                    refresh_offerings_index(&ctx.client, endpoint).await?;
+                }
+                OfferAction::Info { name } => {
+                    let endpoint = ctx.endpoint.as_ref().expect("endpoint required for info");
+                    print_offering_info(&ctx.client, endpoint, name).await?;
+                }
+                OfferAction::Query { query } => {
+                    let endpoint = ctx.endpoint.as_ref().expect("endpoint required for query");
+                    print_offer_query_recommendations(&ctx.client, endpoint, query, &self.prefer)
+                        .await?;
+                }
+                OfferAction::QueryAnywhere { query } => {
+                    print_offer_anywhere_recommendations(&ctx.client, query, &self.prefer).await?;
+                }
+                OfferAction::PlacementRecommend { name, quiet } => {
+                    handle_placement_recommendation(&ctx.client, name, *quiet).await?;
+                }
+                OfferAction::Install { name } => {
+                    let endpoint = ctx
+                        .endpoint
+                        .as_ref()
+                        .expect("endpoint required for install");
+                    let offering_fqn = OfferingFqn::parse(name)
+                        .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", name, e))?;
+                    let service_name = offering_fqn.fqn();
+                    let offering_type = offering_fqn.offering.clone();
+                    // Check if service is already installed
+                    let services_url =
+                        format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+                    if let Ok(response) = ctx.client.get(&services_url).send().await
+                        && let Ok(json) = response.json::<serde_json::Value>().await {
+                            let services: Vec<ServiceInfo> =
+                                serde_json::from_value(json.get("data").cloned().unwrap_or(json))
+                                    .unwrap_or_default();
+                            if let Some(existing) = services.iter().find(|s| s.name == service_name) {
+                                let status_str = format!("{:?}", existing.status).to_lowercase();
+                                let status_icon =
+                                    ui::status_indicator(&status_str, term.supports_color);
 
-                // POST /api/v1/stone/services with JSON body
-                let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
-                let payload = serde_json::json!({
-                    "offering": service_name,
-                    "ports": [],
-                    "environment": {}
-                });
-
-                let response = ctx.client.post(url).json(&payload).send().await?;
-                let status = response.status();
-                let body = response.json::<serde_json::Value>().await.ok();
-
-                match status {
-                    reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::OK => {
-                        if let Some(body) = body {
-                            let fmt = CliFormatter::new();
-                            let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
-
-                            let response_service_name = body
-                                .get("service")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(&service_name);
-                            let action = body
-                                .get("action")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("create");
-                            let api_status = body
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("pending");
-                            let message =
-                                body.get("message").and_then(|v| v.as_str()).unwrap_or("");
-
-                            // Display: lowercase name with status on same line
-                            // mongodb      [pending create]
-                            println!();
-                            let status_text = format!("[{} {}]", api_status, action);
-                            let padding = 16usize.saturating_sub(response_service_name.len());
-                            println!(
-                                "{}{}{}{}",
-                                indent,
-                                response_service_name,
-                                " ".repeat(padding),
-                                status_text
-                            );
-                            println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
-
-                            // Extract job_id from message if present
-                            let job_id = if message.contains("Job ID:") || message.contains("job:")
-                            {
-                                message
-                                    .split_whitespace()
-                                    .skip_while(|s| !s.contains("ID") && !s.contains("job"))
-                                    .nth(1)
-                                    .map(|s| s.trim_end_matches(&['.', ',', '!'][..]).to_string())
-                            } else {
-                                None
-                            };
-
-                            if let Some(job_id) = job_id {
-                                stream_job_progress(
-                                    &ctx.client,
-                                    endpoint,
-                                    &job_id,
-                                    response_service_name,
-                                    self.quiet,
-                                )
-                                .await?;
-                            } else if message.contains("Adopted") {
                                 println!(
-                                    "{}{} Service already exists (adopted)",
-                                    indent,
-                                    ui::status_indicator("ok", term.supports_color)
+                                    "{}{} Service '{}' is already installed ({})",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                                    status_icon,
+                                    existing.name,
+                                    status_str
                                 );
-                                println!("{}{}", indent, message);
-                            } else if message.contains("maintenance") {
+                                println!();
+                                println!("{}Options:", " ".repeat(ui::constants::DEFAULT_INDENT));
                                 println!(
-                                    "{}{} Under maintenance, retry later",
-                                    indent,
-                                    ui::status_indicator("pending", term.supports_color)
+                                    "{}  • View details:  garden-rake show {}",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                    existing.name
                                 );
-                            } else if !message.is_empty() {
-                                println!("{}{}", indent, message);
-                            }
-
-                            // Display suggestions from v1 API (if not quiet)
-                            if !self.quiet {
-                                if let Some(suggestions) =
-                                    body.get("suggestions").and_then(|v| v.as_array())
+                                println!(
+                                    "{}  • Remove service: garden-rake remove {}",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                    existing.name
+                                );
+                                if status_str.contains(garden_common::constants::SERVICE_STOPPED) {
+                                    println!(
+                                        "{}  • Start service:  garden-rake start {}",
+                                        " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                        existing.name
+                                    );
+                                } else if status_str.contains(garden_common::constants::SERVICE_RUNNING)
                                 {
-                                    if !suggestions.is_empty() {
-                                        println!();
-                                        println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
-                                        println!("{}{}", indent, fmt.group("SUGGESTIONS"));
-                                        for suggestion in suggestions {
-                                            if let Some(s) = suggestion.as_str() {
-                                                println!("{}    • {}", indent, s);
+                                    println!(
+                                        "{}  • Stop service:   garden-rake stop {}",
+                                        " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                        existing.name
+                                    );
+                                    println!(
+                                        "{}  • Restart service: garden-rake restart {}",
+                                        " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                        existing.name
+                                    );
+                                }
+                                return Ok(());
+                            }
+                        }
+
+                    // POST /api/v1/stone/services with JSON body
+                    let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+                    let payload = serde_json::json!({
+                        "offering": service_name,
+                        "ports": [],
+                        "environment": {}
+                    });
+
+                    let response = ctx.client.post(url).json(&payload).send().await?;
+                    let status = response.status();
+                    let body = response.json::<serde_json::Value>().await.ok();
+
+                    match status {
+                        reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::OK => {
+                            if let Some(body) = body {
+                                let fmt = CliFormatter::new();
+                                let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+
+                                let response_service_name = body
+                                    .get("service")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&service_name);
+                                let action = body
+                                    .get("action")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("create");
+                                let api_status = body
+                                    .get("status")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("pending");
+                                let message =
+                                    body.get("message").and_then(|v| v.as_str()).unwrap_or("");
+
+                                // Display: lowercase name with status on same line
+                                // mongodb      [pending create]
+                                println!();
+                                let status_text = format!("[{} {}]", api_status, action);
+                                let padding = 16usize.saturating_sub(response_service_name.len());
+                                println!(
+                                    "{}{}{}{}",
+                                    indent,
+                                    response_service_name,
+                                    " ".repeat(padding),
+                                    status_text
+                                );
+                                println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
+
+                                // Extract job_id from message if present
+                                let job_id = if message.contains("Job ID:") || message.contains("job:")
+                                {
+                                    message
+                                        .split_whitespace()
+                                        .skip_while(|s| !s.contains("ID") && !s.contains("job"))
+                                        .nth(1)
+                                        .map(|s| s.trim_end_matches(&['.', ',', '!'][..]).to_string())
+                                } else {
+                                    None
+                                };
+
+                                if let Some(job_id) = job_id {
+                                    stream_job_progress(
+                                        &ctx.client,
+                                        endpoint,
+                                        &job_id,
+                                        response_service_name,
+                                        self.quiet,
+                                    )
+                                    .await?;
+                                } else if message.contains("Adopted") {
+                                    println!(
+                                        "{}{} Service already exists (adopted)",
+                                        indent,
+                                        ui::status_indicator("ok", term.supports_color)
+                                    );
+                                    println!("{}{}", indent, message);
+                                } else if message.contains("maintenance") {
+                                    println!(
+                                        "{}{} Under maintenance, retry later",
+                                        indent,
+                                        ui::status_indicator("pending", term.supports_color)
+                                    );
+                                } else if !message.is_empty() {
+                                    println!("{}{}", indent, message);
+                                }
+
+                                // Display suggestions from v1 API (if not quiet)
+                                if !self.quiet
+                                    && let Some(suggestions) =
+                                        body.get("suggestions").and_then(|v| v.as_array())
+                                        && !suggestions.is_empty() {
+                                            println!();
+                                            println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
+                                            println!("{}{}", indent, fmt.group("SUGGESTIONS"));
+                                            for suggestion in suggestions {
+                                                if let Some(s) = suggestion.as_str() {
+                                                    println!("{}    • {}", indent, s);
+                                                }
                                             }
                                         }
+                                println!();
+                            }
+                        }
+                        reqwest::StatusCode::BAD_REQUEST => {
+                            if let Some(body) = body {
+                                let code = body
+                                    .get("error")
+                                    .and_then(|e| e.get("code"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("<unknown>");
+                                let msg = body
+                                    .get("error")
+                                    .and_then(|e| e.get("message"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Request failed");
+
+                                println!(
+                                    "{}{} {} ({})",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                                    ui::status_indicator("error", term.supports_color),
+                                    msg,
+                                    code
+                                );
+
+                                if let Some(details) = body.get("error").and_then(|e| e.get("details"))
+                                {
+                                    if let Some(reason) = details.get("reason").and_then(|v| v.as_str())
+                                    {
+                                        println!(
+                                            "{}Reason: {}",
+                                            " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                            reason
+                                        );
+                                    }
+                                    if let Some(suggestion) =
+                                        details.get("suggestion").and_then(|v| v.as_str())
+                                    {
+                                        println!(
+                                            "{}Suggestion: {}",
+                                            " ".repeat(ui::constants::DEFAULT_INDENT * 2),
+                                            suggestion
+                                        );
                                     }
                                 }
-                            }
-                            println!();
-                        }
-                    }
-                    reqwest::StatusCode::BAD_REQUEST => {
-                        if let Some(body) = body {
-                            let code = body
-                                .get("error")
-                                .and_then(|e| e.get("code"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("<unknown>");
-                            let msg = body
-                                .get("error")
-                                .and_then(|e| e.get("message"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Request failed");
 
+                                if code == garden_common::constants::COMPATIBILITY_FAILED {
+                                    let derived_query = print_alternatives_for_failed_install(
+                                        &ctx.client,
+                                        endpoint,
+                                        &offering_type,
+                                        &self.prefer,
+                                    )
+                                    .await
+                                    .ok()
+                                    .flatten();
+
+                                    if self.anywhere_on_fail
+                                        && let Some(q) = derived_query {
+                                            println!(
+                                                "\n{}Searching across stones...",
+                                                " ".repeat(ui::constants::DEFAULT_INDENT)
+                                            );
+                                            let _ = print_offer_anywhere_recommendations(
+                                                &ctx.client,
+                                                &q,
+                                                &self.prefer,
+                                            )
+                                            .await;
+                                        }
+                                }
+                            } else {
+                                println!(
+                                    "{}{} Failed: {}",
+                                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                                    ui::status_indicator("error", term.supports_color),
+                                    status
+                                );
+                            }
+                        }
+                        reqwest::StatusCode::NOT_FOUND => {
                             println!(
-                                "{}{} {} ({})",
+                                "{}{} Unknown offering: {}",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
                                 ui::status_indicator("error", term.supports_color),
-                                msg,
-                                code
+                                name
                             );
-
-                            if let Some(details) = body.get("error").and_then(|e| e.get("details"))
-                            {
-                                if let Some(reason) = details.get("reason").and_then(|v| v.as_str())
-                                {
-                                    println!(
-                                        "{}Reason: {}",
-                                        " ".repeat(ui::constants::DEFAULT_INDENT * 2),
-                                        reason
-                                    );
-                                }
-                                if let Some(suggestion) =
-                                    details.get("suggestion").and_then(|v| v.as_str())
-                                {
-                                    println!(
-                                        "{}Suggestion: {}",
-                                        " ".repeat(ui::constants::DEFAULT_INDENT * 2),
-                                        suggestion
-                                    );
-                                }
-                            }
-
-                            if code == garden_common::constants::COMPATIBILITY_FAILED {
-                                let derived_query = print_alternatives_for_failed_install(
-                                    &ctx.client,
-                                    endpoint,
-                                    &offering_type,
-                                    &self.prefer,
-                                )
-                                .await
-                                .ok()
-                                .flatten();
-
-                                if self.anywhere_on_fail {
-                                    if let Some(q) = derived_query {
-                                        println!(
-                                            "\n{}Searching across stones...",
-                                            " ".repeat(ui::constants::DEFAULT_INDENT)
-                                        );
-                                        let _ = print_offer_anywhere_recommendations(
-                                            &ctx.client,
-                                            &q,
-                                            &self.prefer,
-                                        )
-                                        .await;
-                                    }
-                                }
-                            }
-                        } else {
+                            let _ = print_offer_query_recommendations(
+                                &ctx.client,
+                                endpoint,
+                                name,
+                                &self.prefer,
+                            )
+                            .await;
+                        }
+                        s if s.is_success() => {
+                            println!(
+                                "{}{} Offered {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("ok", term.supports_color),
+                                name
+                            );
+                        }
+                        reqwest::StatusCode::NOT_IMPLEMENTED => {
+                            println!(
+                                "{}ℹ️  Offer not implemented on server",
+                                " ".repeat(ui::constants::DEFAULT_INDENT)
+                            );
+                        }
+                        _ => {
                             println!(
                                 "{}{} Failed: {}",
                                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -1701,188 +1731,145 @@ impl Command for OfferCommand {
                             );
                         }
                     }
-                    reqwest::StatusCode::NOT_FOUND => {
-                        println!(
-                            "{}{} Unknown offering: {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("error", term.supports_color),
-                            name
-                        );
-                        let _ = print_offer_query_recommendations(
-                            &ctx.client,
-                            endpoint,
-                            name,
-                            &self.prefer,
-                        )
-                        .await;
-                    }
-                    s if s.is_success() => {
-                        println!(
-                            "{}{} Offered {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("ok", term.supports_color),
-                            name
-                        );
-                    }
-                    reqwest::StatusCode::NOT_IMPLEMENTED => {
-                        println!(
-                            "{}ℹ️  Offer not implemented on server",
-                            " ".repeat(ui::constants::DEFAULT_INDENT)
-                        );
-                    }
-                    _ => {
-                        println!(
-                            "{}{} Failed: {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("error", term.supports_color),
-                            status
-                        );
-                    }
                 }
-            }
-            OfferAction::Image {
-                image_ref,
-                instance,
-                info_only,
-            } => {
-                let endpoint = ctx
-                    .endpoint
-                    .as_ref()
-                    .expect("endpoint required for image");
+                OfferAction::Image {
+                    image_ref,
+                    instance,
+                    info_only,
+                } => {
+                    let endpoint = ctx.endpoint.as_ref().expect("endpoint required for image");
 
-                if *info_only {
-                    // Info-only: inspect the image without deploying
-                    let url = format!(
-                        "{}/api/v1/stone/offerings/inspect?image={}",
-                        endpoint.trim_end_matches('/'),
-                        urlencoding::encode(image_ref)
-                    );
-                    let response = ctx.client.get(&url).send().await?;
-                    let status = response.status();
-                    let body: serde_json::Value = response.json().await?;
+                    if *info_only {
+                        // Info-only: inspect the image without deploying
+                        let url = format!(
+                            "{}/api/v1/stone/offerings/inspect?image={}",
+                            endpoint.trim_end_matches('/'),
+                            urlencoding::encode(image_ref)
+                        );
+                        let response = ctx.client.get(&url).send().await?;
+                        let status = response.status();
+                        let body: serde_json::Value = response.json().await?;
 
-                    if status.is_success() {
-                        let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
-                        println!();
-                        println!("{}Image: {}", indent, image_ref);
-                        if let Some(arch) = body.get("architecture").and_then(|v| v.as_str()) {
-                            println!("{}Architecture: {}", indent, arch);
-                        }
-                        if let Some(ports) = body.get("exposed_ports").and_then(|v| v.as_array()) {
-                            if !ports.is_empty() {
-                                let port_strs: Vec<String> = ports
-                                    .iter()
-                                    .filter_map(|p| p.as_u64().map(|n| n.to_string()))
-                                    .collect();
-                                println!("{}Ports: {}", indent, port_strs.join(", "));
+                        if status.is_success() {
+                            let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+                            println!();
+                            println!("{}Image: {}", indent, image_ref);
+                            if let Some(arch) = body.get("architecture").and_then(|v| v.as_str()) {
+                                println!("{}Architecture: {}", indent, arch);
                             }
-                        }
-                        if let Some(vols) = body.get("volumes").and_then(|v| v.as_array()) {
-                            if !vols.is_empty() {
-                                println!("{}Volumes:", indent);
-                                for v in vols {
-                                    if let Some(s) = v.as_str() {
-                                        println!("{}  {}", indent, s);
+                            if let Some(ports) = body.get("exposed_ports").and_then(|v| v.as_array())
+                                && !ports.is_empty() {
+                                    let port_strs: Vec<String> = ports
+                                        .iter()
+                                        .filter_map(|p| p.as_u64().map(|n| n.to_string()))
+                                        .collect();
+                                    println!("{}Ports: {}", indent, port_strs.join(", "));
+                                }
+                            if let Some(vols) = body.get("volumes").and_then(|v| v.as_array())
+                                && !vols.is_empty() {
+                                    println!("{}Volumes:", indent);
+                                    for v in vols {
+                                        if let Some(s) = v.as_str() {
+                                            println!("{}  {}", indent, s);
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        if let Some(alt) = body.get("curated_alternative") {
-                            if !alt.is_null() {
-                                let alt_name =
-                                    alt.get("offering_name").and_then(|v| v.as_str()).unwrap_or("?");
-                                let alt_desc =
-                                    alt.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                                println!();
-                                println!(
-                                    "{}{} A curated manifest '{}' exists for this image.",
-                                    indent,
-                                    ui::status_indicator("info", term.supports_color),
-                                    alt_name
-                                );
-                                if !alt_desc.is_empty() {
-                                    println!("{}  {}", indent, alt_desc);
+                            if let Some(alt) = body.get("curated_alternative")
+                                && !alt.is_null() {
+                                    let alt_name = alt
+                                        .get("offering_name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("?");
+                                    let alt_desc = alt
+                                        .get("description")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    println!();
+                                    println!(
+                                        "{}{} A curated manifest '{}' exists for this image.",
+                                        indent,
+                                        ui::status_indicator("info", term.supports_color),
+                                        alt_name
+                                    );
+                                    if !alt_desc.is_empty() {
+                                        println!("{}  {}", indent, alt_desc);
+                                    }
+                                    println!("{}  Use: garden-rake offer {}", indent, alt_name);
                                 }
-                                println!(
-                                    "{}  Use: garden-rake offer {}",
-                                    indent, alt_name
-                                );
+                            println!();
+                        } else {
+                            let msg = body
+                                .get("error")
+                                .and_then(|e| e.get("message"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Inspection failed");
+                            println!(
+                                "{}{} {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("error", term.supports_color),
+                                msg
+                            );
+                        }
+                    } else {
+                        // Deploy: construct image-direct FQN and POST to services API
+                        let fqn_string = if let Some(inst) = instance {
+                            format!("image:{}::{}", image_ref, inst)
+                        } else {
+                            format!("image:{}", image_ref)
+                        };
+
+                        let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+                        let payload = serde_json::json!({
+                            "offering": fqn_string,
+                        });
+
+                        let response = ctx.client.post(&url).json(&payload).send().await?;
+                        let status = response.status();
+                        let body: serde_json::Value = response.json().await?;
+
+                        let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
+
+                        if status.is_success() {
+                            let svc = body
+                                .get("data")
+                                .and_then(|d| d.get("service"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(image_ref);
+                            let api_status = body
+                                .get("data")
+                                .and_then(|d| d.get("status"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("accepted");
+                            let message = body
+                                .get("data")
+                                .and_then(|d| d.get("message"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            println!();
+                            println!("{}{}  [{}]", indent, svc, api_status);
+                            if !message.is_empty() {
+                                println!("{}{}", indent, message);
                             }
+                            println!();
+                        } else {
+                            let msg = body
+                                .get("error")
+                                .and_then(|e| e.get("message"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Deployment failed");
+                            println!(
+                                "{}{} {}",
+                                indent,
+                                ui::status_indicator("error", term.supports_color),
+                                msg
+                            );
                         }
-                        println!();
-                    } else {
-                        let msg = body
-                            .get("error")
-                            .and_then(|e| e.get("message"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Inspection failed");
-                        println!(
-                            "{}{} {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("error", term.supports_color),
-                            msg
-                        );
-                    }
-                } else {
-                    // Deploy: construct image-direct FQN and POST to services API
-                    let fqn_string = if let Some(inst) = instance {
-                        format!("image:{}::{}", image_ref, inst)
-                    } else {
-                        format!("image:{}", image_ref)
-                    };
-
-                    let url =
-                        format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
-                    let payload = serde_json::json!({
-                        "offering": fqn_string,
-                    });
-
-                    let response = ctx.client.post(&url).json(&payload).send().await?;
-                    let status = response.status();
-                    let body: serde_json::Value = response.json().await?;
-
-                    let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
-
-                    if status.is_success() {
-                        let svc = body
-                            .get("data")
-                            .and_then(|d| d.get("service"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(image_ref);
-                        let api_status = body
-                            .get("data")
-                            .and_then(|d| d.get("status"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("accepted");
-                        let message = body
-                            .get("data")
-                            .and_then(|d| d.get("message"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-
-                        println!();
-                        println!("{}{}  [{}]", indent, svc, api_status);
-                        if !message.is_empty() {
-                            println!("{}{}", indent, message);
-                        }
-                        println!();
-                    } else {
-                        let msg = body
-                            .get("error")
-                            .and_then(|e| e.get("message"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Deployment failed");
-                        println!(
-                            "{}{} {}",
-                            indent,
-                            ui::status_indicator("error", term.supports_color),
-                            msg
-                        );
                     }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 }

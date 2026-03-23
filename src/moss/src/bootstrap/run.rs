@@ -41,7 +41,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-
 // ============================================================================
 // Bootstrap artifacts
 // ============================================================================
@@ -73,13 +72,129 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let file_config = config.file_config.clone();
     let (state, artifacts) = build_state(config, log).await?;
-    let api_endpoint = crate::tasks::coordinator::start_background_tasks(state.clone(), artifacts, file_config).await;
+
+    // Write MOTD on every startup with whatever is known at this point.
+    // Hardware may not be fully detected yet (that happens in background), so
+    // cpu/ram/gpu may be None — the MOTD writer handles that gracefully.
+    // The hardware detection task will overwrite with full info once it completes.
+    #[cfg(target_os = "linux")]
+    {
+        use garden_common::console::{write_motd, BankSummary, MotdInfo, StorageSetSummary};
+        use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
+
+        let caps = state.current.capabilities.read().await.clone();
+        let stone_name = state.current.stone.name.clone();
+        let ip = state.current.address.read().await.ip_str();
+        let port = state.current.api_port;
+        let version = version_string();
+        let pond_name = state.security.pond.state.name().await;
+
+        let (cpu_cores, ram_mb, gpu) = match &caps {
+            Some(c) => {
+                let cores = Some(c.hardware.cpu.cores);
+                let ram = Some(c.hardware.memory.total_mb);
+                let first_gpu = c.hardware.gpus.first().map(|g| (g.model.clone(), g.vram_mb));
+                (cores, ram, first_gpu)
+            }
+            None => (None, None, None),
+        };
+
+        let storage_sets = {
+            let volumes = state.current.storage.volumes.read().await;
+            let mut sets: std::collections::BTreeMap<String, Vec<BankSummary>> =
+                std::collections::BTreeMap::new();
+            for volume in volumes.values() {
+                if volume.state != crate::domain::storage::VolumeState::Online {
+                    continue;
+                }
+                if let Some(mgmt) = &volume.management {
+                    let set_name = if mgmt.replica_set_name.is_empty() {
+                        DEFAULT_REPLICA_SET_DISPLAY.to_string()
+                    } else {
+                        mgmt.replica_set_name.clone()
+                    };
+                    sets.entry(set_name).or_default().push(BankSummary {
+                        name: mgmt.name.clone(),
+                        used_bytes: volume.used_bytes,
+                        capacity_bytes: volume.capacity_bytes,
+                    });
+                }
+            }
+            sets.into_iter()
+                .map(|(replica_set_name, banks)| StorageSetSummary {
+                    replica_set_name,
+                    banks,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let info = MotdInfo {
+            stone_name,
+            ip,
+            port,
+            version,
+            pond_name,
+            cpu_cores,
+            ram_mb,
+            gpu,
+            storage_sets,
+        };
+        if let Err(e) = write_motd(&info) {
+            tracing::warn!(error = %e, "Failed to write startup MOTD");
+        }
+    }
+
+    let (api_endpoint, supervisor) =
+        crate::tasks::coordinator::start_background_tasks(state.clone(), artifacts, file_config)
+            .await;
+
+    // Run the task supervisor in the background — it monitors all spawned tasks
+    // for panics and handles clean shutdown when the cancellation token fires.
+    let shutdown_token = state.shutdown_token.clone();
+    tokio::spawn(supervisor.run(shutdown_token));
+
     serve(state, &api_endpoint).await
 }
 
 // ============================================================================
 // Stage 1: Sequential initialization
 // ============================================================================
+
+/// Build a skeleton `TopologyEntry` from the bootstrap source-of-truth fields.
+///
+/// Used during early boot before `AppState` exists. After AppState construction,
+/// `AppState::build_self_entry()` supersedes this.
+async fn build_boot_entry(
+    stone_id: &str,
+    stone_name: &str,
+    address: &Arc<RwLock<garden_common::PeerAddress>>,
+    health: &Arc<RwLock<String>>,
+    mac: &Arc<RwLock<Option<String>>>,
+    capabilities: Option<&Arc<RwLock<Option<garden_common::HardwareCapabilities>>>>,
+) -> garden_common::TopologyEntry {
+    let address = address.read().await.clone();
+    let health = health.read().await.clone();
+    let mac = mac.read().await.clone();
+    let caps = match capabilities {
+        Some(c) => c.read().await.clone(),
+        None => None,
+    };
+    garden_common::TopologyEntry {
+        stone_id: stone_id.to_string(),
+        stone_name: stone_name.to_string(),
+        address,
+        moss_version: version_string(),
+        services: Vec::new(),
+        mac,
+        health,
+        capabilities: caps,
+        status: garden_common::StoneStatus::Online,
+        discovered_at: chrono::Utc::now(),
+        last_seen: chrono::Utc::now(),
+        tags: Vec::new(),
+        gateways: Vec::new(),
+    }
+}
 
 /// Sequential daemon initialization.
 ///
@@ -101,26 +216,21 @@ async fn build_state(
     let stone_id = infra::load_or_generate_stone_id().await;
     tracing::info!(stone_id = %stone_id, stone_name = %stone_name, "Stone identity loaded");
 
-    // Phase 0.5: Initialize self topology entry
-    // Create with minimal identity, will be progressively enriched during boot
-    let self_entry = Arc::new(RwLock::new(crate::domain::TopologyEntry {
-        stone_id: stone_id.clone(),
-        stone_name: stone_name.clone(),
-        address: garden_common::PeerAddress::new(
+    // Phase 0.5: Source-of-truth fields for this stone's mutable state.
+    //
+    // These are progressively enriched during bootstrap, then shared with
+    // AppState. After construction, `build_self_entry()` reads from them
+    // on demand — no mutable self_entry cache.
+    let current_address: Arc<RwLock<garden_common::PeerAddress>> =
+        Arc::new(RwLock::new(garden_common::PeerAddress::new(
             std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             garden_common::constants::MOSS_HTTP,
-        ), // Will be set in Phase 3
-        moss_version: version_string(),
-        services: Vec::new(),
-        mac: None, // Will be set in Phase 2
-        health: garden_common::constants::STONE_STARTING.to_string(),
-        capabilities: None, // Will be set in Phase 9
-        status: garden_common::StoneStatus::Online,
-        discovered_at: chrono::Utc::now(),
-        last_seen: chrono::Utc::now(),
-        tags: Vec::new(), // Compiled from NotificationRegistry
-        gateways: Vec::new(), // ORCH-0004: populated by gateway API
-    }));
+        )));
+    let current_health: Arc<RwLock<String>> = Arc::new(RwLock::new(
+        garden_common::constants::STONE_STARTING.to_string(),
+    ));
+    let current_mac: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
+
     tracing::debug!("Self topology entry initialized (health=starting)");
 
     // Phase 1: Start UDP listener EARLY (can now respond to discovery requests)
@@ -136,18 +246,29 @@ async fn build_state(
     }
 
     // Write initial topology file immediately (self entry only, no peers yet).
-    // Don't wait for the 30s maintenance cycle â€” containers may start before then.
-    if let Err(e) = crate::domain::topology::persist_topology(&topology_cache, &self_entry).await {
+    // Don't wait for the 30s maintenance cycle -- containers may start before then.
+    let boot_entry = build_boot_entry(
+        &stone_id,
+        &stone_name,
+        &current_address,
+        &current_health,
+        &current_mac,
+        None,
+    )
+    .await;
+    if let Err(e) = crate::domain::topology::persist_topology(&topology_cache, &boot_entry).await {
         tracing::warn!(error = %e, "Failed to write initial topology file");
     } else {
         topology_dirty.store(false, std::sync::atomic::Ordering::Relaxed);
         tracing::debug!("Initial topology file written");
     }
 
-    let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(512);
+    let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(
+        garden_common::constants::channels::TOOL_DELTA,
+    );
     let tool = Arc::new(crate::domain::Tool {
         registry: crate::domain::garden_registry::new_registry(),
-        delta:    tool_delta,
+        delta: tool_delta,
     });
 
     // Console is needed for UDP listener, create it early
@@ -237,7 +358,9 @@ async fn build_state(
     // Create infrastructure handlers - wired to UDP pipeline from the start
     let infrastructure_handlers =
         Arc::new(crate::domain::InfrastructureHandlerRegistry::new(vec![
-            Box::new(crate::domain::DockerRegistry::new()),
+            Box::new(crate::domain::DockerRegistry::new(std::sync::Arc::new(
+                crate::infra::OsDockerConfig,
+            ))),
         ]));
 
     // Create orchestration nudge early â€” shared between discovery listener and AppState
@@ -257,7 +380,7 @@ async fn build_state(
         topology_dirty.clone(),
         tool.delta.clone(),
         tool.registry.clone(),
-        self_entry.clone(),
+        current_address.clone(),
         console_printer.clone(),
         infrastructure_handlers.clone(),
         manifest_registry.clone(),
@@ -273,7 +396,12 @@ async fn build_state(
     // Windows: Uses hardware-id cache existence, sets DNS hostname via registry
     #[cfg(target_os = "linux")]
     if console::is_first_run() {
-        start_first_boot_task(&stone_name, port, config.docker_retry_delay_secs(), runtime.clone());
+        start_first_boot_task(
+            &stone_name,
+            port,
+            config.docker_retry_delay_secs(),
+            runtime.clone(),
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -298,8 +426,8 @@ async fn build_state(
     // Network manages the subsystems.network.ready flag
     let network = Network::start_with_config(
         NetworkConfig::default()
-            .with_disconnect_retry(5)
-            .with_connected_poll(30),
+            .with_disconnect_retry(crate::tasks::network_monitor::DEFAULT_DISCONNECT_RETRY_SECS)
+            .with_connected_poll(crate::tasks::network_monitor::DEFAULT_CONNECTED_POLL_SECS),
         subsystems.network.ready.clone(),
     )
     .await;
@@ -309,7 +437,7 @@ async fn build_state(
 
     // Phase 3: Resolve API endpoint
     // Prefer explicit STONE_HOST, otherwise use monitored network IP
-    let use_static_host = std::env::var(garden_common::ENV_STONE_HOST)
+    let use_static_host = std::env::var(garden_common::constants::ENV_STONE_HOST)
         .ok()
         .filter(|h| !h.trim().is_empty());
 
@@ -325,13 +453,12 @@ async fn build_state(
             .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
     };
 
-    // Phase 3.5: Update self entry with network configuration
+    // Phase 3.5: Update source fields with network configuration
     {
-        let mut entry = self_entry.write().await;
-        entry.address = garden_common::PeerAddress::new(resolved_ip, port);
-        entry.mac = mac_address.clone();
-        entry.health = garden_common::constants::STONE_INITIALIZING.to_string();
-        entry.last_seen = chrono::Utc::now();
+        let new_addr = garden_common::PeerAddress::new(resolved_ip, port);
+        *current_address.write().await = new_addr;
+        *current_mac.write().await = mac_address.clone();
+        *current_health.write().await = garden_common::constants::STONE_INITIALIZING.to_string();
     }
     tracing::debug!(ip = %resolved_ip, port = port, mac = ?mac_address, "Self entry updated (health=initializing)");
 
@@ -340,7 +467,15 @@ async fn build_state(
 
     // Auto-chirp: Network configuration complete
     {
-        let entry = self_entry.read().await.clone();
+        let entry = build_boot_entry(
+            &stone_id,
+            &stone_name,
+            &current_address,
+            &current_health,
+            &current_mac,
+            None,
+        )
+        .await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to auto-chirp after network config");
         } else {
@@ -415,8 +550,8 @@ async fn build_state(
     // so by this point the CA is already unlocked if the key file exists.
     // We just read the status and seed the application state.
     let pond_state = crate::domain::PondState::new();
-    if let Ok(cm) = koi_handle.certmesh() {
-        if let Ok(core) = cm.core() {
+    if let Ok(cm) = koi_handle.certmesh()
+        && let Ok(core) = cm.core() {
             let status = core.certmesh_status().await;
             if status.ca_initialized && !status.ca_locked {
                 pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -441,7 +576,9 @@ async fn build_state(
                                 "Pond CA locked â€” unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
                             );
                         } else if methods.contains(&"fido2") {
-                            tracing::info!("Pond CA locked â€” unlock with security key via pond UI");
+                            tracing::info!(
+                                "Pond CA locked â€” unlock with security key via pond UI"
+                            );
                         } else {
                             tracing::info!(
                                 "Pond CA locked â€” run 'garden-rake pond unlock' with passphrase"
@@ -453,11 +590,12 @@ async fn build_state(
                         );
                     }
                 } else {
-                    tracing::info!("Pond CA exists but is locked â€” run 'garden-rake pond unlock'");
+                    tracing::info!(
+                        "Pond CA exists but is locked â€” run 'garden-rake pond unlock'"
+                    );
                 }
             }
         }
-    }
     // Enrolled member fallback: check for enrollment certs on disk
     if !pond_active.load(std::sync::atomic::Ordering::Relaxed) {
         let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
@@ -475,13 +613,10 @@ async fn build_state(
     let pond_metadata = crate::domain::load_pond_metadata();
     pond_state.seed_name(pond_metadata.name).await;
 
-    // Phase 4.0.1b: Propagate pond state into self topology entry
+    // Phase 4.0.1b: Propagate pond state into address
     if pond_active.load(std::sync::atomic::Ordering::Relaxed) {
-        let mut entry = self_entry.write().await;
-        entry.address = entry
-            .address
-            .clone()
-            .with_tls(garden_common::constants::MOSS_HTTPS);
+        let mut addr = current_address.write().await;
+        *addr = addr.clone().with_tls(garden_common::constants::MOSS_HTTPS);
         tracing::debug!(
             "Self entry updated with TLS port {}",
             garden_common::constants::MOSS_HTTPS
@@ -584,33 +719,42 @@ async fn build_state(
     let _docker_monitor = DockerMonitor::start_with_config(
         docker.clone(),
         DockerMonitorConfig::default()
-            .with_disconnect_retry(5)
-            .with_connected_poll(30),
+            .with_disconnect_retry(crate::tasks::docker::DEFAULT_DISCONNECT_RETRY_SECS)
+            .with_connected_poll(crate::tasks::docker::DEFAULT_CONNECTED_POLL_SECS),
         subsystems.docker.ready.clone(),
     )
     .await;
-    tracing::debug!("Docker monitor started (5s retry, 30s poll)");
+    tracing::debug!(
+        "Docker monitor started ({}s retry, {}s poll)",
+        crate::tasks::docker::DEFAULT_DISCONNECT_RETRY_SECS,
+        crate::tasks::docker::DEFAULT_CONNECTED_POLL_SECS
+    );
 
     // Phase 8: Create domain event bus and pulse channel
     let event_bus = infra::EventBus::new();
-    let (pulse, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(512);
+    let (pulse, _) = tokio::sync::broadcast::channel::<infra::PulseEvent>(
+        garden_common::constants::channels::PULSE,
+    );
     tracing::debug!("Domain event bus and pulse channel initialized");
 
     // Phase 9: Capabilities loading
     let capabilities = init_capabilities(&stone_id, &stone_name, &console_printer).await;
 
-    // Phase 9.5: Update self entry with capabilities and set health to thriving
-    {
-        let mut entry = self_entry.write().await;
-        entry.capabilities = capabilities.read().await.clone();
-        entry.health = garden_common::constants::STONE_THRIVING.to_string();
-        entry.last_seen = chrono::Utc::now();
-    }
+    // Phase 9.5: Set health to thriving (capabilities are already in their Arc<RwLock>)
+    *current_health.write().await = garden_common::constants::STONE_THRIVING.to_string();
     tracing::debug!("Self entry updated with capabilities (health=thriving)");
 
     // Auto-chirp: Capabilities complete
     {
-        let entry = self_entry.read().await.clone();
+        let entry = build_boot_entry(
+            &stone_id,
+            &stone_name,
+            &current_address,
+            &current_health,
+            &current_mac,
+            Some(&capabilities),
+        )
+        .await;
         if let Err(e) = crate::announcement::announce(&entry).await {
             tracing::warn!(error = ?e, "Failed to auto-chirp after capabilities update");
         } else {
@@ -646,30 +790,36 @@ async fn build_state(
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
-    let nurturing_store = Arc::new(infra::NurturingStore::new(
-        infra::HarvestStore::default_store(),
-    ));
+    let harvest_ops = Arc::new(
+        crate::infra::harvest::OsHarvestOps::new(docker.clone(), Arc::clone(&harvest_store)),
+    );
+    let nurturing_store = Arc::new(
+        infra::NurturingStore::new(infra::HarvestStore::default_store(), docker.clone()),
+    );
 
     // Storage and orchestration channels (ARCH-0004)
-    let (storage_tick_raw_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
-    let (storage_tick_debounced_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageTick>(64);
-    let (storage_changed_tx, _) =
-        tokio::sync::broadcast::channel::<garden_common::storage::StorageChanged>(64);
-    let nourishment_map = Arc::new(RwLock::new(
-        HashMap::<String, tokio::sync::broadcast::Sender<String>>::new(),
-    ));
+    let (storage_tick_raw, _) = tokio::sync::broadcast::channel::<
+        garden_common::storage::StorageTick,
+    >(garden_common::constants::channels::STORAGE_EVENT);
+    let (storage_tick_debounced, _) = tokio::sync::broadcast::channel::<
+        garden_common::storage::StorageTick,
+    >(garden_common::constants::channels::STORAGE_EVENT);
+    let (storage_changed, _) = tokio::sync::broadcast::channel::<
+        garden_common::storage::StorageChanged,
+    >(garden_common::constants::channels::STORAGE_EVENT);
+    let nourishment_map = Arc::new(RwLock::new(HashMap::<
+        String,
+        tokio::sync::broadcast::Sender<String>,
+    >::new()));
     let media = crate::domain::storage::new_media();
 
     // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
     // Note: No longer async - no socket binding (uses p2p transport)
-    let election_service_placeholder =
-        Arc::new(crate::tasks::election_service::Elections::new(
-            stone_id.clone(),
-            stone_name.clone(),
-            Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
-        ));
+    let election_service_placeholder = Arc::new(crate::tasks::election_service::Elections::new(
+        stone_id.clone(),
+        stone_name.clone(),
+        Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
+    ));
 
     let state = AppState {
         current: Arc::new(crate::domain::Current {
@@ -680,16 +830,22 @@ async fn build_state(
             storage: Arc::new(crate::domain::Storage {
                 volumes: volumes.clone(),
                 media: media.clone(),
-                changed: storage_changed_tx.clone(),
+                changed: storage_changed.clone(),
             }),
             topology: crate::domain::current::Topology {
                 cache: topology_cache.clone(),
                 dirty: topology_dirty.clone(),
-                self_entry: self_entry.clone(),
             },
             capabilities: capabilities.clone(),
+            address: current_address.clone(),
+            health: current_health.clone(),
+            mac: current_mac.clone(),
             api_port: port,
-            system_resources: Arc::new(RwLock::new(None)),
+            metrics: Arc::new(crate::domain::current::Metrics {
+                system: Arc::new(RwLock::new(None)),
+                network: Arc::new(RwLock::new(None)),
+                gpu: Arc::new(RwLock::new(None)),
+            }),
         }),
         offerings: Arc::new(RwLock::new(offerings)),
         manifest_registry: manifest_registry.clone(),
@@ -707,7 +863,6 @@ async fn build_state(
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
         tool: tool.clone(),
-        fqn_handler: Arc::new(crate::domain::FqnHandler::new()),
         discovery: Arc::new(crate::domain::Discovery {
             mdns: mdns_handle.clone(),
             koi: koi_handle.clone(),
@@ -729,15 +884,11 @@ async fn build_state(
         }),
         presence: Arc::new(crate::domain::Presence {
             elections: election_service_placeholder,
-            notifications: Arc::new(garden_common::NotificationRegistry::new()),
+            notifications: Arc::new(garden_common::notifications::NotificationRegistry::new()),
         }),
         companion: Arc::new(crate::domain::Companion {
             registry: Arc::new(infra::CompanionRegistry::new().await),
         }),
-        // Cached metrics - populated by background tasks, read-only for endpoints
-        network_metrics_cache: Arc::new(RwLock::new(None)),
-        // FIREFLY-0003: GPU utilization cache
-        gpu_utilization: Arc::new(RwLock::new(None)),
         // Log broadcast channel (for live SSE log streaming)
         log: log.clone(),
         // Subsystem readiness (network_ready managed by Network)
@@ -746,15 +897,18 @@ async fn build_state(
         orchestration: Arc::new(crate::domain::Orchestration {
             storage: crate::domain::StorageOrchestration {
                 tick: crate::domain::orchestration::storage::Tick {
-                    raw:       storage_tick_raw_tx.clone(),
-                    debounced: storage_tick_debounced_tx.clone(),
+                    raw: storage_tick_raw.clone(),
+                    debounced: storage_tick_debounced.clone(),
                 },
-                nudge:  orchestration_nudge.clone(),
+                nudge: orchestration_nudge.clone(),
                 rescan: volume_rescan.clone(),
+                s3_listeners: Arc::new(
+                    crate::infra::storage::S3Listeners::new(shutdown_token.clone()),
+                ),
             },
             nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
-                harvest: Arc::clone(&harvest_store),
-                store:   Arc::clone(&nurturing_store),
+                harvest_ops: Arc::clone(&harvest_ops),
+                store: Arc::clone(&nurturing_store),
             },
             nourishment: crate::domain::orchestration::nourishment::NourishmentOrchestration {
                 jobs: nourishment_map.clone(),
@@ -788,7 +942,8 @@ async fn build_state(
     {
         let state_for_fitness = Arc::new(state.clone());
         state
-            .presence.elections
+            .presence
+            .elections
             .set_fitness_provider(Box::new(
                 crate::tasks::state_provider::MossFitnessProvider::new(state_for_fitness),
             ))
@@ -796,11 +951,14 @@ async fn build_state(
         tracing::info!("Fitness provider injected into election service (ORCH-0001)");
     }
 
-    Ok((state, BuildArtifacts {
-        volume_rescan_rx,
-        use_static_host: use_static_host.is_some(),
-        api_endpoint: api_endpoint.clone(),
-    }))
+    Ok((
+        state,
+        BuildArtifacts {
+            volume_rescan_rx,
+            use_static_host: use_static_host.is_some(),
+            api_endpoint: api_endpoint.clone(),
+        },
+    ))
 }
 
 // ============================================================================
@@ -809,11 +967,11 @@ async fn build_state(
 
 /// Bind the HTTP server and run until shutdown.
 async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
-    let stone_name      = state.current.stone.name.clone();
-    let port            = state.current.api_port;
-    let shutdown_token  = state.shutdown_token.clone();
+    let stone_name = state.current.stone.name.clone();
+    let port = state.current.api_port;
+    let shutdown_token = state.shutdown_token.clone();
     let console_printer = state.console.clone();
-    let runtime         = state.platform.runtime.clone();
+    let runtime = state.platform.runtime.clone();
 
     // Phase 18: HTTP server
     tracing::info!("Setting up HTTP router with 200 MB body limit");
@@ -821,7 +979,11 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     // When pond security is active, split routes across two listeners:
     // - HTTP :7185 â†’ public lobby (health, discovery, pond join/status)
     // - HTTPS :7183 â†’ all routes (authenticated, full API)
-    let pond_is_active = state.security.pond.active.load(std::sync::atomic::Ordering::Relaxed);
+    let pond_is_active = state
+        .security
+        .pond
+        .active
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     // If already enrolled at boot, activate HTTPS + chirp signing/verification
     if pond_is_active {
@@ -830,7 +992,8 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
 
     let app = if pond_is_active
         && state
-            .security.https
+            .security
+            .https
             .load(std::sync::atomic::Ordering::Relaxed)
     {
         tracing::info!(
@@ -850,10 +1013,11 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     let shutdown_callback: crate::bootstrap::server::ShutdownCallback = Box::new(move || {
         Box::pin(async move {
             // TOPO-0002: Flush topology to disk before shutdown
+            let self_entry = goodbye_state.build_self_entry().await;
             crate::domain::topology::flush_topology(
                 &goodbye_state.current.topology.cache,
                 &goodbye_state.current.topology.dirty,
-                &goodbye_state.current.topology.self_entry,
+                &self_entry,
             )
             .await;
 
@@ -895,7 +1059,6 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     )
     .await
 }
-
 
 /// Configure systemd-resolved for Zen Garden container DNS.
 ///
@@ -1001,7 +1164,7 @@ async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<(
 
 /// Start first-boot initialization task (Linux only)
 ///
-/// Waits for filesystem to become writable, then runs initialization.
+/// Runs initialization in a background task.
 /// Exits process after completion so systemd restarts with new config.
 #[cfg(target_os = "linux")]
 fn start_first_boot_task(
@@ -1011,7 +1174,6 @@ fn start_first_boot_task(
     runtime: std::sync::Arc<dyn garden_common::PlatformRuntime>,
 ) {
     tracing::info!("First run detected on Linux, spawning background initialization task");
-    tracing::info!("First boot detected - will initialize console after Docker connection");
 
     let init_stone_name = stone_name.to_string();
     let init_port = port;
@@ -1019,57 +1181,44 @@ fn start_first_boot_task(
     tokio::spawn(async move {
         const MAX_ATTEMPTS: u32 = 20;
 
-        runtime.write_line("");
-        runtime.display_wait("First-boot setup: Waiting for filesystem to become writable");
+        match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
+            Ok(new_name) => {
+                if let Err(e) = console::mark_first_run_complete().await {
+                    tracing::error!(error = ?e, "Failed to mark first-run complete");
+                }
 
-        for attempt in 1..=MAX_ATTEMPTS {
-            match console::ensure_etc_writable().await {
-                Ok(true) => {
-                    tracing::info!(
-                        attempt,
-                        "Filesystem is writable, proceeding with first boot initialization"
-                    );
-                    runtime.display_success("Filesystem ready, starting configuration");
+                tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
+                runtime.write_line("");
+                runtime.display_success(&format!("Stone configured as: {}", new_name));
+                runtime.display_wait("Restarting to apply new configuration...");
+                runtime.write_line("");
+
+                // Exit so systemd restarts us with the new configuration
+                std::process::exit(0);
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, "First boot initialization failed");
+                runtime.display_error(&format!("Setup failed: {}", e));
+
+                // Retry loop for transient failures (e.g. network not yet up for mDNS)
+                for attempt in 2..=MAX_ATTEMPTS {
+                    tracing::info!(attempt, "Retrying first boot initialization");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs)).await;
 
                     match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
                         Ok(new_name) => {
                             if let Err(e) = console::mark_first_run_complete().await {
                                 tracing::error!(error = ?e, "Failed to mark first-run complete");
                             }
-
-                            tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
-                            runtime.write_line("");
-                            runtime.display_success(&format!(
-                                "Stone configured as: {}",
-                                new_name
-                            ));
-                            runtime.display_wait("Restarting to apply new configuration...");
-                            runtime.write_line("");
-
-                            // Exit so systemd restarts us with the new configuration
+                            tracing::info!(new_name = %new_name, "First boot initialization completed");
                             std::process::exit(0);
                         }
                         Err(e) => {
-                            tracing::error!(error = ?e, "First boot initialization failed");
-                            runtime.display_error(&format!("Setup failed: {}", e));
-                            if attempt < MAX_ATTEMPTS {
-                                tokio::time::sleep(tokio::time::Duration::from_secs(
-                                    retry_delay_secs,
-                                ))
-                                .await;
+                            tracing::error!(error = ?e, attempt, "First boot retry failed");
+                            if attempt == MAX_ATTEMPTS {
+                                runtime.display_error("First boot setup failed after all retries");
                             }
                         }
-                    }
-                }
-                Ok(false) | Err(_) => {
-                    if attempt < MAX_ATTEMPTS {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs))
-                            .await;
-                    } else {
-                        tracing::error!("First boot initialization abandoned - filesystem never became writable");
-                        runtime.display_error(
-                            "Setup abandoned - filesystem remained read-only",
-                        );
                     }
                 }
             }
@@ -1327,30 +1476,36 @@ pub(crate) async fn activate_pond_security(
     let cert_path = certs_dir.join("cert.pem");
 
     // --- Chirp signing ---
-    if key_path.exists() && cert_path.exists() {
-        if let Ok(key_pem) = std::fs::read_to_string(&key_path) {
-            if let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem) {
+    if key_path.exists() && cert_path.exists()
+        && let Ok(key_pem) = std::fs::read_to_string(&key_path)
+            && let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem) {
                 use base64::Engine;
-                let public_key_pem = keypair.public_key_pem();
-                let _ = garden_common::infra::communications::p2p::set_envelope_enricher(Box::new(
-                    move |announcement| {
-                        if let Ok(data_bytes) = serde_json::to_vec(&announcement.data) {
-                            let sig = koi_crypto::signing::sign_bytes(&keypair, &data_bytes);
-                            announcement.signature =
-                                Some(base64::engine::general_purpose::STANDARD.encode(&sig));
-                            announcement.sender_cert = Some(public_key_pem.clone());
-                        }
-                    },
-                ));
-                tracing::info!("Chirp signing enabled");
+                match keypair.public_key_pem() {
+                    Ok(public_key_pem) => {
+                        let _ = garden_common::infra::communications::p2p::set_envelope_enricher(
+                            Box::new(move |announcement| {
+                                if let Ok(data_bytes) = serde_json::to_vec(&announcement.data) {
+                                    let sig =
+                                        koi_crypto::signing::sign_bytes(&keypair, &data_bytes);
+                                    announcement.signature = Some(
+                                        base64::engine::general_purpose::STANDARD.encode(&sig),
+                                    );
+                                    announcement.sender_cert = Some(public_key_pem.clone());
+                                }
+                            }),
+                        );
+                        tracing::info!("Chirp signing enabled");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = ?e, "Failed to extract public key PEM, chirp signing disabled");
+                    }
+                }
             }
-        }
-    }
 
     // --- Chirp verification ---
     let ca_cert_path = koi_certmesh::ca::ca_cert_path();
-    if ca_cert_path.exists() {
-        if let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path) {
+    if ca_cert_path.exists()
+        && let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path) {
             let _ = garden_common::infra::communications::p2p::set_envelope_verifier(Box::new(
                 move |announcement| {
                     use base64::Engine;
@@ -1381,11 +1536,11 @@ pub(crate) async fn activate_pond_security(
             ));
             tracing::info!("Chirp verification enabled");
         }
-    }
 
     // --- HTTPS listener ---
     if state
-        .security.https
+        .security
+        .https
         .compare_exchange(
             false,
             true,
@@ -1405,7 +1560,8 @@ pub(crate) async fn activate_pond_security(
 
         if handle.is_none() {
             state
-                .security.https
+                .security
+                .https
                 .store(false, std::sync::atomic::Ordering::Relaxed);
             tracing::warn!("HTTPS listener not started (certs may not be ready)");
         } else {

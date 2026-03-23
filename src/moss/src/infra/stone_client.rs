@@ -25,6 +25,7 @@
 //! changes (`PondEvent::EnrollmentChanged`), call `reload_tls()` to rebuild
 //! the TLS client with fresh certificates.
 
+use crate::domain::traits::PondClient;
 use anyhow::{Context, Result};
 use garden_common::PeerAddress;
 use reqwest::Method;
@@ -220,6 +221,28 @@ impl StoneClient {
 
 // reqwest::Client is Clone + Send + Sync, so StoneClient can be shared via Arc.
 // The RwLock is std::sync (not tokio) since we only hold it for Clone operations.
+
+impl PondClient for StoneClient {
+    fn get(&self, address: &PeerAddress, path: &str) -> reqwest::RequestBuilder {
+        StoneClient::get(self, address, path)
+    }
+
+    fn post(&self, address: &PeerAddress, path: &str) -> reqwest::RequestBuilder {
+        StoneClient::post(self, address, path)
+    }
+
+    fn put(&self, address: &PeerAddress, path: &str) -> reqwest::RequestBuilder {
+        StoneClient::put(self, address, path)
+    }
+
+    fn delete(&self, address: &PeerAddress, path: &str) -> reqwest::RequestBuilder {
+        StoneClient::delete(self, address, path)
+    }
+
+    fn reload_tls(&self) {
+        StoneClient::reload_tls(self)
+    }
+}
 
 #[cfg(test)]
 mod tests {

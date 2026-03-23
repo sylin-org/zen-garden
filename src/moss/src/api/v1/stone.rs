@@ -16,10 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::api::responses::ApiResponse;
 use crate::domain::validate_binary_architecture;
 use crate::AppState;
-use garden_common::api_utils::ApiErrorResponse;
 use garden_common::{
     constants::{MOSS_BINARY, RAKE_BINARY},
     HardwareCapabilities, Offering,
@@ -52,14 +50,13 @@ pub struct StoneInfoResponse {
 pub async fn get_stone_info_v1(
     State(state): State<AppState>,
     _headers: HeaderMap,
-) -> Result<Json<ApiResponse<StoneInfoResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StoneInfoResponse> {
     // Get capabilities from cached state
     let capabilities = {
         let caps_guard = state.current.capabilities.read().await;
-        caps_guard
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| crate::infra::hardware::create_skeleton(state.current.stone.name.clone()))
+        caps_guard.as_ref().cloned().unwrap_or_else(|| {
+            crate::infra::hardware::create_skeleton(state.current.stone.name.clone())
+        })
     };
 
     // Get offerings from registry
@@ -75,10 +72,7 @@ pub async fn get_stone_info_v1(
         endpoint,
     };
 
-    Ok(Json(ApiResponse {
-        data: response,
-        suggestions: None,
-    }))
+    crate::api::ok(response)
 }
 
 // ============================================================================
@@ -632,10 +626,13 @@ pub async fn deploy_stone_v1(
         ));
 
         // Show update banner on physical console (platform-appropriate output)
-        state.platform.runtime.print_update_banner(&garden_common::console::UpdateBannerInfo {
-            stone_name: state.current.stone.name.clone(),
-            new_version: None, // Version extracted earlier but not easily accessible here
-        });
+        state
+            .platform
+            .runtime
+            .print_update_banner(&garden_common::console::UpdateBannerInfo {
+                stone_name: state.current.stone.name.clone(),
+                new_version: None, // Version extracted earlier but not easily accessible here
+            });
 
         #[cfg(target_os = "windows")]
         {
@@ -735,7 +732,7 @@ pub async fn deploy_stone_v1(
             state.shutdown_token.cancel();
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             // Linux: systemd ExecStartPre handles binary installation
             state.shutdown_token.cancel();

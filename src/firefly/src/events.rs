@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use garden_common::presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
-use garden_companion_sdk::{async_trait, CompanionState, EventHandler, SseEvent};
+use garden_companion_sdk::{CompanionState, EventHandler, SseEvent};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
@@ -74,7 +74,7 @@ pub(crate) struct StorageSummary {
 #[derive(Debug, Deserialize)]
 pub(crate) struct OfferingState {
     pub(crate) name: String,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) status: String,
     #[serde(default)]
     pub(crate) health: String,
@@ -89,7 +89,6 @@ struct ServiceEvent {
 /// Stone tended event payload
 #[derive(Debug, Deserialize)]
 struct TendedEvent {
-    #[allow(dead_code)]
     by: Option<String>,
 }
 
@@ -181,7 +180,6 @@ impl FireflyEvents {
     }
 }
 
-#[async_trait]
 impl EventHandler for FireflyEvents {
     async fn on_event(&self, event: SseEvent) {
         // Update enabled state in animation context
@@ -307,9 +305,9 @@ impl EventHandler for FireflyEvents {
                             self.send_oled_wipe_out(&evt.service.to_uppercase(), "STOPPED");
                         }
                         FireflyDeviceType::Esp32TDisplay => {
-                            let _ = self.connection.with_device(|s| {
-                                s.tdisplay_service_stopped(&evt.service)
-                            });
+                            let _ = self
+                                .connection
+                                .with_device(|s| s.tdisplay_service_stopped(&evt.service));
                         }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;
@@ -331,9 +329,9 @@ impl EventHandler for FireflyEvents {
 
                     // For T-Display: Send health command (FIREFLY-0003)
                     if device_type == FireflyDeviceType::Esp32TDisplay {
-                        let _ = self.connection.with_device(|s| {
-                            s.tdisplay_health(&evt.health)
-                        });
+                        let _ = self
+                            .connection
+                            .with_device(|s| s.tdisplay_health(&evt.health));
                     }
 
                     let mut ctx = self.context.write().await;
@@ -397,9 +395,7 @@ impl EventHandler for FireflyEvents {
                         }
                         FireflyDeviceType::Esp32TDisplay => {
                             let by = evt.by.as_deref().unwrap_or("unknown");
-                            let _ = self.connection.with_device(|s| {
-                                s.tdisplay_tended(by, "")
-                            });
+                            let _ = self.connection.with_device(|s| s.tdisplay_tended(by, ""));
                         }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;
@@ -457,9 +453,9 @@ impl EventHandler for FireflyEvents {
                             self.send_oled_wipe_out("SEED BANK", "REMOVED");
                         }
                         FireflyDeviceType::Esp32TDisplay => {
-                            let _ = self.connection.with_device(|s| {
-                                s.tdisplay_seed_bank_removed()
-                            });
+                            let _ = self
+                                .connection
+                                .with_device(|s| s.tdisplay_seed_bank_removed());
                         }
                         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
                             let mut ctx = self.context.write().await;

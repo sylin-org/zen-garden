@@ -163,8 +163,8 @@ impl LiveGarden {
         let mut timings = Vec::new();
 
         // Parse stones from topology response
-        if let Some(data) = resp.get("data") {
-            if let Some(stones_arr) = data.get("stones").and_then(|s| s.as_array()) {
+        if let Some(data) = resp.get("data")
+            && let Some(stones_arr) = data.get("stones").and_then(|s| s.as_array()) {
                 for stone_val in stones_arr {
                     if let (Some(name), Some(endpoint)) = (
                         stone_val.get("name").and_then(|n| n.as_str()),
@@ -181,7 +181,6 @@ impl LiveGarden {
                     }
                 }
             }
-        }
 
         // If no tended stone found yet, mark the first one as tended
         if tended.is_none() && !stones.is_empty() {

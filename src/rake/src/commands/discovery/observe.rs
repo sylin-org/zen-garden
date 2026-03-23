@@ -11,11 +11,11 @@ use crate::context::Runtime;
 use crate::discovery;
 use crate::suggestions;
 use crate::tending;
-use async_trait::async_trait;
+use crate::ui::colors::CliFormatter;
+use crate::ui::layout::{IndentLevel, Layout};
+use crate::ui::rendering as ui;
 use colored::Colorize;
-use garden_common::ui::layout::{IndentLevel, Layout};
-use garden_common::ui::rendering as ui;
-use garden_common::{CliFormatter, GardenApiResponse, TopologyEntry};
+use garden_common::{GardenApiResponse, TopologyEntry};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -40,11 +40,7 @@ pub struct ObserveCommand {
 }
 
 impl ObserveCommand {
-    pub fn new(
-        stone_filter: Option<String>,
-        offering_filter: Option<String>,
-        quiet: bool,
-    ) -> Self {
+    pub fn new(stone_filter: Option<String>, offering_filter: Option<String>, quiet: bool) -> Self {
         Self {
             stone_filter,
             offering_filter,
@@ -53,15 +49,16 @@ impl ObserveCommand {
     }
 }
 
-#[async_trait]
 impl Command for ObserveCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        observe_garden(ctx, self.stone_filter.clone(), self.offering_filter.clone()).await?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            observe_garden(ctx, self.stone_filter.clone(), self.offering_filter.clone()).await?;
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::OBSERVE, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::OBSERVE, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {
@@ -122,11 +119,7 @@ async fn observe_garden(
         }
         layout
             .field("Fresh mode")
-            .value(if ctx.fresh {
-                "enabled"
-            } else {
-                "disabled"
-            })
+            .value(if ctx.fresh { "enabled" } else { "disabled" })
             .level(IndentLevel::Card)
             .tag("verbose")
             .print();
@@ -443,7 +436,7 @@ fn print_table_header(_term: &ui::TerminalInfo, table_width: usize) {
 }
 
 /// Print a single stone row in the compact table
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn print_stone_row(
     name: &str,
     health: &str,
@@ -574,7 +567,7 @@ fn display_topology_compact(
     }
 
     // Filter stones if name specified
-    let filtered_stones: Vec<&TopologyEntry> = if let Some(ref filter_name) = stone_filter {
+    let filtered_stones: Vec<&TopologyEntry> = if let Some(filter_name) = stone_filter {
         stones
             .iter()
             .filter(|s| s.stone_name.eq_ignore_ascii_case(filter_name))
@@ -624,7 +617,7 @@ fn display_topology_compact(
     for stone in &displayable {
         // Offline stones always count as dormant regardless of last-known health
         let effective_health = if stone.status == garden_common::StoneStatus::Offline {
-            garden_common::VITALITY_DORMANT
+            garden_common::constants::VITALITY_DORMANT
         } else {
             &stone.health
         };
@@ -636,8 +629,8 @@ fn display_topology_compact(
             has_tended = true;
         }
 
-        if let Some(ref caps) = stone.capabilities {
-            if let Some(ref rt) = caps.runtime {
+        if let Some(ref caps) = stone.capabilities
+            && let Some(ref rt) = caps.runtime {
                 let family = ui::os_family_from_runtime(&rt.os);
                 if family.starts_with("windows") || family.starts_with("microsoft") {
                     has_windows = true;
@@ -645,7 +638,6 @@ fn display_topology_compact(
                     has_linux = true;
                 }
             }
-        }
     }
 
     STONE_COUNT.store(displayable.len(), Ordering::SeqCst);
@@ -663,7 +655,7 @@ fn display_topology_compact(
 
         // Offline stones always render as dormant
         let effective_health = if stone.status == garden_common::StoneStatus::Offline {
-            garden_common::VITALITY_DORMANT
+            garden_common::constants::VITALITY_DORMANT
         } else {
             &stone.health
         };
@@ -679,7 +671,7 @@ fn display_topology_compact(
         let ai = ui::compact_ai(caps);
 
         // Filter offerings if needed
-        let filtered_services: Vec<_> = if let Some(ref filters) = offerings_filter {
+        let filtered_services: Vec<_> = if let Some(filters) = offerings_filter {
             stone
                 .services
                 .iter()

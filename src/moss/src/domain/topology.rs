@@ -180,7 +180,7 @@ pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
             let age = now.signed_duration_since(entry.last_seen);
             if age > offline_threshold {
                 entry.status = StoneStatus::Offline;
-                entry.health = garden_common::VITALITY_DORMANT.to_string();
+                entry.health = garden_common::constants::VITALITY_DORMANT.to_string();
                 marked_offline += 1;
                 tracing::debug!(
                     stone_name = %entry.stone_name,
@@ -241,7 +241,7 @@ pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
 pub async fn maintain_and_persist(
     cache: &TopologyCache,
     dirty: &TopologyDirtyFlag,
-    self_entry: &Arc<RwLock<TopologyEntry>>,
+    self_entry: &TopologyEntry,
 ) -> (usize, usize) {
     let (marked, evicted) = maintain_topology(cache).await;
 
@@ -251,13 +251,12 @@ pub async fn maintain_and_persist(
     }
 
     // Flush to disk if dirty
-    if dirty.swap(false, Ordering::Relaxed) {
-        if let Err(e) = persist_topology(cache, self_entry).await {
+    if dirty.swap(false, Ordering::Relaxed)
+        && let Err(e) = persist_topology(cache, self_entry).await {
             tracing::warn!(error = %e, "Failed to persist topology to disk");
             // Re-dirty so next cycle retries
             mark_dirty(dirty);
         }
-    }
 
     (marked, evicted)
 }
@@ -274,20 +273,19 @@ pub async fn prune_stale_stones(cache: &TopologyCache, _stale_threshold_minutes:
 /// Returns true if the stone was found and marked offline.
 pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
     let mut map = cache.write().await;
-    if let Some(entry) = map.get_mut(stone_id) {
-        if entry.status != StoneStatus::Offline {
+    if let Some(entry) = map.get_mut(stone_id)
+        && entry.status != StoneStatus::Offline {
             entry.status = StoneStatus::Offline;
             // Set health to dormant so UI (observe) renders consistently.
             // The last-known health is no longer meaningful once the stone
             // stops responding — "dormant" is the garden metaphor for sleeping.
-            entry.health = garden_common::VITALITY_DORMANT.to_string();
+            entry.health = garden_common::constants::VITALITY_DORMANT.to_string();
             tracing::info!(
                 stone_name = %entry.stone_name,
                 "Stone marked offline (goodbye received)"
             );
             return true;
         }
-    }
     false
 }
 
@@ -343,13 +341,12 @@ pub async fn forget_stone_dirty(
 /// Uses atomic write (tmp + rename) for crash safety.
 pub async fn persist_topology(
     cache: &TopologyCache,
-    self_entry: &Arc<RwLock<TopologyEntry>>,
+    self_entry: &TopologyEntry,
 ) -> Result<(), anyhow::Error> {
-    let self_entry = self_entry.read().await.clone();
     let self_id = self_entry.stone_id.clone();
 
     // Build array: self first, then peers
-    let mut stones = vec![self_entry];
+    let mut stones = vec![self_entry.clone()];
     let cache_entries = {
         let map = cache.read().await;
         map.values().cloned().collect::<Vec<_>>()
@@ -386,7 +383,7 @@ pub async fn persist_topology(
 pub async fn flush_topology(
     cache: &TopologyCache,
     dirty: &TopologyDirtyFlag,
-    self_entry: &Arc<RwLock<TopologyEntry>>,
+    self_entry: &TopologyEntry,
 ) {
     // Clear dirty flag (we're flushing regardless)
     dirty.store(false, Ordering::Relaxed);
@@ -638,12 +635,7 @@ mod tests {
     #[tokio::test]
     async fn test_persist_topology_writes_file() {
         let cache = make_test_cache();
-        let self_entry = Arc::new(RwLock::new(make_entry(
-            "self-1",
-            "local",
-            "http://127.0.0.1:7185",
-            "0.1.0",
-        )));
+        let self_entry = make_entry("self-1", "local", "http://127.0.0.1:7185", "0.1.0");
 
         // Add a peer
         upsert_from_chirp(
@@ -658,7 +650,8 @@ mod tests {
 
         // Override shared_data_dir so topology_dir resolves to our temp dir
         let original = std::env::var("GARDEN_SHARED_DATA_DIR").ok();
-        std::env::set_var("GARDEN_SHARED_DATA_DIR", temp_dir.to_str().unwrap());
+        // SAFETY: Test-only; no concurrent env var access in this test.
+        unsafe { std::env::set_var("GARDEN_SHARED_DATA_DIR", temp_dir.to_str().unwrap()) };
 
         let result = persist_topology(&cache, &self_entry).await;
         assert!(result.is_ok());
@@ -675,8 +668,9 @@ mod tests {
         // Cleanup
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         match original {
-            Some(val) => std::env::set_var("GARDEN_SHARED_DATA_DIR", val),
-            None => std::env::remove_var("GARDEN_SHARED_DATA_DIR"),
+            // SAFETY: Test cleanup — restoring original env var.
+            Some(val) => unsafe { std::env::set_var("GARDEN_SHARED_DATA_DIR", val) },
+            None => unsafe { std::env::remove_var("GARDEN_SHARED_DATA_DIR") },
         }
     }
 }

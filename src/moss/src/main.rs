@@ -1,6 +1,6 @@
 //! Zen Garden Moss - Service orchestration daemon
 //!
-//! Entry point with CLI dispatch. Install/uninstall run synchronously
+//! Entry point with CLI dispatch. Install/uninstall/pre-start run synchronously
 //! before the Tokio runtime to prevent accidental daemon startup.
 //! All orchestration logic delegated to bootstrap module.
 
@@ -13,19 +13,52 @@ use garden_moss::infra::{
 };
 use garden_moss::{init_tracing, run_daemon, Cli, Commands, DaemonConfig};
 
+/// Check if Moss is installed as a system service.
+/// Linux: systemd unit file exists. Windows: SCM entry exists.
+fn is_installed_as_service() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::path::Path::new("/etc/systemd/system/garden-moss.service").exists()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("sc")
+            .args(["query", "ZenGardenMoss"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = <Cli as clap::Parser>::parse();
 
     // ── Synchronous subcommands (no Tokio runtime, no daemon) ────────
-    // Install and uninstall are pure setup/teardown operations.
+    // Install, uninstall, and pre-start are pure setup/teardown operations.
     // They must never activate the daemon loop, API server, or service stack.
     if let Some(command) = &cli.command {
         return match command {
-            Commands::Install => garden_moss::infra::installer::install(),
+            Commands::Install { yes, dry_run } => {
+                let options = garden_moss::infra::installer::InstallOptions {
+                    yes: *yes,
+                    dry_run: *dry_run,
+                };
+                garden_moss::infra::installer::install(&options)
+            }
             Commands::Uninstall => garden_moss::infra::installer::uninstall(),
+            #[cfg(target_os = "linux")]
+            Commands::PreStart { dry_run } => garden_moss::infra::installer::pre_start(*dry_run),
+            #[cfg(target_os = "windows")]
+            Commands::PreStart { .. } => {
+                eprintln!("pre-start is not supported on Windows");
+                Ok(())
+            }
             #[cfg(target_os = "windows")]
             Commands::TakeRoot | Commands::InstallService => {
-                garden_moss::infra::installer::install()
+                let options = garden_moss::infra::installer::InstallOptions::default();
+                garden_moss::infra::installer::install(&options)
             }
         };
     }
@@ -64,7 +97,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let config = DaemonConfig::from_cli(&cli).await?;
 
     // Create log broadcast channel (for live SSE streaming via API)
-    let (log, _) = tokio::sync::broadcast::channel::<String>(1024);
+    let (log, _) =
+        tokio::sync::broadcast::channel::<String>(garden_common::constants::channels::LOG_STREAM);
 
     // Initialize tracing/logging (returns guard that must be held for process lifetime)
     let _log_guard = init_tracing(&config, log.clone());
@@ -76,6 +110,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             tracing::warn!(error = ?e, "Failed to shutdown existing processes, continuing anyway");
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    // Ephemeral mode nudge: if not installed as a service, inform the user
+    if !is_installed_as_service() {
+        tracing::warn!("Moss is running in ephemeral mode (not installed as a service)");
+        if cfg!(target_os = "linux") {
+            tracing::warn!("To install permanently: sudo garden-moss install");
+        } else {
+            tracing::warn!("To install permanently: garden-moss install (as Administrator)");
+        }
     }
 
     // Run daemon (all orchestration in bootstrap::run)

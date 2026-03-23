@@ -2,13 +2,15 @@
 //! Provides Companion registry and command proxy functionality
 
 use crate::app_state::AppState;
-use crate::error_response;
+use crate::domain::Companion;
+use crate::domain::traits::CompanionOps;
+use crate::{internal, not_found};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use std::sync::Arc;
 use garden_common::command_manifest::{CommandManifest, CommandResponse, CompanionCommandRequest};
 use serde::{Deserialize, Serialize};
 
@@ -33,13 +35,13 @@ pub struct CompanionListResponse {
 /// GET /api/v1/stone/Companions
 /// Returns list of available Companions with running status
 pub async fn get_companions(
-    State(state): State<AppState>,
-) -> Result<Json<ApiResponse<CompanionListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let companions = state.companion.registry.list().await;
+    State(companion): State<Arc<Companion>>,
+) -> crate::api::ApiResult<CompanionListResponse> {
+    let companions = companion.registry.list().await;
 
     let mut summaries = Vec::new();
     for a in companions {
-        let running = state.companion.registry.is_running(&a.id).await;
+        let running = companion.registry.is_running(&a.id).await;
         summaries.push(CompanionSummary {
             id: a.manifest.id.clone(),
             name: a.manifest.name.clone(),
@@ -47,13 +49,13 @@ pub async fn get_companions(
             description: a.manifest.description.clone(),
             command_count: a.manifest.commands.len(),
             running,
-            pid: if running { a.pid() } else { None },
+            pid: if running { a.pid } else { None },
         });
     }
 
-    Ok(Json(ApiResponse::new(CompanionListResponse {
+    crate::api::ok(CompanionListResponse {
         companions: summaries,
-    })))
+    })
 }
 
 /// GET /api/v1/stone/companions/:id
@@ -68,24 +70,19 @@ pub struct CompanionDetailResponse {
 }
 
 pub async fn get_companion_manifest(
-    State(state): State<AppState>,
+    State(companion): State<Arc<Companion>>,
     Path(companion_id): Path<String>,
-) -> Result<Json<ApiResponse<CompanionDetailResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state.companion.registry.get(&companion_id).await {
-        Some(c) => {
-            let running = c.is_running();
-            Ok(Json(ApiResponse::new(CompanionDetailResponse {
-                manifest: c.manifest.clone(),
-                running,
-                pid: if running { c.pid() } else { None },
-                port: c.port(),
-            })))
-        }
-        None => Err(error_response(
-            StatusCode::NOT_FOUND,
+) -> crate::api::ApiResult<CompanionDetailResponse> {
+    match companion.registry.get(&companion_id).await {
+        Some(c) => crate::api::ok(CompanionDetailResponse {
+            manifest: c.manifest.clone(),
+            running: c.running,
+            pid: if c.running { c.pid } else { None },
+            port: c.port,
+        }),
+        None => Err(not_found(
             "COMPANION_NOT_FOUND",
             format!("Companion '{}' not found", companion_id),
-            None,
         )),
     }
 }
@@ -149,16 +146,15 @@ async fn execute_companion_command_local(
     };
 
     // Auto-start Companion if not running
-    if !companion.is_running() {
+    if !companion.running {
         tracing::info!(companion_id = %companion_id, "Companion not running, auto-starting before command execution");
 
         // Get moss endpoint for Companion to connect to
-        let self_entry = state.current.topology.self_entry.read().await;
-        let moss_endpoint = self_entry.address.http_base();
-        drop(self_entry);
+        let moss_endpoint = state.current.address.read().await.http_base();
 
         if let Err(e) = state
-            .companion.registry
+            .companion
+            .registry
             .start(companion_id, &moss_endpoint)
             .await
         {
@@ -172,11 +168,11 @@ async fn execute_companion_command_local(
         }
 
         // Give the Companion a moment to initialize
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(garden_common::constants::timeouts::companion_startup_wait()).await;
     }
 
     // Get the pre-assigned port
-    let port = companion.port().ok_or_else(|| {
+    let port = companion.port.ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(CommandResponse::error(format!(
@@ -195,20 +191,8 @@ async fn execute_companion_command_local(
 
     // Forward command to Companion's command server
     let url = format!("http://127.0.0.1:{}/command", port);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(CommandResponse::error(format!(
-                    "Failed to create HTTP client: {}",
-                    e
-                ))),
-            )
-        })?;
 
-    match client.post(&url).json(&request).send().await {
+    match crate::http::COMPANION.post(&url).json(&request).send().await {
         Ok(resp) => {
             let status = resp.status();
             match resp.json::<CommandResponse>().await {
@@ -273,10 +257,7 @@ async fn broadcast_to_topology(
     use crate::domain::topology;
 
     // Get our own stone_id to exclude from broadcast
-    let self_id = {
-        let self_entry = state.current.topology.self_entry.read().await;
-        self_entry.stone_id.clone()
-    };
+    let self_id = state.current.stone.id.clone();
 
     // Get all online stones except self
     let stones = topology::get_online_stones(&state.current.topology.cache).await;
@@ -298,10 +279,7 @@ async fn broadcast_to_topology(
     );
 
     // Fan out requests in parallel
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let client = crate::http::COMPANION.clone();
 
     let futures: Vec<_> = other_stones
         .iter()
@@ -362,11 +340,9 @@ pub struct CompanionLifecycleResponse {
 pub async fn start_companion(
     State(state): State<AppState>,
     Path(companion_id): Path<String>,
-) -> Result<Json<ApiResponse<CompanionLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<CompanionLifecycleResponse> {
     // Build this Moss's endpoint for the Companion to connect to
-    let self_entry = state.current.topology.self_entry.read().await;
-    let moss_endpoint = self_entry.address.http_base();
-    drop(self_entry);
+    let moss_endpoint = state.current.address.read().await.http_base();
 
     // Enable the Companion (mark for auto-start on boot)
     if let Err(e) = state.companion.registry.enable(&companion_id).await {
@@ -374,11 +350,12 @@ pub async fn start_companion(
     }
 
     match state
-        .companion.registry
+        .companion
+        .registry
         .start(&companion_id, &moss_endpoint)
         .await
     {
-        Ok(pid) => Ok(Json(ApiResponse::new(CompanionLifecycleResponse {
+        Ok(pid) => crate::api::ok(CompanionLifecycleResponse {
             companion_id: companion_id.clone(),
             running: true,
             pid: Some(pid),
@@ -386,12 +363,10 @@ pub async fn start_companion(
                 "Companion '{}' started and enabled for auto-start (PID {})",
                 companion_id, pid
             ),
-        }))),
-        Err(e) => Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        }),
+        Err(e) => Err(internal(
             "COMPANION_START_FAILED",
             format!("Failed to start Companion '{}': {}", companion_id, e),
-            None,
         )),
     }
 }
@@ -402,15 +377,15 @@ pub async fn start_companion(
 /// When user explicitly stops an Companion, it should stay off until
 /// manually started again. This persists the disabled state.
 pub async fn stop_companion(
-    State(state): State<AppState>,
+    State(companion): State<Arc<Companion>>,
     Path(companion_id): Path<String>,
-) -> Result<Json<ApiResponse<CompanionLifecycleResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state
-        .companion.registry
+) -> crate::api::ApiResult<CompanionLifecycleResponse> {
+    match companion
+        .registry
         .stop_and_disable(&companion_id)
         .await
     {
-        Ok(()) => Ok(Json(ApiResponse::new(CompanionLifecycleResponse {
+        Ok(()) => crate::api::ok(CompanionLifecycleResponse {
             companion_id: companion_id.clone(),
             running: false,
             pid: None,
@@ -418,12 +393,10 @@ pub async fn stop_companion(
                 "Companion '{}' stopped and disabled (will not auto-start)",
                 companion_id
             ),
-        }))),
-        Err(e) => Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
+        }),
+        Err(e) => Err(internal(
             "COMPANION_STOP_FAILED",
             format!("Failed to stop Companion '{}': {}", companion_id, e),
-            None,
         )),
     }
 }
@@ -431,15 +404,15 @@ pub async fn stop_companion(
 /// POST /api/v1/stone/companions/refresh
 /// Re-scan Companions directory
 pub async fn refresh_companions(
-    State(state): State<AppState>,
-) -> Result<Json<ApiResponse<CompanionListResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
-    match state.companion.registry.refresh_all().await {
+    State(companion): State<Arc<Companion>>,
+) -> crate::api::ApiResult<CompanionListResponse> {
+    match companion.registry.refresh_all().await {
         Ok(_) => {
             // Return updated list with running status
-            let companions = state.companion.registry.list().await;
+            let companions = companion.registry.list().await;
             let mut summaries = Vec::new();
             for a in companions {
-                let running = state.companion.registry.is_running(&a.id).await;
+                let running = companion.registry.is_running(&a.id).await;
                 summaries.push(CompanionSummary {
                     id: a.manifest.id.clone(),
                     name: a.manifest.name.clone(),
@@ -447,18 +420,13 @@ pub async fn refresh_companions(
                     description: a.manifest.description.clone(),
                     command_count: a.manifest.commands.len(),
                     running,
-                    pid: if running { a.pid() } else { None },
+                    pid: if running { a.pid } else { None },
                 });
             }
-            Ok(Json(ApiResponse::new(CompanionListResponse {
+            crate::api::ok(CompanionListResponse {
                 companions: summaries,
-            })))
+            })
         }
-        Err(e) => Err(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "COMPANION_REFRESH_FAILED",
-            e.to_string(),
-            None,
-        )),
+        Err(e) => Err(internal("COMPANION_REFRESH_FAILED", e.to_string())),
     }
 }

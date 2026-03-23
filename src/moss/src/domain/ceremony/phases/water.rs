@@ -3,7 +3,7 @@
 //! Starts the newly created container and waits for it to become healthy.
 //! If health check fails and auto_rollback is enabled, restores from harvest.
 
-use crate::infra::restore_harvest;
+use crate::domain::traits::HarvestOps;
 use crate::AppState;
 use anyhow::{Context, Result};
 use std::time::Duration;
@@ -28,7 +28,8 @@ pub async fn execute(
 
     // Step 1: Start the container
     state
-        .platform.docker
+        .platform
+        .docker
         .start_service(offering, Some(&state.console))
         .await
         .context("Failed to start container")?;
@@ -57,18 +58,24 @@ pub async fn execute(
 
         // Stop the unhealthy container
         let _ = state
-            .platform.docker
+            .platform
+            .docker
             .stop_service(offering, Some(&state.console))
             .await;
 
-        // Restore volumes from harvest
-        restore_harvest(&state.platform.docker, &state.orchestration.nurturing.harvest, harvest_id)
+        // Restore volumes from harvest via trait object (no infra import)
+        state
+            .orchestration
+            .nurturing
+            .harvest_ops
+            .restore_harvest(harvest_id)
             .await
             .context("Failed to restore from harvest during rollback")?;
 
         // Start the container again (now with original volumes)
         state
-            .platform.docker
+            .platform
+            .docker
             .start_service(offering, Some(&state.console))
             .await
             .context("Failed to start container after rollback")?;

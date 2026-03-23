@@ -1,7 +1,7 @@
 //! Discovery domain — mDNS and Koi embedded service handles.
 
-use std::sync::Arc;
 use crate::mdns::MdnsHandle;
+use std::sync::Arc;
 
 /// Discovery domain context (`state.discovery`).
 ///

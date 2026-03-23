@@ -39,16 +39,25 @@ pub use linux::{detect_linux_platform, LinuxNetplan, LinuxNetwork};
 ///
 /// Implementations handle the actual network configuration for each platform.
 /// Domain layer calls these methods without knowing platform specifics.
-#[async_trait::async_trait]
 pub trait NetworkPlatform: Send + Sync {
     /// Platform name for logging
     fn name(&self) -> &'static str;
 
     /// Apply static IP configuration
-    async fn apply_static(&self, config: &StaticIpApply) -> Result<(), NetworkError>;
+    fn apply_static<'a>(
+        &'a self,
+        config: &'a StaticIpApply,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send + 'a>,
+    >;
 
     /// Revert to DHCP
-    async fn apply_dhcp(&self, interface: &str) -> Result<(), NetworkError>;
+    fn apply_dhcp<'a>(
+        &'a self,
+        interface: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send + 'a>,
+    >;
 
     /// Check if platform is available and properly configured
     fn is_available(&self) -> bool;

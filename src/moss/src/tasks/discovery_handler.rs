@@ -7,16 +7,15 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
-use crate::domain::TopologyEntry;
+use crate::AppState;
 use garden_common::infra::communications::p2p;
 
 /// Start discovery request handler
 ///
 /// Subscribes to p2p events and responds to discovery requests.
 /// Runs as background task, never exits unless p2p transport fails.
-pub async fn start_discovery_handler(self_entry: Arc<RwLock<TopologyEntry>>) -> Result<()> {
+pub async fn start_discovery_handler(state: Arc<AppState>) -> Result<()> {
     tracing::info!("Discovery handler starting, subscribing to p2p events");
 
     let mut udp_rx = p2p::subscribe_to_announcement(
@@ -43,13 +42,13 @@ pub async fn start_discovery_handler(self_entry: Arc<RwLock<TopologyEntry>>) -> 
                     "Discovery request received, sending DiscoveryResponse"
                 );
 
-                // Build response from current self_entry
-                let entry = self_entry.read().await.clone();
+                // Build response from source fields
+                let address = state.current.address.read().await.clone();
                 let response = garden_common::DiscoveryResponse {
-                    stone_id: Some(entry.stone_id.clone()),
-                    stone_name: entry.stone_name.clone(),
-                    address: entry.address.clone(),
-                    moss_version: entry.moss_version.clone(),
+                    stone_id: Some(state.current.stone.id.clone()),
+                    stone_name: state.current.stone.name.clone(),
+                    address,
+                    moss_version: crate::version_string(),
                     lantern_endpoint: None,
                 };
 

@@ -54,12 +54,22 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Commands {
-    /// Install Zen Garden as a system service
+    /// Install or update Zen Garden as a system service
     ///
-    /// Creates directories, extracts package contents (if available),
-    /// registers the service, and starts it. Works as both fresh install
-    /// and upgrade. Requires root (Linux) or Administrator (Windows).
-    Install,
+    /// Auto-detects fresh install vs update. Resolves a platform package
+    /// (local sibling or GitHub download), extracts it, registers the
+    /// service, and starts it. Detects missing environment components
+    /// (Docker, stone user, DNS) and offers to install them.
+    /// Requires root (Linux) or Administrator (Windows).
+    Install {
+        /// Accept all prompts (non-interactive mode for scripts/automation)
+        #[arg(long, short = 'y')]
+        yes: bool,
+
+        /// Show what would happen without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// Remove Zen Garden service and binaries (preserves data)
     ///
@@ -67,6 +77,16 @@ pub enum Commands {
     /// the service. Data and configuration are preserved.
     /// Requires root (Linux) or Administrator (Windows).
     Uninstall,
+
+    /// Process pre-staged packages before daemon start
+    ///
+    /// Used as systemd ExecStartPre. Deploys packages staged by the
+    /// deploy API endpoint. No-op if no staged packages exist.
+    PreStart {
+        /// Show what would happen without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// Alias: install (Zen naming)
     #[cfg(target_os = "windows")]

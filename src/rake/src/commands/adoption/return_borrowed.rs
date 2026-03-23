@@ -6,8 +6,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 
 /// Return (unregister) a borrowed service
 pub struct ReturnCommand {
@@ -21,45 +20,46 @@ impl ReturnCommand {
     }
 }
 
-#[async_trait]
 impl Command for ReturnCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let name_path = urlencoding::encode(&self.name);
-        let url = ctx.api_v1_url(&format!("stone/offerings/borrow/{}", name_path))?;
-        let response = ctx.client.delete(&url).send().await?;
-        let status = response.status();
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let name_path = urlencoding::encode(&self.name);
+            let url = ctx.api_v1_url(&format!("stone/offerings/borrow/{}", name_path))?;
+            let response = ctx.client.delete(&url).send().await?;
+            let status = response.status();
 
-        match status {
-            s if s.is_success() => {
-                println!(
-                    "{}{} Returned borrowed service '{}'",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("ok", ctx.term.supports_color),
-                    self.name
-                );
+            match status {
+                s if s.is_success() => {
+                    println!(
+                        "{}{} Returned borrowed service '{}'",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("ok", ctx.term.supports_color),
+                        self.name
+                    );
+                }
+                reqwest::StatusCode::NOT_FOUND => {
+                    eprintln!(
+                        "{}{} Service '{}' is not currently borrowed",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        self.name
+                    );
+                }
+                _ => {
+                    eprintln!(
+                        "{}{} Failed to return: {}",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("error", ctx.term.supports_color),
+                        status
+                    );
+                }
             }
-            reqwest::StatusCode::NOT_FOUND => {
-                eprintln!(
-                    "{}{} Service '{}' is not currently borrowed",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    self.name
-                );
-            }
-            _ => {
-                eprintln!(
-                    "{}{} Failed to return: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::RETURN, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::RETURN, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {

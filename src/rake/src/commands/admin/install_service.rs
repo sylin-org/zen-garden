@@ -8,8 +8,7 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 use std::time::Duration;
 
 /// CLI style for service installation
@@ -42,100 +41,101 @@ impl InstallServiceCommand {
     }
 }
 
-#[async_trait]
 impl Command for InstallServiceCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?;
-        let url = format!("{}/admin/take-root", endpoint.trim_end_matches('/'));
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?;
+            let url = format!("{}/admin/take-root", endpoint.trim_end_matches('/'));
 
-        // Show initial message based on style
-        match self.style {
-            InstallStyle::TakeRoot => {
-                println!(
-                    "{}{} Instructing stone to take root as system service...",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("info", ctx.term.supports_color)
-                );
+            // Show initial message based on style
+            match self.style {
+                InstallStyle::TakeRoot => {
+                    println!(
+                        "{}{} Instructing stone to take root as system service...",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("info", ctx.term.supports_color)
+                    );
+                }
+                InstallStyle::InstallService => {
+                    println!(
+                        "{}{} Instructing stone to install as system service...",
+                        " ".repeat(ui::constants::DEFAULT_INDENT),
+                        ui::status_indicator("info", ctx.term.supports_color)
+                    );
+                }
             }
-            InstallStyle::InstallService => {
-                println!(
-                    "{}{} Instructing stone to install as system service...",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("info", ctx.term.supports_color)
-                );
-            }
-        }
-        println!();
+            println!();
 
-        match ctx
-            .client
-            .post(&url)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => {
-                if let Ok(body) = response.json::<serde_json::Value>().await {
-                    if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
-                        println!(
-                            "{}{} {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("ok", ctx.term.supports_color),
-                            message
-                        );
+            match ctx
+                .client
+                .post(&url)
+                .timeout(Duration::from_secs(30))
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    if let Ok(body) = response.json::<serde_json::Value>().await {
+                        if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
+                            println!(
+                                "{}{} {}",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("ok", ctx.term.supports_color),
+                                message
+                            );
+                        } else {
+                            print_success_message(ctx, &self.style);
+                        }
                     } else {
                         print_success_message(ctx, &self.style);
                     }
-                } else {
-                    print_success_message(ctx, &self.style);
                 }
-            }
-            Ok(response) => {
-                let status = response.status();
-                if let Ok(body) = response.text().await {
+                Ok(response) => {
+                    let status = response.status();
+                    if let Ok(body) = response.text().await {
+                        eprintln!(
+                            "{}{} Failed to install service: {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            body
+                        );
+                    } else {
+                        eprintln!(
+                            "{}{} Failed to install service: HTTP {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            status
+                        );
+                    }
+                }
+                Err(e) => {
                     eprintln!(
-                        "{}{} Failed to install service: {}",
+                        "{}{} Request failed: {}",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
                         ui::status_indicator("error", ctx.term.supports_color),
-                        body
+                        e
                     );
-                } else {
                     eprintln!(
-                        "{}{} Failed to install service: HTTP {}",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", ctx.term.supports_color),
-                        status
+                        "{}Ensure the target stone is running and accessible",
+                        " ".repeat(ui::constants::DEFAULT_INDENT)
                     );
                 }
             }
-            Err(e) => {
-                eprintln!(
-                    "{}{} Request failed: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    e
-                );
-                eprintln!(
-                    "{}Ensure the target stone is running and accessible",
-                    " ".repeat(ui::constants::DEFAULT_INDENT)
-                );
-            }
-        }
 
-        // Self-teaching suggestions
-        let cmd_name = match self.style {
-            InstallStyle::TakeRoot => cmd::TAKE_ROOT,
-            InstallStyle::InstallService => cmd::INSTALL_SERVICE,
-        };
-        suggestions::print_suggestions(cmd_name, self.quiet);
+            // Self-teaching suggestions
+            let cmd_name = match self.style {
+                InstallStyle::TakeRoot => cmd::TAKE_ROOT,
+                InstallStyle::InstallService => "install-service",
+            };
+            suggestions::print_suggestions(cmd_name, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
         match self.style {
             InstallStyle::TakeRoot => cmd::TAKE_ROOT,
-            InstallStyle::InstallService => cmd::INSTALL_SERVICE,
+            InstallStyle::InstallService => "install-service",
         }
     }
 }

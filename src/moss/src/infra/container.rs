@@ -4,6 +4,7 @@
 //! Currently uses bollard (Docker API) - could support Podman in future.
 
 use crate::docker::Client;
+use crate::domain::traits::ServiceRuntime;
 use anyhow::{Context, Result};
 use garden_common::{ContainerResources, ServiceHealthStatus, ServiceStatus};
 
@@ -86,6 +87,49 @@ impl ContainerRuntime {
     /// Get actual port bindings from a running container
     pub async fn get_container_ports(&self, service_name: &str) -> Result<Vec<(u16, u16)>> {
         self.docker.get_container_ports(service_name).await
+    }
+}
+
+impl ServiceRuntime for ContainerRuntime {
+    async fn is_healthy(&self) -> bool {
+        ContainerRuntime::is_healthy(self).await
+    }
+
+    async fn service_exists(&self, service_name: &str) -> Result<bool> {
+        ContainerRuntime::service_exists(self, service_name).await
+    }
+
+    async fn get_service_status(&self, service_name: &str) -> Result<ServiceStatus> {
+        ContainerRuntime::get_service_status(self, service_name).await
+    }
+
+    async fn get_service_health(&self, service_name: &str) -> Result<ServiceHealthStatus> {
+        ContainerRuntime::get_service_health(self, service_name).await
+    }
+
+    async fn list_services(&self) -> Result<Vec<String>> {
+        ContainerRuntime::list_services(self).await
+    }
+
+    async fn get_stats(&self, service_name: &str) -> Result<ContainerResources> {
+        ContainerRuntime::get_stats(self, service_name).await
+    }
+
+    async fn start_service(&self, service_name: &str) -> Result<()> {
+        ContainerRuntime::start_service(self, service_name).await
+    }
+
+    async fn stop_service(&self, service_name: &str) -> Result<()> {
+        ContainerRuntime::stop_service(self, service_name).await
+    }
+
+    async fn restart_service(&self, service_name: &str) -> Result<()> {
+        ContainerRuntime::stop_service(self, service_name).await?;
+        ContainerRuntime::start_service(self, service_name).await
+    }
+
+    async fn remove_service(&self, service_name: &str) -> Result<()> {
+        ContainerRuntime::remove_service(self, service_name).await
     }
 }
 

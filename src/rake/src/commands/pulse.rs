@@ -14,14 +14,13 @@
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
-use async_trait::async_trait;
+use crate::ui::gauge;
+use crate::ui::rendering::{self, TerminalInfo};
 use colored::Colorize;
 use futures_util::StreamExt;
 use garden_common::presence::{
     event_types, OfferingState, PresenceSnapshot, StoneLoadUpdatedPayload, StoneState,
 };
-use garden_common::ui::gauge;
-use garden_common::ui::rendering::{self, TerminalInfo};
 use garden_common::utils::strings::shorten_stone_name;
 use garden_common::{GardenApiResponse, TopologyEntry};
 use std::collections::VecDeque;
@@ -58,11 +57,12 @@ impl PulseCommand {
     }
 }
 
-#[async_trait]
 impl Command for PulseCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?.to_string();
-        run_pulse_monitor(&ctx.client, &endpoint, &ctx.term).await
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?.to_string();
+            run_pulse_monitor(&ctx.client, &endpoint, &ctx.term).await
+        })
     }
 
     fn show_stone_header(&self) -> bool {
@@ -309,10 +309,7 @@ async fn run_pulse_monitor(
         endpoint.trim_end_matches('/'),
         event_types::PULSE_STREAM_PATH,
     );
-    let topology_url = format!(
-        "{}/api/v1/garden/topology",
-        endpoint.trim_end_matches('/')
-    );
+    let topology_url = format!("{}/api/v1/garden/topology", endpoint.trim_end_matches('/'));
 
     // Clear screen once before first frame; subsequent frames overwrite in-place
     print!("\x1b[2J");
@@ -336,14 +333,7 @@ async fn run_pulse_monitor(
                 state.connected_since = Some(Instant::now());
 
                 // Run the streaming loop
-                let reason = stream_loop(
-                    &mut state,
-                    response,
-                    client,
-                    &topology_url,
-                    term,
-                )
-                .await;
+                let reason = stream_loop(&mut state, response, client, &topology_url, term).await;
 
                 match reason {
                     DisconnectReason::ServerShutdown => {
@@ -528,9 +518,9 @@ fn process_sse_message(state: &mut MonitorState, message: &str) {
 fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) {
     match event_type {
         "stone.load.updated" => {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(payload_value) = parsed.get("data") {
-                    if let Ok(payload) =
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+                && let Some(payload_value) = parsed.get("data")
+                    && let Ok(payload) =
                         serde_json::from_value::<StoneLoadUpdatedPayload>(payload_value.clone())
                     {
                         state.apply_load_update(payload);
@@ -561,8 +551,6 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                             detail_items: details,
                         });
                     }
-                }
-            }
         }
         "stone.health.changed" => {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
@@ -612,9 +600,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                     .or_else(|| parsed.get("service"))
                     .and_then(|s| s.as_str())
                     .unwrap_or("unknown");
-                let action = event_type
-                    .strip_prefix("service.")
-                    .unwrap_or(event_type);
+                let action = event_type.strip_prefix("service.").unwrap_or(event_type);
                 state.apply_offering_event(entity, action);
                 let level = match action {
                     "stopped" | "uprooted" => EventLevel::Warn,
@@ -666,10 +652,7 @@ fn process_domain_event(state: &mut MonitorState, event_type: &str, data: &str) 
                 // Who tended and from where
                 let mut details = Vec::new();
                 let data_obj = parsed.get("data");
-                if let Some(by) = data_obj
-                    .and_then(|d| d.get("by"))
-                    .and_then(|v| v.as_str())
-                {
+                if let Some(by) = data_obj.and_then(|d| d.get("by")).and_then(|v| v.as_str()) {
                     details.push(format!("by {}", by));
                 }
                 if let Some(from) = data_obj
@@ -743,8 +726,8 @@ fn process_transport_event(state: &mut MonitorState, transport_type: &str, data:
 /// Extract a short entity name from transport event data.
 fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String {
     // Try payload_preview first, then summary parsing
-    if let Some(preview) = parsed.get("payload_preview") {
-        if let Some(name) = preview
+    if let Some(preview) = parsed.get("payload_preview")
+        && let Some(name) = preview
             .get("name")
             .or_else(|| preview.get("stone_name"))
             .or_else(|| preview.get("requester_name"))
@@ -753,7 +736,6 @@ fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String
         {
             return shorten_stone_name(name).to_string();
         }
-    }
 
     // Parse from "from" address as last resort
     if let Some(from) = parsed.get("from").and_then(|f| f.as_str()) {
@@ -764,11 +746,7 @@ fn extract_transport_entity(parsed: &serde_json::Value, summary: &str) -> String
     }
 
     // Use first word of summary
-    summary
-        .split_whitespace()
-        .last()
-        .unwrap_or("?")
-        .to_string()
+    summary.split_whitespace().last().unwrap_or("?").to_string()
 }
 
 /// Build a compact base label and optional detail items for transport events.
@@ -793,7 +771,11 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
                                 .map(|n| n.to_string())
                         })
                         .collect();
-                    let count = if names.is_empty() { arr.len() } else { names.len() };
+                    let count = if names.is_empty() {
+                        arr.len()
+                    } else {
+                        names.len()
+                    };
                     (format!("chirp ({} svc)", count), names)
                 }
                 Some(serde_json::Value::String(t)) => {
@@ -817,8 +799,8 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
                 // Tuple variants: {"offering_primary": "weaviate:dev"} → "offering primary (weaviate:dev)"
                 if let Some(s) = et.as_str() {
                     details.push(s.replace('_', " "));
-                } else if let Some(obj) = et.as_object() {
-                    if let Some(key) = obj.keys().next() {
+                } else if let Some(obj) = et.as_object()
+                    && let Some(key) = obj.keys().next() {
                         let val = obj[key].as_str().unwrap_or("");
                         if val.is_empty() {
                             details.push(key.replace('_', " "));
@@ -826,7 +808,6 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
                             details.push(format!("{} ({})", key.replace('_', " "), val));
                         }
                     }
-                }
             }
             ("election req".to_string(), details)
         }
@@ -838,7 +819,10 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
             {
                 details.push(shorten_stone_name(name).to_string());
             }
-            if let Some(score) = preview.and_then(|p| p.get("score")).and_then(|s| s.as_i64()) {
+            if let Some(score) = preview
+                .and_then(|p| p.get("score"))
+                .and_then(|s| s.as_i64())
+            {
                 details.push(format!("score={}", score));
             }
             ("election candidate".to_string(), details)
@@ -859,9 +843,17 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
                 Some(serde_json::Value::Array(arr)) => {
                     let names: Vec<String> = arr
                         .iter()
-                        .filter_map(|b| b.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                        .filter_map(|b| {
+                            b.get("name")
+                                .and_then(|n| n.as_str())
+                                .map(|s| s.to_string())
+                        })
                         .collect();
-                    let count = if names.is_empty() { arr.len() } else { names.len() };
+                    let count = if names.is_empty() {
+                        arr.len()
+                    } else {
+                        names.len()
+                    };
                     (format!("beacon ({} banks)", count), names)
                 }
                 Some(serde_json::Value::String(t)) => {
@@ -887,7 +879,11 @@ fn transport_label(transport_type: &str, parsed: &serde_json::Value) -> (String,
                                 .map(|s| s.to_string())
                         })
                         .collect();
-                    let count = if names.is_empty() { arr.len() } else { names.len() };
+                    let count = if names.is_empty() {
+                        arr.len()
+                    } else {
+                        names.len()
+                    };
                     (format!("tools ({} deltas)", count), names)
                 }
                 _ => ("tools beacon".to_string(), Vec::new()),
@@ -912,10 +908,7 @@ fn transport_event_level(transport_type: &str) -> EventLevel {
 // =============================================================================
 
 /// Render the full monitor frame to stdout.
-fn render_frame(
-    state: &MonitorState,
-    term: &TerminalInfo,
-) {
+fn render_frame(state: &MonitorState, term: &TerminalInfo) {
     let layout = Layout::detect(term);
 
     // Paint independent regions
@@ -966,7 +959,13 @@ fn render_frame(
         } => {
             let wire_lines = paint_wire(state, wire_cols, content_rows, &layout);
             let sidebar_lines = paint_sidebar(state, sidebar_cols, content_rows, &layout);
-            composite_split(&mut buf, &wire_lines, &sidebar_lines, wire_cols, layout.unicode);
+            composite_split(
+                &mut buf,
+                &wire_lines,
+                &sidebar_lines,
+                wire_cols,
+                layout.unicode,
+            );
         }
         LayoutMode::Stacked => {
             let garden_rows = layout.garden_rows(state.topology.len());
@@ -979,7 +978,13 @@ fn render_frame(
             // Garden summary
             if garden_rows > 0 {
                 let label = garden_summary(&state.topology, layout.cols);
-                paint_separator(&mut buf, Some(&label), layout.cols, layout.unicode, layout.color);
+                paint_separator(
+                    &mut buf,
+                    Some(&label),
+                    layout.cols,
+                    layout.unicode,
+                    layout.color,
+                );
                 paint_garden_compact(
                     &mut buf,
                     state,
@@ -1077,7 +1082,7 @@ fn paint_header(state: &MonitorState, layout: &Layout) -> Vec<String> {
 
     let right_parts: Vec<&str> = [health_str.as_str(), uptime_str.as_str(), epm_str.as_str()]
         .iter()
-        .filter(|s| !s.is_empty())
+        .filter(|s: &&&str| !s.is_empty())
         .copied()
         .collect();
     let right_plain = right_parts.join("  ");
@@ -1240,12 +1245,7 @@ fn paint_offerings(state: &MonitorState, layout: &Layout) -> Option<String> {
 }
 
 /// Paint wire feed events.
-fn paint_wire(
-    state: &MonitorState,
-    cols: usize,
-    max_rows: usize,
-    layout: &Layout,
-) -> Vec<String> {
+fn paint_wire(state: &MonitorState, cols: usize, max_rows: usize, layout: &Layout) -> Vec<String> {
     let color = layout.color;
 
     if state.events.is_empty() || max_rows == 0 {
@@ -1298,8 +1298,7 @@ fn paint_wire(
         let msg = if !event.detail_items.is_empty() && msg_width > event.message.len() + 2 {
             // Budget for details: total width minus base label minus "  " separator
             let detail_budget = msg_width - event.message.len() - 2;
-            let detail_refs: Vec<&str> =
-                event.detail_items.iter().map(|s| s.as_str()).collect();
+            let detail_refs: Vec<&str> = event.detail_items.iter().map(|s| s.as_str()).collect();
             let fitted = rendering::fit_items(&detail_refs, detail_budget);
             if fitted.is_empty() {
                 rendering::truncate_visible(&event.message, msg_width)
@@ -1313,24 +1312,18 @@ fn paint_wire(
 
         let line = if color {
             match event.level {
-                EventLevel::Info => format!(
-                    " {}  {}  {}",
-                    time.dimmed(),
-                    padded_entity.green(),
-                    msg
-                ),
+                EventLevel::Info => {
+                    format!(" {}  {}  {}", time.dimmed(), padded_entity.green(), msg)
+                }
                 EventLevel::Warn => format!(
                     " {}  {}  {}",
                     time.dimmed(),
                     padded_entity.yellow(),
                     msg.yellow()
                 ),
-                EventLevel::Error => format!(
-                    " {}  {}  {}",
-                    time.dimmed(),
-                    padded_entity.red(),
-                    msg.red()
-                ),
+                EventLevel::Error => {
+                    format!(" {}  {}  {}", time.dimmed(), padded_entity.red(), msg.red())
+                }
                 EventLevel::Dim => format!(
                     " {}  {}  {}",
                     time.dimmed(),
@@ -1490,7 +1483,11 @@ fn paint_footer(state: &MonitorState, layout: &Layout) -> String {
         let elapsed = since.elapsed();
         let secs = elapsed.as_secs();
         if secs >= 3600 {
-            parts.push(format!("connected {}h {}m", secs / 3600, (secs % 3600) / 60));
+            parts.push(format!(
+                "connected {}h {}m",
+                secs / 3600,
+                (secs % 3600) / 60
+            ));
         } else if secs >= 60 {
             parts.push(format!("connected {}m {}s", secs / 60, secs % 60));
         } else {
@@ -1619,13 +1616,25 @@ fn paint_garden_compact(
 
             let health_dot = match entry.health.as_str() {
                 "thriving" => {
-                    if color { "●".green().to_string() } else { "o".to_string() }
+                    if color {
+                        "●".green().to_string()
+                    } else {
+                        "o".to_string()
+                    }
                 }
                 "degraded" | "withering" => {
-                    if color { "●".yellow().to_string() } else { "!".to_string() }
+                    if color {
+                        "●".yellow().to_string()
+                    } else {
+                        "!".to_string()
+                    }
                 }
                 _ => {
-                    if color { "○".dimmed().to_string() } else { "-".to_string() }
+                    if color {
+                        "○".dimmed().to_string()
+                    } else {
+                        "-".to_string()
+                    }
                 }
             };
 
@@ -1634,7 +1643,11 @@ fn paint_garden_compact(
             } else {
                 let elapsed = now.signed_duration_since(entry.last_seen);
                 let secs = elapsed.num_seconds().max(0) as u64;
-                if secs < 60 { format!("{}s", secs) } else { format!("{}m", secs / 60) }
+                if secs < 60 {
+                    format!("{}s", secs)
+                } else {
+                    format!("{}m", secs / 60)
+                }
             };
 
             let name_width = half_cols.saturating_sub(14).max(6);
@@ -1650,10 +1663,7 @@ fn paint_garden_compact(
                 } else {
                     display_name.to_string()
                 };
-                let entry_str = format!(
-                    " {} {}  {}  {}",
-                    health_dot, n, svc_count, age.dimmed()
-                );
+                let entry_str = format!(" {} {}  {}  {}", health_dot, n, svc_count, age.dimmed());
                 // Pad to half_cols
                 let visible = rendering::visible_length(&entry_str);
                 line.push_str(&entry_str);
@@ -1728,10 +1738,7 @@ fn garden_summary(topology: &[TopologyEntry], cols: usize) -> String {
 }
 
 /// Fetch topology from stone.
-async fn fetch_topology(
-    client: &reqwest::Client,
-    url: &str,
-) -> anyhow::Result<Vec<TopologyEntry>> {
+async fn fetch_topology(client: &reqwest::Client, url: &str) -> anyhow::Result<Vec<TopologyEntry>> {
     let response = client
         .get(url)
         .timeout(Duration::from_secs(5))

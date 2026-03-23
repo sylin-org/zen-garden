@@ -18,10 +18,14 @@ pub mod tasks;
 // Core modules
 pub mod announcement;
 pub mod docker;
+pub mod http;
 pub mod mdns;
 
 // App state for HTTP handlers
 pub mod app_state;
+
+// Test support — available to integration tests (tests/ directory)
+pub mod testing;
 
 // Re-export AppState and related types
 pub use app_state::{
@@ -29,6 +33,10 @@ pub use app_state::{
 };
 
 // Re-export API helpers from infra
+pub use infra::api_helpers::{
+    bad_gateway, bad_request, conflict, forbidden, internal, not_found, not_implemented,
+    unavailable,
+};
 pub use infra::error_response;
 
 // Re-export commonly used job event utilities
@@ -67,9 +75,9 @@ pub use tasks::{
     DockerEvent,
     DockerMonitor,
     DockerMonitorConfig,
-    NetworkEvent,
     Network,
     NetworkConfig,
+    NetworkEvent,
 };
 
 // Re-export bootstrap utilities

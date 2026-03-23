@@ -178,6 +178,10 @@ pub fn is_elevated() -> bool {
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
 
+    // SAFETY: `-4isize as HANDLE` is the well-known pseudo-handle for the current process token
+    // (GetCurrentProcessToken). `elevation` is a stack-allocated TOKEN_ELEVATION valid for the
+    // duration of the call. `size` is initialized to the correct struct size as required by
+    // GetTokenInformation.
     unsafe {
         let token: HANDLE = -4isize as HANDLE;
         let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
@@ -197,6 +201,7 @@ pub fn is_elevated() -> bool {
 pub fn is_running_as_service() -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
+    // SAFETY: GetForegroundWindow takes no arguments and is always safe to call.
     let has_console = unsafe { GetForegroundWindow() } != 0;
     let username = std::env::var("USERNAME").unwrap_or_default();
     let is_system = username.eq_ignore_ascii_case("SYSTEM")

@@ -7,9 +7,9 @@ use std::sync::Arc;
 /// Field path: `state.orchestration.nurturing.*`
 #[derive(Clone)]
 pub struct NurturingOrchestration {
-    /// Harvest store — backup manifests and archives.
-    pub harvest: Arc<crate::infra::HarvestStore>,
+    /// Harvest operations — used by ceremony phases for backup/restore.
+    pub harvest_ops: Arc<crate::infra::harvest::OsHarvestOps>,
 
     /// Nurturing store — A/B local backup slots.
-    pub store:   Arc<crate::infra::NurturingStore>,
+    pub store: Arc<crate::infra::NurturingStore>,
 }

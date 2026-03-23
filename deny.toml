@@ -1,0 +1,53 @@
+# cargo-deny configuration — license, vulnerability, and duplicate auditing
+# Run: cargo deny check
+# Install: cargo install cargo-deny
+
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "deny"
+notice = "warn"
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "OpenSSL",
+    "BSL-1.0",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+copyleft = "deny"
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+# Allow specific duplicate versions that are transitive and out of our control
+skip = [
+    # Multiple versions pulled by different transitive deps
+    { name = "bitflags" },
+    { name = "windows-sys" },
+    { name = "windows-targets" },
+    { name = "windows_*" },
+    { name = "syn" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

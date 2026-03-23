@@ -162,7 +162,7 @@ docs/journeys/
 ### Storage & Backup
 - `docs/specs/STORAGE-0001-seed-bank-onboarding.md` — Seed bank spec
 - `src/moss/src/infra/storage/` — Storage implementation
-- `src/moss/src/tasks/nurturing_scheduler.rs` — Backup scheduling
+- `src/moss/src/tasks/nourishment_scheduler.rs` — Backup scheduling
 
 ### Discovery & Topology
 - `docs/philosophy/discovery-over-configuration.md` — Discovery concepts
@@ -170,7 +170,7 @@ docs/journeys/
 - `src/common/src/infra/communications/` — Protocol types
 
 ### Ceremonies & Updates
-- `docs/proposals/nourishment.md` — Full nourishment spec
+- `docs/specs/nourishment.md` — Full nourishment spec
 - `src/moss/src/domain/ceremony/` — Ceremony engine (planned)
 
 ---

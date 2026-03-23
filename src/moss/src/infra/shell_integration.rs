@@ -41,8 +41,8 @@ const VERB_PREPARE: &str = "ZenGarden.Prepare";
 ///
 /// Call during Moss startup.  Idempotent — safe to call repeatedly.
 pub fn register() -> Result<()> {
-    let exe_path = std::env::current_exe()
-        .context("Could not resolve exe path for shell integration")?;
+    let exe_path =
+        std::env::current_exe().context("Could not resolve exe path for shell integration")?;
     let exe_icon = format!("{},1", exe_path.display());
 
     // Resolve rake binary — expected next to garden-moss.exe
@@ -61,10 +61,7 @@ pub fn register() -> Result<()> {
 
     parent.set_value("MUIVerb", &"Zen Garden")?;
     parent.set_value("Icon", &exe_icon)?;
-    parent.set_value(
-        "SubCommands",
-        &format!("{};{}", VERB_ADOPT, VERB_PREPARE),
-    )?;
+    parent.set_value("SubCommands", &format!("{};{}", VERB_ADOPT, VERB_PREPARE))?;
 
     // ── Child verbs in CommandStore ───────────────────────────────────
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);

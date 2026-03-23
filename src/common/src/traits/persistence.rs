@@ -3,7 +3,6 @@
 //! Uses JSON file storage with atomic writes to prevent corruption.
 //! All writes go through: write to .tmp → sync → rename (atomic on POSIX, best-effort on Windows)
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// Persistence errors
@@ -32,7 +31,6 @@ pub enum PersistenceError {
 }
 
 /// Generic persistence provider for JSON-serializable data
-#[async_trait]
 pub trait PersistenceProvider<T>: Send + Sync
 where
     T: Serialize + for<'de> Deserialize<'de> + Send,
@@ -40,16 +38,16 @@ where
     /// Load data from storage
     ///
     /// Returns None if file doesn't exist, Error if corrupted
-    async fn load(&self) -> Result<Option<T>, PersistenceError>;
+    fn load(&self) -> impl std::future::Future<Output = Result<Option<T>, PersistenceError>> + Send;
 
     /// Save data to storage atomically
     ///
     /// Uses atomic file write pattern to prevent corruption
-    async fn save(&self, data: &T) -> Result<(), PersistenceError>;
+    fn save(&self, data: &T) -> impl std::future::Future<Output = Result<(), PersistenceError>> + Send;
 
     /// Delete storage file
-    async fn delete(&self) -> Result<(), PersistenceError>;
+    fn delete(&self) -> impl std::future::Future<Output = Result<(), PersistenceError>> + Send;
 
     /// Check if storage file exists
-    async fn exists(&self) -> bool;
+    fn exists(&self) -> impl std::future::Future<Output = bool> + Send;
 }

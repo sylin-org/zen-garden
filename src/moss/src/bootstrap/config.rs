@@ -106,7 +106,7 @@ impl DaemonConfig {
 async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::Result<String> {
     use crate::infra::load_cached_stone_name;
 
-    let env_stone_name = std::env::var(garden_common::ENV_STONE_NAME).ok();
+    let env_stone_name = std::env::var(garden_common::constants::ENV_STONE_NAME).ok();
 
     // CLI flag only counts if it wasn't set via env var
     let explicit_cli_stone_name = if cli.stone_name.is_some() && env_stone_name.is_none() {
@@ -121,22 +121,21 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
     let system_hostname = console::get_hostname().await.ok();
 
     // Warn if env and hostname mismatch
-    if let (Some(env_name), Some(sys_name)) = (&env_stone_name, &system_hostname) {
-        if env_name != sys_name {
+    if let (Some(env_name), Some(sys_name)) = (&env_stone_name, &system_hostname)
+        && env_name != sys_name {
             tracing::warn!(
                 env_stone_name = %env_name,
                 system_hostname = %sys_name,
                 "STONE_NAME env does not match system hostname; preferring hostname (fix systemd unit to remove Environment=STONE_NAME)"
             );
         }
-    }
 
     let stone_name = explicit_cli_stone_name
         .or_else(|| config.as_ref().and_then(|c| c.stone_name.clone()))
         .or(cached_stone_name)
         .or(system_hostname)
         .or(env_stone_name)
-        .unwrap_or_else(|| garden_common::DEFAULT_STONE_NAME.to_string());
+        .unwrap_or_else(|| garden_common::constants::DEFAULT_STONE_NAME.to_string());
 
     Ok(stone_name)
 }
@@ -187,8 +186,8 @@ pub fn init_tracing(
         .with_filter(make_filter("info"));
 
     // Layer 3: broadcast channel — always info+ (for live SSE streaming)
-    let broadcast_layer = crate::infra::log_broadcast::LogBroadcastLayer::new(log)
-        .with_filter(make_filter("info"));
+    let broadcast_layer =
+        crate::infra::log_broadcast::LogBroadcastLayer::new(log).with_filter(make_filter("info"));
 
     tracing_subscriber::registry()
         .with(stderr_layer)
@@ -237,23 +236,22 @@ pub async fn ensure_windows_stone_name_config() {
 
     if hardware_id_path.exists() {
         // Not first boot but no cached name - check config and cache it
-        if let Some(config) = MossConfig::load() {
-            if let Some(name) = config.stone_name {
+        if let Some(config) = MossConfig::load()
+            && let Some(name) = config.stone_name {
                 eprintln!("[stone-name] Caching name from config: {}", name);
                 if let Err(e) = save_stone_name_cache(&name).await {
                     eprintln!("[stone-name] Warning: Failed to cache name: {}", e);
                 }
                 return;
             }
-        }
         // No name in config either - this is a problem, but don't generate new name
         eprintln!("[stone-name] Warning: No cached name and no config name found");
         return;
     }
 
     // Check if config already has a stone_name
-    if let Some(config) = MossConfig::load() {
-        if let Some(name) = config.stone_name {
+    if let Some(config) = MossConfig::load()
+        && let Some(name) = config.stone_name {
             // Config has a name - cache it
             eprintln!("[stone-name] Caching existing config name: {}", name);
             if let Err(e) = save_stone_name_cache(&name).await {
@@ -261,7 +259,6 @@ pub async fn ensure_windows_stone_name_config() {
             }
             return;
         }
-    }
 
     // First boot and no stone_name anywhere - generate one now
     eprintln!("[first-boot] Generating stone name for Windows...");

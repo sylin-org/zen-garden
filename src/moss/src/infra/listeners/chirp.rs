@@ -51,7 +51,6 @@ impl ChirpListener {
     }
 }
 
-#[async_trait::async_trait]
 impl EventListener for ChirpListener {
     async fn on_event(&self, event: &DomainEvent) {
         // Only process offering events for chirp (topology changes)

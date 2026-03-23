@@ -47,11 +47,11 @@ $ErrorActionPreference = "Stop"
 
 # Build if requested
 if ($Build) {
-    Write-Host "`n🔨 Building packages..." -ForegroundColor Cyan
+    Write-Host "`n Building packages..." -ForegroundColor Cyan
     $buildScript = Join-Path $PSScriptRoot "build.ps1"
     & $buildScript
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "✗ Build failed" -ForegroundColor Red
+        Write-Host "X Build failed" -ForegroundColor Red
         exit 1
     }
     Write-Host ""
@@ -75,7 +75,7 @@ if (Test-Path $packagesDir) {
 }
 
 if (-not $linuxX64Package -and -not $linuxX86Package -and -not $windowsX64Package) {
-    Write-Host "⚠️  No packages found in $packagesDir" -ForegroundColor Yellow
+    Write-Host "!  No packages found in $packagesDir" -ForegroundColor Yellow
     Write-Host "   Run with -Build flag or run build.ps1 first." -ForegroundColor Yellow
     exit 1
 }
@@ -147,7 +147,7 @@ function Get-LanBindAddress {
 function Find-AllStones {
     param([int]$TimeoutSeconds)
 
-    Write-Status "🔍 Discovering stones on network (timeout: ${TimeoutSeconds}s)..."
+    Write-Status " Discovering stones on network (timeout: ${TimeoutSeconds}s)..."
 
     $lanIP = Get-LanBindAddress
     if ($lanIP) {
@@ -198,7 +198,7 @@ function Find-AllStones {
                 if ($seenStones.ContainsKey($response.stone_name)) { continue }
                 $seenStones[$response.stone_name] = $true
 
-                # PeerAddress is { ip, port, tls_port? } — build endpoint URL
+                # PeerAddress is { ip, port, tls_port? } - build endpoint URL
                 $addr = $response.address
                 $stoneIP = if ($addr.ip) { $addr.ip } else { $remoteEP.Address.ToString() }
                 $stonePort = if ($Port -gt 0) { $Port } elseif ($addr.port) { $addr.port } else { 7185 }
@@ -209,7 +209,7 @@ function Find-AllStones {
                     Endpoint = $endpoint
                     Address = $remoteEP.Address.ToString()
                 }) | Out-Null
-                Write-Status "   ✓ Found: $($response.stone_name) at $endpoint" -Type "Success"
+                Write-Status "   OK Found: $($response.stone_name) at $endpoint" -Type "Success"
             }
         }
         catch [System.Net.Sockets.SocketException] { continue }
@@ -226,7 +226,7 @@ function Resolve-StoneEndpoint {
 
     $endpoint = $Stone.Endpoint
     if ($endpoint -match "127\.0\.0\.1|localhost") {
-        Write-Status "   ⚠️  $($Stone.Name) reports loopback, using UDP source address" -Type "Warning"
+        Write-Status "   !  $($Stone.Name) reports loopback, using UDP source address" -Type "Warning"
         $port = "7185"
         if ($endpoint -match ":(\d+)") { $port = $Matches[1] }
         if ($Stone.Address -and $Stone.Address -ne "127.0.0.1") {
@@ -268,7 +268,7 @@ function Deploy-PackageToStone {
         [string]$Platform
     )
 
-    Write-Status "`n📦 Deploying package to $($Stone.Name) ($Platform)..."
+    Write-Status "`n Deploying package to $($Stone.Name) ($Platform)..."
 
     $url = "$($Stone.Endpoint.TrimEnd('/'))/api/v1/stone/deploy"
     $packageName = Split-Path -Leaf $PackagePath
@@ -286,9 +286,9 @@ function Deploy-PackageToStone {
         $response = Invoke-RestMethod -Uri $url -Method Post -Body $packageBytes -ContentType "application/octet-stream" -Headers $headers -TimeoutSec 120
 
         if ($response.status -eq "accepted") {
-            Write-Status "   ✅ Package uploaded and staged" -Type "Success"
+            Write-Status "   [OK] Package uploaded and staged" -Type "Success"
 
-            Write-Status "   ⏳ Waiting for service to restart..."
+            Write-Status "    Waiting for service to restart..."
             Start-Sleep -Seconds 8
 
             $healthUrl = "$($Stone.Endpoint.TrimEnd('/'))/health"
@@ -299,7 +299,7 @@ function Deploy-PackageToStone {
                 try {
                     $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 5
                     if ($health.status) {
-                        Write-Status "   ✅ $($Stone.Name) is back online" -Type "Success"
+                        Write-Status "   [OK] $($Stone.Name) is back online" -Type "Success"
                         $online = $true
                         break
                     }
@@ -308,20 +308,20 @@ function Deploy-PackageToStone {
             }
 
             if (-not $online) {
-                Write-Status "   ⚠️  $($Stone.Name) did not respond after restart" -Type "Warning"
+                Write-Status "   !  $($Stone.Name) did not respond after restart" -Type "Warning"
                 return $false
             }
 
-            Write-Status "   ✅ $($Stone.Name) updated" -Type "Success"
+            Write-Status "   [OK] $($Stone.Name) updated" -Type "Success"
             return $true
         }
         else {
-            Write-Status "   ✗ Unexpected response: $($response | ConvertTo-Json -Compress)" -Type "Error"
+            Write-Status "   X Unexpected response: $($response | ConvertTo-Json -Compress)" -Type "Error"
             return $false
         }
     }
     catch {
-        Write-Status "   ✗ Failed to deploy to $($Stone.Name)" -Type "Error"
+        Write-Status "   X Failed to deploy to $($Stone.Name)" -Type "Error"
         Write-Status "      Error: $_" -Type "Error"
         return $false
     }
@@ -329,11 +329,11 @@ function Deploy-PackageToStone {
 
 # Main execution
 try {
-    Write-Status "`n═══════════════════════════════════════════════════════════════"
+    Write-Status "`n==============================================================="
     Write-Status "  Deploy Zen Garden Packages to All Stones"
-    Write-Status "═══════════════════════════════════════════════════════════════`n"
+    Write-Status "===============================================================`n"
 
-    Write-Status "📦 Using packages:" -ForegroundColor Cyan
+    Write-Status " Using packages:" -ForegroundColor Cyan
     if ($linuxX64Package) {
         Write-Status "   Linux x64:   $(Split-Path -Leaf $linuxX64Package)"
     } else {
@@ -352,12 +352,12 @@ try {
     $stones = Find-AllStones -TimeoutSeconds $Timeout
 
     if ($stones.Count -eq 0) {
-        Write-Status "`n⚠️  No stones discovered on the network" -Type "Warning"
+        Write-Status "`n!  No stones discovered on the network" -Type "Warning"
         exit 1
     }
 
     # Detect platform and prepare configs (parallel probing)
-    Write-Status "`n🔍 Detecting platform for each stone..."
+    Write-Status "`n Detecting platform for each stone..."
     $stoneConfigs = @()
     $skippedStones = @()
 
@@ -450,7 +450,7 @@ try {
             Write-Status "   $($info.Name): SKIPPED (unreachable)" -Type "Warning"
             $skippedStones += $info.Name
         } else {
-            # Job still running after 15s — find matching stone name from launch order
+            # Job still running after 15s - find matching stone name from launch order
             $idx = [array]::IndexOf($probeJobs, $job)
             $stoneName = if ($idx -ge 0 -and $idx -lt $stones.Count) { $stones[$idx].Name } else { "unknown" }
             Write-Status "   ${stoneName}: SKIPPED (timed out)" -Type "Warning"
@@ -460,16 +460,16 @@ try {
     $probeJobs | Remove-Job -Force
 
     if ($stoneConfigs.Count -eq 0) {
-        Write-Status "`n⚠️  No stones can be deployed to" -Type "Warning"
+        Write-Status "`n!  No stones can be deployed to" -Type "Warning"
         exit 1
     }
 
     if ($skippedStones.Count -gt 0) {
-        Write-Status "`n⚠️  Skipped $($skippedStones.Count) stone(s): $($skippedStones -join ', ')" -Type "Warning"
+        Write-Status "`n!  Skipped $($skippedStones.Count) stone(s): $($skippedStones -join ', ')" -Type "Warning"
     }
 
     # Deploy
-    Write-Status "`n📡 Deploying packages to $($stoneConfigs.Count) stone(s)..."
+    Write-Status "`n Deploying packages to $($stoneConfigs.Count) stone(s)..."
 
     $results = @()
 
@@ -495,7 +495,7 @@ try {
                         return @{ Success = $false; Name = $StoneName; Platform = $Platform; Error = "Unexpected: $($response.status)" }
                     }
 
-                    # Wait for service to restart — 8s initial grace, then poll for up to 60s
+                    # Wait for service to restart - 8s initial grace, then poll for up to 60s
                     Start-Sleep -Seconds 8
 
                     $healthUrl = "$($StoneEndpoint.TrimEnd('/'))/health"
@@ -521,7 +521,7 @@ try {
                 }
             } -ArgumentList $config.Stone.Name, $config.Stone.Endpoint, $packageBytes, $packageHash, $config.Platform
 
-            Write-Status "   ⏳ Started: $($config.Stone.Name)"
+            Write-Status "    Started: $($config.Stone.Name)"
         }
 
         # Stream results as each deployment completes
@@ -536,9 +536,9 @@ try {
                 $result = Receive-Job $job
                 $results += $result
                 if ($result.Success) {
-                    Write-Status "   ✅ $($result.Name) ($($result.Platform)) — updated" -Type "Success"
+                    Write-Status "   [OK] $($result.Name) ($($result.Platform)) - updated" -Type "Success"
                 } else {
-                    Write-Status "   ✗ $($result.Name) ($($result.Platform)) — $($result.Error)" -Type "Error"
+                    Write-Status "   X $($result.Name) ($($result.Platform)) - $($result.Error)" -Type "Error"
                 }
             }
             if ($deployHandled.Count -lt $jobs.Count) { Start-Sleep -Milliseconds 500 }
@@ -560,9 +560,9 @@ try {
     }
 
     # Summary
-    Write-Status "`n═══════════════════════════════════════════════════════════════"
+    Write-Status "`n==============================================================="
     Write-Status "  Deployment Summary"
-    Write-Status "═══════════════════════════════════════════════════════════════`n"
+    Write-Status "===============================================================`n"
 
     $totalStones = @($stones).Count
     $successful = @($results | Where-Object { $_.Success }).Count
@@ -574,7 +574,7 @@ try {
         Write-Status "   Failed: $failed" -Type "Error"
         Write-Status "`nFailed stones:"
         foreach ($result in ($results | Where-Object { -not $_.Success })) {
-            Write-Status "   ✗ $($result.Name)" -Type "Error"
+            Write-Status "   X $($result.Name)" -Type "Error"
             if ($result.Error) { Write-Status "      $($result.Error)" -Type "Error" }
         }
     }
@@ -582,16 +582,16 @@ try {
     Write-Status ""
 
     if ($failed -eq 0) {
-        Write-Status "✅ All stones updated successfully!" -Type "Success"
+        Write-Status "[OK] All stones updated successfully!" -Type "Success"
         exit 0
     }
     else {
-        Write-Status "⚠️  Some stones failed to update" -Type "Warning"
+        Write-Status "!  Some stones failed to update" -Type "Warning"
         exit 1
     }
 }
 catch {
-    Write-Status "`n✗ Script failed: $_" -Type "Error"
+    Write-Status "`nX Script failed: $_" -Type "Error"
     Write-Status $_.ScriptStackTrace -Type "Error"
     exit 1
 }

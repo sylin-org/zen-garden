@@ -10,16 +10,16 @@
 //! 7-argument dispatch calls. `CommandInvocation` pairs a Command with its
 //! per-invocation target stone.
 
-use garden_common::ui::rendering::{self as ui, TerminalInfo};
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::client::{resolve_target_endpoint, CachedStoneOps};
 use garden_rake::commands::management::tend;
 use garden_rake::commands::Command;
-use garden_rake::context::{Runtime as CommandCtx, OutputFormat};
+use garden_rake::context::{OutputFormat, Runtime as CommandCtx};
 use garden_rake::discovery;
 use garden_rake::stone_bag::StoneBag;
 use garden_rake::stone_cache::STONE;
 use garden_rake::tending;
+use garden_rake::ui::rendering::{self as ui, TerminalInfo};
 
 // ============================================================================
 // CommandInvocation — pairs a Command with its target stone
@@ -104,8 +104,7 @@ impl Runtime {
         };
 
         if cmd.requires_endpoint() {
-            let endpoint =
-                resolve_endpoint(&self.client, inv.at, Some(&*STONE)).await?;
+            let endpoint = resolve_endpoint(&self.client, inv.at, Some(&*STONE)).await?;
 
             // Build bag — seeded from tending cache when the endpoint matches,
             // so stone_name() is free.  Cold path (--at, env, discovery) does
@@ -151,12 +150,11 @@ impl Runtime {
     /// Build a [`StoneBag`] for the given endpoint, seeding from the
     /// tending cache when the endpoints match.
     fn build_bag(&self, endpoint: &str) -> StoneBag {
-        if let Ok(state) = tending::read_tending() {
-            if state.endpoint == endpoint && state.capabilities.is_some() {
+        if let Ok(state) = tending::read_tending()
+            && state.endpoint == endpoint && state.capabilities.is_some() {
                 tracing::debug!(stone = %state.stone_name, "StoneBag: seeded from tending cache");
                 return StoneBag::from_tending(&state, self.client.clone());
             }
-        }
         StoneBag::new(self.client.clone(), endpoint.to_string())
     }
 }
@@ -185,7 +183,7 @@ pub async fn resolve_endpoint(
     }
 
     // Priority 2: GARDEN_STONE environment variable
-    if let Ok(env_endpoint) = std::env::var(garden_common::ENV_GARDEN_STONE) {
+    if let Ok(env_endpoint) = std::env::var(garden_common::constants::ENV_GARDEN_STONE) {
         tracing::info!(endpoint = %env_endpoint, "Using GARDEN_STONE environment variable");
         let endpoint = resolve_target_endpoint(client, &env_endpoint, cache).await?;
         return Ok(endpoint);
@@ -260,4 +258,3 @@ pub async fn resolve_endpoint(
 
     Ok(endpoint)
 }
-

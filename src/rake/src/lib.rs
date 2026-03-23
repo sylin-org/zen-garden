@@ -21,9 +21,10 @@ pub mod stone_bag;
 pub mod stone_cache;
 pub mod suggestions;
 pub mod tending;
+pub mod ui;
 
 // Re-exports for convenience
 pub use client::{resolve_target_endpoint, CachedStoneInfo, CachedStoneOps};
 pub use context::Runtime;
-pub use garden_common::ui::layout::{IndentLevel, Layout};
-pub use garden_common::ui::rendering::{OutputWriter, TerminalInfo};
+pub use ui::layout::{IndentLevel, Layout};
+pub use ui::rendering::{OutputWriter, TerminalInfo};

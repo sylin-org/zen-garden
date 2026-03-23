@@ -16,7 +16,7 @@ pub async fn get_companions(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiErrorResponse>)> {
     let endpoint = {
         let topology = state.topology.read().await;
-        let found = topology.stones.iter().find(|(key, entry)| {
+        let found = topology.stones.iter().find(|(key, entry): &(&String, &garden_common::types::topology::TopologyEntry)| {
             key.as_str() == stone_id || entry.stone_id == stone_id || entry.stone_name == stone_id
         });
 

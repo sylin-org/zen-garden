@@ -178,6 +178,49 @@ pub fn mount_recovery_max_attempts() -> u32 {
 // Docker Timeouts
 // ============================================================================
 
+// ============================================================================
+// Operational Timeouts (API handlers, companion forwarding, pond)
+// ============================================================================
+
+/// Companion command forwarding timeout (default 5s)
+pub fn companion_command_timeout() -> Duration {
+    env_duration_secs("GARDEN_COMPANION_COMMAND_TIMEOUT_SECS", 5)
+}
+
+/// Nourishment execution timeout per stone (default 10s)
+pub fn nourishment_timeout() -> Duration {
+    env_duration_secs("GARDEN_NOURISHMENT_TIMEOUT_SECS", 10)
+}
+
+/// Capability check / offering capability probe timeout (default 20s)
+pub fn capability_check_timeout() -> Duration {
+    env_duration_secs("GARDEN_CAPABILITY_CHECK_TIMEOUT_SECS", 20)
+}
+
+/// Pond join / cornerstone lookup timeout (default 15s)
+pub fn pond_join_timeout() -> Duration {
+    env_duration_secs("GARDEN_POND_JOIN_TIMEOUT_SECS", 15)
+}
+
+/// Pond short operation timeout (default 5s)
+pub fn pond_operation_timeout() -> Duration {
+    env_duration_secs("GARDEN_POND_OPERATION_TIMEOUT_SECS", 5)
+}
+
+/// TLS retry sleep between attempts (default 8s)
+pub fn tls_retry_delay() -> Duration {
+    env_duration_secs("GARDEN_TLS_RETRY_DELAY_SECS", 8)
+}
+
+/// Companion process startup wait (default 200ms)
+pub fn companion_startup_wait() -> Duration {
+    env_duration_millis("GARDEN_COMPANION_STARTUP_WAIT_MS", 200)
+}
+
+// ============================================================================
+// Docker Timeouts
+// ============================================================================
+
 /// Stall detection timeout for Docker image pulls (default 5 minutes).
 ///
 /// This is a **TTL-with-no-activity** timeout — not a wall-clock cap.

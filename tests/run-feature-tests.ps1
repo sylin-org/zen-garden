@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 # Comprehensive Test Suite for Zen Garden Features
 # Tests: Caching, Graceful Shutdown, Config, Health, Pooling, Errors, Templates
 
@@ -34,10 +34,10 @@ function Write-TestResult {
     $script:TestResults += $result
     
     if ($Passed) {
-        Write-Host "✓ PASS: $TestName" -ForegroundColor Green
+        Write-Host "OK PASS: $TestName" -ForegroundColor Green
         if ($Details) { Write-Host "  $Details" -ForegroundColor Gray }
     } else {
-        Write-Host "✗ FAIL: $TestName" -ForegroundColor Red
+        Write-Host "X FAIL: $TestName" -ForegroundColor Red
         if ($Details) { Write-Host "  $Details" -ForegroundColor Yellow }
     }
 }
@@ -458,9 +458,9 @@ function Test-FullWorkflow {
 # MAIN TEST EXECUTION
 # =============================================================================
 
-Write-Host "`n╔═══════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-Write-Host "║   ZEN GARDEN - COMPREHENSIVE FEATURE TEST SUITE          ║" -ForegroundColor Magenta
-Write-Host "╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
+Write-Host "`n+===========================================================+" -ForegroundColor Magenta
+Write-Host "|   ZEN GARDEN - COMPREHENSIVE FEATURE TEST SUITE          |" -ForegroundColor Magenta
+Write-Host "+===========================================================+" -ForegroundColor Magenta
 
 # Ensure we're in the right directory
 Push-Location "F:\Replica\NAS\Files\repo\github\koan-framework\other\zen-garden"
@@ -485,9 +485,9 @@ try {
     Test-FullWorkflow
     
     # Summary
-    Write-Host "`n╔═══════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-    Write-Host "║   TEST SUMMARY                                           ║" -ForegroundColor Magenta
-    Write-Host "╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
+    Write-Host "`n+===========================================================+" -ForegroundColor Magenta
+    Write-Host "|   TEST SUMMARY                                           |" -ForegroundColor Magenta
+    Write-Host "+===========================================================+" -ForegroundColor Magenta
     
     $totalTests = $TestResults.Count
     $passedTests = ($TestResults | Where-Object { $_.Passed }).Count
@@ -502,7 +502,7 @@ try {
     if ($failedTests -gt 0) {
         Write-Host "`nFailed Tests:" -ForegroundColor Yellow
         $TestResults | Where-Object { -not $_.Passed } | ForEach-Object {
-            Write-Host "  ✗ $($_.Test)" -ForegroundColor Red
+            Write-Host "  X $($_.Test)" -ForegroundColor Red
             if ($_.Details) {
                 Write-Host "    $($_.Details)" -ForegroundColor Gray
             }
@@ -523,6 +523,6 @@ try {
     Pop-Location
 }
 
-Write-Host "`n✓ Test suite complete!`n" -ForegroundColor Green
+Write-Host "`nOK Test suite complete!`n" -ForegroundColor Green
 
 exit $(if ($failedTests -eq 0) { 0 } else { 1 })

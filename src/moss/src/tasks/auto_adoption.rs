@@ -57,8 +57,11 @@ use tokio_util::sync::CancellationToken;
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
-    let orchestrator = DetectionOrchestrator::new(state.platform.docker.clone());
-    let connectivity = ConnectivityOrchestrator::new(state.platform.docker.clone());
+    let detector = std::sync::Arc::new(
+        crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
+    );
+    let orchestrator = DetectionOrchestrator::new(detector.clone());
+    let connectivity = ConnectivityOrchestrator::new(detector);
 
     // Track elapsed time for schedule phases
     let start_time = Instant::now();
@@ -110,12 +113,24 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
         // Phase 1: Validate health of already-adopted offerings
         // Snapshot adopted offerings to avoid holding write lock during async work
-        let adopted_snapshot: Vec<(String, String, garden_common::OfferingLocation, ServiceHealthStatus)> = {
+        let adopted_snapshot: Vec<(
+            String,
+            String,
+            garden_common::OfferingLocation,
+            ServiceHealthStatus,
+        )> = {
             let offerings = state.offerings.read().await;
             offerings
                 .iter()
                 .filter(|o| o.is_adopted())
-                .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone(), o.health.clone()))
+                .map(|o| {
+                    (
+                        o.offering_id.clone(),
+                        o.offering.clone(),
+                        o.location.clone(),
+                        o.health.clone(),
+                    )
+                })
                 .collect()
         };
 
@@ -130,11 +145,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             match orchestrator.detect(manifest).await {
                 Ok(result) if result.detected => {
                     let connectivity_outcome = connectivity
-                        .ensure_connectivity(
-                            manifest,
-                            Some(&location),
-                            &state.current.stone.name,
-                        )
+                        .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
                         .await
                         .unwrap_or_else(|e| {
                             tracing::warn!(
@@ -154,10 +165,12 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             offering = %offering_name,
                             "Adopted offering came back online, marking healthy"
                         );
-                        state.update_offering(&offering_id, false, |o| {
-                            o.health = ServiceHealthStatus::Healthy;
-                            true
-                        }).await;
+                        state
+                            .update_offering(&offering_id, false, |o| {
+                                o.health = ServiceHealthStatus::Healthy;
+                                true
+                            })
+                            .await;
                         state_changed = true;
 
                         state
@@ -169,18 +182,18 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             ));
                     }
 
-                    if !connectivity_outcome.is_ok()
-                        && old_health == ServiceHealthStatus::Healthy
-                    {
+                    if !connectivity_outcome.is_ok() && old_health == ServiceHealthStatus::Healthy {
                         tracing::warn!(
                             offering = %offering_name,
                             details = %connectivity_outcome.details,
                             "Connectivity checks failed for adopted offering"
                         );
-                        state.update_offering(&offering_id, false, |o| {
-                            o.health = ServiceHealthStatus::Degraded;
-                            true
-                        }).await;
+                        state
+                            .update_offering(&offering_id, false, |o| {
+                                o.health = ServiceHealthStatus::Degraded;
+                                true
+                            })
+                            .await;
                         state_changed = true;
                     }
                 }
@@ -191,10 +204,12 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             offering = %offering_name,
                             "Adopted offering not responding, marking offline"
                         );
-                        state.update_offering(&offering_id, false, |o| {
-                            o.health = ServiceHealthStatus::Offline;
-                            true
-                        }).await;
+                        state
+                            .update_offering(&offering_id, false, |o| {
+                                o.health = ServiceHealthStatus::Offline;
+                                true
+                            })
+                            .await;
                         state_changed = true;
 
                         state
@@ -220,10 +235,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             // Check if already registered (any mode: managed, adopted, or borrowed)
             {
                 let offerings = state.offerings.read().await;
-                if offerings
-                    .iter()
-                    .any(|o| o.offering == manifest.name)
-                {
+                if offerings.iter().any(|o| o.offering == manifest.name) {
                     continue; // Already in registry (any mode)
                 }
             }
@@ -321,6 +333,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         offering_id: garden_common::utils::ids::generate_guidv7(),
                         name: adopted_fqn,
                         offering: manifest.name.clone(),
+                        category: manifest.category.clone(),
                         version: result.version.unwrap_or_else(|| "unknown".to_string()),
                         status: garden_common::OfferingStatus::Running,
                         health,
@@ -387,12 +400,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             }
         }
 
-        // Sync + chirp + persist if we made changes
+        // Sync + chirp if we made changes (gateway methods auto-persist)
         if state_changed {
             state.sync_self_services(true).await;
-            if let Err(e) = state.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist offerings");
-            }
         }
 
         tracing::debug!("Auto-adoption scan complete");

@@ -291,9 +291,8 @@ async fn main() -> Result<()> {
                                     "hr": 12,
                                 });
                                 let json_str = json.to_string();
-                                let _ = conn_for_retry.with_device(|serial| {
-                                    serial.tdisplay_json_push(&json_str)
-                                });
+                                let _ = conn_for_retry
+                                    .with_device(|serial| serial.tdisplay_json_push(&json_str));
                             } else {
                                 tracing::debug!(
                                     "T-Display reconnected but no cached stone name available"
@@ -311,8 +310,7 @@ async fn main() -> Result<()> {
     });
 
     // Start the animation engine (runs the baseline firefly animation)
-    let _animation_handle =
-        start_animation(Arc::clone(&connection), Arc::clone(&animation));
+    let _animation_handle = start_animation(Arc::clone(&connection), Arc::clone(&animation));
     tracing::info!("Animation engine started");
 
     // Start SSE client to receive presence events from Moss

@@ -87,9 +87,9 @@ $versionData = Get-Content $versionFile | ConvertFrom-Json
 $buildNumber = Get-Date -Format "yyyyMMddHHmm"
 $version = "$($versionData.major).$($versionData.minor).$buildNumber"
 
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║  Zen Garden Distribution Build                     ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+Write-Host "`n+====================================================+" -ForegroundColor Cyan
+Write-Host "|  Zen Garden Distribution Build                     |" -ForegroundColor Cyan
+Write-Host "+====================================================+`n" -ForegroundColor Cyan
 Write-Host "Version: $version" -ForegroundColor Cyan
 Write-Host "Configuration: dist.json" -ForegroundColor Cyan
 Write-Host ""
@@ -103,6 +103,25 @@ Write-Host "Build Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake only)' } e
 Write-Host "Build Profile: $buildProfile" -ForegroundColor Yellow
 Write-Host ""
 
+# -- Dependency resolution (single source of truth) -------------------
+# Resolve dependencies ONCE on the host before any platform build.
+# generate-lockfile ensures Cargo.lock matches Cargo.toml + path deps (koi)
+# without upgrading pinned versions. fetch pre-downloads all crates.
+# Platform builds use --frozen: no network, no lockfile writes.
+Write-Host "Resolving dependencies..." -ForegroundColor Yellow
+Push-Location $config.workspace.root
+try {
+    cargo generate-lockfile 2>&1 | Out-Null
+    cargo fetch 2>&1 | Out-Null
+    Write-Host "  Dependencies resolved. Cargo.lock is authoritative.`n" -ForegroundColor DarkGray
+}
+catch {
+    Write-Host "  Warning: dependency resolution failed: $_`n" -ForegroundColor Yellow
+}
+finally {
+    Pop-Location
+}
+
 # Destroy and recreate staging directory (ensures no stale packages)
 $stagingRoot = Join-Path $config.workspace.dist "staging"
 if (Test-Path $stagingRoot) { Remove-Item $stagingRoot -Recurse -Force }
@@ -112,7 +131,7 @@ New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
 $buildErrors = @()
 $builtPlatforms = @()
 
-# TODO: Parallel builds — Linux Docker and Windows native use different target dirs
+# TODO: Parallel builds - Linux Docker and Windows native use different target dirs
 # and could run simultaneously. Prerequisites:
 #   1. Move Cargo.toml version update from build-windows-x64.ps1 into this script
 #   2. Build Lantern frontend once here (it's platform-independent)
@@ -121,9 +140,9 @@ $builtPlatforms = @()
 
 # Build Linux
 if (-not $SkipLinux) {
-    Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "===================================================" -ForegroundColor Cyan
     Write-Host " Linux x64 Build" -ForegroundColor Cyan
-    Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+    Write-Host "===================================================`n" -ForegroundColor Cyan
 
     $linuxScript = Join-Path $PSScriptRoot $config.'linux-x64'.buildScript
     try {
@@ -140,19 +159,19 @@ if (-not $SkipLinux) {
         }
         
         $builtPlatforms += "linux-x64"
-        Write-Host "✓ Linux x64 build complete`n" -ForegroundColor Green
+        Write-Host "OK Linux x64 build complete`n" -ForegroundColor Green
     }
     catch {
         $buildErrors += "Linux x64: $_"
-        Write-Host "✗ Linux x64 build failed: $_`n" -ForegroundColor Red
+        Write-Host "X Linux x64 build failed: $_`n" -ForegroundColor Red
     }
 }
 
 # Build Windows
 if (-not $SkipWindows) {
-    Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "===================================================" -ForegroundColor Cyan
     Write-Host " Windows x64 Build" -ForegroundColor Cyan
-    Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+    Write-Host "===================================================`n" -ForegroundColor Cyan
 
     $windowsScript = Join-Path $PSScriptRoot $config.'windows-x64'.buildScript
     try {
@@ -169,19 +188,19 @@ if (-not $SkipWindows) {
         }
         
         $builtPlatforms += "windows-x64"
-        Write-Host "✓ Windows x64 build complete`n" -ForegroundColor Green
+        Write-Host "OK Windows x64 build complete`n" -ForegroundColor Green
     }
     catch {
         $buildErrors += "Windows x64: $_"
-        Write-Host "✗ Windows x64 build failed: $_`n" -ForegroundColor Red
+        Write-Host "X Windows x64 build failed: $_`n" -ForegroundColor Red
     }
 }
 
 # Build Linux x86
 if ($IncludeX86) {
-    Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Magenta
+    Write-Host "===================================================" -ForegroundColor Magenta
     Write-Host " Linux x86 Build" -ForegroundColor Magenta
-    Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Magenta
+    Write-Host "===================================================`n" -ForegroundColor Magenta
 
     $x86Script = Join-Path $PSScriptRoot $config.'linux-x86'.buildScript
     try {
@@ -198,21 +217,21 @@ if ($IncludeX86) {
         }
 
         $builtPlatforms += "linux-x86"
-        Write-Host "✓ Linux x86 build complete`n" -ForegroundColor Green
+        Write-Host "OK Linux x86 build complete`n" -ForegroundColor Green
     }
     catch {
         $buildErrors += "Linux x86: $_"
-        Write-Host "✗ Linux x86 build failed: $_`n" -ForegroundColor Red
+        Write-Host "X Linux x86 build failed: $_`n" -ForegroundColor Red
     }
 }
 
 # Check for build errors
 if ($buildErrors.Count -gt 0) {
-    Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Red
-    Write-Host "║  Build Failed                                      ║" -ForegroundColor Red
-    Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Red
+    Write-Host "+====================================================+" -ForegroundColor Red
+    Write-Host "|  Build Failed                                      |" -ForegroundColor Red
+    Write-Host "+====================================================+`n" -ForegroundColor Red
     foreach ($buildError in $buildErrors) {
-        Write-Host "  ✗ $buildError" -ForegroundColor Red
+        Write-Host "  X $buildError" -ForegroundColor Red
     }
     exit 1
 }
@@ -223,9 +242,9 @@ if ($builtPlatforms.Count -eq 0) {
 }
 
 # Consolidate packages
-Write-Host "═══════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host " Package Consolidation" -ForegroundColor Cyan
-Write-Host "═══════════════════════════════════════════════════`n" -ForegroundColor Cyan
+Write-Host "===================================================`n" -ForegroundColor Cyan
 
 # Clean and recreate packages directory
 Write-Host "Cleaning packages directory..." -ForegroundColor Yellow
@@ -243,7 +262,7 @@ if ($builtPlatforms -contains "linux-x64") {
     if ($linuxPackage) {
         Move-Item $linuxPackage.FullName $config.packages.outputDir -Force
         $sizeMB = [math]::Round($linuxPackage.Length / 1MB, 2)
-        Write-Host "  ✓ $($linuxPackage.Name) ($sizeMB MB)" -ForegroundColor Green
+        Write-Host "  OK $($linuxPackage.Name) ($sizeMB MB)" -ForegroundColor Green
         $packagesMoved++
     } else {
         Write-Warning "Linux x64 package not found in staging: $($config.staging.'linux-x64')"
@@ -257,7 +276,7 @@ if ($builtPlatforms -contains "windows-x64") {
     if ($windowsPackage) {
         Move-Item $windowsPackage.FullName $config.packages.outputDir -Force
         $sizeMB = [math]::Round($windowsPackage.Length / 1MB, 2)
-        Write-Host "  ✓ $($windowsPackage.Name) ($sizeMB MB)" -ForegroundColor Green
+        Write-Host "  OK $($windowsPackage.Name) ($sizeMB MB)" -ForegroundColor Green
         $packagesMoved++
     } else {
         Write-Warning "Windows x64 package not found in staging: $($config.staging.'windows-x64')"
@@ -273,7 +292,7 @@ if ($builtPlatforms -contains "linux-x86") {
         if ($x86Package) {
             Move-Item $x86Package.FullName $config.packages.outputDir -Force
             $sizeMB = [math]::Round($x86Package.Length / 1MB, 2)
-            Write-Host "  ✓ $($x86Package.Name) ($sizeMB MB)" -ForegroundColor Green
+            Write-Host "  OK $($x86Package.Name) ($sizeMB MB)" -ForegroundColor Green
             $packagesMoved++
         } else {
             Write-Warning "Linux x86 package not found in staging: $x86StagingDir"
@@ -282,15 +301,15 @@ if ($builtPlatforms -contains "linux-x86") {
 }
 
 if ($packagesMoved -eq 0) {
-    Write-Host "⚠️  No packages found to consolidate (binaries built but not packaged)" -ForegroundColor Yellow
+    Write-Host "!  No packages found to consolidate (binaries built but not packaged)" -ForegroundColor Yellow
 } else {
     Write-Host "`nPackages moved to: $($config.packages.outputDir)" -ForegroundColor Green
 }
 
 # Summary
-Write-Host "`n╔════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║  Distribution Complete                             ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+Write-Host "`n+====================================================+" -ForegroundColor Green
+Write-Host "|  Distribution Complete                             |" -ForegroundColor Green
+Write-Host "+====================================================+`n" -ForegroundColor Green
 Write-Host "Version: $version" -ForegroundColor Green
 Write-Host "Tier: $Tier $(if ($Tier -eq 'core') { '(moss + rake built, all binaries packaged)' } else { '(all binaries built and packaged)' })" -ForegroundColor Green
 Write-Host "Platforms Built: $($builtPlatforms -join ', ')" -ForegroundColor Green

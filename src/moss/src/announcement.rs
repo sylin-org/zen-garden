@@ -22,7 +22,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use tokio::time::Instant;
 
-use crate::domain::TopologyEntry;
+use garden_common::TopologyEntry;
 
 /// Announce stone presence via all available channels
 ///
@@ -153,8 +153,7 @@ pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
     // Uses immediate send (bypass debounce) — this is time-critical.
     let mut last_err = None;
     for attempt in 1..=3 {
-        match p2p::send_announcement_immediate(announcement_types::STONE_GOODBYE, &goodbye).await
-        {
+        match p2p::send_announcement_immediate(announcement_types::STONE_GOODBYE, &goodbye).await {
             Ok(()) => {
                 tracing::debug!(attempt, "Goodbye announcement sent");
             }
@@ -186,7 +185,7 @@ pub async fn send_goodbye(state: &crate::AppState) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::TopologyEntry;
+    use garden_common::TopologyEntry;
     use garden_common::TopologyServiceEntry;
 
     #[test]

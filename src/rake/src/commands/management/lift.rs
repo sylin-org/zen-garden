@@ -4,12 +4,10 @@
 //! - lift keystone: Remove pond security entirely
 //! - lift stone <name>: Remove a stone from the pond
 
-use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
-use garden_common::ui::rendering as ui;
+use crate::ui::rendering as ui;
 
 /// Lift target type
 pub enum LiftTarget {
@@ -52,28 +50,29 @@ impl LiftCommand {
     }
 }
 
-#[async_trait]
 impl Command for LiftCommand {
-    async fn execute(&self, ctx: &Runtime) -> CommandResult {
-        let endpoint = ctx.endpoint()?;
+    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            let endpoint = ctx.endpoint()?;
 
-        match &self.target {
-            LiftTarget::Keystone => {
-                execute_lift_keystone(ctx, endpoint).await?;
+            match &self.target {
+                LiftTarget::Keystone => {
+                    execute_lift_keystone(ctx, endpoint).await?;
+                }
+                LiftTarget::Stone { name } => {
+                    execute_lift_stone(ctx, endpoint, name).await?;
+                }
             }
-            LiftTarget::Stone { name } => {
-                execute_lift_stone(ctx, endpoint, name).await?;
-            }
-        }
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::LIFT, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions("lift", self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
-        cmd::LIFT
+        "lift"
     }
 }
 
@@ -120,11 +119,7 @@ async fn execute_lift_keystone(ctx: &Runtime, endpoint: &str) -> anyhow::Result<
     Ok(())
 }
 
-async fn execute_lift_stone(
-    ctx: &Runtime,
-    endpoint: &str,
-    stone_name: &str,
-) -> anyhow::Result<()> {
+async fn execute_lift_stone(ctx: &Runtime, endpoint: &str, stone_name: &str) -> anyhow::Result<()> {
     let url = format!(
         "{}/api/v1/pond/stones/{}",
         endpoint.trim_end_matches('/'),

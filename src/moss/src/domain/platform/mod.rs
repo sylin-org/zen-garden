@@ -1,10 +1,10 @@
 //! Platform domain — Docker, runtime, network monitor, infrastructure handlers.
 
-use std::sync::Arc;
 use crate::docker::Client;
-use crate::tasks::Network;
 use crate::domain::InfrastructureHandlerRegistry;
+use crate::tasks::Network;
 use garden_common::PlatformRuntime;
+use std::sync::Arc;
 
 /// Platform domain context (`state.platform`).
 ///

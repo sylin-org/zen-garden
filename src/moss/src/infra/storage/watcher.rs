@@ -69,7 +69,6 @@ struct ActiveWatcher {
     /// Cancels this specific watcher.
     cancel: CancellationToken,
     /// Storage name (for logging).
-    #[allow(dead_code)]
     name: String,
 }
 
@@ -268,8 +267,8 @@ fn spawn_notify_watcher(
     path: PathBuf,
     tx: tokio::sync::mpsc::Sender<notify::Event>,
 ) -> Result<notify::RecommendedWatcher> {
-    let mut watcher =
-        notify::recommended_watcher(move |res: std::result::Result<notify::Event, notify::Error>| {
+    let mut watcher = notify::recommended_watcher(
+        move |res: std::result::Result<notify::Event, notify::Error>| {
             match res {
                 Ok(event) => {
                     // Non-blocking send — if the channel is full, drop the event
@@ -280,8 +279,9 @@ fn spawn_notify_watcher(
                     warn!(error = %e, "Filesystem watcher error");
                 }
             }
-        })
-        .context("Failed to create filesystem watcher")?;
+        },
+    )
+    .context("Failed to create filesystem watcher")?;
 
     watcher
         .watch(&path, RecursiveMode::Recursive)
@@ -308,11 +308,10 @@ async fn flush_changelog_batch(
     let changelog_path = mount_path.join(".zen-garden/changelog.jsonl");
 
     // Ensure directory exists
-    if let Some(parent) = changelog_path.parent() {
-        if !parent.exists() {
+    if let Some(parent) = changelog_path.parent()
+        && !parent.exists() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
-    }
 
     let mut creates = 0u32;
     let mut modifies = 0u32;
@@ -408,12 +407,16 @@ mod tests {
         let zen_path = mount.join(paths::STORAGE_DOTFOLDER).join("manifest.json");
         let rel = zen_path.strip_prefix(mount).unwrap();
         let first = rel.components().next();
-        assert!(matches!(first, Some(std::path::Component::Normal(s)) if s.to_string_lossy() == paths::STORAGE_DOTFOLDER));
+        assert!(
+            matches!(first, Some(std::path::Component::Normal(s)) if s.to_string_lossy() == paths::STORAGE_DOTFOLDER)
+        );
 
         // User files should NOT be filtered
         let user_path = mount.join("Photos/vacation.jpg");
         let rel = user_path.strip_prefix(mount).unwrap();
         let first = rel.components().next();
-        assert!(matches!(first, Some(std::path::Component::Normal(s)) if s.to_string_lossy() == "Photos"));
+        assert!(
+            matches!(first, Some(std::path::Component::Normal(s)) if s.to_string_lossy() == "Photos")
+        );
     }
 }

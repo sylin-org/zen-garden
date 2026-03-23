@@ -1,4 +1,4 @@
-﻿//! Unified storage dispatch — resolve once, operate transparently
+//! Unified storage dispatch — resolve once, operate transparently
 //! (STORAGE-0015)
 //!
 //! `StorageHandle` wraps a `StorageRoute` decision and dispatches
@@ -32,6 +32,45 @@ use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
 use crate::domain::storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 use garden_common::storage::StorageTick;
+
+use super::{ContentStore, ObjectStore};
+
+// ============================================================================
+// Store construction (infra extension for domain LocalStorage)
+// ============================================================================
+
+impl LocalStorage {
+    /// Build a read-only `ContentStore` for this local storage.
+    pub fn content_store(&self) -> ContentStore {
+        ContentStore::new(self.mount_path.clone(), None)
+    }
+
+    /// Build a `ContentStore` with changelog notifications (for writes).
+    pub fn notifying_content_store(
+        &self,
+        tick: Option<&broadcast::Sender<StorageTick>>,
+    ) -> ContentStore {
+        let store = ContentStore::new(self.mount_path.clone(), None);
+        if let Some(tx) = tick {
+            store.with_notifications(self.name.clone(), self.replica_set_id.clone(), tx.clone())
+        } else {
+            store
+        }
+    }
+
+    /// Build a read-only `ObjectStore` for this local storage.
+    pub fn object_store(&self) -> ObjectStore {
+        ObjectStore::new(&self.mount_path)
+    }
+
+    /// Build an `ObjectStore` with changelog notifications (for writes).
+    pub fn notifying_object_store(
+        &self,
+        tick: Option<&broadcast::Sender<StorageTick>>,
+    ) -> ObjectStore {
+        ObjectStore::with_store(self.notifying_content_store(tick))
+    }
+}
 
 // ============================================================================
 // Typed error (A11a — replaces string-based error detection)
@@ -76,11 +115,10 @@ impl From<anyhow::Error> for RouterError {
 /// Classify an `anyhow::Error` as `NotFound` or `Other` based on the I/O error kind.
 fn classify_error(e: anyhow::Error, context: &str) -> RouterError {
     // Walk the error chain for an io::ErrorKind::NotFound
-    if let Some(io_err) = e.chain().find_map(|c| c.downcast_ref::<std::io::Error>()) {
-        if io_err.kind() == std::io::ErrorKind::NotFound {
+    if let Some(io_err) = e.chain().find_map(|c| c.downcast_ref::<std::io::Error>())
+        && io_err.kind() == std::io::ErrorKind::NotFound {
             return RouterError::NotFound(context.to_string());
         }
-    }
     RouterError::Other(e)
 }
 
@@ -141,13 +179,15 @@ pub struct StorageResolver<'a> {
 impl<'a> StorageResolver<'a> {
     /// Resolve for **read** operations.
     pub async fn for_read(&self, name: &str) -> Result<StorageHandle> {
-        let route = StorageRoute::for_read(name, self.volumes, self.registry, self.stone_id).await?;
+        let route =
+            StorageRoute::for_read(name, self.volumes, self.registry, self.stone_id).await?;
         Ok(StorageHandle::new(route, name, self.tick.clone()))
     }
 
     /// Resolve for **write** operations.
     pub async fn for_write(&self, name: &str) -> Result<StorageHandle> {
-        let route = StorageRoute::for_write(name, self.volumes, self.registry, self.stone_id).await?;
+        let route =
+            StorageRoute::for_write(name, self.volumes, self.registry, self.stone_id).await?;
         Ok(StorageHandle::new(route, name, self.tick.clone()))
     }
 }
@@ -184,7 +224,11 @@ impl StorageHandle {
             StorageRoute::Local(local) => HandleInner::Local(local),
             StorageRoute::Proxy(proxy) => HandleInner::Remote(proxy),
         };
-        Self { inner, storage_name, tick }
+        Self {
+            inner,
+            storage_name,
+            tick,
+        }
     }
 
     /// Resolve for **read** operations and wrap (convenience without resolver).
@@ -319,7 +363,11 @@ impl StorageHandle {
                     .map_err(RouterError::Other)?;
 
                 classify_http_response(resp.status(), &url, path)?;
-                Ok(resp.bytes().await.map_err(|e| RouterError::Other(e.into()))?.to_vec())
+                Ok(resp
+                    .bytes()
+                    .await
+                    .map_err(|e| RouterError::Other(e.into()))?
+                    .to_vec())
             }
         }
     }
@@ -328,7 +376,12 @@ impl StorageHandle {
     ///
     /// Local: seek-based (no full-file load for unencrypted stores).
     /// Remote: HTTP Range header.
-    pub async fn read_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>, RouterError> {
+    pub async fn read_range(
+        &self,
+        path: &str,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, RouterError> {
         match &self.inner {
             HandleInner::Local(local) => {
                 let store = local.content_store();
@@ -349,7 +402,11 @@ impl StorageHandle {
                     .map_err(RouterError::Other)?;
 
                 classify_http_response(resp.status(), &url, path)?;
-                Ok(resp.bytes().await.map_err(|e| RouterError::Other(e.into()))?.to_vec())
+                Ok(resp
+                    .bytes()
+                    .await
+                    .map_err(|e| RouterError::Other(e.into()))?
+                    .to_vec())
             }
         }
     }
@@ -386,9 +443,9 @@ impl StorageHandle {
 
                 // Stream the response body via StreamReader
                 use futures_util::StreamExt;
-                let byte_stream = resp.bytes_stream().map(|result| {
-                    result.map_err(std::io::Error::other)
-                });
+                let byte_stream = resp
+                    .bytes_stream()
+                    .map(|result| result.map_err(std::io::Error::other));
                 let reader = tokio_util::io::StreamReader::new(byte_stream);
                 Ok(Box::new(reader))
             }
@@ -635,7 +692,11 @@ impl StorageHandle {
             }
             HandleInner::Remote(target) => {
                 let url = self.file_url(target, path);
-                let resp = http_client().head(&url).timeout(METADATA_TIMEOUT).send().await;
+                let resp = http_client()
+                    .head(&url)
+                    .timeout(METADATA_TIMEOUT)
+                    .send()
+                    .await;
                 Ok(resp.map(|r| r.status().is_success()).unwrap_or(false))
             }
         }
@@ -742,7 +803,12 @@ impl StorageHandle {
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc));
             if !name.is_empty() {
-                entries.push(FileEntry { name, is_dir, size, modified });
+                entries.push(FileEntry {
+                    name,
+                    is_dir,
+                    size,
+                    modified,
+                });
             }
         }
 
@@ -768,8 +834,7 @@ pub async fn transfer(
     dst_path: &str,
 ) -> Result<()> {
     // Fast path: both local, dst unencrypted → streaming copy
-    if let (HandleInner::Local(src_local), HandleInner::Local(dst_local)) =
-        (&src.inner, &dst.inner)
+    if let (HandleInner::Local(src_local), HandleInner::Local(dst_local)) = (&src.inner, &dst.inner)
     {
         let dst_store = if dst.tick.is_some() {
             dst_local.notifying_content_store(dst.tick.as_ref())
@@ -852,7 +917,14 @@ async fn transfer_tree_inner(
         };
 
         if entry.is_dir {
-            Box::pin(transfer_tree_inner(src, &child_src, dst, &child_dst, depth + 1)).await?;
+            Box::pin(transfer_tree_inner(
+                src,
+                &child_src,
+                dst,
+                &child_dst,
+                depth + 1,
+            ))
+            .await?;
         } else {
             transfer(src, &child_src, dst, &child_dst).await?;
         }

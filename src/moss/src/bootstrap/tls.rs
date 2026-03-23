@@ -196,7 +196,7 @@ pub async fn try_start_https(
             }
             _ = async {
                 drain_token.cancelled().await;
-                tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(garden_common::constants::server::DRAIN_DEADLINE_SECS)).await;
             } => {
                 tracing::warn!("HTTPS server: drain deadline exceeded, dropping connections");
             }

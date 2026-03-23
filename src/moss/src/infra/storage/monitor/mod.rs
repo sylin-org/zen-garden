@@ -31,9 +31,7 @@ pub enum PhysicalStorageEvent {
     /// A volume is no longer accessible.
     ///
     /// `path` is the device identifier: `/dev/sdb1` on Linux, `E:\` on Windows.
-    Disconnected {
-        path: String,
-    },
+    Disconnected { path: String },
 }
 
 /// Platform-specific volume monitor.

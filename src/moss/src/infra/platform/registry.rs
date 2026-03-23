@@ -64,12 +64,15 @@ pub fn delete_hklm_value(subkey: &str, value_name: &str) -> Result<()> {
 /// machine-scoped environment variable changes without a reboot.
 pub fn broadcast_environment_change() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
     };
 
     // "Environment\0" as a wide string
     let env_wide: Vec<u16> = "Environment\0".encode_utf16().collect();
 
+    // SAFETY: `HWND_BROADCAST` is a well-known sentinel value accepted by SendMessageTimeoutW.
+    // `env_wide` is a null-terminated wide string that remains valid for the duration of the call.
+    // `_result` is a stack-allocated usize for the return value, valid for the duration of the call.
     unsafe {
         let mut _result: usize = 0;
         SendMessageTimeoutW(
@@ -86,8 +89,7 @@ pub fn broadcast_environment_change() {
 
 // ── Machine-scoped environment variables ────────────────────────
 
-const MACHINE_ENV_KEY: &str =
-    r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment";
+const MACHINE_ENV_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment";
 
 /// Read a machine-scoped environment variable from the registry.
 pub fn read_machine_env(var_name: &str) -> Option<String> {
@@ -123,8 +125,7 @@ pub fn get_dns_hostname() -> Option<String> {
 /// Set the Windows DNS hostname (both volatile and non-volatile keys).
 /// Requires elevation.  Requires reboot to take full effect.
 pub fn set_dns_hostname(name: &str) -> Result<()> {
-    write_hklm_string(TCPIP_PARAMS_KEY, "Hostname", name)
-        .context("failed to set Hostname")?;
+    write_hklm_string(TCPIP_PARAMS_KEY, "Hostname", name).context("failed to set Hostname")?;
     write_hklm_string(TCPIP_PARAMS_KEY, "NV Hostname", name)
         .context("failed to set NV Hostname")?;
     tracing::info!(name = %name, "set Windows DNS hostname (reboot required)");
@@ -133,6 +134,5 @@ pub fn set_dns_hostname(name: &str) -> Result<()> {
 
 /// Read the Windows `MachineGuid` from the Cryptography registry key.
 pub fn get_machine_guid() -> Result<String> {
-    read_hklm_string(CRYPTOGRAPHY_KEY, "MachineGuid")
-        .context("failed to read Windows MachineGuid")
+    read_hklm_string(CRYPTOGRAPHY_KEY, "MachineGuid").context("failed to read Windows MachineGuid")
 }

@@ -3,9 +3,11 @@
 //! Handles server binding, graceful shutdown, and error handling.
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use crate::infra::CompanionRegistry;
+use crate::infra::companions::CompanionRegistry;
 use axum::Router;
-use garden_common::console::{BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo};
+use garden_common::console::{
+    BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo,
+};
 use garden_common::infra::platform::shutdown_signal;
 use garden_common::PlatformRuntime;
 use std::future::Future;
@@ -32,8 +34,8 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             port: garden_common::constants::MOSS_HTTP,
-            drain_deadline_secs: 8,
-            hard_deadline_secs: 15,
+            drain_deadline_secs: garden_common::constants::server::DRAIN_DEADLINE_SECS,
+            hard_deadline_secs: garden_common::constants::server::HARD_DEADLINE_SECS,
         }
     }
 }
@@ -67,7 +69,7 @@ pub async fn bind(port: u16, console: &ConsolePrinter) -> anyhow::Result<TcpList
         Ok(()) => {
             // Listen with backlog
             socket
-                .listen(128)
+                .listen(garden_common::constants::server::TCP_BACKLOG)
                 .map_err(|e| anyhow::anyhow!("Failed to listen: {}", e))?;
 
             // Convert to tokio TcpListener
@@ -121,7 +123,7 @@ pub type ShutdownCallback = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> 
 /// 5. Topology flush, sd_notify STOPPING, process::exit(0)
 ///
 /// Admin/deploy shutdowns call `shutdown_token.cancel()` directly — same cascade.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn run(
     listener: TcpListener,
     app: Router,
@@ -165,7 +167,9 @@ pub async fn run(
         let watchdog_runtime = runtime.clone();
         let watchdog_token = shutdown_token.child_token();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(25));
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+                garden_common::constants::server::WATCHDOG_PING_SECS,
+            ));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {

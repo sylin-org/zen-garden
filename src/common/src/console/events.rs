@@ -1,7 +1,6 @@
 //! Console event types and structures
 
 /// Event categories for structured console output
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventCategory {
     System,
@@ -66,7 +65,6 @@ impl EventCategory {
 }
 
 /// Event status for structured console output
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventStatus {
     // System

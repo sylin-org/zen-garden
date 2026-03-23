@@ -157,7 +157,13 @@ async fn backfill_orchestration(state: &AppState) {
     let candidates: Vec<(String, String, String)> = offerings
         .iter()
         .filter(|o| o.orchestration.is_none() && o.status == OfferingStatus::Running)
-        .map(|o| (o.offering_id.clone(), o.name.to_string(), o.offering.clone()))
+        .map(|o| {
+            (
+                o.offering_id.clone(),
+                o.name.to_string(),
+                o.offering.clone(),
+            )
+        })
         .collect();
 
     if candidates.is_empty() {
@@ -230,7 +236,8 @@ async fn pin_recovery(state: &AppState) {
 
         let election_id = generate_guidv7();
         if let Err(e) = state
-            .presence.elections
+            .presence
+            .elections
             .start_election(
                 election_id,
                 ElectionType::OfferingPrimary(fqn.clone()),
@@ -270,10 +277,9 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     };
 
     // ORCH-0008: collect offering types covered by any active gateway in the garden.
-    // A service registering handler_for suppresses elections for that offering.
-    // Read from the unified registry (category=orchestrator entries).
+    // A registered gateway suppresses elections for that offering type.
     let gateway_handled: std::collections::HashSet<String> = {
-        let reg = state.fqn_handler.registry.read().await;
+        let reg = state.tool.registry.read().await;
         reg.handled_offerings()
     };
 
@@ -415,7 +421,8 @@ async fn dispatch_dormant(
 
             let election_id = generate_guidv7();
             match state
-                .presence.elections
+                .presence
+                .elections
                 .start_election(
                     election_id,
                     ElectionType::OfferingPrimary(fqn.to_string()),
@@ -448,7 +455,8 @@ async fn dispatch_dormant(
 
         let election_id = generate_guidv7();
         match state
-            .presence.elections
+            .presence
+            .elections
             .start_election(
                 election_id,
                 ElectionType::OfferingPrimary(fqn.to_string()),
@@ -518,7 +526,10 @@ async fn transition_role(
     let old_role = {
         let offerings = state.offerings.read().await;
         match offerings.iter().find(|o| o.offering_id == offering_id) {
-            Some(o) => o.orchestration.as_ref().map(|orch| orch.role.clone())
+            Some(o) => o
+                .orchestration
+                .as_ref()
+                .map(|orch| orch.role.clone())
                 .unwrap_or_default(),
             None => {
                 tracing::warn!(offering_id = %offering_id, "Offering not found for role transition");
@@ -533,21 +544,19 @@ async fn transition_role(
 
     // Transition via gateway — syncs self_entry + chirps
     let stone_id = state.current.stone.id.clone();
-    state.update_offering(offering_id, true, |o| {
-        let orch = o
-            .orchestration
-            .get_or_insert_with(OrchestrationState::default);
-        orch.role = new_role.clone();
-        if new_role == OfferingRole::Primary {
-            orch.primary_stone_id = Some(stone_id);
-        }
-        o.touch();
-        true
-    }).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after role transition");
-    }
+    state
+        .update_offering(offering_id, true, |o| {
+            let orch = o
+                .orchestration
+                .get_or_insert_with(OrchestrationState::default);
+            orch.role = new_role.clone();
+            if new_role == OfferingRole::Primary {
+                orch.primary_stone_id = Some(stone_id);
+            }
+            o.touch();
+            true
+        })
+        .await;
 
     tracing::info!(
         offering = %fqn,
@@ -579,14 +588,16 @@ async fn update_primary_stone_id(
     primary_id: &str,
 ) -> Result<()> {
     let primary_id_owned = primary_id.to_string();
-    state.update_offering(offering_id, false, |o| {
-        if let Some(ref mut orch) = o.orchestration {
-            orch.primary_stone_id = Some(primary_id_owned);
-            true
-        } else {
-            false
-        }
-    }).await;
+    state
+        .update_offering(offering_id, false, |o| {
+            if let Some(ref mut orch) = o.orchestration {
+                orch.primary_stone_id = Some(primary_id_owned);
+                true
+            } else {
+                false
+            }
+        })
+        .await;
     Ok(())
 }
 
@@ -608,7 +619,9 @@ async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
         }
         // Check if this stone has the offering with role "primary"
         for svc in &entry.services {
-            if svc.name.to_string() == fqn && svc.role.as_deref() == Some(garden_common::constants::ROLE_PRIMARY) {
+            if svc.name.to_string() == fqn
+                && svc.role.as_deref() == Some(garden_common::constants::ROLE_PRIMARY)
+            {
                 return Some(stone_id.clone());
             }
         }
@@ -654,7 +667,10 @@ async fn cleanup_independent_orchestration(state: &AppState) {
     }, true).await;
 
     if cleaned > 0 {
-        tracing::info!(count = cleaned, "Cleaned stale orchestration state from Independent offerings");
+        tracing::info!(
+            count = cleaned,
+            "Cleaned stale orchestration state from Independent offerings"
+        );
     }
 }
 
@@ -684,20 +700,18 @@ pub async fn assign_initial_role(state: &AppState, offering_id: &str, fqn: &str)
     };
 
     // Set orchestration state via gateway (no event for initial assignment — deploy event suffices)
-    state.update_offering(offering_id, true, |o| {
-        o.orchestration = Some(OrchestrationState {
-            role: new_role,
-            primary_stone_id: primary_id,
-            pinned: false,
-            pin_timestamp: None,
-        });
-        o.touch();
-        true
-    }).await;
-
-    if let Err(e) = state.persist_offerings().await {
-        tracing::error!(error = ?e, "Failed to persist offerings after initial role assignment");
-    }
+    state
+        .update_offering(offering_id, true, |o| {
+            o.orchestration = Some(OrchestrationState {
+                role: new_role,
+                primary_stone_id: primary_id,
+                pinned: false,
+                pin_timestamp: None,
+            });
+            o.touch();
+            true
+        })
+        .await;
 
     Ok(())
 }

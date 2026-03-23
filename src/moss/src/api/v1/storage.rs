@@ -34,7 +34,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
+use garden_common::api_utils::ApiErrorResponse;
 use garden_common::constants::paths;
 use garden_common::storage::{
     AddStorageRequest, AddStorageResponse, CandidatesResponse, DeviceState, MediumAction,
@@ -47,7 +47,7 @@ use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 use crate::domain::storage::analyze_device;
-use crate::infra::storage::{layout, ContentStore};
+use crate::infra::storage::{layout, ContentStore, OsPlatform};
 use crate::infra::{DomainPulse, PulseEvent};
 use crate::{error_response, AppState};
 use garden_common::presence::event_types;
@@ -152,28 +152,11 @@ pub struct StorageTypeInfo {
     pub endpoint: String,
 }
 
-/// Storage readiness overview for this stone
-#[derive(Debug, Serialize)]
-pub struct StorageHealth {
-    pub ready: bool,
-    pub bank_count: usize,
-    pub ready_count: usize,
-    pub banks: Vec<SeedBankHealth>,
-    pub issues: Vec<String>,
-}
+// StorageHealth and SeedBankHealth live in the domain layer (ARCH-0005).
+pub use crate::domain::storage::health::{SeedBankHealth, StorageHealth};
 
-#[derive(Debug, Serialize)]
-pub struct SeedBankHealth {
-    pub id: String,
-    pub name: String,
-    pub device: String,
-    pub mount_path: String,
-    pub canonical: bool,
-    pub writable: bool,
-    pub ready: bool,
-    pub issues: Vec<String>,
-}
-
+// Validation helpers are domain-pure and re-exported for use within this module.
+use crate::domain::storage::health::validate_seed_bank_layout;
 
 /// Response for release endpoint
 #[derive(Debug, Serialize)]
@@ -191,52 +174,6 @@ fn err(status: StatusCode, code: &str, msg: &str) -> (StatusCode, Json<ApiErrorR
     error_response(status, code, msg, None)
 }
 
-/// Check whether a mount is read-only by reading `/proc/mounts`.
-async fn is_mount_readonly(mount_path: &str) -> Option<bool> {
-    #[cfg(target_os = "linux")]
-    {
-        let mounts = tokio::fs::read_to_string("/proc/mounts").await.ok()?;
-        for line in mounts.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 && parts[1] == mount_path {
-                let opts = parts[3];
-                let ro = opts.split(',').any(|o| o == "ro");
-                return Some(ro);
-            }
-        }
-        None
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = mount_path;
-        Some(false)
-    }
-}
-
-/// Validate that a seed bank uses the canonical layout.
-fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
-    let memories = std::path::Path::new(mount_path).join(paths::STORAGE_MEMORIES_DIR);
-    let storage = std::path::Path::new(mount_path).join(paths::STORAGE_OBJECTS_DIR);
-
-    let mut missing = Vec::new();
-    if !memories.is_dir() {
-        missing.push(paths::STORAGE_MEMORIES_DIR);
-    }
-    if !storage.is_dir() {
-        missing.push(paths::STORAGE_OBJECTS_DIR);
-    }
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Seed bank is non-canonical; missing {}. Re-prepare the seed bank.",
-            missing.join(" and ")
-        ))
-    }
-}
-
 // ============================================================================
 // GET /api/v1/stone/storage - Storage Overview
 // ============================================================================
@@ -246,7 +183,7 @@ fn validate_seed_bank_layout(mount_path: &str) -> Result<(), String> {
 /// Returns local bank stats plus garden-wide view from registry.
 pub async fn storage_overview_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<StorageOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageOverview> {
     // Get local banks from the unified Volumes domain (STORAGE-0011)
     let local_banks: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
@@ -277,7 +214,9 @@ pub async fn storage_overview_v1(
                 .unwrap_or(garden_common::storage::StorageRole::Primary)
         } else {
             match sm.and_then(|s| s.role.as_deref()) {
-                Some(garden_common::constants::ROLE_DORMANT) => garden_common::storage::StorageRole::Dormant,
+                Some(garden_common::constants::ROLE_DORMANT) => {
+                    garden_common::storage::StorageRole::Dormant
+                }
                 _ => garden_common::storage::StorageRole::Primary,
             }
         };
@@ -297,7 +236,9 @@ pub async fn storage_overview_v1(
             stone_name: entry.tool.stone.name.clone(),
             endpoint: entry.tool.stone.endpoint.clone(),
             is_local,
-            visibility: sm.map(|s| s.visibility.clone()).unwrap_or_else(|| garden_common::constants::VISIBILITY_OPEN.to_string()),
+            visibility: sm
+                .map(|s| s.visibility.clone())
+                .unwrap_or_else(|| garden_common::constants::VISIBILITY_OPEN.to_string()),
             health: entry.tool.service.status.clone(),
             capacity_bytes: sm.map(|s| s.capacity_bytes).unwrap_or(0),
             used_bytes: sm.map(|s| s.used_bytes).unwrap_or(0),
@@ -320,7 +261,7 @@ pub async fn storage_overview_v1(
         garden_banks,
     };
 
-    Ok(Json(ApiResponse::new(overview)))
+    crate::api::ok(overview)
 }
 
 // ============================================================================
@@ -330,66 +271,14 @@ pub async fn storage_overview_v1(
 /// Get storage readiness for this stone (mounted + canonical + writable).
 pub async fn storage_health_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<StorageHealth>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageHealth> {
     let managed: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
         map.values().filter_map(|v| v.to_storage_info()).collect()
     };
 
-    let mut banks = Vec::new();
-
-    for bank in &managed {
-        let mut issues = Vec::new();
-
-        let canonical = validate_seed_bank_layout(&bank.mount_path).is_ok();
-        if !canonical {
-            issues.push("non-canonical layout".to_string());
-        }
-
-        let writable = match is_mount_readonly(&bank.mount_path).await {
-            Some(true) => {
-                issues.push("mount is read-only".to_string());
-                false
-            }
-            Some(false) => true,
-            None => {
-                issues.push("mount options unavailable".to_string());
-                false
-            }
-        };
-
-        let ready = canonical && writable;
-
-        banks.push(SeedBankHealth {
-            id: bank.id.clone(),
-            name: bank.name.clone(),
-            device: bank.device.clone(),
-            mount_path: bank.mount_path.clone(),
-            canonical,
-            writable,
-            ready,
-            issues,
-        });
-    }
-
-    let bank_count = banks.len();
-    let ready_count = banks.iter().filter(|b| b.ready).count();
-    let ready = ready_count > 0;
-
-    let mut issues = Vec::new();
-    if bank_count == 0 {
-        issues.push("no seed banks mounted".to_string());
-    } else if ready_count == 0 {
-        issues.push("no seed banks are ready".to_string());
-    }
-
-    Ok(Json(ApiResponse::new(StorageHealth {
-        ready,
-        bank_count,
-        ready_count,
-        banks,
-        issues,
-    })))
+    let health = crate::domain::storage::health::assess_storage_health(managed).await;
+    crate::api::ok(health)
 }
 
 // ============================================================================
@@ -399,7 +288,7 @@ pub async fn storage_health_v1(
 /// List all seed banks
 pub async fn list_banks_v1(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<StorageInfo>>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<Vec<StorageInfo>> {
     let banks: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
         map.values()
@@ -407,7 +296,7 @@ pub async fn list_banks_v1(
             .filter(|b| validate_seed_bank_layout(&b.mount_path).is_ok())
             .collect()
     };
-    Ok(Json(ApiResponse::new(banks)))
+    crate::api::ok(banks)
 }
 
 // ============================================================================
@@ -418,20 +307,26 @@ pub async fn list_banks_v1(
 pub async fn get_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageInfo> {
     let bank = {
         let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    &format!("Bank '{}' not found", name),
+                )
+            })?
     };
 
     if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
-    Ok(Json(ApiResponse::new(bank)))
+    crate::api::ok(bank)
 }
 
 // ============================================================================
@@ -446,7 +341,10 @@ pub async fn delete_bank_v1(
     // Check if still mounted (managed volume present = still mounted)
     {
         let map = state.current.storage.volumes.read().await;
-        if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.state.is_online()) {
+        if map
+            .values()
+            .any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.state.is_online())
+        {
             return Err(err(
                 StatusCode::CONFLICT,
                 "BANK_MOUNTED",
@@ -491,14 +389,10 @@ pub async fn delete_bank_v1(
         })?;
     }
 
-    let pulse = DomainPulse::storage_event(
-        event_types::STORAGE_REMOVED,
-        format!("Seed bank '{}' removed", name),
-        "info",
-        None,
-        Some(serde_json::json!({ "name": name })),
-    );
-    let _ = state.pulse.send(PulseEvent::Domain(pulse));
+    // Emit through EventBus so PulseDomainBridge picks it up for SSE consumers.
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
+        .await;
 
     info!(name = %name, "Bank mount directory removed");
     Ok(StatusCode::NO_CONTENT)
@@ -512,47 +406,50 @@ pub async fn delete_bank_v1(
 pub async fn release_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<ReleaseResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<ReleaseResponse> {
     let _mount_path = {
         let map = state.current.storage.volumes.read().await;
-        let vol = map.values()
+        let vol = map
+            .values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    &format!("Bank '{}' not found", name),
+                )
+            })?;
         vol.mount_path.to_string_lossy().to_string()
     };
 
     #[cfg(target_os = "linux")]
-    crate::infra::storage::platform::unmount(&_mount_path).await.map_err(|e| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "UNMOUNT_FAILED",
-            &e.to_string(),
-        )
-    })?;
-
-    let pulse = DomainPulse::storage_event(
-        event_types::STORAGE_RELEASED,
-        format!("Seed bank '{}' released", name),
-        "info",
-        None,
-        Some(serde_json::json!({ "name": name })),
-    );
-    let _ = state.pulse.send(PulseEvent::Domain(pulse));
+    crate::infra::storage::platform::unmount(&_mount_path)
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "UNMOUNT_FAILED",
+                &e.to_string(),
+            )
+        })?;
 
     // STORAGE-0011: Remove management from the released volume
     // Capture identity before clearing management.
     let (device_id, replica_set_id) = {
         let mut map = state.current.storage.volumes.write().await;
-        let ids = map.values().find(|v| {
-            v.management.as_ref().is_some_and(|m| m.name == name)
-        }).and_then(|v| {
-            let mgmt = v.management.as_ref()?;
-            Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
-        }).unwrap_or_default();
+        let ids = map
+            .values()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .and_then(|v| {
+                let mgmt = v.management.as_ref()?;
+                Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
+            })
+            .unwrap_or_default();
 
-        if let Some(vol) = map.values_mut().find(|v| {
-            v.management.as_ref().is_some_and(|m| m.name == name)
-        }) {
+        if let Some(vol) = map
+            .values_mut()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+        {
             vol.management = None;
             debug!(name = %name, "Cleared management from released volume");
         }
@@ -560,22 +457,26 @@ pub async fn release_bank_v1(
     };
 
     // Emit ribbon event before Removed (name still meaningful at this point)
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Released {
-        name: name.clone(),
-    }).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Released {
+            name: name.clone(),
+        })
+        .await;
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts automatically
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Removed {
-        device_id,
-        replica_set_id,
-    }).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Removed {
+            device_id,
+            replica_set_id,
+        })
+        .await;
 
     info!(name = %name, "Bank released");
-    Ok(Json(ApiResponse::new(ReleaseResponse {
+    crate::api::ok(ReleaseResponse {
         released: true,
         name,
         message: "Bank safely released. You may now remove the device.".to_string(),
-    })))
+    })
 }
 
 // ============================================================================
@@ -590,7 +491,7 @@ pub async fn rename_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(request): Json<RenameStorageRequest>,
-) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageInfo> {
     // Validate new name
     if request.new_name.is_empty() {
         return Err(err(
@@ -605,14 +506,20 @@ pub async fn rename_bank_v1(
         let map = state.current.storage.volumes.read().await;
         map.values()
             .filter(|v| {
-                v.management.as_ref().is_some_and(|m| m.display_name() == name)
+                v.management
+                    .as_ref()
+                    .is_some_and(|m| m.display_name() == name)
             })
             .map(|v| v.mount_path.to_string_lossy().to_string())
             .collect()
     };
 
     if mount_paths.is_empty() {
-        return Err(err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "BANK_NOT_FOUND",
+            &format!("Bank '{}' not found", name),
+        ));
     }
 
     // Update manifest on each device in the replica set
@@ -633,14 +540,16 @@ pub async fn rename_bank_v1(
         let mut map = state.current.storage.volumes.write().await;
         let mut rsid = String::new();
         for vol in map.values_mut() {
-            let matches = vol.management.as_ref().is_some_and(|m| m.display_name() == name);
-            if matches {
-                if let Some(ref mut mgmt) = vol.management {
+            let matches = vol
+                .management
+                .as_ref()
+                .is_some_and(|m| m.display_name() == name);
+            if matches
+                && let Some(ref mut mgmt) = vol.management {
                     rsid = mgmt.replica_set_id.clone();
                     mgmt.replica_set_name = request.new_name.clone();
                     mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
                 }
-            }
         }
         rsid
     };
@@ -649,21 +558,33 @@ pub async fn rename_bank_v1(
     let updated = {
         let map = state.current.storage.volumes.read().await;
         map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.replica_set_name == request.new_name))
+            .find(|v| {
+                v.management
+                    .as_ref()
+                    .is_some_and(|m| m.replica_set_name == request.new_name)
+            })
             .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after rename"))?
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    "Bank not found after rename",
+                )
+            })?
     };
 
     info!(old_name = %name, new_name = %request.new_name, volumes = mount_paths.len(), "Replica set renamed");
 
     // STORAGE-0013: Emit domain event — beacon subscriber + orchestration react
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Renamed {
-        replica_set_id,
-        new_name: request.new_name.clone(),
-    }).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Renamed {
+            replica_set_id,
+            new_name: request.new_name.clone(),
+        })
+        .await;
     state.orchestration.storage.nudge.notify_one();
 
-    Ok(Json(ApiResponse::new(updated.clone())))
+    crate::api::ok(updated.clone())
 }
 
 // ============================================================================
@@ -676,78 +597,78 @@ pub async fn rename_bank_v1(
 pub async fn list_candidates_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<CandidatesResponse>), (StatusCode, Json<ApiErrorResponse>)> {
-    // Space candidates: mounted volumes that are unmanaged, removable, and online.
-    let volumes_map = state.current.storage.volumes.read().await;
-    let spaces: Vec<StorageDetectedInfo> = volumes_map
-        .values()
-        .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
-        .map(|v| StorageDetectedInfo {
-            device: v.path.clone(),
-            mount_path: Some(v.mount_path.to_string_lossy().to_string()),
-            label: v.label.clone(),
-            capacity_bytes: v.capacity_bytes,
-            state: DeviceState::Empty,
-            eligible: true,
-            removable: v.removable,
-            ineligible_reason: None,
-        })
-        .collect();
+    // Space and medium candidates collected under a single scope for both read guards.
+    let (spaces, media) = {
+        // Space candidates: mounted volumes that are unmanaged, removable, and online.
+        let volumes_map = state.current.storage.volumes.read().await;
+        let spaces: Vec<StorageDetectedInfo> = volumes_map
+            .values()
+            .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+            .map(|v| StorageDetectedInfo {
+                device: v.path.clone(),
+                mount_path: Some(v.mount_path.to_string_lossy().to_string()),
+                label: v.label.clone(),
+                capacity_bytes: v.capacity_bytes,
+                state: DeviceState::Empty,
+                eligible: true,
+                removable: v.removable,
+                ineligible_reason: None,
+            })
+            .collect();
 
-    // Medium candidates: physical disks (USB/external only).
-    let media_map = state.current.storage.media.read().await;
-    let media: Vec<MediumInfo> = media_map
-        .values()
-        .filter(|m| m.removable)
-        .map(|m| {
-            let managed = m.has_managed_space(&volumes_map);
-            let suggested_action = match m.condition {
-                crate::infra::storage::platform::MediumCondition::Unreadable => {
-                    MediumAction::Unreadable
-                }
-                crate::infra::storage::platform::MediumCondition::Raw => {
-                    MediumAction::NeedsPartition
-                }
-                crate::infra::storage::platform::MediumCondition::Partitioned => {
-                    if managed {
-                        MediumAction::AlreadyManaged
-                    } else if m.has_mounted_space() {
-                        MediumAction::Ready
-                    } else {
-                        MediumAction::NeedsFormat
+        // Medium candidates: physical disks (USB/external only).
+        let media_map = state.current.storage.media.read().await;
+        let media: Vec<MediumInfo> = media_map
+            .values()
+            .filter(|m| m.removable)
+            .map(|m| {
+                let managed = m.has_managed_space(&volumes_map);
+                let suggested_action = match m.condition {
+                    crate::infra::storage::platform::MediumCondition::Unreadable => {
+                        MediumAction::Unreadable
                     }
+                    crate::infra::storage::platform::MediumCondition::Raw => {
+                        MediumAction::NeedsPartition
+                    }
+                    crate::infra::storage::platform::MediumCondition::Partitioned => {
+                        if managed {
+                            MediumAction::AlreadyManaged
+                        } else if m.has_mounted_space() {
+                            MediumAction::Ready
+                        } else {
+                            MediumAction::NeedsFormat
+                        }
+                    }
+                };
+
+                MediumInfo {
+                    device_id: m.device_id.clone(),
+                    model: m.model.clone(),
+                    bus_type: garden_common::storage::BusType::from(m.bus_type),
+                    size_bytes: m.size_bytes,
+                    removable: m.removable,
+                    condition: garden_common::storage::MediumCondition::from(m.condition),
+                    partitions: m
+                        .partitions
+                        .iter()
+                        .map(|p| MediumPartitionInfo {
+                            index: p.index,
+                            size_bytes: p.size_bytes,
+                            filesystem: p.filesystem.clone(),
+                            mount_path: p.mount_path.clone(),
+                            label: p.label.clone(),
+                        })
+                        .collect(),
+                    managed,
+                    suggested_action,
                 }
-            };
+            })
+            .collect();
 
-            MediumInfo {
-                device_id: m.device_id.clone(),
-                model: m.model.clone(),
-                bus_type: garden_common::storage::BusType::from(m.bus_type),
-                size_bytes: m.size_bytes,
-                removable: m.removable,
-                condition: garden_common::storage::MediumCondition::from(m.condition),
-                partitions: m
-                    .partitions
-                    .iter()
-                    .map(|p| MediumPartitionInfo {
-                        index: p.index,
-                        size_bytes: p.size_bytes,
-                        filesystem: p.filesystem.clone(),
-                        mount_path: p.mount_path.clone(),
-                        label: p.label.clone(),
-                    })
-                    .collect(),
-                managed,
-                suggested_action,
-            }
-        })
-        .collect();
-    drop(volumes_map);
-    drop(media_map);
+        (spaces, media)
+    };
 
-    Ok((
-        StatusCode::OK,
-        Json(CandidatesResponse { spaces, media }),
-    ))
+    Ok((StatusCode::OK, Json(CandidatesResponse { spaces, media })))
 }
 
 // ============================================================================
@@ -763,7 +684,7 @@ pub async fn list_candidates_v1(
 pub async fn add_storage_v1(
     State(state): State<AppState>,
     Json(request): Json<AddStorageRequest>,
-) -> Result<Json<ApiResponse<AddStorageResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<AddStorageResponse> {
     let target = &request.target;
     let target_path = std::path::Path::new(target);
 
@@ -779,14 +700,21 @@ pub async fn add_storage_v1(
                 return Err(err(
                     StatusCode::CONFLICT,
                     "DEVICE_BUSY",
-                    &format!("Device {} is already being added — wait for it to finish", target),
+                    &format!(
+                        "Device {} is already being added — wait for it to finish",
+                        target
+                    ),
                 ));
             }
         }
 
         // Analyze device state
-        let device_info = analyze_device(target).map_err(|e| {
-            err(StatusCode::BAD_REQUEST, "DEVICE_ANALYSIS_FAILED", &e.to_string())
+        let device_info = analyze_device(target, &OsPlatform).map_err(|e| {
+            err(
+                StatusCode::BAD_REQUEST,
+                "DEVICE_ANALYSIS_FAILED",
+                &e.to_string(),
+            )
         })?;
 
         // Validate: already managed → conflict
@@ -831,7 +759,10 @@ pub async fn add_storage_v1(
         // Same-name replicas are fine (STORAGE-0006)
         {
             let map = state.current.storage.volumes.read().await;
-            if map.values().any(|v| v.management.as_ref().is_some_and(|m| m.name == name)) {
+            if map
+                .values()
+                .any(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            {
                 info!(name = %name, "Same-name storage exists — new device will be a replica");
             }
         }
@@ -858,22 +789,34 @@ pub async fn add_storage_v1(
             let guard_device = target.to_string();
 
             tokio::spawn(async move {
-                let _guard = PrepareGuard { device: guard_device };
+                let _guard = PrepareGuard {
+                    device: guard_device,
+                };
 
                 match run_format_and_add(
-                    &task_job_id, &device, &task_name, &filesystem,
-                    encrypted, &roles, &stone_name, pulse.clone(),
-                ).await {
+                    &task_job_id,
+                    &device,
+                    &task_name,
+                    &filesystem,
+                    encrypted,
+                    &roles,
+                    &stone_name,
+                    pulse.clone(),
+                )
+                .await
+                {
                     Ok(()) => {
-                        tools_state.emit_storage_changed(
-                            garden_common::storage::StorageChanged::Sensed {
+                        tools_state
+                            .emit_storage_changed(garden_common::storage::StorageChanged::Sensed {
                                 name: task_name.clone(),
                                 roles: roles.clone(),
-                            },
-                        ).await;
-                        tools_state.emit_storage_changed(
-                            garden_common::storage::StorageChanged::Reclassified,
-                        ).await;
+                            })
+                            .await;
+                        tools_state
+                            .emit_storage_changed(
+                                garden_common::storage::StorageChanged::Reclassified,
+                            )
+                            .await;
                     }
                     Err(e) => {
                         tracing::error!(
@@ -901,7 +844,7 @@ pub async fn add_storage_v1(
                 cataloged: 0,
                 job_id: Some(job_id),
             };
-            return Ok(Json(ApiResponse::new(response)));
+            return crate::api::ok(response);
         }
 
         // ── Device has filesystem but no format needed ──────────────────
@@ -913,7 +856,11 @@ pub async fn add_storage_v1(
         };
 
         let manifest = StorageManifest::with_roles(
-            &name, &state.current.stone.name, "unknown", visibility, request.roles.clone(),
+            &name,
+            &state.current.stone.name,
+            "unknown",
+            visibility,
+            request.roles.clone(),
         );
 
         let data_dir = garden_common::constants::paths::data_dir();
@@ -921,20 +868,32 @@ pub async fn add_storage_v1(
 
         #[cfg(target_os = "linux")]
         {
-            #[allow(unused_imports)]
+            #[expect(unused_imports)]
             use anyhow::Context;
             let output = tokio::process::Command::new("sudo")
                 .args(["mkdir", "-p", &mount_dir.to_string_lossy()])
-                .output().await.map_err(|e| err(
-                    StatusCode::INTERNAL_SERVER_ERROR, "MOUNT_FAILED",
-                    &format!("Failed to create mount dir: {}", e),
-                ))?;
+                .output()
+                .await
+                .map_err(|e| {
+                    err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "MOUNT_FAILED",
+                        &format!("Failed to create mount dir: {}", e),
+                    )
+                })?;
             if !output.status.success() {
-                return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "MOUNT_FAILED",
-                    &format!("mkdir failed: {}", String::from_utf8_lossy(&output.stderr))));
+                return Err(err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "MOUNT_FAILED",
+                    &format!("mkdir failed: {}", String::from_utf8_lossy(&output.stderr)),
+                ));
             }
             mount_device(target, &mount_dir).await.map_err(|e| {
-                err(StatusCode::INTERNAL_SERVER_ERROR, "MOUNT_FAILED", &e.to_string())
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "MOUNT_FAILED",
+                    &e.to_string(),
+                )
             })?;
         }
 
@@ -969,7 +928,11 @@ pub async fn add_storage_v1(
     };
 
     let manifest = StorageManifest::with_roles(
-        &name, &state.current.stone.name, "unknown", visibility, request.roles.clone(),
+        &name,
+        &state.current.stone.name,
+        "unknown",
+        visibility,
+        request.roles.clone(),
     );
 
     add_at_path(state, target_path, manifest, false).await
@@ -981,25 +944,40 @@ async fn add_at_path(
     mount_path: &std::path::Path,
     manifest: StorageManifest,
     formatted: bool,
-) -> Result<Json<ApiResponse<AddStorageResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<AddStorageResponse> {
     // Migrate legacy layout if present
-    layout::migrate_legacy_layout(mount_path).await.map_err(|e| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "MIGRATION_FAILED",
-            &format!("Failed to migrate legacy layout: {}", e))
-    })?;
+    layout::migrate_legacy_layout(mount_path)
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "MIGRATION_FAILED",
+                &format!("Failed to migrate legacy layout: {}", e),
+            )
+        })?;
 
     // Initialize layout (creates all subdirs + symlink, idempotent)
     layout::initialize_layout(mount_path).await.map_err(|e| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "LAYOUT_INIT_FAILED",
-            &format!("Failed to initialize storage layout: {}", e))
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "LAYOUT_INIT_FAILED",
+            &format!("Failed to initialize storage layout: {}", e),
+        )
     })?;
 
     // Write manifest atomically
-    let manifest_path = mount_path.join(paths::STORAGE_DOTFOLDER).join("manifest.json");
-    write_manifest_atomic(&manifest_path, &manifest).await.map_err(|e| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "MANIFEST_WRITE_FAILED",
-            &format!("Failed to write manifest: {}", e))
-    })?;
+    let manifest_path = mount_path
+        .join(paths::STORAGE_DOTFOLDER)
+        .join("manifest.json");
+    write_manifest_atomic(&manifest_path, &manifest)
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "MANIFEST_WRITE_FAILED",
+                &format!("Failed to write manifest: {}", e),
+            )
+        })?;
 
     // Catalog existing content for replication baseline
     let cataloged = {
@@ -1034,28 +1012,36 @@ async fn add_at_path(
     state.request_volume_rescan();
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Added {
-        device_id: manifest.id.clone(),
-        replica_set_id: manifest.replica_set_id.clone(),
-    }).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Added {
+            device_id: manifest.id.clone(),
+            replica_set_id: manifest.replica_set_id.clone(),
+        })
+        .await;
 
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Sensed {
-        name: manifest.name.clone(),
-        roles: manifest.roles.clone(),
-    }).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Sensed {
+            name: manifest.name.clone(),
+            roles: manifest.roles.clone(),
+        })
+        .await;
 
     let storages = crate::domain::storage::name_id_pairs(&state.current.storage.volumes).await;
     if let Err(e) = crate::infra::storage::refresh_signpost(
-        &state.current.stone.name, state.current.api_port, &storages,
-    ).await {
+        &state.current.stone.name,
+        state.current.api_port,
+        &storages,
+    )
+    .await
+    {
         warn!(error = %e, "Failed to refresh signpost after add");
     }
 
-    Ok(Json(ApiResponse::new(response)))
+    crate::api::ok(response)
 }
 
 /// Run format-and-add job in background (for block devices needing formatting).
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn run_format_and_add(
     job_id: &str,
     device: &str,
@@ -1068,7 +1054,10 @@ async fn run_format_and_add(
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    info!(job_id, device, name, encrypted, "Starting storage add (format)");
+    info!(
+        job_id,
+        device, name, encrypted, "Starting storage add (format)"
+    );
     emit_progress(&pulse, job_id, name, "analyzing", "Analyzing device...");
 
     let actual_fs = if filesystem == "btrfs" && check_btrfs_support().await {
@@ -1086,9 +1075,8 @@ async fn run_format_and_add(
         StorageVisibility::Open
     };
 
-    let manifest = StorageManifest::with_roles(
-        name, stone_name, actual_fs, visibility, roles.to_vec(),
-    );
+    let manifest =
+        StorageManifest::with_roles(name, stone_name, actual_fs, visibility, roles.to_vec());
 
     let data_dir = garden_common::constants::paths::data_dir();
     let mount_dir = PathBuf::from(manifest.derive_mount_path(&data_dir));
@@ -1097,7 +1085,8 @@ async fn run_format_and_add(
     {
         let output = tokio::process::Command::new("sudo")
             .args(["mkdir", "-p", &mount_dir.to_string_lossy()])
-            .output().await
+            .output()
+            .await
             .context("Failed to run sudo mkdir")?;
         if !output.status.success() {
             return Err(anyhow::anyhow!(
@@ -1107,41 +1096,64 @@ async fn run_format_and_add(
         }
     }
     #[cfg(not(target_os = "linux"))]
-    tokio::fs::create_dir_all(&mount_dir).await
+    tokio::fs::create_dir_all(&mount_dir)
+        .await
         .context("Failed to create mount directory")?;
 
-    emit_progress(&pulse, job_id, name, "formatting", &format!("Formatting as {}...", actual_fs));
+    emit_progress(
+        &pulse,
+        job_id,
+        name,
+        "formatting",
+        &format!("Formatting as {}...", actual_fs),
+    );
 
     #[cfg(target_os = "linux")]
-    format_device(device, actual_fs).await
+    format_device(device, actual_fs)
+        .await
         .context("Failed to format device")?;
 
     emit_progress(&pulse, job_id, name, "mounting", "Mounting filesystem...");
 
     #[cfg(target_os = "linux")]
-    mount_device(device, &mount_dir).await
+    mount_device(device, &mount_dir)
+        .await
         .context("Failed to mount device")?;
 
     #[cfg(target_os = "linux")]
     {
         let output = tokio::process::Command::new("sudo")
             .args(["chown", "-R", "stone:stone", &mount_dir.to_string_lossy()])
-            .output().await
+            .output()
+            .await
             .context("Failed to run chown")?;
         if !output.status.success() {
-            warn!("Failed to chown mount directory: {}", String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "Failed to chown mount directory: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
-    emit_progress(&pulse, job_id, name, "creating", "Creating storage structure...");
+    emit_progress(
+        &pulse,
+        job_id,
+        name,
+        "creating",
+        "Creating storage structure...",
+    );
 
     // Initialize canonical layout
-    layout::initialize_layout(&mount_dir).await
+    layout::initialize_layout(&mount_dir)
+        .await
         .context("Failed to initialize storage layout")?;
 
     // Write manifest atomically
-    let manifest_path = mount_dir.join(paths::STORAGE_DOTFOLDER).join("manifest.json");
-    write_manifest_atomic(&manifest_path, &manifest).await
+    let manifest_path = mount_dir
+        .join(paths::STORAGE_DOTFOLDER)
+        .join("manifest.json");
+    write_manifest_atomic(&manifest_path, &manifest)
+        .await
         .context("Failed to write manifest")?;
 
     // Sync filesystem
@@ -1237,7 +1249,7 @@ async fn mount_device(device: &str, mount_point: &std::path::Path) -> anyhow::Re
 }
 
 fn generate_storage_name() -> String {
-    use rand::seq::SliceRandom;
+    use rand::prelude::IndexedRandom;
     const ADJECTIVES: &[&str] = &[
         "kind", "wise", "calm", "bold", "swift", "quiet", "bright", "deep", "warm", "cool",
         "fresh", "clear", "soft", "strong", "gentle",
@@ -1246,7 +1258,7 @@ fn generate_storage_name() -> String {
         "meadow", "valley", "river", "forest", "garden", "grove", "brook", "stone", "path",
         "spring", "hill", "field", "shore", "cliff", "peak",
     ];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     format!(
         "seed-{}-{}",
         ADJECTIVES.choose(&mut rng).unwrap(),
@@ -1266,9 +1278,16 @@ pub async fn set_visibility_v1(
 ) -> Result<(StatusCode, Json<StorageInfo>), (StatusCode, Json<ApiErrorResponse>)> {
     let mount_path = {
         let map = state.current.storage.volumes.read().await;
-        let vol = map.values()
+        let vol = map
+            .values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", &format!("Seed bank '{}' not found", name)))?;
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "SEED_BANK_NOT_FOUND",
+                    &format!("Seed bank '{}' not found", name),
+                )
+            })?;
         vol.mount_path.to_string_lossy().to_string()
     };
 
@@ -1285,13 +1304,12 @@ pub async fn set_visibility_v1(
     // Sync visibility to volume management
     {
         let mut map = state.current.storage.volumes.write().await;
-        if let Some(vol) = map.values_mut().find(|v| {
-            v.management.as_ref().is_some_and(|m| m.name == name)
-        }) {
-            if let Some(ref mut mgmt) = vol.management {
+        if let Some(vol) = map
+            .values_mut()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            && let Some(ref mut mgmt) = vol.management {
                 mgmt.visibility = request.visibility;
             }
-        }
     }
 
     // Re-read updated info
@@ -1300,13 +1318,21 @@ pub async fn set_visibility_v1(
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "SEED_BANK_NOT_FOUND", "Seed bank disappeared after update"))?
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "SEED_BANK_NOT_FOUND",
+                    "Seed bank disappeared after update",
+                )
+            })?
     };
 
     info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
+        .await;
 
     Ok((StatusCode::OK, Json(updated.clone())))
 }
@@ -1339,7 +1365,10 @@ async fn update_manifest_roles(mount_path: &str, roles: &[String]) -> anyhow::Re
 }
 
 /// Update the replica set display name in the on-disk manifest.
-pub(crate) async fn update_manifest_replica_set_name(mount_path: &str, new_name: &str) -> anyhow::Result<()> {
+pub(crate) async fn update_manifest_replica_set_name(
+    mount_path: &str,
+    new_name: &str,
+) -> anyhow::Result<()> {
     use anyhow::Context;
     let manifest_path = std::path::Path::new(mount_path).join(".zen-garden/manifest.json");
     let content = tokio::fs::read_to_string(&manifest_path)
@@ -1389,12 +1418,19 @@ pub async fn set_roles_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(request): Json<SetRolesRequest>,
-) -> Result<Json<ApiResponse<StorageInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<StorageInfo> {
     let mount_path = {
         let map = state.current.storage.volumes.read().await;
-        let vol = map.values()
+        let vol = map
+            .values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    &format!("Bank '{}' not found", name),
+                )
+            })?;
         vol.mount_path.to_string_lossy().to_string()
     };
 
@@ -1411,13 +1447,12 @@ pub async fn set_roles_v1(
     // Sync roles to volume management
     {
         let mut map = state.current.storage.volumes.write().await;
-        if let Some(vol) = map.values_mut().find(|v| {
-            v.management.as_ref().is_some_and(|m| m.name == name)
-        }) {
-            if let Some(ref mut mgmt) = vol.management {
+        if let Some(vol) = map
+            .values_mut()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            && let Some(ref mut mgmt) = vol.management {
                 mgmt.roles = request.roles.clone();
             }
-        }
     }
 
     // Re-read updated info
@@ -1426,15 +1461,23 @@ pub async fn set_roles_v1(
         map.values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after role update"))?
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    "Bank not found after role update",
+                )
+            })?
     };
 
     info!(name = %name, roles = ?request.roles, "Bank roles updated");
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
+        .await;
 
-    Ok(Json(ApiResponse::new(updated.clone())))
+    crate::api::ok(updated.clone())
 }
 
 // ============================================================================
@@ -1451,7 +1494,10 @@ pub async fn release_all_seed_banks_v1(
         map.values()
             .filter_map(|v| {
                 let mgmt = v.management.as_ref()?;
-                Some((mgmt.name.clone(), v.mount_path.to_string_lossy().to_string()))
+                Some((
+                    mgmt.name.clone(),
+                    v.mount_path.to_string_lossy().to_string(),
+                ))
             })
             .collect()
     };
@@ -1505,7 +1551,9 @@ pub async fn release_all_seed_banks_v1(
     }
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts
-    state.emit_storage_changed(garden_common::storage::StorageChanged::Reclassified).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
+        .await;
 
     info!(count = results.len(), "All seed banks released");
     Ok((StatusCode::OK, Json(results)))
@@ -1543,7 +1591,7 @@ pub struct PinSeedBankResponse {
 pub async fn pin_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<PinSeedBankResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<PinSeedBankResponse> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err(err(
@@ -1567,7 +1615,8 @@ pub async fn pin_bank_v1(
                 )
             })?;
 
-        vol.pin().await.map_err(|e| {
+        let store = ContentStore::new(vol.mount_path.clone(), None);
+        vol.pin(&store).await.map_err(|e| {
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PIN_FAILED",
@@ -1587,20 +1636,22 @@ pub async fn pin_bank_v1(
             })
             .unwrap_or_default()
     };
-    state.emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
-        device_id,
-        replica_set_id,
-    }).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
+            device_id,
+            replica_set_id,
+        })
+        .await;
     state.orchestration.storage.nudge.notify_one();
 
-    Ok(Json(ApiResponse::new(PinSeedBankResponse {
+    crate::api::ok(PinSeedBankResponse {
         name: name.clone(),
         pinned: true,
         message: format!(
             "Primary role for '{}' pinned to this stone (pin_id: {})",
             name, pin_id
         ),
-    })))
+    })
 }
 
 /// POST /api/v1/stone/storage/banks/:name/unpin
@@ -1610,7 +1661,7 @@ pub async fn pin_bank_v1(
 pub async fn unpin_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ApiResponse<PinSeedBankResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<PinSeedBankResponse> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err(err(
@@ -1623,10 +1674,12 @@ pub async fn unpin_bank_v1(
     // STORAGE-0011: Unpin via Volume — clears pin + deletes disk file.
     let _was_pinned = {
         let mut map = state.current.storage.volumes.write().await;
-        if let Some(vol) = map.values_mut().find(|v| {
-            v.management.as_ref().is_some_and(|m| m.name == name)
-        }) {
-            match vol.unpin().await {
+        if let Some(vol) = map
+            .values_mut()
+            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+        {
+            let store = ContentStore::new(vol.mount_path.clone(), None);
+            match vol.unpin(&store).await {
                 Ok(old_pin_id) => old_pin_id,
                 Err(e) => {
                     warn!(name = %name, error = %e, "Unpin encountered an error");
@@ -1650,17 +1703,19 @@ pub async fn unpin_bank_v1(
             })
             .unwrap_or_default()
     };
-    state.emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
-        device_id,
-        replica_set_id,
-    }).await;
+    state
+        .emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
+            device_id,
+            replica_set_id,
+        })
+        .await;
     state.orchestration.storage.nudge.notify_one();
 
-    Ok(Json(ApiResponse::new(PinSeedBankResponse {
+    crate::api::ok(PinSeedBankResponse {
         name: name.clone(),
         pinned: false,
         message: format!("Primary role for '{}' is now unpinned", name),
-    })))
+    })
 }
 
 // ============================================================================
@@ -1677,15 +1732,19 @@ pub async fn bank_changes_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Query(params): Query<ChangesQuery>,
-) -> Result<
-    Json<ApiResponse<garden_common::storage::ChangesResponse>>,
-    (StatusCode, Json<ApiErrorResponse>),
-> {
+) -> crate::api::ApiResult<garden_common::storage::ChangesResponse> {
     let mount_path = {
         let map = state.current.storage.volumes.read().await;
-        let vol = map.values()
+        let vol = map
+            .values()
             .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    &format!("Bank '{}' not found", name),
+                )
+            })?;
         vol.mount_path.to_string_lossy().to_string()
     };
 
@@ -1712,7 +1771,7 @@ pub async fn bank_changes_v1(
         "Served changelog changes"
     );
 
-    Ok(Json(ApiResponse::new(resp)))
+    crate::api::ok(resp)
 }
 
 /// Query parameters for the storage SSE stream.
@@ -1744,7 +1803,7 @@ pub async fn stream_storage_v1(
     use tokio_stream::StreamExt;
 
     let token = state.shutdown_token.child_token();
-    let rx = state.orchestration.storage.tick.debounced.subscribe();
+    let rx = state.orchestration.storage.tick_stream();
     let filter_name = query.storage.clone();
 
     info!(
@@ -1757,11 +1816,10 @@ pub async fn stream_storage_v1(
         match result {
             Ok(tick) => {
                 // If a filter is set, only emit ticks for that seed bank
-                if let Some(ref name) = filter_name {
-                    if tick.storage != *name {
+                if let Some(ref name) = filter_name
+                    && tick.storage != *name {
                         return None;
                     }
-                }
                 let json = serde_json::to_string(&tick).unwrap_or_default();
                 Some(Event::default().event("storage.tick").data(json))
             }
@@ -1791,4 +1849,21 @@ pub async fn stream_storage_v1(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ============================================================================
+// GET /api/v1/stone/storage/s3/ports - S3 Port Catalog (STORAGE-0016)
+// ============================================================================
+
+/// Returns the mapping of replica set name → S3 port for all armed listeners.
+///
+/// Clients use this to discover which port to connect to for S3 operations
+/// on a specific storage.
+///
+/// Response: `{ "ports": { "storage": 23454, "prod": 23455 } }`
+pub async fn s3_port_catalog(
+    State(state): State<AppState>,
+) -> axum::Json<serde_json::Value> {
+    let catalog = state.orchestration.storage.s3_listeners.port_catalog().await;
+    axum::Json(serde_json::json!({ "ports": catalog }))
 }

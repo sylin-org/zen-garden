@@ -3,8 +3,9 @@
 //! Executors implement specific job types (install-service, upgrade-service, etc.)
 //! JobManager dispatches to appropriate executor based on job_type.
 
-use async_trait::async_trait;
 use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
 
 /// Result of job execution
 #[derive(Debug, Clone)]
@@ -79,7 +80,6 @@ pub enum JobExecutionError {
 /// - UpgradeServiceExecutor: Stops old container, starts new one
 /// - VacateStoneExecutor: Migrates all services off stone
 /// - TransferServiceExecutor: Moves service to different stone
-#[async_trait]
 pub trait JobExecutor: Send + Sync {
     /// Get the job type this executor handles
     fn job_type(&self) -> &str;
@@ -88,7 +88,11 @@ pub trait JobExecutor: Send + Sync {
     ///
     /// Input format is job-type specific (validated by executor).
     /// Executor should publish progress events via EventBus.
-    async fn execute(&self, job_id: &str, input: Value) -> Result<JobResult, JobExecutionError>;
+    fn execute<'a>(
+        &'a self,
+        job_id: &'a str,
+        input: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<JobResult, JobExecutionError>> + Send + 'a>>;
 
     /// Validate input without executing
     ///

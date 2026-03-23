@@ -3,10 +3,10 @@ use crate::{
     InterfaceMetrics, MemoryMetrics, NetworkMetrics, StoneResources, StorageMetrics,
 };
 use anyhow::{Context, Result};
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::process::Command;
-use sysinfo::{Networks, System};
+use sysinfo::{Components, Networks, System};
 
 /// Collect CPU model and features from /proc/cpuinfo (Linux) or WMI (Windows)
 pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
@@ -15,13 +15,13 @@ pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
         get_cpu_info_windows()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         get_cpu_info_linux()
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn get_cpu_info_linux() -> Result<(String, Vec<String>, String)> {
     let cpuinfo = fs::read_to_string("/proc/cpuinfo").context("Failed to read /proc/cpuinfo")?;
 
@@ -68,10 +68,10 @@ fn get_cpu_info_windows() -> Result<(String, Vec<String>, String)> {
         ])
         .output();
 
-    if let Ok(output) = output {
-        if let Ok(name) = String::from_utf8(output.stdout) {
-            model_name = name.trim().to_string();
-        }
+    if let Ok(output) = output
+        && let Ok(name) = String::from_utf8(output.stdout)
+    {
+        model_name = name.trim().to_string();
     }
 
     // Detect CPU features using CPUID - is_x86_feature_detected! is safe
@@ -138,11 +138,12 @@ fn get_cpu_info_windows() -> Result<(String, Vec<String>, String)> {
 /// Fast collection suitable for high-frequency polling (5s intervals).
 /// Only accesses in-memory kernel structures, no I/O.
 pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
-    let mut system = System::new_all();
-    system.refresh_all();
+    let mut system = System::new();
+    system.refresh_cpu_all();
+    system.refresh_memory();
 
     // CPU metrics
-    let usage_percent = system.global_cpu_info().cpu_usage();
+    let usage_percent = system.global_cpu_usage();
     let cpu = CpuMetrics {
         cores: system.cpus().len(),
         usage_percent,
@@ -173,6 +174,30 @@ pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
     let uptime_friendly = format_uptime(uptime_seconds);
 
     Ok((cpu, memory, uptime_seconds, uptime_friendly))
+}
+
+/// Read the CPU package temperature from hardware thermal sensors.
+///
+/// Scans `sysinfo::Components` for labels containing "CPU", "Package",
+/// "Tctl", or "coretemp" (common on x86 and ARM). Returns the first
+/// matching sensor's temperature in degrees Celsius, or `None` if no
+/// CPU thermal sensor is found (e.g. VMs, some Windows configurations).
+///
+/// Especially valuable for ARM stones with passive cooling where thermal
+/// throttling is a real operational concern.
+pub fn get_cpu_temperature() -> Option<f32> {
+    let components = Components::new_with_refreshed_list();
+    components
+        .list()
+        .iter()
+        .find(|c| {
+            let label = c.label().to_lowercase();
+            label.contains("cpu")
+                || label.contains("package")
+                || label.contains("tctl")
+                || label.contains("coretemp")
+        })
+        .and_then(|c| c.temperature())
 }
 
 /// Collect storage metrics for all mounted disks (slower, involves filesystem stat calls)
@@ -319,6 +344,7 @@ pub fn calculate_network_rate(
 pub fn collect_stone_resources() -> Result<StoneResources> {
     let (cpu, memory, uptime_seconds, uptime_friendly) = get_fast_metrics()?;
     let storage = get_storage_metrics()?;
+    let cpu_temperature = get_cpu_temperature();
 
     Ok(StoneResources {
         cpu,
@@ -326,6 +352,7 @@ pub fn collect_stone_resources() -> Result<StoneResources> {
         storage,
         uptime_seconds,
         uptime_friendly,
+        cpu_temperature,
     })
 }
 
@@ -334,13 +361,14 @@ pub fn get_stone_resources() -> Result<StoneResources> {
     collect_stone_resources()
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn collect_stone_resources_original() -> Result<StoneResources> {
-    let mut system = System::new_all();
-    system.refresh_all();
+    let mut system = System::new();
+    system.refresh_cpu_all();
+    system.refresh_memory();
 
     // CPU metrics
-    let usage_percent = system.global_cpu_info().cpu_usage();
+    let usage_percent = system.global_cpu_usage();
     let cpu = CpuMetrics {
         cores: system.cpus().len(),
         usage_percent,
@@ -407,6 +435,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
         storage: vec![], // Legacy function - use get_storage_metrics() instead
         uptime_seconds,
         uptime_friendly,
+        cpu_temperature: get_cpu_temperature(),
     })
 }
 
@@ -426,7 +455,7 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
         None
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         // Strategy 1: Use lsblk which resolves LVM/device-mapper to physical device.
         // `lsblk -ndo ROTA,TYPE <source>` returns e.g. "0 disk" (SSD) or "1 disk" (HDD).
@@ -441,7 +470,7 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
 }
 
 /// Detect disk type using `lsblk`, which handles LVM, device-mapper, and LUKS.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn detect_via_lsblk(mount_point: &str) -> Option<String> {
     // Find the source device for this mount point
     let findmnt = Command::new("findmnt")
@@ -514,7 +543,7 @@ fn detect_via_lsblk(mount_point: &str) -> Option<String> {
 
 /// Fallback: detect disk type via sysfs rotational flag.
 /// Works for direct /dev/sdX and /dev/nvmeXnY devices only.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn detect_via_sysfs(mount_point: &str) -> Option<String> {
     let output = Command::new("findmnt")
         .args(["-no", "SOURCE", "--target", mount_point])
@@ -676,10 +705,10 @@ pub fn detect_gpus() -> Vec<GpuInfo> {
     // If nothing detected but we're on Windows, try DirectX/DXGI detection
     #[cfg(target_os = "windows")]
     {
-        if gpus.is_empty() {
-            if let Ok(dxgi_gpus) = detect_windows_gpus() {
-                gpus.extend(dxgi_gpus);
-            }
+        if gpus.is_empty()
+            && let Ok(dxgi_gpus) = detect_windows_gpus()
+        {
+            gpus.extend(dxgi_gpus);
         }
     }
 
@@ -767,38 +796,38 @@ fn detect_nvidia_gpus() -> Result<Vec<GpuInfo>> {
 
 fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
     // Try rocm-smi first
-    if let Ok(output) = Command::new("rocm-smi").arg("--showproductname").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let gpus: Vec<GpuInfo> = stdout
-                .lines()
-                .filter(|line| line.contains("Card series"))
-                .filter_map(|line| {
-                    let model = line.split(':').nth(1)?.trim().to_string();
+    if let Ok(output) = Command::new("rocm-smi").arg("--showproductname").output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let gpus: Vec<GpuInfo> = stdout
+            .lines()
+            .filter(|line| line.contains("Card series"))
+            .filter_map(|line| {
+                let model = line.split(':').nth(1)?.trim().to_string();
 
-                    let mut capabilities = vec!["rocm".to_string(), "vulkan".to_string()];
-                    if cfg!(target_os = "windows") {
-                        capabilities.push("directml".to_string());
-                    }
+                let mut capabilities = vec!["rocm".to_string(), "vulkan".to_string()];
+                if cfg!(target_os = "windows") {
+                    capabilities.push("directml".to_string());
+                }
 
-                    Some(GpuInfo {
-                        vendor: "AMD".to_string(),
-                        model,
-                        vram_mb: None, // Would need additional query
-                        capabilities,
-                        ai_runtimes: Vec::new(),
-                    })
+                Some(GpuInfo {
+                    vendor: "AMD".to_string(),
+                    model,
+                    vram_mb: None, // Would need additional query
+                    capabilities,
+                    ai_runtimes: Vec::new(),
                 })
-                .collect();
+            })
+            .collect();
 
-            if !gpus.is_empty() {
-                return Ok(gpus);
-            }
+        if !gpus.is_empty() {
+            return Ok(gpus);
         }
     }
 
     // Fallback: check lspci on Linux
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         if let Ok(output) = Command::new("lspci").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -836,7 +865,7 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
 }
 
 fn detect_intel_gpus() -> Result<Vec<GpuInfo>> {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         if let Ok(output) = Command::new("lspci").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1063,28 +1092,26 @@ fn get_vram_from_wmi() -> std::collections::HashMap<String, u64> {
         ])
         .output();
 
-    if let Ok(output) = output {
-        if let Ok(stdout) = String::from_utf8(output.stdout) {
-            // Parse JSON output
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                let gpu_array: Vec<&serde_json::Value> = if json.is_array() {
-                    json.as_array().unwrap().iter().collect()
-                } else {
-                    vec![&json]
-                };
+    if let Ok(output) = output
+        && let Ok(stdout) = String::from_utf8(output.stdout)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout)
+    {
+        // Parse JSON output
+        let gpu_array: Vec<&serde_json::Value> = if json.is_array() {
+            json.as_array().unwrap().iter().collect()
+        } else {
+            vec![&json]
+        };
 
-                for gpu in gpu_array {
-                    if let (Some(name), Some(vram)) = (gpu["Name"].as_str(), gpu["VramMB"].as_u64())
-                    {
-                        // Only add if VRAM is reasonable (> 0)
-                        if vram > 0 {
-                            let normalized = normalize_gpu_name(name);
-                            vram_map.insert(normalized, vram);
+        for gpu in gpu_array {
+            if let (Some(name), Some(vram)) = (gpu["Name"].as_str(), gpu["VramMB"].as_u64()) {
+                // Only add if VRAM is reasonable (> 0)
+                if vram > 0 {
+                    let normalized = normalize_gpu_name(name);
+                    vram_map.insert(normalized, vram);
 
-                            // Also store original name for fallback matching
-                            vram_map.insert(name.to_string(), vram);
-                        }
-                    }
+                    // Also store original name for fallback matching
+                    vram_map.insert(name.to_string(), vram);
                 }
             }
         }
@@ -1108,6 +1135,8 @@ fn get_vram_from_dxgi() -> std::collections::HashMap<String, u64> {
     let mut vram_map = HashMap::new();
 
     // Create DXGI Factory
+    // SAFETY: CreateDXGIFactory takes no arguments and is safe to call on any Windows platform
+    // that has the DXGI runtime installed (guaranteed on Windows 7+).
     let factory: Result<IDXGIFactory, _> = unsafe { CreateDXGIFactory() };
 
     let Ok(factory) = factory else {
@@ -1118,15 +1147,20 @@ fn get_vram_from_dxgi() -> std::collections::HashMap<String, u64> {
     // Enumerate adapters
     let mut adapter_index = 0;
     loop {
+        // SAFETY: `factory` is a valid IDXGIFactory obtained above. `adapter_index` starts at 0
+        // and increments; EnumAdapters returns DXGI_ERROR_NOT_FOUND when the index is exhausted.
         let adapter = unsafe { factory.EnumAdapters(adapter_index) };
 
         match adapter {
             Ok(adapter) => {
                 // Get adapter description using mutable pointer
                 let mut desc = MaybeUninit::<DXGI_ADAPTER_DESC>::uninit();
+                // SAFETY: `adapter` is a valid IDXGIAdapter. `desc.as_mut_ptr()` is a valid
+                // pointer to an uninitialized DXGI_ADAPTER_DESC that GetDesc will fully initialize.
                 let result = unsafe { adapter.GetDesc(desc.as_mut_ptr()) };
 
                 if result.is_ok() {
+                    // SAFETY: GetDesc returned Ok, which means it has fully initialized `desc`.
                     let desc = unsafe { desc.assume_init() };
 
                     // Convert wide string to Rust String
@@ -1182,19 +1216,19 @@ fn detect_ai_runtime(vendor: &str, capabilities: &[String]) -> Option<AiRuntime>
     let mut has_any = false;
 
     // NVIDIA: Check for CUDA toolkit installation
-    if vendor == "NVIDIA" || capabilities.iter().any(|c| c == "cuda") {
-        if let Some(cuda_version) = detect_cuda_toolkit() {
-            runtime.cuda_version = Some(cuda_version);
-            has_any = true;
-        }
+    if (vendor == "NVIDIA" || capabilities.iter().any(|c| c == "cuda"))
+        && let Some(cuda_version) = detect_cuda_toolkit()
+    {
+        runtime.cuda_version = Some(cuda_version);
+        has_any = true;
     }
 
     // AMD: Check for ROCm installation
-    if vendor == "AMD" || capabilities.iter().any(|c| c == "rocm") {
-        if let Some(rocm_version) = detect_rocm_installation() {
-            runtime.rocm_version = Some(rocm_version);
-            has_any = true;
-        }
+    if (vendor == "AMD" || capabilities.iter().any(|c| c == "rocm"))
+        && let Some(rocm_version) = detect_rocm_installation()
+    {
+        runtime.rocm_version = Some(rocm_version);
+        has_any = true;
     }
 
     // Windows: Check for DirectML (part of Windows ML)
@@ -1252,31 +1286,31 @@ fn ai_runtime_to_strings(runtime: &AiRuntime) -> Vec<String> {
 /// Detect CUDA toolkit installation (not just driver)
 fn detect_cuda_toolkit() -> Option<String> {
     // Try nvcc --version (compiler presence indicates toolkit)
-    if let Ok(output) = Command::new("nvcc").arg("--version").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Parse version from: "Cuda compilation tools, release 12.2, V12.2.140"
-            if let Some(line) = stdout.lines().find(|l| l.contains("release")) {
-                if let Some(version_part) = line.split("release").nth(1) {
-                    let version = version_part.trim().split(',').next()?.trim().to_string();
-                    return Some(version);
-                }
-            }
+    if let Ok(output) = Command::new("nvcc").arg("--version").output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Parse version from: "Cuda compilation tools, release 12.2, V12.2.140"
+        if let Some(line) = stdout.lines().find(|l| l.contains("release"))
+            && let Some(version_part) = line.split("release").nth(1)
+        {
+            let version = version_part.trim().split(',').next()?.trim().to_string();
+            return Some(version);
         }
     }
 
     // Check environment variable (toolkit sets this)
-    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-        if !cuda_path.is_empty() {
-            // Try to extract version from path like "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2"
-            if let Some(version) = cuda_path.split("v").last() {
-                if version.chars().next().is_some_and(|c| c.is_numeric()) {
-                    return Some(version.to_string());
-                }
-            }
-            // Fallback: just indicate toolkit is present
-            return Some("installed".to_string());
+    if let Ok(cuda_path) = std::env::var("CUDA_PATH")
+        && !cuda_path.is_empty()
+    {
+        // Try to extract version from path like "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2"
+        if let Some(version) = cuda_path.split("v").last()
+            && version.chars().next().is_some_and(|c| c.is_numeric())
+        {
+            return Some(version.to_string());
         }
+        // Fallback: just indicate toolkit is present
+        return Some("installed".to_string());
     }
 
     None
@@ -1285,16 +1319,16 @@ fn detect_cuda_toolkit() -> Option<String> {
 /// Detect ROCm installation
 fn detect_rocm_installation() -> Option<String> {
     // Try rocm-smi --version
-    if let Ok(output) = Command::new("rocm-smi").arg("--version").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = stdout.lines().find(|l| l.contains("version")) {
-                if let Some(version) = line.split_whitespace().last() {
-                    return Some(version.trim().to_string());
-                }
-            }
-            return Some("installed".to_string());
+    if let Ok(output) = Command::new("rocm-smi").arg("--version").output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(line) = stdout.lines().find(|l| l.contains("version"))
+            && let Some(version) = line.split_whitespace().last()
+        {
+            return Some(version.trim().to_string());
         }
+        return Some("installed".to_string());
     }
 
     // Check for ROCm paths
@@ -1329,8 +1363,8 @@ fn detect_directml() -> bool {
         .any(|path| std::path::Path::new(path).exists())
 }
 
-#[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+#[expect(dead_code)]
 fn detect_directml() -> bool {
     false
 }
@@ -1477,8 +1511,8 @@ pub fn detect_swap() -> Option<u64> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+#[expect(dead_code)]
 fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
     anyhow::bail!("Windows GPU detection not available on this platform")
 }

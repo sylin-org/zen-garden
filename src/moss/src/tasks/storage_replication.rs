@@ -85,7 +85,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
     // Subscribe to aggregated storage ticks — the aggregator quantizes raw
     // per-write events into per-seed-bank batches (2s quiet / 10s deadline).
     // For remote Primaries we still rely on polling as a fallback.
-    let mut tick_rx = state.orchestration.storage.tick.debounced.subscribe();
+    let mut tick_rx = state.orchestration.storage.tick_stream();
 
     loop {
         // Wait for either the poll interval or a storage tick
@@ -140,14 +140,7 @@ async fn replication_tick(state: &AppState) -> Result<()> {
     }
 
     for (name, id, mount_path) in &dormant_banks {
-        if let Err(e) = sync_dormant_bank(
-            state,
-            name,
-            id,
-            mount_path.as_path(),
-        )
-        .await
-        {
+        if let Err(e) = sync_dormant_bank(state, name, id, mount_path.as_path()).await {
             warn!(
                 bank = %name,
                 bank_id = %id,
@@ -187,21 +180,7 @@ async fn sync_dormant_bank(
 
     let peer = PeerAddress::from_http_url(&primary_endpoint);
     // 3. Read local last_cursor
-    // STORAGE-0011: prefer store from Volume management if available
-    let lifecycle_store = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .find_map(|vol| {
-                let mgmt = vol.management.as_ref()?;
-                if mgmt.name == name {
-                    Some(mgmt.store.clone())
-                } else {
-                    None
-                }
-            })
-    };
-    let local_store =
-        lifecycle_store.unwrap_or_else(|| ContentStore::new_public(mount_path));
+    let local_store = ContentStore::new_public(mount_path);
     let last_cursor = local_store.read_last_cursor().await;
 
     // 4. Pull changes from Primary (name-based routes — STORAGE-0009)
@@ -215,7 +194,8 @@ async fn sync_dormant_bank(
     );
 
     let resp = state
-        .security.stone_client
+        .security
+        .stone_client
         .get(&peer, &changes_path)
         .timeout(std::time::Duration::from_secs(PULL_TIMEOUT_SECS))
         .send()
@@ -291,10 +271,7 @@ async fn sync_dormant_bank(
                     }
                 };
 
-                let object_path = format!(
-                    "/api/v1/garden/storage/{}/objects/{}",
-                    name, api_path
-                );
+                let object_path = format!("/api/v1/garden/storage/{}/objects/{}", name, api_path);
 
                 match download_and_write(state, &peer, &object_path, &local_store, &entry.path)
                     .await
@@ -369,7 +346,8 @@ async fn download_and_write(
     rel_path: &str,
 ) -> Result<()> {
     let resp = state
-        .security.stone_client
+        .security
+        .stone_client
         .get(peer, remote_path)
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .send()

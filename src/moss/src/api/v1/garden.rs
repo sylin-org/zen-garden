@@ -1,28 +1,29 @@
-use crate::api::responses::{ApiResponse, GardenOverview, StoneInfo};
+use crate::api::responses::{GardenOverview, StoneInfo};
 use crate::api::suggestions::{generate_suggestions, Suggestion};
 use crate::domain::{
     placement::{PlacementRequest, PlacementResponse},
-    topology, TopologyEntry,
+    topology,
 };
-use crate::{error_response, AppState};
+use crate::{internal, not_found, AppState};
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     Json,
 };
 use garden_common::metrics::system as metrics;
+use garden_common::TopologyEntry;
 use garden_common::{
-    api_utils::ApiErrorResponse, CpuCapabilities, DetectionStatus, DiskCapabilities,
-    HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo,
+    CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory,
+    MemoryCapabilities, RuntimeInfo,
 };
 
 /// GET /api/v1/garden - Get garden overview (all stones)
 pub async fn get_garden_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<GardenOverview>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<GardenOverview> {
     // Build stone list: self entry + all cached peers
-    let self_entry = state.current.topology.self_entry.read().await.clone();
+    let self_entry = state.build_self_entry().await;
     let cache_entries = topology::get_all_stones(&state.current.topology.cache).await;
 
     let mut stones = Vec::new();
@@ -39,7 +40,9 @@ pub async fn get_garden_v1(
     // Add self first with live metrics
     let self_info = topology_entry_to_stone_info_with_metrics(&self_entry, cpu_usage, memory_usage);
     total_services += self_info.services_count;
-    if self_info.health == garden_common::constants::HEALTH_HEALTHY || self_info.health == garden_common::constants::VITALITY_THRIVING {
+    if self_info.health == garden_common::constants::HEALTH_HEALTHY
+        || self_info.health == garden_common::constants::VITALITY_THRIVING
+    {
         healthy_stones += 1;
     } else {
         degraded_stones += 1;
@@ -53,7 +56,9 @@ pub async fn get_garden_v1(
         }
         let info = topology_entry_to_stone_info(&entry);
         total_services += info.services_count;
-        if info.health == garden_common::constants::HEALTH_HEALTHY || info.health == garden_common::constants::VITALITY_THRIVING {
+        if info.health == garden_common::constants::HEALTH_HEALTHY
+            || info.health == garden_common::constants::VITALITY_THRIVING
+        {
             healthy_stones += 1;
         } else {
             degraded_stones += 1;
@@ -72,10 +77,7 @@ pub async fn get_garden_v1(
     let ctx = Suggestion::from_headers(&headers, "observe_garden");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: overview,
-        suggestions,
-    }))
+    crate::api::ok_maybe(overview, suggestions)
 }
 
 /// Convert TopologyEntry to StoneInfo for garden overview (peers - no live metrics)
@@ -104,14 +106,12 @@ pub async fn get_stone_v1(
     State(state): State<AppState>,
     Path(stone_name): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<HardwareCapabilities>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<HardwareCapabilities> {
     // For now, only support local stone
     if state.current.stone.name != stone_name {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
+        return Err(not_found(
             "STONE_NOT_FOUND",
             format!("Stone '{}' not found in garden", stone_name),
-            None,
         ));
     }
 
@@ -120,42 +120,33 @@ pub async fn get_stone_v1(
     let ctx = Suggestion::from_headers(&headers, "observe_stone");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: caps,
-        suggestions,
-    }))
+    crate::api::ok_maybe(caps, suggestions)
 }
 
 /// GET /api/v1/stone - Get local stone consolidated info
 pub async fn get_local_stone_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<HardwareCapabilities>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<HardwareCapabilities> {
     let caps = get_capabilities(&state).await;
 
     let ctx = Suggestion::from_headers(&headers, "observe_stone");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: caps,
-        suggestions,
-    }))
+    crate::api::ok_maybe(caps, suggestions)
 }
 /// POST /api/v1/garden/recommend - Get intelligent placement recommendation
 pub async fn recommend_placement_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<PlacementRequest>,
-) -> Result<Json<ApiResponse<PlacementResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
+) -> crate::api::ApiResult<PlacementResponse> {
     match crate::domain::placement::recommend_placement(request.clone(), &state).await {
         Ok(response) => {
             let ctx = Suggestion::from_headers(&headers, "placement_success");
             let suggestions = generate_suggestions(&ctx);
 
-            Ok(Json(ApiResponse {
-                data: response,
-                suggestions,
-            }))
+            crate::api::ok_maybe(response, suggestions)
         }
         Err(e) => {
             tracing::error!(
@@ -164,11 +155,9 @@ pub async fn recommend_placement_v1(
                 "Placement recommendation failed"
             );
 
-            Err(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+            Err(internal(
                 "PLACEMENT_ERROR",
                 format!("Failed to generate placement recommendation: {}", e),
-                None,
             ))
         }
     }
@@ -270,9 +259,9 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
 pub async fn get_topology_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<TopologyEntry>>>, (StatusCode, Json<ApiErrorResponse>)> {
-    // Step 1: Read self entry (single source of truth for local stone)
-    let self_entry = state.current.topology.self_entry.read().await.clone();
+) -> crate::api::ApiResult<Vec<TopologyEntry>> {
+    // Step 1: Build self entry on demand from source domains
+    let self_entry = state.build_self_entry().await;
 
     tracing::debug!(
         stone_id = %self_entry.stone_id,
@@ -305,8 +294,5 @@ pub async fn get_topology_v1(
     let ctx = Suggestion::from_headers(&headers, "topology_query");
     let suggestions = generate_suggestions(&ctx);
 
-    Ok(Json(ApiResponse {
-        data: stones,
-        suggestions,
-    }))
+    crate::api::ok_maybe(stones, suggestions)
 }

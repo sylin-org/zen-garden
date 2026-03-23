@@ -1,4 +1,4 @@
-﻿//! Command routing — thin dispatch layer
+//! Command routing — thin dispatch layer
 //!
 //! `route()` receives a subcommand name and its ArgMatches, extracts arguments,
 //! constructs the appropriate Command struct, and returns a `CommandInvocation`.
@@ -19,7 +19,6 @@
 
 use crate::dispatch::{self, CommandInvocation, Runtime};
 
-use garden_common::ui::rendering as ui;
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::commands;
 use garden_rake::commands::Command;
@@ -65,7 +64,7 @@ pub async fn route(
         "find" => {
             let query = opt(m, "query").unwrap_or_default();
             let format_str = opt(m, "format").unwrap_or_else(|| "human".into());
-            let wishfully = m.get_flag("wishfully");
+            let ensure = m.get_flag("ensure");
             let find_format: commands::discovery::FindOutputFormat =
                 if g.field.is_some() || g.output.as_str() == "json" {
                     commands::discovery::FindOutputFormat::Json
@@ -78,7 +77,7 @@ pub async fn route(
                     find_format,
                     g.quiet,
                     g.fresh,
-                    wishfully,
+                    ensure,
                     g.field.clone(),
                 ),
                 m,
@@ -108,6 +107,15 @@ pub async fn route(
         }
 
         "pulse" => Inv::remote(commands::pulse::PulseCommand::new(g.quiet), m),
+
+        "logs" => {
+            let service = req(m, "service")?;
+            let timestamps = m.get_flag("timestamps");
+            Inv::remote(
+                commands::discovery::WatchCommand::offering_logs(service, timestamps, g.quiet),
+                m,
+            )
+        }
 
         // === Watch (subcommands) ===
         "watch" => {
@@ -204,12 +212,12 @@ pub async fn route(
         // =================================================================
 
         "remove" => Inv::remote(
-            commands::lifecycle::RemoveCommand::new(req(m, "service")?, m.get_flag("force"), g.quiet),
+            commands::lifecycle::RemoveCommand::new(req(m, "service")?, m.get_flag("yes"), g.quiet),
             m,
         ),
 
         "uproot" => Inv::remote(
-            commands::lifecycle::UprootCommand::new(req(m, "service")?, m.get_flag("force"), g.quiet),
+            commands::lifecycle::UprootCommand::new(req(m, "service")?, m.get_flag("yes"), g.quiet),
             m,
         ),
 
@@ -227,11 +235,6 @@ pub async fn route(
             commands::lifecycle::WakeCommand::new(req(m, "service")?, g.quiet),
             m,
         ),
-
-        "nourish" => {
-            let stone = opt(m, "service");
-            Inv::local(commands::nourish::NourishCommand::new(stone, false, false))
-        }
 
         // =================================================================
         // Manifest Authoring
@@ -298,10 +301,6 @@ pub async fn route(
             m,
         ),
 
-        "adopted" => Inv::remote(commands::discovery::AdoptedCommand::new(g.quiet), m),
-
-        "borrowed" => Inv::remote(commands::discovery::BorrowedCommand::new(g.quiet), m),
-
         "borrow" => {
             let name = req(m, "name")?;
             let from_url = opt(m, "from").ok_or_else(|| {
@@ -318,44 +317,9 @@ pub async fn route(
             m,
         ),
 
-        "locate" => match m.subcommand() {
-            Some(("strays", _)) => Inv::remote(
-                commands::adoption::LocateStraysCommand::new(g.quiet),
-                m,
-            ),
-            _ => anyhow::bail!("Usage: garden-rake locate strays"),
-        },
-
         // =================================================================
         // Management
         // =================================================================
-
-        "place" => {
-            match commands::management::PlaceCommand::from_args(
-                req(m, "target")?,
-                opt(m, "code"),
-                opt(m, "passphrase"),
-                g.quiet,
-            ) {
-                Ok(cmd) => Inv::remote(cmd, m),
-                Err(e) => {
-                    eprintln!(
-                        "{}{} {}",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", rt.term.supports_color),
-                        e
-                    );
-                    return Ok(None);
-                }
-            }
-        }
-
-        "invite" => Inv::remote(commands::management::InviteCommand::new(g.quiet), m),
-
-        "reconcile" => Inv::remote(
-            commands::management::ReconcileCommand::new(m.get_flag("drop-invalid"), g.quiet),
-            m,
-        ),
 
         "tend" => Inv::local(commands::management::TendCommand::new(
             opt(m, "target"),
@@ -407,85 +371,68 @@ pub async fn route(
             )
         }
 
-        // === Lift ===
-        "lift" => {
-            use commands::management::LiftTarget;
-            let target_type = req(m, "target_type")?;
-            let target = match target_type.as_str() {
-                "keystone" => LiftTarget::Keystone,
-                "stone" => LiftTarget::Stone {
-                    name: opt(m, "stone_name").ok_or_else(|| {
-                        anyhow::anyhow!("Stone name required: garden-rake lift stone <name>")
-                    })?,
-                },
-                _ => anyhow::bail!(
-                    "Invalid target: '{}'. Use 'keystone' or 'stone'",
-                    target_type
-                ),
-            };
-            Inv::remote(commands::management::LiftCommand::new(target, g.quiet), m)
-        }
+        // =================================================================
+        // Stone Administration (grouped)
+        // =================================================================
 
-        // === Make (subcommands) ===
-        "make" => {
-            use commands::management::MakeActionType;
-            let target = req(m, "target")?;
-            if target != "stone" {
-                anyhow::bail!(
-                    "Invalid target: '{}'. Use: garden-rake make stone <sing|quiet|silent|minimal>",
-                    target
-                );
+        "stone" => match m.subcommand() {
+            Some(("wake", sub)) => Inv::remote(
+                commands::admin::RouseCommand::new(req(sub, "stone")?, g.quiet),
+                m,
+            ),
+            Some(("shutdown", sub)) => {
+                let target = opt(sub, "stone").or_else(|| opt(m, "at"));
+                Inv::remote_at(commands::admin::SlumberCommand::new(g.quiet), target)
             }
-            let action_type = match m.subcommand() {
-                Some(("sing", sub)) => MakeActionType::Sing {
-                    forever: sub.get_flag("forever"),
-                },
-                Some(("quiet", _)) => MakeActionType::Quiet,
-                Some(("silent", _)) => MakeActionType::Silent,
-                Some(("minimal", _)) => MakeActionType::Minimal,
-                _ => anyhow::bail!("Usage: garden-rake make stone <sing|quiet|silent|minimal>"),
-            };
-            Inv::remote(commands::management::MakeCommand::new(action_type, g.quiet), m)
-        }
-
-        // =================================================================
-        // Admin
-        // =================================================================
-
-        "take-root" => {
-            let at_keyword = opt(m, "at_keyword");
-            let stone = opt(m, "stone");
-            let at_flag = opt(m, "at");
-            let target = if at_keyword.as_deref() == Some("at") {
-                stone.clone()
-            } else {
-                at_keyword.or(at_flag)
-            };
-            Inv::remote_at(
-                commands::admin::InstallServiceCommand::take_root(g.quiet),
-                target,
-            )
-        }
-
-        "install-service" => Inv::remote(
-            commands::admin::InstallServiceCommand::install_service(g.quiet),
-            m,
-        ),
-
-        "rouse" => Inv::remote(
-            commands::admin::RouseCommand::new(req(m, "stone")?, g.quiet),
-            m,
-        ),
-
-        "slumber" => {
-            let target = opt(m, "stone").or_else(|| opt(m, "at"));
-            Inv::remote_at(commands::admin::SlumberCommand::new(g.quiet), target)
-        }
-
-        "stir" => {
-            let target = opt(m, "stone").or_else(|| opt(m, "at"));
-            Inv::remote_at(commands::admin::StirCommand::new(g.quiet), target)
-        }
+            Some(("reboot", sub)) => {
+                let target = opt(sub, "stone").or_else(|| opt(m, "at"));
+                Inv::remote_at(commands::admin::StirCommand::new(g.quiet), target)
+            }
+            Some(("verbosity", sub)) => {
+                use commands::management::MakeActionType;
+                let level = req(sub, "level")?;
+                let action_type = match level.as_str() {
+                    "sing" => MakeActionType::Sing {
+                        forever: sub.get_flag("forever"),
+                    },
+                    "quiet" => MakeActionType::Quiet,
+                    "silent" => MakeActionType::Silent,
+                    "minimal" => MakeActionType::Minimal,
+                    _ => anyhow::bail!(
+                        "Invalid verbosity level: '{}'. Use: sing, quiet, silent, minimal",
+                        level
+                    ),
+                };
+                Inv::remote(commands::management::MakeCommand::new(action_type, g.quiet), m)
+            }
+            Some(("install", _sub)) => {
+                Inv::remote_at(
+                    commands::admin::InstallServiceCommand::take_root(g.quiet),
+                    opt(m, "at"),
+                )
+            }
+            Some(("reconcile", sub)) => Inv::remote(
+                commands::management::ReconcileCommand::new(
+                    sub.get_flag("drop-invalid"),
+                    g.quiet,
+                ),
+                m,
+            ),
+            Some(("refresh", sub)) => {
+                let component = req(sub, "component")?;
+                let from = req(sub, "from")?;
+                let endpoint =
+                    dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*STONE))
+                        .await?;
+                println!("Refreshing {}...", component);
+                refresh_component(&rt.client, &endpoint, &component, std::path::Path::new(&from))
+                    .await?;
+                return Ok(None);
+            }
+            _ => anyhow::bail!(
+                "Usage: garden-rake stone <wake|shutdown|reboot|verbosity|install|reconcile|refresh>"
+            ),
+        },
 
         // =================================================================
         // Hey (companion)
@@ -510,8 +457,8 @@ pub async fn route(
         "commands" => Inv::local(commands::local::BrowseCommand::new(
             opt(m, "name"),
             opt(m, "category"),
-            m.get_flag("zen"),
-            m.get_flag("normative"),
+            false,
+            false,
         )),
 
         // =================================================================
@@ -596,13 +543,11 @@ pub async fn route(
 
         "store" => return route_store(m, g),
 
-        "restore" => return route_restore(m, g),
-
         // =================================================================
-        // Nurturing (subcommands)
+        // Backup (grouped, replaces nurturing + restore)
         // =================================================================
 
-        "nurturing" => match m.subcommand() {
+        "backup" => match m.subcommand() {
             Some(("status", sub)) => Inv::remote(
                 commands::nurturing::NurturingStatusCommand::new(opt(sub, "offering")),
                 m,
@@ -623,8 +568,11 @@ pub async fn route(
                 commands::nurturing::NurturingTriggerCommand::new(None),
                 m,
             ),
+            Some(("restore", sub)) => {
+                return route_restore(sub, g);
+            }
             _ => anyhow::bail!(
-                "Usage: garden-rake nurturing <status|list|trigger|trigger-all>"
+                "Usage: garden-rake backup <status|list|trigger|trigger-all|restore>"
             ),
         },
 
@@ -655,33 +603,7 @@ pub async fn route(
             return Ok(None);
         }
 
-        "presence" => {
-            commands::presence::presence_command(
-                opt(m, "categories"),
-                opt(m, "at"),
-                &rt.client,
-                g.quiet,
-                g.fresh,
-                g.verbose,
-                Some(&*STONE),
-            )
-            .await?;
-            return Ok(None);
-        }
-
         "election" => return route_election(m, &rt.client).await,
-
-        "refresh" => {
-            let component = req(m, "component")?;
-            let from = req(m, "from")?;
-            let endpoint =
-                dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*STONE))
-                    .await?;
-            println!("Refreshing {}...", component);
-            refresh_component(&rt.client, &endpoint, &component, std::path::Path::new(&from))
-                .await?;
-            return Ok(None);
-        }
 
         // =================================================================
         // Fallback
@@ -740,9 +662,7 @@ async fn route_offer(
                 commands::offering::OfferCommand::placement_recommend(name.to_string(), is_quiet),
             )));
         }
-        anyhow::bail!(
-            "Usage: garden-rake offer <offering> --placement-mode <interactive|auto>"
-        );
+        anyhow::bail!("Usage: garden-rake offer <offering> --placement-mode <interactive|auto>");
     }
 
     // ── --at anywhere ──
@@ -764,18 +684,14 @@ async fn route_offer(
     let cmd = match (offering.as_deref(), has_info_sub) {
         (None, _) => commands::offering::OfferCommand::list(g.quiet),
         (Some("refresh"), _) => commands::offering::OfferCommand::refresh(g.quiet),
-        (Some(name), true) => {
-            commands::offering::OfferCommand::info(name.to_string(), g.quiet)
-        }
+        (Some(name), true) => commands::offering::OfferCommand::info(name.to_string(), g.quiet),
         (Some(name), false) => {
             // Is it a known offering? Need pre-resolved endpoint to check.
             let endpoint =
-                dispatch::resolve_endpoint(&rt.client, at.clone(), Some(&*STONE))
-                    .await?;
-            let is_known = commands::offering::OfferCommand::is_known_offering(
-                &rt.client, &endpoint, name,
-            )
-            .await;
+                dispatch::resolve_endpoint(&rt.client, at.clone(), Some(&*STONE)).await?;
+            let is_known =
+                commands::offering::OfferCommand::is_known_offering(&rt.client, &endpoint, name)
+                    .await;
 
             if !is_known {
                 // Query — execute directly with pre-resolved endpoint
@@ -893,9 +809,7 @@ fn route_restore(
     if source_str.contains("seed-bank") || source_str.contains("seedbank") {
         let seed_bank = source_words
             .iter()
-            .skip_while(|s| {
-                s.to_lowercase() != "seed-bank" && s.to_lowercase() != "seedbank"
-            })
+            .skip_while(|s| s.to_lowercase() != "seed-bank" && s.to_lowercase() != "seedbank")
             .nth(1)
             .cloned()
             .ok_or_else(|| {
@@ -905,7 +819,9 @@ fn route_restore(
                 )
             })?;
         Ok(Some(Inv::remote(
-            commands::nurturing::RestoreRemoteCommand::new(offering, seed_bank, harvest_id, dry_run),
+            commands::nurturing::RestoreRemoteCommand::new(
+                offering, seed_bank, harvest_id, dry_run,
+            ),
             m,
         )))
     } else {
@@ -951,11 +867,9 @@ async fn route_election(
                 "ceremony_coordinator" => ElectionType::CeremonyCoordinator,
                 "replica_target" => ElectionType::ReplicaTarget,
                 "backup_source" => ElectionType::BackupSource,
-                s if s.starts_with("offering_primary:") => {
-                    ElectionType::OfferingPrimary(
-                        s.strip_prefix("offering_primary:").unwrap().to_string(),
-                    )
-                }
+                s if s.starts_with("offering_primary:") => ElectionType::OfferingPrimary(
+                    s["offering_primary:".len()..].to_string(),
+                ),
                 custom => ElectionType::Custom(custom.to_string()),
             };
             let timeout_secs: u64 = timeout.as_deref().unwrap_or("10").parse().unwrap_or(10);
@@ -1017,10 +931,7 @@ async fn refresh_component(
     let encoded = base64::engine::general_purpose::STANDARD.encode(&binary_data);
 
     println!("\u{1f680} Uploading to stone...");
-    let url = format!(
-        "{}/api/v1/system/refresh",
-        endpoint.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/system/refresh", endpoint.trim_end_matches('/'));
     let response = client
         .post(&url)
         .json(&serde_json::json!({
@@ -1095,9 +1006,7 @@ async fn refresh_component(
             }
         }
 
-        println!(
-            "\n\u{26a0}\u{fe0f}  Moss did not respond after restart (this may be normal)"
-        );
+        println!("\n\u{26a0}\u{fe0f}  Moss did not respond after restart (this may be normal)");
         println!("   Check garden-moss status: systemctl status garden-moss.service");
     }
 

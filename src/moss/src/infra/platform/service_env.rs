@@ -30,10 +30,7 @@ pub async fn read_env(service_name: &str, var_names: &[String]) -> HashMap<Strin
 /// Write a set of environment variables for an adopted bare-metal service.
 ///
 /// A `None` value deletes the variable (reverts to default).
-pub async fn write_env(
-    service_name: &str,
-    vars: &HashMap<String, Option<String>>,
-) -> Result<()> {
+pub async fn write_env(service_name: &str, vars: &HashMap<String, Option<String>>) -> Result<()> {
     for (name, value) in vars {
         match value {
             Some(val) => write_var(service_name, name, val).await?,
@@ -56,9 +53,7 @@ async fn read_var(service_name: &str, var_name: &str) -> Option<String> {
     }
 
     // Fall back to systemd override
-    let override_file = format!(
-        "/etc/systemd/system/{service_name}.service.d/zen-garden-env.conf"
-    );
+    let override_file = format!("/etc/systemd/system/{service_name}.service.d/zen-garden-env.conf");
     if let Ok(content) = tokio::fs::read_to_string(&override_file).await {
         if let Some(val) = parse_systemd_env_var(&content, var_name) {
             return Some(val);
@@ -120,9 +115,7 @@ async fn delete_var(service_name: &str, var_name: &str) -> Result<()> {
     }
 
     // Remove from systemd override if present
-    let override_file = format!(
-        "/etc/systemd/system/{service_name}.service.d/zen-garden-env.conf"
-    );
+    let override_file = format!("/etc/systemd/system/{service_name}.service.d/zen-garden-env.conf");
     if let Ok(content) = tokio::fs::read_to_string(&override_file).await {
         let updated = remove_systemd_env_var(&content, var_name);
         tokio::fs::write(&override_file, updated)
@@ -375,7 +368,10 @@ mod tests {
     #[test]
     fn parse_quoted_env_file() {
         let content = "FOO=\"hello world\"\nBAR='single'\n";
-        assert_eq!(parse_env_file_var(content, "FOO"), Some("hello world".into()));
+        assert_eq!(
+            parse_env_file_var(content, "FOO"),
+            Some("hello world".into())
+        );
         assert_eq!(parse_env_file_var(content, "BAR"), Some("single".into()));
     }
 

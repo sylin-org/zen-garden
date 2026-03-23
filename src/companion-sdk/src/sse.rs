@@ -3,9 +3,17 @@
 //! Connects to Moss SSE endpoint and dispatches events to handler.
 
 use garden_common::presence::event_types::PRESENCE_STREAM_PATH;
-use std::sync::Arc;
+use std::future::Future;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::task::JoinHandle;
+
+/// Shared HTTP client for SSE connections (no overall timeout since streams are long-lived).
+static SSE_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .build()
+        .expect("SSE HTTP client")
+});
 
 /// Parsed SSE event
 #[derive(Debug, Clone)]
@@ -20,10 +28,9 @@ pub struct SseEvent {
 /// Trait for handling SSE events
 ///
 /// Implement this to react to presence events from Moss.
-#[async_trait::async_trait]
 pub trait EventHandler: Send + Sync + 'static {
     /// Handle an incoming SSE event
-    async fn on_event(&self, event: SseEvent);
+    fn on_event(&self, event: SseEvent) -> impl Future<Output = ()> + Send;
 }
 
 /// SSE client configuration
@@ -133,8 +140,7 @@ impl SseClient {
         endpoint: &str,
         handler: &Arc<H>,
     ) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
-        let response = client
+        let response = SSE_HTTP
             .get(endpoint)
             .header("Accept", "text/event-stream")
             .send()

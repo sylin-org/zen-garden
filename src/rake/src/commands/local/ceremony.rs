@@ -6,7 +6,6 @@ use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
-use async_trait::async_trait;
 
 /// Ceremony command - guided workflows (placeholder)
 pub struct CeremonyCommand {
@@ -20,24 +19,25 @@ impl CeremonyCommand {
     }
 }
 
-#[async_trait]
 impl Command for CeremonyCommand {
-    async fn execute(&self, _ctx: &Runtime) -> CommandResult {
-        println!();
-        println!("  ⏳ Ceremony workflows are not yet implemented.");
-        println!();
-        if let Some(ceremony_name) = &self.name {
-            println!("  Requested ceremony: {}", ceremony_name);
-        }
-        println!("  Future ceremonies may include:");
-        println!("    • ceremony bootstrap    - First-time setup wizard");
-        println!("    • ceremony migrate      - Service migration workflow");
-        println!("    • ceremony backup       - Guided backup configuration");
+    fn execute<'a>(&'a self, _ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            println!();
+            println!("  ⏳ Ceremony workflows are not yet implemented.");
+            println!();
+            if let Some(ceremony_name) = &self.name {
+                println!("  Requested ceremony: {}", ceremony_name);
+            }
+            println!("  Future ceremonies may include:");
+            println!("    • ceremony bootstrap    - First-time setup wizard");
+            println!("    • ceremony migrate      - Service migration workflow");
+            println!("    • ceremony backup       - Guided backup configuration");
 
-        // Self-teaching suggestions
-        suggestions::print_suggestions(cmd::CEREMONY, self.quiet);
+            // Self-teaching suggestions
+            suggestions::print_suggestions(cmd::CEREMONY, self.quiet);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn requires_endpoint(&self) -> bool {

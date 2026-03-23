@@ -9,5 +9,5 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Companion {
     /// Registry of all discovered and running companions.
-    pub registry: Arc<crate::infra::CompanionRegistry>,
+    pub registry: Arc<crate::infra::companions::CompanionRegistry>,
 }

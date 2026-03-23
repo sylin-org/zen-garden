@@ -20,7 +20,10 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
+use crate::domain::Current;
 use crate::AppState;
 
 // ============================================================================
@@ -36,9 +39,9 @@ use crate::AppState;
 ///
 /// # Returns
 /// - 200 OK: Shutdown initiated successfully
-pub async fn moss_shutdown(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
+pub async fn moss_shutdown(State(shutdown_token): State<CancellationToken>) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!("Admin moss shutdown requested");
-    state.shutdown_token.cancel();
+    shutdown_token.cancel();
 
     (
         StatusCode::OK,
@@ -136,8 +139,8 @@ pub async fn moss_take_root(
     // Check if service already exists
     let check_output = Command::new("sc").args(["query", "ZenGardenMoss"]).output();
 
-    if let Ok(output) = check_output {
-        if output.status.success() {
+    if let Ok(output) = check_output
+        && output.status.success() {
             tracing::warn!("Service already exists");
             return Err((
                 StatusCode::CONFLICT,
@@ -147,7 +150,6 @@ pub async fn moss_take_root(
                 })),
             ));
         }
-    }
 
     // Create service with proper sc.exe syntax (requires space after =)
     let bin_path = format!("binPath= {}", exe_path_str);
@@ -285,18 +287,24 @@ pub async fn stone_shutdown(
             if let Err(e) = result {
                 // Fallback to shutdown command
                 tracing::warn!(error = ?e, "systemctl failed, trying shutdown -h now");
-                let _ = std::process::Command::new("shutdown")
+                if let Err(e) = std::process::Command::new("shutdown")
                     .args(["-h", "now"])
-                    .spawn();
+                    .spawn()
+                {
+                    tracing::error!(error = ?e, "Failed to execute shutdown fallback command");
+                }
             }
         }
 
         #[cfg(windows)]
         {
             tracing::info!("Executing: shutdown /s /t 0");
-            let _ = std::process::Command::new("shutdown")
+            if let Err(e) = std::process::Command::new("shutdown")
                 .args(["/s", "/t", "0"])
-                .spawn();
+                .spawn()
+            {
+                tracing::error!(error = ?e, "Failed to execute shutdown command");
+            }
         }
     });
 
@@ -339,16 +347,21 @@ pub async fn stone_reboot(State(_state): State<AppState>) -> (StatusCode, Json<s
             if let Err(e) = result {
                 // Fallback to reboot command
                 tracing::warn!(error = ?e, "systemctl failed, trying reboot");
-                let _ = std::process::Command::new("reboot").spawn();
+                if let Err(e) = std::process::Command::new("reboot").spawn() {
+                    tracing::error!(error = ?e, "Failed to execute reboot fallback command");
+                }
             }
         }
 
         #[cfg(windows)]
         {
             tracing::info!("Executing: shutdown /r /t 0");
-            let _ = std::process::Command::new("shutdown")
+            if let Err(e) = std::process::Command::new("shutdown")
                 .args(["/r", "/t", "0"])
-                .spawn();
+                .spawn()
+            {
+                tracing::error!(error = ?e, "Failed to execute reboot command");
+            }
         }
     });
 
@@ -378,14 +391,15 @@ pub async fn stone_reboot(State(_state): State<AppState>) -> (StatusCode, Json<s
 /// - 400 BAD_REQUEST: Stone has no MAC address (discovery didn't capture it)
 /// - 500 INTERNAL_SERVER_ERROR: Failed to send WoL packet
 pub async fn stone_wake(
-    State(state): State<AppState>,
+    State(current): State<Arc<Current>>,
     Path(stone_name): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!(stone = %stone_name, "Wake-on-LAN requested");
 
     // Look up stone in topology cache (includes offline stones)
     let stone =
-        crate::domain::topology::get_stone_by_name(&state.current.topology.cache, &stone_name).await;
+        crate::domain::topology::get_stone_by_name(&current.topology.cache, &stone_name)
+            .await;
 
     match stone {
         None => {

@@ -3,7 +3,7 @@
 //! Backs up the offering's state (container image + volumes) so we can
 //! roll back if the update fails.
 
-use crate::infra::create_harvest;
+use crate::domain::traits::HarvestOps;
 use crate::AppState;
 use anyhow::Result;
 use garden_common::manifests::CeremonyMode;
@@ -38,15 +38,13 @@ pub async fn execute(
         );
     }
 
-    // Create the harvest
-    let manifest = create_harvest(
-        &state.platform.docker,
-        &state.orchestration.nurturing.harvest,
-        offering,
-        &state.current.stone.id,
-        commit_image,
-    )
-    .await?;
+    // Create the harvest via trait object (no infra import)
+    let manifest = state
+        .orchestration
+        .nurturing
+        .harvest_ops
+        .create_harvest(offering, &state.current.stone.id, commit_image)
+        .await?;
 
     tracing::info!(
         offering,

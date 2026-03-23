@@ -29,8 +29,8 @@ fn extract_bank_info(bank: &Value) -> Option<(String, String)> {
 
 async fn select_seed_bank(garden: &LiveGarden) -> Option<SelectedSeedBank> {
     for stone in &garden.stones {
-        if let Ok(resp) = stone.get_json("/api/v1/stone/storage/banks").await {
-            if let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
+        if let Ok(resp) = stone.get_json("/api/v1/stone/storage/banks").await
+            && let Some(banks) = resp.get("data").and_then(|d| d.as_array()) {
                 for bank in banks {
                     if let Some((id, name)) = extract_bank_info(bank) {
                         return Some(SelectedSeedBank {
@@ -41,7 +41,6 @@ async fn select_seed_bank(garden: &LiveGarden) -> Option<SelectedSeedBank> {
                     }
                 }
             }
-        }
     }
 
     None
@@ -494,7 +493,10 @@ async fn test_object_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result<
     }
 
     // LIST the bucket to confirm object shows up
-    let list_path = format!("/api/v1/garden/storage/{}/objects/{}/", bank_name, PROBE_BUCKET);
+    let list_path = format!(
+        "/api/v1/garden/storage/{}/objects/{}/",
+        bank_name, PROBE_BUCKET
+    );
     let list_start = Instant::now();
     let list_result = stone.get_json(&list_path).await;
     let list_duration = list_start.elapsed();
@@ -737,8 +739,7 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
         gateway_stone.endpoint, seed_bank, bucket
     );
     let list_start = Instant::now();
-    let list_resp = client.get(&list_url).send()
-        .await?;
+    let list_resp = client.get(&list_url).send().await?;
     let list_duration = list_start.elapsed();
 
     if list_resp.status() == StatusCode::OK {
@@ -782,8 +783,7 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     // GET
     let get_start = Instant::now();
-    let get_resp = client.get(&url).send()
-        .await?;
+    let get_resp = client.get(&url).send().await?;
     let get_duration = get_start.elapsed();
 
     if get_resp.status() != StatusCode::OK {
@@ -823,8 +823,7 @@ async fn test_gateway_roundtrip(garden: Arc<LiveGarden>, mut bag: Bag) -> Result
 
     // DELETE
     let delete_start = Instant::now();
-    let delete_resp = client.delete(&url).send()
-        .await?;
+    let delete_resp = client.delete(&url).send().await?;
     let delete_duration = delete_start.elapsed();
 
     if delete_resp.status() == StatusCode::NO_CONTENT || delete_resp.status() == StatusCode::OK {

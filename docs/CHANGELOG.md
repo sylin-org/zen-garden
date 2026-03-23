@@ -2,6 +2,10 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-17
+
+- **ARCH-0006**: Unified interface language. Removed the dual zen/normative CLI syntax — all commands now follow a single grammar: `verb [noun] [--flags]`. Deleted the three-layer parser pipeline (style detection, keyword extraction, normalization). Net: ~2,500 lines removed. Renamed: `nourish`→`upgrade`, `nurturing`→`backup`, `rouse/slumber/stir`→`stone wake/shutdown/reboot`, `make`→`stone verbosity`, `take-root`→`stone install`, `--wishful`→`--ensure`, `--force`→`--yes`. New: `logs <service>` shortcut, `cap`/`explore` aliases, `stone` and `backup` command groups. Moss API paths renamed: `/nourishment`→`/updates`, `/nurturing`→`/snapshots`, `/nourish`→`/upgrade`, `/memories`→`/snapshots`. See [ARCH-0006](decisions/ARCH-0006-unified-interface-language.md).
+
 ## 2026-03-12
 
 - **Garden storage API**: `/files/` namespace renamed to `/fs/`. Directory listing separated from content access (S3/GCS model): `GET /fs?path=&depth=N` for listing, `GET /fs/{*path}` for file content. Proxy `handle.list()` uses the listing endpoint with query parameters, avoiding the Axum wildcard gap for root/empty paths. CfApi startup purge race fixed — initial reconciliation no longer deletes remote-storage placeholders before registry beacons arrive.

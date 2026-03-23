@@ -787,7 +787,7 @@ impl CapabilityExecutor {
         #[cfg(target_os = "windows")]
         let (shell, flag) = ("cmd", "/C");
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         let (shell, flag) = ("sh", "-c");
 
         let output = tokio::time::timeout(
@@ -934,11 +934,10 @@ impl CapabilityExecutor {
         // Extract metadata fields
         let mut metadata = HashMap::new();
         for (key, path) in &fields.metadata {
-            if let Ok(value) = self.extract_path(item, path) {
-                if !value.is_null() {
+            if let Ok(value) = self.extract_path(item, path)
+                && !value.is_null() {
                     metadata.insert(key.clone(), value);
                 }
-            }
         }
 
         Ok(CapabilityItem {

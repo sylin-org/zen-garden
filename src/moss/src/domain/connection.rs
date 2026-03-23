@@ -4,22 +4,9 @@
 //! Supports hostname-first resolution with IP fallback for resilience.
 
 use garden_common::manifests::{get_category_registry, ConnectionProfile};
-use serde::{Deserialize, Serialize};
 
-/// Resolved connection information for a service
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolvedConnection {
-    /// Hostname (e.g., "stone-02.local")
-    pub hostname: String,
-    /// IP address (e.g., "192.168.1.102")
-    pub ip: String,
-    /// Service port
-    pub port: u16,
-    /// Protocol (e.g., "mongodb", "postgresql", "redis")
-    pub protocol: String,
-    /// Connection URIs - hostname-first, then IP (for resilience)
-    pub uris: Vec<String>,
-}
+// Re-export from garden-common (canonical definition)
+pub use garden_common::discovery::ResolvedConnection;
 
 /// Default connection templates by protocol
 ///
@@ -119,29 +106,25 @@ pub fn infer_protocol_from_manifest_metadata(
     connection: Option<&ConnectionProfile>,
 ) -> String {
     if let Some(conn) = connection {
-        if let Some(protocol) = conn.protocol.as_deref() {
-            if !protocol.trim().is_empty() {
+        if let Some(protocol) = conn.protocol.as_deref()
+            && !protocol.trim().is_empty() {
                 return protocol.trim().to_string();
             }
-        }
-        if let Some(template) = conn.uri_template.as_deref() {
-            if let Some(protocol) = protocol_from_template(template) {
+        if let Some(template) = conn.uri_template.as_deref()
+            && let Some(protocol) = protocol_from_template(template) {
                 return protocol;
             }
-        }
     }
 
     if let Some(category_conn) = get_category_registry().connection(category) {
-        if let Some(protocol) = category_conn.protocol.as_deref() {
-            if !protocol.trim().is_empty() {
+        if let Some(protocol) = category_conn.protocol.as_deref()
+            && !protocol.trim().is_empty() {
                 return protocol.trim().to_string();
             }
-        }
-        if let Some(template) = category_conn.uri_template.as_deref() {
-            if let Some(protocol) = protocol_from_template(template) {
+        if let Some(template) = category_conn.uri_template.as_deref()
+            && let Some(protocol) = protocol_from_template(template) {
                 return protocol;
             }
-        }
     }
 
     "http".to_string()
@@ -152,21 +135,17 @@ pub fn select_uri_template(
     connection: Option<&ConnectionProfile>,
     category: &str,
 ) -> Option<String> {
-    if let Some(conn) = connection {
-        if let Some(template) = conn.uri_template.as_deref() {
-            if !template.trim().is_empty() {
+    if let Some(conn) = connection
+        && let Some(template) = conn.uri_template.as_deref()
+            && !template.trim().is_empty() {
                 return Some(template.to_string());
             }
-        }
-    }
 
-    if let Some(category_conn) = get_category_registry().connection(category) {
-        if let Some(template) = category_conn.uri_template.as_deref() {
-            if !template.trim().is_empty() {
+    if let Some(category_conn) = get_category_registry().connection(category)
+        && let Some(template) = category_conn.uri_template.as_deref()
+            && !template.trim().is_empty() {
                 return Some(template.to_string());
             }
-        }
-    }
 
     None
 }

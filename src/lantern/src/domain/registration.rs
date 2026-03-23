@@ -35,13 +35,14 @@ pub fn register_stone(
         .into_iter()
         .map(|svc| TopologyServiceEntry {
             offering_id: String::new(),
-            name: garden_common::offerings::OfferingFqn::parse(&svc.name)
-                .unwrap_or_else(|_| garden_common::offerings::OfferingFqn {
+            name: garden_common::offerings::OfferingFqn::parse(&svc.name).unwrap_or_else(|_| {
+                garden_common::offerings::OfferingFqn {
                     source: None,
                     offering: svc.name.clone(),
                     instance: None,
                     image_ref: None,
-                }),
+                }
+            }),
             offering: svc.service_type,
             category: String::new(),
             status: svc.status,
@@ -76,7 +77,7 @@ pub fn register_stone(
             moss_version: String::new(),
             services: topo_services,
             mac: None,
-            health: garden_common::VITALITY_THRIVING.to_string(),
+            health: garden_common::constants::VITALITY_THRIVING.to_string(),
             capabilities: None,
             status: StoneStatus::Online,
             discovered_at: now,

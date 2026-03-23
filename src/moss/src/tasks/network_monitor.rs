@@ -92,13 +92,10 @@ impl Network {
     }
 
     /// Start background network monitoring with custom config
-    pub async fn start_with_config(
-        config: NetworkConfig,
-        network_ready: Arc<AtomicBool>,
-    ) -> Self {
+    pub async fn start_with_config(config: NetworkConfig, network_ready: Arc<AtomicBool>) -> Self {
         let initial_ip = get_current_ip();
         let current_ip = Arc::new(RwLock::new(initial_ip.clone()));
-        let (tx, _) = broadcast::channel(100);
+        let (tx, _) = broadcast::channel(garden_common::constants::channels::MONITOR_EVENT);
 
         // Set initial network_ready state
         let initially_connected = !is_disconnected(&initial_ip);
@@ -172,7 +169,6 @@ fn is_disconnected(ip: &str) -> bool {
 
 /// Check if IP is a valid LAN address (not loopback, not Docker bridge)
 /// Used by Lantern integration to validate IPs before registration
-#[allow(dead_code)]
 pub fn is_valid_lan_ip(ip: &str) -> bool {
     if is_disconnected(ip) {
         return false;

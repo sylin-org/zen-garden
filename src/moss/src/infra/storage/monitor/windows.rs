@@ -78,9 +78,7 @@ impl VolumeMonitor for WindowsVolumeMonitor {
                     if !current_paths.contains(path) {
                         info!(path = %path, "Volume disappeared (monitor)");
                         if tx
-                            .send(PhysicalStorageEvent::Disconnected {
-                                path: path.clone(),
-                            })
+                            .send(PhysicalStorageEvent::Disconnected { path: path.clone() })
                             .await
                             .is_err()
                         {

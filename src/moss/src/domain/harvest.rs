@@ -64,7 +64,7 @@ impl HarvestManifest {
     pub fn new(offering: &str, source_stone: &str, original_image: &str) -> Self {
         // Use timestamp + random suffix to ensure unique IDs
         let now = Utc::now();
-        let random_suffix: u16 = rand::thread_rng().gen();
+        let random_suffix: u16 = rand::rng().random();
         let safe_offering = OfferingFqn::parse(offering)
             .map(|fqn| fqn.encoded_for_container())
             .unwrap_or_else(|_| offering.to_string());

@@ -49,13 +49,13 @@ Follow these commit message conventions based on 200 analyzed commits.
 *Commit message example*
 
 ```text
-fix: drop systemd sandbox + moss-owned MOTD
+feat: add zen-garden ECC bundle (.claude/commands/refactoring.md)
 ```
 
 *Commit message example*
 
 ```text
-feat: ARCH-0012 typed StoneApi client layer + fix edition 2024 inference
+fix: drop systemd sandbox + moss-owned MOTD
 ```
 
 *Commit message example*
@@ -79,19 +79,19 @@ docs: add STORAGE-0016 unified S3 storage gateway ADR
 *Commit message example*
 
 ```text
-Merge pull request #3 from sylin-org/arch-0005/common-scope
+feat: add zen-garden ECC bundle (.claude/commands/test-driven-development.md)
 ```
 
 *Commit message example*
 
 ```text
-feat: leverage new dependency capabilities -- events stream, shared clients, thermal monitoring
+feat: add zen-garden ECC bundle (.claude/commands/feature-development.md)
 ```
 
 *Commit message example*
 
 ```text
-refactor(s3): replace hand-built XML with quick-xml serde serialization
+feat: add zen-garden ECC bundle (.claude/homunculus/instincts/inherited/zen-garden-instincts.yaml)
 ```
 
 ## Architecture
@@ -192,7 +192,7 @@ These workflows were detected from analyzing commit patterns.
 
 Standard feature implementation workflow
 
-**Frequency**: ~11 times per month
+**Frequency**: ~19 times per month
 
 **Steps**:
 1. Add feature implementation
@@ -205,9 +205,9 @@ Standard feature implementation workflow
 
 **Example commit sequence**:
 ```
-refactor: replace VolumeHealth + online:bool with VolumeState aggregate
-Merge pull request #2 from sylin-org/arch-0003-migration
-refactor: move moss-only modules out of common (pure rename)
+refactor: complete ARCH-0005 structural quality pass
+fix: unify gateway registration into tool.registry, eliminating fqn_handler
+refactor: add category to Offering struct, eliminate O(n×m) index lookups
 ```
 
 ### Test Driven Development
@@ -236,7 +236,7 @@ feat: implement user validation
 
 Code refactoring and cleanup workflow
 
-**Frequency**: ~14 times per month
+**Frequency**: ~9 times per month
 
 **Steps**:
 1. Ensure tests pass before refactor
@@ -248,24 +248,24 @@ Code refactoring and cleanup workflow
 
 **Example commit sequence**:
 ```
-refactor: replace VolumeHealth + online:bool with VolumeState aggregate
-Merge pull request #2 from sylin-org/arch-0003-migration
-refactor: move moss-only modules out of common (pure rename)
+refactor: complete ARCH-0005 structural quality pass
+fix: unify gateway registration into tool.registry, eliminating fqn_handler
+refactor: add category to Offering struct, eliminate O(n×m) index lookups
 ```
 
-### Api Endpoint Addition Or Rename
+### Api Endpoint Addition Or Renaming
 
-Adds or renames an API endpoint, including handler, routing, and sometimes related DTO/types and documentation.
+Adds or renames an API endpoint, including handler implementation, route registration, and often client/test updates.
 
 **Frequency**: ~2 times per month
 
 **Steps**:
-1. Create or rename handler file in src/moss/src/api/v1/
-2. Update src/moss/src/api/v1/mod.rs to include new handler
-3. Update src/moss/src/bootstrap/router.rs to add/modify route
-4. Update related domain/service files if needed (src/moss/src/domain/...)
-5. Update client code (e.g., src/rake/src/commands/..., src/common/src/client/...) if endpoint is consumed
-6. Update documentation if endpoint is public (docs/reference/api.md, .agentic/reference/api-endpoints.md, etc.)
+1. Create or rename handler file in src/moss/src/api/v1/ (e.g., new_thing.rs or updates.rs)
+2. Update src/moss/src/api/v1/mod.rs to register the new handler
+3. Update src/moss/src/bootstrap/router.rs to add or change the route
+4. Update related domain/service files (src/moss/src/domain/...) as needed
+5. Update client code (e.g., src/rake/src/commands/..., src/common/src/client/...) to use the new endpoint
+6. Update documentation if endpoint vocabulary changes
 
 **Files typically involved**:
 - `src/moss/src/api/v1/*.rs`
@@ -273,118 +273,118 @@ Adds or renames an API endpoint, including handler, routing, and sometimes relat
 - `src/moss/src/bootstrap/router.rs`
 - `src/rake/src/commands/**/*.rs`
 - `src/common/src/client/**/*.rs`
-- `docs/reference/api.md`
-- `.agentic/reference/api-endpoints.md`
 
 **Example commit sequence**:
 ```
-Create or rename handler file in src/moss/src/api/v1/
-Update src/moss/src/api/v1/mod.rs to include new handler
-Update src/moss/src/bootstrap/router.rs to add/modify route
-Update related domain/service files if needed (src/moss/src/domain/...)
-Update client code (e.g., src/rake/src/commands/..., src/common/src/client/...) if endpoint is consumed
-Update documentation if endpoint is public (docs/reference/api.md, .agentic/reference/api-endpoints.md, etc.)
+Create or rename handler file in src/moss/src/api/v1/ (e.g., new_thing.rs or updates.rs)
+Update src/moss/src/api/v1/mod.rs to register the new handler
+Update src/moss/src/bootstrap/router.rs to add or change the route
+Update related domain/service files (src/moss/src/domain/...) as needed
+Update client code (e.g., src/rake/src/commands/..., src/common/src/client/...) to use the new endpoint
+Update documentation if endpoint vocabulary changes
 ```
 
-### Cli Command Addition Or Refactor
+### Cli Command Surface Change
 
-Adds, renames, or reorganizes CLI commands and groups in the rake CLI, including manifest, routing, and handler logic.
+Adds, renames, or removes CLI commands/groups, including parser, manifest, and handler updates.
 
 **Frequency**: ~2 times per month
 
 **Steps**:
-1. Add or modify command handler in src/rake/src/commands/
-2. Update src/rake/src/command_manifest.rs to register the command (add CommandDef, aliases, etc.)
-3. Update src/rake/src/route.rs to add routing logic
-4. Update src/rake/src/cli_build.rs if command grouping or flags change
-5. Update documentation (docs/reference/cli.md, etc.)
+1. Edit src/rake/src/command_manifest.rs to add/remove/rename CommandDef entries
+2. Edit src/rake/src/route.rs to add/remove route arms
+3. Edit or create handler files in src/rake/src/commands/**/
+4. Update parser/build logic in src/rake/src/cli_build.rs if grouping or aliasing changes
+5. Update documentation and examples
 
 **Files typically involved**:
-- `src/rake/src/commands/**/*.rs`
 - `src/rake/src/command_manifest.rs`
 - `src/rake/src/route.rs`
+- `src/rake/src/commands/**/*.rs`
 - `src/rake/src/cli_build.rs`
-- `docs/reference/cli.md`
 
 **Example commit sequence**:
 ```
-Add or modify command handler in src/rake/src/commands/
-Update src/rake/src/command_manifest.rs to register the command (add CommandDef, aliases, etc.)
-Update src/rake/src/route.rs to add routing logic
-Update src/rake/src/cli_build.rs if command grouping or flags change
-Update documentation (docs/reference/cli.md, etc.)
+Edit src/rake/src/command_manifest.rs to add/remove/rename CommandDef entries
+Edit src/rake/src/route.rs to add/remove route arms
+Edit or create handler files in src/rake/src/commands/**/
+Update parser/build logic in src/rake/src/cli_build.rs if grouping or aliasing changes
+Update documentation and examples
 ```
 
-### Dependency Bump And Cargo Lock Update
+### Dependency Version Bump
 
-Updates dependency versions across the workspace, including Cargo.toml and Cargo.lock, sometimes with code changes for breaking API updates.
+Upgrades Rust crate dependencies across workspace members and orchestrators, updating lockfiles and fixing breaking changes.
 
 **Frequency**: ~2 times per month
 
 **Steps**:
-1. Update version numbers in Cargo.toml files (root and/or per-crate)
-2. Regenerate Cargo.lock (cargo update or cargo generate-lockfile)
-3. Update code to accommodate breaking changes in dependencies
-4. Update orchestrator lockfiles if present (src/orchestrators/*/Cargo.lock)
-5. Update build scripts if dependency version stamping is affected
+1. Edit Cargo.toml and/or src/*/Cargo.toml to bump dependency versions
+2. Regenerate Cargo.lock and src/orchestrators/*/Cargo.lock
+3. Fix breaking API changes in source files (e.g., src/moss/src/docker/*.rs, src/common/src/metrics/system.rs, etc.)
+4. Update build scripts if needed (e.g., installer/build-*.ps1)
+5. Test and fix compilation/runtime issues
 
 **Files typically involved**:
 - `Cargo.toml`
 - `Cargo.lock`
-- `src/**/Cargo.toml`
-- `src/**/Cargo.lock`
+- `src/*/Cargo.toml`
+- `src/orchestrators/*/Cargo.lock`
 - `src/**/*.rs`
-- `installer/build-*.ps1`
+- `installer/*.ps1`
 
 **Example commit sequence**:
 ```
-Update version numbers in Cargo.toml files (root and/or per-crate)
-Regenerate Cargo.lock (cargo update or cargo generate-lockfile)
-Update code to accommodate breaking changes in dependencies
-Update orchestrator lockfiles if present (src/orchestrators/*/Cargo.lock)
-Update build scripts if dependency version stamping is affected
+Edit Cargo.toml and/or src/*/Cargo.toml to bump dependency versions
+Regenerate Cargo.lock and src/orchestrators/*/Cargo.lock
+Fix breaking API changes in source files (e.g., src/moss/src/docker/*.rs, src/common/src/metrics/system.rs, etc.)
+Update build scripts if needed (e.g., installer/build-*.ps1)
+Test and fix compilation/runtime issues
 ```
 
-### Architectural Refactor With Adrs
+### Structural Refactor With Adrs
 
-Performs a large-scale refactor guided by an ADR (architecture decision record), including code, documentation, and sometimes file moves or renames.
+Performs a large-scale structural refactor following an architectural decision record (ADR), often involving file moves, module decomposition, trait boundary enforcement, and code deduplication.
 
 **Frequency**: ~1 times per month
 
 **Steps**:
-1. Create or update docs/decisions/ARCH-xxxx-*.md with rationale and plan
-2. Refactor codebase according to ADR (e.g., move files, rename modules, change trait boundaries, update API/CLI vocabulary)
-3. Update related documentation (docs/reference/*, docs/guides/*, etc.)
-4. Update tests and client code to match new architecture
-5. Commit with reference to ADR
+1. Write or update an ADR in docs/decisions/
+2. Move, split, or rename modules/files (e.g., domain decomposition, god module breakup)
+3. Update trait boundaries and interfaces (e.g., move traits to domain/traits/)
+4. Deduplicate types and move shared DTOs to common/
+5. Update all affected call sites and tests
+6. Update documentation to reflect new structure
 
 **Files typically involved**:
-- `docs/decisions/ARCH-*.md`
-- `src/**/*.rs`
-- `src/**/*.toml`
-- `docs/reference/*.md`
-- `docs/guides/*.md`
+- `docs/decisions/*.md`
+- `src/common/src/**/*.rs`
+- `src/moss/src/domain/**/*.rs`
+- `src/moss/src/api/v1/**/*.rs`
+- `src/rake/src/commands/**/*.rs`
 
 **Example commit sequence**:
 ```
-Create or update docs/decisions/ARCH-xxxx-*.md with rationale and plan
-Refactor codebase according to ADR (e.g., move files, rename modules, change trait boundaries, update API/CLI vocabulary)
-Update related documentation (docs/reference/*, docs/guides/*, etc.)
-Update tests and client code to match new architecture
-Commit with reference to ADR
+Write or update an ADR in docs/decisions/
+Move, split, or rename modules/files (e.g., domain decomposition, god module breakup)
+Update trait boundaries and interfaces (e.g., move traits to domain/traits/)
+Deduplicate types and move shared DTOs to common/
+Update all affected call sites and tests
+Update documentation to reflect new structure
 ```
 
-### Build Pipeline Script Hardening
+### Build Pipeline Hardening
 
-Updates or hardens build scripts (PowerShell, shell) to improve reproducibility, prevent lockfile drift, or adapt to new dependency management practices.
+Updates build scripts and pipeline logic to ensure deterministic, cross-platform builds and prevent lockfile drift.
 
-**Frequency**: ~1 times per month
+**Frequency**: ~2 times per month
 
 **Steps**:
-1. Edit installer/build-*.ps1 and installer/compile-*.ps1 scripts to change cargo invocation flags (--locked, --frozen, etc.)
-2. Regenerate Cargo.lock if needed
-3. Update documentation or comments in scripts to explain new pipeline
-4. Test build on all platforms to ensure reproducibility
+1. Edit installer/build-*.ps1 and installer/compile-*.ps1 scripts to add flags (e.g., --locked, --frozen)
+2. Regenerate Cargo.lock as needed
+3. Update Docker mount logic and CARGO_HOME/target dir handling
+4. Strip problematic characters or logic from scripts for compatibility
+5. Document pipeline architecture in comments or docs
 
 **Files typically involved**:
 - `installer/build-*.ps1`
@@ -393,66 +393,39 @@ Updates or hardens build scripts (PowerShell, shell) to improve reproducibility,
 
 **Example commit sequence**:
 ```
-Edit installer/build-*.ps1 and installer/compile-*.ps1 scripts to change cargo invocation flags (--locked, --frozen, etc.)
-Regenerate Cargo.lock if needed
-Update documentation or comments in scripts to explain new pipeline
-Test build on all platforms to ensure reproducibility
+Edit installer/build-*.ps1 and installer/compile-*.ps1 scripts to add flags (e.g., --locked, --frozen)
+Regenerate Cargo.lock as needed
+Update Docker mount logic and CARGO_HOME/target dir handling
+Strip problematic characters or logic from scripts for compatibility
+Document pipeline architecture in comments or docs
 ```
 
-### S3 Gateway Feature Development
+### Documentation Synchronization With Code Changes
 
-Implements or extends S3-compatible storage gateway features, including new handlers, object store logic, tests, and documentation.
+Updates documentation files to match codebase changes, especially after vocabulary, API, or CLI changes.
 
 **Frequency**: ~2 times per month
 
 **Steps**:
-1. Add or update handler files in src/moss/src/api/v1/s3_*.rs
-2. Update src/moss/src/infra/storage/* for object store and S3 logic
-3. Update src/moss/src/api/v1/garden_storage/mod.rs and related endpoints
-4. Add or update unit tests for S3 features
-5. Update ADRs and documentation (docs/decisions/STORAGE-*.md)
-
-**Files typically involved**:
-- `src/moss/src/api/v1/s3_*.rs`
-- `src/moss/src/infra/storage/*.rs`
-- `src/moss/src/api/v1/garden_storage/mod.rs`
-- `docs/decisions/STORAGE-*.md`
-
-**Example commit sequence**:
-```
-Add or update handler files in src/moss/src/api/v1/s3_*.rs
-Update src/moss/src/infra/storage/* for object store and S3 logic
-Update src/moss/src/api/v1/garden_storage/mod.rs and related endpoints
-Add or update unit tests for S3 features
-Update ADRs and documentation (docs/decisions/STORAGE-*.md)
-```
-
-### Documentation Update For Vocabulary Or Feature
-
-Updates documentation files to reflect new vocabulary, CLI/API changes, or major features.
-
-**Frequency**: ~2 times per month
-
-**Steps**:
-1. Edit docs/reference/*.md, docs/guides/*.md, docs/glossary.md, etc.
-2. Edit .agentic/reference/api-endpoints.md for API path changes
-3. Update migration tables and examples in journeys and proposals
-4. Commit with reference to related code changes or ADR
+1. Edit docs/reference/*.md, docs/guides/*.md, docs/specs/*.md, and related files to match new vocabulary or API paths
+2. Update migration tables, changelogs, and glossary entries
+3. Archive or move obsolete proposals/specs
+4. Ensure documentation matches code and CLI/API behavior
 
 **Files typically involved**:
 - `docs/reference/*.md`
 - `docs/guides/*.md`
+- `docs/specs/*.md`
 - `docs/glossary.md`
-- `docs/journeys/*.md`
+- `docs/CHANGELOG.md`
 - `docs/proposals/*.md`
-- `.agentic/reference/api-endpoints.md`
 
 **Example commit sequence**:
 ```
-Edit docs/reference/*.md, docs/guides/*.md, docs/glossary.md, etc.
-Edit .agentic/reference/api-endpoints.md for API path changes
-Update migration tables and examples in journeys and proposals
-Commit with reference to related code changes or ADR
+Edit docs/reference/*.md, docs/guides/*.md, docs/specs/*.md, and related files to match new vocabulary or API paths
+Update migration tables, changelogs, and glossary entries
+Archive or move obsolete proposals/specs
+Ensure documentation matches code and CLI/API behavior
 ```
 
 

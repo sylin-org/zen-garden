@@ -1,0 +1,379 @@
+# Instincts generated from https://github.com/sylin-org/zen-garden
+# Generated: 2026-03-23T00:23:40.547Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: zen-garden-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Commit Length
+
+## Action
+
+Write moderate-length commit messages (~64 characters)
+
+## Evidence
+
+- Average commit message length: 64 chars
+- Based on 200 commits
+
+---
+id: zen-garden-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: zen-garden-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: zen-garden-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: zen-garden-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: build-utils, common, companion-sdk, cricket, firefly
+
+---
+id: zen-garden-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: zen-garden-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~11x per month
+- Files: **/*.test.*, **/api/**
+
+---
+id: zen-garden-workflow-test-driven-development
+trigger: "when adding new functionality"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Test Driven Development
+
+## Action
+
+Follow the test-driven-development workflow:
+1. Write failing test
+2. Implement code to pass test
+3. Refactor if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: **/*.test.*, **/*.spec.*, src/**/*
+
+---
+id: zen-garden-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~14x per month
+- Files: src/**/*
+
+---
+id: zen-garden-workflow-api-endpoint-addition-or-rename
+trigger: "when doing api endpoint addition or rename"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Api Endpoint Addition Or Rename
+
+## Action
+
+Follow the api-endpoint-addition-or-rename workflow:
+1. Create or rename handler file in src/moss/src/api/v1/
+2. Update src/moss/src/api/v1/mod.rs to include new handler
+3. Update src/moss/src/bootstrap/router.rs to add/modify route
+4. Update related domain/service files if needed (src/moss/src/domain/...)
+5. Update client code (e.g., src/rake/src/commands/..., src/common/src/client/...) if endpoint is consumed
+6. Update documentation if endpoint is public (docs/reference/api.md, .agentic/reference/api-endpoints.md, etc.)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/moss/src/api/v1/*.rs, src/moss/src/api/v1/mod.rs, src/moss/src/bootstrap/router.rs
+
+---
+id: zen-garden-workflow-cli-command-addition-or-refactor
+trigger: "when doing cli command addition or refactor"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Cli Command Addition Or Refactor
+
+## Action
+
+Follow the cli-command-addition-or-refactor workflow:
+1. Add or modify command handler in src/rake/src/commands/
+2. Update src/rake/src/command_manifest.rs to register the command (add CommandDef, aliases, etc.)
+3. Update src/rake/src/route.rs to add routing logic
+4. Update src/rake/src/cli_build.rs if command grouping or flags change
+5. Update documentation (docs/reference/cli.md, etc.)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/rake/src/commands/**/*.rs, src/rake/src/command_manifest.rs, src/rake/src/route.rs
+
+---
+id: zen-garden-workflow-dependency-bump-and-cargo-lock-update
+trigger: "when doing dependency bump and cargo lock update"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Dependency Bump And Cargo Lock Update
+
+## Action
+
+Follow the dependency-bump-and-cargo-lock-update workflow:
+1. Update version numbers in Cargo.toml files (root and/or per-crate)
+2. Regenerate Cargo.lock (cargo update or cargo generate-lockfile)
+3. Update code to accommodate breaking changes in dependencies
+4. Update orchestrator lockfiles if present (src/orchestrators/*/Cargo.lock)
+5. Update build scripts if dependency version stamping is affected
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: Cargo.toml, Cargo.lock, src/**/Cargo.toml
+
+---
+id: zen-garden-workflow-architectural-refactor-with-adrs
+trigger: "when doing architectural refactor with adrs"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Architectural Refactor With Adrs
+
+## Action
+
+Follow the architectural-refactor-with-adrs workflow:
+1. Create or update docs/decisions/ARCH-xxxx-*.md with rationale and plan
+2. Refactor codebase according to ADR (e.g., move files, rename modules, change trait boundaries, update API/CLI vocabulary)
+3. Update related documentation (docs/reference/*, docs/guides/*, etc.)
+4. Update tests and client code to match new architecture
+5. Commit with reference to ADR
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: docs/decisions/ARCH-*.md, src/**/*.rs, src/**/*.toml
+
+---
+id: zen-garden-workflow-build-pipeline-script-hardening
+trigger: "when doing build pipeline script hardening"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Build Pipeline Script Hardening
+
+## Action
+
+Follow the build-pipeline-script-hardening workflow:
+1. Edit installer/build-*.ps1 and installer/compile-*.ps1 scripts to change cargo invocation flags (--locked, --frozen, etc.)
+2. Regenerate Cargo.lock if needed
+3. Update documentation or comments in scripts to explain new pipeline
+4. Test build on all platforms to ensure reproducibility
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: installer/build-*.ps1, installer/compile-*.ps1, Cargo.lock
+
+---
+id: zen-garden-workflow-s3-gateway-feature-development
+trigger: "when doing s3 gateway feature development"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow S3 Gateway Feature Development
+
+## Action
+
+Follow the s3-gateway-feature-development workflow:
+1. Add or update handler files in src/moss/src/api/v1/s3_*.rs
+2. Update src/moss/src/infra/storage/* for object store and S3 logic
+3. Update src/moss/src/api/v1/garden_storage/mod.rs and related endpoints
+4. Add or update unit tests for S3 features
+5. Update ADRs and documentation (docs/decisions/STORAGE-*.md)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/moss/src/api/v1/s3_*.rs, src/moss/src/infra/storage/*.rs, src/moss/src/api/v1/garden_storage/mod.rs
+
+---
+id: zen-garden-workflow-documentation-update-for-vocabulary-or-feature
+trigger: "when doing documentation update for vocabulary or feature"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sylin-org/zen-garden
+---
+
+# Zen Garden Workflow Documentation Update For Vocabulary Or Feature
+
+## Action
+
+Follow the documentation-update-for-vocabulary-or-feature workflow:
+1. Edit docs/reference/*.md, docs/guides/*.md, docs/glossary.md, etc.
+2. Edit .agentic/reference/api-endpoints.md for API path changes
+3. Update migration tables and examples in journeys and proposals
+4. Commit with reference to related code changes or ADR
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: docs/reference/*.md, docs/guides/*.md, docs/glossary.md
+

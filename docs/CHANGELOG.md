@@ -2,9 +2,43 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-03-22
+
+- **ARCH-0007**: Rust 1.92 / edition 2024 modernization. Removed `async-trait` — 13 domain traits monomorphized with concrete types. `TaskSupervisor` (JoinSet-based) replaces ad-hoc `tokio::spawn` for 30 background tasks; tasks named via `tracing::Instrument`. `FromRef` infrastructure: 12 handler dependency-injection impls so handlers declare only what they use. Added 5 integration test crates, 4 property-based test suites (proptest). `[workspace.lints]` enforces `undocumented_unsafe_blocks` and `unwrap_used` — zero suppressions merged. `cargo-deny` configured for license and advisory scanning. Removed dependencies: `async-trait`, `once_cell`, `serde_yaml`, `local-ip-address`, `network-interface`. See [ARCH-0007](decisions/ARCH-0007-monomorphic-domain-traits.md).
+- **ARCH-0008**: Drop systemd sandbox. Removed `ProtectSystem`, `PrivateTmp`, and `ReadWritePaths` from all service unit sources — on a root-owned dedicated appliance these provided no security boundary and caused first-boot NAMESPACE failures. Removed `ensure_etc_writable()` and the writable-wait outer loop; first-boot init runs directly. See [ARCH-0008](decisions/ARCH-0008-drop-systemd-sandbox.md).
+- **ARCH-0009**: Moss-owned MOTD. Static `write_motd()` replaced with a `MotdInfo`-driven renderer that writes `/etc/motd` at startup and again after hardware detection. 50-char ribbon width, two-column layout: stone identity, IP/pond, CPU/RAM/GPU, storage sets with replica set name and seed bank hierarchy. Removed dead `motd.template` and `generate-stone-motd.sh` artifacts. See [ARCH-0009](decisions/ARCH-0009-moss-owned-motd.md).
+- **ARCH-0012**: Typed `StoneApi` client layer in `garden-common`. Seven endpoint-family methods (`services()`, `offerings()`, `storage()`, `pond()`, etc.) return domain types directly — no manual URL building or `ApiResponse<T>` unwrapping at call sites. `GardenApiResponse<T>` consolidated as a type alias for `ApiResponse<T>`. Fixed edition 2024 match-ergonomics inference in lantern, rake, and moss; fixed `reqwest` 0.13 TLS feature (`rustls-tls` → `rustls`); fixed `windows-sys` missing features (`Win32_Foundation`, `Win32_System_IO`).
+- **Performance and new capabilities** from dependency bumps: Docker events stream (bollard 0.20) delivers sub-second container state detection; CPU temperature monitoring (sysinfo 0.38) on ARM stones exposed in metrics; `get_fast_metrics()` 40–60% faster on ARM via targeted refresh; 3 shared `reqwest::Client` singletons replace 15 per-request constructions; container removal verified in `recreate_service` lifecycle; removed unused `nix` dependency from moss.
+
+## 2026-03-19
+
+- **STORAGE-0016**: Unified S3 storage gateway. S3 objects share the same mount root as WebDAV/filesystem (unified namespace — `s3://bucket/path` and `dav://stone/path` address the same bytes). Per-storage S3 port listeners with full lifecycle management (start/stop/restart on bank add/remove). Feature completeness: range reads, `ListObjectsV2`, `CopyObject`, conditional requests (`If-Match`/`If-None-Match`/`If-Modified-Since`), object metadata, multipart upload (initiate/upload-part/complete/abort), Moss-native presigned URLs. Correct `NoSuchBucket` XML error semantics. S3 endpoint surfaced in `GET /api/v1/garden/storage` discovery. Replaced hand-built S3 XML strings with `quick-xml` + serde serialization. See [STORAGE-0016](decisions/STORAGE-0016-s3-port-per-storage-listener.md).
+
+## 2026-03-18
+
+- **Build pipeline hardening**: all `cargo build` invocations in installer scripts now pass `--locked`; lockfile regenerated with modern dependency versions; cross-platform builder environments enforce lockfile consistency to prevent silent dependency drift.
+- **Robustness fixes**: `RouterError` typed enum replaces string-based 404 detection (code standard §10); ranged read for CfApi hydration avoids full-file OOM on large files; depth-limited recursive tree operations; `OnceLock` HTTP client singleton; `has_path_traversal` guard shared between garden and S3 handlers; `is_blocked_path` rewritten with proper path splitting.
+
 ## 2026-03-17
 
 - **ARCH-0006**: Unified interface language. Removed the dual zen/normative CLI syntax — all commands now follow a single grammar: `verb [noun] [--flags]`. Deleted the three-layer parser pipeline (style detection, keyword extraction, normalization). Net: ~2,500 lines removed. Renamed: `nourish`→`upgrade`, `nurturing`→`backup`, `rouse/slumber/stir`→`stone wake/shutdown/reboot`, `make`→`stone verbosity`, `take-root`→`stone install`, `--wishful`→`--ensure`, `--force`→`--yes`. New: `logs <service>` shortcut, `cap`/`explore` aliases, `stone` and `backup` command groups. Moss API paths renamed: `/nourishment`→`/updates`, `/nurturing`→`/snapshots`, `/nourish`→`/upgrade`, `/memories`→`/snapshots`. See [ARCH-0006](decisions/ARCH-0006-unified-interface-language.md).
+
+## 2026-03-16
+
+- Service discovery rewritten to use `tool.registry` exclusively; projector reads offerings directly, bypassing the old `service_discovery` layer. Storage events routed through `EventBus` — ad-hoc pulse sends removed. Self-entry mutable cache eliminated; chirp computed on demand, reducing lock contention.
+- Metrics grouped under the `Current` domain context (`current.metrics.*`), eliminating cross-domain field leakage from AppState.
+- Single offering mutation gateway introduced with `category` field on `Offering` struct, eliminating O(n×m) catalog scans. Gateway registration unified into `tool.registry` — separate `fqn_handler` domain deleted.
+
+## 2026-03-15
+
+- **ARCH-0005**: Structural quality pass across all workspace crates. Deduplicated Ollama types via `orchestrator-common` re-exports; narrowed `lib.rs` wildcard re-exports to explicit items; decomposed `common/src/types.rs` into 12 focused domain sub-modules; moved moss-only modules out of `garden-common` into moss. See [ARCH-0005](decisions/ARCH-0005-structural-quality-pass.md).
+- Domain consumers wired to trait objects instead of concrete infra types; domain trait boundaries defined for infra decoupling (preparatory work for ARCH-0007 monomorphization).
+
+## 2026-03-13
+
+- **VolumeState aggregate**: `VolumeHealth` struct and `online: bool` field replaced by a single `VolumeState` enum (`Online` / `Degraded` / `Offline` / `Unavailable`) — impossible state combinations are now unrepresentable. Fixed volume device identity tracking and NTFS-3G stale mount detection.
+- **CfApi availability signalling** (all four phases): Cloud Filter provider registers Windows toast AUMID at startup; all four dehydration/rehydration phases correctly handled. Fixed CfApi startup purge race — initial reconciliation no longer deletes remote-storage placeholders before registry beacons arrive.
+- Storage connect ribbon: storage name as title, capacity + used percentage on connect, cleaner release messaging. Added application icons and Windows resource manifest.
 
 ## 2026-03-12
 
@@ -15,6 +49,19 @@ All notable changes to Zen Garden will be documented in this file.
 - **STORAGE-0015 A10**: StorageHandle consolidation. `StorageHandle` replaces `StorageRouter` as the unified dispatch type — callers never match on Local vs Proxy. `StorageResolver` eliminates the repeated 4-arg resolution pattern across 15+ handler sites. Write operations now emit replication tick events (A1). `rename_replica_set()` extracted from CfApi adapter to domain service (A3). `copy_file`/`copy_tree` within-storage operations added (A4). Dead `local_endpoint` field removed; `StorageRouter` type alias retired (A6). HTTP client upgraded with per-call metadata timeouts (30s) and connection pooling (A11k). See [STORAGE-0015](decisions/STORAGE-0015-cloud-drive-storage-router.md).
 
 - **STORAGE-0015 hardening**: Robustness audit fixes across the Cloud Filter + StorageRouter stack. `RouterError` typed error enum replaces string-based 404 detection (code standard #10). Ranged read for CfApi hydration avoids full-file OOM. Depth-limited recursive tree operations. `OnceLock` HTTP client singleton. `Management::display_name()` centralizes replica set name fallback. Named Win32 constants in `mark_in_sync`. Stray purge limited to heartbeat passes to avoid racing ingest. `is_blocked_path` rewritten with proper path splitting. `has_path_traversal` shared between garden and S3 handlers.
+
+## 2026-03-11
+
+- **ARCH-0002**: `PlatformRuntime` trait for cross-cutting platform concerns (DNS registration, mDNS advertisement, service install/uninstall) propagated through the full bootstrap pipeline — platform-specific behaviour injected once at startup rather than scattered across domain logic. See [ARCH-0002](decisions/ARCH-0002-platform-runtime-trait.md).
+- **ARCH-0003**: Code standards compliance migration across all workspace crates (Waves 1a–6e). `EventBus` channel fields renamed to drop `_tx`/`_rx` suffixes; canonical domain value objects introduced; `companion-sdk`, `lantern`, `cricket`, `firefly`, `rake`, and `moss` domain/infra/api/tasks/bootstrap layers brought into full naming compliance with code-standards §1–§12. New standards added: §7 (domain value objects over primitive-identifier newtypes), §13 (domain event subscription API — `on_X()` / `X_stream()`), §14 (canonical types and file/concept coupling), §15 (module visibility). See [ARCH-0003](decisions/ARCH-0003-code-standards-compliance-migration.md).
+- **ARCH-0004**: AppState domain context extraction — all 8 phases. `Current` context groups stone identity, topology cache, metrics, and local storage. `Storage` domain: `orchestration.nudge`, `orchestration.tick`, `replication.changed` channels; volumes; media. `Orchestration` domain. `Tool` domain (`tool.registry`, `tool.delta`). `FqnHandler` domain. `Security` domain (pond, ceremony, stone_client, https). `Discovery` domain (mdns, koi). `Companion` domain. `Platform` domain. `Presence` domain (elections, notifications). AppState is now a thin facade; each handler extracts only its domain via `FromRef`. See [ARCH-0004](decisions/ARCH-0004-appstate-domain-context-extraction.md).
+- **Three-stage daemon bootstrap**: `build_state` / `start_background_tasks` / `serve` — initialization phases cleanly separated; Tokio runtime lifecycle aligned with state readiness.
+
+## 2026-03-10
+
+- **STORAGE-0011**: Unified storage infrastructure consolidation — fragmented storage modules merged into a single coherent `StorageInfra` with clear domain boundaries. See [STORAGE-0011](decisions/STORAGE-0011-unified-storage-domain.md).
+- **STORAGE-0012**: Cloud Filter SoC refactor and full callback coverage — all four Windows CfApi callbacks implemented; `CloudFilterProvider` owns its entire lifecycle. See [STORAGE-0012](decisions/STORAGE-0012-cloud-filter-rebuild.md).
+- **STORAGE-0014**: Storage platform architecture and bounded context separation. `VolumeMonitor` trait and `StorageBank` domain bridge decouple platform-specific implementations from domain logic. Cloud Filter write-back retry on storage-online event; HTTP status guard prevents retrying non-retriable errors. Sync root ingest watcher: Explorer write-backs detected; ingested files marked in-sync via `CfConvertToPlaceholder`. See [STORAGE-0014](decisions/STORAGE-0014-storage-platform-architecture.md).
 
 ## 2026-03-09
 

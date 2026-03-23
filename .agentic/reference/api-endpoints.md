@@ -62,12 +62,47 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/stone/storage/banks/{name}/changes` | Replication changelog |
 | GET | `/api/v1/stone/storage/stream` | SSE replication stream |
 
-### S3 Gateway
+### S3 Gateway (STORAGE-0016)
+
+**Per-storage port listeners** — each bank has a dedicated S3 port (default range 23400–23499).
+Standard S3 clients connect to `http://{stone}:{s3-port}/{bucket}/{key}` with no path prefix.
+
+Discover ports: `GET /api/v1/stone/storage/s3/ports` or via Garden SSE `connection.port`.
+
+| Method | Endpoint (per-port listener, root `/`) | Purpose |
+|--------|----------------------------------------|---------|
+| GET | `/` | List buckets |
+| PUT | `/{bucket}` | Create bucket |
+| GET | `/{bucket}?[list-type=2]` | List objects (V1 or V2) |
+| PUT | `/{bucket}/{key}` | Put object (with `x-amz-meta-*` support) |
+| PUT | `/{bucket}/{key}` + `x-amz-copy-source` header | Copy object |
+| GET | `/{bucket}/{key}` | Get object (Range reads → 206) |
+| HEAD | `/{bucket}/{key}` | Object metadata |
+| DELETE | `/{bucket}/{key}` | Delete object |
+| POST | `/{bucket}/{key}?uploads` | Initiate multipart upload |
+| PUT | `/{bucket}/{key}?partNumber=N&uploadId=X` | Upload part |
+| POST | `/{bucket}/{key}?uploadId=X` | Complete multipart upload |
+| DELETE | `/{bucket}/{key}?uploadId=X` | Abort multipart upload |
+
+**Presigned URLs** (Moss-native HMAC, not SigV4):
+| Method | Endpoint (port 7185) | Purpose |
+|--------|----------------------|---------|
+| POST | `/api/v1/storage/s3/presign` | Generate time-limited access token |
+
+**Port catalog** (port 7185):
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/storage/s3/ports` | S3 port per bank (diagnostic) |
+
+**Legacy compatibility path** (port 7185, same unified namespace):
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/api/v1/storage/s3` | List buckets |
 | GET | `/api/v1/storage/s3/{bucket}` | List objects |
 | PUT/GET/HEAD/DELETE | `/api/v1/storage/s3/{bucket}/*key` | Object ops |
+
+All conditional headers honored: `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`.
+`NoSuchBucket` (404) returned for unknown buckets; `ServiceUnavailable` (503) when storage device removed.
 
 ### System
 | Method | Endpoint | Purpose |

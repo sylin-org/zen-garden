@@ -15,20 +15,24 @@ canonical: true
 ## Active ADRs
 
 ### Architecture
-- **[ARCH-0001](ARCH-0001-soc-ddd-architecture.md)**: SoC/DDD Architecture for Moss
-  - **Status**: Accepted (2026-01-20)
-  - **Rationale**: Domain/infra/API separation, main.rs reduced to 45 lines
-  - **Impact**: Testable domain logic, clear module boundaries
+- **[ARCH-0001](ARCH-0001-soc-ddd-architecture.md)**: SoC/DDD Architecture for Moss — Accepted (2026-01-20)
+- **[ARCH-0002](ARCH-0002-platform-runtime-trait.md)**: PlatformRuntime Trait — Accepted (2026-03-10)
+- **[ARCH-0003](ARCH-0003-code-standards-compliance-migration.md)**: Code Standards Compliance Migration — Accepted (2026-03-11)
+- **[ARCH-0004](ARCH-0004-appstate-domain-context-extraction.md)**: AppState Domain Context Extraction — Accepted (2026-03-11)
+- **[ARCH-0005](ARCH-0005-structural-quality-pass.md)**: Structural Quality Pass — Accepted (2026-03-15)
+- **[ARCH-0006](ARCH-0006-unified-interface-language.md)**: Unified Interface Language — Accepted (2026-03-17)
+- **[ARCH-0007](ARCH-0007-monomorphic-domain-traits.md)**: Rust 1.92 Modernization — Monomorphic Traits, Edition 2024 — Accepted (2026-03-22)
+- **[ARCH-0008](ARCH-0008-drop-systemd-sandbox.md)**: Drop systemd Sandbox Constraints — Accepted (2026-03-22)
+- **[ARCH-0009](ARCH-0009-moss-owned-motd.md)**: Moss-Owned MOTD — Accepted (2026-03-22)
+- **ARCH-0010**: _(ADR file not yet created — decision made but not documented)_
+- **ARCH-0011**: _(ADR file not yet created — decision made but not documented)_
+- **[ARCH-0012](ARCH-0012-typed-stone-api-client.md)**: Typed StoneApi Client Layer — Accepted (2026-03-22)
 
 ### Build & Distribution
-- **[BUILD-0001](BUILD-0001-versioning.md)**: Natural Flow Versioning
-  - **Status**: Accepted (2026-01-15)
-  - **Rationale**: major.minor.timestamp format, timestamp = truth
-  - **Impact**: Predictable versioning, build-time revision injection
-- **[BUILD-0002](BUILD-0002-unified-deployment-packages.md)**: Unified Deployment Packages
-  - **Status**: Accepted (2026-01-23)
-  - **Rationale**: One package format for all deployment methods
-  - **Impact**: SHA256 validation, atomic staging, platform-specific finalization
+- **[BUILD-0001](BUILD-0001-versioning.md)**: Natural Flow Versioning — Accepted (2026-01-15)
+- **[BUILD-0002](BUILD-0002-unified-deployment-packages.md)**: Unified Deployment Packages — Accepted (2026-01-23)
+- **[BUILD-0003](BUILD-0003-self-deploying-moss.md)**: Self-Deploying Moss — Accepted (2026-02-09)
+- **[BUILD-0004](BUILD-0004-installer-path-security.md)**: Installer Path Security — Accepted
 
 ### Compatibility
 - **[COMPAT-0001](COMPAT-0001-compatibility.md)**: Offering Compatibility Rules
@@ -55,57 +59,32 @@ canonical: true
   - **Impact**: Faster discovery than mDNS, Windows compatibility
 
 ### Moss (Daemon)
-- **[MOSS-0001](MOSS-0001-registry.md)**: Persistent Registry and Adoption
-  - **Status**: Accepted
-  - **Rationale**: Stone-local service registry with persistence
-  - **Impact**: Survives reboots, enables offline operation
-
-- **[MOSS-0002](MOSS-0002-infrastructure-handlers.md)**: Infrastructure Handlers
-  - **Status**: Accepted (2026-01-31)
-  - **Rationale**: Self-contained handlers for garden-wide effects (registry trust, DNS, etc.)
-  - **Impact**: Distributed autonomous configuration, Docker daemon auto-trust for registries
-
-- **[MOSS-0003](MOSS-0003-docker-runtime-resilience.md)**: Docker Runtime Resilience
-  - **Status**: Accepted (2026-02-04)
-  - **Rationale**: Mirror NetworkMonitor pattern for Docker daemon availability tracking
-  - **Impact**: Graceful degradation when Docker unavailable, automatic recovery on reconnect
-
-- **[MOSS-0004](MOSS-0004-phased-cooperative-shutdown.md)**: Phased Cooperative Shutdown
-  - **Status**: Accepted (2026-02-09)
-  - **Rationale**: CancellationToken + sd_notify + cooperative task exit prevent stuck updates
-  - **Impact**: Background tasks exit cleanly on SIGTERM, SSE streams drain, systemd Type=notify
+- **[MOSS-0001](MOSS-0001-registry.md)**: Persistent Registry and Adoption — Accepted
+- **[MOSS-0002](MOSS-0002-infrastructure-handlers.md)**: Infrastructure Handlers — Accepted (2026-01-31)
+- **[MOSS-0003](MOSS-0003-docker-runtime-resilience.md)**: Docker Runtime Resilience — Accepted (2026-02-04)
+- **[MOSS-0004](MOSS-0004-phased-cooperative-shutdown.md)**: Phased Cooperative Shutdown — Accepted (2026-02-09)
+- **[MOSS-0005](MOSS-0005-manageable-env-vars.md)**: Manageable Environment Variables — Accepted (2026-03-06)
 
 ### Orchestration
-- **[ORCH-0001](ORCH-0001-replant-ceremony.md)**: Replant Ceremony — Offering State Transfer Between Stones
-  - **Status**: Proposed (2026-02-16)
-  - **Rationale**: Cross-stone state transfer via harvest/collect/plant phases, reusing ceremony + harvest infrastructure
-  - **Impact**: Replicas sync from primaries, seed-bank fallback, `garden-rake replant` CLI
-- **[ORCH-0002](ORCH-0002-routing-safety-net.md)**: Routing Safety Net — Never Refuse an Installed Model
-  - **Status**: Accepted (2026-02-18)
-  - **Rationale**: Removed `NoViableTier` error; models on a stone are always routable via degraded fallback
-  - **Impact**: No false rejections, degraded-tier labelling, future fitness data is advisory-only
-- **[ORCH-0003](ORCH-0003-fitness-profiler.md)**: Fitness Profiler — Model Benchmark System
-  - **Status**: Accepted (2026-02-18)
-  - **Rationale**: Empirical per-model per-stone benchmarking with verdict thresholds (Fast/Degraded/Vetoed)
-  - **Impact**: Advisory routing scores, dashboard fitness matrix, persistent results
+- **[ORCH-0001](ORCH-0001-replant-ceremony.md)**: Replant Ceremony — Offering State Transfer Between Stones — Proposed (2026-02-16)
+- **[ORCH-0002](ORCH-0002-routing-safety-net.md)**: Routing Safety Net — Never Refuse an Installed Model — Accepted (2026-02-18)
+- **[ORCH-0003](ORCH-0003-fitness-profiler.md)**: Fitness Profiler — Model Benchmark System — Accepted (2026-02-18)
+- **[ORCH-0004](ORCH-0004-gateway-announcement.md)**: Gateway Announcement — Accepted (2026-02-21)
+- **[ORCH-0005](ORCH-0005-cpu-inference-tier.md)**: CPU Inference Tier — Accepted (2026-02-19)
+- **[ORCH-0006](ORCH-0006-coordination-mode.md)**: CoordinationMode Enum — Accepted (2026-02-22)
+- **[ORCH-0007](ORCH-0007-managed-logical-sets.md)**: MongoDB Replica Set Orchestrator — Accepted (2026-02-24)
+- **[ORCH-0008](ORCH-0008-handler-election-suppression.md)**: Handler Election Suppression — Accepted (2026-03-01)
+- **[ORCH-0009](ORCH-0009-demand-weighted-topology-advisor.md)**: Demand-Weighted Topology Advisor — Accepted (2026-03-06)
+- **[ORCH-0010](ORCH-0010-extended-fitness-capabilities.md)**: Extended Fitness Capabilities (Tools + Think) — Accepted (2026-03-06)
+- **[ORCH-0011](ORCH-0011-recommended-model-monikers.md)**: Recommended Model Monikers — Accepted (2026-03-06)
 
 ### Offerings (Services)
-- **[OFFER-0001](OFFER-0001-taxonomy.md)**: Offering Taxonomy
-  - **Status**: Accepted
-  - **Rationale**: Categorization scheme for service offerings
-  - **Impact**: Organized service catalog (data, cache, compute, ai, storage, messaging, web)
-- **[OFFER-0003](OFFER-0003-offering-fqn.md)**: Offering Fully-Qualified Names (FQN)
-  - **Status**: Accepted (2026-02-06)
-  - **Rationale**: Separate offering type from instance identity
-  - **Impact**: Multi-instance support, consistent naming across APIs and containers
-- **[OFFER-0004](OFFER-0004-intelligent-placement.md)**: Intelligent Offering Placement
-  - **Status**: Accepted (2026-01-23)
-  - **Rationale**: Multi-factor scoring for automatic stone selection
-  - **Impact**: `garden-rake offer <name> somewhere` with ranked recommendations
-- **[OFFER-0005](OFFER-0005-offering-modes.md)**: Three Offering Modes
-  - **Status**: Accepted (2026-01-21)
-  - **Rationale**: Managed (container), Adopted (existing), Borrowed (network) modes
-  - **Impact**: Garden represents full infrastructure, not just containers
+- **[OFFER-0001](OFFER-0001-taxonomy.md)**: Offering Taxonomy — Accepted
+- **[OFFER-0002](OFFER-0002-container-namespace-collision.md)**: Container Namespace Collision Prevention — Accepted
+- **[OFFER-0003](OFFER-0003-offering-fqn.md)**: Offering Fully-Qualified Names (FQN) v1 — Accepted (2026-02-06)
+- **[OFFER-0004](OFFER-0004-intelligent-placement.md)**: Intelligent Offering Placement — Accepted (2026-01-23)
+- **[OFFER-0005](OFFER-0005-offering-modes.md)**: Three Offering Modes (Managed / Adopted / Borrowed) — Accepted (2026-01-21)
+- **[OFFER-0006](OFFER-0006-image-direct-and-fqn-v2.md)**: Image-Direct Deployment and FQN v2 — Accepted (2026-03-02)
 
 ### Rake (CLI)
 - **[RAKE-0010](RAKE-0010-caching.md)**: Cached Endpoint Resolution
@@ -114,24 +93,26 @@ canonical: true
   - **Impact**: Performance optimization, stale endpoint cleanup
 
 ### Storage (Seed Banks)
-- **[STORAGE-0006](STORAGE-0006-seed-bank-replication.md)**: Seed Bank Replication, Roles, and Pond Encryption
-  - **Status**: Accepted (2026-02-17)
-  - **Rationale**: Primary/dormant roles for seed banks, ChaCha20-Poly1305 encryption for pond-scoped data-at-rest, GUIDv7 last-pin-wins, clone for export, default naming
-  - **Impact**: Seed bank redundancy, geographic distribution, encrypted storage, foundation for Replant ceremony. Simplifies data model (removes group/replica_id).
-- **[STORAGE-0007](STORAGE-0007-storage-lifecycle-objects.md)**: Storage Lifecycle Objects
-  - **Status**: Accepted (2026-02-17)
-  - **Rationale**: Two-layer Storage/SeedBank composition model replacing 6 scattered AppState collections with unified lifecycle objects and self-healing mount verification
-  - **Impact**: Eliminates mount-loss bugs structurally, single source of truth per seed bank, enables future Storage reuse (HarvestStore)
-- **[STORAGE-0008](STORAGE-0008-garden-stone-api-split.md)**: Garden / Stone API Split for Storage
-  - **Status**: Accepted (2026-02-17)
-  - **Rationale**: Name-based garden-tier routes with Primary-or-proxy routing; stone-tier file routes become read-only
-  - **Impact**: Clients use names not IDs, writes always reach Primary, discovery endpoint for dashboards
+- **[STORAGE-0002](STORAGE-0002-api-structure.md)**: Storage API Structure (Native + S3 dual-layer) — Accepted
+- **[STORAGE-0003](STORAGE-0003-beacon-protocol.md)**: Storage Beacon Protocol — Accepted
+- **[STORAGE-0004](STORAGE-0004-seedbank-resilience.md)**: Seed Bank Resilience — Accepted
+- **[STORAGE-0005](STORAGE-0005-manifest-first-discovery.md)**: Manifest-First Discovery — Accepted
+- **[STORAGE-0006](STORAGE-0006-seed-bank-replication.md)**: Seed Bank Replication, Roles, and Pond Encryption — Accepted (2026-02-17)
+- **[STORAGE-0007](STORAGE-0007-storage-lifecycle-objects.md)**: Storage Lifecycle Objects — Accepted (2026-02-17)
+- **[STORAGE-0008](STORAGE-0008-garden-stone-api-split.md)**: Garden / Stone API Split for Storage — Accepted (2026-02-17)
+- **[STORAGE-0009](STORAGE-0009-managed-storage-and-file-sharing.md)**: Managed Storage and File Sharing (WebDAV, Cloud Filter, S3) — Accepted (2026-03-07)
+- **[STORAGE-0010](STORAGE-0010-unified-storage-add-command.md)**: Unified Storage Add Command — Accepted (2026-03-08)
+- **[STORAGE-0011](STORAGE-0011-unified-storage-domain.md)**: Unified Storage Domain — Accepted (2026-03-10)
+- **[STORAGE-0012](STORAGE-0012-cloud-filter-rebuild.md)**: Cloud Filter Rebuild (SoC, full callback coverage) — Accepted (2026-03-10)
+- **[STORAGE-0013](STORAGE-0013-replica-set-identity.md)**: Replica Set Name as Display Identity — Accepted (2026-03-09)
+- **[STORAGE-0014](STORAGE-0014-storage-platform-architecture.md)**: Storage Platform Architecture — Accepted (2026-03-11)
+- **[STORAGE-0015](STORAGE-0015-cloud-drive-storage-router.md)**: Cloud Drive Storage Router (streaming I/O, StorageHandle) — Accepted (2026-03-12)
+- **[STORAGE-0016](STORAGE-0016-s3-port-per-storage-listener.md)**: Unified S3 Storage Gateway (port-per-storage, unified namespace) — Accepted (2026-03-19)
 
 ### Tools
-- **[TOOLS-0001](TOOLS-0001-garden-tools-domain.md)**: Unified Garden Tools Domain
-  - **Status**: Accepted (2026-02-06)
-  - **Rationale**: Single normalized projection of all offerings and seed banks
-  - **Impact**: One API surface for automation, SSE stream, wishful readiness
+- **[TOOLS-0001](TOOLS-0001-garden-tools-domain.md)**: Unified Garden Tools Domain — Accepted (2026-02-06)
+- **[TOOLS-0002](TOOLS-0002-garden-tool-unified-contract.md)**: Unified GardenTool Contract and Projection Pipeline — Accepted (2026-03-02)
+- **[TOOLS-0003](TOOLS-0003-unified-garden-registry.md)**: Unified Garden Registry (beacon-propagated gateways) — Accepted (2026-03-05)
 
 ---
 
@@ -305,20 +286,27 @@ Once an ADR is **Accepted**:
 
 ## ADR Statistics
 
-- **Total ADRs**: 10
+- **Total ADR files**: 96 (2 planned but not yet filed: ARCH-0010, ARCH-0011)
 - **By Status**:
-  - Accepted: 9
-  - Proposed: 0
+  - Accepted: ~94
+  - Proposed: 1 (ORCH-0001)
   - Superseded: 0
 - **By Domain**:
-  - Build: 1
-  - Companions: 1
+  - Architecture: 12 (ARCH-0001 through 0012; 0010/0011 pending)
+  - Build: 4
+  - Communications: 5
+  - Companions: 3 (CRICKET-0001, FIREFLY-0001..0003)
   - Compatibility: 1
-  - Lantern: 1
+  - Discovery/DNS/mDNS/Lantern: 4
   - Metrics: 1
-  - Moss: 3
-  - Offerings: 2
-  - Rake: 1
+  - Moss: 5
+  - Offerings: 6
+  - Orchestration: 11
+  - Ports/Portrait: 4
+  - Presence/Topology: 3
+  - Security: 4
+  - Storage: 15 (STORAGE-0002 through 0016)
+  - Tools: 3
 
 ---
 
@@ -328,6 +316,6 @@ Once an ADR is **Accepted**:
 
 ---
 
-**Last Updated**: February 6, 2026
+**Last Updated**: 2026-03-22
 **Maintained By**: Architecture Team
 **Review Cycle**: As needed (updated when ADRs added/changed)

@@ -2,7 +2,7 @@
 
 Reference guide for environment setup, backup policies, and service recovery.
 
-> **Version**: 0.1 (based on codebase as of 2026-01-30)
+> **Version**: 0.2 (updated 2026-03-22 for ARCH-0006 API renames)
 > **Scope**: Local A/B backups, seed bank replication, and restore operations
 
 ---
@@ -248,7 +248,7 @@ Response shows both slots:
 ```bash
 curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/replicate \
   -H "Content-Type: application/json" \
-  -d '{"seed_bank": "portable-backup"}'
+  -d '{"storage": "portable-backup"}'
 ```
 
 ### List Remote Snapshots
@@ -257,28 +257,26 @@ curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/replicate \
 curl http://localhost:7185/api/v1/stone/snapshots/remote/{seed_bank_name}
 ```
 
-### Hydration Access (Memories API)
+### Hydration Access (Garden Storage Snapshots API)
 
-External orchestrators can read seed bank backups through the **read-only** Memories API.
-Requests are automatically routed to the stone that hosts the selected seed bank, and
-access is **audited** (no auth gating yet).
+External orchestrators can read seed bank backups through the **read-only** garden storage
+snapshots API. Requests are automatically routed to the stone that hosts the selected seed
+bank, and access is **audited** (no auth gating yet).
 
 ```bash
-# List all remote snapshots (index)
-curl http://localhost:7185/api/v1/memories
+# List all remote snapshots on a storage (index)
+curl http://localhost:7185/api/v1/garden/storage/{name}/snapshots
 
 # List snapshots for a specific offering
-curl http://localhost:7185/api/v1/memories/{offering_id}
+curl http://localhost:7185/api/v1/garden/storage/{name}/snapshots/{offering_id}
 
 # Get hydration metadata (offering.json)
-curl http://localhost:7185/api/v1/memories/{offering_id}/manifest
+curl http://localhost:7185/api/v1/garden/storage/{name}/snapshots/{offering_id}/manifest
 
 # Download snapshot tarball
 curl -o snapshot.tar.gz \
-  http://localhost:7185/api/v1/memories/{offering_id}/{harvest_id}
+  http://localhost:7185/api/v1/garden/storage/{name}/snapshots/{offering_id}/{harvest_id}
 ```
-
-**Optional:** target a specific seed bank by name with `X-Seed-Bank: {name}` or `?seed-bank={name}`.
 
 ---
 
@@ -370,7 +368,7 @@ If `slot` is omitted, restores from the most recent slot.
 ```bash
 curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/restore-remote \
   -H "Content-Type: application/json" \
-  -d '{"seed_bank": "portable-backup", "harvest_id": null}'
+  -d '{"storage": "portable-backup", "harvest_id": null}'
 ```
 
 If `harvest_id` is omitted, restores from the latest snapshot on that seed bank.
@@ -396,7 +394,7 @@ If `harvest_id` is omitted, restores from the latest snapshot on that seed bank.
 3. **Restore from seed bank:**
    ```bash
    curl -X POST http://localhost:7185/api/v1/stone/snapshots/{offering}/restore-remote \
-     -d '{"seed_bank": "portable-backup"}'
+     -d '{"storage": "portable-backup"}'
    ```
 
 **Gap:** No CLI command for restore operations. Must use API directly.

@@ -114,6 +114,13 @@ generate_id("job")          // "job-01234567"
 - `CommandParameter` - name, type, required, description
 - `check_dump_commands()` - Helper for companion binaries
 
+### API Response (`common/src/api_utils/`)
+- `ApiResponse<T>` - canonical envelope: `data: T`, `success: bool`
+- `GardenApiResponse<T>` - type alias for `ApiResponse<T>` (backward compat only; new code uses `ApiResponse<T>` directly)
+
+### Hardware (`common/src/types/hardware.rs`)
+- `HardwareCapabilities` - includes `cpu_temperature: Option<f32>` (degrees Celsius from thermal sensors; `None` in VMs or where no sensor is present)
+
 ### Offerings (`common/src/offerings.rs`)
 - `OfferingFqn` - Typed FQN (see [offering-fqn spec](../../docs/specs/offering-fqn.md))
   - Constructors: `new()`, `with_instance()`, `adopted()`, `image_direct()`, `parse()`
@@ -153,6 +160,47 @@ MOSS_SERVICE   = "garden-moss.service"
 
 ---
 
+## StoneApi Typed Client (`common/src/client/stone_api.rs`)
+
+Typed client for the Stone (Moss) REST API (ARCH-0012). Preferred way to call Moss from Rake commands.
+`ApiResponse<T>` unwrapping and error handling are centralized — callers receive `T` directly.
+
+```rust
+let api = ctx.stone_api()?;
+let services = api.services().list().await?;
+let caps     = api.stone().capabilities().await?;
+```
+
+**Endpoint families:**
+
+| Method | Family | Key operations |
+|--------|--------|----------------|
+| `api.services()` | `ServicesApi` | `list()`, `get(name)`, `wake`, `rest`, `restart`, `upgrade`, `remove`, `logs`, `env`, `set_env` |
+| `api.offerings()` | `OfferingsApi` | `list()`, `search(q, prefer, limit)`, `get(name)`, `plant`, `remove`, `refresh`, `inspect`, `heal` |
+| `api.storage()` | `StorageApi` | `overview()`, `health()`, `candidates()`, `add`, `banks()`, `bank(name)`, `pin`, `unpin`, `rename`, `set_visibility`, `set_roles`, `changes`, `stream` |
+| `api.pond()` | `PondApi` | `status()`, `init`, `join`, `invite`, `unlock`, `drain`, `revoke`, `promote`, `rename`, `ca_cert` |
+| `api.companions()` | `CompanionsApi` | `list()`, `get(id)`, `command`, `up`, `down`, `refresh` |
+| `api.stone()` | `StoneInfoApi` | `capabilities()`, `health()`, `metrics()`, `updates()`, `execute_updates`, `logs`, `log_stream`, `maintenance_history`, `sweep` |
+| `api.garden()` | `GardenApi` | `services(query)`, garden-wide aggregated operations |
+
+**Error type** `StoneApiError`: `Connection`, `Http { status, code, message }`, `HttpRaw`, `Parse`, `NotFound`.
+Helper methods: `is_not_found()`, `display_message()`.
+
+For SSE streams or raw HTTP access, use `api.http()` to get the underlying `reqwest::Client`.
+
+---
+
+## System Metrics (`common/src/metrics/system.rs`)
+
+| Function | Returns | Notes |
+|----------|---------|-------|
+| `get_fast_metrics()` | `(CpuMetrics, MemoryMetrics, u64, String)` | CPU + memory + uptime. Only in-memory kernel structures — no I/O. Suitable for 5s polling. 40–60% faster on ARM than a full sysinfo refresh. |
+| `get_cpu_temperature()` | `Option<f32>` | CPU package temp in °C from thermal sensors. Returns `None` in VMs or where no sensor is found. Especially relevant for ARM stones with passive cooling. |
+| `get_cpu_info()` | `(String, Vec<String>, String)` | CPU model name, feature flags, architecture string. |
+| `get_storage_metrics()` | `Vec<StorageMetrics>` | All mounted disks with usage. Involves filesystem stat calls — use at 30s intervals, not 5s. |
+
+---
+
 ## Key Infra Modules
 
 | Module | Purpose |
@@ -161,4 +209,5 @@ MOSS_SERVICE   = "garden-moss.service"
 | `moss/src/infra/persistence.rs` | `load_json<T>()`, `save_json<T>()` atomic |
 | `moss/src/infra/docker.rs` | Bollard wrapper |
 | `moss/src/infra/manifests/` | YAML frontmatter loader |
-| `common/src/client.rs` | `ApiClient` with 30s timeout |
+| `common/src/client/api.rs` | `GardenHttpClient` with timeout; `GardenApiResponse<T>` (type alias for `ApiResponse<T>`) |
+| `common/src/client/stone_api.rs` | `StoneApi` typed client (ARCH-0012) — preferred for new Rake commands |

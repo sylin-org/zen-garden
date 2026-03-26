@@ -22,6 +22,7 @@ exclude = [
   "src/orchestrators/common",
   "src/orchestrators/ollama",
   "src/orchestrators/mongodb",
+  "src/orchestrators/postgresql",
 ]
 resolver = "2"
 

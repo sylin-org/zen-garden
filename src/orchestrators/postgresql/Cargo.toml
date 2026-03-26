@@ -1,0 +1,33 @@
+[package]
+name = "zen-garden-postgresql-orchestrator"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+authors = ["Koan Framework"]
+description = "PostgreSQL streaming replication orchestrator for Zen Garden"
+
+[dependencies]
+orchestrator-common = { path = "../common" }
+garden-common = { path = "../../common" }
+
+# Core
+anyhow = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP
+axum = { version = "0.8", features = ["macros"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# PostgreSQL client
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+
+# Time
+chrono = "0.4"
+
+# Shutdown
+tokio-util = { version = "0.7", features = ["rt"] }

@@ -253,8 +253,8 @@ its changes are merged to `dev`.
 
 - [x] Phase 0: Documentation Alignment (2026-03-25)
 - [x] Phase 1: Thin Code Completions (2026-03-25) — 1a-1f complete
-- [ ] Phase 2: Storage Completions
-- [ ] Phase 3: Service Lifecycle Completions
+- [x] Phase 2: Storage Completions (2026-03-25) — 2a-2d complete
+- [x] Phase 3: Service Lifecycle Completions (2026-03-25) — 3a-3c complete
 - [ ] Phase 4: Secret Backend Expansion
 - [ ] Phase 5: New Low-Complexity Features
 - [ ] Phase 6: Strategic Features (individual ADRs)

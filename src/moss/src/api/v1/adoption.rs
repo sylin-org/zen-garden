@@ -358,6 +358,10 @@ pub struct BorrowOfferingRequest {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub category: Option<String>,
 
+    /// Optional credentials (password, API key, token) — stored encrypted in vault
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub credentials: Option<String>,
+
     /// Optional description
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,
@@ -421,7 +425,25 @@ pub async fn borrow_service_v1(
         location,
         mode_data: OfferingModeData::Borrowed(BorrowedData {
             health_method: None,
-            credentials_key: None,
+            credentials_key: {
+                // Store credentials in Koi vault if provided
+                if let Some(ref creds) = req.credentials {
+                    let vault_key = format!("borrowed:{}:credentials", req.name);
+                    match state.discovery.koi.vault() {
+                        Ok(vault) => {
+                            if let Err(e) = vault.store(&vault_key, creds) {
+                                tracing::warn!(error = %e, "Failed to store borrowed credentials in vault");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Vault unavailable, credentials not stored");
+                        }
+                    }
+                    Some(vault_key)
+                } else {
+                    None
+                }
+            },
             connection_template: Some(req.url.clone()),
             announced_at: chrono::Utc::now(),
         }),

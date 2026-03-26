@@ -23,6 +23,8 @@ exclude = [
   "src/orchestrators/ollama",
   "src/orchestrators/mongodb",
   "src/orchestrators/postgresql",
+  "src/orchestrators/valkey",
+  "src/orchestrators/weaviate",
 ]
 resolver = "2"
 

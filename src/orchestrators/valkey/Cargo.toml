@@ -1,0 +1,30 @@
+[package]
+name = "zen-garden-valkey-orchestrator"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+authors = ["Koan Framework"]
+description = "Valkey/Redis Sentinel orchestrator for Zen Garden"
+
+[dependencies]
+orchestrator-common = { path = "../common" }
+garden-common = { path = "../../common" }
+
+# Core
+anyhow = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP (for dashboard)
+axum = { version = "0.8", features = ["macros"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time
+chrono = "0.4"
+
+# Shutdown
+tokio-util = { version = "0.7", features = ["rt"] }

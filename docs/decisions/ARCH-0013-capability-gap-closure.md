@@ -258,4 +258,9 @@ its changes are merged to `dev`.
 - [x] Phase 4: Secret Backend Expansion (2026-03-25) — Koi vault replaces Moss stubs
 - [x] Phase 5: New Low-Complexity Features (2026-03-25) — F1, F2, F3 complete
 - [x] Phase 6/F4: Self-Deploying Moss — BUILD-0003 accepted (2026-03-25)
-- [ ] Phase 6: Remaining Strategic Features (F5-F16, individual ADRs)
+- [x] Phase 6/F5: AI Capability Router — already implemented (~92%), core complete (2026-03-25)
+- [x] Phase 6/F6-F7: TPM + Platform Keyring — handled by Koi vault (Phase 4)
+- [x] Phase 6/F10: Database Choreographer — MongoDB orchestrator core complete; generic extraction proposed as [ORCH-0012](ORCH-0012-cluster-adapter-extraction.md) (2026-03-25)
+- [ ] Phase 6/F8: Connection String Driver Libraries
+- [ ] Phase 6/F9: Stone Lifecycle Ops
+- [ ] Phase 6/F11-F16: Web Dashboard, Federation, AWS Bridge, Android (individual ADRs)

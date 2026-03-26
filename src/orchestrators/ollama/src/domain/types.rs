@@ -108,6 +108,29 @@ pub struct OrchestratorJob {
 
 // ── Ollama Instance ──────────────────────────────────────────────
 
+/// Whether an Ollama instance uses GPU or CPU for inference.
+///
+/// CPU-only instances (from `ollama-cpu` offering) use system RAM as
+/// workspace memory. GPU instances use VRAM. The orchestrator's tiering
+/// and routing logic treats both uniformly via `workspace_*` fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComputeType {
+    /// GPU-accelerated inference (CUDA, ROCm, Metal).
+    Gpu,
+    /// CPU-only inference (no GPU or forced CPU via CUDA_VISIBLE_DEVICES="").
+    Cpu,
+}
+
+impl std::fmt::Display for ComputeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Gpu => write!(f, "gpu"),
+            Self::Cpu => write!(f, "cpu"),
+        }
+    }
+}
+
 /// A discovered Ollama instance and its hardware profile.
 #[derive(Debug, Clone)]
 pub struct OllamaInstance {
@@ -117,6 +140,7 @@ pub struct OllamaInstance {
     pub moss_endpoint: Option<String>, // e.g. "http://192.168.1.50:7185"
     pub ollama_version: Option<String>,
     pub gpu_name: Option<String>,
+    pub compute_type: ComputeType,
     pub vram_total_bytes: u64,
     pub vram_budget_bytes: u64,
     /// Ollama's configured `OLLAMA_NUM_PARALLEL` (concurrent request slots).

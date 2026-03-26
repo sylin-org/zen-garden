@@ -16,7 +16,7 @@
 //! 4. On stream failure → clear tending, re-discover from step 1.
 
 use crate::app_state::{AppState, TendedStone};
-use crate::domain::types::{InstanceHealth, OllamaInstance};
+use crate::domain::types::{ComputeType, InstanceHealth, OllamaInstance};
 use crate::infra::ollama_client::OllamaClient;
 use crate::infra::stone_discovery;
 use crate::infra::tools_stream::{self, ToolEvent};
@@ -497,6 +497,7 @@ async fn profile_instance(
                 vram_total_bytes: vram_total,
                 vram_budget_bytes: vram_budget,
                 num_parallel,
+                compute_type: ComputeType::Gpu,
                 health: InstanceHealth::Healthy,
                 models_loaded,
                 models_available,
@@ -555,6 +556,7 @@ async fn profile_instance(
                     vram_total_bytes: topology_vram_bytes,
                     vram_budget_bytes: vram_budget,
                     num_parallel,
+                    compute_type: ComputeType::Gpu,
                     health: InstanceHealth::Unhealthy {
                         since: Instant::now(),
                         reason: e.to_string(),

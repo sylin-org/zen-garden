@@ -34,8 +34,14 @@ const POND_HTML: &str = include_str!("../../../assets/pond.html");
 
 #[derive(Deserialize)]
 pub struct PondInitRequest {
-    /// Passphrase to encrypt the CA private key at rest
+    /// Passphrase to encrypt the CA private key at rest.
+    /// If empty and `generate_passphrase` is true, an XKCD-style passphrase is generated.
+    #[serde(default)]
     pub passphrase: String,
+    /// Generate an XKCD-style passphrase (word-word-word-NN) instead of requiring one.
+    /// The generated passphrase is returned in the response.
+    #[serde(default)]
+    pub generate_passphrase: bool,
     /// Trust profile: "just-me" (default), "my-team", "my-organization"
     #[serde(default)]
     pub profile: Option<String>,
@@ -116,6 +122,12 @@ pub struct PondInitResponse {
     pub totp_uri: Option<String>,
     pub ca_fingerprint: String,
     pub name: String,
+    /// Generated passphrase (only present when `generate_passphrase` was true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_passphrase: Option<String>,
+    /// Memorization hint for the generated passphrase
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memorization_hint: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -311,8 +323,22 @@ pub async fn pond_init_v1(
 
     let core = get_certmesh_core(&state)?;
 
+    // Generate passphrase if requested (or if passphrase is empty)
+    let (passphrase, generated_passphrase, memorization_hint) =
+        if payload.generate_passphrase || payload.passphrase.is_empty() {
+            let entropy = koi_certmesh::entropy::collect_entropy(
+                koi_certmesh::entropy::EntropyMode::AutoGenerate,
+            )
+            .map_err(|e| internal("ENTROPY_FAILED", format!("Entropy collection failed: {e}")))?;
+            let generated = koi_certmesh::entropy::generate_passphrase(&entropy);
+            let hint = koi_certmesh::entropy::memorization_hint(&generated);
+            (generated.clone(), Some(generated), Some(hint))
+        } else {
+            (payload.passphrase, None, None)
+        };
+
     let input = PondInitInput {
-        passphrase: payload.passphrase,
+        passphrase,
         profile: payload.profile,
         name: payload.name,
     };
@@ -336,6 +362,8 @@ pub async fn pond_init_v1(
         totp_uri: result.totp_uri,
         ca_fingerprint: result.ca_fingerprint,
         name: result.pond_name,
+        generated_passphrase,
+        memorization_hint,
     })
 }
 

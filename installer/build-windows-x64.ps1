@@ -141,100 +141,14 @@ if (-not $SkipPackage) {
     Write-Host "`nCreating deployment package..." -ForegroundColor Yellow
     Write-Host "  (Including all available binaries from dist/windows-x64/)" -ForegroundColor DarkGray
 
-    $stagingDir = Join-Path $DIST_DIR "staging\windows-x64"
-    New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
-
-    $packageName = "zen-garden-$Version-windows-x64"
-    $packageDir = Join-Path $stagingDir $packageName
-    $zipPath = Join-Path $stagingDir "$packageName.zip"
-
-    # Clean and create package directory
-    if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
-    New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-
-    # Copy ALL available binaries (not just tier-specific ones)
-    # This allows packages to include previously-built Companions even when only core was built
-    $binaries = Get-PlatformBinaries -Config $config -Platform "windows"
-    $includedCount = 0
-    $skippedCount = 0
-    foreach ($binary in $binaries) {
-        $result = Copy-BinaryToStaging -SourceDir $WINDOWS_X64_DIR -StagingRoot $packageDir -Binary $binary -Platform "windows"
-        if ($result) { $includedCount++ } else { $skippedCount++ }
-    }
-    Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
-    
-    # Copy external tools (pre-built binaries from external repos, e.g., Koi)
-    $externalTools = Get-ExternalTools -Config $config -Platform "windows"
-    $toolsIncluded = 0
-    $toolsSkipped = 0
-    foreach ($tool in $externalTools) {
-        $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform "windows"
-        if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
-    }
-    if ($externalTools -and @($externalTools).Count -gt 0) {
-        Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
-    }
-
-    # Copy assets from config
-    $assets = Get-PlatformAssets -Config $config -Platform "windows"
-    foreach ($asset in $assets) {
-        Copy-AssetToStaging -WorkspaceRoot $WORKSPACE_ROOT -StagingRoot $packageDir -Asset $asset
-    }
-
-    # Create package manifest
-    $components = @{}
-    foreach ($binary in $binaries) {
-        $sourceFilename = $binary.Source + ".exe"
-        $sourcePath = Join-Path $WINDOWS_X64_DIR $sourceFilename
-        if (Test-Path $sourcePath) {
-            $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
-            $relativePath = $binary.Destination + $sourceFilename
-            $components[$binary.Source] = @{
-                path = $relativePath
-                sha256 = $hash
-                size = (Get-Item $sourcePath).Length
-                required = $binary.Required
-            }
-        }
-    }
-
-    # Add external tools to manifest
-    foreach ($tool in $externalTools) {
-        $filename = $tool.Binary + ".exe"
-        $toolPath = Join-Path (Join-Path $packageDir $tool.Destination) $filename
-        if (Test-Path $toolPath) {
-            $hash = (Get-FileHash $toolPath -Algorithm SHA256).Hash.ToLower()
-            $relativePath = $tool.Destination + $filename
-            $components[$tool.Name] = @{
-                path = $relativePath
-                sha256 = $hash
-                size = (Get-Item $toolPath).Length
-                required = $false
-                external = $true
-            }
-        }
-    }
-    
-    $manifest = @{
-        version = $Version
-        platform = "windows"
-        architecture = "x64"
-        created = (Get-Date).ToUniversalTime().ToString("o")
-        components = $components
-    }
-    # Write without BOM (UTF8 with BOM breaks JSON parsing)
-    $jsonContent = $manifest | ConvertTo-Json -Depth 10
-    [System.IO.File]::WriteAllText((Join-Path $packageDir "package.json"), $jsonContent, [System.Text.UTF8Encoding]::new($false))
-    
-    # Create zip in staging area
-    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-    Compress-Archive -Path $packageDir -DestinationPath $zipPath -Force
-    
-    $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 2)
-    Write-Host "`nOK Package: $packageName.zip ($sizeMB MB)" -ForegroundColor Green
-    Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
-    
-    Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
+    New-PlatformPackage `
+        -Version $Version `
+        -Platform "windows" `
+        -Architecture "x64" `
+        -SourceDir $WINDOWS_X64_DIR `
+        -StagingBaseDir (Join-Path $DIST_DIR "staging") `
+        -WorkspaceRoot $WORKSPACE_ROOT `
+        -Config $config
 }
 
 Write-Host "`nOK Windows x64 build complete" -ForegroundColor Green

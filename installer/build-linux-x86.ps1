@@ -106,105 +106,14 @@ if (-not $SkipPackage) {
     Write-Host "`nCreating x86 deployment package..." -ForegroundColor Yellow
     Write-Host "  (Including all available binaries from dist/linux-x86/)" -ForegroundColor DarkGray
 
-    $stagingDir = Join-Path $DIST_DIR "staging\linux-x86"
-    New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
-
-    $packageName = "zen-garden-$Version-linux-x86"
-    $packageDir = Join-Path $stagingDir $packageName
-    $tarPath = Join-Path $stagingDir "$packageName.tar.gz"
-
-    if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
-    New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-
-    # Copy ALL available binaries (not just tier-specific ones)
-    # This allows packages to include previously-built Companions even when only core was built
-    $binaries = Get-PlatformBinaries -Config $config -Platform "linux"
-    $includedCount = 0
-    $skippedCount = 0
-    foreach ($binary in $binaries) {
-        $result = Copy-BinaryToStaging -SourceDir $LINUX_X86_DIR -StagingRoot $packageDir -Binary $binary -Platform "linux"
-        if ($result) { $includedCount++ } else { $skippedCount++ }
-    }
-    Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
-
-    # Copy external tools (pre-built binaries from external repos)
-    $externalTools = @(Get-ExternalTools -Config $config -Platform "linux")
-    $toolsIncluded = 0
-    $toolsSkipped = 0
-    foreach ($tool in $externalTools) {
-        $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform "linux"
-        if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
-    }
-    if ($externalTools -and @($externalTools).Count -gt 0) {
-        Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
-    }
-
-    # Copy assets
-    $assets = Get-PlatformAssets -Config $config -Platform "linux"
-    foreach ($asset in $assets) {
-        Copy-AssetToStaging -WorkspaceRoot $WORKSPACE_ROOT -StagingRoot $packageDir -Asset $asset
-    }
-
-    # Create package manifest
-    $components = @{}
-    foreach ($binary in $binaries) {
-        $sourceFilename = $binary.Source
-        $sourcePath = Join-Path $LINUX_X86_DIR $sourceFilename
-        if (Test-Path $sourcePath) {
-            $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
-            $relativePath = ($binary.Destination + $sourceFilename) -replace '\\', '/'
-            $components[$binary.Source] = @{
-                path = $relativePath
-                sha256 = $hash
-                size = (Get-Item $sourcePath).Length
-                required = $binary.Required
-            }
-        }
-    }
-
-    # Add external tools to manifest
-    foreach ($tool in $externalTools) {
-        $filename = $tool.Binary
-        $toolPath = Join-Path (Join-Path $packageDir $tool.Destination) $filename
-        if (Test-Path $toolPath) {
-            $hash = (Get-FileHash $toolPath -Algorithm SHA256).Hash.ToLower()
-            $relativePath = ($tool.Destination + $filename) -replace '\\', '/'
-            $components[$tool.Name] = @{
-                path = $relativePath
-                sha256 = $hash
-                size = (Get-Item $toolPath).Length
-                required = $false
-                external = $true
-            }
-        }
-    }
-
-    $manifest = @{
-        version = $Version
-        platform = "linux"
-        architecture = "x86"
-        created = (Get-Date).ToUniversalTime().ToString("o")
-        components = $components
-    }
-    $jsonContent = $manifest | ConvertTo-Json -Depth 10
-    [System.IO.File]::WriteAllText((Join-Path $packageDir "package.json"), $jsonContent, [System.Text.UTF8Encoding]::new($false))
-
-    # Create tar.gz
-    try {
-        $tarFile = "$packageName.tar.gz"
-        & tar -czf $tarFile -C $stagingDir $packageName 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $tarFile)) {
-            Move-Item $tarFile $tarPath -Force
-            $sizeMB = [math]::Round((Get-Item $tarPath).Length / 1MB, 2)
-            Write-Host "`nOK Package: $packageName.tar.gz ($sizeMB MB)" -ForegroundColor Green
-            Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
-        } else {
-            throw "tar failed with exit code $LASTEXITCODE"
-        }
-    } finally {
-        Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item $tarFile -Force -ErrorAction SilentlyContinue
-    }
+    New-PlatformPackage `
+        -Version $Version `
+        -Platform "linux" `
+        -Architecture "x86" `
+        -SourceDir $LINUX_X86_DIR `
+        -StagingBaseDir (Join-Path $DIST_DIR "staging") `
+        -WorkspaceRoot $WORKSPACE_ROOT `
+        -Config $config
 }
 
 Write-Host "`nOK Linux x86 build complete" -ForegroundColor Green

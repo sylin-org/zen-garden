@@ -458,14 +458,175 @@ function Copy-ExternalToolToStaging {
     return $true
 }
 
+# ── Build Profile Selection ────────────────────────────────────────────
+
+function Get-BuildProfile {
+    <#
+    .SYNOPSIS
+        Resolve build profile from flags (single source of truth).
+    #>
+    param(
+        [switch]$DebugBuild,
+        [switch]$Release,
+        [switch]$Fast
+    )
+    if ($DebugBuild) { return "debug" }
+    if ($Release)    { return "release" }
+    return "fast-release"
+}
+
+# ── Platform Package Creation ──────────────────────────────────────────
+
+function New-PlatformPackage {
+    <#
+    .SYNOPSIS
+        Create a deployment package (tar.gz or zip) from built binaries.
+
+    .DESCRIPTION
+        Single implementation for all platforms. Handles: binary copying,
+        external tools, assets, manifest generation, compression, and cleanup.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Version,
+        [Parameter(Mandatory)]
+        [ValidateSet('linux', 'windows')]
+        [string]$Platform,
+        [Parameter(Mandatory)]
+        [string]$Architecture,
+        [Parameter(Mandatory)]
+        [string]$SourceDir,
+        [Parameter(Mandatory)]
+        [string]$StagingBaseDir,
+        [Parameter(Mandatory)]
+        [string]$WorkspaceRoot,
+        [Parameter(Mandatory)]
+        [PSCustomObject]$Config
+    )
+
+    $ext = if ($Platform -eq "windows") { ".exe" } else { "" }
+    $format = if ($Platform -eq "windows") { "zip" } else { "tar.gz" }
+
+    $stagingDir = Join-Path $StagingBaseDir "$Platform-$Architecture"
+    New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+
+    $packageName = "zen-garden-$Version-$Platform-$Architecture"
+    $packageDir = Join-Path $stagingDir $packageName
+    $packagePath = Join-Path $stagingDir "$packageName.$format"
+
+    # Clean and create package directory
+    if (Test-Path $packageDir) { Remove-Item $packageDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+    # Copy binaries
+    $binaries = Get-PlatformBinaries -Config $Config -Platform $Platform
+    $includedCount = 0
+    $skippedCount = 0
+    foreach ($binary in $binaries) {
+        $result = Copy-BinaryToStaging -SourceDir $SourceDir -StagingRoot $packageDir -Binary $binary -Platform $Platform
+        if ($result) { $includedCount++ } else { $skippedCount++ }
+    }
+    Write-Host "  Binaries: $includedCount included, $skippedCount not found" -ForegroundColor $(if ($skippedCount -gt 0) { 'Yellow' } else { 'Green' })
+
+    # Copy external tools
+    $externalTools = @(Get-ExternalTools -Config $Config -Platform $Platform)
+    $toolsIncluded = 0
+    $toolsSkipped = 0
+    foreach ($tool in $externalTools) {
+        $result = Copy-ExternalToolToStaging -StagingRoot $packageDir -Tool $tool -Platform $Platform
+        if ($result) { $toolsIncluded++ } else { $toolsSkipped++ }
+    }
+    if ($externalTools -and @($externalTools).Count -gt 0) {
+        Write-Host "  External tools: $toolsIncluded included, $toolsSkipped not found" -ForegroundColor $(if ($toolsSkipped -gt 0) { 'Yellow' } else { 'DarkCyan' })
+    }
+
+    # Copy assets
+    $assets = Get-PlatformAssets -Config $Config -Platform $Platform
+    foreach ($asset in $assets) {
+        Copy-AssetToStaging -WorkspaceRoot $WorkspaceRoot -StagingRoot $packageDir -Asset $asset
+    }
+
+    # Build manifest
+    $components = @{}
+    foreach ($binary in $binaries) {
+        $sourceFilename = $binary.Source + $ext
+        $sourcePath = Join-Path $SourceDir $sourceFilename
+        if (Test-Path $sourcePath) {
+            $hash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = ($binary.Destination + $sourceFilename) -replace '\\', '/'
+            $components[$binary.Source] = @{
+                path     = $relativePath
+                sha256   = $hash
+                size     = (Get-Item $sourcePath).Length
+                required = $binary.Required
+            }
+        }
+    }
+    foreach ($tool in $externalTools) {
+        $filename = $tool.Binary + $ext
+        $toolPath = Join-Path (Join-Path $packageDir $tool.Destination) $filename
+        if (Test-Path $toolPath) {
+            $hash = (Get-FileHash $toolPath -Algorithm SHA256).Hash.ToLower()
+            $relativePath = ($tool.Destination + $filename) -replace '\\', '/'
+            $components[$tool.Name] = @{
+                path     = $relativePath
+                sha256   = $hash
+                size     = (Get-Item $toolPath).Length
+                required = $false
+                external = $true
+            }
+        }
+    }
+
+    $manifest = @{
+        version      = $Version
+        platform     = $Platform
+        architecture = $Architecture
+        created      = (Get-Date).ToUniversalTime().ToString("o")
+        components   = $components
+    }
+    $jsonContent = $manifest | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText(
+        (Join-Path $packageDir "package.json"),
+        $jsonContent,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    # Compress
+    if ($format -eq "tar.gz") {
+        try {
+            $tarFile = "$packageName.tar.gz"
+            & tar -czf $tarFile -C $stagingDir $packageName 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $tarFile)) {
+                Move-Item $tarFile $packagePath -Force
+            } else {
+                throw "tar failed with exit code $LASTEXITCODE"
+            }
+        } finally {
+            Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item $tarFile -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        if (Test-Path $packagePath) { Remove-Item $packagePath -Force }
+        Compress-Archive -Path $packageDir -DestinationPath $packagePath -Force
+        Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $sizeMB = [math]::Round((Get-Item $packagePath).Length / 1MB, 2)
+    Write-Host "`nOK Package: $packageName.$format ($sizeMB MB)" -ForegroundColor Green
+    Write-Host "  Staged at: $stagingDir" -ForegroundColor DarkGray
+}
+
 Export-ModuleMember -Function @(
     'Get-DistConfig',
+    'Get-BuildProfile',
     'Get-PlatformBinaries',
     'Get-TierBinaries',
     'Get-CargoBuildTargets',
     'Get-PlatformAssets',
     'Get-ExternalTools',
     'New-StagingDirectory',
+    'New-PlatformPackage',
     'Copy-BinaryToStaging',
     'Copy-AssetToStaging',
     'Copy-ExternalToolToStaging'

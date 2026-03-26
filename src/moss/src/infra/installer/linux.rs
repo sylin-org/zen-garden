@@ -3,8 +3,6 @@
 use std::path::Path;
 use std::process::Command;
 
-use garden_common::utils::validation::validate_safe_path;
-
 use super::SERVICE_NAME;
 
 const UNIT_FILE_PATH: &str = "/etc/systemd/system/garden-moss.service";
@@ -135,99 +133,6 @@ fn install_companions(bin_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    Ok(())
-}
-
-/// Install scripts/ directory contents using filesystem-mirrored paths
-/// (scripts/X/Y/Z -> /X/Y/Z)
-fn install_scripts(staging_dir: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    // Find scripts/ in the package
-    let scripts_dir = find_scripts_dir(staging_dir);
-    if !scripts_dir.exists() {
-        return Ok(());
-    }
-
-    println!("  Installing scripts...");
-    let mut needs_daemon_reload = false;
-
-    for entry in walkdir(&scripts_dir)? {
-        let rel_path = entry.strip_prefix(&scripts_dir)?;
-        validate_safe_path(rel_path).map_err(|e| {
-            anyhow::anyhow!(
-                "unsafe path in package scripts: {}: {}",
-                rel_path.display(),
-                e
-            )
-        })?;
-        let target_path = Path::new("/").join(rel_path);
-        let target_dir = target_path.parent().unwrap_or(Path::new("/"));
-
-        std::fs::create_dir_all(target_dir)?;
-        std::fs::copy(&entry, &target_path)?;
-
-        // Apply post-install hooks based on path
-        let target_str = target_path.to_string_lossy();
-        if target_str.starts_with("/etc/systemd/system/") {
-            needs_daemon_reload = true;
-            std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o644))?;
-        } else if target_str.starts_with("/usr/local/bin/") {
-            std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o755))?;
-        }
-
-        println!("    {} -> {}", rel_path.display(), target_path.display());
-    }
-
-    if needs_daemon_reload {
-        let _ = Command::new("systemctl").args(["daemon-reload"]).output();
-    }
-
-    Ok(())
-}
-
-/// Find scripts/ directory inside extracted package
-fn find_scripts_dir(staging_dir: &Path) -> std::path::PathBuf {
-    let direct = staging_dir.join("scripts");
-    if direct.exists() {
-        return direct;
-    }
-
-    // Inside a version subdirectory
-    if let Ok(entries) = std::fs::read_dir(staging_dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            if entry.path().is_dir() {
-                let nested = entry.path().join("scripts");
-                if nested.exists() {
-                    return nested;
-                }
-            }
-        }
-    }
-
-    staging_dir.join("scripts")
-}
-
-/// Walk a directory tree and return all file paths
-fn walkdir(dir: &Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
-    let mut files = Vec::new();
-    walk_recursive(dir, &mut files)?;
-    Ok(files)
-}
-
-fn walk_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> anyhow::Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            walk_recursive(&path, files)?;
-        } else {
-            files.push(path);
-        }
-    }
     Ok(())
 }
 

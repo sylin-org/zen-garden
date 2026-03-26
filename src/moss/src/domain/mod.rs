@@ -94,7 +94,6 @@ pub use service_discovery::{
     find_services, get_offering_port, list_all_local_services, FoundService,
     ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,
 };
-pub use service_manager::ServiceLifecycle;
 pub use storage::{
     new_media, new_volumes, Management, Media, Medium, Storage, StorageBank, Volume, VolumeState,
     Volumes,

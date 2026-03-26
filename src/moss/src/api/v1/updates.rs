@@ -404,8 +404,26 @@ pub async fn execute_stone(
         }
     }
 
-    // TODO V1+: Handle items field for granular selection
-    // if !request.items.is_empty() { ... }
+    // Granular selection: if items are specified, filter to only those
+    if !request.items.is_empty() {
+        let selected_offerings: std::collections::HashSet<&str> = request
+            .items
+            .iter()
+            .filter_map(|item| item.strip_prefix("offering:"))
+            .collect();
+        let selected_firmware: std::collections::HashSet<&str> = request
+            .items
+            .iter()
+            .filter_map(|item| item.strip_prefix("firmware:"))
+            .collect();
+
+        if !selected_offerings.is_empty() {
+            pending_offerings.retain(|name| selected_offerings.contains(name.as_str()));
+        }
+        if !selected_firmware.is_empty() {
+            pending_firmware.retain(|id| selected_firmware.contains(id.as_str()));
+        }
+    }
 
     if pending_offerings.is_empty() && pending_firmware.is_empty() {
         return Err(crate::infra::error_response(
@@ -915,7 +933,7 @@ async fn check_offering_updates(
                 };
 
                 // Check constraints (example: MongoDB 5.0+ requires AVX)
-                let requirements = get_offering_requirements(&offering_name_str);
+                let requirements = get_offering_requirements(&offering_name_str, state);
 
                 match check_constraints(&requirements, capabilities) {
                     Ok(()) => results.push(Ok(update)),
@@ -1125,17 +1143,46 @@ fn version_less_than(a: &str, b: &str) -> bool {
     false // Equal
 }
 
-/// Get hardware requirements for an offering
+/// Get hardware requirements for an offering from its manifest.
 ///
-/// TODO: Load from offering manifest metadata
-fn get_offering_requirements(name: &str) -> crate::domain::constraints::Requirements {
-    // Hardcoded rules for V0 - should come from manifests
+/// Loads compatibility rules from the manifest registry. Falls back to
+/// hardcoded rules for offerings without manifest metadata.
+fn get_offering_requirements(
+    name: &str,
+    state: &crate::AppState,
+) -> crate::domain::constraints::Requirements {
+    use crate::domain::constraints::Requirements;
+
+    // Try to load from manifest first
+    if let Some(offering) = state.manifest_registry.sw.get(name) {
+        if let Some(ref compat) = offering.compatibility {
+            let mut req = Requirements::new();
+            for rule in &compat.compatibility_rules {
+                if let Some(ref features) = rule.condition.cpu_features_missing {
+                    for f in features {
+                        req = req.require_cpu_feature(f);
+                    }
+                }
+                if let Some(min_mem) = rule.condition.memory_mb_less_than {
+                    req = req.require_memory_mb(min_mem);
+                }
+                if let Some(ref archs) = rule.condition.architectures {
+                    for a in archs {
+                        req = req.require_architecture(a);
+                    }
+                }
+            }
+            return req;
+        }
+    }
+
+    // Fallback: hardcoded rules for offerings without manifest metadata
     match name {
-        "mongodb" => crate::domain::constraints::Requirements::new()
+        "mongodb" => Requirements::new()
             .require_cpu_feature("avx")
             .require_memory_mb(2048),
-        "postgres" => crate::domain::constraints::Requirements::new().require_memory_mb(1024),
-        _ => crate::domain::constraints::Requirements::new(),
+        "postgres" => Requirements::new().require_memory_mb(1024),
+        _ => Requirements::new(),
     }
 }
 

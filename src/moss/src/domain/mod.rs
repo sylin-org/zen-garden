@@ -14,6 +14,7 @@
 //! All I/O goes through infra layer.
 
 pub mod adoption;
+pub mod announcement;
 pub mod capabilities;
 pub mod ceremony;
 pub mod cloud_drive;

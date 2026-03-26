@@ -24,6 +24,15 @@ impl CoordinationMode {
     pub fn is_elected(&self) -> bool {
         matches!(self, Self::Elected)
     }
+
+    /// Whether only the Primary instance should be announced via mDNS/DNS.
+    ///
+    /// For `Independent`, all instances are announced (each is autonomous).
+    /// For `Elected`, only the Primary is announced — Dormant/Degraded are
+    /// reachable but not discoverable by clients.
+    pub fn announce_primary_only(&self) -> bool {
+        matches!(self, Self::Elected)
+    }
 }
 
 impl std::fmt::Display for CoordinationMode {
@@ -54,6 +63,17 @@ pub enum OfferingRole {
     Dormant,
     /// Stepped down due to consecutive health failures.
     Degraded,
+}
+
+impl OfferingRole {
+    /// Whether this role should be announced via mDNS/DNS.
+    ///
+    /// Only Primary instances are discoverable by clients. Dormant and
+    /// Degraded instances are reachable (for replication, health checks)
+    /// but not announced as service endpoints.
+    pub fn is_announced(&self) -> bool {
+        matches!(self, Self::Primary)
+    }
 }
 
 impl std::fmt::Display for OfferingRole {

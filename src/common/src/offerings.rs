@@ -320,6 +320,28 @@ impl OfferingFqn {
     ///
     /// Curated: `mongodb--prod` (unchanged from V1).
     /// Image-direct: `img-nginx-latest--staging` (new).
+    /// Derive a DNS/mDNS announcement name from the FQN.
+    ///
+    /// Uses dot separator for instances — maps naturally to DNS subdomains:
+    ///
+    /// | FQN | Announcement | DNS (under `.zengarden`) |
+    /// |-----|-------------|--------------------------|
+    /// | `searxng` | `searxng` | `searxng.zengarden` |
+    /// | `searxng::prod` | `searxng.prod` | `searxng.prod.zengarden` |
+    /// | `pihole::backup` | `pihole.backup` | `pihole.backup.zengarden` |
+    pub fn announcement_name(&self) -> String {
+        match &self.instance {
+            Some(instance) => format!("{}.{}", self.offering, instance),
+            None => self.offering.clone(),
+        }
+    }
+
+    /// Derive a container-safe name from the FQN.
+    ///
+    /// Uses `--` separator (avoids ambiguity with hyphens in offering names).
+    ///
+    /// Curated: `mongodb--prod` (unchanged from V1).
+    /// Image-direct: `img-nginx-latest--staging` (new).
     pub fn encoded_for_container(&self) -> String {
         match &self.source {
             Some(OfferingSource::Image) => {

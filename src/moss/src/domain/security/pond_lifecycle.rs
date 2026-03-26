@@ -177,7 +177,7 @@ pub async fn init(
 
     Ok(PondInitResult {
         cornerstone: state.current.stone.name.clone(),
-        keystone_path: koi_certmesh::ca::ca_dir().display().to_string(),
+        keystone_path: koi_certmesh::CertmeshPaths::default().ca_dir().display().to_string(),
         totp_uri,
         ca_fingerprint: create_resp.ca_fingerprint,
         pond_name,

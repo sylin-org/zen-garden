@@ -566,7 +566,7 @@ async fn build_state(
             } else if status.ca_initialized {
                 // CA is initialized but still locked â€” no auto-unlock key
                 // existed, or decryption failed.  Report available methods.
-                let slot_table_path = koi_certmesh::ca::slot_table_path();
+                let slot_table_path = koi_certmesh::CertmeshPaths::default().slot_table_path();
                 if slot_table_path.exists() {
                     if let Ok(table) = koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
                         let methods = table.available_methods();
@@ -1491,7 +1491,7 @@ pub(crate) async fn activate_pond_security(
             }
 
     // --- Chirp verification ---
-    let ca_cert_path = koi_certmesh::ca::ca_cert_path();
+    let ca_cert_path = koi_certmesh::CertmeshPaths::default().ca_cert_path();
     if ca_cert_path.exists()
         && let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path) {
             let _ = garden_common::infra::communications::p2p::set_envelope_verifier(Box::new(

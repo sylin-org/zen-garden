@@ -741,7 +741,7 @@ async fn write_enrollment_certs(
 
     // Also store CA cert at the certmesh CA cert path so chirp verification
     // works on non-cornerstone stones (activate_pond_security reads from there).
-    let ca_cert_dest = koi_certmesh::ca::ca_cert_path();
+    let ca_cert_dest = koi_certmesh::CertmeshPaths::default().ca_cert_path();
     if let Some(parent) = ca_cert_dest.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
@@ -996,7 +996,7 @@ pub async fn pond_promote_v1(
 
     crate::api::ok(serde_json::json!({
         "promoted": true,
-        "ca_fingerprint": koi_certmesh::ca::ca_fingerprint_from_disk()
+        "ca_fingerprint": koi_certmesh::ca::ca_fingerprint_from_disk(&koi_certmesh::CertmeshPaths::default())
             .unwrap_or_else(|_| "unavailable".to_string()),
     }))
 }
@@ -1019,7 +1019,7 @@ pub async fn pond_ca_cert_v1(
     }
 
     // Read CA cert from disk
-    let ca_cert_path = koi_certmesh::ca::ca_cert_path();
+    let ca_cert_path = koi_certmesh::CertmeshPaths::default().ca_cert_path();
     let ca_pem = tokio::fs::read_to_string(&ca_cert_path)
         .await
         .map_err(|e| {
@@ -1234,7 +1234,7 @@ async fn execute_pond_init_from_ceremony(
                 .and_then(|v| v.as_str())
                 .unwrap_or("totp");
 
-            let slot_table_path = koi_certmesh::ca::slot_table_path();
+            let slot_table_path = koi_certmesh::CertmeshPaths::default().slot_table_path();
             if !slot_table_path.exists() {
                 tracing::error!(
                     "Slot table not found after CA creation — cannot register unlock token"

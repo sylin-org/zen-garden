@@ -520,6 +520,7 @@ pub async fn get_portrait_data(
                     garden_common::OfferingStatus::Maintenance => "maintenance",
                     garden_common::OfferingStatus::Degraded => "degraded",
                     garden_common::OfferingStatus::Unknown => "unknown",
+                    garden_common::OfferingStatus::Cordoned => "cordoned",
                 };
                 let health_str = match o.health {
                     garden_common::ServiceHealthStatus::Healthy => "healthy",

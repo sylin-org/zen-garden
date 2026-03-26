@@ -1686,7 +1686,11 @@ mod tests {
 
     #[test]
     fn test_list_all_buckets_includes_names() {
-        let buckets = vec!["photos".to_string(), "backups".to_string()];
+        let now = chrono::Utc::now();
+        let buckets = vec![
+            ("photos".to_string(), now),
+            ("backups".to_string(), now),
+        ];
         let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&buckets));
         assert!(xml.contains("<Name>photos</Name>"));
         assert!(xml.contains("<Name>backups</Name>"));
@@ -1694,7 +1698,7 @@ mod tests {
 
     #[test]
     fn test_list_all_buckets_escapes_names() {
-        let buckets = vec!["my<bucket>".to_string()];
+        let buckets = vec![("my<bucket>".to_string(), chrono::Utc::now())];
         let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&buckets));
         assert!(xml.contains("<Name>my&lt;bucket&gt;</Name>"));
     }

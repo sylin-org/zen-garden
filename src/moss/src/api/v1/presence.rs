@@ -240,7 +240,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             net_tx_bytes_per_sec: net_tx,
             has_gpu,
             gpu_active,
-            is_lantern: false, // TODO: detect from offerings
+            is_lantern: offerings_guard.iter().any(|o| o.offering == "lantern"),
             has_cricket,
             hour,
             seed_bank,

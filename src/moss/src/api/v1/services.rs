@@ -31,6 +31,7 @@ fn offering_to_service_info(o: &Offering) -> ServiceInfo {
             OfferingStatus::Degraded => ServiceStatus::Degraded,
             OfferingStatus::Maintenance => ServiceStatus::Maintenance,
             OfferingStatus::Unknown => ServiceStatus::Unknown,
+            OfferingStatus::Cordoned => ServiceStatus::Cordoned,
         },
         health: o.health.clone(),
         ports: Ports {

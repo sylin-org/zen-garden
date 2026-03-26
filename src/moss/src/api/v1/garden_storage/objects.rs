@@ -450,11 +450,11 @@ async fn handle_bucket_listing(store: &ObjectStore) -> Response {
         Ok(buckets) => {
             let entries = buckets
                 .into_iter()
-                .map(|name| DirectoryEntry {
+                .map(|(name, created)| DirectoryEntry {
                     name,
                     entry_type: "dir".to_string(),
                     size: None,
-                    modified: None,
+                    modified: Some(created.to_rfc3339()),
                 })
                 .collect::<Vec<_>>();
             let response = DirectoryListResponse {

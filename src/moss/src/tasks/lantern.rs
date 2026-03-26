@@ -5,6 +5,7 @@
 
 use crate::tasks::network_monitor::{Network, NetworkEvent};
 use crate::lantern_registration_loop;
+use crate::AppState;
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +24,7 @@ pub async fn start_lantern_registration(
     use_static_host: bool,
     network: &Network,
     console: Option<&ConsolePrinter>,
+    state: AppState,
     token: CancellationToken,
 ) {
     let lantern_endpoint = match std::env::var(garden_common::constants::ENV_LANTERN_ENDPOINT) {
@@ -56,6 +58,7 @@ pub async fn start_lantern_registration(
             reg_stone_name,
             reg_endpoint,
             lantern_url,
+            state,
             token,
         )
         .await

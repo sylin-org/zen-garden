@@ -38,7 +38,7 @@ pub struct ListAllMyBucketsResult {
 }
 
 impl ListAllMyBucketsResult {
-    pub fn new(bucket_names: &[String]) -> Self {
+    pub fn new(buckets: &[(String, chrono::DateTime<chrono::Utc>)]) -> Self {
         Self {
             xmlns: S3_XMLNS,
             owner: Owner {
@@ -46,12 +46,14 @@ impl ListAllMyBucketsResult {
                 display_name: "zen-garden".to_string(),
             },
             buckets: Buckets {
-                bucket: bucket_names
+                bucket: buckets
                     .iter()
-                    .map(|name| BucketEntry {
+                    .map(|(name, created)| BucketEntry {
                         name: name.clone(),
-                        // TODO: use actual directory mtime when bucket metadata is tracked
-                        creation_date: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                        creation_date: created.to_rfc3339_opts(
+                            chrono::SecondsFormat::Millis,
+                            true,
+                        ),
                     })
                     .collect(),
             },

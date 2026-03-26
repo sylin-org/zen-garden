@@ -309,7 +309,8 @@ impl ObjectStore {
 
     /// LIST buckets - list all directories at mount root as buckets.
     /// Excludes dotfolders (.zen-garden, etc.) since those are infrastructure.
-    pub async fn list_buckets(&self) -> Result<Vec<String>> {
+    /// Returns (name, creation_time) pairs using directory mtime from the filesystem.
+    pub async fn list_buckets(&self) -> Result<Vec<(String, chrono::DateTime<chrono::Utc>)>> {
         let root_dir = &self.root_path;
 
         if !root_dir.exists() {
@@ -328,11 +329,18 @@ impl ObjectStore {
                     if name.starts_with('.') {
                         continue;
                     }
-                    buckets.push(name.to_string());
+                    let created = entry
+                        .metadata()
+                        .await
+                        .ok()
+                        .and_then(|m| m.created().ok())
+                        .map(chrono::DateTime::<chrono::Utc>::from)
+                        .unwrap_or_else(chrono::Utc::now);
+                    buckets.push((name.to_string(), created));
                 }
         }
 
-        buckets.sort();
+        buckets.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(buckets)
     }
 
@@ -681,8 +689,8 @@ mod tests {
             .unwrap();
 
         let buckets = store.list_buckets().await.unwrap();
-        assert!(buckets.contains(&"photos".to_string()));
-        assert!(!buckets.iter().any(|b| b.starts_with('.')));
+        assert!(buckets.iter().any(|(name, _)| name == "photos"));
+        assert!(!buckets.iter().any(|(name, _)| name.starts_with('.')));
     }
 
     #[tokio::test]

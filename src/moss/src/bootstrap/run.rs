@@ -21,7 +21,6 @@ use crate::{
     router,
     run_server,
     start_discovery_listener,
-    start_lantern_registration,
     version_string,
     AppState,
     DockerConfig,
@@ -666,18 +665,7 @@ async fn build_state(
     // Phase 4.5: Start mDNS lurk-listener (moved to Phase 11 after state creation)
     // Note: IP change handler moved to Phase 11 to use AppState.announce_resolution_change()
 
-    // Phase 6: Lantern registration (console already created in Phase 1)
-    start_lantern_registration(
-        &stone_id,
-        &stone_name,
-        &api_endpoint,
-        port,
-        use_static_host.is_some(),
-        &network,
-        Some(&console_printer),
-        shutdown_token.child_token(),
-    )
-    .await;
+    // Phase 6: Lantern registration — deferred to Phase 11.post2 (needs AppState for service list)
 
     emit_startup_events(&console_printer, &config);
 

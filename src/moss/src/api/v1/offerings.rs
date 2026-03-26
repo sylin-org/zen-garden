@@ -266,24 +266,34 @@ pub struct PlantOfferingRequest {
 }
 
 pub async fn plant_offering_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<PlantOfferingRequest>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
-    // Forward to services API with simplified configuration
-    // TODO: Transform simplified config to full service creation request
+    use axum::http::HeaderMap;
+    use crate::api::responses::CreateServiceRequest;
+
     tracing::info!(offering = %payload.name, "Planting offering (simplified)");
 
-    let mut details = HashMap::new();
-    details.insert("offering".to_string(), serde_json::json!(payload.name));
-    Err(error_response(
-        StatusCode::NOT_IMPLEMENTED,
-        "NOT_IMPLEMENTED",
-        "Offering planting not yet implemented - use POST /api/v1/services for now".to_string(),
-        Some(details),
-    ))
+    // Transform simplified config to full service creation request
+    let create_req = CreateServiceRequest {
+        offering: payload.name,
+    };
+
+    // Delegate to the services API (same pattern as take_away_offering_v1)
+    let result = crate::api::v1::services::create_service_v1(
+        State(state),
+        HeaderMap::new(),
+        Json(create_req),
+    )
+    .await;
+
+    match result {
+        Ok(Json(response)) => Ok((StatusCode::ACCEPTED, Json(serde_json::json!(response.data)))),
+        Err((status, error)) => Err((status, error)),
+    }
 }
 
 /// DELETE /api/v1/offerings/:name
@@ -378,7 +388,7 @@ pub async fn refresh_catalog_v1(
 fn simplify_health(status: &garden_common::OfferingStatus) -> String {
     use garden_common::{constants, OfferingStatus};
     match status {
-        OfferingStatus::Running => constants::HEALTH_HEALTHY.to_string(),
+        OfferingStatus::Running | OfferingStatus::Cordoned => constants::HEALTH_HEALTHY.to_string(),
         OfferingStatus::Stopped | OfferingStatus::Unknown => {
             constants::HEALTH_UNHEALTHY.to_string()
         }

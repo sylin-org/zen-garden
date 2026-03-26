@@ -1060,6 +1060,23 @@ pub(crate) async fn start_background_tasks(
         });
     }
 
+    // Phase 15: Lantern registration (now has AppState for service list)
+    {
+        let network = state.platform.network.clone();
+        start_lantern_registration(
+            &stone_id,
+            &stone_name,
+            &api_endpoint,
+            state.current.api_port,
+            use_static_host,
+            &network,
+            Some(&console_printer),
+            state.clone(),
+            shutdown_token.child_token(),
+        )
+        .await;
+    }
+
     // Phase 16: Pre-install manifest handling
     crate::bootstrap::run::start_preinstall_handler(&state).await;
 

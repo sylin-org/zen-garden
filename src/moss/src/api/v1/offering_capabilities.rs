@@ -1094,6 +1094,7 @@ async fn offering_to_service_info(offering: &Offering, state: &AppState) -> Serv
             garden_common::OfferingStatus::Degraded => ServiceStatus::Degraded,
             garden_common::OfferingStatus::Maintenance => ServiceStatus::Maintenance,
             garden_common::OfferingStatus::Unknown => ServiceStatus::Unknown,
+            garden_common::OfferingStatus::Cordoned => ServiceStatus::Cordoned,
         },
         health: offering.health.clone(),
         ports: Ports {

@@ -1749,6 +1749,7 @@ async fn offering_to_service_info_for_refresh(
             OfferingStatus::Degraded => ServiceStatus::Degraded,
             OfferingStatus::Maintenance => ServiceStatus::Maintenance,
             OfferingStatus::Unknown => ServiceStatus::Unknown,
+            OfferingStatus::Cordoned => ServiceStatus::Cordoned,
         },
         health: offering.health.clone(),
         ports: Ports {

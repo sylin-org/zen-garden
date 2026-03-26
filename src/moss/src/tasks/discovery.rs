@@ -5,31 +5,23 @@
 //! - mDNS broadcasts (local network discovery) - future
 //! - Pond synchronization (distributed discovery) - future
 
+use crate::AppState;
+
 /// Lantern registration loop - registers this stone with Lantern every 45 seconds
 ///
 /// Continuously registers this stone with the Lantern service discovery system.
 /// Sends POST /api/register with stone ID, name, endpoint, and current service list.
 ///
 /// Only runs if LANTERN_ENDPOINT environment variable is set.
-///
-/// # Arguments
-/// * `stone_id` - This stone's unique identifier (GUID v7)
-/// * `stone_name` - This stone's human-readable name (hostname)
-/// * `endpoint` - This stone's HTTP endpoint (e.g., "http://192.168.1.100:7185")
-/// * `lantern_endpoint` - Lantern service URL (e.g., "http://lantern:7190")
-///
-/// # Future Improvements
-/// - TODO: Build actual service list from running containers
-/// - TODO: Add health status to registration
-/// - TODO: Handle Lantern unavailability gracefully
 pub async fn lantern_registration_loop(
     stone_id: String,
     stone_name: String,
     endpoint: String,
     lantern_endpoint: String,
+    state: AppState,
     token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
-    use garden_common::RegisterRequest;
+    use garden_common::{RegisterRequest, RegisterServiceInfo};
     use reqwest::Client;
 
     tracing::info!(
@@ -43,13 +35,29 @@ pub async fn lantern_registration_loop(
     let register_url = format!("{}/api/v1/register", lantern_endpoint);
 
     loop {
-        // TODO: Build service list from actual running containers
-        // For now, just register as online with no services
+        // Build service list from current offerings
+        let services = {
+            let offerings = state.offerings.read().await;
+            offerings
+                .iter()
+                .map(|o| RegisterServiceInfo {
+                    name: o.name.to_string(),
+                    service_type: o.offering.clone(),
+                    status: o.status.to_string(),
+                    connection_string: format!(
+                        "{}:{}",
+                        endpoint,
+                        o.location.port_map.values().next().copied().unwrap_or(0)
+                    ),
+                })
+                .collect()
+        };
+
         let request = RegisterRequest {
             stone_id: Some(stone_id.clone()),
             stone_name: stone_name.clone(),
             endpoint: endpoint.clone(),
-            services: vec![],
+            services,
         };
 
         match client.post(&register_url).json(&request).send().await {

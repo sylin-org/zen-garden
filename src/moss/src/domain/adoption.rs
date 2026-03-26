@@ -168,6 +168,7 @@ pub async fn adopt_offering_container(
         (_, garden_common::ServiceStatus::Degraded) => OfferingStatus::Degraded,
         (_, garden_common::ServiceStatus::Maintenance) => OfferingStatus::Maintenance,
         (_, garden_common::ServiceStatus::Unknown) => OfferingStatus::Unknown,
+        (_, garden_common::ServiceStatus::Cordoned) => OfferingStatus::Cordoned,
     };
     let protocol = connection::infer_protocol_from_manifest_metadata(
         &offering_type,

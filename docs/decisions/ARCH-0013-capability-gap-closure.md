@@ -257,4 +257,5 @@ its changes are merged to `dev`.
 - [x] Phase 3: Service Lifecycle Completions (2026-03-25) — 3a-3c complete
 - [x] Phase 4: Secret Backend Expansion (2026-03-25) — Koi vault replaces Moss stubs
 - [x] Phase 5: New Low-Complexity Features (2026-03-25) — F1, F2, F3 complete
-- [ ] Phase 6: Strategic Features (individual ADRs)
+- [x] Phase 6/F4: Self-Deploying Moss — BUILD-0003 accepted (2026-03-25)
+- [ ] Phase 6: Remaining Strategic Features (F5-F16, individual ADRs)

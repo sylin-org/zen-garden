@@ -1,14 +1,14 @@
 ---
 audience: [developer, contributor]
 doc_type: decision
-status: draft
-last_verified: 2026-03-16
+status: accepted
+last_verified: 2026-03-25
 ---
 
 # BUILD-0003: Self-Deploying Moss
 
 **Date**: 2026-03-16
-**Status**: Draft
+**Status**: Accepted
 **Depends on**: [BUILD-0002 (Unified Deployment Packages)](BUILD-0002-unified-deployment-packages.md)
 **Supersedes**: Portions of BUILD-0002 (platform-specific finalization via shell scripts)
 **Applies to**: `moss` (installer module), `installer/` (build scripts, USB creator), `deploy.ps1`

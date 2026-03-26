@@ -66,29 +66,7 @@
   },
 
   "assets": {
-    "shellScripts": {
-      "source": "installer",
-      "destination": "bin/",
-      "files": [
-        "moss-update-helper.sh"
-      ],
-      "lineEndings": "lf",
-      "platforms": ["linux"]
-    },
-    "serviceFile": {
-      "source": "installer/package-assets",
-      "destination": "scripts/etc/systemd/system/",
-      "files": ["garden-moss.service"],
-      "lineEndings": "lf",
-      "platforms": ["linux"]
-    },
-    "gardenConfig": {
-      "source": "installer",
-      "destination": "scripts/var/lib/zen-garden/",
-      "files": ["garden.conf"],
-      "lineEndings": "lf",
-      "platforms": ["linux"]
-    }
+    "_note": "BUILD-0003: shell scripts, service files, and garden.conf are no longer packaged. The garden-moss binary generates all system configuration during install."
   },
   
   "externalTools": {

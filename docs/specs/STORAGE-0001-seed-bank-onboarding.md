@@ -787,8 +787,8 @@ Seed banks are mounted under `{data_dir}/mounts/`:
 │   ├── head                # Current journal head pointer
 │   └── *.json              # Journal entry batches
 └── garden/                 # Garden namespace
-    ├── memories/           # Nurturing backups
-    │   ├── index.json       # Remote nurturing index
+    ├── snapshots/          # Backup snapshots
+    │   ├── index.json       # Remote snapshots index
     │   └── {offering_id}/
     │       ├── offering.json
     │       └── {harvest_id}.tar.gz

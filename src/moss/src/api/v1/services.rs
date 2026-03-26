@@ -502,7 +502,7 @@ pub async fn get_manifest_v1(
 /// GET /api/v1/services/:service/logs - Stream service logs (SSE)
 pub async fn stream_service_logs_v1(
     Path(service): Path<String>,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<
     axum::response::sse::Sse<
         impl futures_util::stream::Stream<
@@ -512,15 +512,48 @@ pub async fn stream_service_logs_v1(
     (StatusCode, Json<ApiErrorResponse>),
 > {
     let service_name = normalize_service_name(&service)?;
-    // TODO: Implement log streaming from Docker container
-    use async_stream::stream;
-    use axum::response::sse::{Event, KeepAlive, Sse};
 
-    let log_stream = stream! {
-        yield Ok(Event::default().data(format!("Log streaming for '{}' not yet implemented", service_name)));
+    // Verify the service exists before starting the stream
+    let exists = {
+        let offerings = state.offerings.read().await;
+        offerings.iter().any(|o| o.name.to_string() == service_name)
+    };
+    if !exists {
+        return Err(not_found(
+            "SERVICE_NOT_FOUND",
+            format!("Service '{}' not found", service_name),
+        ));
+    }
+
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::StreamExt;
+
+    let token = state.shutdown_token.child_token();
+    let mut log_source = state.platform.docker.get_logs_stream(&service_name, true);
+
+    let stream = async_stream::stream! {
+        loop {
+            tokio::select! {
+                item = log_source.next() => {
+                    match item {
+                        Some(Ok(line)) => {
+                            if let Ok(event) = Event::default().json_data(&line) {
+                                yield Ok::<Event, std::convert::Infallible>(event);
+                            }
+                        }
+                        Some(Err(e)) => {
+                            tracing::warn!(error = %e, "Docker log stream error");
+                            break;
+                        }
+                        None => break,
+                    }
+                }
+                _ = token.cancelled() => break,
+            }
+        }
     };
 
-    Ok(Sse::new(log_stream).keep_alive(KeepAlive::default()))
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// GET /api/v1/services/:service/env - Get service environment variables
@@ -698,31 +731,28 @@ pub async fn restart_service_v1(
     ))
 }
 
-/// POST /api/v1/services/:service:cordon - Mark service unavailable
+/// POST /api/v1/services/:service/cordon - Mark service non-schedulable
 pub async fn cordon_service_v1(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(service): Path<String>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    let service_name = match OfferingFqn::parse(&service) {
-        Ok(fqn) => fqn.fqn(),
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "INVALID_SERVICE_NAME",
-                    "message": format!("Invalid service name '{}': {}", service, e),
-                })),
-            );
-        }
-    };
-    // TODO: Implement cordon logic (mark in registry, update status)
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": "NOT_IMPLEMENTED",
-            "message": "Cordon operation not yet implemented",
-            "service": service_name
-        })),
+    headers: HeaderMap,
+) -> crate::api::ApiResult<ServiceActionResponse> {
+    let service_name = normalize_service_name(&service)?;
+
+    service_lifecycle::cordon(&state, &service_name)
+        .await
+        .map_err(|e| lifecycle_error("CORDON_FAILED", &e))?;
+
+    let ctx = Suggestion::from_headers(&headers, "cordon_service");
+    let suggestions = generate_suggestions(&ctx);
+    crate::api::ok_maybe(
+        ServiceActionResponse {
+            service: service_name,
+            action: "cordon".to_string(),
+            status: "cordoned".to_string(),
+            message: "Service cordoned (non-schedulable)".to_string(),
+        },
+        suggestions,
     )
 }
 

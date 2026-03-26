@@ -12,6 +12,8 @@ pub enum ServiceStatus {
     Installing,
     Running,
     Stopped,
+    /// Running but marked non-schedulable (excluded from placement)
+    Cordoned,
     Maintenance,
     Degraded,
     Unknown,

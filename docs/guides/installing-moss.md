@@ -293,4 +293,4 @@ Use `garden-moss install` when you already have a machine with an OS running. Us
 
 - [Your First Stone](first-stone.md) — full walkthrough including USB provisioning
 - [Troubleshooting](troubleshooting.md) — common issues and solutions
-- [Nurturing](nurturing.md) — keeping your stones updated
+- [Snapshots](nurturing.md) — backup configuration and scheduling

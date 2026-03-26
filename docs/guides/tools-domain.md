@@ -269,6 +269,6 @@ Internal announcement type:
 
 Related documents:
 
-- `docs/proposals/moss-tools-domain.md`
+- `docs/archive/proposals/moss-tools-domain.md`
 - `docs/archive/proposals/tools-domain-implementation.md`
 - `docs/guides/offering-sub-capabilities.md`

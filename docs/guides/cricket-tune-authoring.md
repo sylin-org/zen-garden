@@ -147,8 +147,8 @@ impl TuneManager {
             "notifications/offering-planted-soft.mp3".to_string());
         your_events.insert("offering_removed".to_string(), 
             "notifications/offering-removed-beep.mp3".to_string());
-        your_events.insert("nourishment_available".to_string(), 
-            "notifications/nourishment-alert.mp3".to_string());
+        your_events.insert("updates_available".to_string(), 
+            "notifications/updates-alert.mp3".to_string());
         
         configs.insert(Tune::YourTuneName, TuneConfig {
             name: "Your Tune Display Name".to_string(),
@@ -174,7 +174,7 @@ Cricket responds to these garden events:
 | `stone_offline` | Stone leaves garden | Foreground | Goodbye sound |
 | `offering_planted` | New offering deployed | Midground | Confirmation |
 | `offering_removed` | Offering removed | Midground | Removal notice |
-| `nourishment_available` | Updates available | Foreground | Alert user |
+| `updates_available` | Updates available | Foreground | Alert user |
 | `election_started` | Leader election begins | Midground | Optional |
 | `election_won` | This stone won election | Foreground | Optional |
 
@@ -257,7 +257,7 @@ For ambient/background loops:
 
 ### 5. Sample Density
 Don't overdo it:
-- **Essential events**: stone_online, nourishment_available (always map)
+- **Essential events**: stone_online, updates_available (always map)
 - **Optional events**: election_started, election_won (can skip)
 - **Leave silence**: Not every event needs a sound
 
@@ -278,7 +278,7 @@ samples/cyberpunk-noir/
 │   ├── stone-online-hack.mp3        # Digital breach sound
 │   ├── stone-offline-disconnect.mp3 # Power down glitch
 │   ├── offering-planted-install.mp3 # Software install beep
-│   └── nourishment-alert-scan.mp3   # Scanner alert
+│   └── updates-alert-scan.mp3   # Scanner alert
 ├── ambient_nature/
 │   └── city-hum-loop.mp3            # Distant traffic, machinery
 ├── synth_pads/
@@ -296,8 +296,8 @@ cyberpunk_events.insert("stone_offline".to_string(),
     "notifications/stone-offline-disconnect.mp3".to_string());
 cyberpunk_events.insert("offering_planted".to_string(), 
     "notifications/offering-planted-install.mp3".to_string());
-cyberpunk_events.insert("nourishment_available".to_string(), 
-    "notifications/nourishment-alert-scan.mp3".to_string());
+cyberpunk_events.insert("updates_available".to_string(), 
+    "notifications/updates-alert-scan.mp3".to_string());
 
 configs.insert(Tune::CyberpunkNoir, TuneConfig {
     name: "Cyberpunk Noir".to_string(),

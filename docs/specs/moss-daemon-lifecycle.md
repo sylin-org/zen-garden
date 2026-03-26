@@ -1,6 +1,19 @@
-﻿# Garden-Moss Daemon Specification
+﻿---
+audience: [developer]
+doc_type: spec
+status: superseded
+last_verified: 2026-03-25
+note: "Historical specification from early development. Current architecture differs significantly — see components.md and api-endpoints.md."
+---
 
-**Purpose:** Technical specification for the Moss daemon - HTTP API, service orchestration, discovery.  
+# Garden-Moss Daemon Specification
+
+> **Superseded**: This specification reflects the original Moss design (pre-ARCH-0004).
+> The current architecture uses Bollard (not Docker Compose), domain context extraction,
+> and a different API surface. See [components.md](../reference/components.md) and
+> [api-endpoints.md](../../.agentic/reference/api-endpoints.md) for current reference.
+
+**Purpose:** Technical specification for the Moss daemon - HTTP API, service orchestration, discovery.
 **Audience:** Developers implementing Moss, maintainers debugging production issues.
 
 ---

@@ -12,7 +12,7 @@ note: "Legacy seed bank guide. See storage.md for the current guide covering man
 
 > **This guide covers the pre-STORAGE-0009 seed bank model.** For the current storage system — including file sharing, WebDAV, S3, replication, and the adopt flow — see the **[Storage Guide](./storage.md)**.
 
-**External storage for nurturing (backups) with replication support.**
+**External storage for snapshots (backups) with replication support.**
 
 ---
 
@@ -92,7 +92,7 @@ For critical data, you can create **replicated seed banks** - multiple physical 
         └───────────┘  └───────────┘  └───────────┘
 ```
 
-When nurturing writes to the "primary" group, data goes to all online replicas.
+When the snapshot scheduler writes to the "primary" group, data goes to all online replicas.
 
 ---
 
@@ -193,8 +193,8 @@ For home use with one backup drive:
 # Prepare the drive
 garden-rake storage prepare /dev/sdb --name home-backup
 
-# Configure nurturing to use it
-garden-rake nurturing configure immich --seed-bank home-backup
+# Configure snapshots to use it
+garden-rake backup configure immich --seed-bank home-backup
 ```
 
 ### Scenario 2: Rotating Offsite Backups
@@ -206,11 +206,11 @@ Keep one drive at home, take one offsite:
 garden-rake storage prepare /dev/sdb --group offsite --replica 1
 garden-rake storage prepare /dev/sdc --group offsite --replica 2
 
-# Configure nurturing with rotation
-garden-rake nurturing configure immich --seed-bank offsite --strategy any_replica
+# Configure snapshots with rotation
+garden-rake backup configure immich --seed-bank offsite --strategy any_replica
 ```
 
-With `any_replica` strategy, nurturing writes to whichever drive is connected. Swap drives weekly for offsite rotation.
+With `any_replica` strategy, the snapshot scheduler writes to whichever drive is connected. Swap drives weekly for offsite rotation.
 
 ### Scenario 3: Maximum Durability
 
@@ -222,8 +222,8 @@ garden-rake storage prepare /dev/sdb --group critical --replica 1
 garden-rake storage prepare /dev/sdc --group critical --replica 2
 garden-rake storage prepare /dev/sdd --group critical --replica 3
 
-# Configure nurturing to write to all
-garden-rake nurturing configure postgres --seed-bank critical --strategy all_replicas
+# Configure snapshots to write to all
+garden-rake backup configure postgres --seed-bank critical --strategy all_replicas
 ```
 
 With `all_replicas` strategy, data is written to all connected drives. Even if one fails, you have redundant copies.
@@ -238,8 +238,8 @@ garden-rake storage prepare /dev/sdb --name photos-backup
 garden-rake storage prepare /dev/sdc --name databases-backup
 
 # Configure each offering
-garden-rake nurturing configure immich --seed-bank photos-backup
-garden-rake nurturing configure postgres --seed-bank databases-backup
+garden-rake backup configure immich --seed-bank photos-backup
+garden-rake backup configure postgres --seed-bank databases-backup
 ```
 
 ---
@@ -364,7 +364,7 @@ The manifest file (`.zen-garden/manifest.json`) contains:
 
 ## Write Strategies
 
-When configuring nurturing, you can specify how data is written to replicated seed banks:
+When configuring snapshots, you can specify how data is written to replicated seed banks:
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
@@ -374,7 +374,7 @@ When configuring nurturing, you can specify how data is written to replicated se
 
 ```bash
 # Configure write strategy
-garden-rake nurturing configure immich --seed-bank primary --strategy all_replicas
+garden-rake backup configure immich --seed-bank primary --strategy all_replicas
 ```
 
 ---
@@ -450,7 +450,7 @@ garden-rake storage list | grep primary
 **Solutions:**
 1. **Normal variance:** Small differences expected (timestamps, metadata)
 2. **Significant difference:** One replica may have been offline during writes
-   - Run `garden-rake nurturing sync primary` to synchronize
+   - Run `garden-rake backup sync primary` to synchronize
 
 ---
 

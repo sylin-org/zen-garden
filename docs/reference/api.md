@@ -2,7 +2,7 @@
 audience: [api-client, operator, maintainer]
 doc_type: reference
 status: current
-last_verified: 2026-01-19
+last_verified: 2026-03-25
 canonical: true
 note: "Complete HTTP API documentation for Moss daemon v1."
 ---
@@ -12,14 +12,14 @@ note: "Complete HTTP API documentation for Moss daemon v1."
 **Version:** v1  
 **Base Path:** `/api/v1`  
 **Protocol:** HTTP/REST with JSON payloads  
-**Date:** January 2026
+**Date:** March 2026
 
 ## Overview
 
 The Zen Garden API v1 provides **two layers** for managing containerized services across distributed stones:
 
-1. **Offerings API** (`/api/v1/offerings`) — Human-friendly, simplified responses for beginners and automation (90% use case)
-2. **Services API** (`/api/v1/services`) — Technical, detailed container-level operations for operators (10% use case)
+1. **Offerings API** (`/api/v1/stone/offerings`) — Human-friendly, simplified responses for beginners and automation (90% use case)
+2. **Services API** (`/api/v1/stone/services`) — Technical, detailed container-level operations for operators (10% use case)
 
 Both layers access the same underlying resources but provide different views optimized for their audiences. See [API-V1-DUAL-LAYER-DESIGN.md](API-V1-DUAL-LAYER-DESIGN.md) for complete architecture details.
 
@@ -76,104 +76,113 @@ All endpoints respect the `X-Quiet: true` header, which suppresses suggestion ge
 ### Offerings API (Human Layer)
 
 **Catalog Operations:**
-- `GET /api/v1/offerings` - List offerings (available + installed)
-- `GET /api/v1/offerings?state=available` - Filter available offerings
-- `GET /api/v1/offerings?state=installed` - Filter planted offerings
-- `GET /api/v1/offerings/:name` - Get offering details
-- `GET /api/v1/offerings/:name/manifest` - Get offering YAML template
+- `GET /api/v1/stone/offerings` - List offerings (available + installed)
+- `GET /api/v1/stone/offerings?state=available` - Filter available offerings
+- `GET /api/v1/stone/offerings?state=installed` - Filter planted offerings
+- `GET /api/v1/stone/offerings/:name` - Get offering details
+- `GET /api/v1/stone/offerings/:name/manifest` - Get offering YAML template
+- `GET /api/v1/stone/offerings/search?q={query}` - Search with taxonomy
+- `GET /api/v1/stone/offerings/inspect?image={ref}` - Inspect Docker image
 
 **Lifecycle Operations:**
-- `POST /api/v1/offerings` - Plant offering (simplified install)
-- `DELETE /api/v1/offerings/:name` - Take away offering (uninstall)
-- `POST /api/v1/offerings:heal` - Heal garden (discover orphans)
-- `POST /api/v1/offerings:refresh` - Refresh catalog from disk
+- `POST /api/v1/stone/offerings` - Plant offering (simplified install)
+- `DELETE /api/v1/stone/offerings/:name` - Take away offering (uninstall)
+- `POST /api/v1/stone/offerings/heal` - Heal garden (discover orphans)
+- `POST /api/v1/stone/offerings/refresh` - Refresh catalog from disk
+
+**Adoption & Borrowing:**
+- `GET /api/v1/stone/offerings/adoptable` - List containers available for adoption
+- `GET /api/v1/stone/offerings/adopted` - List adopted containers
+- `GET /api/v1/stone/offerings/borrowed` - List borrowed services
+- `POST /api/v1/stone/offerings/:offering/adopt` - Adopt container
+- `DELETE /api/v1/stone/offerings/:offering/adopt` - Unadopt container
+- `POST /api/v1/stone/offerings/borrow` - Borrow service from topology
+- `DELETE /api/v1/stone/offerings/borrow/:name` - Return borrowed service
+
+**Capabilities:**
+- `GET /api/v1/stone/offerings/:name/capabilities` - List offering capabilities
+- `POST /api/v1/stone/offerings/:name/capabilities` - Add capability
+- `POST /api/v1/stone/offerings/:name/capabilities/refresh` - Refresh capabilities
+- `DELETE /api/v1/stone/offerings/:name/capabilities/:capability` - Remove capability
 
 ### Services API (Technical Layer)
 
 **Manifest Operations:**
-- `GET /api/v1/services/manifests` - List all service manifests
-- `GET /api/v1/services/:name/manifest` - Get specific manifest YAML
+- `GET /api/v1/stone/services/manifests` - List all service manifests
+- `GET /api/v1/stone/services/:name/manifest` - Get specific manifest YAML
 
 **Runtime Operations:**
-- `GET /api/v1/services` - List services (container-level details)
-- `GET /api/v1/services/:name` - Get service details (full technical view)
-- `GET /api/v1/services/:name/logs` - Stream logs (SSE)
-- `POST /api/v1/services` - Install (full Docker control)
-- `POST /api/v1/services/:name:restart` - Restart service
-- `POST /api/v1/services/:name:cordon` - Mark unavailable
-- `DELETE /api/v1/services/:name` - Uninstall service
-- `POST /api/v1/services:reconcile` - Reconcile inventory
-- `POST /api/v1/services:refresh` - Refresh manifests
+- `GET /api/v1/stone/services` - List services (container-level details)
+- `GET /api/v1/stone/services/:name` - Get service details (full technical view)
+- `GET /api/v1/stone/services/:name/logs` - Stream logs (SSE)
+- `POST /api/v1/stone/services` - Install (full Docker control)
+- `POST /api/v1/stone/services/:name/restart` - Restart service
+- `POST /api/v1/stone/services/:name/upgrade` - Upgrade service
+- `POST /api/v1/stone/services/:name/cordon` - Mark non-schedulable
+- `POST /api/v1/stone/services/:name/destroy` - Destroy service
+- `POST /api/v1/stone/services/:name/reassign` - Reassign to another stone
+- `DELETE /api/v1/stone/services/:name` - Uninstall service
+- `GET /api/v1/stone/services/:name/env` - Read env vars + manageable list
+- `PATCH /api/v1/stone/services/:name/env` - Set/delete env vars (allowlist)
+- `GET /api/v1/stone/services/:name/capabilities` - Discover service capabilities
+- `POST /api/v1/stone/services/reconcile` - Reconcile inventory
+- `POST /api/v1/stone/services/refresh` - Refresh manifests
+- `POST /api/v1/stone/services/refresh-capabilities` - Refresh all capabilities
 
 ### Stone Operations
 - `GET /health` - Health check with component status
-- `GET /capabilities` - Hardware and software capabilities
-- `GET /metrics` - Prometheus metrics exposition
-- `POST /api/v1/stone:upgrade` - Upgrade stone software
-- `POST /api/v1/stone:shutdown` - Shutdown Moss daemon
+- `GET /api/v1/stone/capabilities` - Hardware and software capabilities
+- `GET /api/v1/stone/metrics` - Prometheus metrics exposition
+- `POST /api/v1/stone/upgrade` - Upgrade stone software
+
+### Administrative API
+- `POST /api/v1/admin/moss/shutdown` - Shutdown Moss daemon
+- `POST /api/v1/admin/moss/take-root` - Escalate to root (Linux)
+- `POST /api/v1/admin/stone/shutdown` - Shutdown stone
+- `POST /api/v1/admin/stone/reboot` - Reboot stone
+- `POST /api/v1/admin/stone/{name}/wake` - Wake-on-LAN
+
+### Logs & Maintenance
+- `GET /api/v1/stone/logs` - Recent daemon logs
+- `GET /api/v1/stone/logs/stream` - Live log stream (SSE)
+- `GET /api/v1/stone/maintenance/history` - Sweep reports
+- `POST /api/v1/stone/maintenance/sweep` - Trigger immediate sweep
+
+### Updates
+- `GET /api/v1/stone/updates` - Pending updates
+- `POST /api/v1/stone/updates/execute` - Execute updates
+- `GET /api/v1/stone/updates/stream/:job_id` - SSE update stream
+
+### Pond (Security / Trust)
+- `POST /api/v1/pond/init` - Place keystone (create CA)
+- `GET /api/v1/pond/status` - Pond status and membership
+- `POST /api/v1/pond/join` - Join pond with TOTP code
+- `POST /api/v1/pond/invite` - Open enrollment
+- `POST /api/v1/pond/unlock` - Unlock CA after restart
+- `DELETE /api/v1/pond` - Drain pond
+- `DELETE /api/v1/pond/stones/:name` - Revoke stone
+- `POST /api/v1/pond/promote` - Promote to standby CA
+- `PUT /api/v1/pond/name` - Rename pond
+- `GET /api/v1/pond/ca.pem` - Download CA certificate
 
 ### Events & Jobs
 - `GET /api/v1/stone/presence/stream` - Stream all domain events (SSE) - unified presence stream
 - `GET /api/v1/jobs` - List background jobs
 - `GET /api/v1/jobs/:job_id` - Get job status and result
 
-### Administrative
-- `POST /admin/shutdown` - Graceful daemon shutdown
+### Console
+- `GET /api/v1/console/mode` - Get console mode
+- `POST /api/v1/console/mode` - Set console mode
 
-**Total:** 32 endpoints
+### Garden Operations (Orchestrated)
+- `GET /api/v1/garden/services` - Find services across garden
+- `GET /api/v1/garden/updates` - Garden-wide updates
+- `POST /api/v1/garden/updates/execute` - Execute garden updates
+- `GET /api/v1/garden/observe` - Aggregate topology
+- `GET /api/v1/garden/tools` - List garden-wide tools
+- `GET /api/v1/garden/tools/stream` - Tool changes (SSE)
 
----
-
-## Migration from v0 to v1
-
-### Breaking Changes
-
-| Old Endpoint (v0) | New Endpoint (v1) | Notes |
-|-------------------|-------------------|-------|
-| `GET /api/offerings` | `GET /api/v1/offerings` | Versioned path |
-| `GET /api/offerings/:name` | `GET /api/v1/offerings/:name` | Versioned path |
-| `POST /api/offerings/refresh` | `POST /api/v1/offerings:refresh` | Custom action format |
-| `GET /api/templates` | `GET /api/v1/services/manifests` | New endpoint + key name |
-| `GET /api/templates/:name` | `GET /api/v1/services/:name/manifest` | New endpoint structure |
-| `GET /api/services` | `GET /api/v1/services` | Versioned path |
-| `POST /api/services` | `POST /api/v1/services` | Versioned path |
-| `DELETE /api/services/:name` | `DELETE /api/v1/services/:name` | Versioned path |
-
-### Response Format Changes
-
-**Manifests list changed key:**
-```json
-// Old (v0)
-{"templates": [...]}
-
-// New (v1)
-{"manifests": [...]}
-```
-
-**Offerings now support state filtering:**
-```http
-GET /api/v1/offerings?state=available
-GET /api/v1/offerings?state=installed
-```
-
-### Custom Actions
-
-v1 uses single-colon format for custom actions (aligns with Kubernetes/GCP standards):
-
-```http
-POST /api/v1/offerings:heal
-POST /api/v1/offerings:refresh
-POST /api/v1/services:reconcile
-POST /api/v1/services:refresh
-POST /api/v1/stone:upgrade
-POST /api/v1/stone:shutdown
-```
-
-### Backwards Compatibility
-
-- v0 endpoints are **deprecated** and will be removed in future releases
-- Update clients to use v1 endpoints immediately
-- Both APIs currently share the same backend (no data migration needed)
+**Total:** 77 endpoints (index above; see detailed sections below for request/response examples)
 
 ---
 
@@ -181,7 +190,7 @@ POST /api/v1/stone:shutdown
 
 Manage containerized services (offerings) on a stone.
 
-### POST /api/v1/services
+### POST /api/v1/stone/services
 
 **Create and start a service from an offering template.**
 
@@ -233,20 +242,15 @@ Manage containerized services (offerings) on a stone.
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake offer mongodb
-
-# Normative syntax
-garden-rake services create mongodb
 
 # With quiet mode
 garden-rake offer redis quietly
-garden-rake services create redis --quiet
 ```
 
 ---
 
-### GET /api/v1/services
+### GET /api/v1/stone/services
 
 **List all services on the stone.**
 
@@ -277,16 +281,12 @@ garden-rake services create redis --quiet
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake observe
-
-# Normative syntax
-garden-rake list
 ```
 
 ---
 
-### GET /api/v1/services/:service
+### GET /api/v1/stone/services/:service
 
 **Get detailed information about a specific service.**
 
@@ -320,16 +320,12 @@ garden-rake list
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake touch mongodb
-
-# Normative syntax
-garden-rake status mongodb
 ```
 
 ---
 
-### POST /api/v1/services/:service/rest
+### POST /api/v1/stone/services/:service/rest
 
 **Stop a running service (rest mode).**
 
@@ -362,16 +358,12 @@ Stops the container but preserves volumes and configuration for quick restart.
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake rest mongodb
-
-# Normative syntax
-garden-rake services stop mongodb
 ```
 
 ---
 
-### POST /api/v1/services/:service/wake
+### POST /api/v1/stone/services/:service/wake
 
 **Start a stopped service (wake from rest).**
 
@@ -398,16 +390,12 @@ garden-rake services stop mongodb
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake wake mongodb
-
-# Normative syntax
-garden-rake services start mongodb
 ```
 
 ---
 
-### POST /api/v1/services/:service/upgrade
+### POST /api/v1/stone/services/:service/upgrade
 
 **Upgrade service to latest image version.**
 
@@ -443,18 +431,13 @@ Pulls latest image, stops container, recreates with same config, preserves volum
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake nourish mongodb
 garden-rake nourish --all  # upgrade all services
-
-# Normative syntax
-garden-rake services update mongodb
-garden-rake upgrade --all
 ```
 
 ---
 
-### DELETE /api/v1/services/:service
+### DELETE /api/v1/stone/services/:service
 
 **Remove service and its containers (volumes preserved).**
 
@@ -487,12 +470,191 @@ garden-rake upgrade --all
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake release mongodb
+```
 
-# Normative syntax
-garden-rake services delete mongodb
-garden-rake remove mongodb
+---
+
+### POST /api/v1/stone/services/:service/destroy
+
+**Destroy a service, including its volumes and configuration.**
+
+Unlike `DELETE` which preserves volumes, destroy performs a full cleanup.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Service 'mongodb' destroyed",
+  "data": {
+    "service_name": "mongodb",
+    "volumes_removed": ["zen-vol-mongodb-data"],
+    "config_removed": true
+  }
+}
+```
+
+**Errors:**
+- `404` - Service not found
+- `500` - Cleanup failure
+
+---
+
+### POST /api/v1/stone/services/:service/reassign
+
+**Reassign a service to another stone in the garden.**
+
+Migrates the service definition (and optionally data) to a target stone.
+
+**Request:**
+```json
+{
+  "target_stone": "stone-02"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Service 'mongodb' reassigned to stone-02",
+  "data": {
+    "service_name": "mongodb",
+    "source_stone": "stone-01",
+    "target_stone": "stone-02"
+  }
+}
+```
+
+**Errors:**
+- `404` - Service or target stone not found
+- `409` - Target stone already has this service
+- `503` - Target stone unreachable
+
+---
+
+### POST /api/v1/stone/services/:service/cordon
+
+**Mark a service as non-schedulable.**
+
+Prevents the service from being included in scheduling decisions while remaining running.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Service 'mongodb' cordoned",
+  "data": {
+    "service_name": "mongodb",
+    "cordoned": true
+  }
+}
+```
+
+**Errors:**
+- `404` - Service not found
+
+---
+
+### GET /api/v1/stone/services/:service/env
+
+**Read environment variables for a service.**
+
+Returns current environment variables and the list of manageable (user-configurable) variables.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "environment": {
+      "MONGO_INITDB_ROOT_USERNAME": "admin",
+      "MONGO_INITDB_ROOT_PASSWORD": "***"
+    },
+    "manageable": ["MONGO_INITDB_ROOT_USERNAME", "MONGO_INITDB_ROOT_PASSWORD"]
+  }
+}
+```
+
+**Errors:**
+- `404` - Service not found
+
+---
+
+### PATCH /api/v1/stone/services/:service/env
+
+**Set or delete environment variables for a service.**
+
+Only variables in the manageable allowlist can be modified. Service is restarted automatically after changes.
+
+**Request:**
+```json
+{
+  "set": {
+    "MONGO_INITDB_ROOT_PASSWORD": "new-password"
+  },
+  "delete": ["OLD_UNUSED_VAR"]
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Environment updated for 'mongodb'",
+  "data": {
+    "set": ["MONGO_INITDB_ROOT_PASSWORD"],
+    "deleted": ["OLD_UNUSED_VAR"],
+    "restarted": true
+  }
+}
+```
+
+**Errors:**
+- `400` - Variable not in manageable allowlist
+- `404` - Service not found
+
+---
+
+### GET /api/v1/stone/services/:service/capabilities
+
+**Discover capabilities exposed by a service.**
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "service": "ollama",
+    "capabilities": [
+      {"name": "chat", "type": "inference"},
+      {"name": "embedding", "type": "inference"}
+    ]
+  }
+}
+```
+
+**Errors:**
+- `404` - Service not found
+
+---
+
+### POST /api/v1/stone/services/refresh-capabilities
+
+**Refresh capabilities for all services.**
+
+Re-discovers capabilities by probing all running services.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Capabilities refreshed",
+  "data": {
+    "services_scanned": 5,
+    "capabilities_found": 12
+  }
+}
 ```
 
 ---
@@ -681,11 +843,7 @@ Creates a new ECDSA P-256 certificate authority, encrypts the private key with t
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake place keystone --passphrase "my-secure-pass"
-
-# Normative syntax
-garden-rake pond init --passphrase "my-secure-pass" --profile "my-team"
 ```
 
 ---
@@ -779,11 +937,7 @@ Rotates the TOTP secret and opens enrollment for the specified TTL. The returned
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake invite --passphrase "my-secure-pass"
-
-# Normative syntax
-garden-rake pond invite --passphrase "my-secure-pass"
 ```
 
 ---
@@ -829,11 +983,7 @@ Validates the TOTP code against the cornerstone's enrollment secret. On success,
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake place stone --code 123456
-
-# Normative syntax
-garden-rake pond join 123456
 ```
 
 ---
@@ -978,11 +1128,7 @@ Removes the certificate authority, all issued certificates, and reverts the ston
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake lift keystone
-
-# Normative syntax
-garden-rake pond remove
 ```
 
 ---
@@ -1011,11 +1157,7 @@ Revokes the named stone's certificate and removes it from the pond roster.
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake lift stone stone-02
-
-# Normative syntax
-garden-rake pond untrust stone-02
 ```
 
 ---
@@ -1073,7 +1215,7 @@ garden-rake pond untrust stone-02
 
 ---
 
-### GET /capabilities
+### GET /api/v1/stone/capabilities
 
 **Get stone hardware and software capabilities.**
 
@@ -1101,7 +1243,7 @@ garden-rake pond untrust stone-02
 
 ---
 
-### GET /metrics
+### GET /api/v1/stone/metrics
 
 **Prometheus-compatible metrics endpoint.**
 
@@ -1141,129 +1283,9 @@ zen_stone_services_total{stone="stone-01"} 3
 
 ## Offerings Catalog
 
-### GET /api/offerings
-
-**Get validated offering templates with compatibility info.**
-
-**Response (200 OK):**
-```json
-{
-  "offerings": [
-    {
-      "name": "mongodb",
-      "category": "databases",
-      "description": "MongoDB NoSQL database",
-      "tags": ["nosql", "database", "document-store"],
-      "image": "mongo:7.0",
-      "ports": [
-        {"container": 27017, "host": 27017, "protocol": "tcp"}
-      ],
-      "environment": {
-        "MONGO_INITDB_ROOT_USERNAME": "admin",
-        "MONGO_INITDB_ROOT_PASSWORD": "${GENERATED}"
-      },
-      "volumes": [
-        {"name": "${SERVICE}-data", "mount": "/data/db"}
-      ],
-      "compatibility": {
-        "decision": "pass",
-        "reason": null,
-        "original_image": null,
-        "fallback_image": null,
-        "suggestion": null
-      }
-    },
-    {
-      "name": "postgres",
-      "category": "databases",
-      "description": "PostgreSQL relational database",
-      "tags": ["sql", "database", "relational"],
-      "image": "postgres:16",
-      "compatibility": {
-        "decision": "fallback",
-        "reason": "Architecture mismatch: amd64 image on arm64 host",
-        "original_image": "postgres:16",
-        "fallback_image": "postgres:16-alpine",
-        "suggestion": "Will use ARM-compatible Alpine image"
-      }
-    }
-  ]
-}
-```
-
-**Compatibility Decisions:**
-- `pass` - Image compatible with stone architecture
-- `fallback` - Architecture-compatible fallback available
-- `block` - No compatible image available for this architecture
-
-**CLI Examples:**
-```bash
-# Zen syntax
-garden-rake explore
-
-# Normative syntax
-garden-rake offerings list
-```
-
----
-
-## Templates API
-
-### GET /api/templates
-
-**List available offering templates (raw YAML).**
-
-**Response (200 OK):**
-```json
-{
-  "templates": [
-    {"name": "mongodb", "category": "databases"},
-    {"name": "redis", "category": "caching"},
-    {"name": "nginx", "category": "web-servers"}
-  ]
-}
-```
-
-**CLI Examples:**
-```bash
-garden-rake template list
-```
-
----
-
-### GET /api/templates/:name
-
-**Get raw YAML content of a template.**
-
-**Response (200 OK):**
-```yaml
-name: mongodb
-category: databases
-description: MongoDB NoSQL database
-image: mongo:7.0
-ports:
-  - container: 27017
-    host: 27017
-environment:
-  MONGO_INITDB_ROOT_USERNAME: admin
-  MONGO_INITDB_ROOT_PASSWORD: ${GENERATED}
-volumes:
-  - name: ${SERVICE}-data
-    mount: /data/db
-```
-
-**CLI Examples:**
-```bash
-garden-rake template show mongodb
-```
-
----
-
-## Offerings Catalog
-
 Validated offering templates with architecture compatibility analysis.
 
-### GET /api/offerings
+### GET /api/v1/stone/offerings
 
 **List validated offerings with compatibility decisions.**
 
@@ -1322,16 +1344,12 @@ Returns all offering templates analyzed for this stone's architecture with autom
 
 **CLI Examples:**
 ```bash
-# Zen syntax
 garden-rake explore
-
-# Normative syntax
-garden-rake offerings list
 ```
 
 ---
 
-### GET /api/offerings/:name
+### GET /api/v1/stone/offerings/:name
 
 **Get detailed offering info with compatibility analysis.**
 
@@ -1368,11 +1386,9 @@ garden-rake offer mongodb info
 
 ---
 
-### POST /api/offerings/refresh
+### POST /api/v1/stone/offerings/refresh
 
 **Force rebuild of offerings index cache.**
-
-**Note:** Per zen taxonomy, this should be `POST /api/offerings/_refresh` (underscore prefix for system actions)
 
 Triggers immediate recompilation of all offering templates with compatibility decisions. Normally done automatically on template changes.
 
@@ -1393,68 +1409,11 @@ Triggers immediate recompilation of all offering templates with compatibility de
 
 ---
 
-## Templates
-
-Raw YAML offering templates without compatibility analysis.
-
-### GET /api/templates
-
-**List available offering templates.**
-
-**Response (200 OK):**
-```json
-{
-  "templates": [
-    {"name": "mongodb", "category": "databases"},
-    {"name": "redis", "category": "caching"},
-    {"name": "nginx", "category": "web-servers"}
-  ]
-}
-```
-
-**CLI Examples:**
-```bash
-garden-rake template list
-```
-
----
-
-### GET /api/templates/:name
-
-**Get raw YAML content of a template.**
-
-**Response (200 OK):**
-```yaml
-name: mongodb
-category: databases
-description: MongoDB NoSQL database
-image: mongo:7.0
-ports:
-  - container: 27017
-    host: 27017
-environment:
-  MONGO_INITDB_ROOT_USERNAME: admin
-  MONGO_INITDB_ROOT_PASSWORD: ${GENERATED}
-volumes:
-  - name: ${SERVICE}-data
-    mount: /data/db
-```
-
-**Errors:**
-- `404` - Template not found
-
-**CLI Examples:**
-```bash
-garden-rake template show mongodb
-```
-
----
-
 ## Real-Time Streams (SSE)
 
 Server-Sent Events for logs and system events.
 
-### GET /api/services/:service/logs
+### GET /api/v1/stone/services/:service/logs
 
 **Stream service container logs in real-time.**
 
@@ -1544,7 +1503,7 @@ All job progress events now flow through the presence stream alongside other dom
 
 Job tracking infrastructure for future long-running operations.
 
-### GET /api/jobs
+### GET /api/v1/jobs
 
 **List all async jobs.**
 
@@ -1561,7 +1520,7 @@ Returns list of background jobs and their statuses.
 
 ---
 
-### GET /api/jobs/:job_id
+### GET /api/v1/jobs/:job_id
 
 **Get async job status.**
 
@@ -1593,7 +1552,7 @@ Check status of specific background operation.
 
 Multi-stone network discovery via mDNS.
 
-### GET /api/peer-stones
+### GET /api/v1/stone/peer-stones
 
 **Query discovered stones in the garden.**
 
@@ -1624,7 +1583,7 @@ Returns list of stones discovered via mDNS/Avahi, simpler format than `/api/v1/g
 
 ## System Administration
 
-### POST /api/system/reconcile
+### POST /api/v1/stone/services/reconcile
 
 **Reconcile Moss registry with existing containers.**
 
@@ -1661,7 +1620,7 @@ garden-rake reconcile --drop-invalid
 
 ---
 
-### POST /api/system/refresh
+### POST /api/v1/stone/refresh
 
 **Refresh Moss or Rake binary on stone.**
 
@@ -1695,7 +1654,7 @@ garden-rake refresh rake --from ./dist/linux-x64/garden-rake
 
 ---
 
-### GET /api/system/templates/:name/sources
+### GET /api/v1/stone/services/:name/sources
 
 **Get template image sources and fallbacks.**
 
@@ -1727,7 +1686,7 @@ Returns list of available image sources for an offering template, including arch
 
 ---
 
-### PUT /api/system/templates/:name/compatibility
+### PUT /api/v1/stone/services/:name/compatibility
 
 **Override compatibility decision for template.**
 
@@ -1755,7 +1714,7 @@ Manually set compatibility fallback image for a template (development/testing).
 
 ## Administrative Endpoints
 
-### POST /admin/shutdown
+### POST /api/v1/admin/moss/shutdown
 
 **Gracefully shutdown Moss daemon.**
 
@@ -1775,6 +1734,677 @@ Stops all services and shuts down the Moss HTTP server.
 - Exits process with code 0
 
 **Security:** No authentication on HTTP. When pond is active, use HTTPS (:7183) for authenticated access.
+
+---
+
+### POST /api/v1/admin/moss/take-root
+
+**Escalate Moss daemon to root privileges (Linux only).**
+
+Re-executes Moss under root to enable privileged operations (storage mounting, firmware updates).
+
+**Response (200 OK):**
+```json
+{
+  "message": "Escalating to root",
+  "pid": 12345
+}
+```
+
+**Errors:**
+- `403` - Already running as root
+- `500` - Escalation failed (sudo not available)
+
+---
+
+### POST /api/v1/admin/stone/shutdown
+
+**Shutdown the stone (power off).**
+
+Gracefully shuts down the Moss daemon, then issues a system power-off command.
+
+**Response (200 OK):**
+```json
+{
+  "message": "Stone shutting down"
+}
+```
+
+**Errors:**
+- `500` - Shutdown command failed
+
+---
+
+### POST /api/v1/admin/stone/reboot
+
+**Reboot the stone.**
+
+Gracefully shuts down the Moss daemon, then issues a system reboot command.
+
+**Response (200 OK):**
+```json
+{
+  "message": "Stone rebooting"
+}
+```
+
+**Errors:**
+- `500` - Reboot command failed
+
+---
+
+### POST /api/v1/admin/stone/{name}/wake
+
+**Send Wake-on-LAN packet to a stone.**
+
+Sends a WoL magic packet to wake a powered-off stone on the local network.
+
+**Request:**
+```json
+{
+  "mac": "AA:BB:CC:DD:EE:FF"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "message": "Wake-on-LAN packet sent",
+  "target": "stone-02"
+}
+```
+
+**Errors:**
+- `400` - Invalid MAC address
+- `404` - Stone not found in topology
+
+---
+
+## Adoption & Borrowing
+
+### GET /api/v1/stone/offerings/adoptable
+
+**List containers available for adoption.**
+
+Returns containers running on the stone that match the `zen-offering-*` naming convention but are not yet tracked by Moss.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "adoptable": [
+      {
+        "container_name": "zen-offering-redis",
+        "image": "redis:7",
+        "status": "running",
+        "created": "2026-01-10T08:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET /api/v1/stone/offerings/adopted
+
+**List adopted containers.**
+
+Returns containers that were adopted into Moss management (not originally planted through the API).
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "adopted": [
+      {
+        "name": "redis",
+        "container_name": "zen-offering-redis",
+        "adopted_at": "2026-01-10T09:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET /api/v1/stone/offerings/borrowed
+
+**List borrowed services.**
+
+Returns services borrowed from other stones in the garden topology.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "borrowed": [
+      {
+        "name": "mongodb",
+        "source_stone": "stone-02",
+        "endpoint": "http://192.168.1.101:27017"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### POST /api/v1/stone/offerings/:offering/adopt
+
+**Adopt an existing container into Moss management.**
+
+Takes ownership of a `zen-offering-*` container that is running but not tracked.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Container adopted as 'redis'",
+  "data": {
+    "name": "redis",
+    "container_name": "zen-offering-redis",
+    "status": "running"
+  }
+}
+```
+
+**Errors:**
+- `404` - Container not found
+- `409` - Already managed by Moss
+
+---
+
+### DELETE /api/v1/stone/offerings/:offering/adopt
+
+**Unadopt a container (release from Moss management).**
+
+Removes the container from Moss tracking without stopping or deleting it.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Container 'redis' released from management"
+}
+```
+
+**Errors:**
+- `404` - Offering not found or not adopted
+
+---
+
+### POST /api/v1/stone/offerings/borrow
+
+**Borrow a service from another stone in the topology.**
+
+Creates a proxy reference to a service running on a remote stone.
+
+**Request:**
+```json
+{
+  "name": "mongodb",
+  "source_stone": "stone-02"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Borrowed 'mongodb' from stone-02",
+  "data": {
+    "name": "mongodb",
+    "source_stone": "stone-02",
+    "endpoint": "http://192.168.1.101:27017"
+  }
+}
+```
+
+**Errors:**
+- `404` - Service or stone not found
+- `409` - Already borrowed or locally installed
+
+---
+
+### DELETE /api/v1/stone/offerings/borrow/:name
+
+**Return a borrowed service.**
+
+Removes the proxy reference to the remote service.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Returned borrowed service 'mongodb'"
+}
+```
+
+**Errors:**
+- `404` - Borrowed service not found
+
+---
+
+## Offering Capabilities
+
+### GET /api/v1/stone/offerings/:name/capabilities
+
+**List capabilities exposed by an offering.**
+
+Returns discovered capabilities (HTTP endpoints, protocols, tools) for the offering.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "offering": "ollama",
+    "capabilities": [
+      {
+        "name": "chat",
+        "type": "inference",
+        "endpoint": "/api/chat"
+      }
+    ]
+  }
+}
+```
+
+**Errors:**
+- `404` - Offering not found
+
+---
+
+### POST /api/v1/stone/offerings/:name/capabilities
+
+**Add a capability to an offering.**
+
+Manually register a capability for an offering.
+
+**Request:**
+```json
+{
+  "name": "embedding",
+  "type": "inference",
+  "endpoint": "/api/embeddings"
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "status": "success",
+  "message": "Capability 'embedding' added to ollama"
+}
+```
+
+**Errors:**
+- `404` - Offering not found
+- `409` - Capability already exists
+
+---
+
+### POST /api/v1/stone/offerings/:name/capabilities/refresh
+
+**Refresh capabilities for an offering.**
+
+Re-discovers capabilities by probing the running service.
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Capabilities refreshed for ollama",
+  "data": {
+    "discovered": 4
+  }
+}
+```
+
+**Errors:**
+- `404` - Offering not found
+- `503` - Service not running
+
+---
+
+### DELETE /api/v1/stone/offerings/:name/capabilities/:capability
+
+**Remove a capability from an offering.**
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Capability 'embedding' removed from ollama"
+}
+```
+
+**Errors:**
+- `404` - Offering or capability not found
+
+---
+
+## Logs & Maintenance
+
+### GET /api/v1/stone/logs
+
+**Retrieve recent Moss daemon log lines.**
+
+**Query Parameters:**
+- `lines=100` - Number of recent lines (default: 100)
+- `level=warn` - Minimum log level filter (`trace`, `debug`, `info`, `warn`, `error`)
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "lines": [
+      "2026-03-25T10:30:00Z INFO  moss::api: Listening on 0.0.0.0:7185",
+      "2026-03-25T10:30:01Z WARN  moss::infra::docker: Slow image pull for mongo:7.0"
+    ],
+    "count": 2
+  }
+}
+```
+
+---
+
+### GET /api/v1/stone/logs/stream
+
+**Live log stream from the Moss daemon (SSE).**
+
+**Response (200 OK - text/event-stream):**
+```
+event: log
+data: {"timestamp": "2026-03-25T10:30:00Z", "level": "info", "message": "Service started", "target": "moss::domain"}
+
+event: log
+data: {"timestamp": "2026-03-25T10:30:01Z", "level": "warn", "message": "High memory usage", "target": "moss::infra"}
+```
+
+---
+
+### GET /api/v1/stone/maintenance/history
+
+**Retrieve recent caretaking sweep reports.**
+
+Returns the last N sweep reports showing what maintenance actions were performed.
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "reports": [
+      {
+        "timestamp": "2026-03-25T06:00:00Z",
+        "actions": ["pruned 3 dangling images", "rotated logs"],
+        "duration_ms": 1200
+      }
+    ]
+  }
+}
+```
+
+---
+
+### POST /api/v1/stone/maintenance/sweep
+
+**Trigger an immediate maintenance sweep.**
+
+Runs the caretaking sweep cycle on demand (normally runs on a schedule).
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "started": true,
+    "job_id": "sweep-01234567"
+  }
+}
+```
+
+---
+
+## Updates
+
+### GET /api/v1/stone/updates
+
+**List pending updates for this stone.**
+
+Returns available updates for offerings, firmware, and system packages.
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "offerings": [
+      {"name": "mongodb", "current": "7.0", "available": "7.0.5"}
+    ],
+    "firmware": [],
+    "total": 1
+  }
+}
+```
+
+---
+
+### POST /api/v1/stone/updates/execute
+
+**Execute pending updates.**
+
+**Request:**
+```json
+{"scope": "all"}
+```
+
+| Scope | Description |
+|-------|-------------|
+| `all` | All pending updates |
+| `offerings` | Software/container updates only |
+| `firmware` | Firmware updates only |
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "job_id": "update-01234567",
+    "scope": "all",
+    "updates_queued": 1
+  }
+}
+```
+
+---
+
+### GET /api/v1/stone/updates/stream/:job_id
+
+**SSE stream for update progress.**
+
+**Response (200 OK - text/event-stream):**
+```
+event: progress
+data: {"job_id": "update-01234567", "offering": "mongodb", "phase": "pulling", "percent": 45}
+
+event: complete
+data: {"job_id": "update-01234567", "success": true, "updated": ["mongodb"]}
+```
+
+---
+
+### GET /api/v1/garden/updates
+
+**Aggregate pending updates across all garden stones.**
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "stones": [
+      {"name": "stone-01", "pending": 1},
+      {"name": "stone-02", "pending": 0}
+    ],
+    "total": 1
+  }
+}
+```
+
+---
+
+### POST /api/v1/garden/updates/execute
+
+**Dispatch update execution to affected stones.**
+
+**Request:**
+```json
+{"scope": "all"}
+```
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "dispatched": ["stone-01"],
+    "skipped": ["stone-02"]
+  }
+}
+```
+
+---
+
+## Console
+
+### GET /api/v1/console/mode
+
+**Get the current console display mode.**
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "mode": "observe"
+  }
+}
+```
+
+---
+
+### POST /api/v1/console/mode
+
+**Set the console display mode.**
+
+**Request:**
+```json
+{
+  "mode": "observe"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "mode": "observe",
+    "previous": "idle"
+  }
+}
+```
+
+---
+
+## Garden Operations (Orchestrated)
+
+All garden endpoints hit the tended Moss instance, which aggregates data from all stones in the garden.
+
+### GET /api/v1/garden/services
+
+**Find services across all stones in the garden.**
+
+**Query Parameters:**
+- `q` - Search query text
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "services": [
+      {
+        "name": "mongodb",
+        "stone": "stone-01",
+        "status": "running",
+        "endpoint": "http://192.168.1.100:27017"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET /api/v1/garden/tools
+
+**List garden-wide tools aggregated from all stones.**
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "tools": [
+      {
+        "name": "chat",
+        "offering": "ollama",
+        "stone": "stone-01",
+        "type": "inference"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET /api/v1/garden/tools/stream
+
+**SSE stream for tool availability changes across the garden.**
+
+**Response (200 OK - text/event-stream):**
+```
+event: tool.added
+data: {"name": "chat", "offering": "ollama", "stone": "stone-01"}
+
+event: tool.removed
+data: {"name": "embedding", "offering": "ollama", "stone": "stone-02"}
+```
+
+---
+
+### GET /api/v1/garden/observe
+
+**Aggregate topology view of all stones and their services.**
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "stones": [
+      {
+        "name": "stone-01",
+        "health": "thriving",
+        "services": ["mongodb", "redis"],
+        "endpoint": "http://192.168.1.100:7185"
+      }
+    ]
+  }
+}
+```
 
 ---
 
@@ -1834,6 +2464,16 @@ Stops all services and shuts down the Moss HTTP server.
 - CA unlock after restart, promote for standby CA
 - mDNS TXT advertises pond and https_port when active
 
+**Phase 3.5 (Complete — Extended Surface):**
+- Administrative API: take-root, stone shutdown/reboot, Wake-on-LAN
+- Adoption & borrowing: adoptable, adopted, borrowed, adopt, unadopt, borrow, return
+- Offering capabilities: list, add, refresh, remove
+- Service lifecycle: destroy, reassign, cordon, env read/write, capabilities, refresh-capabilities
+- Logs & maintenance: daemon logs (file + SSE), sweep history, on-demand sweep
+- Updates: local + garden-wide pending, execute, SSE progress stream
+- Console mode get/set
+- Garden operations: tools list, tools SSE stream
+
 **Phase 4 (Planned):**
 - HTTPS listener on :7183 with route splitting (public vs authenticated)
 - Web dashboard integration
@@ -1845,7 +2485,7 @@ Stops all services and shuts down the Moss HTTP server.
 
 ### Official
 
-**Rake CLI:** Built-in client with dual syntax (zen/normative)
+**Rake CLI:** Built-in client with zen syntax
 
 ### Community
 
@@ -1863,6 +2503,6 @@ None yet - contributions welcome!
 
 ---
 
-**Last Updated:** February 16, 2026  
+**Last Updated:** March 25, 2026  
 **API Version:** v1  
-**Implementation Status:** Phase 3 Complete (Pond Security implemented)
+**Implementation Status:** Phase 3.5 Complete (Pond Security + Extended Surface)

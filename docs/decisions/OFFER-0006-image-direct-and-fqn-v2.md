@@ -643,7 +643,7 @@ Files requiring example updates (`:` → `::`):
 - `docs/guides/offering-sub-capabilities.md` — CLI examples
 - `docs/guides/container-collision-avoidance.md` — encoding examples
 - `docs/guides/tools-domain.md` — tool FQID examples
-- `docs/proposals/moss-tools-domain.md` — tool FQID examples
+- `docs/archive/proposals/moss-tools-domain.md` — tool FQID examples
 - `.agentic/rules/docker-ops.md` — container naming convention
 
 ### Orchestrator Updates

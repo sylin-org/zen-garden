@@ -485,7 +485,7 @@ All notable changes to Zen Garden will be documented in this file.
   - Event-driven readiness for `garden-rake find ... wishfully` (offering and capability-aware flows)
   - Capability state persistence + propagation through tools projection/beacons
 - **Documentation added for tools domain**
-  - Proposal status updated: `docs/proposals/moss-tools-domain.md`
+  - Proposal status updated: `docs/archive/proposals/moss-tools-domain.md`
   - Implementation report: `docs/archive/proposals/tools-domain-implementation.md`
   - User guide: `docs/guides/tools-domain.md`
 - **Capability wishful syntax and semantics refined**

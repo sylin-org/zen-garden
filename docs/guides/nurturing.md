@@ -46,7 +46,7 @@ Reference guide for environment setup, backup policies, and service recovery.
   ├── ceremonies/          # Update journals
   ├── staging/             # Deployment packages
   ├── mounts/              # Seed bank mount points
-  └── nurturing/           # A/B slot index
+  └── snapshots/           # A/B slot index
 ```
 
 **Windows:**
@@ -123,7 +123,7 @@ After preparation, the seed bank contains:
 {mount_path}/.zen-garden/
 ├── manifest.json           # Identity and metadata
 └── garden/
-    ├── memories/           # Backup snapshots (seed bank memories)
+    ├── snapshots/          # Backup snapshots
     │   ├── index.json       # Remote backup index
     │   └── {offering_id}/
     │       ├── offering.json
@@ -193,7 +193,7 @@ When replicating to seed banks, three strategies are available:
 
 The backup scheduler uses these defaults:
 ```rust
-NurturingWorkflowConfig {
+SnapshotWorkflowConfig {
     commit_image: true,              // Commit container image during snapshot
     routing_strategy: First,         // Use first available seed bank
     max_replication_attempts: 3,     // Retry failed replications

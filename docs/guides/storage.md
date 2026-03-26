@@ -2,7 +2,7 @@
 audience: [operator, visitor]
 doc_type: guide
 status: current
-last_verified: 2026-03-08
+last_verified: 2026-03-25
 canonical: true
 note: "Authoritative guide for managed storage: setup, file sharing, replication, and access."
 ---
@@ -32,16 +32,16 @@ This guide walks you through the entire journey, starting with a single USB driv
 Any directory can become managed storage. Point zen-garden at it and give it a name:
 
 ```bash
-# 1. Adopt an existing folder (NAS mount, USB drive, local directory)
-garden-rake storage adopt /mnt/my-drive --name my-files
+# 1. Add an existing folder (NAS mount, USB drive, local directory)
+garden-rake storage add /mnt/my-drive --name my-files
 
 # 2. Confirm it's ready
-garden-rake storage-status
+garden-rake storage status
 ```
 
 That's it. Zen-garden creates a `.zen-garden/` folder alongside your existing files (never touches them), and the storage is live. Files you place on it replicate to other stones that have a storage with the same name.
 
-> **Have a brand-new blank drive?** Use `garden-rake storage prepare /dev/sdb --name my-files` instead — it formats, partitions, mounts, and adopts in one step. See [Preparing a Blank Device](#preparing-a-blank-device) for details.
+> **Have a brand-new blank drive?** `garden-rake storage add /dev/sdb --name my-files` works the same way — Moss auto-detects that the target is a blank device and handles formatting, partitioning, and mounting before adding it. See [Adding a Blank Device](#adding-a-blank-device) for details.
 
 ---
 
@@ -102,11 +102,11 @@ Default visibility is `open`.
 
 ---
 
-## Adopting Storage
+## Adding Existing Storage
 
 The most common way to add storage. Use this for any directory that already exists — a NAS mount, a USB drive with files on it, or a local folder.
 
-Adopt is **non-destructive** — it writes a `.zen-garden/` dotfolder alongside your existing files and never touches your data.
+Adding existing storage is **non-destructive** — it writes a `.zen-garden/` dotfolder alongside your existing files and never touches your data.
 
 ### Step 1: Mount (if needed)
 
@@ -122,37 +122,37 @@ sudo mount -t cifs //nas.local/media /mnt/nas-media -o guest
 
 For a local directory, nothing to mount — just point at it.
 
-### Step 2: Adopt
+### Step 2: Add
 
 ```bash
-garden-rake storage adopt /mnt/nas-media --name family-media
+garden-rake storage add /mnt/nas-media --name family-media
 ```
 
 This creates `.zen-garden/manifest.json` on the storage and walks the existing files to build a baseline replication log (the **content catalog**). The catalog tells other replicas what already exists, so they know what to sync.
 
-To adopt as a seed-bank (receives offering backups):
+To add as a seed-bank (receives offering backups):
 
 ```bash
-garden-rake storage adopt /mnt/archive --name archive --roles seed-bank
+garden-rake storage add /mnt/archive --name archive --roles seed-bank
 ```
 
 ### Step 3: Verify
 
 ```bash
-garden-rake storage-status
+garden-rake storage status
 ```
 
-You'll see the adopted storage listed with its existing capacity and usage.
+You'll see the added storage listed with its existing capacity and usage.
 
-### What Adopt Creates
+### What Add Creates
 
 ```
 /mnt/nas-media/
-├── .zen-garden/               ← Created by adopt
+├── .zen-garden/               ← Created by add
 │   ├── manifest.json          ← Identity and configuration
 │   ├── changelog.jsonl        ← Replication log (seeded with existing files)
 │   ├── storage/               ← S3 objects namespace
-│   └── memories/              ← Offering snapshots (if seed-bank role)
+│   └── snapshots/             ← Offering snapshots (if seed-bank role)
 ├── Photos/                    ← Your existing data (untouched)
 ├── Videos/                    ← Your existing data (untouched)
 └── Documents/                 ← Your existing data (untouched)
@@ -160,14 +160,14 @@ You'll see the adopted storage listed with its existing capacity and usage.
 
 ---
 
-## Preparing a Blank Device
+## Adding a Blank Device
 
-Use this when you have a **brand-new, empty drive** and want zen-garden to format, partition, mount, and adopt it in one step. If the drive already has data on it, use [Adopt](#adopting-storage) instead.
+Use this when you have a **brand-new, empty drive**. `storage add` auto-detects that the target is a blank device and handles formatting, partitioning, and mounting before adding it. If the drive already has data on it, use [Adding Existing Storage](#adding-existing-storage) instead.
 
 ### Step 1: Identify the Device
 
 ```bash
-garden-rake storage devices
+garden-rake storage list --candidates
 ```
 
 Sample output:
@@ -178,30 +178,30 @@ Device          Size      Filesystem    Mounted
 /dev/sdc       1.0 TB    ext4          No
 ```
 
-Choose the device you want to prepare. Double-check the device name — **prepare formats the entire device**.
+Choose the device you want to add. Double-check the device name — **adding a blank device formats the entire device**.
 
-### Step 2: Prepare
+### Step 2: Add
 
 ```bash
 # Basic: name it yourself
-garden-rake storage prepare /dev/sdb --name family-photos
+garden-rake storage add /dev/sdb --name family-photos
 
 # Let zen-garden pick a random name
-garden-rake storage prepare /dev/sdb --random
+garden-rake storage add /dev/sdb --random
 
 # Use btrfs instead of the default ext4
-garden-rake storage prepare /dev/sdb --name backups --fs btrfs
+garden-rake storage add /dev/sdb --name backups --fs btrfs
 
 # Also give it the seed-bank role (for offering backups)
-garden-rake storage prepare /dev/sdb --name backups --roles seed-bank
+garden-rake storage add /dev/sdb --name backups --roles seed-bank
 ```
 
-Under the hood, prepare does four things: formats the device, mounts it, creates the `.zen-garden/` structure, and writes the manifest. The result is identical to mounting a blank drive and running `adopt` — prepare just handles the low-level device setup for you.
+When the target is a blank device, `storage add` auto-detects it and handles formatting, mounting, creating the `.zen-garden/` structure, and writing the manifest. The result is identical to manually formatting, mounting, and then adding a directory.
 
 ### Step 3: Verify
 
 ```bash
-garden-rake storage-status
+garden-rake storage status
 ```
 
 Sample output:
@@ -359,15 +359,15 @@ curl "http://stone-name:7185/api/v1/garden/storage/family-photos/fs?path=Photos&
 curl "http://stone-name:7185/api/v1/garden/storage/family-photos/fs?depth=all"
 ```
 
-The REST API also handles objects (S3-style) and memories (offering snapshots):
+The REST API also handles objects (S3-style) and snapshots (offering snapshots):
 
 ```bash
 # Objects (under .zen-garden/storage/)
 curl http://stone-name:7185/api/v1/garden/storage/family-photos/objects/bucket/key.dat
 
-# Memories (offering snapshots)
-curl http://stone-name:7185/api/v1/garden/storage/backups/memories
-curl http://stone-name:7185/api/v1/garden/storage/backups/memories/immich
+# Snapshots (offering snapshots)
+curl http://stone-name:7185/api/v1/garden/storage/backups/snapshots
+curl http://stone-name:7185/api/v1/garden/storage/backups/snapshots/immich
 ```
 
 ### SMB Signpost (Network Browser Discovery)
@@ -426,13 +426,13 @@ Replication happens automatically when two or more storages share the same name.
 **On Stone A** (this will become Primary):
 
 ```bash
-garden-rake storage adopt /mnt/ssd --name shared-docs
+garden-rake storage add /mnt/ssd --name shared-docs
 ```
 
 **On Stone B** (this will become Dormant):
 
 ```bash
-garden-rake storage adopt /mnt/usb --name shared-docs
+garden-rake storage add /mnt/usb --name shared-docs
 ```
 
 That's it. Both storages have the name `shared-docs`. Moss discovers both via the garden topology and one claims Primary. The other becomes Dormant and starts replicating.
@@ -495,10 +495,10 @@ Write another file and watch the tick events appear in real time.
 
 ### Viewing Status
 
-The `storage-status` command gives you a dashboard of all storages:
+The `storage status` command gives you a dashboard of all storages:
 
 ```bash
-garden-rake storage-status
+garden-rake storage status
 ```
 
 Sample output:
@@ -585,7 +585,7 @@ You want to share files from a stone to your home network.
 
 ```bash
 # Adopt a local directory
-garden-rake storage adopt /home/stone/shared --name personal
+garden-rake storage add /home/stone/shared --name personal
 
 # Access from any device via WebDAV
 # macOS: Finder → Cmd+K → http://stone-name.local:7185/dav/personal/
@@ -605,7 +605,7 @@ sudo mount -t nfs nas.local:/volume1/media /mnt/nas-media
 echo "nas.local:/volume1/media /mnt/nas-media nfs defaults 0 0" | sudo tee -a /etc/fstab
 
 # Adopt the mounted share
-garden-rake storage adopt /mnt/nas-media --name media-library
+garden-rake storage add /mnt/nas-media --name media-library
 ```
 
 Now you can access `/mnt/nas-media` via WebDAV from any device, and it replicates to other stones with a storage named `media-library`.
@@ -616,16 +616,16 @@ Keep one USB at home, take one offsite. Both carry offering backups.
 
 ```bash
 # Prepare two blank drives with the same name and seed-bank role
-# (Use prepare here because the drives are brand new and need formatting)
-garden-rake storage prepare /dev/sdb --name offsite --roles seed-bank
-garden-rake storage prepare /dev/sdc --name offsite --roles seed-bank
+# (Moss auto-detects blank devices and handles formatting)
+garden-rake storage add /dev/sdb --name offsite --roles seed-bank
+garden-rake storage add /dev/sdc --name offsite --roles seed-bank
 
 # Configure backup to target this storage
 garden-rake backup configure immich --seed-bank offsite
 garden-rake backup configure postgres --seed-bank offsite
 ```
 
-Nurturing writes to whichever `offsite` drive is plugged in. Swap drives weekly — the one at home replicates the latest state, and you take the updated one offsite.
+The snapshot scheduler writes to whichever `offsite` drive is plugged in. Swap drives weekly — the one at home replicates the latest state, and you take the updated one offsite.
 
 ### Scenario 4: Multi-Stone Replication
 
@@ -634,13 +634,13 @@ You have three stones and want a replicated file share across all of them.
 ```bash
 # On each stone, adopt a storage with the same name
 # Stone A:
-garden-rake storage adopt /mnt/ssd --name team-share
+garden-rake storage add /mnt/ssd --name team-share
 
 # Stone B:
-garden-rake storage adopt /mnt/usb-drive --name team-share
+garden-rake storage add /mnt/usb-drive --name team-share
 
 # Stone C:
-garden-rake storage adopt /mnt/local-ssd --name team-share
+garden-rake storage add /mnt/local-ssd --name team-share
 ```
 
 All three stones now replicate `team-share`. Pin one as Primary if you want deterministic write routing:
@@ -658,7 +658,7 @@ An application needs S3-compatible object storage (e.g., a photo gallery, a back
 
 ```bash
 # Adopt a directory for the application
-garden-rake storage adopt /mnt/app-ssd --name app-data
+garden-rake storage add /mnt/app-ssd --name app-data
 
 # Point the application at the S3 gateway
 # Endpoint: http://stone-name:7185/api/v1/storage/s3
@@ -681,7 +681,7 @@ Every managed storage has a `.zen-garden/` directory at its root. Here's what li
 ├── pin.json              # Present when this replica claims Primary (contains pin_id)
 ├── last_cursor           # Replication cursor (tracks sync position)
 ├── last-known-good/      # Resilience snapshot of the manifest
-├── memories/             # Offering snapshots (only when seed-bank role is active)
+├── snapshots/            # Offering snapshots (only when seed-bank role is active)
 │   ├── immich/
 │   │   ├── manifest.json
 │   │   └── 2026-03-07T12-00-00Z.tar.gz
@@ -732,32 +732,24 @@ A symlink named `Zen Garden` pointing to `.zen-garden/` is created at the storag
 
 | Command | Purpose |
 |---------|---------|
-| `garden-rake storage devices` | List available (unprepared) devices |
-| `garden-rake storage prepare /dev/sdX --name NAME` | Format and claim a blank device |
-| `garden-rake storage adopt /path --name NAME` | Adopt existing storage non-destructively |
-| `garden-rake storage-status` | Dashboard of all storages with capacity and roles |
+| `garden-rake storage list --candidates` | List available (unmanaged) devices |
+| `garden-rake storage add /dev/sdX --name NAME` | Format and claim a blank device (auto-detected) |
+| `garden-rake storage add /path --name NAME` | Add existing storage non-destructively |
+| `garden-rake storage status` | Dashboard of all storages with capacity and roles |
 | `garden-rake storage list` | List connected storages |
 | `garden-rake storage info NAME` | Detailed info about a storage |
 | `garden-rake storage release NAME` | Unmount without removing |
 | `garden-rake storage pin NAME` | Claim Primary role (persists across reboots) |
 | `garden-rake storage unpin NAME` | Release Primary claim |
 
-### Prepare Flags
+### Add Flags
 
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--name <name>` | Human-readable storage name | Required (unless `--random`) |
 | `--random` | Generate a random name | false |
-| `--fs <type>` | Filesystem: `ext4` or `btrfs` | `ext4` |
+| `--fs <type>` | Filesystem: `ext4` or `btrfs` (blank devices only) | `ext4` |
 | `--roles <role,...>` | Composable roles (e.g., `seed-bank`) | none |
-| `--encrypted` | Enable content encryption | false |
-
-### Adopt Flags
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--name <name>` | Storage name | Required |
-| `--roles <role,...>` | Composable roles | none |
 | `--encrypted` | Enable content encryption | false |
 
 ---
@@ -804,7 +796,7 @@ Then adopt the mount:
 
 ```bash
 sudo mount /mnt/nas-media
-garden-rake storage adopt /mnt/nas-media --name media
+garden-rake storage add /mnt/nas-media --name media
 ```
 
 ### Samba Integration (SMB Signpost)
@@ -835,8 +827,7 @@ The signpost share appears in network browsers as a read-only folder containing 
 | GET | `/api/v1/stone/storage` | Storage overview |
 | GET | `/api/v1/stone/storage/health` | Health status |
 | GET | `/api/v1/stone/storage/candidates` | Eligible devices |
-| POST | `/api/v1/stone/storage/prepare` | Prepare blank device |
-| POST | `/api/v1/stone/storage/adopt` | Adopt existing storage |
+| POST | `/api/v1/stone/storage/add` | Add storage (auto-detects blank device vs. existing directory) |
 | GET | `/api/v1/stone/storage/banks` | List local storages |
 | GET | `/api/v1/stone/storage/banks/{name}` | Storage details |
 | DELETE | `/api/v1/stone/storage/banks/{name}` | Remove storage |
@@ -858,9 +849,9 @@ The signpost share appears in network browsers as a read-only folder containing 
 | GET | `/api/v1/garden/storage/{name}/fs` | Directory listing (`?path=&depth=N`) |
 | GET/PUT/DELETE/HEAD | `/api/v1/garden/storage/{name}/fs/*path` | User file operations |
 | GET/PUT/DELETE/HEAD | `/api/v1/garden/storage/{name}/objects/*path` | S3 object operations |
-| GET | `/api/v1/garden/storage/{name}/memories` | List offerings with snapshots |
-| GET | `/api/v1/garden/storage/{name}/memories/{offering}` | List snapshots |
-| GET | `/api/v1/garden/storage/{name}/memories/{offering}/{harvest}` | Download snapshot |
+| GET | `/api/v1/garden/storage/{name}/snapshots` | List offerings with snapshots |
+| GET | `/api/v1/garden/storage/{name}/snapshots/{offering}` | List snapshots |
+| GET | `/api/v1/garden/storage/{name}/snapshots/{offering}/{harvest}` | Download snapshot |
 
 ### WebDAV
 
@@ -887,7 +878,7 @@ The signpost share appears in network browsers as a read-only folder containing 
 
 ### Storage Not Detected After Plugging In
 
-**Symptom:** USB drive connected but not in `storage-status`
+**Symptom:** USB drive connected but not in `storage status`
 
 **Check:**
 
@@ -905,7 +896,7 @@ ls /mnt/.zen-garden/manifest.json
 
 **Common causes:**
 
-1. **No manifest** — The device hasn't been prepared or adopted. Run `garden-rake storage prepare` or `garden-rake storage adopt`.
+1. **No manifest** — The device hasn't been added. Run `garden-rake storage add`.
 2. **Desktop automounter grabbed it** — Install udev rules (see [System Configuration](#system-configuration)).
 3. **Permission denied** — Ensure moss runs with access to block devices.
 
@@ -917,7 +908,7 @@ ls /mnt/.zen-garden/manifest.json
 
 ```bash
 # Verify both storages have the same name
-garden-rake storage-status  # Run on both stones
+garden-rake storage status  # Run on both stones
 
 # Check the changelog on the Primary
 curl http://primary-stone:7185/api/v1/stone/storage/banks/my-storage/changes
@@ -946,11 +937,11 @@ sudo mount /dev/sdb1 /mnt
 # Check if manifest exists
 cat /mnt/.zen-garden/manifest.json
 
-# If corrupt, you can re-adopt (non-destructive)
-garden-rake storage adopt /mnt --name recovered-storage
+# If corrupt, you can re-add (non-destructive)
+garden-rake storage add /mnt --name recovered-storage
 ```
 
-Re-adopting writes a fresh manifest and rebuilds the content catalog. Your files are preserved.
+Re-adding writes a fresh manifest and rebuilds the content catalog. Your files are preserved.
 
 ### Wrong Storage is Primary
 
@@ -995,7 +986,7 @@ curl -X PROPFIND http://stone-name:7185/dav/my-storage/
 
 ## Further Reading
 
-- [Backup Guide](./nurturing.md) — Backup configuration and scheduling
+- [Snapshots Guide](./nurturing.md) — Backup configuration and scheduling
 - [First Stone](./first-stone.md) — Setting up your first stone
 - [Seed Banks Guide](./seed-banks.md) — Legacy seed bank setup (pre-STORAGE-0009)
 - [Troubleshooting](./troubleshooting.md) — General troubleshooting

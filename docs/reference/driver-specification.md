@@ -2,7 +2,7 @@
 
 **Version:** 2.0  
 **Status:** Reference Implementation  
-**Last Updated:** 2026-01-27
+**Last Updated:** 2026-03-25
 
 > **Build applications that discover infrastructure automatically.**  
 > This guide helps you create drivers, SDKs, and integrations for Zen Garden.
@@ -31,7 +31,7 @@ print(f"Found: {stone['stone_name']} at {stone['stone_endpoint']}")
 **Then query its services:**
 
 ```bash
-curl -s http://stone-topaz-basin.local:7185/api/v1/services | jq '.data'
+curl -s http://stone-topaz-basin.local:7185/api/v1/stone/services | jq '.data'
 ```
 
 ---
@@ -359,17 +359,17 @@ async def get_mongodb_connection() -> str:
     tending = load_tending_state()
     if tending:
         try:
-            services = await http_get(f"{tending.endpoint}/api/v1/services")
+            services = await http_get(f"{tending.endpoint}/api/v1/stone/services")
             for svc in services['data']:
                 if svc['offering'] == 'mongodb' and svc['status'] == 'Running':
                     return f"mongodb://{parse_host(tending.endpoint)}:27017"
         except ConnectionError:
             pass  # Stone offline, fall through
-    
+
     # Discover any Stone with MongoDB
     stones = await discover_stones_async(timeout=3.0)
     for stone in stones:
-        services = await http_get(f"{stone.stone_endpoint}/api/v1/services")
+        services = await http_get(f"{stone.stone_endpoint}/api/v1/stone/services")
         for svc in services['data']:
             if svc['offering'] == 'mongodb' and svc['status'] == 'Running':
                 return f"mongodb://{parse_host(stone.stone_endpoint)}:{svc['ports']['native']}"
@@ -406,7 +406,7 @@ class ResilientConnection:
         # Rediscover on failure
         stones = await discover_stones_async(timeout=3.0)
         for stone in stones:
-            services = await http_get(f"{stone.stone_endpoint}/api/v1/services")
+            services = await http_get(f"{stone.stone_endpoint}/api/v1/stone/services")
             for svc in services['data']:
                 if svc['offering'] == self.offering and svc['status'] == 'Running':
                     self.current_stone = stone.stone_endpoint
@@ -754,7 +754,7 @@ GET /health
 #### Hardware Capabilities
 
 ```http
-GET /capabilities
+GET /api/v1/stone/capabilities
 ```
 
 ```json
@@ -786,15 +786,15 @@ GET /capabilities
 **List offerings:**
 
 ```http
-GET /api/v1/offerings
-GET /api/v1/offerings?state=available
-GET /api/v1/offerings?state=installed
+GET /api/v1/stone/offerings
+GET /api/v1/stone/offerings?state=available
+GET /api/v1/stone/offerings?state=installed
 ```
 
 **Search offerings:**
 
 ```http
-GET /api/v1/offerings/search?q=nosql%20database&limit=5
+GET /api/v1/stone/offerings/search?q=nosql%20database&limit=5
 ```
 
 ```json
@@ -821,7 +821,7 @@ GET /api/v1/offerings/search?q=nosql%20database&limit=5
 **Install (plant) offering:**
 
 ```http
-POST /api/v1/offerings
+POST /api/v1/stone/offerings
 Content-Type: application/json
 
 {
@@ -847,7 +847,7 @@ Response (202 Accepted):
 **Uninstall (take away) offering:**
 
 ```http
-DELETE /api/v1/offerings/{name}
+DELETE /api/v1/stone/offerings/{name}
 ```
 
 ### 6.5 Services API (Technical Layer)
@@ -855,7 +855,7 @@ DELETE /api/v1/offerings/{name}
 **List services (container-level):**
 
 ```http
-GET /api/v1/services
+GET /api/v1/stone/services
 ```
 
 ```json
@@ -884,7 +884,7 @@ GET /api/v1/services
 **Service details:**
 
 ```http
-GET /api/v1/services/{name}
+GET /api/v1/stone/services/{name}
 ```
 
 ### 6.6 Garden Endpoints (Cross-Stone Orchestration)
@@ -915,7 +915,7 @@ GET /api/v1/garden/topology
 }
 ```
 
-**Garden-wide nourishment (updates):**
+**Garden-wide updates:**
 
 ```http
 GET /api/v1/garden/updates
@@ -935,15 +935,15 @@ async def find_service(offering: str) -> Optional[ServiceInfo]:
     # Option 1: Query tended Stone
     tending = load_tending_state()
     if tending:
-        services = await http_get(f"{tending.endpoint}/api/v1/services")
+        services = await http_get(f"{tending.endpoint}/api/v1/stone/services")
         for svc in services['data']:
             if svc['offering'] == offering and svc['status'] == 'Running':
                 return ServiceInfo.from_dict(svc, tending.endpoint)
-    
+
     # Option 2: Discover and query all Stones
     stones = await discover_stones_async()
     for stone in stones:
-        services = await http_get(f"{stone.stone_endpoint}/api/v1/services")
+        services = await http_get(f"{stone.stone_endpoint}/api/v1/stone/services")
         for svc in services['data']:
             if svc['offering'] == offering and svc['status'] == 'Running':
                 return ServiceInfo.from_dict(svc, stone.stone_endpoint)
@@ -962,10 +962,10 @@ Use prefix syntax for advanced searches:
 | `t:`, `tag:`, `tags:` | Tag | `t:nosql` |
 
 ```http
-GET /api/v1/services?q=mongodb          # Name search
-GET /api/v1/services?q=c:database       # Category search
-GET /api/v1/services?q=t:nosql          # Tag search
-GET /api/v1/services?fresh=true         # Force network scan
+GET /api/v1/stone/services?q=mongodb          # Name search
+GET /api/v1/stone/services?q=c:database       # Category search
+GET /api/v1/stone/services?q=t:nosql          # Tag search
+GET /api/v1/stone/services?fresh=true         # Force network scan
 ```
 
 ### 7.3 Default Ports
@@ -1389,7 +1389,7 @@ interface TendingState {
 - [ ] **Endpoint normalization** — Accept all input formats
 - [ ] **HTTP client** — With timeout handling (30s default)
 - [ ] **Health check** — `GET /health`
-- [ ] **Service list** — `GET /api/v1/services`
+- [ ] **Service list** — `GET /api/v1/stone/services`
 - [ ] **API unwrapping** — Handle `{ data, suggestions }` envelope
 - [ ] **Error parsing** — Handle `{ error: { code, message } }` format
 
@@ -1485,8 +1485,8 @@ Tending doesn't expire, but your driver should:
 
 ### 14.3 Service Not Found
 
-1. Verify offering is installed: `GET /api/v1/offerings?state=installed`
-2. Check container status: `GET /api/v1/services/{name}`
+1. Verify offering is installed: `GET /api/v1/stone/offerings?state=installed`
+2. Check container status: `GET /api/v1/stone/services/{name}`
 3. Container may be starting: check `status` field for `"Installing"`
 4. Track installation: use `job_id` to poll progress
 
@@ -1503,16 +1503,16 @@ Check logs for "multicast send failed" warnings. Broadcast is slower but functio
 ### Common Endpoints
 
 ```http
-GET  /health                            # Health status
-GET  /capabilities                      # Hardware inventory
-GET  /api/v1/services                   # List services
-GET  /api/v1/services?q=mongo           # Search services
-GET  /api/v1/offerings                  # List offerings
-GET  /api/v1/offerings/search?q=nosql   # Search offerings
-POST /api/v1/offerings                  # Install offering
-GET  /api/v1/garden/topology            # All Stones
-GET  /api/v1/stone/companions             # List Companions
-POST /api/v1/stone/companions/{id}/command # Send Companion command
+GET  /health                                   # Health status
+GET  /api/v1/stone/capabilities                # Hardware inventory
+GET  /api/v1/stone/services                    # List services
+GET  /api/v1/stone/services?q=mongo            # Search services
+GET  /api/v1/stone/offerings                   # List offerings
+GET  /api/v1/stone/offerings/search?q=nosql    # Search offerings
+POST /api/v1/stone/offerings                   # Install offering
+GET  /api/v1/garden/topology                   # All Stones
+GET  /api/v1/stone/companions                  # List Companions
+POST /api/v1/stone/companions/{id}/command     # Send Companion command
 ```
 
 ### Port Summary

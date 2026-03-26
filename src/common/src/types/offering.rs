@@ -147,6 +147,8 @@ pub enum OfferingStatus {
     Running,
     /// Stopped or not running
     Stopped,
+    /// Running but marked non-schedulable (excluded from placement)
+    Cordoned,
     /// In maintenance mode
     Maintenance,
     /// Running but degraded
@@ -161,6 +163,7 @@ impl std::fmt::Display for OfferingStatus {
             Self::Installing => write!(f, "installing"),
             Self::Running => write!(f, "running"),
             Self::Stopped => write!(f, "stopped"),
+            Self::Cordoned => write!(f, "cordoned"),
             Self::Maintenance => write!(f, "maintenance"),
             Self::Degraded => write!(f, "degraded"),
             Self::Unknown => write!(f, "unknown"),
@@ -174,6 +177,7 @@ impl From<ServiceStatus> for OfferingStatus {
             ServiceStatus::Installing => Self::Installing,
             ServiceStatus::Running => Self::Running,
             ServiceStatus::Stopped => Self::Stopped,
+            ServiceStatus::Cordoned => Self::Cordoned,
             ServiceStatus::Maintenance => Self::Maintenance,
             ServiceStatus::Degraded => Self::Degraded,
             ServiceStatus::Unknown => Self::Unknown,
@@ -187,6 +191,7 @@ impl From<OfferingStatus> for ServiceStatus {
             OfferingStatus::Installing => Self::Installing,
             OfferingStatus::Running => Self::Running,
             OfferingStatus::Stopped => Self::Stopped,
+            OfferingStatus::Cordoned => Self::Cordoned,
             OfferingStatus::Maintenance => Self::Maintenance,
             OfferingStatus::Degraded => Self::Degraded,
             OfferingStatus::Unknown => Self::Unknown,

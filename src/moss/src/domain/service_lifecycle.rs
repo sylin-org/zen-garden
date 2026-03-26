@@ -85,6 +85,55 @@ pub async fn stop(state: &AppState, service_name: &str) -> Result<LifecycleOutco
 }
 
 // ============================================================================
+// Cordon / Uncordon
+// ============================================================================
+
+/// Mark a service as cordoned (non-schedulable). The container keeps running
+/// but placement logic excludes it from new work assignments.
+pub async fn cordon(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+    let offering_id = find_managed(state, service_name).await?;
+
+    state
+        .update_offering(&offering_id, true, |o| {
+            if o.status == OfferingStatus::Cordoned {
+                return false; // already cordoned
+            }
+            o.status = OfferingStatus::Cordoned;
+            true
+        })
+        .await;
+
+    info!(service = %service_name, "Service cordoned");
+
+    Ok(LifecycleOutcome {
+        offering_id,
+        service_name: service_name.to_string(),
+    })
+}
+
+/// Remove cordon from a service, restoring it to running status.
+pub async fn uncordon(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+    let offering_id = find_managed(state, service_name).await?;
+
+    state
+        .update_offering(&offering_id, true, |o| {
+            if o.status != OfferingStatus::Cordoned {
+                return false; // not cordoned
+            }
+            o.status = OfferingStatus::Running;
+            true
+        })
+        .await;
+
+    info!(service = %service_name, "Service uncordoned");
+
+    Ok(LifecycleOutcome {
+        offering_id,
+        service_name: service_name.to_string(),
+    })
+}
+
+// ============================================================================
 // Start
 // ============================================================================
 

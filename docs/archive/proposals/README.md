@@ -7,7 +7,7 @@ This directory contains proposals that have been fully implemented in the codeba
 Unified automation-grade tools projection and stream for offerings + seed banks, with event-driven wishful readiness and capability propagation.
 
 ### Proposals
-1. **[moss-tools-domain.md](../../proposals/moss-tools-domain.md)** - Original specification
+1. **[moss-tools-domain.md](moss-tools-domain.md)** - Original specification
    - Status: ✅ Implemented (greenfield)
    - Implementation Date: 2026-02-06
    - API: `GET /api/v1/garden/tools`, `GET /api/v1/garden/tools/stream`
@@ -168,16 +168,12 @@ When a proposal is implemented:
 
 ## Related Directories
 
-### [ongoing/](../ongoing/)
+### [ongoing/](../../proposals/ongoing/)
 Proposals that are substantially implemented (75-95%) with remaining work in progress.
 
-**Current**: 1 proposal (CLI taxonomy)
-
-### [proposals/](../)
+### [proposals/](../../proposals/)
 Active proposals awaiting implementation.
-
-**Current**: 13 proposals
 
 ---
 
-**Last Updated**: 2026-02-06
+**Last Updated**: 2026-03-25

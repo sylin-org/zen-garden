@@ -40,5 +40,5 @@ Introduce a `Tools` bounded context that provides a single normalized projection
 - API: `GET /api/v1/garden/tools`, `GET /api/v1/garden/tools/stream`
 - User guide: [guides/tools-domain.md](../guides/tools-domain.md)
 - Implementation: `src/moss/src/domain/tools/`
-- Original spec: [proposals/moss-tools-domain.md](../proposals/moss-tools-domain.md)
+- Original spec: [archive/proposals/moss-tools-domain.md](../archive/proposals/moss-tools-domain.md)
 - Implementation report: [archive/proposals/tools-domain-implementation.md](../archive/proposals/tools-domain-implementation.md)

@@ -2,7 +2,7 @@
 audience: [developer, operator, maintainer]
 doc_type: spec
 status: current
-last_verified: 2026-02-06
+last_verified: 2026-03-25
 canonical: true
 note: "Formal ADR documenting dual-layer API architecture."
 ---
@@ -36,14 +36,14 @@ Both layers access the same data but present different views optimized for diffe
 #### Catalog Operations
 
 ```http
-GET  /api/v1/offerings                     # List all offerings (available + installed)
-GET  /api/v1/offerings?state=available     # Filter: available to install
-GET  /api/v1/offerings?state=installed     # Filter: planted offerings
-GET  /api/v1/offerings/{name}              # Offering details + compatibility (FQN accepted; instance ignored)
-GET  /api/v1/offerings/{name}/manifest     # Raw YAML definition (FQN accepted; instance ignored)
+GET  /api/v1/stone/offerings                     # List all offerings (available + installed)
+GET  /api/v1/stone/offerings?state=available     # Filter: available to install
+GET  /api/v1/stone/offerings?state=installed     # Filter: planted offerings
+GET  /api/v1/stone/offerings/{name}              # Offering details + compatibility (FQN accepted; instance ignored)
+GET  /api/v1/stone/offerings/{name}/manifest     # Raw YAML definition (FQN accepted; instance ignored)
 ```
 
-**GET /api/v1/offerings response:**
+**GET /api/v1/stone/offerings response:**
 ```json
 {
   "offerings": [
@@ -69,13 +69,13 @@ GET  /api/v1/offerings/{name}/manifest     # Raw YAML definition (FQN accepted; 
 #### Lifecycle Operations
 
 ```http
-POST   /api/v1/offerings                   # Plant offering (simplified install)
-DELETE /api/v1/offerings/{name}            # Take away offering (uninstall)
-POST   /api/v1/offerings:heal              # Heal garden (discover orphans)
-POST   /api/v1/offerings:refresh           # Refresh catalog from disk
+POST   /api/v1/stone/offerings                   # Plant offering (simplified install)
+DELETE /api/v1/stone/offerings/{name}            # Take away offering (uninstall)
+POST   /api/v1/stone/offerings/heal              # Heal garden (discover orphans)
+POST   /api/v1/stone/offerings/refresh           # Refresh catalog from disk
 ```
 
-**POST /api/v1/offerings (plant):**
+**POST /api/v1/stone/offerings (plant):**
 ```json
 // Request
 {
@@ -175,11 +175,11 @@ POST /api/v1/stone/companions/refresh        # Rescan Companion directory
 #### Manifest Operations
 
 ```http
-GET /api/v1/services/manifests             # List all service manifests
-GET /api/v1/services/{name}/manifest       # Get specific manifest YAML (FQN accepted; instance ignored)
+GET /api/v1/stone/services/manifests             # List all service manifests
+GET /api/v1/stone/services/{name}/manifest       # Get specific manifest YAML (FQN accepted; instance ignored)
 ```
 
-**GET /api/v1/services/manifests response:**
+**GET /api/v1/stone/services/manifests response:**
 ```json
 {
   "manifests": [
@@ -205,18 +205,18 @@ GET /api/v1/services/{name}/manifest       # Get specific manifest YAML (FQN acc
 #### Runtime Operations
 
 ```http
-GET    /api/v1/services                    # List services (container-level details)
-GET    /api/v1/services/{name}             # Service details (full technical view, name = FQN)
-GET    /api/v1/services/{name}/logs        # Stream logs (SSE)
-POST   /api/v1/services                    # Install (full Docker control)
-POST   /api/v1/services/{name}:restart     # Restart service
-POST   /api/v1/services/{name}:cordon      # Mark unavailable
-DELETE /api/v1/services/{name}             # Uninstall
-POST   /api/v1/services:reconcile          # Reconcile inventory
-POST   /api/v1/services:refresh            # Refresh manifests
+GET    /api/v1/stone/services                    # List services (container-level details)
+GET    /api/v1/stone/services/{name}             # Service details (full technical view, name = FQN)
+GET    /api/v1/stone/services/{name}/logs        # Stream logs (SSE)
+POST   /api/v1/stone/services                    # Install (full Docker control)
+POST   /api/v1/stone/services/{name}/restart     # Restart service
+POST   /api/v1/stone/services/{name}/cordon      # Mark unavailable
+DELETE /api/v1/stone/services/{name}             # Uninstall
+POST   /api/v1/stone/services/reconcile          # Reconcile inventory
+POST   /api/v1/stone/services/refresh            # Refresh manifests
 ```
 
-**GET /api/v1/services/{name} response (detailed):**
+**GET /api/v1/stone/services/{name} response (detailed):**
 ```json
 {
   "name": "mongodb",
@@ -248,7 +248,7 @@ POST   /api/v1/services:refresh            # Refresh manifests
 }
 ```
 
-**POST /api/v1/services (install with full control):**
+**POST /api/v1/stone/services (install with full control):**
 ```json
 {
   "name": "mongodb",
@@ -295,10 +295,10 @@ POST   /api/v1/stone/offerings/{name}/capabilities/mirror
 
 ```http
 GET  /health                               # Health check (Prometheus standard)
-GET  /capabilities                         # Stone hardware capabilities
-GET  /metrics                              # Prometheus metrics
-POST /api/v1/stone:upgrade                 # Upgrade stone software
-POST /api/v1/stone:shutdown                # Shutdown Moss daemon
+GET  /api/v1/stone/capabilities            # Stone hardware capabilities
+GET  /api/v1/stone/metrics                 # Prometheus metrics
+POST /api/v1/stone/upgrade                 # Upgrade stone software
+POST /api/v1/admin/moss/shutdown           # Shutdown Moss daemon
 ```
 
 ---
@@ -419,16 +419,16 @@ GET    /api/v1/storage/{bucket}/?list=true&prefix=...&delimiter=/&marker=...&max
 
 ---
 
-### Memories API (Hydration)
+### Snapshots API (Hydration)
 
-**Target:** Read-only access to nurturing backups for external orchestrators  
+**Target:** Read-only access to backup snapshots for external orchestrators
 **Philosophy:** Backups are portable, discoverable, and auditable
 
 ```http
-GET /api/v1/snapshots                                # List all remote snapshots (index)
-GET /api/v1/snapshots/{offering_id}                  # List snapshots for offering
-GET /api/v1/snapshots/{offering_id}/manifest         # Hydration metadata (offering.json)
-GET /api/v1/snapshots/{offering_id}/{harvest_id}     # Download snapshot tar.gz
+GET /api/v1/stone/snapshots                                # List all remote snapshots (index)
+GET /api/v1/stone/snapshots/{offering_id}                  # List snapshots for offering
+GET /api/v1/stone/snapshots/{offering_id}/manifest         # Hydration metadata (offering.json)
+GET /api/v1/stone/snapshots/{offering_id}/{harvest_id}     # Download snapshot tar.gz
 ```
 
 **Headers:**
@@ -442,25 +442,24 @@ GET /api/v1/snapshots/{offering_id}/{harvest_id}     # Download snapshot tar.gz
 **Philosophy:** Adopt local/network storage as S3-capable seed banks
 
 ```http
-GET    /api/v1/stone/storage                      # Overview (seed banks + candidates)
-GET    /api/v1/stone/storage/health               # Storage readiness (mounted + canonical + writable)
-GET    /api/v1/stone/storage/candidates           # List eligible devices
-POST   /api/v1/stone/storage/prepare              # Prepare a device as seed bank
-POST   /api/v1/stone/storage/release-all          # Safely unmount all seed banks
-GET    /api/v1/stone/storage/bank                 # List seed banks
-GET    /api/v1/stone/storage/bank/{id}            # Get seed bank details
-DELETE /api/v1/stone/storage/bank/{id}            # Remove seed bank (does not delete data)
-PATCH  /api/v1/stone/storage/bank/{id}/visibility # Change visibility (open/closed)
-PATCH  /api/v1/stone/storage/bank/{id}/rename     # Rename seed bank (pool rules apply)
-POST   /api/v1/stone/storage/bank/{id}/release    # Safely unmount seed bank
+GET    /api/v1/stone/storage                       # Overview (seed banks + candidates)
+GET    /api/v1/stone/storage/health                # Storage readiness (mounted + canonical + writable)
+GET    /api/v1/stone/storage/candidates            # List eligible devices
+POST   /api/v1/stone/storage/add                   # Add a device or directory as seed bank
+GET    /api/v1/stone/storage/banks                 # List seed banks
+GET    /api/v1/stone/storage/banks/{name}          # Get seed bank details
+DELETE /api/v1/stone/storage/banks/{name}          # Remove seed bank (does not delete data)
+PATCH  /api/v1/stone/storage/banks/{name}/visibility # Change visibility (open/closed)
+PATCH  /api/v1/stone/storage/banks/{name}/rename   # Rename seed bank (pool rules apply)
+POST   /api/v1/stone/storage/banks/{name}/release  # Safely unmount seed bank
 ```
 
-**Object operations (stone-local, by seed bank id):**
+**Object operations (stone-local, by seed bank name):**
 ```http
-GET    /api/v1/stone/storage/bank/{id}/*path       # Get object
-PUT    /api/v1/stone/storage/bank/{id}/*path       # Put object
-DELETE /api/v1/stone/storage/bank/{id}/*path       # Delete object
-HEAD   /api/v1/stone/storage/bank/{id}/*path       # Object metadata
+GET    /api/v1/stone/storage/banks/{name}/*path    # Get object
+PUT    /api/v1/stone/storage/banks/{name}/*path    # Put object
+DELETE /api/v1/stone/storage/banks/{name}/*path    # Delete object
+HEAD   /api/v1/stone/storage/banks/{name}/*path    # Object metadata
 ```
 
 ---
@@ -514,16 +513,9 @@ into stone activity.
 
 **Offerings API (Zen commands):**
 ```bash
-garden-rake explore              # GET /api/v1/offerings?state=available
-garden-rake offer mongodb        # POST /api/v1/offerings
-garden-rake observe              # GET /api/v1/offerings?state=installed
-```
-
-**Services API (Technical operations):**
-```bash
-garden-rake service logs mongodb     # GET /api/v1/services/mongodb/logs
-garden-rake service inspect mongodb  # GET /api/v1/services/mongodb
-garden-rake service reconcile        # POST /api/v1/services:reconcile
+garden-rake explore              # GET /api/v1/stone/offerings?state=available
+garden-rake offer mongodb        # POST /api/v1/stone/offerings
+garden-rake observe              # GET /api/v1/stone/offerings?state=installed
 ```
 
 ---
@@ -623,10 +615,10 @@ If an offering isn't working as expected, use the services API for detailed insp
 
 ```bash
 # Get container-level details
-curl http://localhost:7185/api/v1/services/mongodb
+curl http://localhost:7185/api/v1/stone/services/mongodb
 
 # Stream logs
-curl http://localhost:7185/api/v1/services/mongodb/logs
+curl http://localhost:7185/api/v1/stone/services/mongodb/logs
 ```
 
 This exposes:

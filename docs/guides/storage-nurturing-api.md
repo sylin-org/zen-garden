@@ -20,17 +20,17 @@ Use these APIs for different purposes:
 
 - **Storage**: app/user data (object storage under `garden/storage` on seed banks)
 - **Backup**: offering snapshots (A/B local snapshots, replication to seed banks)
-- **Memories**: read‑only access to backup snapshots for hydration and external orchestrators
+- **Snapshots**: read‑only access to backup snapshots for hydration and external orchestrators
 
 Three scopes exist:
 
 - **Stone‑local**: `/api/v1/stone/...` (always targets the local stone; file ops are read‑only)
 - **Garden‑tier**: `/api/v1/garden/storage/{name}/...` (name‑based, Primary‑or‑proxy; any Moss is a valid entry point)
-- **SDK gateways**: `/api/v1/storage/...`, `/api/v1/storage/s3/...`, `/api/v1/memories` (convenience layers)
+- **SDK gateways**: `/api/v1/storage/...`, `/api/v1/storage/s3/...`, `/api/v1/snapshots` (convenience layers)
 
 Seed bank identifiers:
 
-- **Seed bank name**: human‑readable name, used by garden‑tier, gateway, and memories APIs
+- **Seed bank name**: human‑readable name, used by garden‑tier, gateway, and snapshots APIs
 - **Seed bank id**: GUIDv7, used by stone‑local admin endpoints only
 
 Default seed bank name (when none provided):
@@ -63,10 +63,10 @@ curl http://stone-01:7185/api/v1/stone/storage/bank
 curl http://stone-01:7185/api/v1/storage
 ```
 
-### List available backup snapshots via memories
+### List available backup snapshots
 
 ```bash
-curl http://stone-01:7185/api/v1/memories
+curl http://stone-01:7185/api/v1/snapshots
 ```
 
 ---
@@ -367,33 +367,33 @@ curl -X POST \
 
 ---
 
-## 9. Memories API (Read‑Only Hydration)
+## 9. Snapshots API (Read‑Only Hydration)
 
-Memories are garden‑wide, read‑only, and **audited**. Use them for hydration and external orchestrators.
+Snapshots are garden‑wide, read‑only, and **audited**. Use them for hydration and external orchestrators.
 
 ### 9.1 List all snapshots
 
 ```bash
-curl http://stone-01:7185/api/v1/memories
+curl http://stone-01:7185/api/v1/snapshots
 ```
 
 ### 9.2 List snapshots for one offering
 
 ```bash
-curl http://stone-01:7185/api/v1/memories/{offering_id}
+curl http://stone-01:7185/api/v1/snapshots/{offering_id}
 ```
 
 ### 9.3 Fetch hydration manifest
 
 ```bash
-curl http://stone-01:7185/api/v1/memories/{offering_id}/manifest
+curl http://stone-01:7185/api/v1/snapshots/{offering_id}/manifest
 ```
 
 ### 9.4 Download a snapshot
 
 ```bash
 curl -o snapshot.tar.gz \
-  http://stone-01:7185/api/v1/memories/{offering_id}/{harvest_id}
+  http://stone-01:7185/api/v1/snapshots/{offering_id}/{harvest_id}
 ```
 
 Optional audit metadata:
@@ -450,7 +450,7 @@ Likely causes:
 Likely causes:
 
 - Seed bank not attached to the local stone
-- Seed bank layout missing `garden/storage` or `garden/memories`
+- Seed bank layout missing `garden/storage` or `garden/snapshots`
 
 ---
 
@@ -493,12 +493,12 @@ Backup (stone‑local):
 - `POST /api/v1/stone/snapshots/{offering}/restore-remote`
 - `GET /api/v1/stone/snapshots/remote/{seed_bank}`
 
-Memories (garden‑wide, read‑only):
+Snapshots (garden‑wide, read‑only):
 
-- `GET /api/v1/memories`
-- `GET /api/v1/memories/{offering_id}`
-- `GET /api/v1/memories/{offering_id}/manifest`
-- `GET /api/v1/memories/{offering_id}/{harvest_id}`
+- `GET /api/v1/snapshots`
+- `GET /api/v1/snapshots/{offering_id}`
+- `GET /api/v1/snapshots/{offering_id}/manifest`
+- `GET /api/v1/snapshots/{offering_id}/{harvest_id}`
 
 ---
 

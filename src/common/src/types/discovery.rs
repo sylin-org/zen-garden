@@ -110,6 +110,7 @@ impl TopologyServiceEntry {
             status: match service.status {
                 ServiceStatus::Running => SERVICE_RUNNING,
                 ServiceStatus::Stopped => SERVICE_STOPPED,
+                ServiceStatus::Cordoned => SERVICE_CORDONED,
                 ServiceStatus::Installing => SERVICE_INSTALLING,
                 ServiceStatus::Maintenance => SERVICE_MAINTENANCE,
                 ServiceStatus::Degraded => SERVICE_DEGRADED,
@@ -146,6 +147,7 @@ impl TopologyServiceEntry {
             status: match offering.status {
                 OfferingStatus::Running => SERVICE_RUNNING,
                 OfferingStatus::Stopped => SERVICE_STOPPED,
+                OfferingStatus::Cordoned => SERVICE_CORDONED,
                 OfferingStatus::Installing => SERVICE_INSTALLING,
                 OfferingStatus::Maintenance => SERVICE_MAINTENANCE,
                 OfferingStatus::Degraded => SERVICE_DEGRADED,

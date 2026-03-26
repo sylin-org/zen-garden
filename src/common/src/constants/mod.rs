@@ -338,6 +338,9 @@ pub const SERVICE_MAINTENANCE: &str = "maintenance";
 /// Service is degraded
 pub const SERVICE_DEGRADED: &str = "degraded";
 
+/// Service cordoned (non-schedulable)
+pub const SERVICE_CORDONED: &str = "cordoned";
+
 /// Service status unknown
 pub const SERVICE_UNKNOWN: &str = "unknown";
 

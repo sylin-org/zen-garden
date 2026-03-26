@@ -1,11 +1,11 @@
-﻿# Nourishment V0 - Viability Test Specification
+﻿# Updates V0 - Viability Test Specification
 
-**Date:** 2026-01-24  
+**Date:** 2026-01-24
 **Purpose:** Zero-day viability test for unified software/firmware update system
 
 ## Overview
 
-V0 nourishment provides a simple update listing and execution system for both software offerings and hardware firmware. It follows the distributed query pattern established by the `observe` command.
+V0 updates provides a simple update listing and execution system for both software offerings and hardware firmware. It follows the distributed query pattern established by the `observe` command.
 
 ## Architecture
 
@@ -123,7 +123,7 @@ pub fn check_constraints(
 ) -> Result<(), ConstraintViolation>
 ```
 
-### Phase 2: Nourishment API (~400 lines)
+### Phase 2: Updates API (~400 lines)
 **File:** `src/moss/src/api/v1/updates.rs` (NEW)
 
 - Local check: Query offering versions via Docker registry API, detect firmware updates
@@ -152,8 +152,8 @@ UI Elements:
 - ESC to detach from execution
 
 ### Phase 4: Wire Up (~50 lines)
-- `src/moss/src/api/v1/mod.rs`: Add nourishment module
-- `src/rake/src/main.rs`: Add Commands::Nourish handler
+- `src/moss/src/api/v1/mod.rs`: Add updates module
+- `src/rake/src/main.rs`: Add Commands::Upgrade handler
 
 ## Testing
 
@@ -161,7 +161,7 @@ UI Elements:
 
 1. **Offering Update**
    ```bash
-   garden-rake nourish
+   garden-rake upgrade
    # Select redis 7.2.3 → 7.2.4
    # Verify constraint checking
    # Verify execution
@@ -170,14 +170,14 @@ UI Elements:
 2. **Blocked Update**
    ```bash
    # On Celeron J4105 (no AVX)
-   garden-rake nourish
+   garden-rake upgrade
    # Verify MongoDB 7.x shown as blocked
    # Verify reason displayed clearly
    ```
 
 3. **Firmware Update** (Linux only)
    ```bash
-   garden-rake nourish
+   garden-rake upgrade
    # Verify LVFS firmware detected
    # Verify reboot warning shown
    ```
@@ -185,14 +185,14 @@ UI Elements:
 4. **Multi-Stone**
    ```bash
    # On tended stone with 2+ stones
-   garden-rake nourish
+   garden-rake upgrade
    # Verify updates grouped by stone
    # Verify parallel queries fast
    ```
 
 5. **Detachment**
    ```bash
-   garden-rake nourish
+   garden-rake upgrade
    # Start update
    # Press ESC
    # Verify detaches cleanly

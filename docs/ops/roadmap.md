@@ -36,7 +36,7 @@ last_verified: 2026-02-16
 - Intelligent placement with compatibility scoring
 - Health monitoring and auto-adoption
 
-### Updates (Nourishment V0)
+### Updates (V0)
 
 - Software update checking (Docker registry integration)
 - Firmware update detection (fwupd/LVFS integration)
@@ -75,7 +75,7 @@ last_verified: 2026-02-16
 
 - Video walkthrough
 - Offering template authoring guide
-- Advanced nourishment ceremony guide
+- Advanced update ceremony guide
 
 ### Connection String Driver Libraries
 
@@ -88,7 +88,7 @@ Applications resolve `zen-garden:mongodb/mydb` to actual connection strings with
 | Rust | `zen-garden-client` |
 | C# | `ZenGarden.Client` |
 
-### Nourishment Ceremonies (V1)
+### Update Ceremonies (V1)
 
 - Orchestrated update sequences with pre/post checks
 - Dependency-aware ordering
@@ -126,7 +126,7 @@ Applications resolve `zen-garden:mongodb/mydb` to actual connection strings with
 - One-click offering deployment
 - Log viewer
 - Configuration editor
-- Nourishment status and history
+- Update status and history
 
 Not planned: Cloud-hosted dashboard. The dashboard runs on a Stone.
 

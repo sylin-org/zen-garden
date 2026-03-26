@@ -137,7 +137,7 @@ if ($existingImage -and -not $ForceRebuild) {
         if ($savedHash -ne $lockHash) {
             $lockfileStale = $true
             Write-Host "Build Container:" -ForegroundColor Yellow
-            Write-Host "  Cargo.lock changed — rebuilding container for dependency sync" -ForegroundColor Cyan
+            Write-Host "  Cargo.lock changed - rebuilding container for dependency sync" -ForegroundColor Cyan
         }
     } else {
         New-Item -ItemType Directory -Path ($DIST_DIR) -Force | Out-Null

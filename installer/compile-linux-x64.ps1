@@ -177,7 +177,7 @@ if ($UseDocker) {
             if ($savedHash -ne $lockHash) {
                 $lockfileStale = $true
                 Write-Host "Build Container:" -ForegroundColor Yellow
-                Write-Host "  Cargo.lock changed — rebuilding container for dependency sync" -ForegroundColor Cyan
+                Write-Host "  Cargo.lock changed - rebuilding container for dependency sync" -ForegroundColor Cyan
             }
         } else {
             # No marker yet — save current hash, don't force rebuild

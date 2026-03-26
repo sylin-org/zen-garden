@@ -13,6 +13,7 @@ mod instance_registry;
 mod logical_set;
 mod action_queue;
 mod adapter;
+pub mod connection;
 pub mod health_poller;
 
 pub use instance_registry::InstanceRegistry;
@@ -20,4 +21,5 @@ pub use logical_set::{LogicalSet, SetPhase, SetAction, MembershipEvent, KnownMem
 pub use logical_set::{classify_probes, load_sets, save_sets};
 pub use action_queue::{ActionQueue, PendingAction};
 pub use adapter::{ClusterAdapter, ClusterInstance, InstanceHealth, ProbeResult, MemberHealth};
+pub use connection::{ConnectionInfo, ConnectionModel, ConnectionPublisher};
 pub use health_poller::{HealthPollerConfig, run as run_health_poller};

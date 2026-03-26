@@ -31,3 +31,9 @@ chrono = "0.4"
 
 # Shutdown
 tokio-util = { version = "0.7", features = ["rt"] }
+
+[profile.fast-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 4
+strip = true

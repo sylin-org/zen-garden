@@ -166,7 +166,27 @@ if ($UseDocker) {
     # Check if perennial build image exists
     $existingImage = docker images -q $IMAGE_NAME 2>$null
 
+    # Auto-detect stale Cargo.lock: if workspace lockfile has changed since
+    # the container was last built, force a rebuild so dependencies resolve.
+    $lockfileStale = $false
     if ($existingImage -and -not $ForceRebuild) {
+        $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
+        $markerFile = Join-Path $DIST_DIR ".builder-lock-hash-x64"
+        if (Test-Path $markerFile) {
+            $savedHash = Get-Content $markerFile -ErrorAction SilentlyContinue
+            if ($savedHash -ne $lockHash) {
+                $lockfileStale = $true
+                Write-Host "Build Container:" -ForegroundColor Yellow
+                Write-Host "  Cargo.lock changed — rebuilding container for dependency sync" -ForegroundColor Cyan
+            }
+        } else {
+            # No marker yet — save current hash, don't force rebuild
+            New-Item -ItemType Directory -Path $DIST_DIR -Force | Out-Null
+            $lockHash | Out-File $markerFile -NoNewline
+        }
+    }
+
+    if ($existingImage -and -not $ForceRebuild -and -not $lockfileStale) {
         Write-Host "Build Container:" -ForegroundColor Yellow
         Write-Host "  OK Using existing image: $IMAGE_NAME" -ForegroundColor Green
         Write-Host "    (Use -ForceRebuild to recreate)" -ForegroundColor DarkGray
@@ -176,17 +196,23 @@ if ($UseDocker) {
         Write-Host "Build Container:" -ForegroundColor Yellow
         Write-Host "  $(if ($ForceRebuild) { 'Rebuilding' } else { 'Creating' }) image: $IMAGE_NAME"
         
-        if ($ForceRebuild) {
+        if ($ForceRebuild -or $lockfileStale) {
             # Remove existing container so it gets recreated from the new image
             Write-Host "  Removing old container..." -ForegroundColor DarkGray
             docker rm -f zen-builder-linux-x64 2>$null | Out-Null
         }
-        
+
         Push-Location $WORKSPACE_ROOT
         try {
             docker build -f Dockerfile.linux-x64 -t $IMAGE_NAME . --quiet
             if ($LASTEXITCODE -ne 0) { throw "Docker build failed" }
             Write-Host "  OK Image ready`n" -ForegroundColor Green
+
+            # Save Cargo.lock hash so we can detect staleness next time
+            $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
+            $markerFile = Join-Path $DIST_DIR ".builder-lock-hash-x64"
+            New-Item -ItemType Directory -Path $DIST_DIR -Force | Out-Null
+            $lockHash | Out-File $markerFile -NoNewline
         }
         finally {
             Pop-Location

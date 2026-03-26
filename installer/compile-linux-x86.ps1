@@ -127,7 +127,25 @@ try {
 $existingImage = $null
 try { $existingImage = docker images -q $IMAGE_NAME 2>&1 | Where-Object { $_ -is [string] } } catch {}
 
+# Auto-detect stale Cargo.lock: rebuild container when dependencies change
+$lockfileStale = $false
 if ($existingImage -and -not $ForceRebuild) {
+    $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
+    $markerFile = Join-Path (Split-Path $LINUX_DIR) ".builder-lock-hash-x86"
+    if (Test-Path $markerFile) {
+        $savedHash = Get-Content $markerFile -ErrorAction SilentlyContinue
+        if ($savedHash -ne $lockHash) {
+            $lockfileStale = $true
+            Write-Host "Build Container:" -ForegroundColor Yellow
+            Write-Host "  Cargo.lock changed — rebuilding container for dependency sync" -ForegroundColor Cyan
+        }
+    } else {
+        New-Item -ItemType Directory -Path (Split-Path $LINUX_DIR) -Force | Out-Null
+        $lockHash | Out-File $markerFile -NoNewline
+    }
+}
+
+if ($existingImage -and -not $ForceRebuild -and -not $lockfileStale) {
     Write-Host "Build Container:" -ForegroundColor Yellow
     Write-Host "  Using existing image: $IMAGE_NAME" -ForegroundColor Green
     Write-Host "    (Use -ForceRebuild to recreate)" -ForegroundColor DarkGray
@@ -136,12 +154,9 @@ if ($existingImage -and -not $ForceRebuild) {
     Write-Host "Build Container:" -ForegroundColor Yellow
     Write-Host "  $(if ($ForceRebuild) { 'Rebuilding' } else { 'Creating' }) image: $IMAGE_NAME"
 
-    if ($ForceRebuild) {
+    if ($ForceRebuild -or $lockfileStale) {
         # Remove existing container and cargo cache volume to avoid stale
         # build-script binaries compiled against a different glibc version.
-        # The x86 Dockerfile is pinned to rust:bookworm (glibc 2.36) - if the
-        # cargo cache was populated under rust:latest (glibc 2.39), host-arch
-        # build scripts (libsqlite3-sys, alsa-sys, etc.) will fail at runtime.
         Write-Host "  Removing old container and cargo cache..." -ForegroundColor DarkGray
         docker rm -f $CONTAINER_NAME 2>$null | Out-Null
         docker volume rm $CARGO_CACHE_VOLUME 2>$null | Out-Null
@@ -152,6 +167,12 @@ if ($existingImage -and -not $ForceRebuild) {
         docker build -f Dockerfile.linux-x86 -t $IMAGE_NAME . --quiet
         if ($LASTEXITCODE -ne 0) { throw "Docker build failed" }
         Write-Host "  Image ready`n" -ForegroundColor Green
+
+        # Save Cargo.lock hash for staleness detection
+        $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
+        $markerFile = Join-Path (Split-Path $LINUX_DIR) ".builder-lock-hash-x86"
+        New-Item -ItemType Directory -Path (Split-Path $LINUX_DIR) -Force | Out-Null
+        $lockHash | Out-File $markerFile -NoNewline
     } finally {
         Pop-Location
     }

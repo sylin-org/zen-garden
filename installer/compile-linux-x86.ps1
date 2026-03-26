@@ -131,7 +131,7 @@ try { $existingImage = docker images -q $IMAGE_NAME 2>&1 | Where-Object { $_ -is
 $lockfileStale = $false
 if ($existingImage -and -not $ForceRebuild) {
     $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
-    $markerFile = Join-Path (Split-Path $LINUX_DIR) ".builder-lock-hash-x86"
+    $markerFile = Join-Path ($DIST_DIR) ".builder-lock-hash-x86"
     if (Test-Path $markerFile) {
         $savedHash = Get-Content $markerFile -ErrorAction SilentlyContinue
         if ($savedHash -ne $lockHash) {
@@ -140,7 +140,7 @@ if ($existingImage -and -not $ForceRebuild) {
             Write-Host "  Cargo.lock changed — rebuilding container for dependency sync" -ForegroundColor Cyan
         }
     } else {
-        New-Item -ItemType Directory -Path (Split-Path $LINUX_DIR) -Force | Out-Null
+        New-Item -ItemType Directory -Path ($DIST_DIR) -Force | Out-Null
         $lockHash | Out-File $markerFile -NoNewline
     }
 }
@@ -170,8 +170,8 @@ if ($existingImage -and -not $ForceRebuild -and -not $lockfileStale) {
 
         # Save Cargo.lock hash for staleness detection
         $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
-        $markerFile = Join-Path (Split-Path $LINUX_DIR) ".builder-lock-hash-x86"
-        New-Item -ItemType Directory -Path (Split-Path $LINUX_DIR) -Force | Out-Null
+        $markerFile = Join-Path ($DIST_DIR) ".builder-lock-hash-x86"
+        New-Item -ItemType Directory -Path ($DIST_DIR) -Force | Out-Null
         $lockHash | Out-File $markerFile -NoNewline
     } finally {
         Pop-Location

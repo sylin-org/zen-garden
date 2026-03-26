@@ -252,7 +252,7 @@ Progress is tracked via this ADR's phase checklist. Each step is marked complete
 its changes are merged to `dev`.
 
 - [x] Phase 0: Documentation Alignment (2026-03-25)
-- [ ] Phase 1: Thin Code Completions
+- [x] Phase 1: Thin Code Completions (2026-03-25) — 1a-1f complete
 - [ ] Phase 2: Storage Completions
 - [ ] Phase 3: Service Lifecycle Completions
 - [ ] Phase 4: Secret Backend Expansion

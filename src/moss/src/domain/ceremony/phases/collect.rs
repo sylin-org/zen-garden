@@ -5,17 +5,19 @@
 
 use crate::domain::traits::HarvestOps;
 use crate::AppState;
-use anyhow::Result;
-use garden_common::manifests::CeremonyMode;
+use anyhow::{Context, Result};
+use garden_common::manifests::{CeremonyMode, CeremonyPolicy};
 
 /// Execute the collect phase
 ///
 /// Creates a harvest (backup) of the offering unless running recklessly.
+/// For quiesceable offerings, runs quiesce/resume commands around the harvest
+/// so the container stays running while data is frozen to disk.
 /// Returns the harvest ID if created, None if skipped.
 pub async fn execute(
     state: &AppState,
     offering: &str,
-    ceremony_mode: &CeremonyMode,
+    policy: &CeremonyPolicy,
     recklessly: bool,
 ) -> Result<Option<String>> {
     if recklessly {
@@ -23,28 +25,68 @@ pub async fn execute(
         return Ok(None);
     }
 
-    tracing::info!(offering, mode = ?ceremony_mode, "Starting collect phase");
+    tracing::info!(offering, mode = ?policy.mode, "Starting collect phase");
 
     // Determine if we should commit the container image
     // Stateless services don't need image commits (no persistent state in container)
-    let commit_image = *ceremony_mode != CeremonyMode::Stateless;
+    let commit_image = policy.mode != CeremonyMode::Stateless;
 
-    // TODO: If quiesceable, run quiesce command before harvest
-    // For now, we only support unsafe mode (container must be stopped) or stateless
-    if *ceremony_mode == CeremonyMode::Quiesceable {
-        tracing::warn!(
-            offering,
-            "Quiesceable mode not yet implemented, proceeding with unsafe snapshot"
-        );
+    // Quiesceable: freeze data before harvest, resume after
+    if policy.mode == CeremonyMode::Quiesceable {
+        if let Some(ref quiesce) = policy.quiesce {
+            tracing::info!(offering, cmd = ?quiesce.exec, "Running quiesce command");
+            let (exit_code, output) = state
+                .platform
+                .docker
+                .exec_in_container(offering, &quiesce.exec, quiesce.timeout_seconds)
+                .await
+                .context("Failed to execute quiesce command")?;
+
+            if exit_code != 0 {
+                anyhow::bail!(
+                    "Quiesce command failed (exit {}): {}",
+                    exit_code,
+                    output.trim()
+                );
+            }
+        }
     }
 
     // Create the harvest via trait object (no infra import)
-    let manifest = state
+    let harvest_result = state
         .orchestration
         .nurturing
         .harvest_ops
         .create_harvest(offering, &state.current.stone.id, commit_image)
-        .await?;
+        .await;
+
+    // Quiesceable: always resume after harvest, even if harvest failed
+    if policy.mode == CeremonyMode::Quiesceable {
+        if let Some(ref resume) = policy.resume {
+            tracing::info!(offering, cmd = ?resume.exec, "Running resume command");
+            match state
+                .platform
+                .docker
+                .exec_in_container(offering, &resume.exec, resume.timeout_seconds)
+                .await
+            {
+                Ok((0, _)) => {}
+                Ok((code, output)) => {
+                    tracing::warn!(
+                        offering,
+                        exit_code = code,
+                        "Resume command returned non-zero: {}",
+                        output.trim()
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(offering, error = %e, "Resume command failed — manual intervention may be needed");
+                }
+            }
+        }
+    }
+
+    let manifest = harvest_result?;
 
     tracing::info!(
         offering,

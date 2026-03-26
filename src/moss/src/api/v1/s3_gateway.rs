@@ -1499,12 +1499,23 @@ pub async fn copy_object(
     let store = match read_handle.object_store_for_read() {
         Some(s) => s,
         None => {
-            // TODO: proxy copy to primary when storage is remote
-            return xml_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "NotLocal",
-                "Copy is only supported on the local stone",
+            // Remote storage — proxy the entire COPY to the Primary stone
+            let target = read_handle.proxy_target().expect(
+                "invariant: handle is either local or remote; local path returned None",
             );
+            let mut query = Vec::new();
+            if selected != DEFAULT_REPLICA_SET_DISPLAY {
+                query.push(("seed-bank".to_string(), selected));
+            }
+            return proxy_s3_request(
+                reqwest::Method::PUT,
+                &target.endpoint,
+                &format!("/api/v1/storage/s3/{}/{}", dest_bucket, dest_key),
+                query,
+                headers,
+                None,
+            )
+            .await;
         }
     };
 

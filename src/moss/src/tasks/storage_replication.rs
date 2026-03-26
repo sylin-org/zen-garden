@@ -226,15 +226,19 @@ async fn sync_dormant_bank(
     let changes_resp: ChangesResponse =
         serde_json::from_value(body.get("data").cloned().unwrap_or_else(|| body.clone()))?;
 
-    // 5. Handle full_sync_required
+    // 5. Handle full_sync_required — directory walk reconciliation
     if changes_resp.full_sync_required {
-        warn!(
+        info!(
             name = %name,
             local_bank_id = %local_bank_id,
-            "Cursor compacted away — full sync required (not yet implemented)"
+            "Cursor compacted away — starting full directory reconciliation"
         );
-        // TODO (Phase 4e+): full directory walk reconciliation
-        // For now, log and skip. The Dormant will retry each tick.
+        full_sync_dormant_bank(state, name, &peer, &local_store, mount_path).await?;
+        // After full sync, persist the Primary's current cursor so future
+        // syncs resume incrementally from this point.
+        if !changes_resp.cursor.is_empty() {
+            local_store.write_last_cursor(&changes_resp.cursor).await?;
+        }
         return Ok(());
     }
 
@@ -338,6 +342,168 @@ async fn sync_dormant_bank(
 // ============================================================================
 
 /// Download a file from the Primary and write it to the local Dormant store.
+// ============================================================================
+// Full directory walk reconciliation (Phase 4e+)
+// ============================================================================
+
+/// Walk the Primary's object tree and reconcile with the local copy.
+///
+/// 1. Fetch remote object listing from Primary via the garden storage API
+/// 2. Walk local objects directory
+/// 3. Download missing or modified files from Primary
+/// 4. Delete local files that no longer exist on Primary
+async fn full_sync_dormant_bank(
+    state: &AppState,
+    name: &str,
+    peer: &PeerAddress,
+    local_store: &ContentStore,
+    mount_path: &std::path::Path,
+) -> Result<()> {
+    // 1. Fetch remote listing (all objects, recursive)
+    let listing_path = format!(
+        "/api/v1/garden/storage/{}/fs?depth=all",
+        name
+    );
+
+    let resp = state
+        .security
+        .stone_client
+        .get(peer, &listing_path)
+        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            warn!(name = %name, status = %r.status(), "Primary listing failed during full sync");
+            return Ok(());
+        }
+        Err(e) => {
+            warn!(name = %name, error = %e, "Failed to reach Primary for full sync listing");
+            return Ok(());
+        }
+    };
+
+    let body: serde_json::Value = resp.json().await?;
+    let entries_value = body
+        .get("data")
+        .and_then(|d| d.get("entries"))
+        .cloned()
+        .unwrap_or_else(|| body.get("entries").cloned().unwrap_or(serde_json::Value::Array(vec![])));
+
+    let remote_files: std::collections::HashSet<String> = collect_remote_paths(&entries_value, "");
+
+    // 2. Walk local objects directory
+    let objects_dir = mount_path.join(".zen-garden").join("storage");
+    let local_files: std::collections::HashSet<String> = if objects_dir.exists() {
+        walk_local_objects(&objects_dir, &objects_dir).await
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // 3. Download files that exist on Primary but not locally (or differ)
+    let to_download: Vec<&String> = remote_files.difference(&local_files).collect();
+    let to_delete: Vec<&String> = local_files.difference(&remote_files).collect();
+
+    info!(
+        name = %name,
+        remote = remote_files.len(),
+        local = local_files.len(),
+        download = to_download.len(),
+        delete = to_delete.len(),
+        "Full sync diff computed"
+    );
+
+    let mut applied = 0u32;
+    let mut errors = 0u32;
+
+    for rel_path in &to_download {
+        let object_path = format!("/api/v1/garden/storage/{}/objects/{}", name, rel_path);
+        let store_path = format!("{}{}", STORAGE_PREFIX, rel_path);
+        match download_and_write(state, peer, &object_path, local_store, &store_path).await {
+            Ok(()) => applied += 1,
+            Err(e) => {
+                warn!(path = %rel_path, error = %e, "Full sync: failed to download");
+                errors += 1;
+            }
+        }
+    }
+
+    // 4. Delete local files that no longer exist on Primary
+    for rel_path in &to_delete {
+        let store_path = format!("{}{}", STORAGE_PREFIX, rel_path);
+        let rel = std::path::Path::new(&store_path);
+        match local_store.delete(rel).await {
+            Ok(_) => applied += 1,
+            Err(e) => {
+                debug!(path = %rel_path, error = %e, "Full sync: delete failed (may already be gone)");
+                applied += 1;
+            }
+        }
+    }
+
+    info!(
+        name = %name,
+        applied,
+        errors,
+        "Full directory reconciliation complete"
+    );
+
+    Ok(())
+}
+
+/// Recursively collect file paths from a garden storage directory listing.
+fn collect_remote_paths(entries: &serde_json::Value, prefix: &str) -> std::collections::HashSet<String> {
+    let mut paths = std::collections::HashSet::new();
+    if let Some(arr) = entries.as_array() {
+        for entry in arr {
+            let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("file");
+            let full_path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+            if entry_type == "dir" {
+                if let Some(children) = entry.get("entries") {
+                    paths.extend(collect_remote_paths(children, &full_path));
+                }
+            } else {
+                paths.insert(full_path);
+            }
+        }
+    }
+    paths
+}
+
+/// Walk local objects directory and collect relative paths.
+async fn walk_local_objects(
+    root: &std::path::Path,
+    current: &std::path::Path,
+) -> std::collections::HashSet<String> {
+    let mut paths = std::collections::HashSet::new();
+    let Ok(mut entries) = tokio::fs::read_dir(current).await else {
+        return paths;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.is_dir() {
+            paths.extend(Box::pin(walk_local_objects(root, &path)).await);
+        } else if let Ok(rel) = path.strip_prefix(root) {
+            if let Some(s) = rel.to_str() {
+                // Normalize to forward slashes for cross-platform consistency
+                paths.insert(s.replace('\\', "/"));
+            }
+        }
+    }
+    paths
+}
+
+// ============================================================================
+// File download helper
+// ============================================================================
+
 async fn download_and_write(
     state: &AppState,
     peer: &PeerAddress,

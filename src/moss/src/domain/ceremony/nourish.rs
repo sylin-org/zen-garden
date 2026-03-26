@@ -57,7 +57,7 @@ pub async fn execute_nourish_offering(
     // NOTE: Extract recklessly to avoid borrow conflict in async closure (2026-01-24)
     let recklessly = ceremony.options.recklessly;
     let harvest_id = execute_phase(state, ceremony, 0, async {
-        collect::execute(state, offering, &policy.mode, recklessly).await
+        collect::execute(state, offering, policy, recklessly).await
     })
     .await?;
 

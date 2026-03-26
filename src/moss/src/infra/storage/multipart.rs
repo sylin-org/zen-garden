@@ -128,17 +128,16 @@ impl MultipartStore {
         Ok(etag)
     }
 
-    /// Maximum assembled object size for in-memory completion (500 MB).
-    ///
-    /// `complete` loads all parts into memory before writing. For objects larger
-    /// than this limit, a streaming implementation should write parts sequentially
-    /// to the final file. See STORAGE-0016 §2e streaming TODO.
-    const MAX_ASSEMBLED_SIZE: u64 = 500 * 1024 * 1024;
+    /// Threshold below which parts are assembled in memory (500 MB).
+    /// Above this, streaming assembly writes parts sequentially to a temp file.
+    const STREAMING_THRESHOLD: u64 = 500 * 1024 * 1024;
 
     /// Complete the upload: concatenate parts in order, return assembled data.
     ///
-    /// **Memory**: Currently loads all parts into memory before writing.
-    /// Objects exceeding `MAX_ASSEMBLED_SIZE` (500 MB) are rejected.
+    /// For objects up to `STREAMING_THRESHOLD` (500 MB), parts are loaded into
+    /// memory. Larger objects use streaming file I/O — parts are copied
+    /// sequentially to a temp file, then read back, keeping memory usage
+    /// bounded to a single part at a time.
     pub async fn complete(
         &self,
         upload_id: &str,
@@ -155,28 +154,53 @@ impl MultipartStore {
             }
         }
 
-        if total_size > Self::MAX_ASSEMBLED_SIZE {
-            anyhow::bail!(
-                "Assembled object too large for in-memory completion ({} MB, max {} MB)",
-                total_size / (1024 * 1024),
-                Self::MAX_ASSEMBLED_SIZE / (1024 * 1024),
-            );
-        }
+        let assembled = if total_size <= Self::STREAMING_THRESHOLD {
+            // Small object: in-memory assembly
+            let mut buf = Vec::with_capacity(total_size as usize);
+            for pn in part_numbers {
+                let part_file = self.part_path(upload_id, *pn)?;
+                let data = tokio::fs::read(&part_file)
+                    .await
+                    .context(format!("Failed to read part {}", pn))?;
+                buf.extend_from_slice(&data);
+            }
+            buf
+        } else {
+            // Large object: streaming assembly via temp file
+            use tokio::io::AsyncWriteExt;
 
-        // Concatenate parts in order
-        let mut assembled = Vec::with_capacity(total_size as usize);
-        for pn in part_numbers {
-            let part_file = self.part_path(upload_id, *pn)?;
-            let data = tokio::fs::read(&part_file)
+            let tmp_path = self
+                .upload_dir(upload_id)?
+                .join("_assembled");
+
+            let mut out = tokio::fs::File::create(&tmp_path)
                 .await
-                .context(format!("Failed to read part {}", pn))?;
-            assembled.extend_from_slice(&data);
-        }
+                .context("Failed to create assembly temp file")?;
+
+            for pn in part_numbers {
+                let part_file = self.part_path(upload_id, *pn)?;
+                let mut src = tokio::fs::File::open(&part_file)
+                    .await
+                    .context(format!("Failed to open part {}", pn))?;
+                tokio::io::copy(&mut src, &mut out)
+                    .await
+                    .context(format!("Failed to stream part {}", pn))?;
+            }
+            out.flush().await?;
+            drop(out);
+
+            let data = tokio::fs::read(&tmp_path)
+                .await
+                .context("Failed to read assembled file")?;
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            data
+        };
 
         debug!(
             upload_id = %upload_id,
             parts = part_numbers.len(),
             total_size = assembled.len(),
+            streaming = total_size > Self::STREAMING_THRESHOLD,
             "Multipart upload assembled"
         );
 

@@ -84,9 +84,6 @@ async fn main() -> Result<()> {
     let shutdown = CancellationToken::new();
     let (metrics_tx, metrics_rx) = mpsc::unbounded_channel();
     let (snapshot_tx, snapshot_rx) = watch::channel(serde_json::Value::Null);
-    // Keep the sender alive until snapshot_publisher task is wired (Phase 2).
-    // Dropping it would close the channel and break any Phase 2 consumer.
-    let _snapshot_tx = snapshot_tx;
 
     // ── Config ──────────────────────────────────────────────────
     let config = load_config(&cli.data_dir).await;
@@ -142,8 +139,29 @@ async fn main() -> Result<()> {
         tasks::reconciliation::run(reconcile_state, reconcile_shutdown).await;
     });
 
+    // Gateway announce: register with Koi mDNS + per-offering Moss gateways.
+    let gateway_state = state.clone();
+    let gateway_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::gateway_announce::run(gateway_state, gateway_shutdown).await;
+    });
+
+    // Snapshot publisher: build dashboard JSON every 3s.
+    let snapshot_state = state.clone();
+    let snapshot_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::snapshot_publisher::run(snapshot_state, snapshot_tx, snapshot_shutdown).await;
+    });
+
     // ── Proxy Server ────────────────────────────────────────────
+    //
+    // Ollama-compat routes first (specific paths), then fallback to
+    // the generic capability-routing proxy for all other requests.
     let proxy_app = Router::new()
+        .route("/", get(api::compat::ollama_root))
+        .route("/api/tags", get(api::compat::ollama_tags))
+        .route("/api/ps", get(api::compat::ollama_ps))
+        .route("/api/version", get(api::compat::ollama_version))
         .fallback(api::proxy::proxy_handler)
         .with_state(state.clone())
         .layer(CorsLayer::permissive());

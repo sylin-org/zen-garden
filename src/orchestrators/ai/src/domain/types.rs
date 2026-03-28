@@ -133,6 +133,7 @@ pub enum OfferingKind {
     // Local/garden offerings
     Ollama,
     ComfyUi,
+    WhisperCpp,
     Speaches,
     OpenedaiSpeech,
     Infinity,
@@ -154,6 +155,7 @@ impl std::fmt::Display for OfferingKind {
         match self {
             Self::Ollama => write!(f, "ollama"),
             Self::ComfyUi => write!(f, "comfyui"),
+            Self::WhisperCpp => write!(f, "whispercpp"),
             Self::Speaches => write!(f, "speaches"),
             Self::OpenedaiSpeech => write!(f, "openedai-speech"),
             Self::Infinity => write!(f, "infinity"),
@@ -178,6 +180,7 @@ impl OfferingKind {
             Self::HuggingFace
                 | Self::OpenAi
                 | Self::Anthropic
+
                 | Self::StabilityAi
                 | Self::ElevenLabs
                 | Self::Cohere

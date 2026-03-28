@@ -99,6 +99,14 @@ async fn main() -> Result<()> {
     state.load_tending().await;
 
     // ── Spawn background tasks ──────────────────────────────────
+
+    // Discovery: find stones, query topology, subscribe to Tools API SSE.
+    let discovery_state = state.clone();
+    let discovery_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::discovery::run(discovery_state, discovery_shutdown).await;
+    });
+
     let metrics_state = state.clone();
     let metrics_shutdown = shutdown.clone();
     tokio::spawn(async move {

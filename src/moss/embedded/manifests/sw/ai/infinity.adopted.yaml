@@ -1,0 +1,139 @@
+---
+# Infinity Adopted Mode Manifest
+# Detects native infinity-emb installations (pip-installed)
+#
+# Installation:
+#   pip install infinity-emb[all]
+#   infinity_emb v2 --model-id BAAI/bge-small-en-v1.5 --port 7997
+
+name: infinity
+description: Infinity embedding & reranking server (native installation)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - embeddings
+  - reranking
+  - vector
+  - semantic-search
+  - openai-compatible
+
+# DETECTION
+#
+# Infinity has a pip-installable CLI (`infinity_emb`):
+#   Rule 1: pip package installed (check process or pip show)
+#   Rule 2: HTTP probe on default port (confirms running)
+#
+# Vitality:
+#   Rule 1 PASS only  → Installed but NOT running (DORMANT)
+#   Rule 1+2 PASS     → Running and operational (THRIVING)
+
+detection:
+  windows:
+    - method: command
+      config:
+        command: pip show infinity-emb
+        expected_pattern: "Name: infinity.emb"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:7997/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  linux:
+    - method: command
+      config:
+        command: pip show infinity-emb
+        expected_pattern: "Name: infinity.emb"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:7997/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  macos:
+    - method: command
+      config:
+        command: pip show infinity-emb
+        expected_pattern: "Name: infinity.emb"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:7997/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+# CONTROL
+control:
+  level: monitor
+  health_check_url: http://localhost:7997/health
+
+# CONNECTIVITY
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 3
+
+  linux:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --permanent --add-port={{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --reload"
+        continue_on_error: true
+
+  windows:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''Infinity {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+
+  macos:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+
+# CONNECTION
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    health: "/health"
+    embeddings: "/embeddings"
+    rerank: "/rerank"
+    models: "/models"
+    docs: "/docs"

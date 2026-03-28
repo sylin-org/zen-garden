@@ -1,0 +1,164 @@
+---
+# LibreTranslate Adopted Mode Manifest
+# Detects native LibreTranslate installations (pip-installed)
+#
+# Installation:
+#   pip install libretranslate
+#   libretranslate --port 5000
+
+name: libretranslate
+description: LibreTranslate machine translation (native installation)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - translation
+  - nlp
+  - language
+  - machine-translation
+  - argos-translate
+
+# DETECTION
+#
+# LibreTranslate has a pip-installable CLI (`libretranslate`):
+#   Rule 1: pip package installed
+#   Rule 2: HTTP probe on default port (confirms running)
+#   Rule 3: Language list endpoint (confirms operational)
+#
+# Vitality:
+#   Rule 1 PASS only       → Installed but NOT running (DORMANT)
+#   Rule 1+2 PASS          → Running (THRIVING)
+#   Rule 1+2+3 PASS        → Fully operational with languages loaded (THRIVING)
+
+detection:
+  windows:
+    - method: command
+      config:
+        command: pip show libretranslate
+        expected_pattern: "Name: LibreTranslate"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:5000/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    - method: http_probe
+      config:
+        url: http://localhost:5000/languages
+        expected_status: 200
+        timeout_ms: 5000
+      stability_threshold: 1
+      cache_ttl_secs: 120
+
+  linux:
+    - method: command
+      config:
+        command: pip show libretranslate
+        expected_pattern: "Name: LibreTranslate"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:5000/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    - method: http_probe
+      config:
+        url: http://localhost:5000/languages
+        expected_status: 200
+        timeout_ms: 5000
+      stability_threshold: 1
+      cache_ttl_secs: 120
+
+  macos:
+    - method: command
+      config:
+        command: pip show libretranslate
+        expected_pattern: "Name: LibreTranslate"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:5000/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    - method: http_probe
+      config:
+        url: http://localhost:5000/languages
+        expected_status: 200
+        timeout_ms: 5000
+      stability_threshold: 1
+      cache_ttl_secs: 120
+
+# CONTROL
+control:
+  level: monitor
+  health_check_url: http://localhost:5000/health
+
+# CONNECTIVITY
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 3
+
+  linux:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --permanent --add-port={{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --reload"
+        continue_on_error: true
+
+  windows:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''LibreTranslate {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+
+  macos:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+
+# CONNECTION
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    health: "/health"
+    translate: "/translate"
+    languages: "/languages"
+    detect: "/detect"

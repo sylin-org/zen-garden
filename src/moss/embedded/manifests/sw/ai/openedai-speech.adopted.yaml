@@ -1,0 +1,145 @@
+---
+# OpenedAI Speech Adopted Mode Manifest
+# Detects native OpenedAI Speech installations (git clone + venv)
+#
+# Installation:
+#   git clone https://github.com/matatonic/openedai-speech.git
+#   pip install -r requirements-min.txt    # Piper-only (stable, recommended)
+#   pip install -r requirements.txt        # Full XTTS (broken upstream as of 2026-03)
+#   python speech.py                       # or via start.bat on Windows
+#
+# Windows note: Requires start.bat launcher that adds venv\Scripts to PATH
+# so that piper.exe and ffmpeg.exe can be found by subprocess.Popen.
+# Bash PATH does not propagate to Windows CreateProcess.
+
+name: openedai-speech
+description: OpenedAI Speech TTS server (native installation)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - tts
+  - text-to-speech
+  - voice
+  - piper
+  - openai-compatible
+
+# DETECTION
+#
+# OpenedAI Speech has no pip package or named binary. Detection relies on:
+#   Rule 1: Process detection (python with speech.py in args)
+#   Rule 2: HTTP health probe (confirms running and models loaded)
+#
+# Vitality:
+#   Rule 1+2 PASS → Running and operational (THRIVING)
+#   All FAIL      → Not running
+#
+# Note: Default port is 8000 but commonly overridden to 8001 to avoid
+# conflict with whisper.cpp / other services. The {{port}} template
+# resolves from frontmatter or detected port.
+
+detection:
+  windows:
+    # Rule 1: Process with speech.py in command line
+    - method: command
+      config:
+        command: 'powershell -Command "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match ''speech\\.py'' } | Select-Object -First 1 -ExpandProperty Id"'
+        expected_pattern: "\\d+"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    # Rule 2: HTTP health probe
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  linux:
+    - method: command
+      config:
+        command: "pgrep -fa 'python.*speech\\.py'"
+        expected_pattern: "speech.py"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  macos:
+    - method: command
+      config:
+        command: "pgrep -fa 'python.*speech\\.py'"
+        expected_pattern: "speech.py"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+# CONTROL
+control:
+  level: monitor
+  health_check_url: http://localhost:{{port}}/health
+
+# CONNECTIVITY
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 3
+
+  windows:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 3000
+    ensure:
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''OpenedAI Speech {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+
+  linux:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 3000
+    ensure:
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+
+  macos:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 3000
+
+# CONNECTION
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    health: "/health"
+    speech: "/v1/audio/speech"
+    models: "/v1/models"

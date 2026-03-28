@@ -1,0 +1,35 @@
+version: "1"
+
+compatibility_rules:
+  - name: "insufficient-memory"
+    condition:
+      memory_mb_less_than: 1024
+    reason: "whisper.cpp with base model requires at least 1GB RAM"
+    suggestion: "Use the tiny model (~75MB) or increase memory"
+
+  - name: "large-model-memory"
+    condition:
+      memory_mb_less_than: 4096
+    reason: "whisper large-v3 model requires ~3GB RAM"
+    suggestion: "Use base or small models, or increase memory to 4GB+"
+    warn_only: true
+
+  - name: "gpu-acceleration-note"
+    condition:
+      requires_ai_any: ['cuda']
+    reason: "Pre-built whisper.cpp binaries are CPU-only (AVX2/FMA optimized). GPU builds require compiling from source with CUDA/ROCm."
+    suggestion: "CPU inference is fast for most models. For large-v3 with real-time performance, build from source with GPU support."
+    warn_only: true
+
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 50
+  timeout_seconds: 30
+  patterns:
+    - pattern: "failed to load model|model file not found"
+      reason: "Whisper model file not found"
+      suggestion: "Download a model: curl -LO https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+
+    - pattern: "Cannot allocate memory|OOM"
+      reason: "Insufficient memory for the loaded model"
+      suggestion: "Use a smaller model (ggml-tiny or ggml-base)"

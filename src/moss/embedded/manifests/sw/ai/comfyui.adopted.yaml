@@ -1,0 +1,140 @@
+---
+# ComfyUI Adopted Mode Manifest
+# Detects native ComfyUI installations (via comfy-cli or git clone)
+#
+# Installation:
+#   All platforms: pip install comfy-cli && comfy install
+#   Alternative:   git clone https://github.com/comfyanonymous/ComfyUI.git
+#                  pip install -r requirements.txt
+#                  python main.py
+
+name: comfyui
+description: ComfyUI image generation (native installation)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - image-generation
+  - stable-diffusion
+  - flux
+  - gpu
+  - cuda
+
+# DETECTION
+#
+# ComfyUI has no `--version` CLI. Detection relies on:
+#   Rule 1: comfy-cli installed (pip-installed launcher)
+#   Rule 2: HTTP probe on default port (confirms running)
+#
+# Vitality:
+#   Rule 1 PASS only  → Installed but NOT running (DORMANT)
+#   Rule 1+2 PASS     → Running and operational (THRIVING)
+
+detection:
+  windows:
+    - method: command
+      config:
+        command: comfy --help
+        expected_pattern: "ComfyUI"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:8188/system_stats
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  linux:
+    - method: command
+      config:
+        command: comfy --help
+        expected_pattern: "ComfyUI"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:8188/system_stats
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  macos:
+    - method: command
+      config:
+        command: comfy --help
+        expected_pattern: "ComfyUI"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:8188/system_stats
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+# CONTROL
+control:
+  level: monitor
+  health_check_url: http://localhost:8188/system_stats
+
+# CONNECTIVITY
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 3
+
+  linux:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/system_stats"
+          expected_status: 200
+          timeout_ms: 3000
+    ensure:
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --permanent --add-port={{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --reload"
+        continue_on_error: true
+
+  windows:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/system_stats"
+          expected_status: 200
+          timeout_ms: 3000
+    ensure:
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''ComfyUI {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+
+  macos:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/system_stats"
+          expected_status: 200
+          timeout_ms: 3000
+
+# CONNECTION
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    system_stats: "/system_stats"
+    queue: "/queue"
+    models: "/models/checkpoints"
+    prompt: "/prompt"

@@ -1,0 +1,21 @@
+{
+  "name": "whispercpp",
+  "description": "whisper.cpp — fast C++ speech-to-text inference server (MIT)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "stt",
+    "whisper",
+    "speech-to-text",
+    "transcription",
+    "cpp",
+    "ggml"
+  ],
+  "port": 8080,
+  "volumes": ["whispercpp-models"],
+  "gpu_recommended": false,
+  "minimum_memory_gb": 1,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  }
+}

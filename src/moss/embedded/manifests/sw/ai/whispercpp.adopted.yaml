@@ -1,0 +1,153 @@
+---
+# whisper.cpp Adopted Mode Manifest
+# Detects native whisper.cpp server installations
+#
+# Installation:
+#   Download pre-built binary from https://github.com/ggerganov/whisper.cpp/releases
+#   Binary name: whisper-server (or whisper-server.exe on Windows)
+#   Default port: 8080 (configurable via --port)
+#
+# API: Custom /inference endpoint (NOT OpenAI-compatible).
+#   The AI orchestrator's WhisperCpp adapter translates between unified
+#   /api/transcribe and whisper.cpp's POST /inference multipart format.
+#
+# Audio: WAV natively. Other formats require --convert flag (uses ffmpeg).
+
+name: whispercpp
+description: whisper.cpp speech-to-text server (native C++ binary)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - stt
+  - whisper
+  - speech-to-text
+  - transcription
+  - cpp
+  - ggml
+
+# DETECTION
+#
+# whisper.cpp server is a standalone C++ binary (whisper-server / whisper-server.exe).
+#
+#   Rule 1: Binary exists in PATH or common locations
+#   Rule 2: HTTP health probe — GET /health returns {"status":"ok"} (200)
+#            Returns 503 with {"status":"loading model"} while loading.
+#
+# Vitality:
+#   Rule 1 PASS only  → Installed but NOT running (DORMANT)
+#   Rule 1+2 PASS     → Running and operational (THRIVING)
+#
+# Note: Default port is 8080, but users often override with --port.
+# The port template {{port}} resolves from frontmatter (8080) or from
+# the actual detected port during connectivity checks.
+
+detection:
+  windows:
+    # Rule 1: Binary in PATH
+    - method: command
+      config:
+        command: where whisper-server.exe
+        expected_pattern: "whisper-server"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    # Rule 2: HTTP health probe
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  linux:
+    - method: command
+      config:
+        command: which whisper-server
+        expected_pattern: "whisper-server"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  macos:
+    - method: command
+      config:
+        command: which whisper-server
+        expected_pattern: "whisper-server"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 3600
+
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 2000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+# CONTROL
+control:
+  level: monitor
+  health_check_url: http://localhost:{{port}}/health
+
+# CONNECTIVITY
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 3
+
+  windows:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''whisper.cpp {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+
+  linux:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+    ensure:
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --permanent --add-port={{port}}/tcp"
+        continue_on_error: true
+      - command: "sudo firewall-cmd --reload"
+        continue_on_error: true
+
+  macos:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 2000
+
+# CONNECTION
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    health: "/health"
+    inference: "/inference"
+    load: "/load"

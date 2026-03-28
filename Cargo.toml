@@ -25,6 +25,7 @@ exclude = [
   "src/orchestrators/postgresql",
   "src/orchestrators/valkey",
   "src/orchestrators/weaviate",
+  "src/orchestrators/ai",
 ]
 resolver = "2"
 

@@ -207,6 +207,7 @@ impl AppState {
         }
 
         self.recompute_tiers().await;
+        self.refresh_recommendations().await;
         self.emit_event("registry.updated", "{}").await;
     }
 
@@ -217,6 +218,7 @@ impl AppState {
             reg.remove(endpoint);
         }
         self.recompute_tiers().await;
+        self.refresh_recommendations().await;
         self.emit_event("registry.updated", "{}").await;
     }
 
@@ -302,14 +304,20 @@ impl AppState {
 
     /// Add or update a model's metadata.
     pub async fn upsert_model(&self, info: ModelInfo) {
-        let mut models = self.models.write().await;
-        models.insert(info.name.clone(), info);
+        {
+            let mut models = self.models.write().await;
+            models.insert(info.name.clone(), info);
+        }
+        self.refresh_recommendations().await;
     }
 
     /// Remove a model from the global registry.
     pub async fn remove_model(&self, name: &str) {
-        let mut models = self.models.write().await;
-        models.remove(name);
+        {
+            let mut models = self.models.write().await;
+            models.remove(name);
+        }
+        self.refresh_recommendations().await;
     }
 
     // ── Tier Recomputation ──────────────────────────────────────
@@ -418,6 +426,33 @@ impl AppState {
             .and_then(|s| s.vram_budget_mb)
             .map(|mb| mb * 1_048_576)
             .unwrap_or(vram_total)
+    }
+
+    // ── Recommendations ──────────────────────────────────────────
+
+    /// Recompute the cached `recommended_models` map from current state.
+    ///
+    /// Called after mutations that could change recommendation rankings:
+    /// model/instance registry, benchmark results, or pin changes.
+    pub async fn refresh_recommendations(&self) {
+        let models = self.models.read().await.clone();
+        let instances = self.instances.read().await.clone();
+        let gpu_matrix = self.benchmark_run.read().await.gpu_matrix.clone();
+        let pins = self.config.read().await.features.pins.clone();
+
+        let mut cache = std::collections::HashMap::with_capacity(
+            crate::domain::recommendation::ALL_CAPABILITIES.len(),
+        );
+        for &cap in crate::domain::recommendation::ALL_CAPABILITIES {
+            let pin = pins.get(cap).map(|s| s.as_str());
+            let resp =
+                crate::domain::recommendation::recommend(cap, &models, &instances, &gpu_matrix, pin);
+            if let Some(selected) = resp.selected {
+                cache.insert(cap.to_string(), selected);
+            }
+        }
+
+        *self.recommended_models.write().await = cache;
     }
 
     // ── Tending ─────────────────────────────────────────────────

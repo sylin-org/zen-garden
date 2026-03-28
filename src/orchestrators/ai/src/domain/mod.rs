@@ -17,7 +17,8 @@ pub mod reconciliation;
 pub mod routing;
 pub mod tiering;
 
-// ── Pending (Phase 2+) ─────────────────────────────────────────
-// pub mod advisor;
-// pub mod pins;
-// pub mod recommendation;
+pub mod recommendation;
+
+// ── Future ──────────────────────────────────────────────────────
+// pub mod advisor;  // Multi-offering topology advice (requires per-offering config tables)
+// pub mod pins;     // Pin storage (currently handled by FeatureConfig.pins in RouterConfig)

@@ -104,6 +104,8 @@ pub async fn proxy_handler(
     let fitness = &benchmark.gpu_matrix;
     let demand = state.metrics.read().await.demand_shares(3600);
 
+    let vram_budgets = state.vram_budgets.read().await;
+
     let decision = match routing::select_instance(
         &model,
         capability,
@@ -113,6 +115,7 @@ pub async fn proxy_handler(
         64, // max_queue
         Some(fitness),
         &demand,
+        &vram_budgets,
     ) {
         Ok(d) => d,
         Err(e) => {

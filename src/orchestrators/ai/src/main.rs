@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
 
     // ── Offering Catalog ────────────────────────────────────────
     let mut catalog = OfferingRegistry::new();
+    // Local/garden offerings (always registered).
     catalog.register(Arc::new(OllamaOffering::new()));
     catalog.register(Arc::new(ComfyUiOffering::new()));
     catalog.register(Arc::new(WhisperCppOffering::new()));
@@ -74,6 +75,11 @@ async fn main() -> Result<()> {
     catalog.register(Arc::new(OpenedaiSpeechOffering::new()));
     catalog.register(Arc::new(InfinityOffering::new()));
     catalog.register(Arc::new(LibreTranslateOffering::new()));
+
+    // Cloud providers (registered only if API key env vars are set).
+    for cloud in zen_garden_ai_orchestrator::offerings::cloud::openai_compat::register_cloud_providers() {
+        catalog.register(cloud);
+    }
 
     tracing::info!(
         offerings = catalog.len(),
@@ -151,6 +157,27 @@ async fn main() -> Result<()> {
     let snapshot_shutdown = shutdown.clone();
     tokio::spawn(async move {
         tasks::snapshot_publisher::run(snapshot_state, snapshot_tx, snapshot_shutdown).await;
+    });
+
+    // Benchmark: fitness profiling (triggered via /api/benchmark/start).
+    let bench_state = state.clone();
+    let bench_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::benchmark::run(bench_state, bench_shutdown).await;
+    });
+
+    // Placement: demand-weighted model→stone assignment (60s interval).
+    let placement_state = state.clone();
+    let placement_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::placement::run(placement_state, placement_shutdown).await;
+    });
+
+    // Resource sync: model replication across tier peers (60s interval).
+    let sync_state = state.clone();
+    let sync_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::resource_sync::run(sync_state, sync_shutdown).await;
     });
 
     // ── Proxy Server ────────────────────────────────────────────

@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use super::fitness::GpuMatrix;
 use super::types::{
-    Capability, ModelInfo, RoutingDecision, RoutingError, ServiceInstance, Tier,
+    Capability, ModelInfo, RoutingDecision, RoutingError, ServiceInstance, StoneVramBudget, Tier,
 };
 
 /// A routing candidate: one instance on one tier.
@@ -50,6 +50,7 @@ pub fn select_instance(
     max_queue: u32,
     fitness: Option<&GpuMatrix>,
     recent_demand: &HashMap<String, f64>,
+    vram_budgets: &[StoneVramBudget],
 ) -> Result<RoutingDecision, RoutingError> {
     // ── Basics ──────────────────────────────────────────────────
 
@@ -181,6 +182,16 @@ pub fn select_instance(
             .unwrap_or(25)
     };
 
+    // Cross-offering VRAM headroom: prefer instances on stones with more
+    // free VRAM across all offerings (not just this offering's tier).
+    let vram_headroom = |inst: &ServiceInstance| -> u64 {
+        vram_budgets
+            .iter()
+            .find(|b| b.stone.id == inst.stone.id)
+            .map(|b| b.free_bytes)
+            .unwrap_or(inst.vram.budget_bytes) // fallback to per-instance
+    };
+
     if reserve {
         // Reservation: non-degraded first, idle before busy, lower priority desc,
         // lower VRAM tiers first, then fitness, then queue depth.
@@ -197,7 +208,7 @@ pub fn select_instance(
         });
     } else {
         // Performance-first: non-degraded first, idle before busy, priority desc,
-        // highest fitness, highest VRAM, then lowest queue depth.
+        // highest fitness, highest cross-offering VRAM headroom, then queue depth.
         candidates.sort_by(|a, b| {
             a.is_degraded
                 .cmp(&b.is_degraded)
@@ -206,7 +217,9 @@ pub fn select_instance(
                 })
                 .then_with(|| b.instance.priority.cmp(&a.instance.priority))
                 .then_with(|| score(&b.instance.endpoint).cmp(&score(&a.instance.endpoint)))
-                .then_with(|| b.tier.vram_bytes.cmp(&a.tier.vram_bytes))
+                .then_with(|| {
+                    vram_headroom(b.instance).cmp(&vram_headroom(a.instance))
+                })
                 .then_with(|| a.instance.queue_depth.cmp(&b.instance.queue_depth))
         });
     }
@@ -337,7 +350,7 @@ mod tests {
             Tier { vram_bytes: 24 * GIB, label: "24G".into(), endpoints: vec!["b".into()] },
         ];
 
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand())
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "b");
         assert!(!d.was_overflow);
@@ -363,7 +376,7 @@ mod tests {
 
         let demand: HashMap<String, f64> = [("m70b".to_string(), 0.3)].into_iter().collect();
 
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &demand)
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &demand, &[])
             .unwrap();
         assert_eq!(d.endpoint, "a"); // 8G tier, reservation active
     }
@@ -386,7 +399,7 @@ mod tests {
             Tier { vram_bytes: 0, label: "cloud".into(), endpoints: vec!["cloud".into()] },
         ];
 
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand())
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "local"); // cloud excluded by priority gate
     }
@@ -407,7 +420,7 @@ mod tests {
             Tier { vram_bytes: 0, label: "cloud".into(), endpoints: vec!["cloud".into()] },
         ];
 
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand())
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "cloud"); // no local → cloud allowed
     }
@@ -436,6 +449,7 @@ mod tests {
             0,
             None,
             &no_demand(),
+            &[],
         );
         assert!(matches!(result, Err(RoutingError::CapabilityNotAvailable { .. })));
     }
@@ -453,7 +467,7 @@ mod tests {
             Tier { vram_bytes: 8 * GIB, label: "8G".into(), endpoints: vec!["a".into(), "b".into()] },
         ];
 
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand())
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "b");
     }
@@ -472,7 +486,7 @@ mod tests {
             Tier { vram_bytes: 24 * GIB, label: "24G".into(), endpoints: vec!["b".into()] },
         ];
 
-        let d = select_instance("m48b", None, &instances, &models, &tiers, 0, None, &no_demand())
+        let d = select_instance("m48b", None, &instances, &models, &tiers, 0, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "b");
         assert!(d.tier.contains("degraded"));
@@ -522,7 +536,7 @@ mod tests {
         };
 
         let d = select_instance(
-            "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(),
+            "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(), &[],
         )
         .unwrap();
         assert_eq!(d.endpoint, "b");
@@ -558,7 +572,7 @@ mod tests {
         };
 
         let result = select_instance(
-            "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(),
+            "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(), &[],
         );
         assert!(matches!(result, Err(RoutingError::ModelBlocked(_))));
     }
@@ -579,7 +593,7 @@ mod tests {
 
         // Demand only has m7b (small) — no large model → no reservation.
         let demand: HashMap<String, f64> = [("m7b".to_string(), 1.0)].into_iter().collect();
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &demand)
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &demand, &[])
             .unwrap();
         assert_eq!(d.endpoint, "b"); // performance-first → 24G
     }
@@ -604,7 +618,7 @@ mod tests {
 
         let demand: HashMap<String, f64> = [("m70b".to_string(), 0.3)].into_iter().collect();
 
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &demand)
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &demand, &[])
             .unwrap();
         assert_eq!(d.endpoint, "b"); // overflow to 24G
         assert!(d.was_overflow);
@@ -624,7 +638,7 @@ mod tests {
             Tier { vram_bytes: 24 * GIB, label: "24G".into(), endpoints: vec!["b".into()] },
         ];
 
-        let d = select_instance("m70b", None, &instances, &models, &tiers, 0, None, &no_demand())
+        let d = select_instance("m70b", None, &instances, &models, &tiers, 0, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "b");
     }
@@ -644,13 +658,13 @@ mod tests {
         ];
 
         // 24G busy, 8G idle → goes to idle 8G
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &no_demand())
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "a");
 
         // Now 24G idle → performance picks it
         instances.get_mut("b").unwrap().queue_depth = 0;
-        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &no_demand())
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &no_demand(), &[])
             .unwrap();
         assert_eq!(d.endpoint, "b");
     }
@@ -699,7 +713,7 @@ mod tests {
         };
 
         let d = select_instance(
-            "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(),
+            "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(), &[],
         )
         .unwrap();
         assert_eq!(d.endpoint, "b");

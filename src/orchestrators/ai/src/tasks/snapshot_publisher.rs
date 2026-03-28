@@ -20,6 +20,11 @@ pub async fn run(
     snapshot_tx: watch::Sender<serde_json::Value>,
     shutdown: CancellationToken,
 ) {
+    // Publish immediately so /api/status doesn't return Null for the
+    // first PUBLISH_INTERVAL seconds after startup.
+    let initial = build_snapshot(&state).await;
+    let _ = snapshot_tx.send(initial);
+
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,

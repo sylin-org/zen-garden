@@ -27,11 +27,15 @@ const MDNS_NAME: &str = "ZenGarden orchestrator: AI";
 /// Each gets its own gateway registration with Moss.
 const MANAGED_OFFERINGS: &[&str] = &[
     "ollama",
+    "ollama-cpu",
     "comfyui",
     "whispercpp",
     "speaches",
+    "speaches-cpu",
     "openedai-speech",
+    "openedai-speech-min",
     "infinity",
+    "infinity-cpu",
     "libretranslate",
 ];
 
@@ -253,7 +257,13 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
                     }
                 }
 
-                last_registered_endpoint = current_endpoint;
+                // Only advance the tracked endpoint when at least one offering
+                // is successfully registered. If all registrations fail (stone
+                // momentarily unavailable), keep the old endpoint so the next
+                // heartbeat retries the stone-switch deregistration path.
+                if !registered_offerings.is_empty() {
+                    last_registered_endpoint = current_endpoint;
+                }
             }
         }
     }

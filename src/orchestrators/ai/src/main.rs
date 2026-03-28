@@ -180,6 +180,13 @@ async fn main() -> Result<()> {
         tasks::resource_sync::run(sync_state, sync_shutdown).await;
     });
 
+    // Cloud sync: register cloud provider instances + periodic model refresh.
+    let cloud_state = state.clone();
+    let cloud_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::cloud_sync::run(cloud_state, cloud_shutdown).await;
+    });
+
     // ── Proxy Server ────────────────────────────────────────────
     //
     // Ollama-compat routes (specific paths) + management routes,

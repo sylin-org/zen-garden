@@ -5,6 +5,7 @@
 //! algorithms. No direct HTTP calls — always through offerings or infra.
 
 pub mod benchmark;
+pub mod cloud_sync;
 pub mod discovery;
 pub mod gateway_announce;
 pub mod health_check;

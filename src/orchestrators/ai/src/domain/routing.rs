@@ -22,8 +22,7 @@ use std::collections::HashMap;
 
 use super::fitness::GpuMatrix;
 use super::types::{
-    Capability, ModelInfo, OfferingKind, RoutingDecision, RoutingError, ServiceInstance, Stone,
-    Tier,
+    Capability, ModelInfo, RoutingDecision, RoutingError, ServiceInstance, Tier,
 };
 
 /// A routing candidate: one instance on one tier.
@@ -562,5 +561,147 @@ mod tests {
             "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(),
         );
         assert!(matches!(result, Err(RoutingError::ModelBlocked(_))));
+    }
+
+    #[test]
+    fn no_reservation_without_large_demand() {
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b".to_string(), model_info("m7b", 4))].into_iter().collect();
+
+        let tiers = vec![
+            Tier { vram_bytes: 8 * GIB, label: "8G".into(), endpoints: vec!["a".into()] },
+            Tier { vram_bytes: 24 * GIB, label: "24G".into(), endpoints: vec!["b".into()] },
+        ];
+
+        // Demand only has m7b (small) — no large model → no reservation.
+        let demand: HashMap<String, f64> = [("m7b".to_string(), 1.0)].into_iter().collect();
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 0, None, &demand)
+            .unwrap();
+        assert_eq!(d.endpoint, "b"); // performance-first → 24G
+    }
+
+    #[test]
+    fn reservation_overflow_when_lower_saturated() {
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 64)); // saturated
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
+
+        let models: HashMap<String, ModelInfo> = [
+            ("m7b".to_string(), model_info("m7b", 4)),
+            ("m70b".to_string(), model_info("m70b", 20)),
+        ]
+        .into_iter()
+        .collect();
+
+        let tiers = vec![
+            Tier { vram_bytes: 8 * GIB, label: "8G".into(), endpoints: vec!["a".into()] },
+            Tier { vram_bytes: 24 * GIB, label: "24G".into(), endpoints: vec!["b".into()] },
+        ];
+
+        let demand: HashMap<String, f64> = [("m70b".to_string(), 0.3)].into_iter().collect();
+
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &demand)
+            .unwrap();
+        assert_eq!(d.endpoint, "b"); // overflow to 24G
+        assert!(d.was_overflow);
+    }
+
+    #[test]
+    fn large_model_routes_to_viable_tier() {
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m70b".to_string(), model_info("m70b", 20))].into_iter().collect();
+
+        let tiers = vec![
+            Tier { vram_bytes: 8 * GIB, label: "8G".into(), endpoints: vec!["a".into()] },
+            Tier { vram_bytes: 24 * GIB, label: "24G".into(), endpoints: vec!["b".into()] },
+        ];
+
+        let d = select_instance("m70b", None, &instances, &models, &tiers, 0, None, &no_demand())
+            .unwrap();
+        assert_eq!(d.endpoint, "b");
+    }
+
+    #[test]
+    fn performance_spreads_to_idle_stones() {
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 24, &["m7b"], 1)); // busy
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b".to_string(), model_info("m7b", 4))].into_iter().collect();
+
+        let tiers = vec![
+            Tier { vram_bytes: 8 * GIB, label: "8G".into(), endpoints: vec!["a".into()] },
+            Tier { vram_bytes: 24 * GIB, label: "24G".into(), endpoints: vec!["b".into()] },
+        ];
+
+        // 24G busy, 8G idle → goes to idle 8G
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &no_demand())
+            .unwrap();
+        assert_eq!(d.endpoint, "a");
+
+        // Now 24G idle → performance picks it
+        instances.get_mut("b").unwrap().queue_depth = 0;
+        let d = select_instance("m7b", None, &instances, &models, &tiers, 64, None, &no_demand())
+            .unwrap();
+        assert_eq!(d.endpoint, "b");
+    }
+
+    #[test]
+    fn blocked_on_one_stone_routes_to_other() {
+        use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry};
+
+        let mut instances = HashMap::new();
+        instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
+        instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 0));
+
+        let models: HashMap<String, ModelInfo> =
+            [("m7b".to_string(), model_info("m7b", 4))].into_iter().collect();
+
+        let tiers = vec![
+            Tier { vram_bytes: 8 * GIB, label: "8G".into(), endpoints: vec!["a".into(), "b".into()] },
+        ];
+
+        let matrix = GpuMatrix {
+            generated_at: Some(chrono::Utc::now()),
+            entries: vec![
+                GpuMatrixEntry {
+                    model: "m7b".into(),
+                    capability: Capability::Generate,
+                    stone_name: "s1".into(),
+                    endpoint: "a".into(),
+                    gpu_model: "RTX 3060".into(),
+                    verdict: Verdict::Blocked,
+                    median_tps: 0.0,
+                    cold_start_ms: 0,
+                    valid_ratio: None,
+                },
+                GpuMatrixEntry {
+                    model: "m7b".into(),
+                    capability: Capability::Generate,
+                    stone_name: "s2".into(),
+                    endpoint: "b".into(),
+                    gpu_model: "RTX 3060".into(),
+                    verdict: Verdict::Fast,
+                    median_tps: 25.0,
+                    cold_start_ms: 3_000,
+                    valid_ratio: None,
+                },
+            ],
+        };
+
+        let d = select_instance(
+            "m7b", None, &instances, &models, &tiers, 0, Some(&matrix), &no_demand(),
+        )
+        .unwrap();
+        assert_eq!(d.endpoint, "b");
     }
 }

@@ -306,6 +306,28 @@ pub struct LoadedModel {
     pub expires_at: Option<String>,
 }
 
+// ── Benchmark Sample ────────────────────────────────────────────────
+
+/// One measurement from a benchmark prompt/input.
+///
+/// Defined in domain (not catalog) because the fitness module aggregates
+/// these into verdicts. The catalog re-exports this type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sample {
+    /// Index within the test suite (0-based).
+    pub prompt_index: usize,
+    /// Cold start latency in milliseconds.
+    pub cold_start_ms: u64,
+    /// Tokens per second (for text generation capabilities).
+    pub tokens_per_second: Option<f64>,
+    /// Total wall-clock duration in milliseconds.
+    pub total_duration_ms: u64,
+    /// For tool-calling: ratio of correct tool selections (0.0-1.0).
+    pub valid_ratio: Option<f64>,
+    /// Error message if this sample failed.
+    pub error: Option<String>,
+}
+
 // ── Cross-Offering VRAM ─────────────────────────────────────────────
 
 /// Aggregate VRAM state for one stone across all offerings.

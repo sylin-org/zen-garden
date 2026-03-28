@@ -116,22 +116,9 @@ pub struct BenchmarkSample {
     pub samples: Vec<Sample>,
 }
 
-/// One measurement from a benchmark prompt/input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sample {
-    /// Index within the test suite (0-based).
-    pub prompt_index: usize,
-    /// Cold start latency in milliseconds.
-    pub cold_start_ms: u64,
-    /// Tokens per second (for text generation capabilities).
-    pub tokens_per_second: Option<f64>,
-    /// Total wall-clock duration in milliseconds.
-    pub total_duration_ms: u64,
-    /// For tool-calling: ratio of correct tool selections (0.0-1.0).
-    pub valid_ratio: Option<f64>,
-    /// Error message if this sample failed.
-    pub error: Option<String>,
-}
+// Re-export Sample from domain (canonical location) — catalog references
+// it but does not own it. Domain must never import catalog.
+pub use crate::domain::types::Sample;
 
 // ── Resource Sync ───────────────────────────────────────────────────
 

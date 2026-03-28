@@ -112,6 +112,10 @@ impl Verdict {
     /// A model that is fast but picks wrong tools is worse than a slow
     /// model that picks correctly.
     pub fn compute_tools(cold_start_ms: u64, tokens_per_second: f64, valid_ratio: f64) -> Self {
+        // Zero valid calls = hard block (not routable).
+        if valid_ratio <= 0.0 {
+            return Self::Blocked;
+        }
         if valid_ratio < 0.5 {
             return Self::Vetoed;
         }
@@ -222,7 +226,7 @@ pub struct TestSuite {
     pub model: String,
     pub capability: Capability,
     pub status: TestStatus,
-    pub samples: Vec<crate::catalog::Sample>,
+    pub samples: Vec<super::types::Sample>,
     pub summary: Option<TestSummary>,
     pub error: Option<String>,
 }
@@ -230,7 +234,7 @@ pub struct TestSuite {
 impl TestSuite {
     /// Compute summary from collected samples.
     pub fn summarise(&mut self) {
-        let successful: Vec<&crate::catalog::Sample> = self
+        let successful: Vec<&super::types::Sample> = self
             .samples
             .iter()
             .filter(|s| s.error.is_none())
@@ -371,6 +375,7 @@ impl BenchmarkRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::types::Sample;
 
     #[test]
     fn generate_verdict_fast() {
@@ -415,6 +420,10 @@ mod tests {
         // Fast speed, partial correctness → Degraded (capped)
         let v = Verdict::compute_tools(5_000, 20.0, 0.8);
         assert_eq!(v, Verdict::Degraded);
+
+        // Zero valid calls → Blocked (hard routing exclusion)
+        let v = Verdict::compute_tools(5_000, 20.0, 0.0);
+        assert_eq!(v, Verdict::Blocked);
     }
 
     #[test]
@@ -475,7 +484,7 @@ mod tests {
             capability: Capability::Generate,
             status: TestStatus::Done,
             samples: vec![
-                crate::catalog::Sample {
+                Sample {
                     prompt_index: 0,
                     cold_start_ms: 5_000,
                     tokens_per_second: Some(20.0),
@@ -483,7 +492,7 @@ mod tests {
                     valid_ratio: None,
                     error: None,
                 },
-                crate::catalog::Sample {
+                Sample {
                     prompt_index: 1,
                     cold_start_ms: 1_000,
                     tokens_per_second: Some(25.0),
@@ -508,7 +517,7 @@ mod tests {
             model: "m7b".into(),
             capability: Capability::Generate,
             status: TestStatus::Done,
-            samples: vec![crate::catalog::Sample {
+            samples: vec![Sample {
                 prompt_index: 0,
                 cold_start_ms: 0,
                 tokens_per_second: None,

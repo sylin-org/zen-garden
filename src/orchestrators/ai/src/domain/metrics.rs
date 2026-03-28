@@ -306,19 +306,12 @@ impl MetricsEngine {
             }
             MetricEvent::Error {
                 stone,
-                model,
-                status_code,
-                reason,
+                model: _,
+                status_code: _,
+                reason: _,
             } => {
-                if let Some(ref m) = model {
-                    tracing::debug!(
-                        stone = %stone,
-                        model = %m,
-                        status_code = ?status_code,
-                        reason = ?reason,
-                        "recording error metric"
-                    );
-                }
+                // Logging is the caller's responsibility (tasks layer).
+                // Domain must remain pure — no tracing side effects.
                 self.record_error(&stone);
             }
         }

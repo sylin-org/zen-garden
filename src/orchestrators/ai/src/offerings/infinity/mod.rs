@@ -41,6 +41,7 @@ impl Default for InfinityOffering {
 }
 
 impl Offering for InfinityOffering {
+
     fn offering_type(&self) -> OfferingKind {
         OfferingKind::Infinity
     }

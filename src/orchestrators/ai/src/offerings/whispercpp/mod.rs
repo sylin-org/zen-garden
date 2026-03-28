@@ -42,6 +42,7 @@ impl Default for WhisperCppOffering {
 }
 
 impl Offering for WhisperCppOffering {
+
     fn offering_type(&self) -> OfferingKind {
         OfferingKind::WhisperCpp
     }

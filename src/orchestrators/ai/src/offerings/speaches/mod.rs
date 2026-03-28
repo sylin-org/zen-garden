@@ -42,6 +42,7 @@ impl Default for SpeachesOffering {
 }
 
 impl Offering for SpeachesOffering {
+
     fn offering_type(&self) -> OfferingKind {
         OfferingKind::Speaches
     }

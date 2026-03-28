@@ -53,7 +53,22 @@ pub async fn proxy_handler(
             .to_string();
 
         if !from_json.is_empty() {
-            from_json
+            // Resolve recommended:* monikers (ORCH-0011).
+            if let Some(cap_name) = from_json.strip_prefix("recommended:") {
+                let recommended = state.recommended_models.read().await;
+                match recommended.get(cap_name) {
+                    Some(resolved) => resolved.clone(),
+                    None => {
+                        return (
+                            StatusCode::NOT_FOUND,
+                            format!("no recommended model for capability '{cap_name}'"),
+                        )
+                            .into_response();
+                    }
+                }
+            } else {
+                from_json
+            }
         } else {
             // For multipart/capability-only requests, use a sentinel based
             // on the capability so the routing engine can still match.
@@ -168,7 +183,7 @@ pub async fn proxy_handler(
 
 /// Build an Axum response from a ProxyResponse.
 fn build_response(proxy: crate::catalog::ProxyResponse) -> Response {
-    let status = StatusCode::from_u16(proxy.status).unwrap_or(StatusCode::OK);
+    let status = StatusCode::from_u16(proxy.status).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut builder = Response::builder().status(status);
 
     for (key, value) in &proxy.headers {

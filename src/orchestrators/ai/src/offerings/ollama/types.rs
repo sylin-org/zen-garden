@@ -24,6 +24,7 @@ pub struct ModelTag {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[derive(serde::Serialize)]
 pub struct ModelDetails {
     pub format: Option<String>,
     pub family: Option<String>,
@@ -56,6 +57,7 @@ pub struct RunningModel {
 
 /// Response from `POST /api/show`.
 #[derive(Debug, Clone, Deserialize)]
+#[derive(serde::Serialize)]
 pub struct ShowResponse {
     #[serde(default)]
     pub details: Option<ModelDetails>,

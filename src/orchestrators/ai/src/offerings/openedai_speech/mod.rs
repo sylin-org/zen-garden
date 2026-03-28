@@ -43,6 +43,7 @@ impl Default for OpenedaiSpeechOffering {
 }
 
 impl Offering for OpenedaiSpeechOffering {
+
     fn offering_type(&self) -> OfferingKind {
         OfferingKind::OpenedaiSpeech
     }

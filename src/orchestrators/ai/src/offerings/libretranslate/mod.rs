@@ -40,6 +40,7 @@ impl Default for LibreTranslateOffering {
 }
 
 impl Offering for LibreTranslateOffering {
+
     fn offering_type(&self) -> OfferingKind {
         OfferingKind::LibreTranslate
     }

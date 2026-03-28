@@ -49,6 +49,7 @@ impl Default for OllamaOffering {
 }
 
 impl Offering for OllamaOffering {
+
     fn offering_type(&self) -> OfferingKind {
         OfferingKind::Ollama
     }

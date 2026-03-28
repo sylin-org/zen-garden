@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::routing::get;
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use clap::Parser;
 use tokio::sync::{mpsc, watch};
@@ -155,13 +155,29 @@ async fn main() -> Result<()> {
 
     // ── Proxy Server ────────────────────────────────────────────
     //
-    // Ollama-compat routes first (specific paths), then fallback to
-    // the generic capability-routing proxy for all other requests.
+    // Ollama-compat routes (specific paths) + management routes,
+    // then fallback to the generic capability-routing proxy.
     let proxy_app = Router::new()
+        // Ollama backward compatibility
         .route("/", get(api::compat::ollama_root))
         .route("/api/tags", get(api::compat::ollama_tags))
         .route("/api/ps", get(api::compat::ollama_ps))
         .route("/api/version", get(api::compat::ollama_version))
+        // Ollama model management
+        .route("/api/show", post(api::management::ollama_show))
+        .route("/api/pull", post(api::management::ollama_pull))
+        .route("/api/delete", delete(api::management::ollama_delete))
+        // Extension API
+        .route("/v1/models", get(api::extension::list_models))
+        .route("/v1/stones", get(api::extension::list_stones))
+        .route("/v1/capabilities", get(api::extension::list_capabilities))
+        .route("/v1/recommendations", get(api::recommendations::get_recommendation))
+        .route(
+            "/v1/recommendations/:capability/pin",
+            put(api::recommendations::pin_recommendation)
+                .delete(api::recommendations::unpin_recommendation),
+        )
+        // Generic proxy fallback for all other paths
         .fallback(api::proxy::proxy_handler)
         .with_state(state.clone())
         .layer(CorsLayer::permissive());
@@ -173,9 +189,20 @@ async fn main() -> Result<()> {
     // ── Dashboard Server ────────────────────────────────────────
     let dashboard_app = Router::new()
         .route("/health", get(api::health::health))
-        .route("/v1/models", get(api::extension::list_models))
-        .route("/v1/stones", get(api::extension::list_stones))
-        .route("/v1/capabilities", get(api::extension::list_capabilities))
+        // Dashboard API
+        .route("/api/status", get(api::dashboard::status))
+        .route("/api/events", get(api::dashboard::events))
+        .route(
+            "/api/settings",
+            get(api::dashboard::get_settings).post(api::dashboard::post_settings),
+        )
+        .route("/api/offerings", get(api::dashboard::offerings))
+        .route("/api/jobs", get(api::dashboard::jobs))
+        .route("/api/metrics/reset", post(api::dashboard::reset_metrics))
+        .route(
+            "/api/metrics/model-counters/reset",
+            post(api::dashboard::reset_model_counters),
+        )
         .with_state(state.clone())
         .layer(CorsLayer::permissive());
 
@@ -206,8 +233,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Grace period for background tasks.
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    // Grace period for background tasks to complete shutdown handlers.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     tracing::info!("AI Orchestrator shut down");
     Ok(())

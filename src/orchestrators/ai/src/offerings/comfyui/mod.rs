@@ -72,6 +72,7 @@ struct DeviceInfo {
 }
 
 impl Offering for ComfyUiOffering {
+
     fn offering_type(&self) -> OfferingKind {
         OfferingKind::ComfyUi
     }

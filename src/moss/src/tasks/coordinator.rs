@@ -753,7 +753,7 @@ pub(crate) async fn start_background_tasks(
     {
         let state = state.clone();
         supervisor.spawn("companion-scan", async move {
-            let endpoint = state.current.address.read().await.http_base();
+            let endpoint = format!("http://127.0.0.1:{}", garden_common::constants::MOSS_HTTP);
             match state
                 .companion
                 .registry

@@ -149,8 +149,9 @@ async fn execute_companion_command_local(
     if !companion.running {
         tracing::info!(companion_id = %companion_id, "Companion not running, auto-starting before command execution");
 
-        // Get moss endpoint for Companion to connect to
-        let moss_endpoint = state.current.address.read().await.http_base();
+        // Companions always run on the same machine — use localhost to avoid
+        // DHCP race conditions where the external IP isn't yet assigned.
+        let moss_endpoint = format!("http://127.0.0.1:{}", garden_common::constants::MOSS_HTTP);
 
         if let Err(e) = state
             .companion
@@ -341,8 +342,8 @@ pub async fn start_companion(
     State(state): State<AppState>,
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionLifecycleResponse> {
-    // Build this Moss's endpoint for the Companion to connect to
-    let moss_endpoint = state.current.address.read().await.http_base();
+    // Companions always run on the same machine — use localhost
+    let moss_endpoint = format!("http://127.0.0.1:{}", garden_common::constants::MOSS_HTTP);
 
     // Enable the Companion (mark for auto-start on boot)
     if let Err(e) = state.companion.registry.enable(&companion_id).await {

@@ -45,6 +45,9 @@ pub async fn pin_recommendation(
         config.features.pins.insert(capability.clone(), model.clone());
     }
 
+    // Persist config to disk so pins survive restarts.
+    persist_config(&state).await;
+
     // Update the cached recommendations.
     {
         let mut recommended = state.recommended_models.write().await;
@@ -65,6 +68,8 @@ pub async fn unpin_recommendation(
         config.features.pins.remove(&capability);
     }
 
+    persist_config(&state).await;
+
     // Remove from cache — the next refresh will compute the natural recommendation.
     {
         let mut recommended = state.recommended_models.write().await;
@@ -73,4 +78,12 @@ pub async fn unpin_recommendation(
 
     state.emit_event("recommendations.updated", "{}").await;
     StatusCode::OK
+}
+
+/// Persist router config to disk (same pattern as dashboard.rs).
+async fn persist_config(state: &AppState) {
+    let config = state.config.read().await;
+    let toml_str = toml::to_string_pretty(&*config).unwrap_or_default();
+    let path = std::path::Path::new(&state.data_dir).join("router-config.toml");
+    let _ = tokio::fs::write(&path, toml_str).await;
 }

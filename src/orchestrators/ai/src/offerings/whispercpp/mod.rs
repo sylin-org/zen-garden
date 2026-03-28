@@ -164,7 +164,7 @@ impl Offering for WhisperCppOffering {
                     reqwest::multipart::Part::bytes(wav_data)
                         .file_name("benchmark.wav")
                         .mime_str("audio/wav")
-                        .unwrap(),
+                        .expect("'audio/wav' is a valid MIME type"),
                 )
                 .text("response_format", "json");
 

@@ -52,6 +52,10 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # Async trait object safety (BoxFuture)
 pin-project-lite = "0.2"
 
+# Embedded static assets (dashboard SPA)
+rust-embed = "8"
+mime_guess = "2"
+
 [profile.fast-release]
 inherits = "release"
 lto = "thin"

@@ -1,23 +1,48 @@
 //! Dashboard API handlers — status, events, settings, offerings, jobs.
+//!
+//! Also serves the embedded React SPA (built from web/ via rust-embed).
 
+use axum::body::Body;
 use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::Html;
+use axum::http::{header, StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use futures_util::stream::Stream;
+use rust_embed::Embed;
 use std::convert::Infallible;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::app_state::AppState;
 
-/// Embedded dashboard SPA — compiled into the binary.
-const DASHBOARD_HTML: &str = include_str!("../../assets/dashboard.html");
+/// Embedded dashboard SPA assets (built from web/dist/).
+#[derive(Embed)]
+#[folder = "web/dist/"]
+struct DashboardAssets;
 
-/// `GET /` — serve the dashboard SPA.
-pub async fn get_dashboard() -> Html<&'static str> {
-    Html(DASHBOARD_HTML)
+/// Serve embedded static files. Falls back to index.html for SPA routing.
+pub async fn static_handler(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+
+    // Try exact file match first (JS, CSS, images).
+    if let Some(content) = DashboardAssets::get(path) {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        return Response::builder()
+            .header(header::CONTENT_TYPE, mime.as_ref())
+            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+            .body(Body::from(content.data.to_vec()))
+            .unwrap_or_default();
+    }
+
+    // SPA fallback: serve index.html for all unmatched routes.
+    match DashboardAssets::get("index.html") {
+        Some(content) => Response::builder()
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(Body::from(content.data.to_vec()))
+            .unwrap_or_default(),
+        None => (StatusCode::NOT_FOUND, "Dashboard not built").into_response(),
+    }
 }
 
 /// `GET /api/status` — full orchestrator snapshot (from watch channel).

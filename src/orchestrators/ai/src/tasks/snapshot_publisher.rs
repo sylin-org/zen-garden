@@ -1,29 +1,28 @@
 //! Snapshot publisher — builds dashboard-ready JSON from live state.
 //!
-//! Periodically produces a comprehensive JSON snapshot of the orchestrator's
-//! state and publishes it to a `watch` channel. The dashboard `/api/status`
-//! endpoint reads from this channel (zero computation at request time).
+//! Periodically produces a comprehensive JSON snapshot and:
+//! 1. Publishes to the `watch` channel (for `/api/status` GET)
+//! 2. Emits as a `status.snapshot` event on the dashboard broadcast
+//!    channel (for SSE streaming — eliminates polling)
 
 use std::time::Duration;
 
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::app_state::AppState;
+use crate::app_state::{AppState, DashboardEvent};
 
-/// How often to rebuild the snapshot.
 const PUBLISH_INTERVAL: Duration = Duration::from_secs(3);
 
-/// Background task: periodic snapshot aggregation.
 pub async fn run(
     state: AppState,
     snapshot_tx: watch::Sender<serde_json::Value>,
     shutdown: CancellationToken,
 ) {
-    // Publish immediately so /api/status doesn't return Null for the
-    // first PUBLISH_INTERVAL seconds after startup.
+    // Publish immediately on startup.
     let initial = build_snapshot(&state).await;
-    let _ = snapshot_tx.send(initial);
+    let _ = snapshot_tx.send(initial.clone());
+    emit_snapshot_event(&state, &initial);
 
     loop {
         tokio::select! {
@@ -32,13 +31,26 @@ pub async fn run(
         }
 
         let snapshot = build_snapshot(&state).await;
-        let _ = snapshot_tx.send(snapshot);
+        let _ = snapshot_tx.send(snapshot.clone());
+        emit_snapshot_event(&state, &snapshot);
     }
 
     tracing::info!("snapshot publisher shutting down");
 }
 
+/// Emit the snapshot as an SSE event so the React frontend receives
+/// it on the single EventSource connection (no polling needed).
+fn emit_snapshot_event(state: &AppState, snapshot: &serde_json::Value) {
+    let _ = state.dashboard_tx.send(DashboardEvent {
+        event_type: "status.snapshot".to_string(),
+        data: snapshot.to_string(),
+    });
+}
+
 /// Build a comprehensive JSON snapshot of the orchestrator state.
+///
+/// This is the single source of truth for the dashboard. Every field
+/// the frontend needs must be included here.
 async fn build_snapshot(state: &AppState) -> serde_json::Value {
     let instances = state.instances.read().await;
     let models = state.models.read().await;
@@ -48,12 +60,19 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     let benchmark = state.benchmark_run.read().await;
     let recommended = state.recommended_models.read().await;
     let jobs = state.jobs.read().await;
+    let vram_budgets = state.vram_budgets.read().await;
 
     let metrics_snapshot = {
         let metrics = state.metrics.read().await;
         metrics.snapshot()
     };
 
+    let demand_shares = {
+        let metrics = state.metrics.read().await;
+        metrics.demand_shares(300) // 5 minute window
+    };
+
+    // Full instance data — include model lists, loaded models, VRAM details.
     let instance_list: Vec<serde_json::Value> = instances
         .values()
         .map(|inst| {
@@ -64,11 +83,31 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
                 "gpu": inst.gpu,
                 "vram": inst.vram,
                 "health": inst.health,
-                "models_available": inst.models_available.len(),
-                "models_loaded": inst.models_loaded.len(),
+                "models_available": inst.models_available,
+                "models_loaded": inst.models_loaded,
                 "capabilities": inst.capabilities,
                 "queue_depth": inst.queue_depth,
                 "priority": inst.priority,
+                "metadata": inst.metadata,
+            })
+        })
+        .collect();
+
+    // Full model registry.
+    let model_list: Vec<serde_json::Value> = models
+        .values()
+        .map(|m| {
+            serde_json::json!({
+                "name": m.name,
+                "parameter_count": m.parameter_count,
+                "parameter_size": m.parameter_size,
+                "quantization_level": m.quantization_level,
+                "family": m.family,
+                "capabilities": m.capabilities,
+                "format": m.format,
+                "size_disk": m.size_disk,
+                "vram_bytes": m.vram_bytes,
+                "context_length": m.context_length,
             })
         })
         .collect();
@@ -89,13 +128,21 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
             "models_known": models.len(),
         },
         "instances": instance_list,
+        "models": model_list,
         "offering_counts": offering_counts,
         "tiers": *tiers,
+        "vram_budgets": *vram_budgets,
         "metrics": metrics_snapshot,
+        "demand_shares": demand_shares,
         "placement": *placement,
         "benchmark": {
-            "status": benchmark.status,
             "id": benchmark.id,
+            "status": benchmark.status,
+            "started_at": benchmark.started_at,
+            "completed_at": benchmark.completed_at,
+            "stones": benchmark.stones,
+            "gpu_matrix": benchmark.gpu_matrix,
+            "error": benchmark.error,
         },
         "recommended_models": *recommended,
         "config": {

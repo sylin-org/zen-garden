@@ -222,7 +222,6 @@ async fn main() -> Result<()> {
 
     // ── Dashboard Server ────────────────────────────────────────
     let dashboard_app = Router::new()
-        .route("/", get(api::dashboard::get_dashboard))
         .route("/health", get(api::health::health))
         // Dashboard API
         .route("/api/status", get(api::dashboard::status))
@@ -248,6 +247,8 @@ async fn main() -> Result<()> {
         .route("/api/benchmark/cancel", post(api::benchmark_api::cancel_benchmark))
         .route("/api/benchmark/results", get(api::benchmark_api::benchmark_results))
         .route("/api/benchmark/export", get(api::benchmark_api::benchmark_export))
+        // SPA static files — fallback for all unmatched routes (serves index.html).
+        .fallback(api::dashboard::static_handler)
         .with_state(state.clone())
         .layer(CorsLayer::permissive());
 

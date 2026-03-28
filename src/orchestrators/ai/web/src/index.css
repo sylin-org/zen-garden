@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sage: #84a59d;
+  --color-clay: #d4a373;
+  --color-gold: #c4b060;
+  --color-vellum: #f4f2ee;
+  --color-ink: #1a1a1a;
+  --color-muted: #6b6b6b;
+  --color-fast: #22c55e;
+  --color-degraded: #eab308;
+  --color-vetoed: #f97316;
+  --color-blocked: #ef4444;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Grafana-inspired dark theme base */
+:root {
+  color-scheme: dark;
+}

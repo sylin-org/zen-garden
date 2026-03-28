@@ -222,6 +222,7 @@ async fn main() -> Result<()> {
 
     // ── Dashboard Server ────────────────────────────────────────
     let dashboard_app = Router::new()
+        .route("/", get(api::dashboard::get_dashboard))
         .route("/health", get(api::health::health))
         // Dashboard API
         .route("/api/status", get(api::dashboard::status))

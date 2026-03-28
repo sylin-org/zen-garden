@@ -76,7 +76,19 @@ const PROVIDERS: &[ProviderDef] = &[
 pub fn register_cloud_providers() -> Vec<Arc<dyn Offering>> {
     let mut providers = Vec::new();
 
+    // Anthropic gets its own adapter with Messages API translation.
+    if let Some(anthropic) = super::anthropic::AnthropicOffering::from_env() {
+        tracing::info!("cloud provider registered: Anthropic (Messages API)");
+        providers.push(Arc::new(anthropic) as Arc<dyn Offering>);
+    }
+
+    // All other providers use the generic OpenAI-compatible adapter.
     for def in PROVIDERS {
+        // Skip Anthropic — handled above with dedicated adapter.
+        if def.kind == OfferingKind::Anthropic {
+            continue;
+        }
+
         if let Some(offering) = CloudProviderOffering::from_env(
             def.kind,
             def.capabilities.to_vec(),

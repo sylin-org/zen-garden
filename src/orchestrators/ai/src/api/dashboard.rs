@@ -2,6 +2,7 @@
 
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use futures_util::stream::Stream;
@@ -10,6 +11,14 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::app_state::AppState;
+
+/// Embedded dashboard SPA — compiled into the binary.
+const DASHBOARD_HTML: &str = include_str!("../../assets/dashboard.html");
+
+/// `GET /` — serve the dashboard SPA.
+pub async fn get_dashboard() -> Html<&'static str> {
+    Html(DASHBOARD_HTML)
+}
 
 /// `GET /api/status` — full orchestrator snapshot (from watch channel).
 pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {

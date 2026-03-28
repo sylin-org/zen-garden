@@ -27,6 +27,7 @@
 //!
 //! A provider with no API key is silently skipped (not registered).
 
+pub mod anthropic;
 pub mod openai_compat;
 
 use std::time::Duration;

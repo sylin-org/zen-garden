@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zen Garden AI Orchestrator</title>
+<style>
+:root {
+  --bg: #f4f2ee; --bg-card: rgba(255,255,255,0.72); --text: #1a1a1a; --text-muted: #6b6b6b;
+  --accent: #84a59d; --accent2: #d4a373; --gold: #c4b060; --border: rgba(0,0,0,0.08);
+  --radius: 12px; --shadow: 0 2px 12px rgba(0,0,0,0.06);
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a1a; --bg-card: rgba(40,40,40,0.82); --text: #e8e4de; --text-muted: #999;
+    --border: rgba(255,255,255,0.08); --shadow: 0 2px 12px rgba(0,0,0,0.3);
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+.app { display: flex; min-height: 100vh; }
+nav { width: 220px; padding: 20px 16px; border-right: 1px solid var(--border); position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+nav h1 { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+nav .sub { font-size: 11px; color: var(--text-muted); margin-bottom: 20px; }
+nav a { display: block; padding: 6px 10px; border-radius: 6px; color: var(--text-muted); text-decoration: none; font-size: 13px; margin-bottom: 2px; }
+nav a:hover, nav a.active { background: var(--border); color: var(--text); }
+main { flex: 1; padding: 24px 32px; max-width: 1200px; }
+.banner { background: #e74c3c; color: #fff; padding: 8px 16px; text-align: center; font-size: 13px; border-radius: var(--radius); margin-bottom: 16px; display: none; }
+.banner.visible { display: block; }
+section { margin-bottom: 32px; }
+h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.card { background: var(--bg-card); backdrop-filter: blur(14px); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.card .meta { font-size: 12px; color: var(--text-muted); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.badge.healthy { background: #d4edda; color: #155724; }
+.badge.unhealthy { background: #f8d7da; color: #721c24; }
+.badge.profiling { background: #fff3cd; color: #856404; }
+.badge.cap { background: rgba(132,165,157,0.15); color: var(--accent); }
+.stat-row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 13px; }
+.stat-row .label { color: var(--text-muted); }
+.stat-row .value { font-weight: 500; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); font-weight: 600; color: var(--text-muted); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.activity { max-height: 300px; overflow-y: auto; font-size: 12px; font-family: monospace; background: var(--bg-card); border-radius: var(--radius); padding: 12px; border: 1px solid var(--border); }
+.activity .line { padding: 2px 0; border-bottom: 1px solid var(--border); }
+.activity .time { color: var(--text-muted); margin-right: 8px; }
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.metric-card { text-align: center; }
+.metric-card .val { font-size: 28px; font-weight: 700; color: var(--accent); }
+.metric-card .lbl { font-size: 12px; color: var(--text-muted); }
+.empty { color: var(--text-muted); font-size: 13px; font-style: italic; padding: 12px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+<nav>
+  <h1>AI Orchestrator</h1>
+  <div class="sub" id="navVersion"></div>
+  <a href="#overview">Overview</a>
+  <a href="#instances">Instances</a>
+  <a href="#capabilities">Capabilities</a>
+  <a href="#offerings">Offerings</a>
+  <a href="#models">Models</a>
+  <a href="#recommendations">Recommendations</a>
+  <a href="#metrics">Metrics</a>
+  <a href="#jobs">Jobs</a>
+  <a href="#activity">Activity</a>
+</nav>
+<main>
+  <div class="banner" id="banner">Disconnected from orchestrator</div>
+
+  <section id="overview">
+    <h2>Overview</h2>
+    <div class="metrics-grid" id="overviewGrid"></div>
+  </section>
+
+  <section id="instances">
+    <h2>Instances</h2>
+    <div class="grid" id="instancesGrid"></div>
+  </section>
+
+  <section id="capabilities">
+    <h2>Capabilities</h2>
+    <div class="grid" id="capsGrid"></div>
+  </section>
+
+  <section id="offerings">
+    <h2>Registered Offerings</h2>
+    <div class="grid" id="offeringsGrid"></div>
+  </section>
+
+  <section id="models">
+    <h2>Known Models</h2>
+    <div id="modelsTable"></div>
+  </section>
+
+  <section id="recommendations">
+    <h2>Recommendations</h2>
+    <div class="grid" id="recsGrid"></div>
+  </section>
+
+  <section id="metrics">
+    <h2>Metrics</h2>
+    <div class="metrics-grid" id="metricsGrid"></div>
+  </section>
+
+  <section id="jobs">
+    <h2>Background Jobs</h2>
+    <div id="jobsTable"></div>
+  </section>
+
+  <section id="activity">
+    <h2>Activity</h2>
+    <div class="activity" id="activityLog"></div>
+  </section>
+</main>
+</div>
+
+<script>
+let state = null;
+let connected = false;
+let activityRing = [];
+const MAX_ACTIVITY = 100;
+
+async function refresh() {
+  try {
+    const resp = await fetch('/api/status');
+    if (!resp.ok) throw new Error(resp.statusText);
+    state = await resp.json();
+    connected = true;
+    document.getElementById('banner').classList.remove('visible');
+    render();
+  } catch (e) {
+    if (connected) {
+      connected = false;
+      document.getElementById('banner').classList.add('visible');
+    }
+  }
+}
+
+function render() {
+  if (!state) return;
+  const o = state.orchestrator || {};
+  document.getElementById('navVersion').textContent = `v${o.version || '?'} · ${o.instances_discovered || 0} instances`;
+
+  // Overview
+  document.getElementById('overviewGrid').innerHTML = [
+    mc(o.offerings_registered || 0, 'Offerings'),
+    mc(o.instances_discovered || 0, 'Instances'),
+    mc(o.models_known || 0, 'Models'),
+    mc(formatDur(o.uptime_secs || 0), 'Uptime'),
+  ].join('');
+
+  // Instances
+  const instances = state.instances || [];
+  document.getElementById('instancesGrid').innerHTML = instances.length === 0
+    ? '<div class="empty">No instances discovered yet</div>'
+    : instances.map(i => `<div class="card">
+        <h3>${esc(i.stone?.name || '?')}</h3>
+        <div class="meta">${esc(i.kind)} · ${esc(i.endpoint)}</div>
+        <div style="margin:8px 0"><span class="badge ${healthClass(i.health)}">${healthLabel(i.health)}</span></div>
+        ${i.capabilities ? i.capabilities.map(c => `<span class="badge cap">${esc(c)}</span> `).join('') : ''}
+        <div class="stat-row"><span class="label">Models</span><span class="value">${i.models_available || 0}</span></div>
+        <div class="stat-row"><span class="label">Queue</span><span class="value">${i.queue_depth || 0}</span></div>
+        <div class="stat-row"><span class="label">Priority</span><span class="value">${i.priority || 0}</span></div>
+      </div>`).join('');
+
+  // Capabilities
+  const caps = {};
+  instances.forEach(i => (i.capabilities || []).forEach(c => {
+    if (!caps[c]) caps[c] = 0;
+    if (healthLabel(i.health) === 'healthy') caps[c]++;
+  }));
+  document.getElementById('capsGrid').innerHTML = Object.keys(caps).length === 0
+    ? '<div class="empty">No capabilities available</div>'
+    : Object.entries(caps).map(([c, n]) => `<div class="card"><h3>${esc(c)}</h3><div class="meta">${n} healthy instance${n !== 1 ? 's' : ''}</div></div>`).join('');
+
+  // Offerings
+  const oc = state.offering_counts || {};
+  document.getElementById('offeringsGrid').innerHTML = Object.keys(oc).length === 0
+    ? '<div class="empty">No offerings discovered</div>'
+    : Object.entries(oc).map(([k, v]) => `<div class="card"><h3>${esc(k)}</h3><div class="meta">${v} instance${v !== 1 ? 's' : ''}</div></div>`).join('');
+
+  // Models
+  const models = Object.keys(state.orchestrator?.models_known ? {} : {});
+  document.getElementById('modelsTable').innerHTML = instances.length === 0
+    ? '<div class="empty">No models known</div>'
+    : '<table><thead><tr><th>Instance</th><th>Models Available</th><th>Loaded</th></tr></thead><tbody>'
+      + instances.map(i => `<tr><td>${esc(i.stone?.name || '?')}</td><td>${i.models_available || 0}</td><td>${i.models_loaded || 0}</td></tr>`).join('')
+      + '</tbody></table>';
+
+  // Recommendations
+  const recs = state.recommended_models || {};
+  document.getElementById('recsGrid').innerHTML = Object.keys(recs).length === 0
+    ? '<div class="empty">No recommendations computed yet</div>'
+    : Object.entries(recs).map(([cap, model]) => `<div class="card"><h3>${esc(cap)}</h3><div class="meta">${esc(model)}</div></div>`).join('');
+
+  // Metrics
+  const m = state.metrics || {};
+  document.getElementById('metricsGrid').innerHTML = [
+    mc(fmtNum(m.requests_total || 0), 'Requests'),
+    mc(fmtNum(m.tokens_in_total || 0), 'Tokens In'),
+    mc(fmtNum(m.tokens_out_total || 0), 'Tokens Out'),
+    mc(fmtNum(m.errors_total || 0), 'Errors'),
+  ].join('');
+
+  // Jobs
+  const jobs = state.jobs || [];
+  document.getElementById('jobsTable').innerHTML = jobs.length === 0
+    ? '<div class="empty">No recent jobs</div>'
+    : '<table><thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Detail</th></tr></thead><tbody>'
+      + jobs.map(j => `<tr><td>${esc(j.id)}</td><td>${esc(j.kind)}</td><td>${esc(j.status)}</td><td>${esc(j.detail || '')}</td></tr>`).join('')
+      + '</tbody></table>';
+
+  // Activity
+  renderActivity();
+}
+
+function connectSSE() {
+  const es = new EventSource('/api/events');
+  es.onmessage = (ev) => {
+    try {
+      const d = JSON.parse(ev.data);
+      addActivity(d.event_type || 'event', d.data || '');
+    } catch (_) {
+      addActivity('event', ev.data);
+    }
+  };
+  es.onerror = () => { es.close(); setTimeout(connectSSE, 5000); };
+}
+
+function addActivity(type, data) {
+  const now = new Date().toLocaleTimeString();
+  activityRing.push({ time: now, type, data });
+  if (activityRing.length > MAX_ACTIVITY) activityRing.shift();
+  renderActivity();
+}
+
+function renderActivity() {
+  const el = document.getElementById('activityLog');
+  el.innerHTML = activityRing.slice().reverse().map(a =>
+    `<div class="line"><span class="time">${a.time}</span><strong>${esc(a.type)}</strong> ${esc(typeof a.data === 'string' ? a.data : JSON.stringify(a.data))}</div>`
+  ).join('');
+}
+
+function mc(val, label) { return `<div class="card metric-card"><div class="val">${val}</div><div class="lbl">${label}</div></div>`; }
+function esc(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
+function fmtNum(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n); }
+function formatDur(s) { const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return h > 0 ? `${h}h ${m}m` : `${m}m`; }
+function healthClass(h) { if (!h) return 'profiling'; if (typeof h === 'string') return h.toLowerCase(); if (h.status) return h.status.toLowerCase(); return h.Healthy ? 'healthy' : h.Unhealthy ? 'unhealthy' : 'profiling'; }
+function healthLabel(h) { if (!h) return 'profiling'; if (typeof h === 'string') return h.toLowerCase(); if (h === 'Healthy' || h.Healthy !== undefined) return 'healthy'; if (h === 'Unhealthy' || h.Unhealthy !== undefined) return 'unhealthy'; return 'profiling'; }
+
+setInterval(refresh, 2500);
+refresh();
+connectSSE();
+</script>
+</body>
+</html>

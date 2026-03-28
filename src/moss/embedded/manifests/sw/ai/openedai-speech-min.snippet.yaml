@@ -1,4 +1,4 @@
-container_name: openedai-speech
+container_name: openedai-speech-min
 image: ghcr.io/matatonic/openedai-speech-min:latest
 ports:
   default: [8001, 8000]

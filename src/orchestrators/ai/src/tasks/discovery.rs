@@ -174,19 +174,25 @@ fn handle_tool_event(state: AppState, event: orchestrator_common::tools_stream::
             });
         }
         ToolStreamEvent::OfferingRemoved {
+            stone_id: _,
             stone_name,
-            ..
         } => {
-            tracing::info!(stone = %stone_name, "SSE: AI instance removed");
+            // Note: ToolStreamEvent::OfferingRemoved does not carry tool_fqid,
+            // so we cannot distinguish which offering was removed on a multi-
+            // offering stone. We remove ALL AI instances for this stone.
+            // This is the same behavior as the Ollama orchestrator — the
+            // topology refresh loop will re-discover any that are still alive.
+            tracing::info!(stone = %stone_name, "SSE: AI instance(s) removed");
             tokio::spawn(async move {
-                let endpoint = {
+                let endpoints: Vec<String> = {
                     let instances = state.instances.read().await;
                     instances
                         .values()
-                        .find(|i| i.stone.name == stone_name)
+                        .filter(|i| i.stone.name == stone_name)
                         .map(|i| i.endpoint.clone())
+                        .collect()
                 };
-                if let Some(ep) = endpoint {
+                for ep in endpoints {
                     state.remove_instance(&ep).await;
                 }
             });
@@ -355,9 +361,11 @@ async fn profile_and_register(
     let offering = match state.catalog.get(kind) {
         Some(o) => o.clone(),
         None => {
-            tracing::debug!(
+            tracing::warn!(
                 offering = ?kind,
-                "no adapter registered for offering type, skipping"
+                stone = %stone_name,
+                endpoint = %endpoint,
+                "discovered AI instance but no adapter registered — offering type not yet supported by this orchestrator version"
             );
             return;
         }

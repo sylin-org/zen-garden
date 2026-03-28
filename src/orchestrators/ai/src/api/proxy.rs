@@ -143,13 +143,21 @@ fn build_response(proxy: crate::catalog::ProxyResponse) -> Response {
         builder = builder.header(key.as_str(), value.as_str());
     }
 
-    match proxy.body {
-        crate::catalog::ProxyBody::Complete(bytes) => {
-            builder.body(Body::from(bytes)).unwrap_or_default()
-        }
+    let build_result = match proxy.body {
+        crate::catalog::ProxyBody::Complete(bytes) => builder.body(Body::from(bytes)),
         crate::catalog::ProxyBody::Stream(stream) => {
-            let body = Body::from_stream(stream);
-            builder.body(body).unwrap_or_default()
+            builder.body(Body::from_stream(stream))
+        }
+    };
+
+    match build_result {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to build proxy response");
+            Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Body::from("proxy response build error"))
+                .expect("static error response")
         }
     }
 }

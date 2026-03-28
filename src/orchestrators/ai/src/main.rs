@@ -198,11 +198,21 @@ async fn main() -> Result<()> {
         )
         .route("/api/offerings", get(api::dashboard::offerings))
         .route("/api/jobs", get(api::dashboard::jobs))
+        // Metrics
         .route("/api/metrics/reset", post(api::dashboard::reset_metrics))
         .route(
             "/api/metrics/model-counters/reset",
             post(api::dashboard::reset_model_counters),
         )
+        // Model management (dashboard variants)
+        .route("/api/management/pull", post(api::management::ollama_pull))
+        .route("/api/management/delete", post(api::management::ollama_delete))
+        .route("/api/management/feasibility", get(api::benchmark_api::management_feasibility))
+        // Benchmark
+        .route("/api/benchmark/start", post(api::benchmark_api::start_benchmark))
+        .route("/api/benchmark/cancel", post(api::benchmark_api::cancel_benchmark))
+        .route("/api/benchmark/results", get(api::benchmark_api::benchmark_results))
+        .route("/api/benchmark/export", get(api::benchmark_api::benchmark_export))
         .with_state(state.clone())
         .layer(CorsLayer::permissive());
 

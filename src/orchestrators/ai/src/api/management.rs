@@ -67,26 +67,16 @@ pub async fn ollama_pull(
         }
     };
 
-    // Consume the pull stream and collect into bytes.
-    // The Ollama pull stream is NDJSON progress events — typically small.
-    // For a production pull proxy, this should stream through; for now
-    // we collect to avoid lifetime issues with the stream capturing &str.
+    // Stream the pull progress directly to the client (§20 — no unbounded
+    // accumulation). The pull stream is NDJSON progress events for multi-GB
+    // model downloads — must not be buffered in memory.
     use futures_util::StreamExt;
     match OLLAMA_CLIENT.pull_model(&endpoint, &model).await {
-        Ok(mut stream) => {
-            let mut chunks = Vec::new();
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(bytes) => chunks.push(bytes),
-                    Err(e) => {
-                        return (StatusCode::BAD_GATEWAY, e.to_string()).into_response();
-                    }
-                }
-            }
-            let body_bytes: Vec<u8> = chunks.into_iter().flat_map(|b| b.to_vec()).collect();
+        Ok(stream) => {
+            let mapped = stream.map(|r| r.map_err(|e| std::io::Error::other(e.to_string())));
             Response::builder()
                 .header("content-type", "application/x-ndjson")
-                .body(Body::from(body_bytes))
+                .body(Body::from_stream(mapped))
                 .unwrap_or_default()
         }
         Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),

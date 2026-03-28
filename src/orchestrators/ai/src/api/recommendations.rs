@@ -9,15 +9,10 @@ use axum::Json;
 
 use crate::app_state::AppState;
 
-/// `GET /v1/recommendations` — all capability recommendations.
-pub async fn list_recommendations(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
-    let recommended = state.recommended_models.read().await;
-    Json(serde_json::json!({ "recommendations": *recommended }))
-}
-
-/// `GET /v1/recommendations?capability={cap}` — single capability.
+/// `GET /v1/recommendations` — all recommendations, or filtered by `?capability=`.
+///
+/// Without query param: returns full capability→model map.
+/// With `?capability=chat`: returns single capability recommendation.
 pub async fn get_recommendation(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,

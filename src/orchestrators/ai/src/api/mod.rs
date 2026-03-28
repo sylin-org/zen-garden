@@ -1,5 +1,6 @@
 //! HTTP handlers.
 
+pub mod benchmark_api;
 pub mod compat;
 pub mod dashboard;
 pub mod extension;

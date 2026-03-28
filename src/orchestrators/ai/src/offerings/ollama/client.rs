@@ -136,7 +136,7 @@ impl OllamaClient {
         &self,
         endpoint: &str,
         model: &str,
-    ) -> Result<impl futures_util::Stream<Item = Result<Bytes, reqwest::Error>>> {
+    ) -> Result<impl futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + use<>> {
         let resp = self
             .http
             .post(format!("{endpoint}/api/pull"))

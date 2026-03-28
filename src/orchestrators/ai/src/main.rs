@@ -18,7 +18,13 @@ use zen_garden_ai_orchestrator::api;
 use zen_garden_ai_orchestrator::app_state::AppState;
 use zen_garden_ai_orchestrator::catalog::OfferingRegistry;
 use zen_garden_ai_orchestrator::domain::types::RouterConfig;
+use zen_garden_ai_orchestrator::offerings::comfyui::ComfyUiOffering;
+use zen_garden_ai_orchestrator::offerings::infinity::InfinityOffering;
+use zen_garden_ai_orchestrator::offerings::libretranslate::LibreTranslateOffering;
 use zen_garden_ai_orchestrator::offerings::ollama::OllamaOffering;
+use zen_garden_ai_orchestrator::offerings::openedai_speech::OpenedaiSpeechOffering;
+use zen_garden_ai_orchestrator::offerings::speaches::SpeachesOffering;
+use zen_garden_ai_orchestrator::offerings::whispercpp::WhisperCppOffering;
 use zen_garden_ai_orchestrator::tasks;
 
 #[derive(Parser, Debug)]
@@ -62,8 +68,12 @@ async fn main() -> Result<()> {
     // ── Offering Catalog ────────────────────────────────────────
     let mut catalog = OfferingRegistry::new();
     catalog.register(Arc::new(OllamaOffering::new()));
-    // Future: catalog.register(Arc::new(ComfyUiOffering::new()));
-    // Future: catalog.register(Arc::new(SpeachesOffering::new()));
+    catalog.register(Arc::new(ComfyUiOffering::new()));
+    catalog.register(Arc::new(WhisperCppOffering::new()));
+    catalog.register(Arc::new(SpeachesOffering::new()));
+    catalog.register(Arc::new(OpenedaiSpeechOffering::new()));
+    catalog.register(Arc::new(InfinityOffering::new()));
+    catalog.register(Arc::new(LibreTranslateOffering::new()));
 
     tracing::info!(
         offerings = catalog.len(),
@@ -123,6 +133,13 @@ async fn main() -> Result<()> {
     let flush_shutdown = shutdown.clone();
     tokio::spawn(async move {
         tasks::metrics_flush::run(flush_state, flush_shutdown).await;
+    });
+
+    // Reconciliation: periodic drift detection on all instances.
+    let reconcile_state = state.clone();
+    let reconcile_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tasks::reconciliation::run(reconcile_state, reconcile_shutdown).await;
     });
 
     // ── Proxy Server ────────────────────────────────────────────

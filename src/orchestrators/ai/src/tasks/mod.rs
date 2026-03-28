@@ -8,13 +8,13 @@ pub mod discovery;
 pub mod health_check;
 pub mod metrics_flush;
 pub mod metrics_processor;
+pub mod reconciliation;
 
-// Phase 2+:
+// Phase 3+:
 // pub mod advisor;
 // pub mod benchmark;
 // pub mod cloud_sync;
 // pub mod gateway_announce;
 // pub mod placement;
-// pub mod reconciliation;
 // pub mod resource_sync;
 // pub mod snapshot_publisher;

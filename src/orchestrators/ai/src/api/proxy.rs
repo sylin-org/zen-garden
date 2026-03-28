@@ -80,6 +80,13 @@ pub async fn proxy_handler(
         }
     };
 
+    // ── Lease management ──────────────────────────────────────────
+    if decision.lease_acquired {
+        let now = std::time::Instant::now();
+        let mut leases = state.leases.write().await;
+        leases.acquire(&decision.endpoint, &decision.model, now);
+    }
+
     // ── Increment queue depth ───────────────────────────────────
     let counter = state.queue_counter(&decision.endpoint).await;
     counter.fetch_add(1, Ordering::Relaxed);

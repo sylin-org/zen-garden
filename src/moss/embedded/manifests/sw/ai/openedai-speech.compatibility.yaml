@@ -1,0 +1,41 @@
+version: "1"
+
+compatibility_rules:
+  - name: "no-gpu-xtts-warning"
+    condition:
+      requires_ai_any: ['cuda']
+    reason: "XTTS v2 requires an NVIDIA GPU (~4GB VRAM). Piper voices work on CPU."
+    suggestion: "Use the minimal image (openedai-speech-min) for CPU-only Piper TTS."
+    warn_only: true
+
+  - name: "low-vram-warning"
+    condition:
+      vram_mb_less_than: 4096
+    reason: "XTTS v2 requires ~4GB VRAM for voice synthesis"
+    suggestion: "Use the Piper backend (CPU-only, minimal image) or a GPU with 4GB+ VRAM"
+    warn_only: true
+
+  - name: "insufficient-memory"
+    condition:
+      memory_mb_less_than: 4096
+    reason: "XTTS v2 requires at least 4GB RAM (8GB recommended)"
+    suggestion: "Use the minimal image with Piper backend (~1GB RAM) or increase memory"
+
+  - name: "arm32-not-supported"
+    condition:
+      architectures: ["armv7l", "armv6l"]
+    reason: "OpenedAI Speech Docker images require amd64"
+    suggestion: "Use amd64 hardware"
+
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 60
+  patterns:
+    - pattern: "CUDA.*error|cuda.*fail"
+      reason: "GPU initialization failed"
+      suggestion: "Use the minimal image (-min) for CPU-only Piper TTS"
+
+    - pattern: "Cannot allocate memory|OOM"
+      reason: "Insufficient memory for XTTS v2 model"
+      suggestion: "Use the minimal image with Piper backend"

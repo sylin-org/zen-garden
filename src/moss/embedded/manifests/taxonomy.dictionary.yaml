@@ -37,11 +37,38 @@ map:
   ml: ai
   models: ai
   inference: ai
+  comfyui: image-generation
+  comfy: image-generation
+  stable-diffusion: image-generation
+  sdxl: image-generation
+  flux: image-generation
+  txt2img: image-generation
+  img2img: image-generation
+
+  whisper: speech-to-text
+  stt: speech-to-text
+  transcription: speech-to-text
+  transcribe: speech-to-text
+  speaches: speech-to-text
+
+  tts: text-to-speech
+  speech: text-to-speech
+  voice: text-to-speech
+  openedai-speech: text-to-speech
+
+  translate: translation
+  translation: translation
+  libretranslate: translation
+  libre-translate: translation
+
+  rerank: reranking
+  reranking: reranking
 
   vectordb: vector
   vector-db: vector
   embeddings: embeddings
   embedding: embeddings
+  infinity: embeddings
 
   # Preferences (stone-level)
   ssd: ssd

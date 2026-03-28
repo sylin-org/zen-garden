@@ -1,0 +1,31 @@
+{
+  "name": "openedai-speech",
+  "description": "OpenedAI Speech — OpenAI-compatible text-to-speech with XTTS v2 and Piper (AGPL-3.0)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "tts",
+    "text-to-speech",
+    "voice",
+    "xtts",
+    "piper",
+    "openai-compatible",
+    "gpu"
+  ],
+  "port": 8001,
+  "volumes": ["openedai-speech-voices", "openedai-speech-config"],
+  "gpu_recommended": true,
+  "minimum_memory_gb": 4,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "openedai-speech",
+    "restart_required": true,
+    "vars": [
+      "TTS_HOME",
+      "PRELOAD_MODEL",
+      "EXTRA_ARGS"
+    ]
+  }
+}

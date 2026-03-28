@@ -1,0 +1,29 @@
+{
+  "name": "comfyui",
+  "description": "ComfyUI node-based image generation with Stable Diffusion, Flux, and more (GPL-3.0)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "image-generation",
+    "stable-diffusion",
+    "flux",
+    "comfyui",
+    "gpu",
+    "cuda"
+  ],
+  "port": 8188,
+  "volumes": ["comfyui-data", "comfyui-venv"],
+  "gpu_recommended": true,
+  "minimum_memory_gb": 8,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "comfyui",
+    "restart_required": true,
+    "vars": [
+      "SECURITY_LEVEL",
+      "USE_UV"
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "speaches",
+  "description": "Speaches — OpenAI-compatible speech-to-text and text-to-speech server (MIT)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "stt",
+    "tts",
+    "whisper",
+    "speech-to-text",
+    "text-to-speech",
+    "transcription",
+    "openai-compatible"
+  ],
+  "port": 8000,
+  "volumes": ["speaches-models"],
+  "gpu_recommended": true,
+  "minimum_memory_gb": 4,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "speaches",
+    "restart_required": true,
+    "vars": [
+      "WHISPER__MODEL",
+      "WHISPER__INFERENCE_DEVICE",
+      "WHISPER__COMPUTE_TYPE",
+      "WHISPER__NUM_WORKERS",
+      "STT_MODEL_TTL",
+      "TTS_MODEL_TTL",
+      "PRELOAD_MODELS",
+      "LOG_LEVEL",
+      "ENABLE_UI"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "openedai-speech-min",
+  "description": "OpenedAI Speech — Piper TTS only (CPU, no GPU required, ~860MB image)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "tts",
+    "text-to-speech",
+    "voice",
+    "piper",
+    "openai-compatible",
+    "cpu",
+    "lightweight"
+  ],
+  "port": 8001,
+  "volumes": ["openedai-speech-voices", "openedai-speech-config"],
+  "gpu_recommended": false,
+  "minimum_memory_gb": 1,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  }
+}

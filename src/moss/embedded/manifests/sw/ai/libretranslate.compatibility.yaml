@@ -1,0 +1,35 @@
+version: "1"
+
+compatibility_rules:
+  - name: "insufficient-memory"
+    condition:
+      memory_mb_less_than: 2048
+    reason: "LibreTranslate requires 2GB+ RAM; more languages need more memory"
+    suggestion: "Reduce languages with LT_LOAD_ONLY or increase memory to 4GB+"
+
+  - name: "low-memory-warning"
+    condition:
+      memory_mb_less_than: 4096
+    reason: "Loading all languages requires 4-8GB RAM"
+    suggestion: "Use LT_LOAD_ONLY to limit languages (e.g., 'en,fr,de,es')"
+    warn_only: true
+
+  - name: "slow-startup-warning"
+    condition:
+      memory_mb_less_than: 8192
+    reason: "First startup downloads language models (~100-200MB per language pair)"
+    suggestion: "Initial startup may take 5-15 minutes depending on selected languages and network speed"
+    warn_only: true
+
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 180
+  patterns:
+    - pattern: "Cannot allocate memory|MemoryError"
+      reason: "Insufficient memory for language models"
+      suggestion: "Reduce languages: set LT_LOAD_ONLY to fewer language codes"
+
+    - pattern: "Connection.*refused|Download.*failed"
+      reason: "Language model download failed"
+      suggestion: "Check internet connectivity. For offline use, build image with --build-arg with_models=true"

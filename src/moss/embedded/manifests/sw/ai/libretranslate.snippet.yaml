@@ -1,0 +1,22 @@
+container_name: libretranslate
+image: libretranslate/libretranslate:latest
+ports:
+  default: [5000, 5000]
+volumes:
+  - libretranslate-models:/home/libretranslate/.local
+  - libretranslate-db:/app/db
+environment:
+  LT_LOAD_ONLY: "en,fr,de,es,pt,it,ja,zh,ko,ru"
+  LT_UPDATE_MODELS: "false"
+  LT_THREADS: "4"
+  LT_CHAR_LIMIT: "5000"
+  LT_DISABLE_WEB_UI: "false"
+healthcheck:
+  test: ["CMD", "python", "scripts/healthcheck.py"]
+  interval: 30s
+  timeout: 10s
+  retries: 4
+  start_period: 120s
+restart: unless-stopped
+networks:
+  - zen-garden

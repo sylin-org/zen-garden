@@ -1,0 +1,40 @@
+version: "1"
+
+compatibility_rules:
+  - name: "no-gpu-info"
+    condition:
+      requires_ai_any: ['cuda']
+    reason: "Infinity performs best with GPU acceleration for embedding throughput"
+    suggestion: "Use the CPU image (infinity:latest-cpu) with --engine optimum for CPU-only deployment."
+    warn_only: true
+
+  - name: "low-vram-warning"
+    condition:
+      vram_mb_less_than: 1024
+    reason: "Most embedding models require 512MB-2GB VRAM"
+    suggestion: "Use smaller models (BAAI/bge-small-en-v1.5 ~130MB) or CPU mode"
+    warn_only: true
+
+  - name: "insufficient-memory"
+    condition:
+      memory_mb_less_than: 2048
+    reason: "Infinity with loaded models requires at least 2GB RAM"
+    suggestion: "Increase stone memory or use a single small model"
+
+  - name: "arm32-not-supported"
+    condition:
+      architectures: ["armv7l", "armv6l"]
+    reason: "Infinity Docker images require amd64 or arm64"
+
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 120
+  patterns:
+    - pattern: "CUDA.*error|cuda.*fail"
+      reason: "GPU initialization failed"
+      suggestion: "Use infinity:latest-cpu with --engine optimum"
+
+    - pattern: "Connection.*refused|Failed to download.*model"
+      reason: "Model download failed from HuggingFace"
+      suggestion: "Check internet connectivity. Pre-download models to the infinity-models volume."

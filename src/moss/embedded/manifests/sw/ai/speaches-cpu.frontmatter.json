@@ -1,0 +1,33 @@
+{
+  "name": "speaches-cpu",
+  "description": "Speaches — OpenAI-compatible speech-to-text (CPU-only, no GPU required)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "stt",
+    "whisper",
+    "speech-to-text",
+    "transcription",
+    "openai-compatible",
+    "cpu"
+  ],
+  "port": 8000,
+  "volumes": ["speaches-models"],
+  "gpu_recommended": false,
+  "minimum_memory_gb": 2,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "speaches",
+    "restart_required": true,
+    "vars": [
+      "WHISPER__MODEL",
+      "WHISPER__COMPUTE_TYPE",
+      "WHISPER__NUM_WORKERS",
+      "STT_MODEL_TTL",
+      "LOG_LEVEL",
+      "ENABLE_UI"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+container_name: speaches
+image: ghcr.io/speaches-ai/speaches:latest-cuda
+ports:
+  default: [8000, 8000]
+volumes:
+  - speaches-models:/home/ubuntu/.cache/huggingface/hub
+environment:
+  UVICORN_HOST: "0.0.0.0"
+  UVICORN_PORT: "8000"
+  WHISPER__MODEL: "Systran/faster-distil-whisper-small.en"
+  WHISPER__INFERENCE_DEVICE: "auto"
+  WHISPER__COMPUTE_TYPE: "default"
+  LOG_LEVEL: "info"
+  ENABLE_UI: "true"
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 60s
+restart: unless-stopped
+networks:
+  - zen-garden

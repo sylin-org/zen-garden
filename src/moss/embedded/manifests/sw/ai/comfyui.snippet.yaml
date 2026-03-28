@@ -1,0 +1,21 @@
+container_name: comfyui
+image: mmartial/comfyui-nvidia-docker:latest
+ports:
+  default: [8188, 8188]
+volumes:
+  - comfyui-data:/basedir
+  - comfyui-venv:/comfy/mnt
+environment:
+  WANTED_UID: "1000"
+  WANTED_GID: "1000"
+  SECURITY_LEVEL: "normal"
+  USE_UV: "true"
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8188/system_stats"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 120s
+restart: unless-stopped
+networks:
+  - zen-garden

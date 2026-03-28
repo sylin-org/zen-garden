@@ -1,0 +1,30 @@
+{
+  "name": "infinity-cpu",
+  "description": "Infinity — embedding and reranking server (CPU-only, no GPU required)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "embeddings",
+    "reranking",
+    "vector",
+    "semantic-search",
+    "openai-compatible",
+    "cpu"
+  ],
+  "port": 7997,
+  "volumes": ["infinity-models"],
+  "gpu_recommended": false,
+  "minimum_memory_gb": 2,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "infinity",
+    "restart_required": true,
+    "vars": [
+      "INFINITY_MODEL_ID",
+      "INFINITY_BATCH_SIZE",
+      "INFINITY_API_KEY"
+    ]
+  }
+}

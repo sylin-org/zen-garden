@@ -1,0 +1,35 @@
+{
+  "name": "libretranslate",
+  "description": "LibreTranslate — self-hosted machine translation (AGPL-3.0)",
+  "category": "ai",
+  "tags": [
+    "ai",
+    "translation",
+    "nlp",
+    "language",
+    "machine-translation",
+    "argos-translate"
+  ],
+  "port": 5000,
+  "volumes": ["libretranslate-models", "libretranslate-db"],
+  "gpu_recommended": false,
+  "minimum_memory_gb": 2,
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  },
+  "manageable_env": {
+    "service_name": "libretranslate",
+    "restart_required": true,
+    "vars": [
+      "LT_LOAD_ONLY",
+      "LT_UPDATE_MODELS",
+      "LT_THREADS",
+      "LT_CHAR_LIMIT",
+      "LT_REQ_LIMIT",
+      "LT_API_KEYS",
+      "LT_DISABLE_WEB_UI",
+      "LT_SUGGESTIONS",
+      "LT_DEBUG"
+    ]
+  }
+}

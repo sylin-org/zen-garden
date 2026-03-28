@@ -1,0 +1,18 @@
+container_name: openedai-speech
+image: ghcr.io/matatonic/openedai-speech-min:latest
+ports:
+  default: [8001, 8000]
+volumes:
+  - openedai-speech-voices:/app/voices
+  - openedai-speech-config:/app/config
+environment:
+  TTS_HOME: "voices"
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 30s
+restart: unless-stopped
+networks:
+  - zen-garden

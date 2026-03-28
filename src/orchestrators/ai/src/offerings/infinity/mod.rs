@@ -104,6 +104,7 @@ impl Offering for InfinityOffering {
                                 name,
                                 capabilities: self.capabilities().to_vec(),
                                 vram_bytes: None,
+                        is_loaded: false,
                                 metadata: serde_json::Value::Null,
                             })
                         })

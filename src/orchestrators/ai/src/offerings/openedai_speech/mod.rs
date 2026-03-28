@@ -112,6 +112,7 @@ impl Offering for OpenedaiSpeechOffering {
                                 name,
                                 capabilities: vec![Capability::Speak],
                                 vram_bytes: None,
+                        is_loaded: false,
                                 metadata: serde_json::Value::Null,
                             })
                         })

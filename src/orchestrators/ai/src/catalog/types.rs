@@ -49,8 +49,14 @@ pub struct ServiceModel {
     pub name: String,
     /// Capabilities this specific model supports.
     pub capabilities: Vec<Capability>,
-    /// VRAM consumption when loaded (bytes). `None` if unknown.
+    /// VRAM consumption in bytes. `None` if unknown.
+    /// This is a static estimate for most offerings. For Ollama, it is the
+    /// actual loaded VRAM from `/api/ps` when `is_loaded` is true.
     pub vram_bytes: Option<u64>,
+    /// Whether this model is currently resident in GPU VRAM.
+    /// Only Ollama (via `/api/ps`) can distinguish loaded vs. available.
+    /// Other offerings should set this to `false`.
+    pub is_loaded: bool,
     /// Offering-specific model metadata (param count, quant level, etc.).
     pub metadata: serde_json::Value,
 }

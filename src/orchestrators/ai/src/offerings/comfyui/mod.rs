@@ -133,6 +133,9 @@ impl Offering for ComfyUiOffering {
                 .send()
                 .await
                 .context("GET /models/checkpoints")?;
+            if !resp.status().is_success() {
+                anyhow::bail!("/models/checkpoints returned {}", resp.status());
+            }
             let filenames: Vec<String> = resp.json().await.context("parse checkpoints")?;
 
             let models = filenames
@@ -148,6 +151,7 @@ impl Offering for ComfyUiOffering {
                         name,
                         capabilities: vec![Capability::Imagine, Capability::Edit],
                         vram_bytes: None, // VRAM depends on checkpoint size
+                        is_loaded: false,
                         metadata: serde_json::json!({"display_name": display}),
                     }
                 })

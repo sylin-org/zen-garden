@@ -29,20 +29,45 @@ pub async fn proxy_handler(
 ) -> Response {
     let path = uri.path().to_string();
 
-    // ── Extract model from body ─────────────────────────────────
-    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
-    let model = parsed
-        .get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    if model.is_empty() {
-        return (StatusCode::BAD_REQUEST, "missing 'model' field").into_response();
-    }
-
     // ── Infer capability from path ──────────────────────────────
     let capability = capability_from_path(&path);
+
+    // ── Extract model from body ─────────────────────────────────
+    //
+    // JSON-body requests (Chat, Embed, Speak, Translate, Rerank):
+    //   model is in the JSON body's "model" field.
+    //
+    // Multipart requests (Transcribe via whisper.cpp/Speaches):
+    //   model may be absent — these services load a single model at
+    //   startup. Use a sentinel "whisper" so routing can match.
+    //
+    // ComfyUI workflow requests (Imagine, Edit, Render):
+    //   model is inside the workflow JSON. For raw forwarding, use
+    //   a sentinel "comfyui" and route by capability.
+    let model = {
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let from_json = parsed
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if !from_json.is_empty() {
+            from_json
+        } else {
+            // For multipart/capability-only requests, use a sentinel based
+            // on the capability so the routing engine can still match.
+            match capability {
+                Some(Capability::Transcribe) => "whisper".to_string(),
+                Some(Capability::Imagine | Capability::Edit | Capability::Render) => {
+                    "comfyui".to_string()
+                }
+                _ => {
+                    return (StatusCode::BAD_REQUEST, "missing 'model' field").into_response();
+                }
+            }
+        }
+    };
 
     // ── Route ───────────────────────────────────────────────────
     let mut instances = state.instances.read().await.clone();

@@ -106,10 +106,12 @@ impl Offering for OllamaOffering {
                         .get(info.name.as_str())
                         .map(|l| l.vram_bytes)
                         .or(info.vram_bytes);
+                    let is_loaded = loaded_map.contains_key(info.name.as_str());
                     ServiceModel {
                         name: info.name,
                         capabilities: caps,
                         vram_bytes: vram,
+                        is_loaded,
                         metadata: serde_json::json!({
                             "parameter_count": info.parameter_count,
                             "parameter_size": info.parameter_size,

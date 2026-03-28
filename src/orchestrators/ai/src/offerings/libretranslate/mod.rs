@@ -108,6 +108,7 @@ impl Offering for LibreTranslateOffering {
                         name: code.clone(),
                         capabilities: vec![Capability::Translate],
                         vram_bytes: None,
+                        is_loaded: false,
                         metadata: serde_json::json!({
                             "language_name": name,
                             "language_code": code,

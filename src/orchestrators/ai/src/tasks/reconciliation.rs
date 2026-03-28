@@ -57,8 +57,12 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
 
             let fresh_available: Vec<String> =
                 fresh_models.iter().map(|m| m.name.clone()).collect();
+            // Only models with is_loaded=true are resident in VRAM.
+            // Ollama sets this from /api/ps. Other offerings set false
+            // (static estimate, not runtime state).
             let fresh_loaded: Vec<crate::domain::types::LoadedModel> = fresh_models
                 .iter()
+                .filter(|m| m.is_loaded)
                 .filter_map(|m| {
                     m.vram_bytes.map(|vram| crate::domain::types::LoadedModel {
                         name: m.name.clone(),

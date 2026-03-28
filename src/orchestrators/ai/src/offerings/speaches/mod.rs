@@ -88,6 +88,7 @@ impl Offering for SpeachesOffering {
                 name: "whisper".to_string(),
                 capabilities: vec![Capability::Transcribe],
                 vram_bytes: None,
+                        is_loaded: false,
                 metadata: serde_json::json!({
                     "note": "Speaches loads models per-request from HuggingFace"
                 }),
@@ -123,12 +124,16 @@ impl Offering for SpeachesOffering {
                 .iter()
                 .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
                 .collect();
-            let body = resp.bytes().await.context("read response body")?;
+            // Speaches TTS responses are streaming audio — forward as stream
+            // to avoid buffering entire audio into memory (§20).
+            let stream = resp.bytes_stream();
+            let mapped: std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<bytes::Bytes, anyhow::Error>> + Send>> =
+                Box::pin(futures_util::StreamExt::map(stream, |r| r.map_err(|e| anyhow::anyhow!(e))));
 
             Ok(ProxyResponse {
                 status,
                 headers,
-                body: ProxyBody::Complete(body),
+                body: ProxyBody::Stream(mapped),
             })
         })
     }

@@ -96,6 +96,7 @@ impl Offering for WhisperCppOffering {
                 name: "whisper".to_string(),
                 capabilities: vec![Capability::Transcribe],
                 vram_bytes: None,
+                        is_loaded: false,
                 metadata: serde_json::json!({
                     "note": "whisper.cpp loads one model at startup; model identity not queryable via API"
                 }),

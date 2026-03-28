@@ -9,7 +9,7 @@ mod traits;
 mod types;
 
 pub use registry::OfferingRegistry;
-pub use traits::Offering;
+pub use traits::{BoxFuture, Offering};
 pub use types::{
     BenchmarkSample, DiscoveryConfig, ProbeResult, ProxyBody, ProxyRequest, ProxyResponse,
     Sample, ServiceModel, SyncProgress,

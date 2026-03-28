@@ -14,7 +14,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1a1a1a; --bg-card: rgba(40,40,40,0.82); --text: #e8e4de; --text-muted: #999;
-    --border: rgba(255,255,255,0.08); --shadow: 0 2px 12px rgba(0,0,0,0.3);
+    --accent: #9dbfb5; --accent2: #e0b88a; --border: rgba(255,255,255,0.08);
+    --shadow: 0 2px 12px rgba(0,0,0,0.3);
   }
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -31,9 +32,9 @@ main { flex: 1; padding: 24px 32px; max-width: 1200px; }
 section { margin-bottom: 32px; }
 h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.card { background: var(--bg-card); backdrop-filter: blur(14px); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
-.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
-.card .meta { font-size: 12px; color: var(--text-muted); }
+.card { background: var(--bg-card); backdrop-filter: blur(14px); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); overflow: hidden; }
+.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .meta { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
 .badge.healthy { background: #d4edda; color: #155724; }
 .badge.unhealthy { background: #f8d7da; color: #721c24; }
@@ -44,7 +45,7 @@ h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text);
 .stat-row .value { font-weight: 500; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); font-weight: 600; color: var(--text-muted); }
-td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity { max-height: 300px; overflow-y: auto; font-size: 12px; font-family: monospace; background: var(--bg-card); border-radius: var(--radius); padding: 12px; border: 1px solid var(--border); }
 .activity .line { padding: 2px 0; border-bottom: 1px solid var(--border); }
 .activity .time { color: var(--text-muted); margin-right: 8px; }
@@ -53,13 +54,15 @@ td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .metric-card .val { font-size: 28px; font-weight: 700; color: var(--accent); }
 .metric-card .lbl { font-size: 12px; color: var(--text-muted); }
 .empty { color: var(--text-muted); font-size: 13px; font-style: italic; padding: 12px 0; }
+.reason { font-size: 11px; color: #721c24; margin-top: 4px; }
+.gpu-info { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 </style>
 </head>
 <body>
-<div class="app">
-<nav>
+<div class="app" role="application">
+<nav aria-label="Dashboard sections">
   <h1>AI Orchestrator</h1>
-  <div class="sub" id="navVersion"></div>
+  <div class="sub" id="navVersion">Loading...</div>
   <a href="#overview">Overview</a>
   <a href="#instances">Instances</a>
   <a href="#capabilities">Capabilities</a>
@@ -70,52 +73,52 @@ td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
   <a href="#jobs">Jobs</a>
   <a href="#activity">Activity</a>
 </nav>
-<main>
-  <div class="banner" id="banner">Disconnected from orchestrator</div>
+<main role="main">
+  <div class="banner" id="banner" role="alert" aria-live="polite">Disconnected from orchestrator</div>
 
-  <section id="overview">
+  <section id="overview" aria-label="Overview">
     <h2>Overview</h2>
     <div class="metrics-grid" id="overviewGrid"></div>
   </section>
 
-  <section id="instances">
+  <section id="instances" aria-label="Instances">
     <h2>Instances</h2>
     <div class="grid" id="instancesGrid"></div>
   </section>
 
-  <section id="capabilities">
+  <section id="capabilities" aria-label="Capabilities">
     <h2>Capabilities</h2>
     <div class="grid" id="capsGrid"></div>
   </section>
 
-  <section id="offerings">
+  <section id="offerings" aria-label="Offerings">
     <h2>Registered Offerings</h2>
     <div class="grid" id="offeringsGrid"></div>
   </section>
 
-  <section id="models">
-    <h2>Known Models</h2>
+  <section id="models" aria-label="Models">
+    <h2>Models per Instance</h2>
     <div id="modelsTable"></div>
   </section>
 
-  <section id="recommendations">
+  <section id="recommendations" aria-label="Recommendations">
     <h2>Recommendations</h2>
     <div class="grid" id="recsGrid"></div>
   </section>
 
-  <section id="metrics">
+  <section id="metrics" aria-label="Metrics">
     <h2>Metrics</h2>
     <div class="metrics-grid" id="metricsGrid"></div>
   </section>
 
-  <section id="jobs">
+  <section id="jobs" aria-label="Jobs">
     <h2>Background Jobs</h2>
     <div id="jobsTable"></div>
   </section>
 
-  <section id="activity">
+  <section id="activity" aria-label="Activity">
     <h2>Activity</h2>
-    <div class="activity" id="activityLog"></div>
+    <div class="activity" id="activityLog" aria-live="polite"></div>
   </section>
 </main>
 </div>
@@ -130,13 +133,16 @@ async function refresh() {
   try {
     const resp = await fetch('/api/status');
     if (!resp.ok) throw new Error(resp.statusText);
-    state = await resp.json();
+    const data = await resp.json();
+    if (!data || data === null) return; // Snapshot not yet published
+    state = data;
     connected = true;
     document.getElementById('banner').classList.remove('visible');
     render();
   } catch (e) {
     if (connected) {
       connected = false;
+      document.getElementById('banner').textContent = `Disconnected: ${e.message || 'network error'}`;
       document.getElementById('banner').classList.add('visible');
     }
   }
@@ -145,7 +151,7 @@ async function refresh() {
 function render() {
   if (!state) return;
   const o = state.orchestrator || {};
-  document.getElementById('navVersion').textContent = `v${o.version || '?'} · ${o.instances_discovered || 0} instances`;
+  document.getElementById('navVersion').textContent = `v${esc(o.version || '?')} \u00b7 ${o.instances_discovered || 0} instances`;
 
   // Overview
   document.getElementById('overviewGrid').innerHTML = [
@@ -159,21 +165,32 @@ function render() {
   const instances = state.instances || [];
   document.getElementById('instancesGrid').innerHTML = instances.length === 0
     ? '<div class="empty">No instances discovered yet</div>'
-    : instances.map(i => `<div class="card">
-        <h3>${esc(i.stone?.name || '?')}</h3>
-        <div class="meta">${esc(i.kind)} · ${esc(i.endpoint)}</div>
-        <div style="margin:8px 0"><span class="badge ${healthClass(i.health)}">${healthLabel(i.health)}</span></div>
-        ${i.capabilities ? i.capabilities.map(c => `<span class="badge cap">${esc(c)}</span> `).join('') : ''}
-        <div class="stat-row"><span class="label">Models</span><span class="value">${i.models_available || 0}</span></div>
-        <div class="stat-row"><span class="label">Queue</span><span class="value">${i.queue_depth || 0}</span></div>
-        <div class="stat-row"><span class="label">Priority</span><span class="value">${i.priority || 0}</span></div>
-      </div>`).join('');
+    : instances.map(i => {
+        const h = healthStatus(i.health);
+        const gpuName = i.gpu?.name;
+        const vramMb = i.vram?.total_bytes ? Math.round(i.vram.total_bytes / 1048576) : null;
+        const freeMb = i.vram?.free_bytes ? Math.round(i.vram.free_bytes / 1048576) : null;
+        return `<div class="card">
+          <h3>${esc(i.stone?.name || '?')}</h3>
+          <div class="meta">${esc(i.kind)} \u00b7 ${esc(i.endpoint)}</div>
+          <div style="margin:8px 0">
+            <span class="badge ${h.cls}">${esc(h.label)}</span>
+            ${h.label === 'unhealthy' && i.health?.reason ? `<div class="reason">${esc(i.health.reason)}</div>` : ''}
+          </div>
+          ${gpuName ? `<div class="gpu-info">${esc(gpuName)}${vramMb ? ` \u00b7 ${fmtMb(vramMb)}${freeMb !== null ? ` (${fmtMb(freeMb)} free)` : ''}` : ''}</div>` : ''}
+          ${(i.capabilities || []).map(c => `<span class="badge cap">${esc(c)}</span> `).join('')}
+          <div class="stat-row"><span class="label">Models</span><span class="value">${arrLen(i.models_available)}</span></div>
+          <div class="stat-row"><span class="label">Loaded</span><span class="value">${arrLen(i.models_loaded)}</span></div>
+          <div class="stat-row"><span class="label">Queue</span><span class="value">${i.queue_depth || 0}</span></div>
+          <div class="stat-row"><span class="label">Priority</span><span class="value">${i.priority || 0}</span></div>
+        </div>`;
+      }).join('');
 
   // Capabilities
   const caps = {};
   instances.forEach(i => (i.capabilities || []).forEach(c => {
     if (!caps[c]) caps[c] = 0;
-    if (healthLabel(i.health) === 'healthy') caps[c]++;
+    if (healthStatus(i.health).label === 'healthy') caps[c]++;
   }));
   document.getElementById('capsGrid').innerHTML = Object.keys(caps).length === 0
     ? '<div class="empty">No capabilities available</div>'
@@ -185,12 +202,11 @@ function render() {
     ? '<div class="empty">No offerings discovered</div>'
     : Object.entries(oc).map(([k, v]) => `<div class="card"><h3>${esc(k)}</h3><div class="meta">${v} instance${v !== 1 ? 's' : ''}</div></div>`).join('');
 
-  // Models
-  const models = Object.keys(state.orchestrator?.models_known ? {} : {});
+  // Models per instance
   document.getElementById('modelsTable').innerHTML = instances.length === 0
-    ? '<div class="empty">No models known</div>'
-    : '<table><thead><tr><th>Instance</th><th>Models Available</th><th>Loaded</th></tr></thead><tbody>'
-      + instances.map(i => `<tr><td>${esc(i.stone?.name || '?')}</td><td>${i.models_available || 0}</td><td>${i.models_loaded || 0}</td></tr>`).join('')
+    ? '<div class="empty">No instances to show models for</div>'
+    : '<table><thead><tr><th>Instance</th><th>Offering</th><th>Available</th><th>Loaded</th></tr></thead><tbody>'
+      + instances.map(i => `<tr><td>${esc(i.stone?.name || '?')}</td><td>${esc(i.kind)}</td><td>${arrLen(i.models_available)}</td><td>${arrLen(i.models_loaded)}</td></tr>`).join('')
       + '</tbody></table>';
 
   // Recommendations
@@ -216,20 +232,26 @@ function render() {
       + jobs.map(j => `<tr><td>${esc(j.id)}</td><td>${esc(j.kind)}</td><td>${esc(j.status)}</td><td>${esc(j.detail || '')}</td></tr>`).join('')
       + '</tbody></table>';
 
-  // Activity
   renderActivity();
 }
 
+// ── SSE: use addEventListener for named events ──────────────────
 function connectSSE() {
   const es = new EventSource('/api/events');
-  es.onmessage = (ev) => {
+  const knownEvents = [
+    'registry.updated','job.created','job.completed','job.failed',
+    'settings.updated','tending.changed','placement.updated',
+    'benchmark.started','benchmark.progress','benchmark.completed',
+    'recommendations.updated'
+  ];
+  const handler = (ev) => {
     try {
-      const d = JSON.parse(ev.data);
-      addActivity(d.event_type || 'event', d.data || '');
-    } catch (_) {
-      addActivity('event', ev.data);
-    }
+      addActivity(ev.type, ev.data || '');
+    } catch (_) {}
   };
+  knownEvents.forEach(t => es.addEventListener(t, handler));
+  // Also catch unnamed events
+  es.onmessage = (ev) => { addActivity('event', ev.data || ''); };
   es.onerror = () => { es.close(); setTimeout(connectSSE, 5000); };
 }
 
@@ -242,17 +264,28 @@ function addActivity(type, data) {
 
 function renderActivity() {
   const el = document.getElementById('activityLog');
+  if (!el) return;
   el.innerHTML = activityRing.slice().reverse().map(a =>
-    `<div class="line"><span class="time">${a.time}</span><strong>${esc(a.type)}</strong> ${esc(typeof a.data === 'string' ? a.data : JSON.stringify(a.data))}</div>`
+    `<div class="line"><span class="time">${esc(a.time)}</span> <strong>${esc(a.type)}</strong> ${esc(typeof a.data === 'string' ? a.data : JSON.stringify(a.data))}</div>`
   ).join('');
 }
 
-function mc(val, label) { return `<div class="card metric-card"><div class="val">${val}</div><div class="lbl">${label}</div></div>`; }
+// ── Health status: handles tagged enum {status: "healthy"} ──────
+function healthStatus(h) {
+  if (!h) return { cls: 'profiling', label: 'profiling' };
+  // Tagged enum: {status: "healthy"}, {status: "unhealthy", reason: "..."}
+  if (h.status) return { cls: h.status.toLowerCase(), label: h.status.toLowerCase() };
+  // Fallback for string values
+  if (typeof h === 'string') return { cls: h.toLowerCase(), label: h.toLowerCase() };
+  return { cls: 'profiling', label: 'profiling' };
+}
+
+function mc(val, label) { return `<div class="card metric-card"><div class="val">${esc(String(val))}</div><div class="lbl">${esc(label)}</div></div>`; }
 function esc(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 function fmtNum(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n); }
-function formatDur(s) { const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return h > 0 ? `${h}h ${m}m` : `${m}m`; }
-function healthClass(h) { if (!h) return 'profiling'; if (typeof h === 'string') return h.toLowerCase(); if (h.status) return h.status.toLowerCase(); return h.Healthy ? 'healthy' : h.Unhealthy ? 'unhealthy' : 'profiling'; }
-function healthLabel(h) { if (!h) return 'profiling'; if (typeof h === 'string') return h.toLowerCase(); if (h === 'Healthy' || h.Healthy !== undefined) return 'healthy'; if (h === 'Unhealthy' || h.Unhealthy !== undefined) return 'unhealthy'; return 'profiling'; }
+function fmtMb(mb) { return mb >= 1024 ? (mb/1024).toFixed(1)+' GB' : mb+' MB'; }
+function arrLen(a) { return Array.isArray(a) ? a.length : (a || 0); }
+function formatDur(s) { if (s < 60) return s + 's'; const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return h > 0 ? `${h}h ${m}m` : `${m}m`; }
 
 setInterval(refresh, 2500);
 refresh();

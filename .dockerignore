@@ -1,33 +1,38 @@
-# Build artifacts (hundreds of MB)
+# ── Build artifacts (hundreds of MB — the #1 context bloat source) ──
 target/
-src/orchestrators/common/target/
-src/orchestrators/ollama/target/
-src/orchestrators/mongodb/target/
+**/target/
+src/orchestrators/*/target/
 
-# Git history
+# ── Node.js (rebuilt inside Docker) ──
+**/node_modules/
+src/orchestrators/ai/web/dist/
+
+# ── Git history ──
 .git/
 
-# Build outputs
+# ── Build outputs ──
 dist/
 packages/
 staging/
 
-# IDE / tooling
+# ── IDE / tooling ──
 .vscode/
 .agentic/
 .claude/
 
-# Documentation (not needed in Docker builds)
+# ── Documentation (not needed in Docker builds) ──
 docs/
 
-# Installer scripts (not needed in Docker builds)
+# ── Installer scripts ──
 installer/
+scripts/
 
-# Debug files
+# ── Debug files ──
 check-*.txt
 *.pdb
 
-# Crates not needed by orchestrators (they only use src/common/ + src/orchestrators/)
+# ── Crates not needed by orchestrators ──
+# Orchestrators only use src/common/ + src/orchestrators/
 src/moss/
 src/rake/
 src/lantern/
@@ -36,3 +41,13 @@ src/firefly/
 src/companion-sdk/
 src/build-utils/
 src/probe/
+
+# ── Other orchestrators not needed by AI orchestrator ──
+# The AI Dockerfile only copies src/orchestrators/ai/ and src/orchestrators/common/
+# Other orchestrators are excluded to minimize context.
+# If building a different orchestrator, comment out its exclusion.
+src/orchestrators/ollama/target/
+src/orchestrators/mongodb/target/
+src/orchestrators/postgresql/target/
+src/orchestrators/valkey/target/
+src/orchestrators/weaviate/target/

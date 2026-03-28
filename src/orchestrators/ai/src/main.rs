@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
         .route("/v1/capabilities", get(api::extension::list_capabilities))
         .route("/v1/recommendations", get(api::recommendations::get_recommendation))
         .route(
-            "/v1/recommendations/:capability/pin",
+            "/v1/recommendations/{capability}/pin",
             put(api::recommendations::pin_recommendation)
                 .delete(api::recommendations::unpin_recommendation),
         )

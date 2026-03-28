@@ -74,7 +74,9 @@ async fn main() -> Result<()> {
     let shutdown = CancellationToken::new();
     let (metrics_tx, metrics_rx) = mpsc::unbounded_channel();
     let (snapshot_tx, snapshot_rx) = watch::channel(serde_json::Value::Null);
-    let _ = snapshot_tx; // snapshot_publisher will use this
+    // Keep the sender alive until snapshot_publisher task is wired (Phase 2).
+    // Dropping it would close the channel and break any Phase 2 consumer.
+    let _snapshot_tx = snapshot_tx;
 
     // ── Config ──────────────────────────────────────────────────
     let config = load_config(&cli.data_dir).await;

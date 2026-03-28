@@ -45,9 +45,21 @@ pub async fn proxy_handler(
     let capability = capability_from_path(&path);
 
     // ── Route ───────────────────────────────────────────────────
-    let instances = state.instances.read().await.clone();
+    let mut instances = state.instances.read().await.clone();
     let models = state.models.read().await.clone();
     let tiers = state.tiers.read().await.clone();
+
+    // Patch live queue-depth counters into the cloned snapshot.
+    // Without this, routing always sees queue_depth=0 and the
+    // max_queue saturation guard is functionally dead.
+    {
+        let depths = state.queue_depths.read().await;
+        for (ep, counter) in depths.iter() {
+            if let Some(inst) = instances.get_mut(ep) {
+                inst.queue_depth = counter.load(Ordering::Relaxed);
+            }
+        }
+    }
     let benchmark = state.benchmark_run.read().await;
     let fitness = &benchmark.gpu_matrix;
     let demand = state.metrics.read().await.demand_shares(3600);

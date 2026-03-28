@@ -363,13 +363,22 @@ impl AppState {
             jobs.pop_front();
         }
         jobs.push_back(job);
+
+        self.emit_event(
+            "job.created",
+            &serde_json::json!({"id": &id, "kind": format!("{kind:?}")}).to_string(),
+        )
+        .await;
         id
     }
 
-    pub async fn update_job(&self, id: &str, status: JobStatus) {
+    pub async fn update_job(&self, id: &str, status: JobStatus, progress: Option<&str>) {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
             job.status = status;
+            if let Some(p) = progress {
+                job.detail = p.to_string();
+            }
         }
     }
 

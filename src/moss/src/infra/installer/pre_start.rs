@@ -216,6 +216,10 @@ fn copy_dir_contents(src: &Path, dest: &Path) -> anyhow::Result<()> {
         if src_path.is_dir() {
             copy_dir_contents(&src_path, &dest_path)?;
         } else {
+            // Unlink the target first to avoid ETXTBSY (errno 26) when
+            // overwriting a running executable — Linux allows unlinking a
+            // mapped binary; the inode stays alive until the process exits.
+            let _ = std::fs::remove_file(&dest_path);
             std::fs::copy(&src_path, &dest_path)?;
         }
     }

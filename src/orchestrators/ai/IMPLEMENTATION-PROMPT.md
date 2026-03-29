@@ -13,180 +13,219 @@ You are implementing the Zen Garden AI Orchestrator — a single binary that man
 ALL AI service types (Ollama, ComfyUI, whisper.cpp, OpenedAI Speech, Infinity,
 LibreTranslate, and cloud providers) through an offering adapter pattern.
 
-### What Already Exists (DO NOT recreate)
+This is NOT another Ollama orchestrator. It is a **capability router across
+heterogeneous AI services**, of which Ollama is one managed part. The Ollama
+orchestrator is a source of infrastructure patterns and harvestable domain logic —
+not the architectural template.
+
+---
+
+## What Already Exists (DO NOT recreate)
 
 1. **ADR**: `docs/decisions/ORCH-0013-ai-orchestrator-promotion.md` — full architecture,
    offering specs, validation rules, implementation plan, AND failure lessons from the
    first attempt. **Read the "Implementation Lessons" section first.**
 
-2. **Offering manifests**: `src/moss/embedded/manifests/sw/ai/` — snippet.yaml,
+2. **ORCH-0012**: `docs/decisions/ORCH-0012-cluster-adapter-extraction.md` — the
+   precedent for this exact pattern. It extracted shared cluster primitives from the
+   MongoDB orchestrator into `orchestrator-common::cluster`. The AI orchestrator
+   applies the same approach to the Ollama orchestrator's AI-agnostic logic.
+
+3. **Offering manifests**: `src/moss/embedded/manifests/sw/ai/` — snippet.yaml,
    frontmatter.json, compatibility.yaml, adopted.yaml, and research.md for all 7
    services. These are researched and verified. Use the research.md files as the
    authoritative API reference for each service.
 
-3. **Ollama orchestrator** (reference implementation): `src/orchestrators/ollama/` —
-   a fully functional, production-running orchestrator. This is your primary source
-   of truth for:
-   - How to connect to Koi from inside Docker (`host.docker.internal:5641`)
-   - How to register gateways with Moss
-   - How to structure the discovery task (3-phase: stone → topology → SSE)
-   - How to structure the proxy (NDJSON streaming, queue depth, metrics extraction)
-   - How to structure the dashboard (2,616-line embedded SPA)
-   - Configuration defaults, environment variables, Docker networking
-   - The exercise.ps1 black-box exerciser
+4. **Ollama orchestrator**: `src/orchestrators/ollama/` — a fully functional,
+   production-running orchestrator. Contains two kinds of code:
+   - **Harvestable (~70%)**: routing, demand, fitness, placement, recommendation,
+     metrics, tiering, lease, reconciliation, gpu_catalog, advisor, proxy pattern,
+     dashboard pattern, gateway lifecycle, discovery pipeline
+   - **Ollama-specific (~30%)**: HTTP client for Ollama API, NDJSON streaming,
+     model pull protocol, benchmark prompts, `/api/tags` response shapes
 
-4. **Orchestrator-common**: `src/orchestrators/common/` — shared infrastructure
-   (Koi mDNS, Moss gateway, tools stream, topology, persistence, SSE, stone catalog).
-   The Ollama orchestrator already uses all of these. Study its imports.
+5. **Orchestrator-common**: `src/orchestrators/common/` — shared infrastructure
+   (Koi mDNS, Moss gateway, tools stream, topology, persistence, SSE, stone catalog,
+   cluster primitives). Both the Ollama and MongoDB orchestrators depend on this.
 
-5. **Domain analysis**: The Ollama orchestrator's domain layer (~6,300 LOC) was
-   assessed module by module. ~70% is generic (routing, demand, fitness, placement,
-   metrics, tiering, lease, reconciliation, gpu_catalog, recommendation, advisor).
-   ~30% is Ollama-specific (HTTP client, NDJSON parsing, model pull, benchmark prompts).
+---
 
-### What Needs To Be Built
+## The Engineering Task
 
-A new crate at `src/orchestrators/ai/` that:
-- Starts as a Docker container with correct Koi/Moss connectivity
-- Discovers all AI offering instances across the garden
-- Routes capability requests to the optimal instance
-- Provides Ollama backward compatibility (existing clients work unchanged)
-- Serves a management dashboard
-- Supports cloud providers as priority -10 fallbacks
+**Decompose the Ollama orchestrator into shared orchestration infrastructure and an
+Ollama-specific adapter. Then build the AI orchestrator on top of the shared layer.**
+
+This is not "build a new thing and copy patterns." It is:
+
+1. **Extract** the offering-agnostic orchestration logic from the Ollama orchestrator
+   into a shared layer (either extending `orchestrator-common` or creating a new
+   `orchestrator-ai-core` module within the AI orchestrator crate).
+2. **Prove** the extraction by keeping the Ollama orchestrator functional on top of it
+   (or by the AI orchestrator achieving Ollama feature parity).
+3. **Extend** the shared layer with multi-offering support: the capability enum,
+   the offering adapter trait, per-offering discovery filtering, and the
+   capability-routing extensions.
+4. **Build** offering adapters for each service on top of the shared + extended layer.
+
+This way the AI orchestrator inherits correct operational behavior **by construction**
+— it uses the same infrastructure code that makes the Ollama orchestrator work,
+not a hand-written approximation.
 
 ---
 
 ## Implementation Approach
 
-**DO NOT** build types outward (domain → adapters → tasks → API).
-**DO** build operational requirements inward (Docker → startup → discovery → routing → dashboard).
+### Block 1: Harvest the Shared Orchestration Layer
 
-### Block 1: Operational Foundation
+**Goal:** The Ollama orchestrator's offering-agnostic logic lives in a shared location.
 
-**Goal:** Container starts, connects to Koi, discovers a stone, registers gateway.
+1. **Analyze** each module in `src/orchestrators/ollama/src/domain/`:
+   - What types reference `OllamaInstance` specifically?
+   - What types are already generic (operate on endpoint strings, VRAM numbers, etc.)?
+   - What functions take `&HashMap<String, OllamaInstance>` that could take a trait?
 
-1. Create `src/orchestrators/ai/` with Cargo.toml matching the Ollama orchestrator's
-   dependency pattern exactly.
+2. **Extract** the generic parts. The ADR's module assessment provides the classification:
+   | Shared Domain | routing, demand, fitness, tiering, placement, lease, metrics, policy, reconciliation, gpu_catalog, recommendation, advisor |
+   | Shared Infra | gateway lifecycle, discovery pipeline, persistence, SSE events |
+   | Ollama-Specific | ollama_client, NDJSON proxy, benchmark prompts, Ollama API types |
 
-2. Copy the Ollama orchestrator's `Dockerfile` and adapt it. The key configuration
-   values must be harvested from the Ollama orchestrator, not guessed:
-   - Koi endpoint: check `src/orchestrators/ollama/src/main.rs` for the default
-   - Ports: proxy 21434, dashboard 7190
-   - Data directory: `/data`
-   - Log level: default `info`
-   - All `--arg` defaults and `env` mappings
+3. **Define the offering adapter trait** (the equivalent of ORCH-0012's `ClusterAdapter`):
+   - `probe()` — health check
+   - `enumerate()` — list models/resources
+   - `proxy()` — forward requests
+   - `benchmark()` — fitness profiling
+   - `sync_resource()` — model sync
 
-3. Write `main.rs` by studying the Ollama orchestrator's startup sequence:
-   - How it initializes tracing
-   - How it loads config
-   - How it creates channels
-   - How it constructs AppState
-   - How it spawns tasks
-   - How it binds servers
-   - The exact order matters
+4. **Generalize types**: `OllamaInstance` → `ServiceInstance` with offering-kind
+   discriminator. `RequestCapability` / `fitness::Capability` → unified `Capability`
+   enum extended for non-LLM capabilities.
 
-4. Write the discovery task by harvesting `src/orchestrators/ollama/src/tasks/discovery.rs`.
-   Generalize `OllamaInstance` → `ServiceInstance` but preserve all operational behavior:
-   - Stone resolution cascade (explicit → cached → Koi mDNS)
-   - Topology query as authoritative initial load
-   - SSE stream subscription with tools_stream filtering
-   - Periodic topology refresh alongside SSE
-   - Profile-and-register with HW data merging
-   - Error handling (probe failure → register as unhealthy, not silently skip)
+**Verification:** The generalized domain modules compile, pass their existing tests
+(adapted for the new types), and the Ollama orchestrator can be wired to use them
+(either directly or via the new AI orchestrator achieving Ollama parity).
 
-5. Write the gateway announce task by harvesting
-   `src/orchestrators/ollama/src/tasks/gateway_announce.rs`.
-   For the AI orchestrator, register per-offering (one gateway entry per offering type).
+### Block 2: Operational Foundation
 
-**Verification:** Build the container. Start it. It must show in logs:
-- `Starting AI Orchestrator proxy_port=21434 dashboard_port=7190`
-- `Gateway: mDNS registered via Koi`
-- `topology returned ... stones`
-- `instance profiled and added to routing pool`
+**Goal:** The AI orchestrator binary starts, connects to infrastructure, and discovers
+instances — using the harvested shared layer, not bespoke reimplementations.
 
-If Koi is not reachable, the logs must show retry messages with the correct Koi
-endpoint (not `127.0.0.1`). If a stone is reachable, at least one instance must
-appear in the registry.
+1. **Harvest operational configuration** from the Ollama orchestrator. Do not invent
+   values — read them from the source:
+   - Koi endpoint default: `src/orchestrators/ollama/src/main.rs` (look for the
+     `--koi` arg and its default — it uses `host.docker.internal`, not `localhost`)
+   - Ports, data dir, log level, all CLI args and env var mappings
+   - Docker networking: study the Ollama `Dockerfile` for how it connects to
+     host services
 
-### Block 2: Ollama Feature Parity
+2. **Wire the startup sequence.** The AI orchestrator's `main.rs` has its own startup
+   requirements (multi-offering catalog initialization, per-offering gateway
+   registration), but the infrastructure plumbing (tracing, config loading, channel
+   creation, server binding) follows the same patterns as the Ollama orchestrator
+   because it uses the same shared infrastructure crates.
 
-**Goal:** Replace the Ollama orchestrator with zero regressions.
+3. **Wire the discovery task** using the shared pipeline. The AI orchestrator
+   extends it to filter for ALL AI offering types (not just `offering:ollama`),
+   and dispatches profiling through the offering adapter trait.
 
-1. Generalize the domain layer (routing, demand, fitness, metrics, placement, policy,
-   tiering, lease, reconciliation, gpu_catalog, recommendation, advisor). The ADR has
-   the classification of what's shared vs Ollama-specific.
+4. **Wire the gateway announce task.** The AI orchestrator registers a gateway entry
+   per managed offering type (one `PUT /api/v1/garden/gateway/{offering}` per type).
 
-2. Implement the OllamaOffering adapter (Offering trait). Harvest from
-   `src/orchestrators/ollama/src/infra/ollama_client.rs`.
+**Verification:** Build the container. Start it against a real garden with Koi running.
+Logs must show:
+- Correct Koi endpoint (not `127.0.0.1`)
+- Successful mDNS registration
+- Topology discovery with instance profiling
+- Gateway registration for each offering type
 
-3. Wire all tasks (health_check, reconciliation, metrics_processor, metrics_flush,
-   snapshot_publisher, benchmark, placement, resource_sync).
+### Block 3: Ollama Feature Parity
 
-4. Wire all API routes. The ADR lists every endpoint for both proxy and dashboard ports.
+**Goal:** The AI orchestrator can replace the Ollama orchestrator with zero regressions.
 
-5. Implement Ollama backward compatibility routes (`GET /`, `/api/tags`, `/api/ps`,
-   `/api/version`, `/api/show`, `/api/pull`, `/api/delete`).
+1. **Implement the OllamaOffering adapter** (the offering-specific ~30%). Harvest
+   `ollama_client.rs` for the HTTP client, `proxy.rs` for NDJSON streaming,
+   `benchmark.rs` for test payloads.
 
-**Verification:** Run `exercise.ps1` from the Ollama orchestrator against the AI
+2. **Wire all shared tasks** through the offering adapter trait: health_check,
+   reconciliation, metrics_processor, metrics_flush, snapshot_publisher, benchmark,
+   placement, resource_sync.
+
+3. **Wire the Ollama-compatible API surface**: `GET /`, `/api/tags`, `/api/ps`,
+   `/api/version`, `/api/show`, `/api/pull`, `/api/delete`, plus the proxy
+   fallback for `/api/generate`, `/api/chat`, `/api/embed`.
+
+4. **Wire the extension API**: `/v1/models`, `/v1/stones`, `/v1/capabilities`,
+   `/v1/recommendations`.
+
+**Verification:** Run the Ollama orchestrator's `exercise.ps1` against the AI
 orchestrator's proxy port. All tests must pass.
 
-### Block 3: Multi-Offering Extension
+### Block 4: Multi-Offering Extension
 
 **Goal:** Each offering type works end-to-end.
 
 For each service (ComfyUI, whisper.cpp, OpenedAI Speech, Infinity, LibreTranslate,
 Speaches):
 
-1. Read the research.md in `src/moss/embedded/manifests/sw/ai/{service}.research.md`.
-2. Implement the Offering trait adapter.
-3. Verify against a running instance of that service:
-   - Probe succeeds
-   - Enumerate returns real models/resources
-   - Proxy forwards a request and returns a response
-4. Only move to the next service after the current one works end-to-end.
+1. Read `src/moss/embedded/manifests/sw/ai/{service}.research.md` for the exact API.
+2. Implement the offering adapter (probe, enumerate, proxy, benchmark).
+3. Verify against a running instance of that service — probe succeeds, enumerate
+   returns real data, proxy forwards a real request.
+4. **Only move to the next service after the current one works end-to-end.**
 
-### Block 4: Dashboard
+### Block 5: Dashboard
 
 **Goal:** Operators can monitor and manage the orchestrator through a web UI.
 
-1. Study the Ollama dashboard (`src/orchestrators/ollama/assets/dashboard.html`,
-   2,616 lines). Understand every section, every API call, every interaction.
-2. Build a React + TypeScript + Tailwind dashboard (or a single-file SPA — either
-   pattern works if the result is functional).
-3. The dashboard must show real data from real instances. Not hardcoded, not stubbed.
+Build a React + TypeScript + Tailwind dashboard (Grafana-inspired, dark-first).
+Study the Ollama dashboard (`src/orchestrators/ollama/assets/dashboard.html`,
+2,616 lines) to understand what operators need, then design the AI orchestrator's
+dashboard from its own requirements — capability-centric primary view, per-offering
+detail, multi-stone VRAM visualization, cross-offering fitness matrix.
 
-### Block 5: Cloud Providers
+The dashboard must show real data from real instances. Not hardcoded, not stubbed.
+Use a single SSE connection (`/api/events`) with the snapshot publisher emitting
+full state every 3 seconds — no polling.
+
+### Block 6: Cloud Providers
 
 **Goal:** Cloud APIs as priority -10 fallbacks.
 
 Study LiteLLM and OpenRouter patterns for provider abstraction. Key points:
 - `provider/model` naming convention
 - API keys via environment variables (never in config files)
-- Anthropic uses `x-api-key` header and Messages API (not OpenAI-compatible)
-- Cloud instances must be registered in the instance registry (not just the catalog)
+- Anthropic uses `x-api-key` header and Messages API (not OpenAI-compatible) —
+  needs a dedicated translation layer, not a generic OpenAI-compat adapter
+- Cloud instances must be registered in the instance registry with `priority: -10`
+  so the routing engine's priority gate (RT-4) handles them correctly
 
 ---
 
 ## Critical Rules
 
-1. **Never guess a configuration value.** Check the Ollama orchestrator first.
-   If it's not there, check orchestrator-common. If it's not there, check the
-   Moss codebase. If none of those have it, ask.
+1. **Harvest, don't reinvent.** If the Ollama orchestrator already solves a problem,
+   extract that solution into the shared layer and use it. Do not write a new version.
 
-2. **Never declare a phase complete based on compilation + unit tests.**
-   Verify against a running system. "It compiles" is not a deliverable.
+2. **Never guess a configuration value.** Read it from the existing orchestrators.
+   If the Ollama orchestrator uses `host.docker.internal:5641` for Koi, that's what
+   the AI orchestrator uses. If you don't know a value, find it in the code. If it's
+   not in the code, ask.
 
-3. **Never create bespoke code for a problem the existing codebase already solves.**
+3. **Never declare a phase complete based on compilation + unit tests.** Verify against
+   a running system. "It compiles" is not a deliverable. "The container starts,
+   connects to Koi, discovers instances, and routes a request" is a deliverable.
+
+4. **Break the problem into blocks with clear interfaces.** Each block has a concrete
+   operational verification criterion. Do not build all adapters in parallel before
+   any single one works end-to-end.
+
+5. **Never create bespoke code for a problem the existing codebase already solves.**
    Koi resolution, Moss gateway registration, Docker networking, SSE streaming,
-   topology queries — all solved. Harvest, don't reinvent.
+   topology queries, stone discovery — all solved in `orchestrator-common` and
+   proven by the Ollama and MongoDB orchestrators. Use them.
 
-4. **Break the problem into blocks with clear interfaces.**
-   Each block has a concrete operational verification criterion.
-   Do not build all adapters in parallel before any single one works.
-
-5. **The Ollama orchestrator is the ground truth for operational behavior.**
-   Study it as both source code AND a running system. Match its behavior
-   before extending it.
+6. **The extraction must not break the Ollama orchestrator.** If you move domain
+   logic to a shared location, the Ollama orchestrator must still work. This is
+   the proof that the extraction is correct.
 
 ---
 
@@ -196,11 +235,35 @@ In this order:
 
 1. `docs/decisions/ORCH-0013-ai-orchestrator-promotion.md` — especially the
    "Implementation Lessons" section at the end
-2. `src/orchestrators/ollama/src/main.rs` — startup sequence
-3. `src/orchestrators/ollama/Dockerfile` — Docker configuration
-4. `src/orchestrators/ollama/src/tasks/discovery.rs` — discovery pipeline
-5. `src/orchestrators/ollama/src/tasks/gateway_announce.rs` — gateway registration
-6. `src/orchestrators/ollama/src/app_state.rs` — shared state
-7. `src/orchestrators/ollama/src/api/proxy.rs` — proxy handler
-8. `src/orchestrators/common/src/` — all shared infrastructure modules
+2. `docs/decisions/ORCH-0012-cluster-adapter-extraction.md` — the precedent for
+   extracting shared primitives from a working orchestrator
+3. `src/orchestrators/common/src/` — all shared infrastructure modules (understand
+   what's already shared before deciding what to extract)
+4. `src/orchestrators/ollama/src/domain/` — every module, classifying each as
+   shared vs Ollama-specific
+5. `src/orchestrators/ollama/src/main.rs` — startup sequence and configuration
+6. `src/orchestrators/ollama/Dockerfile` — Docker configuration and networking
+7. `src/orchestrators/ollama/src/tasks/` — all background tasks, identifying
+   the offering-agnostic orchestration patterns
+8. `src/orchestrators/ollama/src/api/` — API handlers and proxy pattern
 9. `src/moss/embedded/manifests/sw/ai/*.research.md` — service API references
+
+---
+
+## Anti-patterns from the Previous Attempt
+
+These are not theoretical — they caused the revert:
+
+- **Writing `main.rs` by "studying" the Ollama orchestrator** without reading the
+  actual default values. Result: wrong Koi endpoint, wrong port, no log output.
+- **Building all 7 offering adapters in parallel** before any single one worked
+  end-to-end. Result: the proxy rejected all multipart requests, health labels
+  were wrong, cloud instances were never registered.
+- **Using adversarial code review as the quality mechanism** instead of running the
+  service. Result: 8 reviews found 29 issues, but the fundamental operational
+  failures weren't caught because no one ran the container against a real garden.
+- **Treating the dashboard as a checkbox** instead of a product. Result: two rewrites
+  (vanilla HTML → React) with critical rendering bugs in both.
+- **Assuming runtime behavior** instead of testing it. When the container couldn't
+  reach Koi, the response was "this is expected" instead of checking how the
+  existing orchestrators handle it.

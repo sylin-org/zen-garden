@@ -261,6 +261,34 @@ pub async fn post_settings(
     Json(serde_json::json!({"status": "ok"}))
 }
 
+/// `GET /api/defaults` — current inference defaults per capability.
+pub async fn get_defaults(
+    State(state): State<AppState>,
+) -> Json<HashMap<String, InferenceDefaults>> {
+    let config = state.config.read().await;
+    Json(config.defaults.clone())
+}
+
+/// `POST /api/defaults` — update inference defaults per capability.
+pub async fn post_defaults(
+    State(state): State<AppState>,
+    Json(defaults): Json<HashMap<String, InferenceDefaults>>,
+) -> Json<serde_json::Value> {
+    {
+        let mut config = state.config.write().await;
+        config.defaults = defaults;
+    }
+
+    // Persist the full config.
+    let config = state.config.read().await.clone();
+    if let Err(e) = crate::infra::persistence::save_config(&state.data_dir, &config).await {
+        tracing::warn!(error = %e, "failed to persist config after defaults update");
+    }
+
+    state.emit_event("config.updated", "{}").await;
+    Json(serde_json::json!({"status": "ok"}))
+}
+
 /// `GET /api/jobs` — recent jobs.
 pub async fn get_jobs(State(state): State<AppState>) -> Json<serde_json::Value> {
     let jobs = state.jobs.read().await;

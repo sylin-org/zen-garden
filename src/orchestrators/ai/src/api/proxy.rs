@@ -10,7 +10,7 @@
 
 use crate::app_state::AppState;
 use crate::domain::routing;
-use crate::domain::types::{Capability, InstanceHealth, MetricEvent, RoutingError};
+use crate::domain::types::{Capability, InferenceDefaults, InstanceHealth, MetricEvent, RoutingError};
 use crate::offerings::ollama::client::OllamaClient;
 use crate::offerings::ollama::types::OllamaInferenceFinal;
 
@@ -125,13 +125,23 @@ async fn proxy_inference(
 ) -> Result<Response, StatusCode> {
     let model = extract_model(&body).ok_or(StatusCode::BAD_REQUEST)?;
 
-    let body_json: serde_json::Value =
+    let mut body_json: serde_json::Value =
         serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
 
     let stream_disabled = body_json.get("stream").and_then(|v| v.as_bool()) == Some(false);
 
     // Infer capability from path
     let capability = capability_from_path(path, &body_json);
+
+    // Merge per-capability inference defaults (only for fields the client didn't set).
+    if let Some(cap) = capability {
+        let config = state.app.config.read().await;
+        if let Some(defaults) = config.defaults.get(cap.as_str()) {
+            if let Some(obj) = body_json.as_object_mut() {
+                merge_inference_defaults(obj, defaults);
+            }
+        }
+    }
 
     // Route — snapshot state, no locks held during routing
     let decision = {
@@ -206,10 +216,15 @@ async fn proxy_inference(
     let counter = state.app.queue_counter(target).await;
     counter.fetch_add(1, Ordering::Relaxed);
 
+    // Re-serialize body if defaults were merged (body_json may have been mutated).
+    let forward_body = Bytes::from(
+        serde_json::to_vec(&body_json).unwrap_or_else(|_| body.to_vec()),
+    );
+
     // Forward to target instance
     let result = state
         .client
-        .forward_request(target, path, Method::POST, body, headers.clone())
+        .forward_request(target, path, Method::POST, forward_body, headers.clone())
         .await;
 
     let response = match result {
@@ -572,6 +587,59 @@ fn extract_model(body: &[u8]) -> Option<String> {
 fn extract_field(body: &[u8], field: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_slice(body).ok()?;
     value.get(field)?.as_str().map(|s| s.to_string())
+}
+
+/// Merge per-capability inference defaults into the request body.
+/// Only injects fields the client did not already set.
+///
+/// Ollama uses `options.temperature`, `options.top_p`, `options.num_predict`
+/// for inference parameters, so we set both top-level (OpenAI style) and
+/// nested `options` (Ollama style) to cover both paths.
+fn merge_inference_defaults(
+    body: &mut serde_json::Map<String, serde_json::Value>,
+    defaults: &InferenceDefaults,
+) {
+    // Top-level defaults (OpenAI compat).
+    if let Some(temp) = defaults.temperature {
+        body.entry("temperature")
+            .or_insert(serde_json::json!(temp));
+    }
+    if let Some(max_tokens) = defaults.max_tokens {
+        body.entry("max_tokens")
+            .or_insert(serde_json::json!(max_tokens));
+    }
+    if let Some(top_p) = defaults.top_p {
+        body.entry("top_p")
+            .or_insert(serde_json::json!(top_p));
+    }
+
+    // Ollama-style nested options (temperature, top_p, num_predict).
+    let options = body
+        .entry("options")
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(opts) = options.as_object_mut() {
+        if let Some(temp) = defaults.temperature {
+            opts.entry("temperature")
+                .or_insert(serde_json::json!(temp));
+        }
+        if let Some(max_tokens) = defaults.max_tokens {
+            opts.entry("num_predict")
+                .or_insert(serde_json::json!(max_tokens));
+        }
+        if let Some(top_p) = defaults.top_p {
+            opts.entry("top_p")
+                .or_insert(serde_json::json!(top_p));
+        }
+    }
+
+    // Clean up empty options object to avoid confusing Ollama.
+    if body
+        .get("options")
+        .and_then(|v| v.as_object())
+        .is_some_and(|o| o.is_empty())
+    {
+        body.remove("options");
+    }
 }
 
 /// Infer the `Capability` from the Ollama API path and body.

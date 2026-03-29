@@ -518,6 +518,23 @@ pub struct OrchestratorConfig {
     /// Per-offering proxy enable/disable overrides.
     #[serde(default)]
     pub proxies: HashMap<String, bool>,
+    /// Default inference parameters per capability.
+    /// The proxy injects these as defaults when the client doesn't specify them.
+    /// Key is the capability name ("chat", "embed", "think", etc.).
+    #[serde(default)]
+    pub defaults: HashMap<String, InferenceDefaults>,
+}
+
+/// Default inference parameters for a capability.
+/// Only non-None fields are injected into requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceDefaults {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

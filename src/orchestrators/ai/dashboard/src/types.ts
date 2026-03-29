@@ -76,10 +76,17 @@ export interface StoneConfig {
   vram_budget_mb: number | null;
 }
 
+export interface InferenceDefaults {
+  temperature?: number | null;
+  max_tokens?: number | null;
+  top_p?: number | null;
+}
+
 export interface OrchestratorConfig {
   features: FeatureConfig;
   stones: Record<string, StoneConfig>;
   proxies: Record<string, boolean>;
+  defaults: Record<string, InferenceDefaults>;
 }
 
 export interface OrchestratorJob {

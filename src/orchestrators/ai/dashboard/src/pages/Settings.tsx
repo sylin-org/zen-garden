@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { DashboardStatus } from "../types";
+import type { DashboardStatus, InferenceDefaults } from "../types";
+import { ALL_CAPABILITIES, CAPABILITY_LABELS } from "../types";
 
 interface SettingsProps {
   status: DashboardStatus;
@@ -8,7 +9,14 @@ interface SettingsProps {
 export function Settings({ status }: SettingsProps) {
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<string | null>(null);
+  const [defaultsSaving, setDefaultsSaving] = useState(false);
+  const [defaultsResult, setDefaultsResult] = useState<string | null>(null);
   const config = status.config;
+
+  // Local state for editable defaults.
+  const [defaults, setDefaults] = useState<Record<string, InferenceDefaults>>(
+    () => config.defaults ?? {}
+  );
 
   const handleSave = async (updated: typeof config) => {
     setSaving(true);
@@ -29,6 +37,50 @@ export function Settings({ status }: SettingsProps) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveDefaults = async () => {
+    setDefaultsSaving(true);
+    setDefaultsResult(null);
+    try {
+      // Strip empty entries (all fields null/undefined).
+      const cleaned: Record<string, InferenceDefaults> = {};
+      for (const [cap, d] of Object.entries(defaults)) {
+        if (d.temperature != null || d.max_tokens != null || d.top_p != null) {
+          cleaned[cap] = d;
+        }
+      }
+      const res = await fetch("/api/defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cleaned),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      setDefaults(cleaned);
+      setDefaultsResult("Defaults saved.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Save failed";
+      setDefaultsResult(`Error: ${msg}`);
+    } finally {
+      setDefaultsSaving(false);
+    }
+  };
+
+  const updateDefault = (
+    capability: string,
+    field: keyof InferenceDefaults,
+    value: string
+  ) => {
+    setDefaults((prev) => {
+      const entry = prev[capability] ?? {};
+      const parsed = value.trim() === "" ? null : Number(value);
+      const numValue =
+        parsed !== null && !isNaN(parsed) ? parsed : null;
+      const updated = { ...entry, [field]: numValue };
+      return { ...prev, [capability]: updated };
+    });
   };
 
   return (
@@ -89,6 +141,106 @@ export function Settings({ status }: SettingsProps) {
               {config.features.metrics_enabled ? "on" : "off"}
             </span>
           </div>
+        </div>
+      </section>
+
+      {/* Inference Defaults */}
+      <section className="bg-[#1a1b23] border border-[#2e303a] rounded-lg p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-medium text-gray-200">
+              Inference Defaults
+            </h3>
+            <p className="text-[11px] text-gray-500">
+              Default parameters injected when clients don't specify them
+            </p>
+          </div>
+          <button
+            onClick={handleSaveDefaults}
+            disabled={defaultsSaving}
+            className="text-[11px] px-3 py-1 rounded border border-[#2e303a] text-gray-400 hover:text-gray-200 hover:border-gray-500 disabled:opacity-50 transition-colors"
+          >
+            {defaultsSaving ? "Saving..." : "Save defaults"}
+          </button>
+        </div>
+        {defaultsResult && (
+          <p
+            className={`text-[11px] mb-2 ${
+              defaultsResult.startsWith("Error")
+                ? "text-red-400"
+                : "text-emerald-400"
+            }`}
+          >
+            {defaultsResult}
+          </p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-gray-500 border-b border-[#2e303a]">
+                <th className="text-left py-2 pr-4 font-medium">Capability</th>
+                <th className="text-left py-2 px-2 font-medium">Temperature</th>
+                <th className="text-left py-2 px-2 font-medium">Max tokens</th>
+                <th className="text-left py-2 px-2 font-medium">Top-p</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ALL_CAPABILITIES.map((cap) => {
+                const d = defaults[cap] ?? {};
+                return (
+                  <tr
+                    key={cap}
+                    className="border-b border-[#2e303a]/50 hover:bg-[#22232d]"
+                  >
+                    <td className="py-1.5 pr-4 text-gray-300 capitalize">
+                      {CAPABILITY_LABELS[cap] ?? cap}
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="2"
+                        placeholder="--"
+                        value={d.temperature ?? ""}
+                        onChange={(e) =>
+                          updateDefault(cap, "temperature", e.target.value)
+                        }
+                        className="w-20 bg-[#12131a] border border-[#2e303a] rounded px-2 py-0.5 text-gray-300 font-mono text-[11px] placeholder:text-gray-600 focus:border-gray-500 focus:outline-none"
+                      />
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <input
+                        type="number"
+                        step="256"
+                        min="1"
+                        placeholder="--"
+                        value={d.max_tokens ?? ""}
+                        onChange={(e) =>
+                          updateDefault(cap, "max_tokens", e.target.value)
+                        }
+                        className="w-24 bg-[#12131a] border border-[#2e303a] rounded px-2 py-0.5 text-gray-300 font-mono text-[11px] placeholder:text-gray-600 focus:border-gray-500 focus:outline-none"
+                      />
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="1"
+                        placeholder="--"
+                        value={d.top_p ?? ""}
+                        onChange={(e) =>
+                          updateDefault(cap, "top_p", e.target.value)
+                        }
+                        className="w-20 bg-[#12131a] border border-[#2e303a] rounded px-2 py-0.5 text-gray-300 font-mono text-[11px] placeholder:text-gray-600 focus:border-gray-500 focus:outline-none"
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </section>
 

@@ -167,6 +167,8 @@ async fn main() -> Result<()> {
         .route("/api/settings", axum::routing::get(api::dashboard::get_settings))
         .route("/api/settings", axum::routing::post(api::dashboard::post_settings))
         .route("/api/jobs", axum::routing::get(api::dashboard::get_jobs))
+        .route("/api/defaults", axum::routing::get(api::dashboard::get_defaults))
+        .route("/api/defaults", axum::routing::post(api::dashboard::post_defaults))
         .route("/api/providers", axum::routing::get(api::dashboard::get_providers))
         .route("/api/providers", axum::routing::post(api::dashboard::add_provider))
         .route("/api/providers/{name}", axum::routing::delete(api::dashboard::delete_provider))

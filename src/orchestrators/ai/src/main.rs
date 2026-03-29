@@ -15,7 +15,10 @@ use zen_garden_ai_orchestrator::api;
 use zen_garden_ai_orchestrator::catalog::OfferingRegistry;
 use zen_garden_ai_orchestrator::domain::types::OfferingKind;
 use zen_garden_ai_orchestrator::infra::persistence;
+use zen_garden_ai_orchestrator::offerings::infinity::InfinityOffering;
+use zen_garden_ai_orchestrator::offerings::libretranslate::LibreTranslateOffering;
 use zen_garden_ai_orchestrator::offerings::ollama::OllamaOffering;
+use zen_garden_ai_orchestrator::offerings::openedai_speech::OpenedaiSpeechOffering;
 use zen_garden_ai_orchestrator::tasks;
 use zen_garden_ai_orchestrator::AppState;
 
@@ -76,6 +79,9 @@ async fn main() -> Result<()> {
     // ── Offering Registry ───────────────────────────────────────────
     let mut registry = OfferingRegistry::new();
     registry.register(Arc::new(OllamaOffering::new()))?;
+    registry.register(Arc::new(LibreTranslateOffering::new()))?;
+    registry.register(Arc::new(InfinityOffering::new()))?;
+    registry.register(Arc::new(OpenedaiSpeechOffering::new()))?;
     let registered_count = registry.len();
     tracing::info!(offerings = registered_count, "offering registry initialized");
 

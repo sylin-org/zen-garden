@@ -11,6 +11,7 @@ use crate::domain::lease::LeaseManager;
 use crate::domain::metrics::MetricsEngine;
 use crate::domain::{recommendation, tiering};
 use crate::domain::types::*;
+use crate::offerings::cloud::CloudProviderStore;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
@@ -32,6 +33,9 @@ pub struct AppState {
 
     // ── Offering Registry ──
     pub registry: Arc<OfferingRegistry>,
+
+    // ── Cloud Provider Store ──
+    pub cloud_store: Arc<RwLock<CloudProviderStore>>,
 
     // ── Instance Registry ──
     pub instances: Arc<RwLock<HashMap<String, ServiceInstance>>>,
@@ -88,6 +92,7 @@ impl AppState {
         data_dir: String,
         config: OrchestratorConfig,
         registry: OfferingRegistry,
+        cloud_store: CloudProviderStore,
         shutdown: CancellationToken,
         metrics_tx: mpsc::UnboundedSender<MetricEvent>,
     ) -> Self {
@@ -103,6 +108,7 @@ impl AppState {
             dashboard_port,
             tended_stone: Arc::new(RwLock::new(None)),
             registry: Arc::new(registry),
+            cloud_store: Arc::new(RwLock::new(cloud_store)),
             instances: Arc::new(RwLock::new(HashMap::new())),
             models: Arc::new(RwLock::new(HashMap::new())),
             tiers: Arc::new(RwLock::new(Vec::new())),

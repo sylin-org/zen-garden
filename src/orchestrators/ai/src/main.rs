@@ -15,6 +15,7 @@ use zen_garden_ai_orchestrator::api;
 use zen_garden_ai_orchestrator::catalog::OfferingRegistry;
 use zen_garden_ai_orchestrator::domain::types::OfferingKind;
 use zen_garden_ai_orchestrator::infra::persistence;
+use zen_garden_ai_orchestrator::offerings::cloud::CloudProviderStore;
 use zen_garden_ai_orchestrator::offerings::infinity::InfinityOffering;
 use zen_garden_ai_orchestrator::offerings::libretranslate::LibreTranslateOffering;
 use zen_garden_ai_orchestrator::offerings::ollama::OllamaOffering;
@@ -82,6 +83,15 @@ async fn main() -> Result<()> {
     registry.register(Arc::new(LibreTranslateOffering::new()))?;
     registry.register(Arc::new(InfinityOffering::new()))?;
     registry.register(Arc::new(OpenedaiSpeechOffering::new()))?;
+
+    // ── Cloud Providers ─────────────────────────────────────────────
+    let cloud_store = CloudProviderStore::load(&cli.data_dir).await;
+    for offering in cloud_store.create_offerings() {
+        if let Err(e) = registry.register(offering) {
+            tracing::warn!(error = %e, "failed to register cloud provider");
+        }
+    }
+
     let registered_count = registry.len();
     tracing::info!(offerings = registered_count, "offering registry initialized");
 
@@ -97,6 +107,7 @@ async fn main() -> Result<()> {
         cli.data_dir.clone(),
         config,
         registry,
+        cloud_store,
         shutdown.clone(),
         metrics_tx,
     );
@@ -151,6 +162,9 @@ async fn main() -> Result<()> {
         .route("/api/settings", axum::routing::get(api::dashboard::get_settings))
         .route("/api/settings", axum::routing::post(api::dashboard::post_settings))
         .route("/api/jobs", axum::routing::get(api::dashboard::get_jobs))
+        .route("/api/providers", axum::routing::get(api::dashboard::get_providers))
+        .route("/api/providers", axum::routing::post(api::dashboard::add_provider))
+        .route("/api/providers/{name}", axum::routing::delete(api::dashboard::delete_provider))
         .with_state(state.clone())
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))

@@ -19,6 +19,7 @@ use tokio_stream::StreamExt;
 
 use crate::app_state::DashboardEvent;
 use crate::domain::types::*;
+use crate::offerings::cloud::CloudProviderConfig;
 use crate::AppState;
 
 // ── Status Snapshot ─────────────────────────────────────────────
@@ -265,6 +266,95 @@ pub async fn get_jobs(State(state): State<AppState>) -> Json<serde_json::Value> 
     let jobs = state.jobs.read().await;
     let jobs_vec: Vec<_> = jobs.iter().rev().cloned().collect();
     Json(serde_json::json!({"jobs": jobs_vec}))
+}
+
+// ── Cloud Provider Management ───────────────────────────────────
+
+/// Provider info with masked API key — safe for dashboard display.
+#[derive(Serialize)]
+pub struct ProviderInfo {
+    pub name: String,
+    pub kind: String,
+    pub base_url: String,
+    pub masked_key: String,
+    pub enabled: bool,
+    pub priority: i32,
+    pub capabilities: Vec<String>,
+    pub model_count: usize,
+}
+
+/// `GET /api/providers` — list configured cloud providers (keys masked).
+pub async fn get_providers(State(state): State<AppState>) -> Json<Vec<ProviderInfo>> {
+    let store = state.cloud_store.read().await;
+    let providers: Vec<ProviderInfo> = store
+        .all()
+        .iter()
+        .map(|p| ProviderInfo {
+            name: p.name.clone(),
+            kind: p.kind.as_str().to_string(),
+            base_url: p.base_url.clone(),
+            masked_key: p.masked_key(),
+            enabled: p.enabled,
+            priority: p.priority,
+            capabilities: p.capabilities.iter().map(|c| c.as_str().to_string()).collect(),
+            model_count: p.models.len(),
+        })
+        .collect();
+    Json(providers)
+}
+
+/// `POST /api/providers` — add or update a cloud provider.
+pub async fn add_provider(
+    State(state): State<AppState>,
+    Json(config): Json<CloudProviderConfig>,
+) -> Json<serde_json::Value> {
+    let provider_name = config.name.clone();
+    {
+        let mut store = state.cloud_store.write().await;
+        store.add(config);
+        if let Err(e) = store.save().await {
+            tracing::warn!(error = %e, "failed to persist cloud provider store");
+        }
+    }
+
+    state
+        .emit_event(
+            "providers.updated",
+            &serde_json::json!({"action": "add", "name": provider_name}).to_string(),
+        )
+        .await;
+
+    Json(serde_json::json!({"status": "ok", "name": provider_name}))
+}
+
+/// `DELETE /api/providers/:name` — remove a cloud provider.
+pub async fn delete_provider(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    let removed = {
+        let mut store = state.cloud_store.write().await;
+        let removed = store.remove(&name);
+        if removed
+            && let Err(e) = store.save().await
+        {
+            tracing::warn!(error = %e, "failed to persist cloud provider store");
+        }
+        removed
+    };
+
+    if removed {
+        state
+            .emit_event(
+                "providers.updated",
+                &serde_json::json!({"action": "remove", "name": name}).to_string(),
+            )
+            .await;
+
+        Json(serde_json::json!({"status": "ok", "removed": name}))
+    } else {
+        Json(serde_json::json!({"status": "not_found", "name": name}))
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────

@@ -1169,3 +1169,77 @@ orchestrator is a new crate with a new binary name
 - All offerings share the same release cadence.
 - Dashboard complexity grows with each offering but is managed through the
   capability-centric + per-offering-detail architecture.
+
+---
+
+## Implementation Lessons (2026-03-29)
+
+The first implementation attempt was reverted. The crate compiled, passed
+63 unit tests, and cleared 8 adversarial reviews, but failed operationally.
+The root causes and corrective guidance are recorded here so the next
+attempt does not repeat them.
+
+### Root Causes
+
+1. **Bespoke code without checking existing solutions.** The Ollama
+   orchestrator already solved Docker networking (`host.docker.internal`),
+   Koi endpoint resolution (port 5641, not 5353), gateway registration
+   patterns, and startup sequencing. The implementation wrote new code
+   for these instead of harvesting the working solutions.
+
+2. **Assumptions instead of verification.** When the container couldn't
+   reach Koi at `127.0.0.1:5353`, the response was "this is expected
+   behavior" instead of checking how existing orchestrators solve it.
+   The answer (`http://host.docker.internal:5641`) was already in the
+   Ollama orchestrator's Dockerfile and CLI defaults.
+
+3. **Checkbox-driven instead of holistic.** Optimized for "does it
+   compile" and "do tests pass" instead of "does this work as a running
+   service." Built types outward (domain → adapters → tasks → API)
+   instead of operational requirements inward (Docker → startup →
+   discovery → routing → dashboard).
+
+### Corrective Guidance for Re-implementation
+
+**Approach:** Break the problem into manageable logical blocks with
+clear interfaces. Do not tackle surface-level across everything at once.
+
+**Block 1: Operational Foundation**
+- Study the Ollama orchestrator's `Dockerfile`, `main.rs` startup
+  sequence, and `tasks/discovery.rs` as a complete working system.
+- Every configuration default (Koi endpoint, ports, timeouts, data
+  directory, log level) must match the existing orchestrators or have
+  a documented reason for diverging.
+- The block is complete when the container starts, connects to Koi,
+  discovers a stone, and registers its gateway — verified by running
+  it against a real garden.
+
+**Block 2: Ollama Feature Parity**
+- Harvest the Ollama orchestrator's domain logic, infra, tasks, and
+  API layer. Generalize types but preserve behavior.
+- The block is complete when the AI orchestrator can replace the Ollama
+  orchestrator with zero regressions — verified by the exercise.ps1
+  script passing against a real Ollama instance.
+
+**Block 3: Multi-Offering Extension**
+- Add offering adapters one at a time. Each adapter is verified against
+  a real running instance of that service before moving to the next.
+- The block is complete when each offering type can be discovered,
+  health-checked, and proxy-routed through the orchestrator.
+
+**Block 4: Dashboard**
+- Build the dashboard last, after the backend is operationally verified.
+- Study the Ollama dashboard (2,616 lines) as the reference for what
+  operators need, then extend for multi-offering.
+
+**Anti-patterns to avoid:**
+- Writing any code before exhaustively checking what exists in the
+  codebase that solves the same problem.
+- Defaulting configuration values from templates instead of from
+  verified production behavior.
+- Declaring a phase complete based on compilation + unit tests instead
+  of end-to-end operational verification.
+- Building all adapters in parallel before any single one works
+  end-to-end.
+- Treating adversarial code review as the primary quality mechanism
+  instead of runtime verification.

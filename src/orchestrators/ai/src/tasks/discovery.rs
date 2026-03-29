@@ -309,12 +309,14 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                 .set_instance_health(endpoint, InstanceHealth::Healthy)
                 .await;
 
-            // Store probe metadata (version, etc.) if useful
-            if let Some(ref version) = probe.version {
+            // Store probe results: capabilities always, metadata when available
+            {
                 let mut reg = state.instances.write().await;
                 if let Some(inst) = reg.get_mut(endpoint) {
-                    inst.metadata = serde_json::json!({ "version": version });
                     inst.capabilities = probe.capabilities;
+                    if let Some(ref version) = probe.version {
+                        inst.metadata = serde_json::json!({ "version": version });
+                    }
                 }
             }
         }

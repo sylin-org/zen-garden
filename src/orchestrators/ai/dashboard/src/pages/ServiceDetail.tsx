@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import type {
   DashboardStatus,
@@ -83,13 +83,14 @@ export function ServiceDetail({ status }: ServiceDetailProps) {
         ))}
       </div>
 
-      {/* Action buttons placeholder */}
-      <div className="flex gap-2">
-        <ActionButton label="Pull Model" />
-        <ActionButton label="Sync Models" />
-        <ActionButton label="Run Benchmark" />
-        <ActionButton label="Refresh" />
-      </div>
+      {/* Action bar */}
+      {name && (
+        <ServiceActions
+          offering={name}
+          instances={instances}
+          models={models}
+        />
+      )}
 
       {/* Full model table */}
       {models.length > 0 && (
@@ -124,6 +125,7 @@ export function ServiceDetail({ status }: ServiceDetailProps) {
                     </th>
                   ))}
                   <th className="px-2 py-1.5 font-medium">Status</th>
+                  <th className="px-2 py-1.5 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#2e303a]/50">
@@ -138,6 +140,7 @@ export function ServiceDetail({ status }: ServiceDetailProps) {
                       stoneEntries={stoneEntries}
                       isExpanded={isExp}
                       loaded={loaded}
+                      offering={name ?? ""}
                       onToggleExpand={() =>
                         setExpanded(isExp ? null : model.name)
                       }
@@ -170,6 +173,162 @@ export function ServiceDetail({ status }: ServiceDetailProps) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Service Actions Bar ────────────────────────────────────────
+
+interface ServiceActionsProps {
+  offering: string;
+  instances: InstanceStatus[];
+  models: ModelStatus[];
+}
+
+type ActionState = "idle" | "loading" | "success" | "error";
+
+function ServiceActions({ offering, instances, models }: ServiceActionsProps) {
+  const [refreshState, setRefreshState] = useState<ActionState>("idle");
+  const [refreshResult, setRefreshResult] = useState<string | null>(null);
+
+  const [pullModel, setPullModel] = useState("");
+  const [pullState, setPullState] = useState<ActionState>("idle");
+  const [pullResult, setPullResult] = useState<string | null>(null);
+  const [showPullInput, setShowPullInput] = useState(false);
+
+  const targets = instances.map((i) => i.endpoint);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshState("loading");
+    setRefreshResult(null);
+    try {
+      const res = await fetch(`/api/services/${offering}/refresh`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRefreshState("success");
+        setRefreshResult(`${data.models} models found`);
+      } else {
+        setRefreshState("error");
+        setRefreshResult(data.message ?? "refresh failed");
+      }
+    } catch {
+      setRefreshState("error");
+      setRefreshResult("network error");
+    }
+    setTimeout(() => {
+      setRefreshState("idle");
+      setRefreshResult(null);
+    }, 3000);
+  }, [offering]);
+
+  const handlePull = useCallback(async () => {
+    if (!pullModel.trim()) return;
+    setPullState("loading");
+    setPullResult(null);
+    try {
+      const res = await fetch(`/api/services/${offering}/pull`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: pullModel.trim(), targets }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPullState("success");
+        setPullResult(`Job ${data.job_id} queued`);
+        setPullModel("");
+        setShowPullInput(false);
+      } else {
+        setPullState("error");
+        setPullResult(data.message ?? "pull failed");
+      }
+    } catch {
+      setPullState("error");
+      setPullResult("network error");
+    }
+    setTimeout(() => {
+      setPullState("idle");
+      setPullResult(null);
+    }, 5000);
+  }, [offering, pullModel, targets]);
+
+  // Suppress unused-variable warning: models is available for future sync/benchmark
+  void models;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <ActionButton
+          label="Refresh"
+          state={refreshState}
+          onClick={handleRefresh}
+        />
+        <ActionButton
+          label="Pull Model"
+          state={showPullInput ? "idle" : pullState}
+          onClick={() => setShowPullInput((s) => !s)}
+        />
+        <ActionButton
+          label="Sync Models"
+          state="idle"
+          onClick={async () => {
+            await fetch(`/api/services/${offering}/sync`, { method: "POST" });
+          }}
+          title="Coming soon"
+        />
+        <ActionButton
+          label="Run Benchmark"
+          state="idle"
+          onClick={async () => {
+            await fetch(`/api/services/${offering}/benchmark`, {
+              method: "POST",
+            });
+          }}
+          title="Coming soon"
+        />
+      </div>
+
+      {/* Pull model input row */}
+      {showPullInput && (
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={pullModel}
+            onChange={(e) => setPullModel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handlePull();
+            }}
+            placeholder="Model name (e.g. nomic-embed-text)"
+            className="text-[12px] px-2 py-1.5 rounded border border-[#2e303a] bg-[#12131a] text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500 w-72"
+            autoFocus
+          />
+          <button
+            onClick={handlePull}
+            disabled={pullState === "loading" || !pullModel.trim()}
+            className="text-[11px] px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition-colors"
+          >
+            {pullState === "loading" ? "Pulling..." : "Pull"}
+          </button>
+          <button
+            onClick={() => {
+              setShowPullInput(false);
+              setPullModel("");
+            }}
+            className="text-[11px] px-2 py-1.5 text-gray-500 hover:text-gray-300"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Result messages */}
+      {refreshResult && (
+        <StatusMessage state={refreshState} message={refreshResult} />
+      )}
+      {pullResult && (
+        <StatusMessage state={pullState} message={pullResult} />
       )}
     </div>
   );
@@ -237,6 +396,7 @@ interface ServiceModelRowProps {
   stoneEntries: ServiceStoneEntry[];
   isExpanded: boolean;
   loaded: boolean;
+  offering: string;
   onToggleExpand: () => void;
 }
 
@@ -245,8 +405,52 @@ function ServiceModelRow({
   stoneEntries,
   isExpanded,
   loaded,
+  offering,
   onToggleExpand,
 }: ServiceModelRowProps) {
+  const [actionState, setActionState] = useState<ActionState>("idle");
+
+  const handleLoadUnload = useCallback(
+    async (action: "load" | "unload", endpoint: string) => {
+      setActionState("loading");
+      try {
+        const res = await fetch(`/api/services/${offering}/${action}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: model.name, endpoint }),
+        });
+        if (res.ok) {
+          setActionState("success");
+        } else {
+          setActionState("error");
+        }
+      } catch {
+        setActionState("error");
+      }
+      setTimeout(() => setActionState("idle"), 3000);
+    },
+    [offering, model.name],
+  );
+
+  const handleDelete = useCallback(async () => {
+    if (!confirm(`Delete ${model.name} from all instances?`)) return;
+    setActionState("loading");
+    try {
+      const res = await fetch(
+        `/api/services/${offering}/models/${encodeURIComponent(model.name)}`,
+        { method: "DELETE" },
+      );
+      if (res.ok) {
+        setActionState("success");
+      } else {
+        setActionState("error");
+      }
+    } catch {
+      setActionState("error");
+    }
+    setTimeout(() => setActionState("idle"), 3000);
+  }, [offering, model.name]);
+
   return (
     <>
       <tr
@@ -314,11 +518,37 @@ function ServiceModelRow({
             {loaded ? "loaded" : "idle"}
           </span>
         </td>
+        <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+          {actionState === "loading" ? (
+            <span className="text-[10px] text-yellow-400">...</span>
+          ) : (
+            <div className="flex gap-1">
+              {loaded ? (
+                <ModelActionBtn
+                  label="Unload"
+                  onClick={() => {
+                    const ep = model.available_on.find((p) => p.loaded)?.endpoint;
+                    if (ep) handleLoadUnload("unload", ep);
+                  }}
+                />
+              ) : (
+                <ModelActionBtn
+                  label="Load"
+                  onClick={() => {
+                    const ep = model.available_on[0]?.endpoint;
+                    if (ep) handleLoadUnload("load", ep);
+                  }}
+                />
+              )}
+              <ModelActionBtn label="Del" onClick={handleDelete} danger />
+            </div>
+          )}
+        </td>
       </tr>
       {isExpanded && (
         <tr>
           <td
-            colSpan={7 + stoneEntries.length + 1}
+            colSpan={7 + stoneEntries.length + 2}
             className="bg-[#16171f] px-6 py-3"
           >
             <div className="grid grid-cols-2 gap-4 text-[11px]">
@@ -368,6 +598,22 @@ function ServiceModelRow({
                     <span className="text-gray-600 text-[10px]">
                       {p.loaded ? "loaded" : "available"}
                     </span>
+                    <button
+                      onClick={() => {
+                        const action = p.loaded ? "unload" : "load";
+                        fetch(`/api/services/${offering}/${action}`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            model: model.name,
+                            endpoint: p.endpoint,
+                          }),
+                        });
+                      }}
+                      className="text-[9px] text-blue-400 hover:text-blue-300 ml-1"
+                    >
+                      [{p.loaded ? "unload" : "load"}]
+                    </button>
                   </div>
                 ))}
               </div>
@@ -396,13 +642,69 @@ function DetailRow({
   );
 }
 
-function ActionButton({ label }: { label: string }) {
+interface ActionButtonProps {
+  label: string;
+  state: ActionState;
+  onClick: () => void;
+  title?: string;
+}
+
+function ActionButton({ label, state, onClick, title }: ActionButtonProps) {
   return (
     <button
-      className="text-[11px] px-3 py-1.5 rounded border border-[#2e303a] text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors"
-      title="Coming soon"
+      onClick={onClick}
+      disabled={state === "loading"}
+      title={title}
+      className={`text-[11px] px-3 py-1.5 rounded border transition-colors ${
+        state === "loading"
+          ? "border-yellow-600 text-yellow-400 cursor-wait"
+          : state === "success"
+            ? "border-emerald-600 text-emerald-400"
+            : state === "error"
+              ? "border-red-600 text-red-400"
+              : "border-[#2e303a] text-gray-400 hover:text-gray-200 hover:border-gray-500"
+      }`}
+    >
+      {state === "loading" ? `${label}...` : label}
+    </button>
+  );
+}
+
+function ModelActionBtn({
+  label,
+  onClick,
+  danger,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${
+        danger
+          ? "border-red-800 text-red-500 hover:text-red-400 hover:border-red-600"
+          : "border-[#2e303a] text-gray-500 hover:text-gray-300 hover:border-gray-500"
+      }`}
     >
       {label}
     </button>
   );
+}
+
+function StatusMessage({
+  state,
+  message,
+}: {
+  state: ActionState;
+  message: string;
+}) {
+  const color =
+    state === "success"
+      ? "text-emerald-400"
+      : state === "error"
+        ? "text-red-400"
+        : "text-gray-400";
+  return <div className={`text-[11px] ${color}`}>{message}</div>;
 }

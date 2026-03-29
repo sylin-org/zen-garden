@@ -106,9 +106,10 @@ export interface DashboardStatus {
 
 // ── Display Helpers ─────────────────────────────────────────────
 
-/** All 13 capabilities in display order. */
+/** User-facing capabilities in display order.
+ * `generate` is excluded — it's an internal fitness/benchmark concept.
+ * Chat covers the user-facing text generation use case. */
 export const ALL_CAPABILITIES = [
-  "generate",
   "chat",
   "embed",
   "vision",

@@ -171,6 +171,14 @@ async fn main() -> Result<()> {
         .route("/api/providers", axum::routing::post(api::dashboard::add_provider))
         .route("/api/providers/{name}", axum::routing::delete(api::dashboard::delete_provider))
         .route("/api/providers/test", axum::routing::post(api::provider_test::test_key))
+        // Service management actions
+        .route("/api/services/{offering}/pull", axum::routing::post(api::service_actions::pull_model))
+        .route("/api/services/{offering}/refresh", axum::routing::post(api::service_actions::refresh_models))
+        .route("/api/services/{offering}/benchmark", axum::routing::post(api::service_actions::trigger_benchmark))
+        .route("/api/services/{offering}/sync", axum::routing::post(api::service_actions::sync_models))
+        .route("/api/services/{offering}/load", axum::routing::post(api::service_actions::load_model))
+        .route("/api/services/{offering}/unload", axum::routing::post(api::service_actions::unload_model))
+        .route("/api/services/{offering}/models/{model}", axum::routing::delete(api::service_actions::delete_model))
         .with_state(state.clone())
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))

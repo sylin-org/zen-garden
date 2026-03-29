@@ -143,9 +143,13 @@ async fn main() -> Result<()> {
     );
 
     // ── Dashboard Server ────────────────────────────────────────────
-    // TODO: Block 5 — React dashboard. For now, a health endpoint.
     let dashboard_router = axum::Router::new()
         .route("/health", axum::routing::get(api::health::health))
+        .route("/api/status", axum::routing::get(api::dashboard::get_status))
+        .route("/api/events", axum::routing::get(api::dashboard::get_events))
+        .route("/api/settings", axum::routing::get(api::dashboard::get_settings))
+        .route("/api/settings", axum::routing::post(api::dashboard::post_settings))
+        .route("/api/jobs", axum::routing::get(api::dashboard::get_jobs))
         .with_state(state.clone());
 
     let dashboard_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cli.dashboard_port));

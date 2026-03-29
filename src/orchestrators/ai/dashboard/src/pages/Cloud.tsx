@@ -98,6 +98,7 @@ export function Cloud({ status: _status }: CloudProps) {
   const [testResult, setTestResult] = useState<{
     valid: boolean;
     message: string;
+    model_names: string[];
   } | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -131,6 +132,7 @@ export function Cloud({ status: _status }: CloudProps) {
           priority,
           capabilities: catalogEntry.capabilities,
           models: [],
+          cached_models: testResult?.model_names ?? [],
         }),
       });
       setConfiguring(null);
@@ -162,11 +164,16 @@ export function Cloud({ status: _status }: CloudProps) {
         }),
       });
       const data = await resp.json();
-      setTestResult({ valid: data.valid, message: data.message });
+      setTestResult({
+        valid: data.valid,
+        message: data.message,
+        model_names: data.model_names ?? [],
+      });
     } catch (e) {
       setTestResult({
         valid: false,
         message: `request failed: ${e instanceof Error ? e.message : "unknown"}`,
+        model_names: [],
       });
     } finally {
       setTesting(false);
@@ -328,13 +335,28 @@ export function Cloud({ status: _status }: CloudProps) {
                   </div>
                   {testResult && (
                     <div
-                      className={`mt-2 px-3 py-1.5 rounded text-xs font-mono ${
+                      className={`mt-2 px-3 py-2 rounded text-xs ${
                         testResult.valid
                           ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
                           : "bg-red-500/10 border border-red-500/30 text-red-400"
                       }`}
                     >
-                      {testResult.valid ? "✓" : "✗"} {testResult.message}
+                      <div className="font-mono">
+                        {testResult.valid ? "✓" : "✗"} {testResult.message}
+                      </div>
+                      {testResult.valid &&
+                        testResult.model_names.length > 0 && (
+                          <div className="mt-1.5 text-[10px] text-gray-400 max-h-32 overflow-y-auto">
+                            {testResult.model_names.map((name) => (
+                              <span
+                                key={name}
+                                className="inline-block mr-1.5 mb-1 px-1.5 py-0.5 rounded bg-[#0f1117] text-gray-300 font-mono"
+                              >
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                     </div>
                   )}
                   <p className="text-[10px] text-gray-600 mt-2">

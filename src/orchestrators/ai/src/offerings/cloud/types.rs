@@ -36,6 +36,14 @@ pub struct CloudProviderConfig {
     /// Optional model allowlist. Empty means all models.
     #[serde(default)]
     pub models: Vec<String>,
+    /// Cached model list from last successful enumeration.
+    /// Persisted to disk so models are known across restarts
+    /// without needing to re-enumerate (which requires the key).
+    #[serde(default)]
+    pub cached_models: Vec<String>,
+    /// Timestamp of last successful enumeration (ISO-8601).
+    #[serde(default)]
+    pub last_enumerated: Option<String>,
 }
 
 fn default_priority() -> i32 {
@@ -110,6 +118,14 @@ impl CloudProviderStore {
             "adding cloud provider"
         );
         self.providers.push(config);
+    }
+
+    /// Update the cached model list for a provider.
+    pub fn update_cached_models(&mut self, name: &str, models: Vec<String>) {
+        if let Some(provider) = self.providers.iter_mut().find(|p| p.name == name) {
+            provider.cached_models = models;
+            provider.last_enumerated = Some(chrono::Utc::now().to_rfc3339());
+        }
     }
 
     /// Remove a provider by name.

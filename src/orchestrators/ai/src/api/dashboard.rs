@@ -304,11 +304,16 @@ pub async fn get_providers(State(state): State<AppState>) -> Json<Vec<ProviderIn
 }
 
 /// `POST /api/providers` — add or update a cloud provider.
+///
+/// If `cached_models` is populated (e.g., from a prior test-key call),
+/// those are persisted to disk alongside the key. On subsequent startups,
+/// the cached list avoids a cold-start enumeration.
 pub async fn add_provider(
     State(state): State<AppState>,
     Json(config): Json<CloudProviderConfig>,
 ) -> Json<serde_json::Value> {
     let provider_name = config.name.clone();
+    let model_count = config.cached_models.len();
     {
         let mut store = state.cloud_store.write().await;
         store.add(config);
@@ -320,11 +325,16 @@ pub async fn add_provider(
     state
         .emit_event(
             "providers.updated",
-            &serde_json::json!({"action": "add", "name": provider_name}).to_string(),
+            &serde_json::json!({
+                "action": "add",
+                "name": provider_name,
+                "models": model_count,
+            })
+            .to_string(),
         )
         .await;
 
-    Json(serde_json::json!({"status": "ok", "name": provider_name}))
+    Json(serde_json::json!({"status": "ok", "name": provider_name, "models": model_count}))
 }
 
 /// `DELETE /api/providers/:name` — remove a cloud provider.

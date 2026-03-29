@@ -26,7 +26,9 @@ pub struct TestKeyResponse {
     pub provider: String,
     pub message: String,
     /// Number of models found (if key is valid and endpoint returns models).
-    pub models: Option<usize>,
+    pub model_count: Option<usize>,
+    /// Model IDs found (if key is valid).
+    pub model_names: Vec<String>,
 }
 
 /// `POST /api/providers/test` — validate an API key without saving it.
@@ -51,17 +53,19 @@ pub async fn test_key(
     };
 
     match result {
-        Ok((message, models)) => Json(TestKeyResponse {
+        Ok((message, model_names)) => Json(TestKeyResponse {
             valid: true,
             provider: req.provider,
             message,
-            models: Some(models),
+            model_count: Some(model_names.len()),
+            model_names,
         }),
         Err(message) => Json(TestKeyResponse {
             valid: false,
             provider: req.provider,
             message,
-            models: None,
+            model_count: None,
+            model_names: vec![],
         }),
     }
 }
@@ -71,7 +75,7 @@ async fn test_openai(
     client: &Client,
     api_key: &str,
     base_url: Option<&str>,
-) -> Result<(String, usize), String> {
+) -> Result<(String, Vec<String>), String> {
     let base = base_url.unwrap_or("https://api.openai.com");
     let resp = client
         .get(format!("{base}/v1/models"))
@@ -91,13 +95,14 @@ async fn test_openai(
     }
 
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
-    let count = body
+    let names: Vec<String> = body
         .get("data")
         .and_then(|d| d.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
 
-    Ok((format!("valid — {count} models available"), count))
+    let count = names.len();
+    Ok((format!("valid — {count} models available"), names))
 }
 
 /// Anthropic: GET /v1/models with x-api-key + anthropic-version.
@@ -105,7 +110,7 @@ async fn test_anthropic(
     client: &Client,
     api_key: &str,
     base_url: Option<&str>,
-) -> Result<(String, usize), String> {
+) -> Result<(String, Vec<String>), String> {
     let base = base_url.unwrap_or("https://api.anthropic.com");
     let resp = client
         .get(format!("{base}/v1/models"))
@@ -126,13 +131,14 @@ async fn test_anthropic(
     }
 
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
-    let count = body
+    let names: Vec<String> = body
         .get("data")
         .and_then(|d| d.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
 
-    Ok((format!("valid — {count} models available"), count))
+    let count = names.len();
+    Ok((format!("valid — {count} models available"), names))
 }
 
 /// Google AI: GET /v1/models?key={key} (key in query param, not header).
@@ -140,7 +146,7 @@ async fn test_google(
     client: &Client,
     api_key: &str,
     base_url: Option<&str>,
-) -> Result<(String, usize), String> {
+) -> Result<(String, Vec<String>), String> {
     let base = base_url.unwrap_or("https://generativelanguage.googleapis.com");
     let resp = client
         .get(format!("{base}/v1/models"))
@@ -165,13 +171,18 @@ async fn test_google(
     }
 
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
-    let count = body
+    let names: Vec<String> = body
         .get("models")
         .and_then(|m| m.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map(|a| a.iter().filter_map(|m| {
+            m.get("name").and_then(|v| v.as_str())
+                .or_else(|| m.get("id").and_then(|v| v.as_str()))
+                .map(String::from)
+        }).collect())
+        .unwrap_or_default();
 
-    Ok((format!("valid — {count} models available"), count))
+    let count = names.len();
+    Ok((format!("valid — {count} models available"), names))
 }
 
 /// Cohere: GET /v2/models with Bearer auth.
@@ -179,7 +190,7 @@ async fn test_cohere(
     client: &Client,
     api_key: &str,
     base_url: Option<&str>,
-) -> Result<(String, usize), String> {
+) -> Result<(String, Vec<String>), String> {
     let base = base_url.unwrap_or("https://api.cohere.com");
     let resp = client
         .get(format!("{base}/v2/models"))
@@ -199,13 +210,18 @@ async fn test_cohere(
     }
 
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
-    let count = body
+    let names: Vec<String> = body
         .get("models")
         .and_then(|m| m.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map(|a| a.iter().filter_map(|m| {
+            m.get("name").and_then(|v| v.as_str())
+                .or_else(|| m.get("id").and_then(|v| v.as_str()))
+                .map(String::from)
+        }).collect())
+        .unwrap_or_default();
 
-    Ok((format!("valid — {count} models available"), count))
+    let count = names.len();
+    Ok((format!("valid — {count} models available"), names))
 }
 
 /// Deepgram: GET /v1/projects with Token auth.
@@ -213,7 +229,7 @@ async fn test_deepgram(
     client: &Client,
     api_key: &str,
     base_url: Option<&str>,
-) -> Result<(String, usize), String> {
+) -> Result<(String, Vec<String>), String> {
     let base = base_url.unwrap_or("https://api.deepgram.com");
     let resp = client
         .get(format!("{base}/v1/projects"))
@@ -233,13 +249,14 @@ async fn test_deepgram(
     }
 
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
-    let count = body
+    let names: Vec<String> = body
         .get("projects")
         .and_then(|p| p.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map(|a| a.iter().filter_map(|p| p.get("name").and_then(|v| v.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
 
-    Ok((format!("valid — {count} projects"), count))
+    let count = names.len();
+    Ok((format!("valid — {count} projects"), names))
 }
 
 /// Stability AI: GET /v1/user/account with Bearer auth.
@@ -247,7 +264,7 @@ async fn test_stability(
     client: &Client,
     api_key: &str,
     base_url: Option<&str>,
-) -> Result<(String, usize), String> {
+) -> Result<(String, Vec<String>), String> {
     let base = base_url.unwrap_or("https://api.stability.ai");
     let resp = client
         .get(format!("{base}/v1/user/account"))
@@ -266,7 +283,7 @@ async fn test_stability(
         return Err(format!("HTTP {status}: {}", truncate(&body, 200)));
     }
 
-    Ok(("valid — account verified".to_string(), 0))
+    Ok(("valid — account verified".to_string(), vec![]))
 }
 
 /// ElevenLabs: GET /v1/user with xi-api-key header.
@@ -274,7 +291,7 @@ async fn test_elevenlabs(
     client: &Client,
     api_key: &str,
     base_url: Option<&str>,
-) -> Result<(String, usize), String> {
+) -> Result<(String, Vec<String>), String> {
     let base = base_url.unwrap_or("https://api.elevenlabs.io");
     let resp = client
         .get(format!("{base}/v1/user"))
@@ -293,7 +310,7 @@ async fn test_elevenlabs(
         return Err(format!("HTTP {status}: {}", truncate(&body, 200)));
     }
 
-    Ok(("valid — account verified".to_string(), 0))
+    Ok(("valid — account verified".to_string(), vec![]))
 }
 
 fn truncate(s: &str, max: usize) -> String {

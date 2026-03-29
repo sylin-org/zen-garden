@@ -148,9 +148,14 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
+    let cloud_sync_handle = tokio::spawn(tasks::cloud_sync::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
+
     tracing::info!(
-        tasks = 5,
-        "background tasks spawned (discovery, gateway, health, metrics_flush, metrics_processor)"
+        tasks = 6,
+        "background tasks spawned (discovery, gateway, health, metrics_flush, metrics_processor, cloud_sync)"
     );
 
     // ── Dashboard Server ────────────────────────────────────────────
@@ -277,6 +282,7 @@ async fn main() -> Result<()> {
         let _ = tokio::join!(
             discovery_handle,
             gateway_handle,
+            cloud_sync_handle,
             health_handle,
             metrics_flush_handle,
             metrics_proc_handle,

@@ -5,5 +5,8 @@
 //! infrastructure (routing, demand, fitness, placement) operates on
 //! generic `ServiceInstance` and `Capability` types.
 
+pub mod app_state;
 pub mod catalog;
 pub mod domain;
+
+pub use app_state::AppState;

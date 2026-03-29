@@ -210,10 +210,11 @@ pub trait Offering: Send + Sync {
         request: ProxyRequest,
     ) -> BoxFuture<'_, Result<ProxyResponse>>;
 
-    /// Benchmark a capability on an instance.
+    /// Benchmark a specific model's capability on an instance.
     fn benchmark(
         &self,
         endpoint: &str,
+        model: &str,
         capability: Capability,
     ) -> BoxFuture<'_, Result<BenchmarkSample>>;
 

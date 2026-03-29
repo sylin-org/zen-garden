@@ -76,6 +76,23 @@ convention — 21434 was chosen to not conflict with Ollama's native port
 based on what works operationally. The key principle is: orchestrator proxy
 ports live in a dedicated range and never collide with native service ports.
 
+**Port registry:** New port assignments must be added to
+`src/moss/embedded/manifests/well-known-ports.yaml` to prevent future collisions.
+
+**Architecture note:** Most reverse proxies (Envoy, Traefik, Nginx) multiplex on
+a single port by path or host header. The per-port approach is chosen here because
+each service has a fundamentally different wire protocol (Ollama NDJSON vs ComfyUI
+WebSocket vs whisper.cpp multipart vs OpenAI JSON). Path-based multiplexing would
+require the proxy to inspect the request before knowing which adapter to dispatch
+to, which is fragile for binary protocols and WebSocket upgrades. Per-port
+dispatch is unambiguous: the listener port determines the adapter.
+
+**Research pattern:** Study how **Envoy's listener filter chains** handle
+multi-protocol dispatch on a single port vs multiple ports. Envoy's documentation
+on listener drain and hot restart is also relevant for graceful shutdown with
+multiple listeners. If per-port dispatch creates too many ports for Docker
+networking, consider Envoy's filter chain match approach as an alternative.
+
 ---
 
 ## What Already Exists (DO NOT recreate)
@@ -163,9 +180,13 @@ not a hand-written approximation.
    discriminator. `RequestCapability` / `fitness::Capability` → unified `Capability`
    enum extended for non-LLM capabilities.
 
-**Verification:** The generalized domain modules compile, pass their existing tests
-(adapted for the new types), and the Ollama orchestrator can be wired to use them
-(either directly or via the new AI orchestrator achieving Ollama parity).
+**Verification:**
+- `cargo check` passes for both the new shared modules and the Ollama orchestrator.
+  If extraction moves modules, run `cargo check --package zen-garden-ollama-orchestrator`
+  to prove no regression.
+- Existing domain unit tests pass (adapted for new types).
+- The Ollama orchestrator's `exercise.ps1` still works against a running Ollama
+  orchestrator container (if the extraction modifies Ollama's imports).
 
 ### Block 2: Operational Foundation
 
@@ -236,11 +257,27 @@ Logs must show:
    connecting to this port must see exactly the same behavior as connecting to
    the current Ollama orchestrator.
 
-4. **Wire the extension API**: `/v1/models`, `/v1/stones`, `/v1/capabilities`,
-   `/v1/recommendations`.
+4. **Wire the extension API** (available on all ports or via dashboard):
+   `/v1/models`, `/v1/stones`, `/v1/capabilities`, `/v1/recommendations`.
 
 **Verification:** Run the Ollama orchestrator's `exercise.ps1` against the AI
-orchestrator's proxy port. All tests must pass.
+orchestrator's Ollama proxy port (21434). All tests must pass.
+
+### Per-Service Proxy Port Specs
+
+Each proxy port must faithfully reproduce the native service's API. The
+research.md files in `src/moss/embedded/manifests/sw/ai/` document the exact
+endpoints. Summary:
+
+| Port | Service | Key Endpoints | Research File |
+|------|---------|---------------|---------------|
+| 21434 | Ollama | `GET /api/tags`, `POST /api/generate`, `POST /api/chat`, `POST /api/embed`, `POST /api/pull` | (Ollama orchestrator source) |
+| 21435 | ComfyUI | `GET /system_stats`, `POST /prompt`, `GET /queue`, `GET /models/*`, `WS /ws` | `comfyui.research.md` |
+| 21436 | whisper.cpp | `GET /health`, `POST /inference` (multipart) | `whispercpp.research.md` |
+| 21437 | Speaches | `GET /health`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech` | (OpenAI-compatible) |
+| 21438 | OpenedAI Speech | `GET /health`, `POST /v1/audio/speech`, `GET /v1/models` | `openedai-speech.research.md` |
+| 21439 | Infinity | `GET /health`, `POST /embeddings`, `POST /rerank`, `GET /models` | `infinity.research.md` |
+| 21440 | LibreTranslate | `GET /health`, `POST /translate`, `GET /languages` | `libretranslate.research.md` |
 
 ### Block 4: Multi-Offering Extension
 
@@ -293,13 +330,34 @@ full state every 3 seconds — no polling.
 
 **Goal:** Cloud APIs as priority -10 fallbacks.
 
-Study LiteLLM and OpenRouter patterns for provider abstraction. Key points:
-- `provider/model` naming convention
+**Research first.** Study these battle-tested implementations before writing code:
+
+- **LiteLLM** (github.com/BerriAI/litellm) — 50+ providers. Study their
+  `transform_request` / `transform_response` pattern, `provider/model` naming,
+  `"os.environ/VAR_NAME"` config syntax, and router fallback strategies.
+- **OpenRouter** (openrouter.ai) — 300+ models. Study their per-request provider
+  selection (`provider.order`, `provider.allow_fallbacks`), model naming with
+  variants (`:free`, `:nitro`), and unified OpenAI-compatible endpoint.
+- **Portkey Gateway** (github.com/Portkey-AI/gateway) — 60+ providers. Study their
+  static provider registry pattern, declarative parameter mapping, and
+  `loadbalance`/`fallback` routing modes.
+
+**Key architectural decisions from research:**
+- `provider/model` naming convention (universal across all three projects)
 - API keys via environment variables (never in config files)
-- Anthropic uses `x-api-key` header and Messages API (not OpenAI-compatible) —
-  needs a dedicated translation layer, not a generic OpenAI-compat adapter
+- OpenAI format as the lingua franca — translate to/from for each provider
+- Anthropic needs a **dedicated translation layer** (not generic OpenAI-compat):
+  - Auth: `x-api-key` header, not Bearer
+  - System messages: extracted from messages array to top-level `system` field
+  - `max_tokens` is required (not optional like OpenAI)
+  - `stop` → `stop_sequences`
+  - Tool definitions: `parameters` → `input_schema`
+  - Response: content blocks → concatenated string + tool_calls
+  - Streaming: named SSE events (not OpenAI's `data:` lines)
 - Cloud instances must be registered in the instance registry with `priority: -10`
   so the routing engine's priority gate (RT-4) handles them correctly
+- A cloud_sync task must create `ServiceInstance` entries at startup and refresh
+  model lists periodically — without this, routing never finds cloud candidates
 
 ---
 
@@ -308,10 +366,10 @@ Study LiteLLM and OpenRouter patterns for provider abstraction. Key points:
 1. **Harvest, don't reinvent.** If the Ollama orchestrator already solves a problem,
    extract that solution into the shared layer and use it. Do not write a new version.
 
-2. **Never guess a configuration value.** Read it from the existing orchestrators.
-   If the Ollama orchestrator uses `host.docker.internal:5641` for Koi, that's what
-   the AI orchestrator uses. If you don't know a value, find it in the code. If it's
-   not in the code, ask.
+2. **Never guess a configuration value.** Read it from the existing orchestrators'
+   source code. Open the file, find the `#[arg]` attribute, read the `default_value`.
+   If you don't know a value, find it in the code. If it's not in the code, ask.
+   Do not hardcode values from this document or any document — always trace to source.
 
 3. **Never declare a phase complete based on compilation + unit tests.** Verify against
    a running system. "It compiles" is not a deliverable. "The container starts,
@@ -356,6 +414,8 @@ In this order:
    the offering-agnostic orchestration patterns
 9. `src/orchestrators/ollama/src/api/` — API handlers and proxy pattern
 10. `src/moss/embedded/manifests/sw/ai/*.research.md` — service API references
+11. `src/moss/embedded/manifests/well-known-ports.yaml` — port registry (register
+    new orchestrator ports here)
 
 ---
 

@@ -82,7 +82,7 @@ impl OfferingKind {
             Self::Ollama => Some(11434),
             Self::ComfyUi => Some(8188),
             Self::Speaches => Some(8000),
-            Self::OpenedaiSpeech => Some(8000),
+            Self::OpenedaiSpeech => Some(8001),
             Self::Infinity => Some(7997),
             Self::LibreTranslate => Some(5000),
             Self::HuggingFace => None,

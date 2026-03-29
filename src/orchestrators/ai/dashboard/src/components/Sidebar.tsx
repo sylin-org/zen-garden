@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import type { DashboardStatus, CapabilityState } from "../types";
 import { ALL_CAPABILITIES, CAPABILITY_LABELS } from "../types";
+import { isCloudOffering } from "../utils/cloudCatalog";
 
 interface SidebarProps {
   status: DashboardStatus | null;
@@ -22,7 +23,32 @@ function capabilityState(
   return found?.state ?? "not_installed";
 }
 
+function countLocalServices(status: DashboardStatus | null): number {
+  if (!status) return 0;
+  const kinds = new Set<string>();
+  for (const inst of status.instances) {
+    if (!isCloudOffering(inst.kind)) {
+      kinds.add(inst.kind);
+    }
+  }
+  return kinds.size;
+}
+
+function countCloudProviders(status: DashboardStatus | null): number {
+  if (!status) return 0;
+  const kinds = new Set<string>();
+  for (const inst of status.instances) {
+    if (isCloudOffering(inst.kind)) {
+      kinds.add(inst.kind);
+    }
+  }
+  return kinds.size;
+}
+
 export function Sidebar({ status }: SidebarProps) {
+  const localCount = countLocalServices(status);
+  const cloudCount = countCloudProviders(status);
+
   return (
     <aside className="w-48 shrink-0 border-r border-[#2e303a] bg-[#0f1117] flex flex-col h-screen sticky top-0">
       <div className="px-4 py-4 border-b border-[#2e303a]">
@@ -88,7 +114,42 @@ export function Sidebar({ status }: SidebarProps) {
         </div>
 
         <NavLink
-          to="/stones"
+          to="/infra/services"
+          className={({ isActive }) =>
+            `flex items-center justify-between px-4 py-1.5 text-[13px] ${
+              isActive
+                ? "text-gray-100 bg-[#1a1b23]"
+                : "text-gray-400 hover:text-gray-200 hover:bg-[#1a1b23]/50"
+            }`
+          }
+        >
+          <span>Services</span>
+          {localCount > 0 && (
+            <span className="text-[10px] text-gray-500 font-mono">{localCount}</span>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/infra/cloud"
+          className={({ isActive }) =>
+            `flex items-center justify-between px-4 py-1.5 text-[13px] ${
+              isActive
+                ? "text-gray-100 bg-[#1a1b23]"
+                : "text-gray-400 hover:text-gray-200 hover:bg-[#1a1b23]/50"
+            }`
+          }
+        >
+          <span className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-purple-500" />
+            Cloud
+          </span>
+          {cloudCount > 0 && (
+            <span className="text-[10px] text-purple-400 font-mono">{cloudCount}</span>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/infra/stones"
           className={({ isActive }) =>
             `block px-4 py-1.5 text-[13px] ${
               isActive
@@ -98,20 +159,6 @@ export function Sidebar({ status }: SidebarProps) {
           }
         >
           Stones
-        </NavLink>
-
-        <NavLink
-          to="/cloud"
-          className={({ isActive }) =>
-            `flex items-center gap-2 px-4 py-1.5 text-[13px] ${
-              isActive
-                ? "text-gray-100 bg-[#1a1b23]"
-                : "text-gray-400 hover:text-gray-200 hover:bg-[#1a1b23]/50"
-            }`
-          }
-        >
-          <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-purple-500" />
-          Cloud Providers
         </NavLink>
       </nav>
 

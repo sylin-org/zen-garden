@@ -116,7 +116,7 @@ function StoneVramBar({ stone }: { stone: StoneStatus }) {
 
   return (
     <Link
-      to="/stones"
+      to="/infra/stones"
       className="block bg-[#1a1b23] border border-[#2e303a] rounded-lg p-3 hover:bg-[#22232d] transition-colors"
     >
       <div className="flex items-center justify-between mb-1.5">

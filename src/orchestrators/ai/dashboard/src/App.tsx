@@ -3,8 +3,12 @@ import { useStatus } from "./hooks/useStatus";
 import { Sidebar } from "./components/Sidebar";
 import { Overview } from "./pages/Overview";
 import { CapabilityDetail } from "./pages/CapabilityDetail";
+import { ServicesList } from "./pages/ServicesList";
+import { ServiceDetail } from "./pages/ServiceDetail";
+import { CloudList } from "./pages/CloudList";
+import { CloudDetail } from "./pages/CloudDetail";
+import { CloudEdit } from "./pages/CloudEdit";
 import { Stones } from "./pages/Stones";
-import { Cloud } from "./pages/Cloud";
 import { Settings } from "./pages/Settings";
 
 function App() {
@@ -43,8 +47,30 @@ function App() {
               path="/capability/:name"
               element={<CapabilityDetail status={status} />}
             />
-            <Route path="/stones" element={<Stones status={status} />} />
-            <Route path="/cloud" element={<Cloud status={status} />} />
+            <Route
+              path="/infra/services"
+              element={<ServicesList status={status} />}
+            />
+            <Route
+              path="/infra/services/:name"
+              element={<ServiceDetail status={status} />}
+            />
+            <Route
+              path="/infra/cloud"
+              element={<CloudList status={status} />}
+            />
+            <Route
+              path="/infra/cloud/:name"
+              element={<CloudDetail status={status} />}
+            />
+            <Route
+              path="/infra/cloud/:name/edit"
+              element={<CloudEdit status={status} />}
+            />
+            <Route
+              path="/infra/stones"
+              element={<Stones status={status} />}
+            />
             <Route path="/settings" element={<Settings status={status} />} />
           </Routes>
         )}

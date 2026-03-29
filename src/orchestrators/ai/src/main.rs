@@ -152,10 +152,9 @@ async fn main() -> Result<()> {
         .route("/api/settings", axum::routing::post(api::dashboard::post_settings))
         .route("/api/jobs", axum::routing::get(api::dashboard::get_jobs))
         .with_state(state.clone())
-        // Embedded dashboard SPA
+        // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))
-        .route("/assets/{*path}", axum::routing::get(api::static_files::asset))
-        .fallback(axum::routing::get(api::static_files::asset));
+        .fallback(api::static_files::fallback);
 
     let dashboard_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cli.dashboard_port));
     let dashboard_listener = tokio::net::TcpListener::bind(dashboard_addr).await?;

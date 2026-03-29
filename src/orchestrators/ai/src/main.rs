@@ -158,6 +158,9 @@ async fn main() -> Result<()> {
         "background tasks spawned (discovery, gateway, health, metrics_flush, metrics_processor, cloud_sync)"
     );
 
+    // ── CORS — wide open for all APIs and proxy ports ────────────
+    let cors = tower_http::cors::CorsLayer::permissive();
+
     // ── Dashboard Server ────────────────────────────────────────────
     let dashboard_router = axum::Router::new()
         // API endpoints
@@ -184,7 +187,8 @@ async fn main() -> Result<()> {
         .with_state(state.clone())
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))
-        .fallback(api::static_files::fallback);
+        .fallback(api::static_files::fallback)
+        .layer(cors.clone());
 
     let dashboard_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cli.dashboard_port));
     let dashboard_listener = tokio::net::TcpListener::bind(dashboard_addr).await?;
@@ -219,7 +223,8 @@ async fn main() -> Result<()> {
 
     let proxy_router = axum::Router::new()
         .fallback(api::proxy::proxy_handler)
-        .with_state(proxy_state);
+        .with_state(proxy_state)
+        .layer(cors.clone());
 
     let proxy_addr = std::net::SocketAddr::from(([0, 0, 0, 0], proxy_port));
     let proxy_listener = tokio::net::TcpListener::bind(proxy_addr).await?;
@@ -261,7 +266,8 @@ async fn main() -> Result<()> {
 
         let router = axum::Router::new()
             .fallback(api::generic_proxy::proxy_handler)
-            .with_state(gp_state);
+            .with_state(gp_state)
+            .layer(cors.clone());
 
         match tokio::net::TcpListener::bind(std::net::SocketAddr::from(([0, 0, 0, 0], port))).await
         {

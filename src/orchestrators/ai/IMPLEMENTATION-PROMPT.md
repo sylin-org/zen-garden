@@ -87,11 +87,11 @@ require the proxy to inspect the request before knowing which adapter to dispatc
 to, which is fragile for binary protocols and WebSocket upgrades. Per-port
 dispatch is unambiguous: the listener port determines the adapter.
 
-**Research pattern:** Study how **Envoy's listener filter chains** handle
-multi-protocol dispatch on a single port vs multiple ports. Envoy's documentation
-on listener drain and hot restart is also relevant for graceful shutdown with
-multiple listeners. If per-port dispatch creates too many ports for Docker
-networking, consider Envoy's filter chain match approach as an alternative.
+**Research suggestion:** Envoy's listener/filter chain architecture may be relevant
+for multi-protocol dispatch and graceful shutdown with multiple listeners — but
+verify this before adopting. If per-port dispatch creates too many ports for Docker
+networking, research alternative approaches (single port with protocol detection,
+path-based routing where protocol allows it).
 
 ---
 
@@ -165,9 +165,27 @@ dashboard), search for established implementations first. Study their approach,
 understand why they made their choices, then adapt — don't copy blindly, but don't
 reinvent either.
 
-The research should be captured in the codebase (comments citing sources, or
-research.md files for complex decisions) so future maintainers understand the
-provenance of design choices.
+**Research artifacts are mandatory.** Every research effort must produce a written
+artifact before implementation begins:
+
+- **Per-service research:** Each offering adapter must have a `research.md` file
+  documenting the service's API surface, health semantics, streaming behavior,
+  authentication, and any quirks discovered. These already exist for the 7 AI
+  services in `src/moss/embedded/manifests/sw/ai/` — validate and extend them,
+  don't recreate.
+
+- **Per-pattern research:** Each architectural pattern adopted from an external
+  system must have a brief write-up: what system was studied, what pattern was
+  extracted, why it applies here, and how it was adapted. This can be a section
+  in the relevant module's doc comment, a standalone `research.md` in the
+  relevant directory, or a section in the ADR — but it must exist in writing.
+
+- **Decision records:** When research leads to a choice between alternatives
+  (e.g., per-port dispatch vs path-based multiplexing), document the alternatives
+  considered, the evidence for each, and the rationale for the choice made.
+
+These artifacts prevent knowledge loss and let future maintainers understand
+why things are built the way they are.
 
 ---
 
@@ -177,20 +195,15 @@ provenance of design choices.
 
 **Goal:** The Ollama orchestrator's offering-agnostic logic lives in a shared location.
 
-**Research:** Study how these projects handle adapter/plugin extraction:
-- **Envoy proxy** (envoyproxy.io) — network filter architecture. Each protocol
-  (HTTP, gRPC, Redis, MongoDB) is a filter plugin with a common interface. Study
-  how `envoy::filter::network::FilterFactory` defines the contract between the
-  shared L4 pipeline and protocol-specific logic. This is the exact pattern for
-  the offering adapter trait.
-- **Containerd** (containerd.io) — runtime plugin architecture. Each container
-  runtime (runc, kata, gVisor) implements a common interface. The shared layer
-  handles image management, snapshots, and task lifecycle. Study how they split
-  "container-agnostic" from "runtime-specific."
-- **Dapr** (dapr.io) — component abstraction. Each state store, pub/sub, or
-  binding is a component implementing a trait. Study `dapr/components-contrib`
-  for how they keep the component interface minimal while supporting wildly
-  different backends.
+**Research:** Before designing the adapter trait, study how mature systems define
+plugin/adapter contracts. The core question: how do you keep the trait surface
+minimal while supporting backends with wildly different protocols?
+
+Suggested starting points (not verified for this exact use case — validate before
+adopting):
+- **Envoy proxy** — network filter architecture for multi-protocol dispatch
+- **Containerd** — runtime plugin interface (runc, kata, gVisor behind one API)
+- **Dapr** — component abstraction for heterogeneous backends (state stores, pub/sub)
 
 1. **Analyze** each module in `src/orchestrators/ollama/src/domain/`:
    - What types reference `OllamaInstance` specifically?
@@ -226,14 +239,14 @@ provenance of design choices.
 **Goal:** The AI orchestrator binary starts, connects to infrastructure, and discovers
 instances — using the harvested shared layer, not bespoke reimplementations.
 
-**Research:** Study how multi-service proxies handle startup and service discovery:
-- **Traefik** (traefik.io) — auto-discovery of services via Docker labels, Kubernetes
-  ingress, or Consul. Study their provider model (each service discovery source is
-  a "provider" implementing a common interface) and how configuration is loaded and
-  hot-reloaded.
-- **Linkerd** (linkerd.io) — service mesh control plane startup sequence. Study how
-  it initializes, connects to Kubernetes, discovers endpoints, and starts serving —
-  the startup ordering and health-check-before-ready pattern is relevant.
+**Research:** Before wiring startup and discovery, study how multi-service proxies
+handle initialization ordering and service discovery. The core question: what's
+the correct startup sequence when the binary must discover infrastructure (Koi),
+register itself, discover services, and start serving — all with graceful retry?
+
+Suggested starting points (not verified — validate before adopting):
+- **Traefik** — provider model for service discovery (Docker, Consul, Kubernetes)
+- **Linkerd** — control plane startup ordering and health-check-before-ready
 
 1. **Harvest operational configuration** from the Ollama orchestrator. Do not invent
    values — read them from the source:
@@ -275,14 +288,16 @@ Logs must show:
 
 **Goal:** The AI orchestrator can replace the Ollama orchestrator with zero regressions.
 
-**Research:** Study how inference routers handle request forwarding and load balancing:
-- **vLLM** (vllm.ai) — GPU-aware request routing. Study their scheduling algorithm
-  (how they decide which GPU processes a request based on KV cache pressure and
-  queue depth). The Ollama orchestrator's demand-weighted reservation pattern
-  solves a similar problem at the multi-stone level.
-- **TGI** (HuggingFace Text Generation Inference) — batch scheduling and queue
-  management. Study their prefill/decode queue separation and how they handle
-  request prioritization under load.
+**Research:** Before implementing the routing and proxy layer, study how inference
+routers handle GPU-aware scheduling and request forwarding. The core question: how
+do you route across heterogeneous GPU instances with different VRAM, different
+loaded models, and different queue depths?
+
+Suggested starting points (not verified — validate before adopting):
+- **vLLM** — GPU-aware scheduling (KV cache pressure, queue depth)
+- **TGI** (HuggingFace Text Generation Inference) — batch queue management
+- The existing Ollama orchestrator's demand-weighted reservation pattern is the
+  primary source — external research supplements, not replaces, it.
 
 1. **Implement the OllamaOffering adapter as a bounded context.** This is the first
    "microservice within the monolith." It owns:
@@ -334,14 +349,14 @@ endpoints. Summary:
 
 **Goal:** Each offering type works end-to-end as its own bounded context.
 
-**Research:** Study how multi-protocol proxies handle heterogeneous backends:
-- **Envoy** — filter chain per listener. Each listener can have a completely
-  different protocol stack (HTTP, raw TCP, Redis, Mongo). Study how they handle
-  WebSocket upgrade (relevant for ComfyUI), multipart body forwarding (relevant
-  for whisper.cpp), and streaming responses (relevant for TTS audio).
-- **Kong** (konghq.com) — plugin architecture for API gateways. Each plugin
-  handles a specific concern (auth, rate limiting, protocol translation).
-  Study how they keep plugins isolated while sharing the request lifecycle.
+**Research:** Before implementing per-service proxy ports, study how multi-protocol
+proxies dispatch to heterogeneous backends. The core questions: how do you handle
+WebSocket upgrade (ComfyUI), multipart forwarding (whisper.cpp), and streaming
+audio responses (TTS) through the same proxy infrastructure?
+
+Suggested starting points (not verified — validate before adopting):
+- **Envoy** — filter chain per listener for multi-protocol dispatch
+- **Kong** — plugin isolation pattern for API gateways
 
 Each adapter is a "microservice within the monolith" — self-contained, owning its
 own client, proxy protocol, health model, and error handling. The pattern:
@@ -376,17 +391,16 @@ interface.
 
 **Goal:** Operators can monitor and manage the orchestrator through a web UI.
 
-**Research:** Study operational dashboards that handle heterogeneous infrastructure:
-- **Grafana** (grafana.com) — the gold standard for infrastructure dashboards.
-  Study their panel architecture (each panel is self-contained with its own data
-  source query), time-range awareness, dark-first design, and information density
-  without clutter. Their React codebase is open source.
-- **Kubernetes Dashboard** (github.com/kubernetes/dashboard) — multi-resource-type
-  management UI. Study how they handle heterogeneous workloads (Deployments, Pods,
-  Services, etc.) in a unified interface with per-resource-type detail views.
-- **Portainer** (portainer.io) — Docker management dashboard. Study their
-  container/volume/network navigation pattern and how they show real-time status
-  across heterogeneous container types.
+**Research:** Before designing the dashboard, study operational UIs that manage
+heterogeneous infrastructure. The core questions: how do you show diverse service
+types (LLM, image gen, STT, TTS, embeddings) in a unified view without making
+it generic to the point of uselessness? How do you balance information density
+with readability?
+
+Suggested starting points (not verified — validate before adopting):
+- **Grafana** — panel architecture, dark-first design, information density
+- **Kubernetes Dashboard** — multi-resource-type unified UI
+- **Portainer** — Docker management with real-time status across container types
 
 Build a React + TypeScript + Tailwind dashboard (Grafana-inspired, dark-first).
 Study the Ollama dashboard (`src/orchestrators/ollama/assets/dashboard.html`,

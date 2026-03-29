@@ -104,17 +104,29 @@ model to serve this capability:
 ```
 
 **Service not installed (gray border)** — capability available if
-the operator installs a service:
+the operator installs a service. The orchestrator knows the garden
+topology and can suggest (or execute) the best placement:
 ```
 ┌─ Imagine ───────────────── not installed ─┐
 │ No image generation service detected.     │
 │                                           │
-│ Install ComfyUI to enable Imagine.        │
-│ Requires: GPU with 8GB+ VRAM             │
+│ ComfyUI can provide Imagine.              │
+│ Best fit: stone-azure-pool                │
+│   RX 7900 XTX · 12.8 GB VRAM free       │
 │                                           │
-│ [How to install →]                        │
+│ [Install ComfyUI on stone-azure-pool]     │
 └───────────────────────────────────────────┘
 ```
+
+The install button calls Moss's plant API
+(`POST /api/v1/stone/offerings`) on the target stone, using the
+orchestrator's topology data to pick the best placement. Discovery
+picks up the new instance automatically — the card turns green.
+
+This is the "wishful offering" pattern: the operator expresses
+intent ("I want Imagine"), the orchestrator figures out where to
+deploy it based on available hardware, free VRAM, and offering
+requirements.
 
 **Degraded (red border)** — was working, now broken:
 ```

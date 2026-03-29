@@ -3,6 +3,7 @@ import type { DashboardStatus, ModelStatus } from "../types";
 import { CAPABILITY_LABELS, formatBytes } from "../types";
 import { stoneColor } from "../utils/stoneColors";
 import { isCloudOffering } from "../utils/cloudCatalog";
+import { TryIt } from "../components/TryIt";
 
 interface CapabilityDetailProps {
   status: DashboardStatus;
@@ -243,6 +244,11 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
             </div>
           )}
         </div>
+      )}
+
+      {/* Try It test panel */}
+      {cap.state !== "not_installed" && name && (
+        <TryIt capability={name} models={models} />
       )}
     </div>
   );

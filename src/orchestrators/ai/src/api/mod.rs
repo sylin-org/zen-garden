@@ -3,5 +3,6 @@
 //! - `proxy`: Ollama-compatible proxy on port 21434.
 //! - `health`: Health check endpoint.
 
+pub mod generic_proxy;
 pub mod health;
 pub mod proxy;

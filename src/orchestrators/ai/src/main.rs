@@ -195,6 +195,54 @@ async fn main() -> Result<()> {
             .ok();
     });
 
+    // ── Generic Proxy Servers (non-Ollama offerings) ──────────────────
+    // Each registered offering with a proxy port gets a pass-through proxy.
+    let generic_proxy_kinds = [
+        OfferingKind::Infinity,
+        OfferingKind::OpenedaiSpeech,
+        OfferingKind::LibreTranslate,
+        OfferingKind::Speaches,
+        OfferingKind::ComfyUi,
+    ];
+
+    let mut generic_proxy_handles = Vec::new();
+    for kind in generic_proxy_kinds {
+        // Only start if the adapter is registered AND the offering has a proxy port
+        if state.registry.get(kind).is_none() {
+            continue;
+        }
+        let port = match kind.proxy_port() {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let gp_state = api::generic_proxy::GenericProxyState {
+            app: state.clone(),
+            kind,
+        };
+
+        let router = axum::Router::new()
+            .fallback(api::generic_proxy::proxy_handler)
+            .with_state(gp_state);
+
+        match tokio::net::TcpListener::bind(std::net::SocketAddr::from(([0, 0, 0, 0], port))).await
+        {
+            Ok(listener) => {
+                tracing::info!(port = port, kind = %kind, "generic proxy server listening");
+                let shutdown = shutdown.clone();
+                generic_proxy_handles.push(tokio::spawn(async move {
+                    axum::serve(listener, router)
+                        .with_graceful_shutdown(shutdown.cancelled_owned())
+                        .await
+                        .ok();
+                }));
+            }
+            Err(e) => {
+                tracing::warn!(port = port, kind = %kind, error = %e, "failed to bind generic proxy port");
+            }
+        }
+    }
+
     // ── Wait for Shutdown ───────────────────────────────────────────
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutdown signal received");
@@ -212,6 +260,9 @@ async fn main() -> Result<()> {
             dashboard_handle,
             proxy_handle,
         );
+        for h in generic_proxy_handles {
+            let _ = h.await;
+        }
     })
     .await;
 

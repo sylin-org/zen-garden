@@ -11,7 +11,9 @@ use tracing_subscriber::EnvFilter;
 
 use std::sync::Arc;
 
+use zen_garden_ai_orchestrator::api;
 use zen_garden_ai_orchestrator::catalog::OfferingRegistry;
+use zen_garden_ai_orchestrator::domain::types::OfferingKind;
 use zen_garden_ai_orchestrator::infra::persistence;
 use zen_garden_ai_orchestrator::offerings::ollama::OllamaOffering;
 use zen_garden_ai_orchestrator::tasks;
@@ -136,25 +138,9 @@ async fn main() -> Result<()> {
 
     // ── Dashboard Server ────────────────────────────────────────────
     // TODO: Block 5 — React dashboard. For now, a health endpoint.
-    let health_state = state.clone();
     let dashboard_router = axum::Router::new()
-        .route(
-            "/health",
-            axum::routing::get(move || {
-                let state = health_state.clone();
-                async move {
-                    let instances = state.instances.read().await;
-                    let total = instances.len();
-                    let healthy = instances.values().filter(|i| i.is_routable()).count();
-                    axum::Json(serde_json::json!({
-                        "status": if healthy > 0 { "healthy" } else if total > 0 { "degraded" } else { "no_instances" },
-                        "offering": OFFERING_NAME,
-                        "version": env!("CARGO_PKG_VERSION"),
-                        "instances": { "total": total, "healthy": healthy },
-                    }))
-                }
-            }),
-        );
+        .route("/health", axum::routing::get(api::health::health))
+        .with_state(state.clone());
 
     let dashboard_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cli.dashboard_port));
     let dashboard_listener = tokio::net::TcpListener::bind(dashboard_addr).await?;
@@ -164,6 +150,41 @@ async fn main() -> Result<()> {
     let dashboard_handle = tokio::spawn(async move {
         axum::serve(dashboard_listener, dashboard_router)
             .with_graceful_shutdown(dashboard_shutdown.cancelled_owned())
+            .await
+            .ok();
+    });
+
+    // ── Ollama Proxy Server (port 21434) ────────────────────────────
+    let proxy_port = OfferingKind::Ollama
+        .proxy_port()
+        .expect("Ollama has a proxy port");
+
+    let proxy_state = api::proxy::ProxyState {
+        app: state.clone(),
+        client: state
+            .registry
+            .get(OfferingKind::Ollama)
+            .and_then(|o| {
+                // Downcast to OllamaOffering to get the shared client.
+                // The proxy needs direct access to OllamaClient for forwarding.
+                let any = o.as_any();
+                any.downcast_ref::<OllamaOffering>().map(|oll| oll.client().clone())
+            })
+            .unwrap_or_default(),
+    };
+
+    let proxy_router = axum::Router::new()
+        .fallback(api::proxy::proxy_handler)
+        .with_state(proxy_state);
+
+    let proxy_addr = std::net::SocketAddr::from(([0, 0, 0, 0], proxy_port));
+    let proxy_listener = tokio::net::TcpListener::bind(proxy_addr).await?;
+    tracing::info!(port = proxy_port, "Ollama proxy server listening");
+
+    let proxy_shutdown = shutdown.clone();
+    let proxy_handle = tokio::spawn(async move {
+        axum::serve(proxy_listener, proxy_router)
+            .with_graceful_shutdown(proxy_shutdown.cancelled_owned())
             .await
             .ok();
     });
@@ -183,6 +204,7 @@ async fn main() -> Result<()> {
             metrics_flush_handle,
             metrics_proc_handle,
             dashboard_handle,
+            proxy_handle,
         );
     })
     .await;

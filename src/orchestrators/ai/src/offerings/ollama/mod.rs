@@ -64,6 +64,10 @@ impl Offering for OllamaOffering {
         OfferingKind::Ollama
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn capabilities(&self) -> &[Capability] {
         OLLAMA_CAPABILITIES
     }

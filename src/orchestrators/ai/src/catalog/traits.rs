@@ -11,6 +11,8 @@ use futures_util::Stream;
 
 use axum::http;
 
+use std::any::Any;
+
 use crate::domain::types::{Capability, OfferingKind, ServiceInstance};
 
 /// Boxed future for object-safe async methods.
@@ -24,9 +26,12 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send +
 /// knowledge: HTTP endpoints, response shapes, streaming formats, model
 /// management commands. The orchestrator's domain layer never sees these
 /// details — it operates on `ServiceInstance` and `Capability` exclusively.
-pub trait Offering: Send + Sync {
+pub trait Offering: Send + Sync + 'static {
     /// Unique type identifier.
     fn offering_type(&self) -> OfferingKind;
+
+    /// Downcast support for accessing concrete offering types.
+    fn as_any(&self) -> &dyn Any;
 
     /// AI capabilities this offering type can provide.
     fn capabilities(&self) -> &[Capability];

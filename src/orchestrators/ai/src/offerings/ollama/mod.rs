@@ -52,7 +52,8 @@ impl Default for OllamaOffering {
 /// support `Embed`). This is the union of all possible capabilities
 /// an Ollama instance could serve.
 const OLLAMA_CAPABILITIES: &[Capability] = &[
-    Capability::Chat,
+    Capability::Generate, // raw generation (/api/generate)
+    Capability::Chat,     // conversational (/api/chat)
     Capability::Embed,
     Capability::Vision,
     Capability::Tools,

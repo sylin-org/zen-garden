@@ -15,7 +15,7 @@
 
 use crate::app_state::{AppState, TendedStone};
 use crate::domain::types::{
-    ComputeType, Gpu, InstanceHealth, OfferingKind, ServiceInstance, Stone, Vram,
+    ComputeType, Gpu, InstanceHealth, ModelInfo, OfferingKind, ServiceInstance, Stone, Vram,
 };
 use orchestrator_common::tools_stream::{self, ToolStreamEvent};
 use orchestrator_common::topology;
@@ -136,12 +136,13 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                 let instance = build_instance_from_discovery(
                     stone_id,
                     stone_name,
-                    endpoint,
+                    endpoint.clone(),
                     kind,
                     0,
                     None,
                 );
                 state.upsert_instance(instance).await;
+                profile_instance(&state, &endpoint, kind).await;
             });
         }
         ToolStreamEvent::OfferingRemoved {
@@ -207,12 +208,13 @@ async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
                     let instance = build_instance_from_discovery(
                         topo_stone.stone_id.clone(),
                         topo_stone.stone_name.clone(),
-                        endpoint,
+                        endpoint.clone(),
                         kind,
                         vram_total,
                         gpu_name,
                     );
                     state.upsert_instance(instance).await;
+                    profile_instance(state, &endpoint, kind).await;
                 }
             }
             Err(e) => {
@@ -289,6 +291,123 @@ fn build_instance_from_discovery(
     }
 }
 
+/// Profile an instance through the Offering trait: probe + enumerate.
+///
+/// Called after every instance registration (topology, SSE, refresh).
+/// Transitions health to Healthy, populates models_available, and
+/// upserts model metadata into the global registry.
+async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) {
+    let adapter = match state.registry.get(kind) {
+        Some(a) => a,
+        None => return, // no adapter registered for this offering type
+    };
+
+    // Probe for liveness
+    match adapter.probe(endpoint).await {
+        Ok(probe) => {
+            state
+                .set_instance_health(endpoint, InstanceHealth::Healthy)
+                .await;
+
+            // Store probe metadata (version, etc.) if useful
+            if let Some(ref version) = probe.version {
+                let mut reg = state.instances.write().await;
+                if let Some(inst) = reg.get_mut(endpoint) {
+                    inst.metadata = serde_json::json!({ "version": version });
+                    inst.capabilities = probe.capabilities;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                endpoint = %endpoint,
+                kind = %kind,
+                error = %e,
+                "probe failed during profiling"
+            );
+            return;
+        }
+    }
+
+    // Enumerate models/resources
+    match adapter.enumerate(endpoint).await {
+        Ok(service_models) => {
+            let model_names: Vec<String> = service_models.iter().map(|m| m.name.clone()).collect();
+            let count = model_names.len();
+
+            // Update instance model inventory
+            state
+                .update_instance_models(endpoint, model_names, vec![])
+                .await;
+
+            // Upsert each model into the global registry
+            for sm in &service_models {
+                let info = ModelInfo {
+                    name: sm.name.clone(),
+                    parameter_count: sm.metadata.get("parameter_count").and_then(|v| v.as_u64()),
+                    parameter_size: sm
+                        .metadata
+                        .get("parameter_size")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    quantization_level: sm
+                        .metadata
+                        .get("quantization_level")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    family: sm
+                        .metadata
+                        .get("family")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    families: sm
+                        .metadata
+                        .get("families")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    capabilities: sm.capabilities.iter().map(|c| c.as_str().to_string()).collect(),
+                    format: sm
+                        .metadata
+                        .get("format")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    size_disk: sm
+                        .metadata
+                        .get("size_disk")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    vram_bytes: sm.vram_bytes,
+                    context_length: sm
+                        .metadata
+                        .get("context_length")
+                        .and_then(|v| v.as_u64()),
+                };
+                state.upsert_model(info).await;
+            }
+
+            tracing::info!(
+                endpoint = %endpoint,
+                kind = %kind,
+                models = count,
+                "profiled instance"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                endpoint = %endpoint,
+                kind = %kind,
+                error = %e,
+                "enumerate failed during profiling"
+            );
+        }
+    }
+}
+
 /// Periodically re-query the topology to catch stones the SSE stream missed.
 async fn topology_refresh_loop(
     stone_endpoint: String,
@@ -326,7 +445,27 @@ async fn resolve_stone(state: &AppState, shutdown: &CancellationToken) -> Option
         return Some(explicit.clone());
     }
 
-    // ── 2. Cached tending state ──────────────────────────────────
+    // ── 2. Local Moss (same machine) ──────────────────────────────
+    // The AI orchestrator typically runs alongside Moss. Local Moss has
+    // the most complete topology view (it sees its own services). Prefer
+    // it over remote stones discovered via mDNS.
+    {
+        let local = format!("http://localhost:{}", garden_common::constants::MOSS_HTTP);
+        if orchestrator_common::discovery::check_stone_health(&local).await {
+            tracing::info!(endpoint = %local, "using local Moss for topology");
+            let tended = TendedStone {
+                stone_name: "local".to_string(),
+                stone_id: None,
+                endpoint: local.clone(),
+                last_seen: chrono::Utc::now(),
+            };
+            state.tend_to(tended).await;
+            return Some(local);
+        }
+        tracing::debug!("local Moss not reachable, trying cached/mDNS");
+    }
+
+    // ── 3. Cached tending state ──────────────────────────────────
     {
         let tended = state.tended_stone.read().await;
         if let Some(ref stone) = *tended {
@@ -347,7 +486,7 @@ async fn resolve_stone(state: &AppState, shutdown: &CancellationToken) -> Option
     }
     state.clear_tending().await;
 
-    // ── 3. Koi mDNS discovery ────────────────────────────────────
+    // ── 4. Koi mDNS discovery ────────────────────────────────────
     loop {
         if shutdown.is_cancelled() {
             return None;

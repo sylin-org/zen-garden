@@ -178,6 +178,11 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
         </div>
       )}
 
+      {/* Try It — right under the elected model, stable position */}
+      {cap.state !== "not_installed" && name && (
+        <TryIt capability={name} models={models} />
+      )}
+
       {/* Flat model table */}
       {models.length > 0 && (
         <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg overflow-hidden">
@@ -246,10 +251,6 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
         </div>
       )}
 
-      {/* Try It test panel */}
-      {cap.state !== "not_installed" && name && (
-        <TryIt capability={name} models={models} />
-      )}
     </div>
   );
 }

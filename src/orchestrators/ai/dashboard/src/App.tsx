@@ -4,6 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Overview } from "./pages/Overview";
 import { CapabilityDetail } from "./pages/CapabilityDetail";
 import { Stones } from "./pages/Stones";
+import { Cloud } from "./pages/Cloud";
 import { Settings } from "./pages/Settings";
 
 function App() {
@@ -43,6 +44,7 @@ function App() {
               element={<CapabilityDetail status={status} />}
             />
             <Route path="/stones" element={<Stones status={status} />} />
+            <Route path="/cloud" element={<Cloud status={status} />} />
             <Route path="/settings" element={<Settings status={status} />} />
           </Routes>
         )}

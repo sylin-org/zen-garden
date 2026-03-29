@@ -99,6 +99,20 @@ export function Sidebar({ status }: SidebarProps) {
         >
           Stones
         </NavLink>
+
+        <NavLink
+          to="/cloud"
+          className={({ isActive }) =>
+            `flex items-center gap-2 px-4 py-1.5 text-[13px] ${
+              isActive
+                ? "text-gray-100 bg-[#1a1b23]"
+                : "text-gray-400 hover:text-gray-200 hover:bg-[#1a1b23]/50"
+            }`
+          }
+        >
+          <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-purple-500" />
+          Cloud Providers
+        </NavLink>
       </nav>
 
       <div className="border-t border-[#2e303a] p-2">

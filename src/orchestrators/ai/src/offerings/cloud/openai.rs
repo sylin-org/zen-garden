@@ -171,6 +171,7 @@ impl Offering for OpenAiProvider {
                 .map(|m| ServiceModel {
                     name: m.id.clone(),
                     capabilities: vec![Capability::Chat], // conservative default
+                    specializations: vec![],
                     vram_bytes: None,
                     metadata: serde_json::json!({
                         "owned_by": m.owned_by,

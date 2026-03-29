@@ -166,6 +166,7 @@ impl Offering for AnthropicProvider {
                 .map(|&name| ServiceModel {
                     name: name.to_string(),
                     capabilities: ANTHROPIC_CAPABILITIES.to_vec(),
+                    specializations: vec![],
                     vram_bytes: None,
                     metadata: serde_json::json!({
                         "cloud": true,

@@ -100,6 +100,7 @@ impl Offering for OpenedaiSpeechOffering {
                 .map(|entry| ServiceModel {
                     name: entry.id.clone(),
                     capabilities: vec![Capability::Speak],
+                    specializations: vec![],
                     vram_bytes: None,
                     metadata: serde_json::json!({
                         "object": entry.object,

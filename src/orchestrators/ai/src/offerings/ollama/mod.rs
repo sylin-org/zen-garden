@@ -134,9 +134,11 @@ impl Offering for OllamaOffering {
                 .into_iter()
                 .map(|info| {
                     let capabilities = ollama_capabilities_from_strings(&info.capabilities);
+                    let specializations = infer_specializations(&info.name, &info.family);
                     ServiceModel {
                         name: info.name,
                         capabilities,
+                        specializations,
                         vram_bytes: info.vram_bytes,
                         metadata: serde_json::json!({
                             "parameter_count": info.parameter_count,
@@ -314,4 +316,52 @@ fn ollama_capabilities_from_strings(ollama_caps: &[String]) -> Vec<Capability> {
     }
 
     caps
+}
+
+/// Infer specialization tags from model name and family.
+///
+/// These are finer-grained than capabilities. A model with `Capability::Vision`
+/// might specialize in OCR, and a model with `Capability::Chat` might specialize
+/// in reasoning or coding. The dashboard uses these for display/filtering.
+fn infer_specializations(name: &str, family: &Option<String>) -> Vec<String> {
+    let lower = name.to_lowercase();
+    let family_lower = family.as_deref().unwrap_or("").to_lowercase();
+    let mut tags = Vec::new();
+
+    // OCR models
+    if lower.contains("ocr") {
+        tags.push("ocr".to_string());
+    }
+
+    // Embedding models
+    if lower.contains("embed") || lower.contains("minilm") || lower.contains("bge") {
+        tags.push("embedding".to_string());
+    }
+
+    // Reasoning / thinking models
+    if lower.contains("deepseek-r1") || lower.contains("reasoning") {
+        tags.push("reasoning".to_string());
+    }
+
+    // Coding models
+    if lower.contains("code") || lower.contains("starcoder") || lower.contains("codellama") {
+        tags.push("coding".to_string());
+    }
+
+    // Multilingual
+    if lower.contains("aya") || lower.contains("translate") || lower.contains("multilingual") {
+        tags.push("multilingual".to_string());
+    }
+
+    // Small/fast models
+    if lower.contains("tiny") || lower.contains("mini") || lower.contains("small") {
+        tags.push("compact".to_string());
+    }
+
+    // Vision-specific
+    if lower.contains("vision") || lower.contains("vl") || family_lower.contains("clip") {
+        tags.push("vision".to_string());
+    }
+
+    tags
 }

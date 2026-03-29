@@ -107,6 +107,7 @@ pub struct InstanceStatus {
 pub struct ModelStatus {
     pub name: String,
     pub capabilities: Vec<String>,
+    pub specializations: Vec<String>,
     pub parameter_size: Option<String>,
     pub quantization_level: Option<String>,
     pub family: Option<String>,
@@ -185,6 +186,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<DashboardStatus> 
             ModelStatus {
                 name: m.name.clone(),
                 capabilities: m.capabilities.clone(),
+                specializations: m.specializations.clone(),
                 parameter_size: m.parameter_size.clone(),
                 quantization_level: m.quantization_level.clone(),
                 family: m.family.clone(),

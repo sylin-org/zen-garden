@@ -56,6 +56,7 @@ export interface ModelPlacement {
 export interface ModelStatus {
   name: string;
   capabilities: string[];
+  specializations: string[];
   parameter_size: string | null;
   quantization_level: string | null;
   family: string | null;

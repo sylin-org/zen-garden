@@ -103,6 +103,7 @@ async fn register_cloud_providers(state: &AppState) {
                     .iter()
                     .map(|c| c.as_str().to_string())
                     .collect(),
+                specializations: vec!["cloud".to_string()],
                 format: None,
                 size_disk: 0,
                 vram_bytes: None,
@@ -185,6 +186,7 @@ async fn refresh_cloud_models(state: &AppState) {
                             .iter()
                             .map(|c| c.as_str().to_string())
                             .collect(),
+                        specializations: sm.specializations.clone(),
                         format: None,
                         size_disk: 0,
                         vram_bytes: None,

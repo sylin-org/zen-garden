@@ -93,6 +93,7 @@ impl Offering for InfinityOffering {
                 .map(|entry| ServiceModel {
                     name: entry.id.clone(),
                     capabilities: INFINITY_CAPABILITIES.to_vec(),
+                    specializations: vec![],
                     vram_bytes: None,
                     metadata: serde_json::json!({
                         "object": entry.object,

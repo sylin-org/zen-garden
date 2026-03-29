@@ -99,6 +99,7 @@ impl Offering for LibreTranslateOffering {
                 .map(|lang| ServiceModel {
                     name: lang.code.clone(),
                     capabilities: vec![Capability::Translate],
+                    specializations: vec![],
                     vram_bytes: None,
                     metadata: serde_json::json!({
                         "language_name": lang.name,

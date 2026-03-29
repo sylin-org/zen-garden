@@ -123,6 +123,8 @@ pub struct ServiceModel {
     pub name: String,
     /// Capabilities this specific model supports.
     pub capabilities: Vec<Capability>,
+    /// Specialization tags derived from model name/metadata.
+    pub specializations: Vec<String>,
     /// VRAM consumption when loaded (bytes). None if unknown.
     pub vram_bytes: Option<u64>,
     /// Offering-specific model metadata.

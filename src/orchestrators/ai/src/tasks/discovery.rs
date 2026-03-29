@@ -373,6 +373,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                         })
                         .unwrap_or_default(),
                     capabilities: sm.capabilities.iter().map(|c| c.as_str().to_string()).collect(),
+                    specializations: sm.specializations.clone(),
                     format: sm
                         .metadata
                         .get("format")

@@ -340,6 +340,11 @@ pub struct ModelInfo {
     pub family: Option<String>,
     pub families: Vec<String>,
     pub capabilities: Vec<String>,
+    /// Specialization tags for finer-grained classification.
+    /// Examples: "ocr", "reasoning", "coding", "embedding.multilingual".
+    /// Derived from model name heuristics and offering metadata.
+    #[serde(default)]
+    pub specializations: Vec<String>,
     pub format: Option<String>,
     pub size_disk: u64,
     pub vram_bytes: Option<u64>,

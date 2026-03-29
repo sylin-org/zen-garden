@@ -449,6 +449,7 @@ impl OllamaClient {
                 family: details.and_then(|d| d.family.clone()),
                 families: details.map(|d| d.families.clone()).unwrap_or_default(),
                 capabilities,
+                specializations: vec![],
                 format,
                 size_disk: tag.size,
                 vram_bytes,

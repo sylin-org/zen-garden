@@ -216,6 +216,7 @@ pub async fn refresh_models(
                             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                             .unwrap_or_default(),
                         capabilities: sm.capabilities.iter().map(|c| c.as_str().to_string()).collect(),
+                        specializations: sm.specializations.clone(),
                         format: sm.metadata.get("format").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         size_disk: sm.metadata.get("size_disk").and_then(|v| v.as_u64()).unwrap_or(0),
                         vram_bytes: sm.vram_bytes,

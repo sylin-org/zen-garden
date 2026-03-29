@@ -165,6 +165,7 @@ async fn main() -> Result<()> {
         .route("/api/providers", axum::routing::get(api::dashboard::get_providers))
         .route("/api/providers", axum::routing::post(api::dashboard::add_provider))
         .route("/api/providers/{name}", axum::routing::delete(api::dashboard::delete_provider))
+        .route("/api/providers/test", axum::routing::post(api::provider_test::test_key))
         .with_state(state.clone())
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))

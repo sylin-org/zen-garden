@@ -6,5 +6,6 @@
 pub mod dashboard;
 pub mod generic_proxy;
 pub mod health;
+pub mod provider_test;
 pub mod proxy;
 pub mod static_files;

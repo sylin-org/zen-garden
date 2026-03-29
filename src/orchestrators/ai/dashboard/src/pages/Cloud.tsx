@@ -94,6 +94,11 @@ export function Cloud({ status: _status }: CloudProps) {
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState(-10);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    valid: boolean;
+    message: string;
+  } | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   // Fetch configured providers
@@ -140,6 +145,32 @@ export function Cloud({ status: _status }: CloudProps) {
   async function removeProvider(name: string) {
     await fetch(`/api/providers/${name}`, { method: "DELETE" });
     setLoaded(false); // re-fetch
+  }
+
+  async function testKey(providerId: string, baseUrl: string) {
+    if (!apiKey.trim()) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const resp = await fetch("/api/providers/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: providerId,
+          api_key: apiKey.trim(),
+          base_url: baseUrl,
+        }),
+      });
+      const data = await resp.json();
+      setTestResult({ valid: data.valid, message: data.message });
+    } catch (e) {
+      setTestResult({
+        valid: false,
+        message: `request failed: ${e instanceof Error ? e.message : "unknown"}`,
+      });
+    } finally {
+      setTesting(false);
+    }
   }
 
   return (
@@ -272,6 +303,13 @@ export function Cloud({ status: _status }: CloudProps) {
                       />
                     </div>
                     <button
+                      onClick={() => testKey(provider.id, provider.baseUrl)}
+                      disabled={testing || !apiKey.trim()}
+                      className="px-3 py-1.5 text-xs rounded bg-[#2e303a] text-gray-300 hover:bg-[#3e404a] disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {testing ? "Testing..." : "Test Key"}
+                    </button>
+                    <button
                       onClick={() => saveProvider(provider)}
                       disabled={saving || !apiKey.trim()}
                       className="px-3 py-1.5 text-xs rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -279,12 +317,26 @@ export function Cloud({ status: _status }: CloudProps) {
                       {saving ? "Saving..." : "Save"}
                     </button>
                     <button
-                      onClick={() => setConfiguring(null)}
+                      onClick={() => {
+                        setConfiguring(null);
+                        setTestResult(null);
+                      }}
                       className="px-3 py-1.5 text-xs rounded bg-[#2e303a] text-gray-400 hover:bg-[#3e404a]"
                     >
                       Cancel
                     </button>
                   </div>
+                  {testResult && (
+                    <div
+                      className={`mt-2 px-3 py-1.5 rounded text-xs font-mono ${
+                        testResult.valid
+                          ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
+                          : "bg-red-500/10 border border-red-500/30 text-red-400"
+                      }`}
+                    >
+                      {testResult.valid ? "✓" : "✗"} {testResult.message}
+                    </div>
+                  )}
                   <p className="text-[10px] text-gray-600 mt-2">
                     Priority -10 = cloud fallback (only used when no local
                     instance serves the capability). Set to 0 for equal priority

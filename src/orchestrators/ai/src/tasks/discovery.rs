@@ -449,18 +449,27 @@ async fn resolve_stone(state: &AppState, shutdown: &CancellationToken) -> Option
     // The AI orchestrator typically runs alongside Moss. Local Moss has
     // the most complete topology view (it sees its own services). Prefer
     // it over remote stones discovered via mDNS.
+    //
+    // Try both localhost (native) and host.docker.internal (Docker).
     {
-        let local = format!("http://localhost:{}", garden_common::constants::MOSS_HTTP);
-        if orchestrator_common::discovery::check_stone_health(&local).await {
-            tracing::info!(endpoint = %local, "using local Moss for topology");
-            let tended = TendedStone {
-                stone_name: "local".to_string(),
-                stone_id: None,
-                endpoint: local.clone(),
-                last_seen: chrono::Utc::now(),
-            };
-            state.tend_to(tended).await;
-            return Some(local);
+        let moss_port = garden_common::constants::MOSS_HTTP;
+        let candidates = [
+            format!("http://localhost:{moss_port}"),
+            format!("http://host.docker.internal:{moss_port}"),
+        ];
+
+        for local in &candidates {
+            if orchestrator_common::discovery::check_stone_health(local).await {
+                tracing::info!(endpoint = %local, "using local Moss for topology");
+                let tended = TendedStone {
+                    stone_name: "local".to_string(),
+                    stone_id: None,
+                    endpoint: local.clone(),
+                    last_seen: chrono::Utc::now(),
+                };
+                state.tend_to(tended).await;
+                return Some(local.clone());
+            }
         }
         tracing::debug!("local Moss not reachable, trying cached/mDNS");
     }

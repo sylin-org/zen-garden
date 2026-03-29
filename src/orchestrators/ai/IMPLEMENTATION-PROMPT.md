@@ -153,11 +153,44 @@ not a hand-written approximation.
 
 ---
 
+## Research-First Principle
+
+**For every architectural pattern in this implementation, research how battle-tested
+systems solve the same problem before writing code.** Do not invent solutions when
+proven ones exist. This applies to every block, not just cloud providers.
+
+When you encounter a design decision (how to do multi-port proxy dispatch, how to
+structure adapter traits, how to handle streaming translation, how to build a
+dashboard), search for established implementations first. Study their approach,
+understand why they made their choices, then adapt — don't copy blindly, but don't
+reinvent either.
+
+The research should be captured in the codebase (comments citing sources, or
+research.md files for complex decisions) so future maintainers understand the
+provenance of design choices.
+
+---
+
 ## Implementation Approach
 
 ### Block 1: Harvest the Shared Orchestration Layer
 
 **Goal:** The Ollama orchestrator's offering-agnostic logic lives in a shared location.
+
+**Research:** Study how these projects handle adapter/plugin extraction:
+- **Envoy proxy** (envoyproxy.io) — network filter architecture. Each protocol
+  (HTTP, gRPC, Redis, MongoDB) is a filter plugin with a common interface. Study
+  how `envoy::filter::network::FilterFactory` defines the contract between the
+  shared L4 pipeline and protocol-specific logic. This is the exact pattern for
+  the offering adapter trait.
+- **Containerd** (containerd.io) — runtime plugin architecture. Each container
+  runtime (runc, kata, gVisor) implements a common interface. The shared layer
+  handles image management, snapshots, and task lifecycle. Study how they split
+  "container-agnostic" from "runtime-specific."
+- **Dapr** (dapr.io) — component abstraction. Each state store, pub/sub, or
+  binding is a component implementing a trait. Study `dapr/components-contrib`
+  for how they keep the component interface minimal while supporting wildly
+  different backends.
 
 1. **Analyze** each module in `src/orchestrators/ollama/src/domain/`:
    - What types reference `OllamaInstance` specifically?
@@ -192,6 +225,15 @@ not a hand-written approximation.
 
 **Goal:** The AI orchestrator binary starts, connects to infrastructure, and discovers
 instances — using the harvested shared layer, not bespoke reimplementations.
+
+**Research:** Study how multi-service proxies handle startup and service discovery:
+- **Traefik** (traefik.io) — auto-discovery of services via Docker labels, Kubernetes
+  ingress, or Consul. Study their provider model (each service discovery source is
+  a "provider" implementing a common interface) and how configuration is loaded and
+  hot-reloaded.
+- **Linkerd** (linkerd.io) — service mesh control plane startup sequence. Study how
+  it initializes, connects to Kubernetes, discovers endpoints, and starts serving —
+  the startup ordering and health-check-before-ready pattern is relevant.
 
 1. **Harvest operational configuration** from the Ollama orchestrator. Do not invent
    values — read them from the source:
@@ -232,6 +274,15 @@ Logs must show:
 ### Block 3: Ollama Feature Parity
 
 **Goal:** The AI orchestrator can replace the Ollama orchestrator with zero regressions.
+
+**Research:** Study how inference routers handle request forwarding and load balancing:
+- **vLLM** (vllm.ai) — GPU-aware request routing. Study their scheduling algorithm
+  (how they decide which GPU processes a request based on KV cache pressure and
+  queue depth). The Ollama orchestrator's demand-weighted reservation pattern
+  solves a similar problem at the multi-stone level.
+- **TGI** (HuggingFace Text Generation Inference) — batch scheduling and queue
+  management. Study their prefill/decode queue separation and how they handle
+  request prioritization under load.
 
 1. **Implement the OllamaOffering adapter as a bounded context.** This is the first
    "microservice within the monolith." It owns:
@@ -283,6 +334,15 @@ endpoints. Summary:
 
 **Goal:** Each offering type works end-to-end as its own bounded context.
 
+**Research:** Study how multi-protocol proxies handle heterogeneous backends:
+- **Envoy** — filter chain per listener. Each listener can have a completely
+  different protocol stack (HTTP, raw TCP, Redis, Mongo). Study how they handle
+  WebSocket upgrade (relevant for ComfyUI), multipart body forwarding (relevant
+  for whisper.cpp), and streaming responses (relevant for TTS audio).
+- **Kong** (konghq.com) — plugin architecture for API gateways. Each plugin
+  handles a specific concern (auth, rate limiting, protocol translation).
+  Study how they keep plugins isolated while sharing the request lifecycle.
+
 Each adapter is a "microservice within the monolith" — self-contained, owning its
 own client, proxy protocol, health model, and error handling. The pattern:
 
@@ -315,6 +375,18 @@ interface.
 ### Block 5: Dashboard
 
 **Goal:** Operators can monitor and manage the orchestrator through a web UI.
+
+**Research:** Study operational dashboards that handle heterogeneous infrastructure:
+- **Grafana** (grafana.com) — the gold standard for infrastructure dashboards.
+  Study their panel architecture (each panel is self-contained with its own data
+  source query), time-range awareness, dark-first design, and information density
+  without clutter. Their React codebase is open source.
+- **Kubernetes Dashboard** (github.com/kubernetes/dashboard) — multi-resource-type
+  management UI. Study how they handle heterogeneous workloads (Deployments, Pods,
+  Services, etc.) in a unified interface with per-resource-type detail views.
+- **Portainer** (portainer.io) — Docker management dashboard. Study their
+  container/volume/network navigation pattern and how they show real-time status
+  across heterogeneous container types.
 
 Build a React + TypeScript + Tailwind dashboard (Grafana-inspired, dark-first).
 Study the Ollama dashboard (`src/orchestrators/ollama/assets/dashboard.html`,

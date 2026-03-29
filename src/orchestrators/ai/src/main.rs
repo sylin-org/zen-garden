@@ -50,15 +50,23 @@ struct Cli {
     /// Data directory for config, metrics, fitness data.
     #[arg(long, default_value = ".", env = "ZG_DATA_DIR")]
     data_dir: String,
+
+    /// Log level (trace, debug, info, warn, error).
+    #[arg(long, env = "RUST_LOG", default_value = "info")]
+    log_level: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
     fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new(&cli.log_level)),
+        )
         .init();
 
-    let cli = Cli::parse();
     tracing::info!(
         proxy_port = cli.proxy_port,
         dashboard_port = cli.dashboard_port,

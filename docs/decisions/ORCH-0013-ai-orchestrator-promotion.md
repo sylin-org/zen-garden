@@ -135,7 +135,10 @@ implementing the same trait contract.
 ### Design Principles
 
 1. **Single binary, single deployment unit.** One Docker image, one
-   config, one dashboard, one proxy port. Operators deploy one thing.
+   config, one dashboard. Per-service proxy ports in a dedicated range
+   (21434+) — each port speaks the native protocol of its service so
+   existing clients work without reconfiguration. Operators deploy one
+   container that replaces multiple individual service proxies.
 
 2. **Offering adapter pattern.** Each AI service type implements a trait.
    Adding a new service = implementing the trait + registering in the
@@ -687,31 +690,38 @@ src/orchestrators/ai/
 
 ### API Surface
 
-**Proxy server** (`:21434`):
+**Per-service proxy ports** (each speaks the service's native protocol):
+
+| Port  | Service | Protocol |
+|-------|---------|----------|
+| 21434 | Ollama | Ollama API (OpenAI-compat) |
+| 21435 | ComfyUI | Custom workflow + WebSocket |
+| 21436 | whisper.cpp | Multipart `/inference` |
+| 21437 | Speaches | OpenAI `/v1/audio/*` |
+| 21438 | OpenedAI Speech | OpenAI `/v1/audio/speech` |
+| 21439 | Infinity | OpenAI `/embeddings` + `/rerank` |
+| 21440 | LibreTranslate | Custom `/translate` |
+
+Port assignments are in the orchestrator's own range (21434+) to
+avoid collision with native service ports on the same stone. Exact
+assignments finalized during implementation.
+
+**Ollama proxy port** (`:21434`) — full Ollama API compatibility:
 
 ```
-# Ollama-compatible (preserved, no regressions)
+# Ollama-native (preserved, no regressions)
 POST /api/generate            -> Ollama proxy
 POST /api/chat                -> Ollama proxy
-POST /api/embed               -> Ollama or Infinity proxy
+POST /api/embed               -> Ollama proxy
 GET  /api/tags                -> Merged model list
 GET  /api/ps                  -> Merged loaded models
-POST /api/show                -> Model detail (Ollama)
-POST /api/pull                -> Model pull (Ollama)
-DELETE /api/delete             -> Model delete (Ollama)
+POST /api/show                -> Model detail
+POST /api/pull                -> Model pull
+DELETE /api/delete             -> Model delete
 GET  /api/version             -> Orchestrator version
 GET  /                        -> "Ollama is running" (client compat)
 
-# New capability endpoints
-POST /api/imagine             -> ComfyUI proxy
-POST /api/edit                -> ComfyUI proxy (inpaint)
-POST /api/render              -> ComfyUI proxy (AnimateDiff)
-POST /api/transcribe          -> Speaches/whisper.cpp proxy
-POST /api/speak               -> OpenedAI Speech proxy
-POST /api/rerank              -> Infinity/TEI proxy
-POST /api/translate           -> LibreTranslate proxy
-
-# Extension API (extended)
+# Extension API (shared across all ports via dashboard)
 GET  /v1/models               -> All models across all offerings
 GET  /v1/stones               -> All stones with offering details
 GET  /v1/capabilities         -> Available capabilities + serving offerings
@@ -1201,36 +1211,42 @@ attempt does not repeat them.
 
 ### Corrective Guidance for Re-implementation
 
-**Approach:** Break the problem into manageable logical blocks with
-clear interfaces. Do not tackle surface-level across everything at once.
+**Approach:** Decompose the Ollama orchestrator into shared infrastructure
+and Ollama-specific adapter, then build the AI orchestrator on the shared
+layer. Break into blocks with clear interfaces and operational verification.
 
-**Block 1: Operational Foundation**
-- Study the Ollama orchestrator's `Dockerfile`, `main.rs` startup
-  sequence, and `tasks/discovery.rs` as a complete working system.
-- Every configuration default (Koi endpoint, ports, timeouts, data
-  directory, log level) must match the existing orchestrators or have
-  a documented reason for diverging.
-- The block is complete when the container starts, connects to Koi,
-  discovers a stone, and registers its gateway — verified by running
-  it against a real garden.
+**Block 1: Harvest the Shared Orchestration Layer**
+- Extract offering-agnostic logic (~70%) from the Ollama orchestrator
+  into a shared layer. Define the offering adapter trait.
+- Complete when generalized domain modules compile and pass tests.
+  The Ollama orchestrator must remain functional (proof of extraction).
 
-**Block 2: Ollama Feature Parity**
-- Harvest the Ollama orchestrator's domain logic, infra, tasks, and
-  API layer. Generalize types but preserve behavior.
-- The block is complete when the AI orchestrator can replace the Ollama
-  orchestrator with zero regressions — verified by the exercise.ps1
-  script passing against a real Ollama instance.
+**Block 2: Operational Foundation**
+- Wire the AI orchestrator binary using the shared layer. Harvest
+  operational configuration (Koi endpoint, ports, Docker networking)
+  from the Ollama orchestrator — do not guess values.
+- Complete when the container starts, connects to Koi, discovers
+  instances, and registers per-offering gateways — verified by running
+  against a real garden.
 
-**Block 3: Multi-Offering Extension**
-- Add offering adapters one at a time. Each adapter is verified against
-  a real running instance of that service before moving to the next.
-- The block is complete when each offering type can be discovered,
-  health-checked, and proxy-routed through the orchestrator.
+**Block 3: Ollama Feature Parity**
+- Implement the OllamaOffering adapter as a bounded context. Wire all
+  shared tasks. Wire the Ollama proxy on its dedicated port.
+- Complete when exercise.ps1 passes against the AI orchestrator.
 
-**Block 4: Dashboard**
-- Build the dashboard last, after the backend is operationally verified.
-- Study the Ollama dashboard (2,616 lines) as the reference for what
-  operators need, then extend for multi-offering.
+**Block 4: Multi-Offering Extension**
+- Implement each offering adapter as a bounded context, one at a time.
+  Each gets its own proxy port speaking its native protocol.
+- Complete when each offering can be discovered, health-checked, and
+  proxy-routed — verified against a real running instance.
+
+**Block 5: Dashboard**
+- Build after the backend is operationally verified. Design from the AI
+  orchestrator's own requirements (capability-centric, multi-offering).
+
+**Block 6: Cloud Providers**
+- Cloud APIs as priority -10 fallbacks. Anthropic needs dedicated
+  Messages API translation, not a generic OpenAI-compat adapter.
 
 **Anti-patterns to avoid:**
 - Writing any code before exhaustively checking what exists in the

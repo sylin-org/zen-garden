@@ -32,6 +32,18 @@ adapter, etc.) as a self-contained microservice within the main service:
 - Domain logic that's offering-agnostic lives in the shared orchestration layer.
   Domain logic that's offering-specific lives inside the adapter.
 
+**What "bounded context" means here:** Each adapter is a self-contained module
+(`offerings/{service}/`) that encapsulates all protocol-specific knowledge.
+Nothing outside that directory knows about the service's API shapes, auth
+mechanism, streaming format, or model management protocol.
+
+**What it does NOT mean:** Adapters are NOT isolated processes, do NOT have
+their own AppState, channels, or task supervisors. They share the single
+`AppState`, the single set of broadcast channels, the single task supervisor.
+The isolation is at the code/module boundary, not at the runtime boundary.
+The offering adapter trait is the interface between the shared infrastructure
+and the service-specific code.
+
 ### Port Forwarding: Per-Service Proxy Ports
 
 The AI orchestrator **replaces** the Ollama orchestrator. It offers a
@@ -72,10 +84,15 @@ ports live in a dedicated range and never collide with native service ports.
    offering specs, validation rules, implementation plan, AND failure lessons from the
    first attempt. **Read the "Implementation Lessons" section first.**
 
-2. **ORCH-0012**: `docs/decisions/ORCH-0012-cluster-adapter-extraction.md` — the
-   precedent for this exact pattern. It extracted shared cluster primitives from the
-   MongoDB orchestrator into `orchestrator-common::cluster`. The AI orchestrator
-   applies the same approach to the Ollama orchestrator's AI-agnostic logic.
+2. **ORCH-0012**: `docs/decisions/ORCH-0012-cluster-adapter-extraction.md` — a
+   **pattern precedent**, not a direct dependency. ORCH-0012 extracted shared cluster
+   management primitives from the MongoDB orchestrator into `orchestrator-common::cluster`.
+   The AI orchestrator applies the **same decomposition approach** to the Ollama
+   orchestrator's AI-agnostic logic — but this is a separate extraction effort.
+   ORCH-0012's cluster module is for stateful database orchestrators (MongoDB, PostgreSQL).
+   The AI orchestrator extracts a different set of primitives (routing, demand, fitness,
+   placement) that are specific to AI inference orchestration. Read ORCH-0012 for the
+   methodology, not for the types.
 
 3. **Offering manifests**: `src/moss/embedded/manifests/sw/ai/` — snippet.yaml,
    frontmatter.json, compatibility.yaml, adopted.yaml, and research.md for all 7
@@ -157,11 +174,16 @@ instances — using the harvested shared layer, not bespoke reimplementations.
 
 1. **Harvest operational configuration** from the Ollama orchestrator. Do not invent
    values — read them from the source:
-   - Koi endpoint default: `src/orchestrators/ollama/src/main.rs` (look for the
-     `--koi` arg and its default — it uses `host.docker.internal`, not `localhost`)
-   - Ports, data dir, log level, all CLI args and env var mappings
-   - Docker networking: study the Ollama `Dockerfile` for how it connects to
-     host services
+   - Koi endpoint default: open `src/orchestrators/ollama/src/main.rs`, find the
+     `--koi` CLI arg, read its `default_value` and `env` attribute. Do NOT hardcode
+     a value from this document — read the actual source. The Ollama orchestrator
+     uses `host.docker.internal` (not `localhost` or `127.0.0.1`) because it runs
+     inside a Docker container that needs to reach Koi on the host. Verify the
+     port from the Koi crate's configuration, not from memory.
+   - Ports, data dir, log level: read every `#[arg(...)]` in the Ollama
+     orchestrator's `Cli` struct and replicate the defaults and env var names.
+   - Docker networking: study the Ollama `Dockerfile` for EXPOSE, ENV defaults,
+     and how it connects to host services.
 
 2. **Wire the startup sequence.** The AI orchestrator's `main.rs` binds **multiple
    listener ports** — one per offering type's native protocol (see port table above)
@@ -316,18 +338,24 @@ In this order:
 
 1. `docs/decisions/ORCH-0013-ai-orchestrator-promotion.md` — especially the
    "Implementation Lessons" section at the end
-2. `docs/decisions/ORCH-0012-cluster-adapter-extraction.md` — the precedent for
-   extracting shared primitives from a working orchestrator
-3. `src/orchestrators/common/src/` — all shared infrastructure modules (understand
+2. `docs/code-standards.md` — the project's Rust code standards (20 rules).
+   Naming conventions (§1–§3), domain purity (§6), channel conventions (§4),
+   error handling (§17), shared resources (§19), and memory budgets (§20)
+   are all enforced. Read before writing any Rust.
+3. `docs/decisions/ORCH-0012-cluster-adapter-extraction.md` — pattern precedent
+   for extracting shared primitives from a working orchestrator (methodology,
+   not types — see note in "What Already Exists" above)
+4. `src/orchestrators/common/src/` — all shared infrastructure modules (understand
    what's already shared before deciding what to extract)
-4. `src/orchestrators/ollama/src/domain/` — every module, classifying each as
+5. `src/orchestrators/ollama/src/domain/` — every module, classifying each as
    shared vs Ollama-specific
-5. `src/orchestrators/ollama/src/main.rs` — startup sequence and configuration
-6. `src/orchestrators/ollama/Dockerfile` — Docker configuration and networking
-7. `src/orchestrators/ollama/src/tasks/` — all background tasks, identifying
+6. `src/orchestrators/ollama/src/main.rs` — startup sequence and configuration
+   (read every `#[arg]` default and env mapping)
+7. `src/orchestrators/ollama/Dockerfile` — Docker configuration and networking
+8. `src/orchestrators/ollama/src/tasks/` — all background tasks, identifying
    the offering-agnostic orchestration patterns
-8. `src/orchestrators/ollama/src/api/` — API handlers and proxy pattern
-9. `src/moss/embedded/manifests/sw/ai/*.research.md` — service API references
+9. `src/orchestrators/ollama/src/api/` — API handlers and proxy pattern
+10. `src/moss/embedded/manifests/sw/ai/*.research.md` — service API references
 
 ---
 

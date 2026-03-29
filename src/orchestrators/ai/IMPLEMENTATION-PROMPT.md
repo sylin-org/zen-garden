@@ -18,6 +18,44 @@ heterogeneous AI services**, of which Ollama is one managed part. The Ollama
 orchestrator is a source of infrastructure patterns and harvestable domain logic —
 not the architectural template.
 
+### Architecture: Monolith of Bounded Contexts
+
+The AI orchestrator is a monolith binary, but its internal composition is
+**microservice-like bounded contexts** — one per offering type. Think of each
+offering adapter (Ollama adapter, ComfyUI adapter, Infinity adapter, HuggingFace
+adapter, etc.) as a self-contained microservice within the main service:
+
+- Each adapter owns its own HTTP client, proxy protocol, health semantics,
+  model enumeration, benchmark payloads, and error handling.
+- Adapters share infrastructure (routing, demand, fitness, metrics, discovery)
+  but never reach into each other's internals.
+- Domain logic that's offering-agnostic lives in the shared orchestration layer.
+  Domain logic that's offering-specific lives inside the adapter.
+
+### Port Forwarding: Per-Service Native Proxy Ports
+
+The AI orchestrator **replaces** the Ollama orchestrator. This means it must
+offer the same proxy ports that native clients expect:
+
+| Port  | Service | Protocol | Native Client Expectation |
+|-------|---------|----------|--------------------------|
+| 21434 | Ollama | Ollama API (OpenAI-compat) | `ollama list`, LangChain, etc. |
+| 8188  | ComfyUI | Custom workflow + WebSocket | ComfyUI frontend, workflow tools |
+| 8080  | whisper.cpp | Multipart `/inference` | Audio transcription clients |
+| 8000  | Speaches | OpenAI `/v1/audio/*` | OpenAI SDK users |
+| 8001  | OpenedAI Speech | OpenAI `/v1/audio/speech` | OpenAI TTS clients |
+| 7997  | Infinity | OpenAI `/embeddings` + `/rerank` | Embedding/RAG pipelines |
+| 5000  | LibreTranslate | Custom `/translate` | Translation clients |
+| 7190  | Dashboard | HTTP | Operator browser |
+
+Each port speaks the native protocol of its service. An Ollama client connecting
+to `:21434` sees a standard Ollama API. A ComfyUI workflow tool connecting to
+`:8188` sees a standard ComfyUI API. The orchestrator routes internally based on
+which port received the request, dispatching to the correct adapter.
+
+This is how the AI orchestrator becomes a **drop-in replacement** for having each
+service running directly — clients don't need to change their connection endpoints.
+
 ---
 
 ## What Already Exists (DO NOT recreate)
@@ -117,18 +155,20 @@ instances — using the harvested shared layer, not bespoke reimplementations.
    - Docker networking: study the Ollama `Dockerfile` for how it connects to
      host services
 
-2. **Wire the startup sequence.** The AI orchestrator's `main.rs` has its own startup
-   requirements (multi-offering catalog initialization, per-offering gateway
-   registration), but the infrastructure plumbing (tracing, config loading, channel
-   creation, server binding) follows the same patterns as the Ollama orchestrator
-   because it uses the same shared infrastructure crates.
+2. **Wire the startup sequence.** The AI orchestrator's `main.rs` binds **multiple
+   listener ports** — one per offering type's native protocol (see port table above)
+   plus the dashboard port. Each port dispatches to the correct offering adapter's
+   proxy method. The infrastructure plumbing (tracing, config loading, channel
+   creation) follows the Ollama orchestrator's patterns because it uses the same
+   shared infrastructure crates.
 
 3. **Wire the discovery task** using the shared pipeline. The AI orchestrator
    extends it to filter for ALL AI offering types (not just `offering:ollama`),
    and dispatches profiling through the offering adapter trait.
 
 4. **Wire the gateway announce task.** The AI orchestrator registers a gateway entry
-   per managed offering type (one `PUT /api/v1/garden/gateway/{offering}` per type).
+   per managed offering type (one `PUT /api/v1/garden/gateway/{offering}` per type),
+   each pointing to the corresponding native proxy port.
 
 **Verification:** Build the container. Start it against a real garden with Koi running.
 Logs must show:
@@ -136,22 +176,35 @@ Logs must show:
 - Successful mDNS registration
 - Topology discovery with instance profiling
 - Gateway registration for each offering type
+- Each per-service port listening and accepting connections
 
 ### Block 3: Ollama Feature Parity
 
 **Goal:** The AI orchestrator can replace the Ollama orchestrator with zero regressions.
 
-1. **Implement the OllamaOffering adapter** (the offering-specific ~30%). Harvest
-   `ollama_client.rs` for the HTTP client, `proxy.rs` for NDJSON streaming,
-   `benchmark.rs` for test payloads.
+1. **Implement the OllamaOffering adapter as a bounded context.** This is the first
+   "microservice within the monolith." It owns:
+   - `offerings/ollama/client.rs` — HTTP client for Ollama API (harvest from
+     `ollama_client.rs`)
+   - `offerings/ollama/proxy.rs` — NDJSON streaming proxy logic (harvest from
+     `api/proxy.rs`)
+   - `offerings/ollama/benchmark.rs` — Ollama-specific test payloads
+   - `offerings/ollama/types.rs` — Ollama API response shapes
+   - The Offering trait implementation that ties it together
+
+   Nothing outside the `offerings/ollama/` directory should know about Ollama's
+   API shapes, NDJSON format, or model pull protocol. The shared layer sees only
+   `ServiceInstance`, `Capability`, and the trait interface.
 
 2. **Wire all shared tasks** through the offering adapter trait: health_check,
    reconciliation, metrics_processor, metrics_flush, snapshot_publisher, benchmark,
    placement, resource_sync.
 
-3. **Wire the Ollama-compatible API surface**: `GET /`, `/api/tags`, `/api/ps`,
-   `/api/version`, `/api/show`, `/api/pull`, `/api/delete`, plus the proxy
-   fallback for `/api/generate`, `/api/chat`, `/api/embed`.
+3. **Wire the Ollama proxy on port 21434.** This port speaks native Ollama protocol:
+   `GET /`, `/api/tags`, `/api/ps`, `/api/version`, `/api/show`, `/api/pull`,
+   `/api/delete`, `/api/generate`, `/api/chat`, `/api/embed`. An Ollama client
+   connecting to this port must see exactly the same behavior as connecting to
+   the current Ollama orchestrator.
 
 4. **Wire the extension API**: `/v1/models`, `/v1/stones`, `/v1/capabilities`,
    `/v1/recommendations`.
@@ -161,16 +214,36 @@ orchestrator's proxy port. All tests must pass.
 
 ### Block 4: Multi-Offering Extension
 
-**Goal:** Each offering type works end-to-end.
+**Goal:** Each offering type works end-to-end as its own bounded context.
+
+Each adapter is a "microservice within the monolith" — self-contained, owning its
+own client, proxy protocol, health model, and error handling. The pattern:
+
+```
+offerings/{service}/
+├── mod.rs          — Offering trait implementation
+├── client.rs       — HTTP client specific to this service's API
+├── proxy.rs        — Protocol-specific proxy logic (if complex)
+├── types.rs        — API response types (serde shapes)
+└── benchmark.rs    — Service-specific benchmark payloads
+```
 
 For each service (ComfyUI, whisper.cpp, OpenedAI Speech, Infinity, LibreTranslate,
 Speaches):
 
 1. Read `src/moss/embedded/manifests/sw/ai/{service}.research.md` for the exact API.
-2. Implement the offering adapter (probe, enumerate, proxy, benchmark).
-3. Verify against a running instance of that service — probe succeeds, enumerate
-   returns real data, proxy forwards a real request.
-4. **Only move to the next service after the current one works end-to-end.**
+2. Implement the adapter as a bounded context: its own client, types, proxy logic.
+3. Wire its native proxy port (see port table above) — clients connect using the
+   same protocol they'd use with the real service.
+4. Verify against a running instance of that service:
+   - Probe succeeds (health check via the service's native endpoint)
+   - Enumerate returns real models/resources
+   - A native client connecting to the proxy port can use the service normally
+5. **Only move to the next service after the current one works end-to-end.**
+
+Nothing outside `offerings/{service}/` should know about that service's API shapes,
+authentication mechanism, or streaming format. The shared layer sees only the trait
+interface.
 
 ### Block 5: Dashboard
 

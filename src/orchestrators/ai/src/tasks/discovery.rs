@@ -327,6 +327,15 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                 error = %e,
                 "probe failed during profiling"
             );
+            state
+                .set_instance_health(
+                    endpoint,
+                    InstanceHealth::Unhealthy {
+                        since: std::time::Instant::now(),
+                        reason: format!("probe failed: {e}"),
+                    },
+                )
+                .await;
             return;
         }
     }

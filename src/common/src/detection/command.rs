@@ -13,77 +13,80 @@ use regex::Regex;
 use std::process::Command;
 use std::time::Duration;
 
-/// Windows fallback paths for common programs not in PATH
+/// Execute a command string via the appropriate shell/interpreter.
+///
+/// On Windows:
+/// - PowerShell commands (`powershell`/`pwsh` prefix): call PowerShell
+///   directly with `-NoProfile -NonInteractive -Command` to avoid
+///   `cmd /C` banner noise and quote mangling.
+/// - Other commands: use `cmd /C` for shell features (pipes, etc.).
+///
+/// On Unix: uses `sh -c` which handles pipes, quotes, and shell builtins.
+///
+/// This replaces the previous `split_whitespace()` approach which broke
+/// commands with quoted arguments.
 #[cfg(windows)]
-fn get_windows_fallback_paths(program: &str) -> Vec<String> {
-    let mut paths = Vec::new();
+fn execute_via_shell(command: &str) -> std::io::Result<std::process::Output> {
+    let trimmed = command.trim();
 
-    // Get LOCALAPPDATA for user-installed programs
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA")
-        && program == "ollama"
-    {
-        // Standard Ollama install path
-        paths.push(format!("{}\\Programs\\Ollama\\ollama.exe", local_app_data));
+    // PowerShell commands: extract the -Command argument and call directly.
+    // This avoids cmd /C which adds banner text to stdout and can mangle
+    // nested quotes.
+    if let Some(ps_cmd) = extract_powershell_command(trimmed) {
+        let shell = if trimmed.starts_with("pwsh") {
+            "pwsh"
+        } else {
+            "powershell"
+        };
+        return Command::new(shell)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+            .output();
     }
 
-    // Common Program Files locations
-    if let Ok(program_files) = std::env::var("ProgramFiles")
-        && program == "ollama"
-    {
-        paths.push(format!("{}\\Ollama\\ollama.exe", program_files));
-    }
-
-    paths
+    // Everything else: cmd /C
+    Command::new("cmd")
+        .args(["/C", trimmed])
+        .output()
 }
 
-/// Try to find and execute a command, checking fallback paths on Windows
+/// Extract the PowerShell -Command argument from a command string like:
+///   `powershell -Command "Get-Process | Where-Object { ... }"`
+///
+/// Returns the command body (without surrounding quotes) if the string
+/// starts with powershell/pwsh and contains -Command. Returns None if
+/// the string doesn't match this pattern.
 #[cfg(windows)]
-fn try_execute_command(program: &str, args: &[String]) -> std::io::Result<std::process::Output> {
-    // First try the command as-is (relies on PATH)
-    match Command::new(program).args(args).output() {
-        Ok(output) => return Ok(output),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Command not found in PATH, try fallback paths
-            tracing::debug!(
-                program = %program,
-                "Command not found in PATH, trying fallback paths"
-            );
-        }
-        Err(e) => return Err(e),
+fn extract_powershell_command(command: &str) -> Option<String> {
+    let lower = command.to_lowercase();
+    if !lower.starts_with("powershell") && !lower.starts_with("pwsh") {
+        return None;
     }
 
-    // Try fallback paths
-    for fallback_path in get_windows_fallback_paths(program) {
-        tracing::debug!(fallback_path = %fallback_path, "Trying fallback path");
-        match Command::new(&fallback_path).args(args).output() {
-            Ok(output) => {
-                tracing::info!(
-                    fallback_path = %fallback_path,
-                    "Found program via fallback path"
-                );
-                return Ok(output);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                continue; // Try next fallback
-            }
-            Err(e) => return Err(e),
-        }
+    // Find -Command (case-insensitive) and take everything after it
+    let idx = lower.find("-command")?;
+    let after = command[idx + "-command".len()..].trim();
+
+    if after.is_empty() {
+        return None;
     }
 
-    // All fallbacks failed, return the original "not found" error
-    Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        format!(
-            "Program '{}' not found in PATH or fallback locations",
-            program
-        ),
-    ))
+    // Strip surrounding quotes if present
+    let body = if (after.starts_with('"') && after.ends_with('"'))
+        || (after.starts_with('\'') && after.ends_with('\''))
+    {
+        &after[1..after.len() - 1]
+    } else {
+        after
+    };
+
+    Some(body.to_string())
 }
 
-/// Execute command (non-Windows just uses PATH)
 #[cfg(not(windows))]
-fn try_execute_command(program: &str, args: &[String]) -> std::io::Result<std::process::Output> {
-    Command::new(program).args(args).output()
+fn execute_via_shell(command: &str) -> std::io::Result<std::process::Output> {
+    Command::new("sh")
+        .args(["-c", command])
+        .output()
 }
 
 /// Detect service by executing a command
@@ -105,22 +108,16 @@ pub async fn detect_by_command(
 
     tracing::debug!(command = %command, os = std::env::consts::OS, "Executing command detection");
 
-    // Parse command into program and args
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() {
-        anyhow::bail!("Empty command");
-    }
-
-    let program = parts[0];
-    let args = &parts[1..];
-
-    // Execute command with timeout
+    // Execute command via the system shell so that quoted arguments,
+    // pipes, and shell builtins work correctly.
+    //
+    // Previous approach used split_whitespace() which broke commands
+    // containing quoted strings (e.g., PowerShell -Command "...").
     let output = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking({
-            let program = program.to_string();
-            let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-            move || try_execute_command(&program, &args)
+            let command = command.to_string();
+            move || execute_via_shell(&command)
         }),
     )
     .await
@@ -135,16 +132,14 @@ pub async fn detect_by_command(
                 command = %command,
                 error = %e,
                 error_kind = ?e.kind(),
-                "Command execution failed"
+                "Shell execution failed"
             );
-            if e.kind() == std::io::ErrorKind::NotFound {
-                return Ok(DetectionResult {
-                    detected: false,
-                    version: None,
-                    details: format!("Program '{}' not found", program),
-                });
-            }
-            anyhow::bail!("Failed to execute command '{}': {}", command, e);
+            // Shell itself not found is a system-level problem
+            return Ok(DetectionResult {
+                detected: false,
+                version: None,
+                details: format!("Shell execution failed: {e}"),
+            });
         }
     };
 
@@ -271,13 +266,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_by_command_success() {
+        // Shell-executed: no need for platform-specific wrapping
         let config = CommandDetection {
-            command: if cfg!(windows) {
-                "cmd /c echo test"
-            } else {
-                "echo test"
-            }
-            .into(),
+            command: "echo test".into(),
             expected_pattern: Some("test".into()),
             expected_exit_code: None,
         };
@@ -296,6 +287,7 @@ mod tests {
             expected_exit_code: None,
         };
 
+        // Through shell, unknown command returns non-zero exit code
         let result = detect_by_command(&config, Duration::from_secs(5))
             .await
             .unwrap();

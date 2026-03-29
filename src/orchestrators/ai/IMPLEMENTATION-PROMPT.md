@@ -32,29 +32,37 @@ adapter, etc.) as a self-contained microservice within the main service:
 - Domain logic that's offering-agnostic lives in the shared orchestration layer.
   Domain logic that's offering-specific lives inside the adapter.
 
-### Port Forwarding: Per-Service Native Proxy Ports
+### Port Forwarding: Per-Service Proxy Ports
 
-The AI orchestrator **replaces** the Ollama orchestrator. This means it must
-offer the same proxy ports that native clients expect:
+The AI orchestrator **replaces** the Ollama orchestrator. It offers a
+dedicated proxy port per service type in its own port range (21434+), so
+it never conflicts with the actual service instances running on the same
+stone or elsewhere in the garden:
 
-| Port  | Service | Protocol | Native Client Expectation |
-|-------|---------|----------|--------------------------|
-| 21434 | Ollama | Ollama API (OpenAI-compat) | `ollama list`, LangChain, etc. |
-| 8188  | ComfyUI | Custom workflow + WebSocket | ComfyUI frontend, workflow tools |
-| 8080  | whisper.cpp | Multipart `/inference` | Audio transcription clients |
-| 8000  | Speaches | OpenAI `/v1/audio/*` | OpenAI SDK users |
-| 8001  | OpenedAI Speech | OpenAI `/v1/audio/speech` | OpenAI TTS clients |
-| 7997  | Infinity | OpenAI `/embeddings` + `/rerank` | Embedding/RAG pipelines |
-| 5000  | LibreTranslate | Custom `/translate` | Translation clients |
+| Port  | Service | Protocol | Clients Connect Here Instead Of |
+|-------|---------|----------|-------------------------------|
+| 21434 | Ollama | Ollama API (OpenAI-compat) | `:11434` (native Ollama) |
+| 21435 | ComfyUI | Custom workflow + WebSocket | `:8188` (native ComfyUI) |
+| 21436 | whisper.cpp | Multipart `/inference` | `:8080` (native whisper.cpp) |
+| 21437 | Speaches | OpenAI `/v1/audio/*` | `:8000` (native Speaches) |
+| 21438 | OpenedAI Speech | OpenAI `/v1/audio/speech` | `:8001` (native OpenedAI Speech) |
+| 21439 | Infinity | OpenAI `/embeddings` + `/rerank` | `:7997` (native Infinity) |
+| 21440 | LibreTranslate | Custom `/translate` | `:5000` (native LibreTranslate) |
 | 7190  | Dashboard | HTTP | Operator browser |
 
-Each port speaks the native protocol of its service. An Ollama client connecting
-to `:21434` sees a standard Ollama API. A ComfyUI workflow tool connecting to
-`:8188` sees a standard ComfyUI API. The orchestrator routes internally based on
-which port received the request, dispatching to the correct adapter.
+Each proxy port speaks the native protocol of its service. An Ollama client
+connecting to `:21434` sees a standard Ollama API. A ComfyUI workflow tool
+connecting to `:21435` sees a standard ComfyUI API. The orchestrator routes
+internally based on which port received the request, dispatching to the
+correct adapter's proxy logic.
 
-This is how the AI orchestrator becomes a **drop-in replacement** for having each
-service running directly — clients don't need to change their connection endpoints.
+The port numbering (21434+) mirrors the Ollama orchestrator's existing
+convention — 21434 was chosen to not conflict with Ollama's native port
+(11434). The same principle applies to all services.
+
+**Note:** The exact port assignments should be finalized during implementation
+based on what works operationally. The key principle is: orchestrator proxy
+ports live in a dedicated range and never collide with native service ports.
 
 ---
 

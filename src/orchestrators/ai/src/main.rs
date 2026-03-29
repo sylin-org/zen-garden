@@ -6,7 +6,13 @@
 
 use anyhow::Result;
 use clap::Parser;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
+
+use zen_garden_ai_orchestrator::catalog::OfferingRegistry;
+use zen_garden_ai_orchestrator::infra::persistence;
+use zen_garden_ai_orchestrator::tasks;
+use zen_garden_ai_orchestrator::AppState;
 
 const OFFERING_NAME: &str = "zen-garden.ai.orchestrator";
 
@@ -40,7 +46,7 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Logging
+    // ── Logging ─────────────────────────────────────────────────────
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level)),
@@ -56,89 +62,130 @@ async fn main() -> Result<()> {
         "starting AI orchestrator"
     );
 
-    // Data directory
+    // ── Data Directory ──────────────────────────────────────────────
     tokio::fs::create_dir_all(&cli.data_dir).await?;
 
-    // ── Connectivity Probe ─────────────────────────────────────────
-    // Verify we can reach infrastructure before wiring anything.
+    // ── Config ──────────────────────────────────────────────────────
+    let config = persistence::load_config(&cli.data_dir).await;
 
-    // 1. Koi health
-    let koi_healthy = orchestrator_common::discovery::check_koi_health(&cli.koi_endpoint).await;
-    if koi_healthy {
-        tracing::info!(endpoint = %cli.koi_endpoint, "koi: healthy");
-    } else {
-        tracing::warn!(endpoint = %cli.koi_endpoint, "koi: unreachable");
+    // ── Offering Registry ───────────────────────────────────────────
+    // Block 3 will register OllamaOffering, Block 4+ will add others.
+    // For now the registry is empty — discovery still runs and finds
+    // instances, but health checks and proxy ports are inactive.
+    let registry = OfferingRegistry::new();
+    let registered_count = registry.len();
+    tracing::info!(offerings = registered_count, "offering registry initialized");
+
+    // ── Channels ────────────────────────────────────────────────────
+    let (metrics_tx, metrics_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // ── Shared State ────────────────────────────────────────────────
+    let shutdown = CancellationToken::new();
+    let state = AppState::new(
+        cli.koi_endpoint.clone(),
+        cli.stone.clone(),
+        cli.dashboard_port,
+        cli.data_dir.clone(),
+        config,
+        registry,
+        shutdown.clone(),
+        metrics_tx,
+    );
+
+    // ── Restore Persisted State ─────────────────────────────────────
+    state.load_tending().await;
+
+    {
+        let snapshot = persistence::load_metrics(&cli.data_dir).await;
+        let mut metrics = state.metrics.write().await;
+        metrics.restore_from_snapshot(snapshot);
     }
 
-    // 2. Stone discovery via Koi mDNS
-    match orchestrator_common::discovery::discover_stones(&cli.koi_endpoint).await {
-        Ok(stones) => {
-            tracing::info!(count = stones.len(), "discovered stones via Koi");
-            for s in &stones {
-                tracing::info!(
-                    name = %s.stone_name,
-                    ip = %s.ip,
-                    port = s.api_port,
-                    health = ?s.health,
-                    "  stone"
-                );
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "stone discovery failed");
-        }
-    }
+    // ── Background Tasks ────────────────────────────────────────────
+    let discovery_handle = tokio::spawn(tasks::discovery::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
 
-    // 3. Topology query (via local Moss or explicit stone)
-    let moss_endpoint = cli
-        .stone
-        .clone()
-        .unwrap_or_else(|| format!("http://localhost:{}", garden_common::constants::MOSS_HTTP));
+    let gateway_handle = tokio::spawn(tasks::gateway_announce::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
+    let health_handle = tokio::spawn(tasks::health_check::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
 
-    match client.get(format!("{moss_endpoint}/api/v1/garden/topology")).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
-            if let Some(entries) = body.get("data").and_then(|d| d.as_array()) {
-                tracing::info!(stones = entries.len(), "topology query successful");
-                for entry in entries {
-                    let name = entry.get("stone_name").and_then(|v| v.as_str()).unwrap_or("?");
-                    let health = entry.get("health").and_then(|v| v.as_str()).unwrap_or("?");
-                    let services = entry
-                        .get("services")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|s| s.get("offering").and_then(|o| o.as_str()))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        })
-                        .unwrap_or_default();
-                    tracing::info!(
-                        stone = %name,
-                        health = %health,
-                        offerings = %services,
-                        "  topology entry"
-                    );
+    let metrics_flush_handle = tokio::spawn(tasks::metrics_flush::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
+
+    let metrics_proc_handle = tokio::spawn(tasks::metrics_processor::run(
+        state.clone(),
+        metrics_rx,
+        shutdown.clone(),
+    ));
+
+    tracing::info!(
+        tasks = 5,
+        "background tasks spawned (discovery, gateway, health, metrics_flush, metrics_processor)"
+    );
+
+    // ── Dashboard Server ────────────────────────────────────────────
+    // TODO: Block 5 — React dashboard. For now, a health endpoint.
+    let health_state = state.clone();
+    let dashboard_router = axum::Router::new()
+        .route(
+            "/health",
+            axum::routing::get(move || {
+                let state = health_state.clone();
+                async move {
+                    let instances = state.instances.read().await;
+                    let total = instances.len();
+                    let healthy = instances.values().filter(|i| i.is_routable()).count();
+                    axum::Json(serde_json::json!({
+                        "status": if healthy > 0 { "healthy" } else if total > 0 { "degraded" } else { "no_instances" },
+                        "offering": OFFERING_NAME,
+                        "version": env!("CARGO_PKG_VERSION"),
+                        "instances": { "total": total, "healthy": healthy },
+                    }))
                 }
-            }
-        }
-        Ok(resp) => {
-            tracing::warn!(status = %resp.status(), "topology query returned non-200");
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, endpoint = %moss_endpoint, "topology query failed");
-        }
-    }
+            }),
+        );
 
-    tracing::info!("connectivity probe complete — Block 2 wiring next");
+    let dashboard_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cli.dashboard_port));
+    let dashboard_listener = tokio::net::TcpListener::bind(dashboard_addr).await?;
+    tracing::info!(port = cli.dashboard_port, "dashboard server listening");
 
-    // Hold open until Ctrl+C
+    let dashboard_shutdown = shutdown.clone();
+    let dashboard_handle = tokio::spawn(async move {
+        axum::serve(dashboard_listener, dashboard_router)
+            .with_graceful_shutdown(dashboard_shutdown.cancelled_owned())
+            .await
+            .ok();
+    });
+
+    // ── Wait for Shutdown ───────────────────────────────────────────
     tokio::signal::ctrl_c().await?;
-    tracing::info!("shutting down");
+    tracing::info!("shutdown signal received");
+    shutdown.cancel();
 
+    // Wait for tasks with timeout
+    let timeout = std::time::Duration::from_secs(5);
+    let _ = tokio::time::timeout(timeout, async {
+        let _ = tokio::join!(
+            discovery_handle,
+            gateway_handle,
+            health_handle,
+            metrics_flush_handle,
+            metrics_proc_handle,
+            dashboard_handle,
+        );
+    })
+    .await;
+
+    tracing::info!("AI orchestrator stopped");
     Ok(())
 }

@@ -75,6 +75,55 @@ impl OfferingKind {
         }
     }
 
+    /// Well-known service port for the offering's native API.
+    /// Returns `None` for cloud providers (no local port).
+    pub fn default_service_port(&self) -> Option<u16> {
+        match self {
+            Self::Ollama => Some(11434),
+            Self::ComfyUi => Some(8188),
+            Self::Speaches => Some(8000),
+            Self::OpenedaiSpeech => Some(8000),
+            Self::Infinity => Some(7997),
+            Self::LibreTranslate => Some(5000),
+            Self::HuggingFace => None,
+            Self::OpenAi => None,
+            Self::Anthropic => None,
+            Self::StabilityAi => None,
+            Self::ElevenLabs => None,
+            Self::Cohere => None,
+            Self::Deepgram => None,
+            Self::Google => None,
+        }
+    }
+
+    /// Parse an offering name from topology into an `OfferingKind`.
+    ///
+    /// Matches the `offering` field in `TopologyServiceEntry` against
+    /// known AI offering names. Returns `None` for unrecognized names.
+    pub fn from_topology_name(name: &str) -> Option<Self> {
+        match name {
+            "ollama" | "ollama-cpu" => Some(Self::Ollama),
+            "comfyui" => Some(Self::ComfyUi),
+            "speaches" => Some(Self::Speaches),
+            "openedai-speech" => Some(Self::OpenedaiSpeech),
+            "infinity" => Some(Self::Infinity),
+            "libretranslate" => Some(Self::LibreTranslate),
+            "huggingface" => Some(Self::HuggingFace),
+            _ => None,
+        }
+    }
+
+    /// All local (non-cloud) offering type names used for topology filtering.
+    pub const LOCAL_OFFERING_NAMES: &[&str] = &[
+        "ollama",
+        "ollama-cpu",
+        "comfyui",
+        "speaches",
+        "openedai-speech",
+        "infinity",
+        "libretranslate",
+    ];
+
     /// Whether this offering type is a cloud provider (priority -10 by default).
     pub fn is_cloud(&self) -> bool {
         matches!(

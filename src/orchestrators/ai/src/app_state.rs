@@ -145,12 +145,15 @@ impl AppState {
                 .or_insert_with(|| Arc::new(AtomicU32::new(0)));
         }
 
-        // Evict stale instance for the same stone at a different endpoint
+        // Evict stale instance for the same stone AND same offering kind
+        // at a different endpoint (e.g. DHCP lease change).
+        // Different offerings on the same stone coexist (different ports).
         let stale_endpoint = {
             let reg = self.instances.read().await;
             reg.iter()
                 .find(|(ep, existing)| {
                     *ep != &endpoint
+                        && existing.kind == instance.kind
                         && (existing.stone.name == stone_name
                             || (!stone_id.is_empty()
                                 && !existing.stone.id.is_empty()

@@ -50,6 +50,7 @@ function SpeakButton({ text }: { text: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          model: "tts-1",
           input: text,
           voice: "alloy",
           response_format: "wav",
@@ -367,6 +368,7 @@ function SpeakPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          model: "tts-1",
           input: text,
           voice,
           response_format: format,

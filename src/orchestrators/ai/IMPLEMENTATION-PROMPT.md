@@ -187,6 +187,11 @@ artifact before implementation begins:
 These artifacts prevent knowledge loss and let future maintainers understand
 why things are built the way they are.
 
+**Do not skim this prompt.** The previous implementation failed because
+instructions were read at surface level. If you find yourself thinking "I get
+the gist" — stop, go back, read the actual words. Every rule, every anti-pattern,
+every verification criterion exists because its absence caused a concrete failure.
+
 ---
 
 ## Implementation Approach

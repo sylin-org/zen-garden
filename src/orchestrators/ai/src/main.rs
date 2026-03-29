@@ -59,8 +59,82 @@ async fn main() -> Result<()> {
     // Data directory
     tokio::fs::create_dir_all(&cli.data_dir).await?;
 
-    // TODO: Block 2 — wire startup sequence, discovery, gateway, proxy ports
-    tracing::info!("AI orchestrator skeleton running — Block 1 complete, awaiting Block 2 wiring");
+    // ── Connectivity Probe ─────────────────────────────────────────
+    // Verify we can reach infrastructure before wiring anything.
+
+    // 1. Koi health
+    let koi_healthy = orchestrator_common::discovery::check_koi_health(&cli.koi_endpoint).await;
+    if koi_healthy {
+        tracing::info!(endpoint = %cli.koi_endpoint, "koi: healthy");
+    } else {
+        tracing::warn!(endpoint = %cli.koi_endpoint, "koi: unreachable");
+    }
+
+    // 2. Stone discovery via Koi mDNS
+    match orchestrator_common::discovery::discover_stones(&cli.koi_endpoint).await {
+        Ok(stones) => {
+            tracing::info!(count = stones.len(), "discovered stones via Koi");
+            for s in &stones {
+                tracing::info!(
+                    name = %s.stone_name,
+                    ip = %s.ip,
+                    port = s.api_port,
+                    health = ?s.health,
+                    "  stone"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "stone discovery failed");
+        }
+    }
+
+    // 3. Topology query (via local Moss or explicit stone)
+    let moss_endpoint = cli
+        .stone
+        .clone()
+        .unwrap_or_else(|| format!("http://localhost:{}", garden_common::constants::MOSS_HTTP));
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    match client.get(format!("{moss_endpoint}/api/v1/garden/topology")).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            if let Some(entries) = body.get("data").and_then(|d| d.as_array()) {
+                tracing::info!(stones = entries.len(), "topology query successful");
+                for entry in entries {
+                    let name = entry.get("stone_name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let health = entry.get("health").and_then(|v| v.as_str()).unwrap_or("?");
+                    let services = entry
+                        .get("services")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| s.get("offering").and_then(|o| o.as_str()))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    tracing::info!(
+                        stone = %name,
+                        health = %health,
+                        offerings = %services,
+                        "  topology entry"
+                    );
+                }
+            }
+        }
+        Ok(resp) => {
+            tracing::warn!(status = %resp.status(), "topology query returned non-200");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, endpoint = %moss_endpoint, "topology query failed");
+        }
+    }
+
+    tracing::info!("connectivity probe complete — Block 2 wiring next");
 
     // Hold open until Ctrl+C
     tokio::signal::ctrl_c().await?;

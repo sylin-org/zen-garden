@@ -9,8 +9,11 @@ use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
+use std::sync::Arc;
+
 use zen_garden_ai_orchestrator::catalog::OfferingRegistry;
 use zen_garden_ai_orchestrator::infra::persistence;
+use zen_garden_ai_orchestrator::offerings::ollama::OllamaOffering;
 use zen_garden_ai_orchestrator::tasks;
 use zen_garden_ai_orchestrator::AppState;
 
@@ -69,10 +72,8 @@ async fn main() -> Result<()> {
     let config = persistence::load_config(&cli.data_dir).await;
 
     // ── Offering Registry ───────────────────────────────────────────
-    // Block 3 will register OllamaOffering, Block 4+ will add others.
-    // For now the registry is empty — discovery still runs and finds
-    // instances, but health checks and proxy ports are inactive.
-    let registry = OfferingRegistry::new();
+    let mut registry = OfferingRegistry::new();
+    registry.register(Arc::new(OllamaOffering::new()))?;
     let registered_count = registry.len();
     tracing::info!(offerings = registered_count, "offering registry initialized");
 

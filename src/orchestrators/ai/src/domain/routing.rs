@@ -23,13 +23,15 @@
 //! always routable — the user explicitly chose to install it.
 
 use super::fitness::GpuMatrix;
-use super::types::{Capability, ModelInfo, RoutingDecision, RoutingError, ServiceInstance, Tier};
+use super::types::{Capability, ModelDirectory, RoutingDecision, RoutingError, ServiceInstance, Tier};
 use std::collections::HashMap;
 
-/// A routing candidate: one instance on one tier.
+/// A routing candidate: one instance with optional tier info.
 struct Candidate<'a> {
     instance: &'a ServiceInstance,
-    tier: &'a Tier,
+    /// The VRAM tier this instance belongs to, if any.
+    /// `None` for cloud instances or instances without VRAM.
+    tier: Option<&'a Tier>,
     /// True when the tier's VRAM is below the model's requirement (safety net).
     is_degraded: bool,
 }
@@ -52,7 +54,7 @@ struct Candidate<'a> {
 pub fn select_instance(
     model: &str,
     instances: &HashMap<String, ServiceInstance>,
-    models: &HashMap<String, ModelInfo>,
+    directory: &ModelDirectory,
     tiers: &[Tier],
     max_queue: u32,
     fitness: Option<&GpuMatrix>,
@@ -66,44 +68,50 @@ pub fn select_instance(
         return Err(RoutingError::NoHealthyInstances);
     }
 
-    let vram_needed: Option<u64> = models.get(model).and_then(|m| m.vram_bytes);
+    let vram_needed: Option<u64> = directory.get(model).and_then(|e| e.metadata.vram_bytes);
 
     let model_exists = instances
         .values()
         .any(|i| i.models_available.iter().any(|m| m == model));
-    if !model_exists && !models.contains_key(model) {
+    if !model_exists && directory.get(model).is_none() {
         return Err(RoutingError::ModelNotFound(model.to_string()));
     }
 
-    // ── Collect candidates ──────────────────────────────────────
+    // ── Collect candidates (instance-first) ────────────────────
+    //
+    // Start from ALL instances, filter by health + model + capability.
+    // Look up tier as optional scoring signal — not a structural gate.
 
     let lowest_tier_vram = tiers.first().map(|t| t.vram_bytes).unwrap_or(0);
     let mut candidates: Vec<Candidate> = Vec::new();
 
-    for tier in tiers {
-        let is_degraded = vram_needed.map_or(false, |v| tier.vram_bytes < v);
-        for ep in &tier.instance_endpoints {
-            let Some(inst) = instances.get(ep.as_str()) else {
-                continue;
-            };
-            if !inst.is_routable() {
-                continue;
-            }
-            if !inst.models_available.iter().any(|m| m == model) {
-                continue;
-            }
-            // Capability filter: skip instances that don't declare the requested capability
-            if let Some(cap) = requested_capability {
-                if !inst.capabilities.contains(&cap) {
-                    continue;
-                }
-            }
-            candidates.push(Candidate {
-                instance: inst,
-                tier,
-                is_degraded,
-            });
+    for (ep, inst) in instances.iter() {
+        if !inst.is_routable() {
+            continue;
         }
+        if !inst.models_available.iter().any(|m| m == model) {
+            continue;
+        }
+        if let Some(cap) = requested_capability {
+            if !inst.capabilities.contains(&cap) {
+                continue;
+            }
+        }
+
+        // Look up tier for this instance (if it has VRAM and is in a tier)
+        let tier = tiers
+            .iter()
+            .find(|t| t.instance_endpoints.iter().any(|e| e == ep));
+
+        let is_degraded = tier
+            .and_then(|t| vram_needed.map(|v| t.vram_bytes < v))
+            .unwrap_or(false);
+
+        candidates.push(Candidate {
+            instance: inst,
+            tier,
+            is_degraded,
+        });
     }
 
     // Priority gate: if any candidate has priority >= 0, exclude all with priority < 0
@@ -152,30 +160,29 @@ pub fn select_instance(
 
     // ── Demand-based reservation check ──────────────────────────
     //
-    // Reservation activates when ALL of:
-    //   1. The requested model fits on lower-tier stones.
-    //   2. Candidates exist on lower tiers for this model.
-    //   3. Recent demand includes a DIFFERENT model whose VRAM
-    //      requirement exceeds the lowest tier (i.e. it exclusively
-    //      needs high-tier stones).
-    //
-    // When active, lower-tier candidates are tried first so the
-    // high-tier stone stays available for the large model traffic.
+    // Only applies when VRAM tiers exist (local GPU instances).
+    // Skipped entirely for pure cloud setups.
 
-    let model_fits_low = vram_needed.map_or(true, |v| v <= lowest_tier_vram);
-    let has_low_candidates = candidates
-        .iter()
-        .any(|c| c.tier.vram_bytes == lowest_tier_vram && !c.is_degraded);
+    let has_tiers = !tiers.is_empty();
 
-    let reserve = model_fits_low
-        && has_low_candidates
-        && recent_demand.iter().any(|(dm, _)| {
-            dm != model
-                && models
-                    .get(dm)
-                    .and_then(|info| info.vram_bytes)
-                    .map_or(false, |v| v > lowest_tier_vram)
+    let reserve = has_tiers && {
+        let model_fits_low = vram_needed.map_or(true, |v| v <= lowest_tier_vram);
+        let has_low_candidates = candidates.iter().any(|c| {
+            c.tier
+                .map_or(false, |t| t.vram_bytes == lowest_tier_vram)
+                && !c.is_degraded
         });
+
+        model_fits_low
+            && has_low_candidates
+            && recent_demand.iter().any(|(dm, _)| {
+                dm != model
+                    && directory
+                        .get(dm)
+                        .and_then(|entry| entry.metadata.vram_bytes)
+                        .map_or(false, |v| v > lowest_tier_vram)
+            })
+    };
 
     // ── Sort candidates ─────────────────────────────────────────
 
@@ -184,6 +191,9 @@ pub fn select_instance(
             .and_then(|f| f.fitness_score(model, ep))
             .unwrap_or(25)
     };
+
+    // VRAM from tier (0 for tierless instances — cloud, CPU-only)
+    let vram = |c: &Candidate| -> u64 { c.tier.map_or(0, |t| t.vram_bytes) };
 
     if reserve {
         // Reservation: non-degraded first, idle before busy, then lower
@@ -194,7 +204,7 @@ pub fn select_instance(
                 .then_with(|| {
                     (a.instance.queue_depth > 0).cmp(&(b.instance.queue_depth > 0))
                 })
-                .then_with(|| a.tier.vram_bytes.cmp(&b.tier.vram_bytes))
+                .then_with(|| vram(a).cmp(&vram(b)))
                 .then_with(|| score(&b.instance.endpoint).cmp(&score(&a.instance.endpoint)))
                 .then_with(|| a.instance.queue_depth.cmp(&b.instance.queue_depth))
         });
@@ -208,7 +218,7 @@ pub fn select_instance(
                     (a.instance.queue_depth > 0).cmp(&(b.instance.queue_depth > 0))
                 })
                 .then_with(|| score(&b.instance.endpoint).cmp(&score(&a.instance.endpoint)))
-                .then_with(|| b.tier.vram_bytes.cmp(&a.tier.vram_bytes))
+                .then_with(|| vram(b).cmp(&vram(a)))
                 .then_with(|| a.instance.queue_depth.cmp(&b.instance.queue_depth))
         });
     }
@@ -231,18 +241,21 @@ pub fn select_instance(
         model: model.to_string(),
     })?;
 
-    let uses_high_tier = c.tier.vram_bytes > lowest_tier_vram;
+    let tier_vram = c.tier.map_or(0, |t| t.vram_bytes);
+    let uses_high_tier = tier_vram > lowest_tier_vram;
     let fits_low = vram_needed.map_or(false, |v| v <= lowest_tier_vram);
 
     Ok(RoutingDecision {
         target_endpoint: c.instance.endpoint.clone(),
         stone_name: c.instance.stone.name.clone(),
         model_name: model.to_string(),
-        tier_label: if c.is_degraded {
-            format!("{}(degraded)", c.tier.label)
-        } else {
-            c.tier.label.clone()
-        },
+        tier_label: c.tier.map(|t| {
+            if c.is_degraded {
+                format!("{}(degraded)", t.label)
+            } else {
+                t.label.clone()
+            }
+        }),
         offering_kind: c.instance.kind,
         was_overflow: reserve && uses_high_tier && fits_low,
         lease_acquired: uses_high_tier && fits_low,
@@ -263,7 +276,7 @@ pub fn instances_with_model<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::types::{ComputeType, Gpu, InstanceHealth, OfferingKind, Stone, Vram};
+    use crate::domain::types::{ComputeType, Gpu, InstanceHealth, ModelDirectory, ModelFqn, ModelMetadata, OfferingKind, Stone, Vram};
     use std::time::Instant;
 
     const GIB: u64 = 1_073_741_824;
@@ -278,7 +291,7 @@ mod tests {
             health: InstanceHealth::Healthy,
             models_loaded: vec![],
             models_available: models.iter().map(|s| s.to_string()).collect(),
-            capabilities: vec![Capability::Generate, Capability::Chat],
+            capabilities: vec![Capability::Chat],
             queue_depth: queue,
             last_seen: Instant::now(),
             metadata: serde_json::Value::Null,
@@ -286,20 +299,18 @@ mod tests {
         }
     }
 
-    fn model(name: &str, vram_gb: u64) -> ModelInfo {
-        ModelInfo {
-            name: name.to_string(),
-            parameter_count: None,
-            parameter_size: None,
-            quantization_level: None,
-            family: None,
-            families: vec![],
-            capabilities: vec![],
-            format: None,
-            size_disk: 0,
-            vram_bytes: Some(vram_gb * GIB),
-            context_length: None,
+    /// Build a ModelDirectory with a single entry for the given model name and VRAM.
+    fn dir_with(entries: &[(&str, u64)]) -> ModelDirectory {
+        let mut dir = ModelDirectory::new();
+        for &(name, vram_gb) in entries {
+            dir.upsert(
+                ModelFqn::new("ollama", "test", name, None),
+                vec![Capability::Chat],
+                vec![],
+                ModelMetadata { vram_bytes: Some(vram_gb * GIB), ..Default::default() },
+            );
         }
+        dir
     }
 
     fn no_demand() -> HashMap<String, f64> {
@@ -313,11 +324,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m7b", model("m7b", 4)), ("m70b", model("m70b", 20))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let directory = dir_with(&[("m7b", 4), ("m70b", 20)]);
 
         let tiers = vec![
             Tier {
@@ -334,7 +341,7 @@ mod tests {
 
         // m7b should route to 24G tier (performance-first, higher VRAM)
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, None, &no_demand(), None).unwrap();
+            select_instance("m7b", &instances, &directory, &tiers, 0, None, &no_demand(), None).unwrap();
         assert_eq!(decision.target_endpoint, "b");
         assert!(!decision.was_overflow);
     }
@@ -347,11 +354,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m7b", model("m7b", 4)), ("m70b", model("m70b", 20))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let directory = dir_with(&[("m7b", 4), ("m70b", 20)]);
 
         let tiers = vec![
             Tier {
@@ -369,7 +372,7 @@ mod tests {
         let demand: HashMap<String, f64> = [("m70b".to_string(), 0.3)].into_iter().collect();
 
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, None, &demand, None).unwrap();
+            select_instance("m7b", &instances, &directory, &tiers, 0, None, &demand, None).unwrap();
         assert_eq!(decision.target_endpoint, "a"); // 8G tier, reservation active
         assert!(!decision.was_overflow);
     }
@@ -382,10 +385,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b"], 0));
 
-        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m7b", 4)]);
 
         let tiers = vec![
             Tier {
@@ -403,7 +403,7 @@ mod tests {
         // Demand only has m7b (small) — no large model in demand
         let demand: HashMap<String, f64> = [("m7b".to_string(), 1.0)].into_iter().collect();
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, None, &demand, None).unwrap();
+            select_instance("m7b", &instances, &directory, &tiers, 0, None, &demand, None).unwrap();
         assert_eq!(decision.target_endpoint, "b"); // 24G, performance-first
     }
 
@@ -414,11 +414,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 64)); // saturated
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
 
-        let models: HashMap<String, ModelInfo> =
-            [("m7b", model("m7b", 4)), ("m70b", model("m70b", 20))]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let directory = dir_with(&[("m7b", 4), ("m70b", 20)]);
 
         let tiers = vec![
             Tier {
@@ -436,7 +432,7 @@ mod tests {
         let demand: HashMap<String, f64> = [("m70b".to_string(), 0.3)].into_iter().collect();
 
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 64, None, &demand, None).unwrap();
+            select_instance("m7b", &instances, &directory, &tiers, 64, None, &demand, None).unwrap();
         assert_eq!(decision.target_endpoint, "b"); // overflow to 24G
         assert!(decision.was_overflow);
     }
@@ -447,10 +443,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m70b"], 0));
 
-        let models: HashMap<String, ModelInfo> = [("m70b", model("m70b", 20))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m70b", 20)]);
 
         let tiers = vec![
             Tier {
@@ -467,7 +460,7 @@ mod tests {
 
         // m70b needs 20G, only viable tier is 24G
         let decision =
-            select_instance("m70b", &instances, &models, &tiers, 0, None, &no_demand(), None).unwrap();
+            select_instance("m70b", &instances, &directory, &tiers, 0, None, &no_demand(), None).unwrap();
         assert_eq!(decision.target_endpoint, "b");
     }
 
@@ -477,10 +470,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 3));
         instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 1));
 
-        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m7b", 4)]);
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -489,7 +479,7 @@ mod tests {
         }];
 
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, None, &no_demand(), None).unwrap();
+            select_instance("m7b", &instances, &directory, &tiers, 0, None, &no_demand(), None).unwrap();
         assert_eq!(decision.target_endpoint, "b"); // lower queue depth
     }
 
@@ -501,10 +491,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b"], 1)); // busy
 
-        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m7b", 4)]);
 
         let tiers = vec![
             Tier {
@@ -520,13 +507,13 @@ mod tests {
         ];
 
         // 24G busy, 8G idle → goes to idle 8G stone
-        let d = select_instance("m7b", &instances, &models, &tiers, 64, None, &no_demand(), None)
+        let d = select_instance("m7b", &instances, &directory, &tiers, 64, None, &no_demand(), None)
             .unwrap();
         assert_eq!(d.target_endpoint, "a");
 
         // Now 24G is idle again → performance picks it
         instances.get_mut("b").unwrap().queue_depth = 0;
-        let d = select_instance("m7b", &instances, &models, &tiers, 64, None, &no_demand(), None)
+        let d = select_instance("m7b", &instances, &directory, &tiers, 64, None, &no_demand(), None)
             .unwrap();
         assert_eq!(d.target_endpoint, "b");
     }
@@ -539,10 +526,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 24, &["m7b", "m48b"], 0));
 
-        let models: HashMap<String, ModelInfo> = [("m48b", model("m48b", 48))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m48b", 48)]);
 
         let tiers = vec![
             Tier {
@@ -558,9 +542,9 @@ mod tests {
         ];
 
         let decision =
-            select_instance("m48b", &instances, &models, &tiers, 0, None, &no_demand(), None).unwrap();
+            select_instance("m48b", &instances, &directory, &tiers, 0, None, &no_demand(), None).unwrap();
         assert_eq!(decision.target_endpoint, "b");
-        assert!(decision.tier_label.contains("degraded"));
+        assert!(decision.tier_label.as_deref().unwrap_or("").contains("degraded"));
     }
 
     #[test]
@@ -574,10 +558,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 0));
 
-        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m7b", 4)]);
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -590,7 +571,7 @@ mod tests {
             entries: vec![
                 GpuMatrixEntry {
                     model: "m7b".into(),
-                    capability: Capability::Generate,
+                    capability: Capability::Chat,
                     stone_name: "s1".into(),
                     endpoint: "a".into(),
                     gpu_model: "RTX 3060".into(),
@@ -601,7 +582,7 @@ mod tests {
                 },
                 GpuMatrixEntry {
                     model: "m7b".into(),
-                    capability: Capability::Generate,
+                    capability: Capability::Chat,
                     stone_name: "s2".into(),
                     endpoint: "b".into(),
                     gpu_model: "RTX 3060".into(),
@@ -615,13 +596,13 @@ mod tests {
 
         // With fitness data, should prefer "b" (Fast) over "a" (Vetoed)
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix), &no_demand(), None)
+            select_instance("m7b", &instances, &directory, &tiers, 0, Some(&matrix), &no_demand(), None)
                 .unwrap();
         assert_eq!(decision.target_endpoint, "b");
 
         // Without fitness, both are equally loaded — deterministic order from sort
         let decision2 =
-            select_instance("m7b", &instances, &models, &tiers, 0, None, &no_demand(), None).unwrap();
+            select_instance("m7b", &instances, &directory, &tiers, 0, None, &no_demand(), None).unwrap();
         assert!(decision2.target_endpoint == "a" || decision2.target_endpoint == "b");
     }
 
@@ -634,10 +615,7 @@ mod tests {
         let mut instances = HashMap::new();
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
 
-        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m7b", 4)]);
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -649,7 +627,7 @@ mod tests {
             generated_at: Some(chrono::Utc::now()),
             entries: vec![GpuMatrixEntry {
                 model: "m7b".into(),
-                capability: Capability::Generate,
+                capability: Capability::Chat,
                 stone_name: "s1".into(),
                 endpoint: "a".into(),
                 gpu_model: "RTX 3060".into(),
@@ -661,7 +639,7 @@ mod tests {
         };
 
         let result =
-            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix), &no_demand(), None);
+            select_instance("m7b", &instances, &directory, &tiers, 0, Some(&matrix), &no_demand(), None);
         assert!(result.is_err());
         match result.unwrap_err() {
             RoutingError::ModelBlocked(m) => assert_eq!(m, "m7b"),
@@ -679,10 +657,7 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8, &["m7b"], 0));
         instances.insert("b".into(), inst("s2", "b", 8, &["m7b"], 0));
 
-        let models: HashMap<String, ModelInfo> = [("m7b", model("m7b", 4))]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let directory = dir_with(&[("m7b", 4)]);
 
         let tiers = vec![Tier {
             vram_bytes: 8 * GIB,
@@ -695,7 +670,7 @@ mod tests {
             entries: vec![
                 GpuMatrixEntry {
                     model: "m7b".into(),
-                    capability: Capability::Generate,
+                    capability: Capability::Chat,
                     stone_name: "s1".into(),
                     endpoint: "a".into(),
                     gpu_model: "RTX 3060".into(),
@@ -706,7 +681,7 @@ mod tests {
                 },
                 GpuMatrixEntry {
                     model: "m7b".into(),
-                    capability: Capability::Generate,
+                    capability: Capability::Chat,
                     stone_name: "s2".into(),
                     endpoint: "b".into(),
                     gpu_model: "RTX 3060".into(),
@@ -719,7 +694,7 @@ mod tests {
         };
 
         let decision =
-            select_instance("m7b", &instances, &models, &tiers, 0, Some(&matrix), &no_demand(), None)
+            select_instance("m7b", &instances, &directory, &tiers, 0, Some(&matrix), &no_demand(), None)
                 .unwrap();
         assert_eq!(decision.target_endpoint, "b");
     }

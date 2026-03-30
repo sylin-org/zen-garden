@@ -2,7 +2,7 @@
 //!
 //! Pure decision functions — no I/O. The caller executes the decision.
 
-use super::types::{AutoPullMode, ModelInfo, OrchestratorConfig, ServiceInstance};
+use super::types::{AutoPullMode, ModelDirectory, OrchestratorConfig, ServiceInstance};
 use std::collections::HashMap;
 
 /// Determine which models need syncing across a tier.
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 pub fn models_needing_sync(
     instances: &HashMap<String, ServiceInstance>,
     config: &OrchestratorConfig,
-    models: &HashMap<String, ModelInfo>,
+    directory: &ModelDirectory,
 ) -> Vec<(String, Vec<String>)> {
     match config.features.auto_pull_mode {
         AutoPullMode::Off => return vec![],
@@ -46,7 +46,7 @@ pub fn models_needing_sync(
 
         for model in all_models {
             // VRAM gate: skip models too large for the target stone.
-            let model_size = models.get(model).map(|m| m.size_disk).unwrap_or(0);
+            let model_size = directory.get(model).map(|e| e.metadata.size_disk).unwrap_or(0);
             if model_size == 0 {
                 continue;
             }

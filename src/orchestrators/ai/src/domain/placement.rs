@@ -4,7 +4,7 @@
 //! model→stone assignment based on recent demand distribution
 //! and VRAM constraints.
 
-use super::types::{ModelInfo, PlacementPlan, ServiceInstance};
+use super::types::{ModelDirectory, PlacementPlan, ServiceInstance};
 use std::collections::HashMap;
 
 /// Compute the ideal model→stone placement based on demand.
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 pub fn compute_placement(
     demand_shares: &HashMap<String, f64>,
     instances: &HashMap<String, ServiceInstance>,
-    models: &HashMap<String, ModelInfo>,
+    directory: &ModelDirectory,
 ) -> PlacementPlan {
     let healthy: Vec<&ServiceInstance> = instances
         .values()
@@ -39,7 +39,7 @@ pub fn compute_placement(
     // safely bin-pack something whose size is unknown.
     let mut ideal_replicas: Vec<(String, usize, u64)> = Vec::new();
     for (model_name, share) in &ranked {
-        let vram = match models.get(model_name.as_str()).and_then(|m| m.vram_bytes) {
+        let vram = match directory.get(model_name.as_str()).and_then(|e| e.metadata.vram_bytes) {
             Some(v) => v,
             None => {
                 tracing::debug!(
@@ -146,7 +146,7 @@ pub fn plans_equivalent(a: &PlacementPlan, b: &PlacementPlan) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::types::{ComputeType, Gpu, InstanceHealth, OfferingKind, Stone, Vram};
+    use crate::domain::types::{Capability, ComputeType, Gpu, InstanceHealth, ModelDirectory, ModelFqn, ModelMetadata, OfferingKind, Stone, Vram};
     use std::time::Instant;
 
     const GIB: u64 = 1_073_741_824;
@@ -169,20 +169,17 @@ mod tests {
         }
     }
 
-    fn model(name: &str, vram_gb: u64) -> ModelInfo {
-        ModelInfo {
-            name: name.to_string(),
-            parameter_count: None,
-            parameter_size: None,
-            quantization_level: None,
-            family: None,
-            families: vec![],
-            capabilities: vec![],
-            format: None,
-            size_disk: 0,
-            vram_bytes: Some(vram_gb * GIB),
-            context_length: None,
+    fn dir_with(entries: &[(&str, u64)]) -> ModelDirectory {
+        let mut dir = ModelDirectory::new();
+        for &(name, vram_gb) in entries {
+            dir.upsert(
+                ModelFqn::new("ollama", "test", name, None),
+                vec![Capability::Chat],
+                vec![],
+                ModelMetadata { vram_bytes: Some(vram_gb * GIB), ..Default::default() },
+            );
         }
+        dir
     }
 
     #[test]
@@ -191,18 +188,13 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8));
         instances.insert("b".into(), inst("s2", "b", 8));
 
-        let models: HashMap<String, ModelInfo> = [
-            ("model-a".to_string(), model("model-a", 4)),
-            ("model-b".to_string(), model("model-b", 4)),
-        ]
-        .into_iter()
-        .collect();
+        let directory = dir_with(&[("model-a", 4), ("model-b", 4)]);
 
         let mut demand = HashMap::new();
         demand.insert("model-a".to_string(), 0.5);
         demand.insert("model-b".to_string(), 0.5);
 
-        let plan = compute_placement(&demand, &instances, &models);
+        let plan = compute_placement(&demand, &instances, &directory);
         assert_eq!(plan.assignments.get("model-a").map(|v| v.len()), Some(1));
         assert_eq!(plan.assignments.get("model-b").map(|v| v.len()), Some(1));
         // They should be on different stones
@@ -217,18 +209,13 @@ mod tests {
         instances.insert("a".into(), inst("s1", "a", 8));
         instances.insert("b".into(), inst("s2", "b", 8));
 
-        let models: HashMap<String, ModelInfo> = [
-            ("model-a".to_string(), model("model-a", 4)),
-            ("model-b".to_string(), model("model-b", 4)),
-        ]
-        .into_iter()
-        .collect();
+        let directory = dir_with(&[("model-a", 4), ("model-b", 4)]);
 
         let mut demand = HashMap::new();
         demand.insert("model-a".to_string(), 0.9);
         demand.insert("model-b".to_string(), 0.1);
 
-        let plan = compute_placement(&demand, &instances, &models);
+        let plan = compute_placement(&demand, &instances, &directory);
         // model-a: 0.9 × 2 = 1.8 → rounds to 2
         assert_eq!(plan.assignments.get("model-a").map(|v| v.len()), Some(2));
         // model-b: 0.1 × 2 = 0.2 → clamped to 1

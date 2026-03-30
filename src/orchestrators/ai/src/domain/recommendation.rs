@@ -28,7 +28,7 @@
 //! - **Layer 2 (Context)**: context window bonus (cap varies by capability).
 //! - **Layer 3 (Quality)**: model size bonus from parameter count.
 
-use crate::domain::types::{Capability, ModelInfo, ServiceInstance};
+use crate::domain::types::{Capability, ModelDirectory, ModelEntry, ServiceInstance};
 use crate::domain::fitness::{GpuMatrix, Verdict};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -69,32 +69,38 @@ fn fitness_capability(cap: &str) -> Option<Capability> {
     match cap {
         "tools" => Some(Capability::Tools),
         "thinking" => Some(Capability::Think),
-        "quick" | "chat" | "completion" | "synthesis" => Some(Capability::Generate),
+        "quick" | "chat" | "completion" | "synthesis" => Some(Capability::Chat),
         "embedding" => Some(Capability::Embed),
         "vision" | "ocr" => Some(Capability::Vision),
-        "imagine" | "edit" | "render" => Some(Capability::Generate),
-        "transcribe" => Some(Capability::Generate),
-        "speak" => Some(Capability::Generate),
+        "image" | "video" => Some(Capability::Chat),
+        "transcribe" => Some(Capability::Chat),
+        "speech" => Some(Capability::Chat),
         "rerank" => Some(Capability::Embed),
-        "translate" => Some(Capability::Generate),
-        _ => Some(Capability::Generate),
+        "translate" => Some(Capability::Chat),
+        _ => Some(Capability::Chat),
     }
 }
 
 /// Map a user-facing capability to the model capability tag used for filtering.
-fn model_capability_tag(cap: &str) -> &str {
+/// Map a user-facing capability to model capability tags used for filtering.
+///
+/// Returns tags to match against — models may use either the
+/// legacy Ollama tag ("completion") or the unified capability tag ("chat").
+fn model_capability_tags<'a>(cap: &'a str) -> Vec<&'a str> {
     match cap {
-        "quick" | "chat" | "completion" | "synthesis" | "tools" | "thinking" => "completion",
-        "embedding" => "embedding",
-        "vision" | "ocr" => "vision",
-        "imagine" => "imagine",
-        "edit" => "edit",
-        "render" => "render",
-        "transcribe" => "transcribe",
-        "speak" => "speak",
-        "rerank" => "rerank",
-        "translate" => "translate",
-        _ => cap,
+        "quick" | "chat" | "completion" | "synthesis" => vec!["completion", "chat"],
+        "tools" => vec!["tools"],
+        "thinking" => vec!["completion", "chat", "think", "thinking"],
+        "embedding" => vec!["embedding", "embed"],
+        "vision" | "ocr" => vec!["vision"],
+        "image" => vec!["image"],
+        "video" => vec!["video"],
+        "transcribe" => vec!["transcribe"],
+        "speech" => vec!["speech"],
+        "music" => vec!["music"],
+        "rerank" => vec!["rerank"],
+        "translate" => vec!["translate"],
+        _ => vec![cap],
     }
 }
 
@@ -122,8 +128,8 @@ fn tps_bonus_cap(cap: &str) -> i64 {
         "chat" | "completion" => 50,
         "tools" | "thinking" => 30,
         "synthesis" | "ocr" => 0, // batch workloads — speed irrelevant
-        "imagine" | "edit" | "render" => 0,
-        "transcribe" | "speak" => 0,
+        "image" | "video" => 0,
+        "transcribe" | "speech" | "music" => 0,
         "rerank" | "translate" => 0,
         _ => 0,
     }
@@ -140,8 +146,8 @@ fn context_bonus_cap(cap: &str) -> i64 {
         "ocr" => 150,
         "translate" => 100,
         "quick" => 0,
-        "imagine" | "edit" | "render" => 0,
-        "transcribe" | "speak" => 0,
+        "image" | "video" => 0,
+        "transcribe" | "speech" | "music" => 0,
         "rerank" => 0,
         _ => 0,
     }
@@ -156,8 +162,8 @@ fn quality_bonus_cap(cap: &str) -> i64 {
         "chat" | "completion" | "synthesis" => 400,
         "ocr" => 400,
         "translate" => 300,
-        "imagine" | "edit" | "render" => 200,
-        "speak" => 100,
+        "image" | "video" => 200,
+        "speech" | "music" => 100,
         "quick" => 0,
         "transcribe" => 0,
         "rerank" => 0,
@@ -173,8 +179,8 @@ fn quality_multiplier(cap: &str) -> i64 {
         "chat" | "completion" | "synthesis" => 40,
         "ocr" => 15,  // OCR: specialization > size. A tuned 1B beats a generic 13B.
         "translate" => 30,
-        "imagine" | "edit" | "render" => 20,
-        "speak" => 10,
+        "image" | "video" => 20,
+        "speech" | "music" => 10,
         _ => 0,
     }
 }
@@ -197,26 +203,21 @@ fn name_affinity_bonus(cap: &str) -> i64 {
 /// offline, wrong capability), the pin is silently ignored.
 pub fn recommend(
     capability: &str,
-    models: &HashMap<String, ModelInfo>,
+    directory: &ModelDirectory,
     instances: &HashMap<String, ServiceInstance>,
     gpu_matrix: &GpuMatrix,
     pin: Option<&str>,
 ) -> RecommendationResponse {
-    let tag = model_capability_tag(capability);
+    let tags = model_capability_tags(capability);
     let fitness_cap = fitness_capability(capability);
 
     // Filter: only models declaring the requested capability.
-    // "tools" and "thinking" require the exact tag; quick/chat/completion/synthesis
-    // all filter on the "completion" tag; vision/ocr filter on "vision".
-    let cap_filter: &str = match capability {
-        "tools" => "tools",
-        "thinking" => "thinking",
-        _ => tag,
-    };
-
-    let eligible: Vec<&ModelInfo> = models
+    // Matches against any of the known tags for this capability
+    // (e.g., "chat" matches both "completion" and "chat" tags).
+    let eligible: Vec<&ModelEntry> = directory
+        .entries()
         .values()
-        .filter(|m| m.capabilities.iter().any(|c| c == cap_filter))
+        .filter(|e| e.capabilities.iter().any(|c: &Capability| tags.contains(&c.as_str())))
         .collect();
 
     // Build instance lookup: model_name → Vec<(stone_name, endpoint, loaded)>
@@ -287,7 +288,7 @@ pub fn recommend(
 // ── Per-model scoring ───────────────────────────────────────────
 
 fn score_model(
-    model: &ModelInfo,
+    model: &ModelEntry,
     capability: &str,
     fitness_cap: Option<Capability>,
     model_stones: &HashMap<&str, Vec<(&str, &str, bool)>>,
@@ -299,7 +300,7 @@ fn score_model(
 
     // ── Layer 0: Availability ─────────────────────────────────────
 
-    let stones = model_stones.get(model.name.as_str());
+    let stones = model_stones.get(model.model.as_str());
     let available_count = stones.map(|s| s.len()).unwrap_or(0);
     let loaded_count = stones
         .map(|s| s.iter().filter(|(_, _, loaded)| *loaded).count())
@@ -348,14 +349,14 @@ fn score_model(
                 .entries
                 .iter()
                 .find(|e| {
-                    e.model == model.name && e.capability == cap && e.endpoint == endpoint
+                    e.model == model.model && e.capability == cap && e.endpoint == endpoint
                 })
                 // Fallback: Tools/Think → Generate when no specific entry exists
                 .or_else(|| {
                     if matches!(cap, Capability::Tools | Capability::Think) {
                         gpu_matrix.entries.iter().find(|e| {
-                            e.model == model.name
-                                && e.capability == Capability::Generate
+                            e.model == model.model
+                                && e.capability == Capability::Chat
                                 && e.endpoint == endpoint
                         })
                     } else {
@@ -430,7 +431,7 @@ fn score_model(
 
     let ctx_cap = context_bonus_cap(capability);
     if ctx_cap > 0 {
-        if let Some(ctx) = model.context_length {
+        if let Some(ctx) = model.metadata.context_length {
             let bonus = ((ctx as i64) / 1000).min(ctx_cap);
             score += bonus;
             if ctx >= 32_000 {
@@ -459,21 +460,21 @@ fn score_model(
     let affinity = name_affinity_bonus(capability);
     if affinity > 0 {
         let keyword = capability.to_lowercase();
-        if model.name.to_lowercase().contains(&keyword) {
+        if model.model.to_lowercase().contains(&keyword) {
             score += affinity;
             reasoning.push(format!("purpose-built {} model", keyword));
         }
     }
 
     Recommendation {
-        model: model.name.clone(),
+        model: model.model.clone(),
         rank: 0, // assigned after sorting
         score,
         pinned: false, // set by recommend() if pin matches
         verdict: best_verdict.map(|v| v.to_string()),
-        parameter_size: model.parameter_size.clone(),
-        quantization_level: model.quantization_level.clone(),
-        context_length: model.context_length,
+        parameter_size: model.metadata.parameter_size.clone(),
+        quantization_level: model.metadata.quantization_level.clone(),
+        context_length: model.metadata.context_length,
         reasoning,
     }
 }
@@ -482,12 +483,12 @@ fn score_model(
 
 /// Extract parameter count in billions. Prefers `parameter_count` (u64),
 /// falls back to parsing `parameter_size` string (e.g. "7B" → 7.0).
-fn parameter_billions(model: &ModelInfo) -> f64 {
-    if let Some(count) = model.parameter_count {
+fn parameter_billions(model: &ModelEntry) -> f64 {
+    if let Some(count) = model.metadata.parameter_count {
         return count as f64 / 1_000_000_000.0;
     }
-    if let Some(ref size) = model.parameter_size {
-        let s = size.trim().to_uppercase();
+    if let Some(ref size) = model.metadata.parameter_size {
+        let s: String = size.trim().to_uppercase();
         if let Some(num) = s.strip_suffix('B') {
             if let Ok(v) = num.trim().parse::<f64>() {
                 return v;
@@ -504,47 +505,92 @@ mod tests {
     use super::*;
     use crate::domain::fitness::{GpuMatrix, GpuMatrixEntry, Verdict};
     use crate::domain::types::{
-        Capability, ComputeType, Gpu, InstanceHealth, LoadedModel, ModelInfo, OfferingKind,
-        ServiceInstance, Stone, Vram,
+        Capability, ComputeType, Gpu, InstanceHealth, LoadedModel, ModelDirectory, ModelFqn,
+        ModelMetadata, OfferingKind, ServiceInstance, Stone, Vram,
     };
     use std::time::Instant;
 
-    fn make_model(name: &str, caps: &[&str], ctx: Option<u64>) -> ModelInfo {
-        ModelInfo {
-            name: name.to_string(),
-            parameter_count: None,
-            parameter_size: Some("7B".to_string()),
-            quantization_level: Some("Q4_K_M".to_string()),
-            family: None,
-            families: vec![],
-            capabilities: caps.iter().map(|s| s.to_string()).collect(),
-            format: None,
-            size_disk: 4_000_000_000,
-            vram_bytes: None,
-            context_length: ctx,
+    /// Map a legacy capability string tag (as used in the old ModelInfo.capabilities Vec<String>)
+    /// to the Capability enum. Returns None for unrecognised tags.
+    fn cap_from_str(s: &str) -> Option<Capability> {
+        match s {
+            "completion" | "chat" => Some(Capability::Chat),
+            "embedding" | "embed" => Some(Capability::Embed),
+            "vision" => Some(Capability::Vision),
+            "tools" => Some(Capability::Tools),
+            "think" | "thinking" => Some(Capability::Think),
+            "image" => Some(Capability::Image),
+            "video" => Some(Capability::Video),
+            "transcribe" => Some(Capability::Transcribe),
+            "speech" => Some(Capability::Speech),
+            "music" => Some(Capability::Music),
+            "rerank" => Some(Capability::Rerank),
+            "translate" => Some(Capability::Translate),
+            _ => None,
         }
     }
 
+    /// Build a ModelDirectory with a single entry (default metadata).
+    fn make_model(name: &str, caps: &[&str], ctx: Option<u64>) -> ModelDirectory {
+        let mut dir = ModelDirectory::new();
+        let capabilities: Vec<Capability> = caps.iter().filter_map(|s| cap_from_str(s)).collect();
+        dir.upsert(
+            ModelFqn::new("ollama", "test", name, None),
+            capabilities,
+            vec![],
+            ModelMetadata {
+                parameter_size: Some("7B".to_string()),
+                quantization_level: Some("Q4_K_M".to_string()),
+                size_disk: 4_000_000_000,
+                context_length: ctx,
+                ..Default::default()
+            },
+        );
+        dir
+    }
+
+    /// Build a ModelDirectory with parameter count / size.
     fn make_model_with_params(
         name: &str,
         caps: &[&str],
         ctx: Option<u64>,
         param_count: Option<u64>,
         param_size: &str,
-    ) -> ModelInfo {
-        ModelInfo {
-            name: name.to_string(),
-            parameter_count: param_count,
-            parameter_size: Some(param_size.to_string()),
-            quantization_level: Some("Q4_K_M".to_string()),
-            family: None,
-            families: vec![],
-            capabilities: caps.iter().map(|s| s.to_string()).collect(),
-            format: None,
-            size_disk: 4_000_000_000,
-            vram_bytes: None,
-            context_length: ctx,
+    ) -> ModelDirectory {
+        let mut dir = ModelDirectory::new();
+        let capabilities: Vec<Capability> = caps.iter().filter_map(|s| cap_from_str(s)).collect();
+        dir.upsert(
+            ModelFqn::new("ollama", "test", name, None),
+            capabilities,
+            vec![],
+            ModelMetadata {
+                parameter_count: param_count,
+                parameter_size: Some(param_size.to_string()),
+                quantization_level: Some("Q4_K_M".to_string()),
+                size_disk: 4_000_000_000,
+                context_length: ctx,
+                ..Default::default()
+            },
+        );
+        dir
+    }
+
+    /// Merge two single-entry directories into one.
+    fn merge_dirs(dirs: Vec<ModelDirectory>) -> ModelDirectory {
+        let mut merged = ModelDirectory::new();
+        for dir in dirs {
+            for (_, entry) in dir.entries() {
+                for fqn in &entry.instances {
+                    merged.upsert(
+                        fqn.clone(),
+                        entry.capabilities.clone(),
+                        entry.specializations.clone(),
+                        entry.metadata.clone(),
+                    );
+                }
+            }
         }
+        merged
     }
 
     fn make_instance(
@@ -579,7 +625,7 @@ mod tests {
                 })
                 .collect(),
             models_available: available.iter().map(|s| s.to_string()).collect(),
-            capabilities: vec![Capability::Generate, Capability::Chat],
+            capabilities: vec![Capability::Chat],
             queue_depth: 0,
             last_seen: Instant::now(),
             metadata: serde_json::Value::Null,
@@ -595,7 +641,7 @@ mod tests {
         tps: f64,
         cold_ms: u64,
     ) -> GpuMatrixEntry {
-        make_entry_cap(model, stone, endpoint, Capability::Generate, verdict, tps, cold_ms)
+        make_entry_cap(model, stone, endpoint, Capability::Chat, verdict, tps, cold_ms)
     }
 
     fn make_entry_cap(
@@ -622,15 +668,10 @@ mod tests {
 
     #[test]
     fn filters_by_capability() {
-        let mut models = HashMap::new();
-        models.insert(
-            "llama3:8b".to_string(),
+        let models = merge_dirs(vec![
             make_model("llama3:8b", &["completion"], Some(8192)),
-        );
-        models.insert(
-            "nomic:latest".to_string(),
             make_model("nomic:latest", &["embedding"], Some(2048)),
-        );
+        ]);
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -642,15 +683,10 @@ mod tests {
 
     #[test]
     fn quick_and_chat_filter_on_completion() {
-        let mut models = HashMap::new();
-        models.insert(
-            "llama3:8b".to_string(),
+        let models = merge_dirs(vec![
             make_model("llama3:8b", &["completion"], Some(8192)),
-        );
-        models.insert(
-            "nomic:latest".to_string(),
             make_model("nomic:latest", &["embedding"], Some(2048)),
-        );
+        ]);
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -667,15 +703,10 @@ mod tests {
 
     #[test]
     fn distribution_gives_redundancy_bonus() {
-        let mut models = HashMap::new();
-        models.insert(
-            "a:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model("a:latest", &["completion"], None),
-        );
-        models.insert(
-            "b:latest".to_string(),
             make_model("b:latest", &["completion"], None),
-        );
+        ]);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -698,11 +729,7 @@ mod tests {
 
     #[test]
     fn fitness_uses_best_stone_not_sum() {
-        let mut models = HashMap::new();
-        models.insert(
-            "m:latest".to_string(),
-            make_model("m:latest", &["completion"], None),
-        );
+        let models = make_model("m:latest", &["completion"], None);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -740,15 +767,10 @@ mod tests {
 
     #[test]
     fn fitness_boosts_score() {
-        let mut models = HashMap::new();
-        models.insert(
-            "fast:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model("fast:latest", &["completion"], None),
-        );
-        models.insert(
-            "slow:latest".to_string(),
             make_model("slow:latest", &["completion"], None),
-        );
+        ]);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -776,11 +798,7 @@ mod tests {
 
     #[test]
     fn tools_uses_generate_fitness() {
-        let mut models = HashMap::new();
-        models.insert(
-            "toolmodel:latest".to_string(),
-            make_model("toolmodel:latest", &["tools"], Some(128_000)),
-        );
+        let models = make_model("toolmodel:latest", &["tools"], Some(128_000));
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -813,15 +831,10 @@ mod tests {
 
     #[test]
     fn context_bonus_for_thinking() {
-        let mut models = HashMap::new();
-        models.insert(
-            "big:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model("big:latest", &["thinking"], Some(256_000)),
-        );
-        models.insert(
-            "small:latest".to_string(),
             make_model("small:latest", &["thinking"], Some(4_000)),
-        );
+        ]);
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -834,15 +847,10 @@ mod tests {
 
     #[test]
     fn blocked_model_ranks_low() {
-        let mut models = HashMap::new();
-        models.insert(
-            "good:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model("good:latest", &["completion"], None),
-        );
-        models.insert(
-            "bad:latest".to_string(),
             make_model("bad:latest", &["completion"], None),
-        );
+        ]);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -871,9 +879,7 @@ mod tests {
     #[test]
     fn chat_prefers_quality_model() {
         // Simulates: tinyllama (1.1B, fast, 120tps) vs qwen3.5 (9.7B, fast, 25tps)
-        let mut models = HashMap::new();
-        models.insert(
-            "tinyllama:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model_with_params(
                 "tinyllama:latest",
                 &["completion"],
@@ -881,9 +887,6 @@ mod tests {
                 Some(1_100_000_000),
                 "1.1B",
             ),
-        );
-        models.insert(
-            "qwen3.5:latest".to_string(),
             make_model_with_params(
                 "qwen3.5:latest",
                 &["completion"],
@@ -891,7 +894,7 @@ mod tests {
                 Some(9_700_000_000),
                 "9.7B",
             ),
-        );
+        ]);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -933,9 +936,7 @@ mod tests {
     #[test]
     fn quick_prefers_fast_small_model() {
         // Same setup as chat_prefers_quality_model but with "quick" capability
-        let mut models = HashMap::new();
-        models.insert(
-            "tinyllama:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model_with_params(
                 "tinyllama:latest",
                 &["completion"],
@@ -943,9 +944,6 @@ mod tests {
                 Some(1_100_000_000),
                 "1.1B",
             ),
-        );
-        models.insert(
-            "qwen3.5:latest".to_string(),
             make_model_with_params(
                 "qwen3.5:latest",
                 &["completion"],
@@ -953,7 +951,7 @@ mod tests {
                 Some(9_700_000_000),
                 "9.7B",
             ),
-        );
+        ]);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -983,27 +981,10 @@ mod tests {
 
     #[test]
     fn quality_layer_uses_parameter_count() {
-        let mut models = HashMap::new();
-        models.insert(
-            "big:latest".to_string(),
-            make_model_with_params(
-                "big:latest",
-                &["completion"],
-                None,
-                Some(13_000_000_000),
-                "13B",
-            ),
-        );
-        models.insert(
-            "small:latest".to_string(),
-            make_model_with_params(
-                "small:latest",
-                &["completion"],
-                None,
-                Some(1_000_000_000),
-                "1B",
-            ),
-        );
+        let models = merge_dirs(vec![
+            make_model_with_params("big:latest", &["completion"], None, Some(13_000_000_000), "13B"),
+            make_model_with_params("small:latest", &["completion"], None, Some(1_000_000_000), "1B"),
+        ]);
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -1018,11 +999,7 @@ mod tests {
 
     #[test]
     fn quality_falls_back_to_parameter_size_string() {
-        let mut models = HashMap::new();
-        models.insert(
-            "m:latest".to_string(),
-            make_model_with_params("m:latest", &["completion"], None, None, "9.7B"),
-        );
+        let models = make_model_with_params("m:latest", &["completion"], None, None, "9.7B");
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -1037,11 +1014,7 @@ mod tests {
 
     #[test]
     fn completion_alias_for_chat() {
-        let mut models = HashMap::new();
-        models.insert(
-            "m:latest".to_string(),
-            make_model("m:latest", &["completion"], Some(32_000)),
-        );
+        let models = make_model("m:latest", &["completion"], Some(32_000));
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -1055,9 +1028,7 @@ mod tests {
     fn synthesis_favors_long_context_over_speed() {
         // 7B/128K/60tps vs 14B/32K/20tps — Chat may favor the fast 7B,
         // Synthesis should favor whichever has better context+quality balance.
-        let mut models = HashMap::new();
-        models.insert(
-            "fast7b:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model_with_params(
                 "fast7b:latest",
                 &["completion"],
@@ -1065,9 +1036,6 @@ mod tests {
                 Some(7_000_000_000),
                 "7B",
             ),
-        );
-        models.insert(
-            "big14b:latest".to_string(),
             make_model_with_params(
                 "big14b:latest",
                 &["completion"],
@@ -1075,7 +1043,7 @@ mod tests {
                 Some(14_000_000_000),
                 "14B",
             ),
-        );
+        ]);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -1114,16 +1082,12 @@ mod tests {
     #[test]
     fn synthesis_context_cap_is_highest() {
         // Model with 256K context should get a much bigger bonus in synthesis than chat
-        let mut models = HashMap::new();
-        models.insert(
-            "longctx:latest".to_string(),
-            make_model_with_params(
-                "longctx:latest",
-                &["completion"],
-                Some(256_000),
-                Some(7_000_000_000),
-                "7B",
-            ),
+        let models = make_model_with_params(
+            "longctx:latest",
+            &["completion"],
+            Some(256_000),
+            Some(7_000_000_000),
+            "7B",
         );
 
         let instances = HashMap::new();
@@ -1148,15 +1112,10 @@ mod tests {
 
     #[test]
     fn ocr_filters_on_vision_tag() {
-        let mut models = HashMap::new();
-        models.insert(
-            "llava:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model("llava:latest", &["completion", "vision"], Some(8192)),
-        );
-        models.insert(
-            "nomic:latest".to_string(),
             make_model("nomic:latest", &["embedding"], Some(2048)),
-        );
+        ]);
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -1168,9 +1127,7 @@ mod tests {
 
     #[test]
     fn ocr_name_affinity_boosts_purpose_built_model() {
-        let mut models = HashMap::new();
-        models.insert(
-            "llava:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model_with_params(
                 "llava:latest",
                 &["completion", "vision"],
@@ -1178,9 +1135,6 @@ mod tests {
                 Some(13_000_000_000),
                 "13B",
             ),
-        );
-        models.insert(
-            "minicpm-ocr:latest".to_string(),
             make_model_with_params(
                 "minicpm-ocr:latest",
                 &["completion", "vision"],
@@ -1188,7 +1142,7 @@ mod tests {
                 Some(7_000_000_000),
                 "7B",
             ),
-        );
+        ]);
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -1214,9 +1168,7 @@ mod tests {
 
     #[test]
     fn vision_and_ocr_produce_different_rankings() {
-        let mut models = HashMap::new();
-        models.insert(
-            "llava:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model_with_params(
                 "llava:latest",
                 &["completion", "vision"],
@@ -1224,9 +1176,6 @@ mod tests {
                 Some(13_000_000_000),
                 "13B",
             ),
-        );
-        models.insert(
-            "minicpm-ocr:latest".to_string(),
             make_model_with_params(
                 "minicpm-ocr:latest",
                 &["completion", "vision"],
@@ -1234,7 +1183,7 @@ mod tests {
                 Some(7_000_000_000),
                 "7B",
             ),
-        );
+        ]);
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -1256,15 +1205,10 @@ mod tests {
 
     #[test]
     fn pin_overrides_ranking() {
-        let mut models = HashMap::new();
-        models.insert(
-            "fast:latest".to_string(),
+        let models = merge_dirs(vec![
             make_model("fast:latest", &["completion"], None),
-        );
-        models.insert(
-            "slow:latest".to_string(),
             make_model("slow:latest", &["completion"], None),
-        );
+        ]);
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -1305,11 +1249,9 @@ mod tests {
 
     #[test]
     fn recommendations_capped_at_five() {
-        let mut models = HashMap::new();
-        for i in 0..8 {
-            let name = format!("model{}:latest", i);
-            models.insert(name.clone(), make_model(&name, &["completion"], None));
-        }
+        let models = merge_dirs(
+            (0..8).map(|i| make_model(&format!("model{}:latest", i), &["completion"], None)).collect()
+        );
 
         let instances = HashMap::new();
         let matrix = GpuMatrix::default();
@@ -1322,11 +1264,7 @@ mod tests {
 
     #[test]
     fn tools_uses_dedicated_tools_entry_over_generate() {
-        let mut models = HashMap::new();
-        models.insert(
-            "toolmodel:latest".to_string(),
-            make_model("toolmodel:latest", &["completion", "tools"], Some(32_000)),
-        );
+        let models = make_model("toolmodel:latest", &["completion", "tools"], Some(32_000));
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -1355,11 +1293,7 @@ mod tests {
 
     #[test]
     fn tools_falls_back_to_generate_when_no_tools_entry() {
-        let mut models = HashMap::new();
-        models.insert(
-            "toolmodel:latest".to_string(),
-            make_model("toolmodel:latest", &["completion", "tools"], Some(32_000)),
-        );
+        let models = make_model("toolmodel:latest", &["completion", "tools"], Some(32_000));
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -1383,11 +1317,7 @@ mod tests {
 
     #[test]
     fn think_uses_dedicated_think_entry_over_generate() {
-        let mut models = HashMap::new();
-        models.insert(
-            "thinker:latest".to_string(),
-            make_model("thinker:latest", &["completion", "thinking"], Some(128_000)),
-        );
+        let models = make_model("thinker:latest", &["completion", "thinking"], Some(128_000));
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -1416,11 +1346,7 @@ mod tests {
 
     #[test]
     fn think_falls_back_to_generate_when_no_think_entry() {
-        let mut models = HashMap::new();
-        models.insert(
-            "thinker:latest".to_string(),
-            make_model("thinker:latest", &["completion", "thinking"], Some(128_000)),
-        );
+        let models = make_model("thinker:latest", &["completion", "thinking"], Some(128_000));
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -1445,11 +1371,7 @@ mod tests {
     #[test]
     fn generate_does_not_fall_back_to_tools_or_think() {
         // Only Tools/Think fall back to Generate, NOT the other way around
-        let mut models = HashMap::new();
-        models.insert(
-            "m:latest".to_string(),
-            make_model("m:latest", &["completion", "tools", "thinking"], Some(32_000)),
-        );
+        let models = make_model("m:latest", &["completion", "tools", "thinking"], Some(32_000));
 
         let mut instances = HashMap::new();
         instances.insert(
@@ -1474,11 +1396,7 @@ mod tests {
 
     #[test]
     fn tools_multi_stone_uses_best_dedicated_entry() {
-        let mut models = HashMap::new();
-        models.insert(
-            "m:latest".to_string(),
-            make_model("m:latest", &["completion", "tools"], Some(32_000)),
-        );
+        let models = make_model("m:latest", &["completion", "tools"], Some(32_000));
 
         let mut instances = HashMap::new();
         instances.insert(

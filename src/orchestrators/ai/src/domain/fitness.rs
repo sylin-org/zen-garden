@@ -48,7 +48,7 @@ impl Verdict {
 
     pub fn compute(capability: Capability, cold_start_ms: u64, tokens_per_second: f64) -> Self {
         match capability {
-            Capability::Generate | Capability::Vision => {
+            Capability::Chat | Capability::Vision => {
                 // Zero tok/s on a generate/vision model means it produced
                 // no output at all — the model is fundamentally broken on
                 // this GPU.  Block it hard.
@@ -516,20 +516,20 @@ mod tests {
     #[test]
     fn compute_verdict_generate() {
         assert_eq!(
-            Verdict::compute(Capability::Generate, 5_000, 10.0),
+            Verdict::compute(Capability::Chat, 5_000, 10.0),
             Verdict::Fast
         );
         assert_eq!(
-            Verdict::compute(Capability::Generate, 50_000, 3.0),
+            Verdict::compute(Capability::Chat, 50_000, 3.0),
             Verdict::Degraded
         );
         assert_eq!(
-            Verdict::compute(Capability::Generate, 100_000, 0.5),
+            Verdict::compute(Capability::Chat, 100_000, 0.5),
             Verdict::Vetoed
         );
         // Zero tok/s means output was never produced — hard block.
         assert_eq!(
-            Verdict::compute(Capability::Generate, 100_000, 0.0),
+            Verdict::compute(Capability::Chat, 100_000, 0.0),
             Verdict::Blocked
         );
     }
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_suite_summarise() {
-        let mut suite = TestSuite::new("llama3.2:3b".into(), Capability::Generate);
+        let mut suite = TestSuite::new("llama3.2:3b".into(), Capability::Chat);
         suite.samples.push(Sample {
             prompt_index: 0,
             cold_start_ms: 5_000,
@@ -610,7 +610,7 @@ mod tests {
             vram_mb: 8192,
             status: StoneStatus::Done,
             tests: vec![{
-                let mut t = TestSuite::new("m1".into(), Capability::Generate);
+                let mut t = TestSuite::new("m1".into(), Capability::Chat);
                 t.status = TestStatus::Done;
                 t.summary = Some(TestSummary {
                     median_tps: 25.0,

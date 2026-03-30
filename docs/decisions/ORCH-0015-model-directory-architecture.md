@@ -1,7 +1,7 @@
 ---
 audience: [developer, ai]
 doc_type: decision
-status: proposed
+status: accepted
 last_verified: 2026-03-30
 ---
 

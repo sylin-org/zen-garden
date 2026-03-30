@@ -5,6 +5,7 @@
 //! counterpart (`OllamaInstance` → `ServiceInstance`, etc.).
 
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Instant;
 
 use chrono::{DateTime, Utc};
@@ -148,77 +149,555 @@ impl std::fmt::Display for OfferingKind {
 
 // ── Capability ──────────────────────────────────────────────────
 
-/// Unified capability enum. Merges the Ollama orchestrator's separate
-/// `fitness::Capability` and `demand::RequestCapability` enums.
+/// AI capability enum — names describe the output type.
 ///
-/// See ORCH-0013 migration table for the merge rationale.
+/// Output-named: Image, Video, Speech, Music, Embed
+/// Action-named: Chat, Transcribe, Translate, Rerank (output is text, action distinguishes)
+/// Sense-named: Vision (understanding, not generation)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
-    // Text/LLM — existing Ollama orchestrator variants (names preserved)
-    Generate, // raw token generation (fitness/benchmark concept)
-    Chat,     // conversational request (demand/routing concept)
-    Embed,    // text → vector (renamed from demand::Embedding)
-    Vision,   // image + text → text
-    Tools,    // structured tool-calling
-    Think,    // sustained long-generation (renamed from demand::Thinking)
+    // Text
+    Chat,       // text conversation
+    Think,      // extended reasoning
+    Tools,      // function calling / agent workflows
+    Translate,  // text + target → translated text
 
-    // Generation (new)
-    Imagine,    // text → image
-    Edit,       // image + instruction → image
-    Render,     // text → video
-
-    // Audio (new)
+    // Understanding
+    Vision,     // image/video + text → text
     Transcribe, // audio → text
-    Speak,      // text → audio
 
-    // Search/Retrieval (new)
+    // Vectors
+    Embed,  // text → vector
     Rerank, // query + docs → scored docs
 
-    // Language (new)
-    Translate, // text + target → text
+    // Generation
+    Image,  // text → image (includes editing with input image)
+    Video,  // text → video
+    Speech, // text → spoken audio
+    Music,  // text → musical audio
 }
 
 impl Capability {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Generate => "generate",
             Self::Chat => "chat",
-            Self::Embed => "embed",
-            Self::Vision => "vision",
-            Self::Tools => "tools",
             Self::Think => "think",
-            Self::Imagine => "imagine",
-            Self::Edit => "edit",
-            Self::Render => "render",
-            Self::Transcribe => "transcribe",
-            Self::Speak => "speak",
-            Self::Rerank => "rerank",
+            Self::Tools => "tools",
             Self::Translate => "translate",
+            Self::Vision => "vision",
+            Self::Transcribe => "transcribe",
+            Self::Embed => "embed",
+            Self::Rerank => "rerank",
+            Self::Image => "image",
+            Self::Video => "video",
+            Self::Speech => "speech",
+            Self::Music => "music",
         }
     }
 
     /// All known capabilities.
     pub const ALL: &[Self] = &[
-        Self::Generate,
         Self::Chat,
-        Self::Embed,
-        Self::Vision,
-        Self::Tools,
         Self::Think,
-        Self::Imagine,
-        Self::Edit,
-        Self::Render,
-        Self::Transcribe,
-        Self::Speak,
-        Self::Rerank,
+        Self::Tools,
         Self::Translate,
+        Self::Vision,
+        Self::Transcribe,
+        Self::Embed,
+        Self::Rerank,
+        Self::Image,
+        Self::Video,
+        Self::Speech,
+        Self::Music,
     ];
 }
 
 impl std::fmt::Display for Capability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+// ── Model FQN (ORCH-0015) ──────────────────────────────────────
+
+/// Error when parsing a Model FQN or ModelFilter string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelFqnError {
+    /// Empty input string.
+    Empty,
+    /// Too many pipe-delimited segments (max 4).
+    TooManySegments(usize),
+    /// A required segment is blank.
+    BlankSegment { position: &'static str },
+}
+
+impl fmt::Display for ModelFqnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(f, "empty MFQN string"),
+            Self::TooManySegments(n) => write!(f, "MFQN has {n} segments (max 4)"),
+            Self::BlankSegment { position } => write!(f, "blank segment at {position}"),
+        }
+    }
+}
+
+impl std::error::Error for ModelFqnError {}
+
+/// Model Fully Qualified Name: `source|locator|model|parameters`.
+///
+/// Every model instance in the directory is identified by a four-part name.
+/// The pipe separator `|` does not appear in model names, location names,
+/// or provider names — it is unambiguous.
+///
+/// Parameters are optional: 3 pipes = with parameters, 2 pipes = without.
+///
+/// Examples:
+/// ```text
+/// ollama|stone-azure-pool|qwen3.5:9b|Q4_K_M
+/// anthropic|prod|claude-sonnet-4
+/// infinity|stone-azure-pool|all-MiniLM-L6-v2
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ModelFqn {
+    pub source: String,
+    pub locator: String,
+    pub model: String,
+    pub parameters: Option<String>,
+}
+
+impl ModelFqn {
+    /// Parse a pipe-delimited MFQN string.
+    ///
+    /// Requires exactly 3 or 4 segments: `source|locator|model[|parameters]`.
+    pub fn parse(input: &str) -> Result<Self, ModelFqnError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(ModelFqnError::Empty);
+        }
+
+        let parts: Vec<&str> = input.split('|').collect();
+        match parts.len() {
+            3 => {
+                if parts[0].is_empty() {
+                    return Err(ModelFqnError::BlankSegment { position: "source" });
+                }
+                if parts[1].is_empty() {
+                    return Err(ModelFqnError::BlankSegment { position: "locator" });
+                }
+                if parts[2].is_empty() {
+                    return Err(ModelFqnError::BlankSegment { position: "model" });
+                }
+                Ok(Self {
+                    source: parts[0].to_string(),
+                    locator: parts[1].to_string(),
+                    model: parts[2].to_string(),
+                    parameters: None,
+                })
+            }
+            4 => {
+                if parts[0].is_empty() {
+                    return Err(ModelFqnError::BlankSegment { position: "source" });
+                }
+                if parts[1].is_empty() {
+                    return Err(ModelFqnError::BlankSegment { position: "locator" });
+                }
+                if parts[2].is_empty() {
+                    return Err(ModelFqnError::BlankSegment { position: "model" });
+                }
+                let params = if parts[3].is_empty() {
+                    None
+                } else {
+                    Some(parts[3].to_string())
+                };
+                Ok(Self {
+                    source: parts[0].to_string(),
+                    locator: parts[1].to_string(),
+                    model: parts[2].to_string(),
+                    parameters: params,
+                })
+            }
+            n => Err(ModelFqnError::TooManySegments(n)),
+        }
+    }
+
+    /// Construct directly (no parsing).
+    pub fn new(
+        source: impl Into<String>,
+        locator: impl Into<String>,
+        model: impl Into<String>,
+        parameters: Option<String>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            locator: locator.into(),
+            model: model.into(),
+            parameters,
+        }
+    }
+
+    /// Canonical pipe-delimited string.
+    pub fn fqn(&self) -> String {
+        match &self.parameters {
+            Some(p) => format!("{}|{}|{}|{}", self.source, self.locator, self.model, p),
+            None => format!("{}|{}|{}", self.source, self.locator, self.model),
+        }
+    }
+
+    /// Whether this FQN refers to a cloud provider instance.
+    pub fn is_cloud(&self) -> bool {
+        matches!(
+            self.source.as_str(),
+            "openai" | "anthropic" | "google" | "cohere" | "deepgram"
+                | "stability-ai" | "elevenlabs" | "huggingface"
+        )
+    }
+
+    /// Model identity: `"model"` or `"model|parameters"`.
+    /// Used as the key in `ModelDirectory.entries`.
+    pub fn model_identity(&self) -> String {
+        match &self.parameters {
+            Some(p) => format!("{}|{}", self.model, p),
+            None => self.model.clone(),
+        }
+    }
+
+    /// Short display: `"qwen3.5:9b (Q4_K_M)"` or `"claude-sonnet-4"`.
+    pub fn display_short(&self) -> String {
+        match &self.parameters {
+            Some(p) => format!("{} ({})", self.model, p),
+            None => self.model.clone(),
+        }
+    }
+}
+
+impl fmt::Display for ModelFqn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.fqn())
+    }
+}
+
+impl Serialize for ModelFqn {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.fqn())
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelFqn {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Partial FQN for pins and queries. Missing fields match everything.
+///
+/// Parse by pipe count:
+/// - 0 pipes → model only (`"qwen3.5:9b"`)
+/// - 1 pipe  → source + model (`"ollama|qwen3.5:9b"`)
+/// - 2 pipes → source + locator + model (`"ollama|stone-azure-pool|qwen3.5:9b"`)
+/// - 3 pipes → full FQN (exact match)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelFilter {
+    pub source: Option<String>,
+    pub locator: Option<String>,
+    pub model: Option<String>,
+    pub parameters: Option<String>,
+}
+
+impl ModelFilter {
+    /// Parse a partial FQN string into a filter.
+    pub fn parse(input: &str) -> Result<Self, ModelFqnError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(ModelFqnError::Empty);
+        }
+
+        let parts: Vec<&str> = input.split('|').collect();
+        let non_empty = |s: &str| -> Option<String> {
+            if s.is_empty() { None } else { Some(s.to_string()) }
+        };
+
+        match parts.len() {
+            // "qwen3.5:9b" → model only
+            1 => Ok(Self {
+                source: None,
+                locator: None,
+                model: non_empty(parts[0]),
+                parameters: None,
+            }),
+            // "ollama|qwen3.5:9b" → source + model
+            2 => Ok(Self {
+                source: non_empty(parts[0]),
+                locator: None,
+                model: non_empty(parts[1]),
+                parameters: None,
+            }),
+            // "ollama|stone-azure-pool|qwen3.5:9b" → source + locator + model
+            3 => Ok(Self {
+                source: non_empty(parts[0]),
+                locator: non_empty(parts[1]),
+                model: non_empty(parts[2]),
+                parameters: None,
+            }),
+            // "ollama|stone-azure-pool|qwen3.5:9b|Q4_K_M" → exact match
+            4 => Ok(Self {
+                source: non_empty(parts[0]),
+                locator: non_empty(parts[1]),
+                model: non_empty(parts[2]),
+                parameters: non_empty(parts[3]),
+            }),
+            n => Err(ModelFqnError::TooManySegments(n)),
+        }
+    }
+
+    /// Check if a full FQN matches this filter. `None` fields match anything.
+    pub fn matches(&self, fqn: &ModelFqn) -> bool {
+        if let Some(ref s) = self.source {
+            if s != &fqn.source {
+                return false;
+            }
+        }
+        if let Some(ref l) = self.locator {
+            if l != &fqn.locator {
+                return false;
+            }
+        }
+        if let Some(ref m) = self.model {
+            if m != &fqn.model {
+                return false;
+            }
+        }
+        if let Some(ref p) = self.parameters {
+            match &fqn.parameters {
+                Some(fp) if fp == p => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Whether this filter specifies all four fields (exact match, no wildcards).
+    pub fn is_exact(&self) -> bool {
+        self.source.is_some()
+            && self.locator.is_some()
+            && self.model.is_some()
+            && self.parameters.is_some()
+    }
+}
+
+impl fmt::Display for ModelFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Reconstruct the shortest unambiguous form
+        let s = self.source.as_deref().unwrap_or("");
+        let l = self.locator.as_deref().unwrap_or("");
+        let m = self.model.as_deref().unwrap_or("");
+        let p = self.parameters.as_deref().unwrap_or("");
+
+        if !p.is_empty() {
+            write!(f, "{s}|{l}|{m}|{p}")
+        } else if !l.is_empty() {
+            write!(f, "{s}|{l}|{m}")
+        } else if !s.is_empty() {
+            write!(f, "{s}|{m}")
+        } else {
+            write!(f, "{m}")
+        }
+    }
+}
+
+// ── Model Directory (ORCH-0015) ────────────────────────────────
+
+/// Metadata about a model entry in the directory.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelMetadata {
+    pub parameter_count: Option<u64>,
+    pub parameter_size: Option<String>,
+    pub quantization_level: Option<String>,
+    pub family: Option<String>,
+    pub families: Vec<String>,
+    pub format: Option<String>,
+    pub size_disk: u64,
+    pub vram_bytes: Option<u64>,
+    pub context_length: Option<u64>,
+}
+
+/// A single model in the directory — may be served by multiple instances.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    /// Model name (e.g., "qwen3.5:9b").
+    pub model: String,
+    /// Quantization or variant (e.g., "Q4_K_M").
+    pub parameters: Option<String>,
+    /// Capability tags.
+    pub capabilities: Vec<Capability>,
+    /// Specialization tags (ocr, reasoning, coding, etc.).
+    pub specializations: Vec<String>,
+    /// Model metadata.
+    pub metadata: ModelMetadata,
+    /// All instances that can serve this model.
+    pub instances: Vec<ModelFqn>,
+}
+
+/// The model directory — single source of truth for what models exist.
+///
+/// Keyed by `model_identity` (model name + optional parameters).
+/// Replaces `AppState.models: HashMap<String, ModelInfo>`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelDirectory {
+    entries: HashMap<String, ModelEntry>,
+}
+
+impl ModelDirectory {
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Upsert a model into the directory. If the model_identity already
+    /// exists, the instance FQN is added (deduped). Capabilities and
+    /// metadata are merged (union for capabilities, latest wins for metadata).
+    pub fn upsert(
+        &mut self,
+        fqn: ModelFqn,
+        capabilities: Vec<Capability>,
+        specializations: Vec<String>,
+        metadata: ModelMetadata,
+    ) {
+        let identity = fqn.model_identity();
+
+        let entry = self.entries.entry(identity).or_insert_with(|| ModelEntry {
+            model: fqn.model.clone(),
+            parameters: fqn.parameters.clone(),
+            capabilities: Vec::new(),
+            specializations: Vec::new(),
+            metadata: ModelMetadata::default(),
+            instances: Vec::new(),
+        });
+
+        // Add instance FQN if not already present
+        if !entry.instances.contains(&fqn) {
+            entry.instances.push(fqn);
+        }
+
+        // Merge capabilities (union)
+        for cap in &capabilities {
+            if !entry.capabilities.contains(cap) {
+                entry.capabilities.push(*cap);
+            }
+        }
+
+        // Merge specializations (union)
+        for spec in &specializations {
+            if !entry.specializations.contains(spec) {
+                entry.specializations.push(spec.clone());
+            }
+        }
+
+        // Update metadata (latest wins for non-default fields)
+        if metadata.parameter_count.is_some() {
+            entry.metadata.parameter_count = metadata.parameter_count;
+        }
+        if metadata.parameter_size.is_some() {
+            entry.metadata.parameter_size = metadata.parameter_size;
+        }
+        if metadata.quantization_level.is_some() {
+            entry.metadata.quantization_level = metadata.quantization_level;
+        }
+        if metadata.family.is_some() {
+            entry.metadata.family = metadata.family;
+        }
+        if !metadata.families.is_empty() {
+            entry.metadata.families = metadata.families;
+        }
+        if metadata.format.is_some() {
+            entry.metadata.format = metadata.format;
+        }
+        if metadata.size_disk > 0 {
+            entry.metadata.size_disk = metadata.size_disk;
+        }
+        if metadata.vram_bytes.is_some() {
+            entry.metadata.vram_bytes = metadata.vram_bytes;
+        }
+        if metadata.context_length.is_some() {
+            entry.metadata.context_length = metadata.context_length;
+        }
+    }
+
+    /// Remove all instances from a specific provider (source + locator).
+    /// Entries with zero instances remaining are removed.
+    pub fn remove_provider(&mut self, source: &str, locator: &str) {
+        self.entries.retain(|_, entry| {
+            entry
+                .instances
+                .retain(|fqn| !(fqn.source == source && fqn.locator == locator));
+            !entry.instances.is_empty()
+        });
+    }
+
+    /// Remove a specific FQN from the directory.
+    pub fn remove_fqn(&mut self, fqn: &ModelFqn) {
+        let identity = fqn.model_identity();
+        if let Some(entry) = self.entries.get_mut(&identity) {
+            entry.instances.retain(|f| f != fqn);
+            if entry.instances.is_empty() {
+                self.entries.remove(&identity);
+            }
+        }
+    }
+
+    /// All entries in the directory.
+    pub fn entries(&self) -> &HashMap<String, ModelEntry> {
+        &self.entries
+    }
+
+    /// Find an entry by model identity.
+    pub fn get(&self, model_identity: &str) -> Option<&ModelEntry> {
+        self.entries.get(model_identity)
+    }
+
+    /// All models that have a given capability.
+    pub fn models_with_capability(&self, cap: Capability) -> Vec<&ModelEntry> {
+        self.entries
+            .values()
+            .filter(|e| e.capabilities.contains(&cap))
+            .collect()
+    }
+
+    /// All FQNs matching a filter that also have a given capability.
+    pub fn matching_fqns(&self, filter: &ModelFilter, cap: Option<Capability>) -> Vec<&ModelFqn> {
+        let mut results = Vec::new();
+        for entry in self.entries.values() {
+            if let Some(c) = cap {
+                if !entry.capabilities.contains(&c) {
+                    continue;
+                }
+            }
+            for fqn in &entry.instances {
+                if filter.matches(fqn) {
+                    results.push(fqn);
+                }
+            }
+        }
+        results
+    }
+
+    /// Find all entries whose model name matches (for routing by model name).
+    pub fn find_by_model_name(&self, model_name: &str) -> Vec<&ModelEntry> {
+        self.entries
+            .values()
+            .filter(|e| e.model == model_name)
+            .collect()
+    }
+
+    /// Total number of unique model identities.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
@@ -328,29 +807,6 @@ pub struct LoadedModel {
     pub expires_at: Option<String>,
 }
 
-// ── Model Info ───────────────────────────────────────────────────
-
-/// Model metadata gathered from offering enumeration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelInfo {
-    pub name: String,
-    pub parameter_count: Option<u64>,
-    pub parameter_size: Option<String>,
-    pub quantization_level: Option<String>,
-    pub family: Option<String>,
-    pub families: Vec<String>,
-    pub capabilities: Vec<String>,
-    /// Specialization tags for finer-grained classification.
-    /// Examples: "ocr", "reasoning", "coding", "embedding.multilingual".
-    /// Derived from model name heuristics and offering metadata.
-    #[serde(default)]
-    pub specializations: Vec<String>,
-    pub format: Option<String>,
-    pub size_disk: u64,
-    pub vram_bytes: Option<u64>,
-    pub context_length: Option<u64>,
-}
-
 // ── Tiers ────────────────────────────────────────────────────────
 
 /// A VRAM capacity tier — emergent from discovered hardware.
@@ -395,7 +851,7 @@ pub struct RoutingDecision {
     pub target_endpoint: String,
     pub stone_name: String,
     pub model_name: String,
-    pub tier_label: String,
+    pub tier_label: Option<String>,
     pub offering_kind: OfferingKind,
     pub was_overflow: bool,
     pub lease_acquired: bool,
@@ -650,4 +1106,262 @@ pub struct OfferingVramUsage {
     pub kind: OfferingKind,
     pub used_bytes: u64,
     pub model_count: usize,
+}
+
+// ── Tests ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ModelFqn ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_full_fqn_with_params() {
+        let fqn = ModelFqn::parse("ollama|stone-azure-pool|qwen3.5:9b|Q4_K_M").unwrap();
+        assert_eq!(fqn.source, "ollama");
+        assert_eq!(fqn.locator, "stone-azure-pool");
+        assert_eq!(fqn.model, "qwen3.5:9b");
+        assert_eq!(fqn.parameters.as_deref(), Some("Q4_K_M"));
+    }
+
+    #[test]
+    fn parse_fqn_without_params() {
+        let fqn = ModelFqn::parse("anthropic|prod|claude-sonnet-4").unwrap();
+        assert_eq!(fqn.source, "anthropic");
+        assert_eq!(fqn.locator, "prod");
+        assert_eq!(fqn.model, "claude-sonnet-4");
+        assert_eq!(fqn.parameters, None);
+    }
+
+    #[test]
+    fn parse_fqn_empty_params_treated_as_none() {
+        let fqn = ModelFqn::parse("ollama|s1|m1|").unwrap();
+        assert_eq!(fqn.parameters, None);
+    }
+
+    #[test]
+    fn parse_fqn_rejects_empty() {
+        assert_eq!(ModelFqn::parse(""), Err(ModelFqnError::Empty));
+    }
+
+    #[test]
+    fn parse_fqn_rejects_too_few_segments() {
+        // 1 segment = too few for FQN (valid as filter, not as FQN)
+        assert!(ModelFqn::parse("just-a-model").is_err());
+    }
+
+    #[test]
+    fn parse_fqn_rejects_blank_segment() {
+        assert_eq!(
+            ModelFqn::parse("|locator|model"),
+            Err(ModelFqnError::BlankSegment { position: "source" })
+        );
+        assert_eq!(
+            ModelFqn::parse("source||model"),
+            Err(ModelFqnError::BlankSegment { position: "locator" })
+        );
+    }
+
+    #[test]
+    fn fqn_roundtrip() {
+        let fqn = ModelFqn::new("ollama", "s1", "qwen3.5:9b", Some("Q4_K_M".into()));
+        assert_eq!(fqn.fqn(), "ollama|s1|qwen3.5:9b|Q4_K_M");
+        assert_eq!(ModelFqn::parse(&fqn.fqn()).unwrap(), fqn);
+    }
+
+    #[test]
+    fn fqn_model_identity() {
+        let with_params = ModelFqn::new("ollama", "s1", "m1", Some("Q4".into()));
+        assert_eq!(with_params.model_identity(), "m1|Q4");
+
+        let without = ModelFqn::new("anthropic", "prod", "claude-sonnet-4", None);
+        assert_eq!(without.model_identity(), "claude-sonnet-4");
+    }
+
+    #[test]
+    fn fqn_is_cloud() {
+        assert!(ModelFqn::new("anthropic", "prod", "m", None).is_cloud());
+        assert!(ModelFqn::new("google", "personal", "m", None).is_cloud());
+        assert!(!ModelFqn::new("ollama", "s1", "m", None).is_cloud());
+        assert!(!ModelFqn::new("infinity", "s1", "m", None).is_cloud());
+    }
+
+    #[test]
+    fn fqn_serde_roundtrip() {
+        let fqn = ModelFqn::new("ollama", "s1", "qwen3.5:9b", Some("Q4_K_M".into()));
+        let json = serde_json::to_string(&fqn).unwrap();
+        assert_eq!(json, r#""ollama|s1|qwen3.5:9b|Q4_K_M""#);
+        let parsed: ModelFqn = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, fqn);
+    }
+
+    // ── ModelFilter ────────────────────────────────────────────
+
+    #[test]
+    fn filter_model_only() {
+        let f = ModelFilter::parse("qwen3.5:9b").unwrap();
+        assert_eq!(f.source, None);
+        assert_eq!(f.locator, None);
+        assert_eq!(f.model.as_deref(), Some("qwen3.5:9b"));
+        assert_eq!(f.parameters, None);
+    }
+
+    #[test]
+    fn filter_source_and_model() {
+        let f = ModelFilter::parse("ollama|qwen3.5:9b").unwrap();
+        assert_eq!(f.source.as_deref(), Some("ollama"));
+        assert_eq!(f.model.as_deref(), Some("qwen3.5:9b"));
+    }
+
+    #[test]
+    fn filter_full() {
+        let f = ModelFilter::parse("ollama|s1|m1|Q4").unwrap();
+        assert!(f.is_exact());
+    }
+
+    #[test]
+    fn filter_matches_model_only() {
+        let f = ModelFilter::parse("qwen3.5:9b").unwrap();
+        let fqn1 = ModelFqn::new("ollama", "s1", "qwen3.5:9b", Some("Q4".into()));
+        let fqn2 = ModelFqn::new("ollama", "s2", "qwen3.5:9b", None);
+        let fqn3 = ModelFqn::new("anthropic", "prod", "claude-sonnet-4", None);
+
+        assert!(f.matches(&fqn1));
+        assert!(f.matches(&fqn2));
+        assert!(!f.matches(&fqn3));
+    }
+
+    #[test]
+    fn filter_matches_source_and_model() {
+        let f = ModelFilter::parse("ollama|qwen3.5:9b").unwrap();
+        let fqn_ollama = ModelFqn::new("ollama", "s1", "qwen3.5:9b", None);
+        let fqn_other = ModelFqn::new("infinity", "s1", "qwen3.5:9b", None);
+
+        assert!(f.matches(&fqn_ollama));
+        assert!(!f.matches(&fqn_other));
+    }
+
+    #[test]
+    fn filter_matches_exact() {
+        let f = ModelFilter::parse("ollama|s1|m1|Q4").unwrap();
+        let exact = ModelFqn::new("ollama", "s1", "m1", Some("Q4".into()));
+        let wrong_loc = ModelFqn::new("ollama", "s2", "m1", Some("Q4".into()));
+        let no_params = ModelFqn::new("ollama", "s1", "m1", None);
+
+        assert!(f.matches(&exact));
+        assert!(!f.matches(&wrong_loc));
+        assert!(!f.matches(&no_params));
+    }
+
+    // ── ModelDirectory ─────────────────────────────────────────
+
+    fn make_fqn(source: &str, loc: &str, model: &str) -> ModelFqn {
+        ModelFqn::new(source, loc, model, None)
+    }
+
+    #[test]
+    fn directory_upsert_and_find() {
+        let mut dir = ModelDirectory::new();
+        let fqn1 = make_fqn("ollama", "s1", "qwen3.5:9b");
+        let fqn2 = make_fqn("ollama", "s2", "qwen3.5:9b");
+
+        dir.upsert(
+            fqn1.clone(),
+            vec![Capability::Chat, Capability::Vision],
+            vec![],
+            ModelMetadata::default(),
+        );
+        dir.upsert(
+            fqn2.clone(),
+            vec![Capability::Chat],
+            vec![],
+            ModelMetadata::default(),
+        );
+
+        assert_eq!(dir.len(), 1); // same model_identity
+        let entry = dir.get("qwen3.5:9b").unwrap();
+        assert_eq!(entry.instances.len(), 2);
+        assert_eq!(entry.capabilities.len(), 2); // Chat + Vision (union)
+    }
+
+    #[test]
+    fn directory_models_with_capability() {
+        let mut dir = ModelDirectory::new();
+        dir.upsert(
+            make_fqn("ollama", "s1", "qwen3.5:9b"),
+            vec![Capability::Chat],
+            vec![],
+            ModelMetadata::default(),
+        );
+        dir.upsert(
+            make_fqn("infinity", "s1", "all-MiniLM-L6-v2"),
+            vec![Capability::Embed],
+            vec![],
+            ModelMetadata::default(),
+        );
+
+        let chat_models = dir.models_with_capability(Capability::Chat);
+        assert_eq!(chat_models.len(), 1);
+        assert_eq!(chat_models[0].model, "qwen3.5:9b");
+
+        let embed_models = dir.models_with_capability(Capability::Embed);
+        assert_eq!(embed_models.len(), 1);
+    }
+
+    #[test]
+    fn directory_remove_provider() {
+        let mut dir = ModelDirectory::new();
+        dir.upsert(
+            make_fqn("ollama", "s1", "m1"),
+            vec![Capability::Chat],
+            vec![],
+            ModelMetadata::default(),
+        );
+        dir.upsert(
+            make_fqn("ollama", "s2", "m1"),
+            vec![Capability::Chat],
+            vec![],
+            ModelMetadata::default(),
+        );
+
+        dir.remove_provider("ollama", "s1");
+        let entry = dir.get("m1").unwrap();
+        assert_eq!(entry.instances.len(), 1);
+        assert_eq!(entry.instances[0].locator, "s2");
+    }
+
+    #[test]
+    fn directory_remove_last_instance_removes_entry() {
+        let mut dir = ModelDirectory::new();
+        dir.upsert(
+            make_fqn("ollama", "s1", "m1"),
+            vec![Capability::Chat],
+            vec![],
+            ModelMetadata::default(),
+        );
+
+        dir.remove_provider("ollama", "s1");
+        assert!(dir.is_empty());
+    }
+
+    #[test]
+    fn directory_matching_fqns_with_filter() {
+        let mut dir = ModelDirectory::new();
+        let fqn1 = make_fqn("ollama", "s1", "qwen3.5:9b");
+        let fqn2 = make_fqn("ollama", "s2", "qwen3.5:9b");
+        let fqn3 = make_fqn("anthropic", "prod", "claude-sonnet-4");
+
+        dir.upsert(fqn1, vec![Capability::Chat], vec![], ModelMetadata::default());
+        dir.upsert(fqn2, vec![Capability::Chat], vec![], ModelMetadata::default());
+        dir.upsert(fqn3, vec![Capability::Chat], vec![], ModelMetadata::default());
+
+        let filter = ModelFilter::parse("qwen3.5:9b").unwrap();
+        let matches = dir.matching_fqns(&filter, Some(Capability::Chat));
+        assert_eq!(matches.len(), 2);
+
+        let filter2 = ModelFilter::parse("ollama|qwen3.5:9b").unwrap();
+        let matches2 = dir.matching_fqns(&filter2, None);
+        assert_eq!(matches2.len(), 2);
+    }
 }

@@ -543,21 +543,22 @@ const DISK_TO_VRAM_FACTOR: f64 = 1.1;
 
 /// Build `ModelSlot`s for **cold (T=0) evaluation** — projected VRAM only.
 pub fn model_slots_projected(
-    models: &HashMap<String, super::types::ModelInfo>,
+    directory: &super::types::ModelDirectory,
 ) -> Vec<ModelSlot> {
-    models
+    directory
+        .entries()
         .values()
-        .filter_map(|m| {
-            if m.size_disk == 0 {
+        .filter_map(|e| {
+            if e.metadata.size_disk == 0 {
                 return None;
             }
-            let vram = (m.size_disk as f64 * DISK_TO_VRAM_FACTOR) as u64;
-            let is_embedding = m.capabilities.iter().any(|c| c == "embedding");
+            let vram = (e.metadata.size_disk as f64 * DISK_TO_VRAM_FACTOR) as u64;
+            let is_embedding = e.capabilities.contains(&super::types::Capability::Embed);
             Some(ModelSlot {
-                name: m.name.clone(),
+                name: e.model.clone(),
                 vram_bytes: vram,
                 is_embedding,
-                kv_cache_per_slot: estimate_kv_cache(vram, is_embedding, m.parameter_count),
+                kv_cache_per_slot: estimate_kv_cache(vram, is_embedding, e.metadata.parameter_count),
                 vram_source: VramSource::Projected,
             })
         })
@@ -566,18 +567,19 @@ pub fn model_slots_projected(
 
 /// Build `ModelSlot`s for **hot evaluation** — measured VRAM only.
 pub fn model_slots_measured(
-    models: &HashMap<String, super::types::ModelInfo>,
+    directory: &super::types::ModelDirectory,
 ) -> Vec<ModelSlot> {
-    models
+    directory
+        .entries()
         .values()
-        .filter_map(|m| {
-            let vram = m.vram_bytes?;
-            let is_embedding = m.capabilities.iter().any(|c| c == "embedding");
+        .filter_map(|e| {
+            let vram = e.metadata.vram_bytes?;
+            let is_embedding = e.capabilities.contains(&super::types::Capability::Embed);
             Some(ModelSlot {
-                name: m.name.clone(),
+                name: e.model.clone(),
                 vram_bytes: vram,
                 is_embedding,
-                kv_cache_per_slot: estimate_kv_cache(vram, is_embedding, m.parameter_count),
+                kv_cache_per_slot: estimate_kv_cache(vram, is_embedding, e.metadata.parameter_count),
                 vram_source: VramSource::Measured,
             })
         })

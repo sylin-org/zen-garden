@@ -1,0 +1,158 @@
+---
+# Speaches Adopted Mode Manifest
+# Detects native Speaches installations (pip/uv/pipx)
+#
+# Installation:
+#   pip install speaches          # or: uv pip install speaches
+#   speaches                      # starts server on 0.0.0.0:8000
+#   # or: uvx speaches            # run without install
+#
+# The service installs as a Python package with a `speaches` entry point.
+# It can also run as `python -m speaches` from a venv.
+
+name: speaches
+description: Speaches STT/TTS server (native installation)
+category: ai
+modes:
+  - adopted
+tags:
+  - ai
+  - stt
+  - tts
+  - speech-to-text
+  - text-to-speech
+  - whisper
+  - kokoro
+  - openai-compatible
+
+# DETECTION
+#
+# Speaches installs as a pip package with a `speaches` CLI entry point.
+# Detection:
+#   Rule 1: Process detection (speaches or python -m speaches)
+#   Rule 2: HTTP health probe (confirms running)
+#
+# Vitality:
+#   Rule 1+2 PASS → Running and operational (THRIVING)
+#   Rule 1 only   → Installed but not running (DORMANT)
+#   All FAIL      → Not installed
+
+detection:
+  windows:
+    # Rule 1: Check for speaches process
+    - method: command
+      config:
+        command: 'powershell -Command "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match ''speaches'' } | Select-Object -First 1 -ExpandProperty Id"'
+        expected_pattern: "\\d+"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    # Rule 2: HTTP health probe
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  linux:
+    - method: command
+      config:
+        command: "pgrep -fa 'speaches|python.*speaches'"
+        expected_pattern: "speaches"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+  macos:
+    - method: command
+      config:
+        command: "pgrep -fa 'speaches|python.*speaches'"
+        expected_pattern: "speaches"
+        expected_exit_code: 0
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+    - method: http_probe
+      config:
+        url: http://localhost:{{port}}/health
+        expected_status: 200
+        timeout_ms: 3000
+      stability_threshold: 1
+      cache_ttl_secs: 60
+
+# DETECT-0001: Process-based detection
+process:
+  executable: speaches
+  cmdline_contains: speaches
+health:
+  path: /health
+  expected_status: 200
+ports:
+  default: 8000
+  range: [8000, 8010]
+  remember: true
+
+# CONTROL
+control:
+  level: monitor
+  health_check_url: http://localhost:{{port}}/health
+
+# CONNECTIVITY
+connectivity:
+  enforce: true
+  enforce_cooldown_secs: 30
+  max_attempts: 3
+
+  windows:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 3000
+    ensure:
+      - command: 'powershell -Command "New-NetFirewallRule -DisplayName ''Speaches {{port}}'' -Direction Inbound -Protocol TCP -LocalPort {{port}} -Action Allow -ErrorAction SilentlyContinue"'
+        continue_on_error: true
+
+  linux:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 3000
+    ensure:
+      - command: "sudo ufw allow {{port}}/tcp"
+        continue_on_error: true
+
+  macos:
+    checks:
+      - method: http_probe
+        config:
+          url: "http://{{lan_ip}}:{{port}}/health"
+          expected_status: 200
+          timeout_ms: 3000
+
+# CONNECTION
+connection:
+  protocol: http
+  uri_template: "{protocol}://{host}:{port}"
+  endpoints:
+    base: "/"
+    health: "/health"
+    transcriptions: "/v1/audio/transcriptions"
+    speech: "/v1/audio/speech"
+    models: "/v1/models"
+    registry: "/v1/registry"
+    docs: "/docs"

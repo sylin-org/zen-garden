@@ -84,6 +84,7 @@ async fn main() -> Result<()> {
     providers.register(Arc::new(providers::infinity::InfinityProvider::new()));
     providers.register(Arc::new(providers::openedai_speech::OpenedaiSpeechProvider::new()));
     providers.register(Arc::new(providers::libretranslate::LibreTranslateProvider::new()));
+    providers.register(Arc::new(providers::speaches::SpeachesProvider::new()));
 
     // ── Cloud Providers ─────────────────────────────────────────────
     let cloud_store = CloudProviderStore::load(&cli.data_dir).await;

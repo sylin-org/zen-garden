@@ -14,3 +14,4 @@ pub mod libretranslate;
 pub mod ollama;
 pub mod openai;
 pub mod openedai_speech;
+pub mod speaches;

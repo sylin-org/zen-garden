@@ -5,7 +5,7 @@
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use rust_embed::Embed;
 
 #[derive(Embed)]

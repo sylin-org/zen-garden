@@ -8,8 +8,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
-use crate::domain::types::{JobKind, OfferingKind};
-use crate::offerings::ollama::OllamaOffering;
+use crate::domain::types::{Capability, JobKind, ModelFqn, ModelMetadata, OfferingKind};
 use crate::AppState;
 
 // ── Request Types ──────────────────────────────────────────────
@@ -49,14 +48,9 @@ fn resolve_offering_kind(name: &str) -> Option<OfferingKind> {
     }
 }
 
-/// Get the OllamaClient from the registry via downcast.
+/// Get the OllamaClient from app state.
 fn get_ollama_client(state: &AppState) -> Option<crate::offerings::ollama::client::OllamaClient> {
-    state
-        .registry
-        .get(OfferingKind::Ollama)?
-        .as_any()
-        .downcast_ref::<OllamaOffering>()
-        .map(|o| o.client().clone())
+    Some(state.ollama_client.clone())
 }
 
 /// JSON error response.
@@ -181,7 +175,7 @@ pub async fn refresh_models(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "unknown offering"))?;
 
     let adapter = state
-        .registry
+        .providers
         .get(kind)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "offering not registered"))?
         .clone();
@@ -198,31 +192,45 @@ pub async fn refresh_models(
 
     let mut total_models = 0usize;
     for endpoint in &endpoints {
-        match adapter.enumerate(endpoint).await {
+        let ctx = crate::catalog::ProviderContext {
+            endpoint: endpoint.clone(),
+            model: None,
+            api_key: None,
+        };
+        match adapter.enumerate(&ctx).await {
             Ok(service_models) => {
                 let model_names: Vec<String> = service_models.iter().map(|m| m.name.clone()).collect();
                 let model_count = model_names.len();
 
-                // Update model infos in state
+                // Update model directory
                 for sm in &service_models {
-                    let info = crate::domain::types::ModelInfo {
-                        name: sm.name.clone(),
+                    let quantization_level = sm
+                        .metadata
+                        .get("quantization_level")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let fqn = ModelFqn::new(
+                        kind.as_str(),
+                        endpoint,
+                        &sm.name,
+                        quantization_level.clone(),
+                    );
+                    let meta = ModelMetadata {
                         parameter_count: sm.metadata.get("parameter_count").and_then(|v| v.as_u64()),
-                        parameter_size: sm.metadata.get("parameter_size").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        quantization_level: sm.metadata.get("quantization_level").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        family: sm.metadata.get("family").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        parameter_size: sm.metadata.get("parameter_size").and_then(|v| v.as_str()).map(String::from),
+                        quantization_level,
+                        family: sm.metadata.get("family").and_then(|v| v.as_str()).map(String::from),
                         families: sm.metadata.get("families")
                             .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                             .unwrap_or_default(),
-                        capabilities: sm.capabilities.iter().map(|c| c.as_str().to_string()).collect(),
-                        specializations: sm.specializations.clone(),
-                        format: sm.metadata.get("format").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        format: sm.metadata.get("format").and_then(|v| v.as_str()).map(String::from),
                         size_disk: sm.metadata.get("size_disk").and_then(|v| v.as_u64()).unwrap_or(0),
                         vram_bytes: sm.vram_bytes,
                         context_length: sm.metadata.get("context_length").and_then(|v| v.as_u64()),
                     };
-                    state.upsert_model(info).await;
+                    let caps: Vec<Capability> = sm.capabilities.clone();
+                    state.directory_upsert(fqn, caps, sm.specializations.clone(), meta).await;
                 }
 
                 // Update instance model lists
@@ -415,7 +423,14 @@ pub async fn delete_model(
             state_bg.fail_job(&job_id_bg, "delete failed on one or more instances").await;
         } else {
             state_bg.complete_job(&job_id_bg).await;
-            state_bg.remove_model(&model_bg).await;
+            // Remove this model's FQN for each endpoint that had it
+            {
+                let mut dir = state_bg.directory.write().await;
+                for endpoint in &endpoints {
+                    let fqn = ModelFqn::new(kind.as_str(), endpoint, &model_bg, None);
+                    dir.remove_fqn(&fqn);
+                }
+            }
         }
 
         state_bg

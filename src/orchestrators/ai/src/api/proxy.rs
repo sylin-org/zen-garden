@@ -10,7 +10,9 @@
 
 use crate::app_state::AppState;
 use crate::domain::routing;
-use crate::domain::types::{Capability, InferenceDefaults, InstanceHealth, MetricEvent, RoutingError};
+use crate::domain::types::{
+    Capability, InferenceDefaults, InstanceHealth, MetricEvent, ModelFilter, ModelFqn, RoutingError,
+};
 use crate::offerings::ollama::client::OllamaClient;
 use crate::offerings::ollama::types::OllamaInferenceFinal;
 
@@ -123,7 +125,7 @@ async fn proxy_inference(
     headers: &HeaderMap,
     body: Bytes,
 ) -> Result<Response, StatusCode> {
-    let model = extract_model(&body).ok_or(StatusCode::BAD_REQUEST)?;
+    let raw_model = extract_model(&body).ok_or(StatusCode::BAD_REQUEST)?;
 
     let mut body_json: serde_json::Value =
         serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
@@ -132,6 +134,22 @@ async fn proxy_inference(
 
     // Infer capability from path
     let capability = capability_from_path(path, &body_json);
+
+    // ── ORCH-0015: Model Resolution ────────────────────────────
+    //
+    // The "model" field in the request can be:
+    //   1. A capability name ("chat", "embed", "speak") → resolve to pinned/recommended model
+    //   2. A partial MFQN ("ollama|qwen3.5:9b") → resolve via directory
+    //   3. A full MFQN ("ollama|stone-azure-pool|qwen3.5:9b|Q4_K_M") → exact instance
+    //   4. A plain model name ("qwen3.5:9b") → existing routing
+    let (model, resolved_header) = resolve_model_field(&raw_model, &state.app).await;
+
+    // If we resolved to a different model, rewrite the body
+    if model != raw_model {
+        if let Some(obj) = body_json.as_object_mut() {
+            obj.insert("model".to_string(), serde_json::json!(model));
+        }
+    }
 
     // Merge per-capability inference defaults (only for fields the client didn't set).
     if let Some(cap) = capability {
@@ -146,7 +164,7 @@ async fn proxy_inference(
     // Route — snapshot state, no locks held during routing
     let decision = {
         let mut instances = state.app.instances.read().await.clone();
-        let models = state.app.models.read().await.clone();
+        let models = state.app.directory.read().await.clone();
         let tiers = state.app.tiers.read().await.clone();
         let gpu_matrix = {
             let run = state.app.benchmark_run.read().await;
@@ -207,7 +225,7 @@ async fn proxy_inference(
         model = %model,
         target = %target,
         stone = %stone_name,
-        tier = %decision.tier_label,
+        tier = decision.tier_label.as_deref().unwrap_or("none"),
         overflow = decision.was_overflow,
         "routing request"
     );
@@ -293,11 +311,13 @@ async fn proxy_inference(
             });
         }
 
-        Ok(Response::builder()
+        let mut builder = Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", "application/json")
-            .body(Body::from(response_bytes))
-            .expect("constant headers"))
+            .header("content-type", "application/json");
+        if let Some(ref hdr) = resolved_header {
+            builder = builder.header("x-zen-resolved-model", hdr.as_str());
+        }
+        Ok(builder.body(Body::from(response_bytes)).expect("constant headers"))
     } else {
         // Streaming: forward NDJSON stream as-is.
         // Block 3 simplification: no NDJSON tee for streaming metrics.
@@ -339,12 +359,14 @@ async fn proxy_inference(
 
         let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
 
-        Ok(Response::builder()
+        let mut builder = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/x-ndjson")
-            .header("transfer-encoding", "chunked")
-            .body(Body::from_stream(body_stream))
-            .expect("constant headers"))
+            .header("transfer-encoding", "chunked");
+        if let Some(ref hdr) = resolved_header {
+            builder = builder.header("x-zen-resolved-model", hdr.as_str());
+        }
+        Ok(builder.body(Body::from_stream(body_stream)).expect("constant headers"))
     }
 }
 
@@ -353,7 +375,7 @@ async fn proxy_inference(
 /// Merge `/api/tags` from all healthy instances into a unified response.
 async fn proxy_merged_tags(state: &ProxyState) -> Result<Response, StatusCode> {
     let instances = state.app.instances.read().await;
-    let models = state.app.models.read().await;
+    let directory = state.app.directory.read().await;
 
     let mut merged: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
@@ -366,19 +388,19 @@ async fn proxy_merged_tags(state: &ProxyState) -> Result<Response, StatusCode> {
             if merged.contains_key(model_name) {
                 continue;
             }
-            if let Some(info) = models.get(model_name) {
+            if let Some(entry) = directory.get(model_name) {
                 merged.insert(
                     model_name.clone(),
                     serde_json::json!({
-                        "name": info.name,
-                        "model": info.name,
-                        "size": info.size_disk,
+                        "name": entry.model,
+                        "model": entry.model,
+                        "size": entry.metadata.size_disk,
                         "details": {
-                            "family": info.family,
-                            "families": info.families,
-                            "parameter_size": info.parameter_size,
-                            "quantization_level": info.quantization_level,
-                            "format": info.format,
+                            "family": entry.metadata.family,
+                            "families": entry.metadata.families,
+                            "parameter_size": entry.metadata.parameter_size,
+                            "quantization_level": entry.metadata.quantization_level,
+                            "format": entry.metadata.format,
                         }
                     }),
                 );
@@ -463,22 +485,22 @@ async fn proxy_show(
 
     // ── Catalog fallback ──────────────────────────────────────
     let model_name = model_name.ok_or(StatusCode::BAD_REQUEST)?;
-    let models = state.app.models.read().await;
+    let directory = state.app.directory.read().await;
 
-    let info = models.get(&model_name).ok_or_else(|| {
+    let entry = directory.get(&model_name).ok_or_else(|| {
         tracing::debug!(model = %model_name, "show: model not in catalog");
         StatusCode::NOT_FOUND
     })?;
 
     let mut model_info = serde_json::Map::new();
-    if let Some(pc) = info.parameter_count {
+    if let Some(pc) = entry.metadata.parameter_count {
         model_info.insert(
             "general.parameter_count".into(),
             serde_json::Value::Number(pc.into()),
         );
     }
-    if let Some(ctx) = info.context_length {
-        let arch = info.family.as_deref().unwrap_or("general");
+    if let Some(ctx) = entry.metadata.context_length {
+        let arch = entry.metadata.family.as_deref().unwrap_or("general");
         model_info.insert(
             format!("{arch}.context_length"),
             serde_json::Value::Number(ctx.into()),
@@ -489,19 +511,24 @@ async fn proxy_show(
         );
     }
 
+    let capabilities_strs: Vec<String> = entry
+        .capabilities
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
     let body = serde_json::json!({
         "modelfile": "",
         "parameters": "",
         "template": "",
         "details": {
-            "family": info.family,
-            "families": info.families,
-            "parameter_size": info.parameter_size,
-            "quantization_level": info.quantization_level,
-            "format": info.format,
+            "family": entry.metadata.family,
+            "families": entry.metadata.families,
+            "parameter_size": entry.metadata.parameter_size,
+            "quantization_level": entry.metadata.quantization_level,
+            "format": entry.metadata.format,
         },
         "model_info": model_info,
-        "capabilities": info.capabilities,
+        "capabilities": capabilities_strs,
     });
 
     Ok(Response::builder()
@@ -577,6 +604,76 @@ async fn proxy_routed(
 }
 
 // ── Helpers ────────────────────────────────────────────────────
+
+/// Resolve the `model` field from a request.
+///
+/// Returns `(resolved_model_name, optional_header)`:
+/// - Capability name ("chat") → resolved to recommended model, header set
+/// - MFQN ("ollama|s1|qwen3.5:9b") → resolved to model name, header set
+/// - Plain model name → returned as-is, no header
+pub async fn resolve_model_field(raw: &str, state: &AppState) -> (String, Option<String>) {
+    // 1. Check if it's a capability name
+    let is_capability = Capability::ALL.iter().any(|c| c.as_str() == raw);
+    if is_capability {
+        // Check pinned model first, then recommended
+        let config = state.config.read().await;
+        if let Some(pin) = config.features.pins.get(raw) {
+            // Pin is a ModelFilter string — resolve to a model name
+            if let Ok(filter) = ModelFilter::parse(pin) {
+                if let Some(model_name) = filter.model.as_deref() {
+                    return (
+                        model_name.to_string(),
+                        Some(format!("{}→{}", raw, model_name)),
+                    );
+                }
+            }
+            // Fallback: pin is already a model name
+            return (pin.clone(), Some(format!("{}→{}", raw, pin)));
+        }
+        drop(config);
+
+        // Try recommended model cache
+        let recommended = state.recommended_models.read().await;
+        if let Some(model) = recommended.get(raw) {
+            return (model.clone(), Some(format!("{}→{}", raw, model)));
+        }
+
+        // No recommendation: return the capability name as-is (will likely 404 in routing)
+        return (raw.to_string(), None);
+    }
+
+    // 2. Check if it contains pipes (MFQN or partial filter)
+    if raw.contains('|') {
+        if let Ok(fqn) = ModelFqn::parse(raw) {
+            // Full FQN — resolve to the model name (routing will use the model name
+            // but we could in the future route directly by FQN)
+            return (
+                fqn.model.clone(),
+                Some(format!("fqn→{}", fqn.display_short())),
+            );
+        }
+        if let Ok(filter) = ModelFilter::parse(raw) {
+            if let Some(ref model) = filter.model {
+                return (
+                    model.clone(),
+                    Some(format!("filter→{}", model)),
+                );
+            }
+        }
+    }
+
+    // 3. Check if it matches "recommended:{capability}" moniker pattern
+    if let Some(cap_name) = raw.strip_prefix("recommended:") {
+        let recommended = state.recommended_models.read().await;
+        if let Some(model) = recommended.get(cap_name) {
+            return (model.clone(), Some(format!("recommended:{}→{}", cap_name, model)));
+        }
+        return (raw.to_string(), None);
+    }
+
+    // 4. Plain model name — return as-is
+    (raw.to_string(), None)
+}
 
 /// Extract the "model" field from a JSON body.
 fn extract_model(body: &[u8]) -> Option<String> {
@@ -654,7 +751,7 @@ fn capability_from_path(path: &str, body: &serde_json::Value) -> Option<Capabili
             if body.get("images").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()) {
                 Some(Capability::Vision)
             } else {
-                Some(Capability::Generate)
+                Some(Capability::Chat)
             }
         }
         "/api/chat" => {

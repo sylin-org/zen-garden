@@ -1,61 +1,72 @@
 //! Cloud provider sync task.
 //!
 //! Registers cloud providers as ServiceInstance entries and periodically
-//! re-enumerates their models. Cloud providers differ from local offerings:
-//! - They use `DiscoveryConfig::Configured` (no topology discovery)
-//! - Their "endpoint" is the base URL (e.g., "https://api.openai.com")
-//! - Their models come from the provider's /models API or cached_models
-//! - They run at priority -10 (cloud fallback)
+//! re-enumerates their models via the `Provider` trait.
+//!
+//! No per-kind auth or enumerate logic lives here — all protocol knowledge
+//! is in the provider implementations (`providers/*.rs`). This task just
+//! orchestrates: iterate configs, call provider.probe(), call provider.enumerate(),
+//! register results.
 
 use crate::app_state::AppState;
+use crate::catalog::ProviderContext;
 use crate::domain::types::*;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// How often to re-enumerate cloud provider models.
-const CLOUD_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60); // 30 minutes
+const CLOUD_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 /// Initial delay before first cloud sync (let local discovery go first).
 const STARTUP_DELAY: Duration = Duration::from_secs(10);
 
 /// Run the cloud provider sync loop.
-///
-/// On startup: registers all configured providers as ServiceInstance entries
-/// using cached_models from disk. Then periodically re-enumerates to refresh.
 pub async fn run(state: AppState, shutdown: CancellationToken) {
-    // Initial delay
     tokio::select! {
         _ = tokio::time::sleep(STARTUP_DELAY) => {}
         _ = shutdown.cancelled() => return,
     }
 
-    // Register from cache on startup
-    register_cloud_providers(&state).await;
+    sync_all(&state).await;
 
-    // Periodic re-enumeration
     loop {
         tokio::select! {
             _ = tokio::time::sleep(CLOUD_REFRESH_INTERVAL) => {}
             _ = shutdown.cancelled() => return,
         }
-
-        refresh_cloud_models(&state).await;
+        sync_all(&state).await;
     }
 }
 
-/// Register all enabled cloud providers as ServiceInstance + ModelInfo entries
-/// from their cached model lists (no API calls — uses disk cache).
-async fn register_cloud_providers(state: &AppState) {
-    let store = state.cloud_store.read().await;
+/// Register/refresh all enabled cloud providers.
+async fn sync_all(state: &AppState) {
+    let configs: Vec<_> = {
+        let store = state.cloud_store.read().await;
+        store
+            .all()
+            .iter()
+            .filter(|p| p.enabled && !p.api_key.is_empty())
+            .cloned()
+            .collect()
+    };
 
-    for provider in store.all() {
-        if !provider.enabled || provider.api_key.is_empty() {
-            continue;
-        }
+    for config in &configs {
+        let kind = config.kind;
+        let endpoint = config.base_url.clone();
+        let name = config.name.clone();
 
-        let kind = provider.kind;
-        let endpoint = provider.base_url.clone();
-        let name = provider.name.clone();
+        // Look up the provider impl
+        let provider = match state.providers.get(kind) {
+            Some(p) => p,
+            None => {
+                tracing::debug!(
+                    provider = %name,
+                    kind = %kind,
+                    "no provider registered for this kind, skipping"
+                );
+                continue;
+            }
+        };
 
         // Create ServiceInstance for this cloud provider
         let instance = ServiceInstance {
@@ -67,7 +78,7 @@ async fn register_cloud_providers(state: &AppState) {
             kind,
             gpu: Gpu {
                 name: None,
-                compute: ComputeType::Cpu, // cloud — not applicable
+                compute: ComputeType::Cpu,
             },
             vram: Vram {
                 total_bytes: 0,
@@ -75,146 +86,119 @@ async fn register_cloud_providers(state: &AppState) {
                 free_bytes: None,
             },
             health: InstanceHealth::Profiling,
-            models_available: provider.cached_models.clone(),
+            models_available: config.cached_models.clone(),
             models_loaded: vec![],
-            capabilities: provider.capabilities.clone(),
+            capabilities: config.capabilities.clone(),
             queue_depth: 0,
             last_seen: Instant::now(),
             metadata: serde_json::json!({
                 "cloud": true,
                 "provider": name,
             }),
-            priority: provider.priority,
+            priority: config.priority,
         };
 
         state.upsert_instance(instance).await;
 
-        // Register cached models in global model registry
-        for model_name in &provider.cached_models {
-            let info = ModelInfo {
-                name: model_name.clone(),
-                parameter_count: None,
-                parameter_size: None,
-                quantization_level: None,
-                family: None,
-                families: vec![],
-                capabilities: provider
-                    .capabilities
-                    .iter()
-                    .map(|c| c.as_str().to_string())
-                    .collect(),
-                specializations: vec!["cloud".to_string()],
-                format: None,
-                size_disk: 0,
-                vram_bytes: None,
-                context_length: None,
-            };
-            state.upsert_model(info).await;
+        // Register cached models for immediate availability (with provider-level caps)
+        for model_name in &config.cached_models {
+            let fqn = ModelFqn::new(kind.as_str(), &name, model_name, None);
+            state
+                .directory_upsert(
+                    fqn,
+                    config.capabilities.clone(),
+                    vec!["cloud".to_string()],
+                    ModelMetadata::default(),
+                )
+                .await;
         }
 
-        // Probe to check key validity
-        if let Some(adapter) = state.registry.get(kind) {
-            match adapter.probe(&endpoint).await {
-                Ok(_) => {
-                    state
-                        .set_instance_health(&endpoint, InstanceHealth::Healthy)
-                        .await;
-                    tracing::info!(
-                        provider = %name,
-                        models = provider.cached_models.len(),
-                        "cloud provider registered (healthy)"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        provider = %name,
-                        error = %e,
-                        "cloud provider registered but probe failed (unhealthy)"
-                    );
-                }
-            }
-        } else {
-            let model_count = provider.cached_models.len();
-            tracing::info!(
-                provider = %name,
-                models = model_count,
-                "cloud provider registered from cache (no adapter)"
-            );
-        }
-    }
-}
-
-/// Re-enumerate models from all healthy cloud providers and update the cache.
-async fn refresh_cloud_models(state: &AppState) {
-    let providers: Vec<(String, OfferingKind, String)> = {
-        let store = state.cloud_store.read().await;
-        store
-            .all()
-            .iter()
-            .filter(|p| p.enabled && !p.api_key.is_empty())
-            .map(|p| (p.name.clone(), p.kind, p.base_url.clone()))
-            .collect()
-    };
-
-    for (name, kind, endpoint) in providers {
-        let adapter = match state.registry.get(kind) {
-            Some(a) => a,
-            None => continue,
+        // Build provider context
+        let ctx = ProviderContext {
+            endpoint: endpoint.clone(),
+            model: None,
+            api_key: Some(config.api_key.clone()),
         };
 
-        match adapter.enumerate(&endpoint).await {
-            Ok(models) => {
-                let model_names: Vec<String> = models.iter().map(|m| m.name.clone()).collect();
-                let count = model_names.len();
-
-                // Update instance model list
+        // Probe
+        match provider.probe(&ctx).await {
+            Ok(_) => {
                 state
-                    .update_instance_models(&endpoint, model_names.clone(), vec![])
+                    .set_instance_health(&endpoint, InstanceHealth::Healthy)
                     .await;
 
-                // Register each model
-                for sm in &models {
-                    let info = ModelInfo {
-                        name: sm.name.clone(),
-                        parameter_count: None,
-                        parameter_size: None,
-                        quantization_level: None,
-                        family: None,
-                        families: vec![],
-                        capabilities: sm
-                            .capabilities
-                            .iter()
-                            .map(|c| c.as_str().to_string())
-                            .collect(),
-                        specializations: sm.specializations.clone(),
-                        format: None,
-                        size_disk: 0,
-                        vram_bytes: None,
-                        context_length: None,
-                    };
-                    state.upsert_model(info).await;
-                }
+                // Enumerate via Provider trait — returns ServiceModel with per-model capabilities
+                match provider.enumerate(&ctx).await {
+                    Ok(service_models) => {
+                        let model_names: Vec<String> =
+                            service_models.iter().map(|m| m.name.clone()).collect();
+                        let count = model_names.len();
 
-                // Update cache on disk
-                {
-                    let mut store = state.cloud_store.write().await;
-                    store.update_cached_models(&name, model_names);
-                    if let Err(e) = store.save().await {
-                        tracing::warn!(error = %e, "failed to persist cloud model cache");
+                        state
+                            .update_instance_models(&endpoint, model_names.clone(), vec![])
+                            .await;
+
+                        // Clear stale directory entries for this provider before
+                        // re-registering with per-model capabilities. This prevents
+                        // the union-merge from retaining stale provider-level caps.
+                        state
+                            .directory_remove_provider(kind.as_str(), &name)
+                            .await;
+
+                        // Register each model with its own capabilities (not provider-level)
+                        for sm in &service_models {
+                            let fqn = ModelFqn::new(kind.as_str(), &name, &sm.name, None);
+                            let metadata = ModelMetadata {
+                                context_length: sm
+                                    .metadata
+                                    .get("input_token_limit")
+                                    .and_then(|v| v.as_u64()),
+                                ..Default::default()
+                            };
+                            state
+                                .directory_upsert(
+                                    fqn,
+                                    sm.capabilities.clone(),
+                                    sm.specializations.clone(),
+                                    metadata,
+                                )
+                                .await;
+                        }
+
+                        // Update cache
+                        {
+                            let mut store = state.cloud_store.write().await;
+                            store.update_cached_models(&name, model_names);
+                            if let Err(e) = store.save().await {
+                                tracing::warn!(error = %e, "failed to persist cloud model cache");
+                            }
+                        }
+
+                        tracing::info!(
+                            provider = %name,
+                            kind = %kind,
+                            models = count,
+                            "cloud provider synced"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::info!(
+                            provider = %name,
+                            kind = %kind,
+                            cached = config.cached_models.len(),
+                            error = %e,
+                            "cloud provider healthy but enumerate failed (using cache)"
+                        );
                     }
                 }
-
-                tracing::info!(
-                    provider = %name,
-                    models = count,
-                    "refreshed cloud provider models"
-                );
             }
             Err(e) => {
                 tracing::warn!(
                     provider = %name,
+                    kind = %kind,
+                    cached = config.cached_models.len(),
                     error = %e,
-                    "failed to enumerate cloud provider models"
+                    "cloud provider probe failed (using cache)"
                 );
             }
         }

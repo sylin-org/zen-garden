@@ -33,12 +33,29 @@ async fn check_all(state: &AppState) {
     };
 
     for (endpoint, stone_name, kind, was_healthy) in snapshot {
-        let adapter = match state.registry.get(kind) {
+        let adapter = match state.providers.get(kind) {
             Some(a) => a,
             None => continue,
         };
 
-        let healthy = adapter.probe(&endpoint).await.is_ok();
+        // Cloud providers need their API key for probe
+        let api_key = if kind.is_cloud() {
+            let store = state.cloud_store.read().await;
+            store
+                .all()
+                .iter()
+                .find(|p| p.base_url == endpoint && p.kind == kind)
+                .map(|p| p.api_key.clone())
+        } else {
+            None
+        };
+
+        let ctx = crate::catalog::ProviderContext {
+            endpoint: endpoint.clone(),
+            model: None,
+            api_key,
+        };
+        let healthy = adapter.probe(&ctx).await.is_ok();
 
         if healthy && !was_healthy {
             tracing::info!(stone = %stone_name, kind = %kind, "instance recovered");

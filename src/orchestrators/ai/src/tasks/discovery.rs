@@ -15,7 +15,8 @@
 
 use crate::app_state::{AppState, TendedStone};
 use crate::domain::types::{
-    ComputeType, Gpu, InstanceHealth, ModelInfo, OfferingKind, ServiceInstance, Stone, Vram,
+    Capability, ComputeType, Gpu, InstanceHealth, ModelFqn, ModelMetadata,
+    OfferingKind, ServiceInstance, Stone, Vram,
 };
 use orchestrator_common::tools_stream::{self, ToolStreamEvent};
 use orchestrator_common::topology;
@@ -297,13 +298,19 @@ fn build_instance_from_discovery(
 /// Transitions health to Healthy, populates models_available, and
 /// upserts model metadata into the global registry.
 async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) {
-    let adapter = match state.registry.get(kind) {
+    let adapter = match state.providers.get(kind) {
         Some(a) => a,
-        None => return, // no adapter registered for this offering type
+        None => return, // no provider registered for this offering type
+    };
+
+    let ctx = crate::catalog::ProviderContext {
+        endpoint: endpoint.to_string(),
+        model: None,
+        api_key: None,
     };
 
     // Probe for liveness
-    match adapter.probe(endpoint).await {
+    match adapter.probe(&ctx).await {
         Ok(probe) => {
             state
                 .set_instance_health(endpoint, InstanceHealth::Healthy)
@@ -340,8 +347,17 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
         }
     }
 
+    // Resolve the stone name for building FQNs (needed for directory)
+    let stone_name = {
+        let instances = state.instances.read().await;
+        instances
+            .get(endpoint)
+            .map(|i| i.stone.name.clone())
+            .unwrap_or_default()
+    };
+
     // Enumerate models/resources
-    match adapter.enumerate(endpoint).await {
+    match adapter.enumerate(&ctx).await {
         Ok(service_models) => {
             let model_names: Vec<String> = service_models.iter().map(|m| m.name.clone()).collect();
             let count = model_names.len();
@@ -351,55 +367,74 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                 .update_instance_models(endpoint, model_names, vec![])
                 .await;
 
-            // Upsert each model into the global registry
+            // Upsert each model into both the legacy registry and the directory
             for sm in &service_models {
-                let info = ModelInfo {
-                    name: sm.name.clone(),
-                    parameter_count: sm.metadata.get("parameter_count").and_then(|v| v.as_u64()),
-                    parameter_size: sm
-                        .metadata
-                        .get("parameter_size")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    quantization_level: sm
-                        .metadata
-                        .get("quantization_level")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    family: sm
-                        .metadata
-                        .get("family")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    families: sm
-                        .metadata
-                        .get("families")
-                        .and_then(|v| v.as_array())
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    capabilities: sm.capabilities.iter().map(|c| c.as_str().to_string()).collect(),
-                    specializations: sm.specializations.clone(),
-                    format: sm
-                        .metadata
-                        .get("format")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    size_disk: sm
-                        .metadata
-                        .get("size_disk")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
+                let quantization = sm
+                    .metadata
+                    .get("quantization_level")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let parameter_size = sm
+                    .metadata
+                    .get("parameter_size")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let family = sm
+                    .metadata
+                    .get("family")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let families: Vec<String> = sm
+                    .metadata
+                    .get("families")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let format = sm
+                    .metadata
+                    .get("format")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let size_disk = sm
+                    .metadata
+                    .get("size_disk")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let context_length = sm
+                    .metadata
+                    .get("context_length")
+                    .and_then(|v| v.as_u64());
+                let parameter_count = sm
+                    .metadata
+                    .get("parameter_count")
+                    .and_then(|v| v.as_u64());
+
+                // ORCH-0015: contribute to model directory
+                let fqn = ModelFqn::new(
+                    kind.as_str(),
+                    &stone_name,
+                    &sm.name,
+                    quantization.clone(),
+                );
+                let caps: Vec<Capability> = sm.capabilities.clone();
+                let meta = ModelMetadata {
+                    parameter_count,
+                    parameter_size,
+                    quantization_level: quantization,
+                    family,
+                    families,
+                    format,
+                    size_disk,
                     vram_bytes: sm.vram_bytes,
-                    context_length: sm
-                        .metadata
-                        .get("context_length")
-                        .and_then(|v| v.as_u64()),
+                    context_length,
                 };
-                state.upsert_model(info).await;
+                state
+                    .directory_upsert(fqn, caps, sm.specializations.clone(), meta)
+                    .await;
             }
 
             tracing::info!(
@@ -444,17 +479,23 @@ async fn topology_refresh_loop(
 ///
 /// Returns `None` only if shutdown is requested.
 async fn resolve_stone(state: &AppState, shutdown: &CancellationToken) -> Option<String> {
-    // ── 1. Explicit stone override ───────────────────────────────
+    // ── 1. Explicit stone override (preferred hint, not mandatory) ─
     if let Some(ref explicit) = state.explicit_stone {
-        tracing::info!(endpoint = %explicit, "using explicit stone override");
-        let tended = TendedStone {
-            stone_name: "explicit".to_string(),
-            stone_id: None,
-            endpoint: explicit.clone(),
-            last_seen: chrono::Utc::now(),
-        };
-        state.tend_to(tended).await;
-        return Some(explicit.clone());
+        if orchestrator_common::discovery::check_stone_health(explicit).await {
+            tracing::info!(endpoint = %explicit, "using explicit stone override (healthy)");
+            let tended = TendedStone {
+                stone_name: "explicit".to_string(),
+                stone_id: None,
+                endpoint: explicit.clone(),
+                last_seen: chrono::Utc::now(),
+            };
+            state.tend_to(tended).await;
+            return Some(explicit.clone());
+        }
+        tracing::warn!(
+            endpoint = %explicit,
+            "explicit stone unreachable, falling through to discovery"
+        );
     }
 
     // ── 2. Local Moss (same machine) ──────────────────────────────

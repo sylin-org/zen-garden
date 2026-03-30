@@ -17,7 +17,6 @@ use std::sync::atomic::Ordering;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::app_state::DashboardEvent;
 use crate::domain::types::*;
 use crate::offerings::cloud::CloudProviderConfig;
 use crate::AppState;
@@ -31,12 +30,31 @@ pub struct DashboardStatus {
     pub capabilities: Vec<CapabilityStatus>,
     pub stones: Vec<StoneStatus>,
     pub instances: Vec<InstanceStatus>,
-    pub models: Vec<ModelStatus>,
+    /// Unified model catalog from the ORCH-0015 model directory.
+    pub models: Vec<DirectoryEntry>,
     pub config: OrchestratorConfig,
     pub jobs: Vec<OrchestratorJob>,
     pub recommendations: HashMap<String, String>,
     pub uptime_secs: u64,
     pub version: String,
+}
+
+/// A model in the directory — serializable view of `ModelEntry`.
+/// Includes both metadata and placement (which instances serve it).
+#[derive(Serialize)]
+pub struct DirectoryEntry {
+    pub model: String,
+    pub parameters: Option<String>,
+    pub model_identity: String,
+    pub capabilities: Vec<String>,
+    pub specializations: Vec<String>,
+    pub metadata: ModelMetadata,
+    /// All FQN strings of instances that can serve this model.
+    pub instances: Vec<String>,
+    /// Number of instances.
+    pub instance_count: usize,
+    /// Per-instance placement details (stone, loaded status).
+    pub available_on: Vec<ModelPlacement>,
 }
 
 /// Per-capability status for the overview grid.
@@ -102,21 +120,7 @@ pub struct InstanceStatus {
     pub priority: i32,
 }
 
-/// Per-model status (flat view, cross-offering).
-#[derive(Serialize)]
-pub struct ModelStatus {
-    pub name: String,
-    pub capabilities: Vec<String>,
-    pub specializations: Vec<String>,
-    pub parameter_size: Option<String>,
-    pub quantization_level: Option<String>,
-    pub family: Option<String>,
-    pub size_disk: u64,
-    pub vram_bytes: Option<u64>,
-    pub context_length: Option<u64>,
-    pub available_on: Vec<ModelPlacement>,
-}
-
+/// Where a model is available — one entry per instance serving it.
 #[derive(Serialize)]
 pub struct ModelPlacement {
     pub stone: String,
@@ -130,14 +134,14 @@ pub struct ModelPlacement {
 /// `GET /api/status` — full snapshot for page load.
 pub async fn get_status(State(state): State<AppState>) -> Json<DashboardStatus> {
     let instances = state.instances.read().await;
-    let models = state.models.read().await;
+    let directory = state.directory.read().await;
     let config = state.config.read().await;
     let jobs = state.jobs.read().await;
     let queue_depths = state.queue_depths.read().await;
     let recommended = state.recommended_models.read().await;
 
     // Build capability statuses
-    let capabilities = build_capability_statuses(&instances, &models, &recommended, &state);
+    let capabilities = build_capability_statuses(&instances, &directory, &recommended, &state);
 
     // Build stone statuses (group instances by stone)
     let stones = build_stone_statuses(&instances);
@@ -168,35 +172,8 @@ pub async fn get_status(State(state): State<AppState>) -> Json<DashboardStatus> 
         })
         .collect();
 
-    // Build flat model list with placement info
-    let model_list: Vec<ModelStatus> = models
-        .values()
-        .map(|m| {
-            let available_on: Vec<ModelPlacement> = instances
-                .values()
-                .filter(|i| i.models_available.contains(&m.name))
-                .map(|i| ModelPlacement {
-                    stone: i.stone.name.clone(),
-                    endpoint: i.endpoint.clone(),
-                    offering: i.kind.as_str().to_string(),
-                    loaded: i.models_loaded.iter().any(|lm| lm.name == m.name),
-                })
-                .collect();
-
-            ModelStatus {
-                name: m.name.clone(),
-                capabilities: m.capabilities.clone(),
-                specializations: m.specializations.clone(),
-                parameter_size: m.parameter_size.clone(),
-                quantization_level: m.quantization_level.clone(),
-                family: m.family.clone(),
-                size_disk: m.size_disk,
-                vram_bytes: m.vram_bytes,
-                context_length: m.context_length,
-                available_on,
-            }
-        })
-        .collect();
+    // Build model catalog from directory with placement info
+    let model_list = build_directory_entries(&directory, &instances);
 
     Json(DashboardStatus {
         capabilities,
@@ -401,7 +378,7 @@ pub async fn delete_provider(
 
 fn build_capability_statuses(
     instances: &HashMap<String, ServiceInstance>,
-    models: &HashMap<String, ModelInfo>,
+    directory: &ModelDirectory,
     recommended: &HashMap<String, String>,
     state: &AppState,
 ) -> Vec<CapabilityStatus> {
@@ -412,11 +389,11 @@ fn build_capability_statuses(
 
             // Find all offerings that could serve this capability
             let serving_offerings: Vec<String> = state
-                .registry
+                .providers
                 .kinds()
                 .filter(|kind| {
                     state
-                        .registry
+                        .providers
                         .get(*kind)
                         .map(|o| o.capabilities().contains(cap))
                         .unwrap_or(false)
@@ -433,10 +410,7 @@ fn build_capability_statuses(
             let healthy_count = capable_instances.iter().filter(|i| i.is_routable()).count();
 
             // Count models that have this capability tag
-            let model_count = models
-                .values()
-                .filter(|m| m.capabilities.iter().any(|c| c == cap_str))
-                .count();
+            let model_count = directory.models_with_capability(*cap).len();
 
             // Determine state
             let cap_state = if healthy_count > 0 && model_count > 0 {
@@ -464,6 +438,68 @@ fn build_capability_statuses(
             }
         })
         .collect()
+}
+
+fn build_directory_entries(
+    dir: &ModelDirectory,
+    instances: &HashMap<String, ServiceInstance>,
+) -> Vec<DirectoryEntry> {
+    dir.entries()
+        .values()
+        .map(|entry| {
+            let model_identity = match &entry.parameters {
+                Some(p) => format!("{}|{}", entry.model, p),
+                None => entry.model.clone(),
+            };
+
+            let available_on: Vec<ModelPlacement> = entry
+                .instances
+                .iter()
+                .filter_map(|fqn| {
+                    // Match by: same source (offering kind) AND locator matches
+                    // stone name. Cloud instances use "cloud:{name}" as stone.name
+                    // but the FQN locator is just "{name}", so also try the
+                    // "cloud:{locator}" format.
+                    instances
+                        .values()
+                        .find(|i| {
+                            i.kind.as_str() == fqn.source
+                                && (i.stone.name == fqn.locator
+                                    || i.stone.name == format!("cloud:{}", fqn.locator))
+                        })
+                        .map(|i| ModelPlacement {
+                            stone: i.stone.name.clone(),
+                            endpoint: i.endpoint.clone(),
+                            offering: i.kind.as_str().to_string(),
+                            loaded: i.models_loaded.iter().any(|lm| lm.name == entry.model),
+                        })
+                })
+                .collect();
+
+            DirectoryEntry {
+                model: entry.model.clone(),
+                parameters: entry.parameters.clone(),
+                model_identity,
+                capabilities: entry
+                    .capabilities
+                    .iter()
+                    .map(|c| c.as_str().to_string())
+                    .collect(),
+                specializations: entry.specializations.clone(),
+                metadata: entry.metadata.clone(),
+                instances: entry.instances.iter().map(|fqn| fqn.fqn()).collect(),
+                instance_count: entry.instances.len(),
+                available_on,
+            }
+        })
+        .collect()
+}
+
+/// `GET /api/directory` — model directory snapshot.
+pub async fn get_directory(State(state): State<AppState>) -> Json<Vec<DirectoryEntry>> {
+    let dir = state.directory.read().await;
+    let instances = state.instances.read().await;
+    Json(build_directory_entries(&dir, &instances))
 }
 
 fn build_stone_statuses(instances: &HashMap<String, ServiceInstance>) -> Vec<StoneStatus> {

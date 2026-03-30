@@ -196,7 +196,7 @@ async fn register_offering_gateways(
     self_ip: &str,
     registered: &mut Vec<String>,
 ) {
-    let kinds: Vec<_> = state.registry.kinds().collect();
+    let kinds: Vec<_> = state.providers.kinds().collect();
 
     for kind in kinds {
         let offering_name = kind.as_str();

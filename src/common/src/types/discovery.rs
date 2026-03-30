@@ -155,7 +155,16 @@ impl TopologyServiceEntry {
             }
             .to_string(),
             role: offering.orchestration.as_ref().map(|o| o.role.to_string()),
-            ports: offering.location.port_map.clone(),
+            // Always include the actual port. If port_map was populated
+            // (new adoptions), use it. Otherwise synthesize from location.port
+            // so topology consumers always know the actual service port.
+            ports: if offering.location.port_map.is_empty() && offering.location.port > 0 {
+                let mut pm = std::collections::HashMap::new();
+                pm.insert("default".to_string(), offering.location.port);
+                pm
+            } else {
+                offering.location.port_map.clone()
+            },
         }
     }
 

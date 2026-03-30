@@ -439,12 +439,18 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         &manifest.category,
                         manifest.connection.as_ref(),
                     );
+                    let detected_port = port.unwrap_or_else(|| manifest.default_host_port());
                     let location = garden_common::OfferingLocation {
                         host: "localhost".to_string(),
-                        port: port.unwrap_or_else(|| manifest.default_host_port()),
+                        port: detected_port,
                         protocol,
                         agnostic_port: None,
-                        port_map: std::collections::HashMap::new(),
+                        // Propagate detected port so topology consumers know the actual port
+                        port_map: {
+                            let mut pm = std::collections::HashMap::new();
+                            pm.insert("default".to_string(), detected_port);
+                            pm
+                        },
                     };
 
                     // Get control config from adopted mode

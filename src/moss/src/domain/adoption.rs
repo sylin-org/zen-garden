@@ -190,7 +190,22 @@ pub async fn adopt_offering_container(
             port: actual_port,
             protocol,
             agnostic_port: None,
-            port_map: std::collections::HashMap::new(),
+            // Propagate detected ports so topology consumers know the actual port
+            // (PORT-0001: only ports that differ from manifest defaults).
+            port_map: {
+                let mut pm = std::collections::HashMap::new();
+                // Always include "default" so orchestrators can find the service
+                pm.insert("default".to_string(), actual_port);
+                // Include any named ports from the manifest with their actual bindings
+                for (port_name, (template_host, container_port)) in &template.ports {
+                    let host_port = docker_port_map
+                        .get(container_port)
+                        .copied()
+                        .unwrap_or(*template_host);
+                    pm.insert(port_name.clone(), host_port);
+                }
+                pm
+            },
         },
         mode_data: OfferingModeData::Managed(ManagedData {
             resources: None,

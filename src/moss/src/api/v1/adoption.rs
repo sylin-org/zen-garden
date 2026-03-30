@@ -157,15 +157,20 @@ pub async fn adopt_offering_v1(
         &offering_def.category,
         offering_def.connection.as_ref(),
     );
+    let detected_port = req.port.unwrap_or_else(|| offering_def.default_host_port());
     let location = OfferingLocation {
         host: req
             .location
             .clone()
             .unwrap_or_else(|| "localhost".to_string()),
-        port: req.port.unwrap_or_else(|| offering_def.default_host_port()),
+        port: detected_port,
         protocol: offering_protocol,
         agnostic_port: None,
-        port_map: std::collections::HashMap::new(),
+        port_map: {
+            let mut pm = std::collections::HashMap::new();
+            pm.insert("default".to_string(), detected_port);
+            pm
+        },
     };
 
     let detector = std::sync::Arc::new(
@@ -410,7 +415,13 @@ pub async fn borrow_service_v1(
         port,
         protocol,
         agnostic_port: None,
-        port_map: std::collections::HashMap::new(),
+        port_map: {
+            let mut pm = std::collections::HashMap::new();
+            if port > 0 {
+                pm.insert("default".to_string(), port);
+            }
+            pm
+        },
     };
 
     let unified = Offering {

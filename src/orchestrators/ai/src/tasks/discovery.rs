@@ -191,7 +191,12 @@ async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
                 for topo_stone in &stones {
                     let (vram_total, gpu_name) = extract_hw_from_caps(&topo_stone.capabilities);
 
-                    let service_port = kind.default_service_port().unwrap_or(0);
+                    // Prefer actual detected port from topology, fall back to manifest default
+                    let service_port = topo_stone
+                        .ports
+                        .get("default")
+                        .copied()
+                        .unwrap_or_else(|| kind.default_service_port().unwrap_or(0));
                     let endpoint = format!(
                         "http://{}:{}",
                         topo_stone.ip, service_port

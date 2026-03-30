@@ -24,6 +24,9 @@ pub struct TopologyOfferingStone {
     pub fqn: OfferingFqn,
     /// Full hardware capabilities from the chirp payload.
     pub capabilities: Option<HardwareCapabilities>,
+    /// Actual host ports from the topology (e.g., `{"default": 8000}`).
+    /// Empty when ports match manifest defaults.
+    pub ports: std::collections::HashMap<String, u16>,
 }
 
 impl TopologyOfferingStone {
@@ -94,6 +97,7 @@ pub async fn query_topology_for_offering(
                     moss_port: entry.address.port,
                     fqn: svc.name.clone(),
                     capabilities: entry.capabilities.clone(),
+                    ports: svc.ports.clone(),
                 });
             }
         }

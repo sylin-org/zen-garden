@@ -325,6 +325,100 @@ providers come online/offline. They reference each other:
 
 ---
 
+---
+
+## Migration Notes
+
+### What Exists Today (for implementer context)
+
+The AI orchestrator crate is at `src/orchestrators/ai/`. Key files:
+
+| File | Current Role | Changes Needed |
+|------|-------------|----------------|
+| `src/domain/types.rs` | `ModelInfo`, `ServiceInstance`, `Capability`, `OfferingKind` | Add `ModelFqn`, `ModelFilter`. `ModelInfo` becomes `ModelEntry`. |
+| `src/app_state.rs` | `models: HashMap<String, ModelInfo>`, `instances: HashMap<String, ServiceInstance>` | Replace `models` with `ModelDirectory`. Keep `instances`. |
+| `src/domain/routing.rs` | `select_instance()` cross-references models + instances + tiers | Rewrite to read from directory. Accept `ModelFilter` for pin resolution. |
+| `src/domain/recommendation.rs` | Scores models per capability | Read from directory. Return `ModelFilter` not model name. |
+| `src/api/proxy.rs` | Extracts model name, calls `select_instance()` | Handle capability names as model field. Resolve `ModelFilter` pins. |
+| `src/api/dashboard.rs` | `ModelStatus` in `/api/status` response | Derive from directory. `CapabilityStatus` from directory scan. |
+| `src/tasks/discovery.rs` | `profile_instance()` calls enumerate, registers models | Contribute to directory via `directory.upsert()`. |
+| `src/tasks/cloud_sync.rs` | Registers cloud models separately | Same path as local: enumerate → directory.upsert(). |
+| `src/offerings/cloud/types.rs` | `CloudProviderStore` with `cached_models` | Support multiple named keys per provider. `locator` = key name. |
+| `src/offerings/cloud/openai.rs` | Only handles `OfferingKind::OpenAi` | Used for any OpenAI-compatible provider (Google, Cohere, etc.) |
+| `src/domain/fitness.rs` | `GpuMatrix` keyed by `(stone, model)` | Replace with `BenchmarkOverlay` keyed by `ModelFqn`. |
+
+### Files That Don't Change
+
+- `src/catalog/traits.rs` — `Offering` trait, `ServiceModel` type (providers still enumerate through this)
+- `src/offerings/ollama/` — Ollama adapter (enumerate returns models, unchanged)
+- `src/offerings/infinity/` — Infinity adapter (same)
+- `src/offerings/openedai_speech/` — OpenedAI Speech adapter (same)
+- `src/infra/` — persistence, events (unchanged)
+- `src/tasks/health_check.rs` — probes instances (unchanged, operates on instance registry)
+- `src/tasks/gateway_announce.rs` — gateway registration (unchanged)
+
+### Dashboard Impact
+
+The React frontend at `src/orchestrators/ai/dashboard/` needs updates:
+
+| Page | Change |
+|------|--------|
+| Overview | Capability status from directory scan (simpler logic) |
+| CapabilityDetail | Model list from directory. All providers unified. |
+| ServiceDetail | Model list filtered by source (provider). |
+| CloudList/Detail | Support multiple keys per provider. |
+| Settings | Pins store `ModelFilter` strings. |
+| TryIt | Model selector from directory. |
+
+### Current Test Coverage
+
+80 domain tests exist (routing, demand, fitness, tiering, placement,
+recommendation, reconciliation, lease, metrics, gpu_catalog). These
+will need updating as the routing and fitness types change. The
+algorithms (demand decay, VRAM tiering, placement bin-packing) are
+unaffected — only their input types change.
+
+### Cloud Provider Key Architecture
+
+Currently: one API key per provider kind in `providers.json`.
+```json
+[{"kind": "google", "name": "google", "api_key": "...", "base_url": "..."}]
+```
+
+After: multiple named keys per provider.
+```json
+[
+  {"kind": "google", "name": "personal", "api_key": "...", "base_url": "..."},
+  {"kind": "openai", "name": "work", "api_key": "...", "base_url": "..."},
+  {"kind": "openai", "name": "personal", "api_key": "...", "base_url": "..."}
+]
+```
+
+The `name` field becomes the `locator` in MFQN. The `kind` field
+determines which adapter handles it. Multiple entries with the same
+`kind` but different `name` create separate instances in the
+directory, each with their own models and benchmark scores.
+
+The `OfferingRegistry` currently stores one adapter per `OfferingKind`.
+With multiple keys, it needs one adapter per `(kind, name)` pair —
+or a single adapter per kind that dispatches by locator at proxy time.
+
+### Verification Plan
+
+After implementation, verify against the live garden:
+
+1. **Directory populated**: all Ollama models (22), Infinity (1),
+   OpenedAI Speech (2), Google cloud (7) appear in the directory
+2. **Capability status**: chat=GREEN, embed=GREEN, speak=GREEN,
+   translate=YELLOW (provider exists, no models), imagine=GRAY
+3. **Routing**: `model: "chat"` resolves to pinned/recommended model
+4. **MFQN parsing**: `"ollama|stone-azure-pool|qwen3.5:9b|Q4_K_M".parse::<ModelFqn>()` works
+5. **Pin with filter**: pinning `"qwen3.5:9b"` load-balances across
+   3 stones. Pinning full FQN routes to one stone.
+6. **Dashboard**: all providers' models visible in capability pages
+
+---
+
 ## Consequences
 
 ### Positive

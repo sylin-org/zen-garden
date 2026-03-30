@@ -12,14 +12,12 @@ use tracing_subscriber::EnvFilter;
 use std::sync::Arc;
 
 use zen_garden_ai_orchestrator::api;
-use zen_garden_ai_orchestrator::catalog::OfferingRegistry;
+use zen_garden_ai_orchestrator::catalog::ProviderRegistry;
 use zen_garden_ai_orchestrator::domain::types::OfferingKind;
 use zen_garden_ai_orchestrator::infra::persistence;
 use zen_garden_ai_orchestrator::offerings::cloud::CloudProviderStore;
-use zen_garden_ai_orchestrator::offerings::infinity::InfinityOffering;
-use zen_garden_ai_orchestrator::offerings::libretranslate::LibreTranslateOffering;
-use zen_garden_ai_orchestrator::offerings::ollama::OllamaOffering;
-use zen_garden_ai_orchestrator::offerings::openedai_speech::OpenedaiSpeechOffering;
+use zen_garden_ai_orchestrator::offerings::ollama::OllamaClient;
+use zen_garden_ai_orchestrator::providers;
 use zen_garden_ai_orchestrator::tasks;
 use zen_garden_ai_orchestrator::AppState;
 
@@ -77,23 +75,24 @@ async fn main() -> Result<()> {
     // ── Config ──────────────────────────────────────────────────────
     let config = persistence::load_config(&cli.data_dir).await;
 
-    // ── Offering Registry ───────────────────────────────────────────
-    let mut registry = OfferingRegistry::new();
-    registry.register(Arc::new(OllamaOffering::new()))?;
-    registry.register(Arc::new(LibreTranslateOffering::new()))?;
-    registry.register(Arc::new(InfinityOffering::new()))?;
-    registry.register(Arc::new(OpenedaiSpeechOffering::new()))?;
+    // ── Provider Registry ───────────────────────────────────────────
+    let mut providers = ProviderRegistry::new();
+    providers.register(Arc::new(providers::ollama::OllamaProvider::new()));
+    providers.register(Arc::new(providers::openai::OpenAiProvider::new()));
+    providers.register(Arc::new(providers::anthropic::AnthropicProvider::new()));
+    providers.register(Arc::new(providers::google::GoogleProvider::new()));
+    providers.register(Arc::new(providers::infinity::InfinityProvider::new()));
+    providers.register(Arc::new(providers::openedai_speech::OpenedaiSpeechProvider::new()));
+    providers.register(Arc::new(providers::libretranslate::LibreTranslateProvider::new()));
 
     // ── Cloud Providers ─────────────────────────────────────────────
     let cloud_store = CloudProviderStore::load(&cli.data_dir).await;
-    for offering in cloud_store.create_offerings() {
-        if let Err(e) = registry.register(offering) {
-            tracing::warn!(error = %e, "failed to register cloud provider");
-        }
-    }
 
-    let registered_count = registry.len();
-    tracing::info!(offerings = registered_count, "offering registry initialized");
+    let provider_count = providers.len();
+    tracing::info!(providers = provider_count, "provider registry initialized");
+
+    // ── Ollama Client ───────────────────────────────────────────────
+    let ollama_client = OllamaClient::default();
 
     // ── Channels ────────────────────────────────────────────────────
     let (metrics_tx, metrics_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -106,7 +105,8 @@ async fn main() -> Result<()> {
         cli.dashboard_port,
         cli.data_dir.clone(),
         config,
-        registry,
+        providers,
+        ollama_client,
         cloud_store,
         shutdown.clone(),
         metrics_tx,
@@ -170,6 +170,7 @@ async fn main() -> Result<()> {
         .route("/api/settings", axum::routing::get(api::dashboard::get_settings))
         .route("/api/settings", axum::routing::post(api::dashboard::post_settings))
         .route("/api/jobs", axum::routing::get(api::dashboard::get_jobs))
+        .route("/api/directory", axum::routing::get(api::dashboard::get_directory))
         .route("/api/defaults", axum::routing::get(api::dashboard::get_defaults))
         .route("/api/defaults", axum::routing::post(api::dashboard::post_defaults))
         .route("/api/providers", axum::routing::get(api::dashboard::get_providers))
@@ -184,6 +185,12 @@ async fn main() -> Result<()> {
         .route("/api/services/{offering}/load", axum::routing::post(api::service_actions::load_model))
         .route("/api/services/{offering}/unload", axum::routing::post(api::service_actions::unload_model))
         .route("/api/services/{offering}/models/{model}", axum::routing::delete(api::service_actions::delete_model))
+        // Unified inference API (ORCH-0016)
+        .route("/v1/chat/completions", axum::routing::post(api::unified::chat_completions))
+        .route("/v1/embeddings", axum::routing::post(api::unified::embeddings))
+        .route("/v1/audio/speech", axum::routing::post(api::unified::speech))
+        .route("/v1/audio/transcriptions", axum::routing::post(api::unified::transcriptions))
+        .route("/v1/models", axum::routing::get(api::unified::models))
         .with_state(state.clone())
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))
@@ -209,16 +216,7 @@ async fn main() -> Result<()> {
 
     let proxy_state = api::proxy::ProxyState {
         app: state.clone(),
-        client: state
-            .registry
-            .get(OfferingKind::Ollama)
-            .and_then(|o| {
-                // Downcast to OllamaOffering to get the shared client.
-                // The proxy needs direct access to OllamaClient for forwarding.
-                let any = o.as_any();
-                any.downcast_ref::<OllamaOffering>().map(|oll| oll.client().clone())
-            })
-            .unwrap_or_default(),
+        client: state.ollama_client.clone(),
     };
 
     let proxy_router = axum::Router::new()
@@ -250,8 +248,8 @@ async fn main() -> Result<()> {
 
     let mut generic_proxy_handles = Vec::new();
     for kind in generic_proxy_kinds {
-        // Only start if the adapter is registered AND the offering has a proxy port
-        if state.registry.get(kind).is_none() {
+        // Only start if the provider is registered AND the offering has a proxy port
+        if state.providers.get(kind).is_none() {
             continue;
         }
         let port = match kind.proxy_port() {

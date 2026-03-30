@@ -1,9 +1,8 @@
 //! Zen Garden AI Orchestrator — multi-offering AI service orchestration.
 //!
-//! Architecture: monolith of bounded contexts. Each offering type is a
-//! self-contained adapter implementing the `Offering` trait. Shared
-//! infrastructure (routing, demand, fitness, placement) operates on
-//! generic `ServiceInstance` and `Capability` types.
+//! Architecture: one `Provider` trait per AI service type. Each provider
+//! covers lifecycle (probe, enumerate) and inference (infer, stream,
+//! embed, speak, transcribe). Protocol-specific clients live in `offerings/`.
 
 pub mod api;
 pub mod app_state;
@@ -11,6 +10,7 @@ pub mod catalog;
 pub mod domain;
 pub mod infra;
 pub mod offerings;
+pub mod providers;
 pub mod tasks;
 
 pub use app_state::AppState;

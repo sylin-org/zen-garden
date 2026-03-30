@@ -4,15 +4,10 @@
 //! `CloudProviderStore` manages the collection, persisting to `providers.json`.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::Offering;
 use crate::domain::types::{Capability, OfferingKind};
-
-use super::anthropic::AnthropicProvider;
-use super::openai::OpenAiProvider;
 
 // ── Provider Config ─────────────────────────────────────────────
 
@@ -149,42 +144,4 @@ impl CloudProviderStore {
         &self.providers
     }
 
-    /// Create `Offering` trait objects for all enabled providers.
-    ///
-    /// Each enabled provider becomes an adapter that reads its API key
-    /// from the store at probe/proxy time. The adapters are always
-    /// registered; they report unhealthy when no key is configured.
-    pub fn create_offerings(&self) -> Vec<Arc<dyn Offering>> {
-        let mut offerings: Vec<Arc<dyn Offering>> = Vec::new();
-        let mut seen_kinds = std::collections::HashSet::new();
-
-        for config in &self.providers {
-            if !config.enabled {
-                continue;
-            }
-            // One adapter per offering kind (not per provider name)
-            if seen_kinds.contains(&config.kind) {
-                continue;
-            }
-
-            match config.kind {
-                OfferingKind::OpenAi => {
-                    seen_kinds.insert(config.kind);
-                    offerings.push(Arc::new(OpenAiProvider::new(config.clone())));
-                }
-                OfferingKind::Anthropic => {
-                    seen_kinds.insert(config.kind);
-                    offerings.push(Arc::new(AnthropicProvider::new(config.clone())));
-                }
-                other => {
-                    tracing::warn!(
-                        kind = %other,
-                        "unsupported cloud provider kind, skipping"
-                    );
-                }
-            }
-        }
-
-        offerings
-    }
 }

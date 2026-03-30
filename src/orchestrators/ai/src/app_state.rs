@@ -3,7 +3,8 @@
 //! Follows the Moss pattern: every field is `Arc` or cheap-to-clone.
 //! Mutation goes through methods that acquire write locks.
 
-use crate::catalog::OfferingRegistry;
+use crate::catalog::ProviderRegistry;
+use crate::offerings::ollama::OllamaClient;
 use crate::domain::advisor::TopologyAdvice;
 use crate::domain::demand::DemandLedger;
 use crate::domain::fitness::BenchmarkRun;
@@ -31,16 +32,21 @@ pub struct AppState {
     pub dashboard_port: u16,
     pub tended_stone: Arc<RwLock<Option<TendedStone>>>,
 
-    // ── Offering Registry ──
-    pub registry: Arc<OfferingRegistry>,
+    // ── Provider Registry ──
+    pub providers: Arc<ProviderRegistry>,
+
+    // ── Ollama Client (for proxy and service actions) ──
+    pub ollama_client: OllamaClient,
 
     // ── Cloud Provider Store ──
     pub cloud_store: Arc<RwLock<CloudProviderStore>>,
 
     // ── Instance Registry ──
     pub instances: Arc<RwLock<HashMap<String, ServiceInstance>>>,
-    pub models: Arc<RwLock<HashMap<String, ModelInfo>>>,
     pub tiers: Arc<RwLock<Vec<Tier>>>,
+
+    // ── Model Directory (ORCH-0015) ──
+    pub directory: Arc<RwLock<ModelDirectory>>,
 
     // ── Routing ──
     pub leases: Arc<RwLock<LeaseManager>>,
@@ -91,7 +97,8 @@ impl AppState {
         dashboard_port: u16,
         data_dir: String,
         config: OrchestratorConfig,
-        registry: OfferingRegistry,
+        providers: ProviderRegistry,
+        ollama_client: OllamaClient,
         cloud_store: CloudProviderStore,
         shutdown: CancellationToken,
         metrics_tx: mpsc::UnboundedSender<MetricEvent>,
@@ -107,11 +114,12 @@ impl AppState {
             explicit_stone,
             dashboard_port,
             tended_stone: Arc::new(RwLock::new(None)),
-            registry: Arc::new(registry),
+            providers: Arc::new(providers),
+            ollama_client,
             cloud_store: Arc::new(RwLock::new(cloud_store)),
             instances: Arc::new(RwLock::new(HashMap::new())),
-            models: Arc::new(RwLock::new(HashMap::new())),
             tiers: Arc::new(RwLock::new(Vec::new())),
+            directory: Arc::new(RwLock::new(ModelDirectory::new())),
             leases: Arc::new(RwLock::new(LeaseManager::new())),
             queue_depths: Arc::new(RwLock::new(HashMap::new())),
             config: Arc::new(RwLock::new(config)),
@@ -296,18 +304,30 @@ impl AppState {
 
     // ── Model Registry ───────────────────────────────────────────
 
-    pub async fn upsert_model(&self, info: ModelInfo) {
+    // ── Model Directory (ORCH-0015) ─────────────────────────────
+
+    /// Contribute a model to the directory. Called by discovery and cloud_sync
+    /// after enumerating models from an offering.
+    pub async fn directory_upsert(
+        &self,
+        fqn: ModelFqn,
+        capabilities: Vec<Capability>,
+        specializations: Vec<String>,
+        metadata: ModelMetadata,
+    ) {
         {
-            let mut models = self.models.write().await;
-            models.insert(info.name.clone(), info);
+            let mut dir = self.directory.write().await;
+            dir.upsert(fqn, capabilities, specializations, metadata);
         }
         self.refresh_recommendations().await;
     }
 
-    pub async fn remove_model(&self, name: &str) {
+    /// Remove all models from a provider (source + locator) from the directory.
+    /// Called when an instance goes offline.
+    pub async fn directory_remove_provider(&self, source: &str, locator: &str) {
         {
-            let mut models = self.models.write().await;
-            models.remove(name);
+            let mut dir = self.directory.write().await;
+            dir.remove_provider(source, locator);
         }
         self.refresh_recommendations().await;
     }
@@ -431,15 +451,17 @@ impl AppState {
         "tools",
         "thinking",
         "embedding",
-        "imagine",
+        "image",
+        "video",
         "transcribe",
-        "speak",
+        "speech",
+        "music",
         "rerank",
         "translate",
     ];
 
     pub async fn refresh_recommendations(&self) {
-        let models = self.models.read().await.clone();
+        let models = self.directory.read().await.clone();
         let instances = self.instances.read().await.clone();
         let gpu_matrix = self.benchmark_run.read().await.gpu_matrix.clone();
         let pins = self.config.read().await.features.pins.clone();

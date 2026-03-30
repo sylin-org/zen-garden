@@ -5,11 +5,27 @@
 //! Inference forwarding has no timeout — streams live until disconnect.
 
 use super::types::*;
-use crate::domain::types::{LoadedModel, ModelInfo};
+use crate::domain::types::LoadedModel;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use reqwest::Client;
 use std::time::Duration;
+
+/// Internal model info from full profiling — not exposed outside this module.
+pub struct OllamaModelInfo {
+    pub name: String,
+    pub parameter_count: Option<u64>,
+    pub parameter_size: Option<String>,
+    pub quantization_level: Option<String>,
+    pub family: Option<String>,
+    pub families: Vec<String>,
+    pub capabilities: Vec<String>,
+    pub specializations: Vec<String>,
+    pub format: Option<String>,
+    pub size_disk: u64,
+    pub vram_bytes: Option<u64>,
+    pub context_length: Option<u64>,
+}
 
 /// Maximum bytes of error body to include in diagnostics.
 const ERROR_BODY_MAX: usize = 512;
@@ -373,7 +389,7 @@ impl OllamaClient {
     ) -> Result<(
         Vec<String>,
         Vec<LoadedModel>,
-        Vec<ModelInfo>,
+        Vec<OllamaModelInfo>,
         Option<String>,
     )> {
         // Step 1: parallel inventory + load state + version
@@ -441,7 +457,7 @@ impl OllamaClient {
             // an actual load provides a real measurement.
             let vram_bytes = loaded_vram.get(name.as_str()).copied();
 
-            model_infos.push(ModelInfo {
+            model_infos.push(OllamaModelInfo {
                 name: name.clone(),
                 parameter_count: param_count,
                 parameter_size: param_size,

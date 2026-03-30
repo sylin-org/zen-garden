@@ -1,80 +1,146 @@
-//! The Offering trait — core abstraction between shared infrastructure
-//! and service-specific adapters.
+//! Provider trait — the single abstraction for all AI service providers.
 //!
-//! See `docs/research/04-offering-trait-design.md` for design rationale.
+//! Every provider (Ollama, OpenAI, Anthropic, Google, Infinity, OpenedAI Speech,
+//! LibreTranslate) implements this one trait. It covers lifecycle (probe, enumerate)
+//! and inference (infer, stream, embed, speak, transcribe).
+//!
+//! No separate Offering/InferenceAdapter split. One trait, one registry, one path.
 
+use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use anyhow::Result;
-use bytes::Bytes;
-use futures_util::Stream;
-
-use axum::http;
-
-use std::any::Any;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::types::{Capability, OfferingKind, ServiceInstance};
 
+use super::inference::{
+    BoxStream, EmbedRequest, EmbedResponse, InferenceChunk, InferenceRequest, InferenceResponse,
+    SpeechRequest, SpeechResponse, TranscribeRequest, TranscribeResponse,
+};
+
 /// Boxed future for object-safe async methods.
-/// The project removed `async-trait` in ARCH-0007; boxed futures are
-/// the explicit replacement for dyn-compatible async methods.
 pub type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
-/// A type of AI service the orchestrator can discover, probe, and route to.
+// ── Provider Context ────────────────────────────────────────────
+
+/// Everything a provider needs for a single operation.
 ///
-/// Each offering implementation encapsulates all service-specific protocol
-/// knowledge: HTTP endpoints, response shapes, streaming formats, model
-/// management commands. The orchestrator's domain layer never sees these
-/// details — it operates on `ServiceInstance` and `Capability` exclusively.
-pub trait Offering: Send + Sync + 'static {
-    /// Unique type identifier.
-    fn offering_type(&self) -> OfferingKind;
+/// Built by the caller (unified API, cloud_sync, provider_test) from
+/// routing decisions and cloud config. Providers are stateless — all
+/// per-request state lives here.
+#[derive(Debug, Clone)]
+pub struct ProviderContext {
+    /// Target endpoint URL.
+    pub endpoint: String,
+    /// Model name (set for inference, `None` for probe/enumerate).
+    pub model: Option<String>,
+    /// API key (set for cloud providers, `None` for local).
+    pub api_key: Option<String>,
+}
 
-    /// Downcast support for accessing concrete offering types.
-    fn as_any(&self) -> &dyn Any;
+// ── Provider Trait ──────────────────────────────────────────────
 
-    /// AI capabilities this offering type can provide.
+/// The single abstraction for all AI service providers.
+///
+/// Each provider implements only the methods it supports. Default impls
+/// return "not supported" for inference methods.
+pub trait Provider: Send + Sync + 'static {
+    /// Provider type identifier.
+    fn kind(&self) -> OfferingKind;
+
+    /// AI capabilities this provider can serve.
     fn capabilities(&self) -> &[Capability];
 
-    /// How to discover instances (port probe, topology filter, configured).
-    fn discovery_config(&self) -> DiscoveryConfig;
+    /// How to discover instances of this provider.
+    fn discovery(&self) -> DiscoveryConfig;
 
-    /// Probe an endpoint for liveness. Returns service metadata if healthy.
-    fn probe(&self, endpoint: &str) -> BoxFuture<'_, Result<ProbeResult>>;
+    // ── Lifecycle ───────────────────────────────────────────────
+
+    /// Probe an endpoint for liveness.
+    fn probe(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<ProbeResult>>;
 
     /// Enumerate available models/resources on a live instance.
-    fn enumerate(&self, endpoint: &str) -> BoxFuture<'_, Result<Vec<ServiceModel>>>;
+    fn enumerate(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<Vec<ServiceModel>>>;
 
-    /// Estimate VRAM consumption for a model on this offering.
-    /// Static estimate from model metadata — not a live query.
-    /// Returns `None` if VRAM is not applicable (CPU-only, cloud).
+    // ── Inference (defaults return "not supported") ─────────────
+
+    /// Non-streaming chat inference.
+    fn infer(
+        &self,
+        ctx: &ProviderContext,
+        req: InferenceRequest,
+    ) -> BoxFuture<'_, Result<InferenceResponse>> {
+        let _ = (ctx, req);
+        Box::pin(async { anyhow::bail!("chat inference not supported") })
+    }
+
+    /// Streaming chat inference.
+    fn infer_stream(
+        &self,
+        ctx: &ProviderContext,
+        req: InferenceRequest,
+    ) -> BoxFuture<'_, Result<BoxStream<'static, Result<InferenceChunk>>>> {
+        let _ = (ctx, req);
+        Box::pin(async { anyhow::bail!("streaming inference not supported") })
+    }
+
+    /// Text embedding.
+    fn embed(
+        &self,
+        ctx: &ProviderContext,
+        req: EmbedRequest,
+    ) -> BoxFuture<'_, Result<EmbedResponse>> {
+        let _ = (ctx, req);
+        Box::pin(async { anyhow::bail!("embeddings not supported") })
+    }
+
+    /// Text-to-speech.
+    fn speak(
+        &self,
+        ctx: &ProviderContext,
+        req: SpeechRequest,
+    ) -> BoxFuture<'_, Result<SpeechResponse>> {
+        let _ = (ctx, req);
+        Box::pin(async { anyhow::bail!("text-to-speech not supported") })
+    }
+
+    /// Speech-to-text.
+    fn transcribe(
+        &self,
+        ctx: &ProviderContext,
+        req: TranscribeRequest,
+    ) -> BoxFuture<'_, Result<TranscribeResponse>> {
+        let _ = (ctx, req);
+        Box::pin(async { anyhow::bail!("transcription not supported") })
+    }
+
+    // ── Optional ────────────────────────────────────────────────
+
+    /// Estimate VRAM consumption for a model. `None` if not applicable.
     fn vram_estimate(&self, model: &ServiceModel) -> Option<u64> {
         let _ = model;
         None
     }
 
-    /// Forward a capability request to the instance's native API.
-    fn proxy(
-        &self,
-        endpoint: &str,
-        capability: Capability,
-        request: ProxyRequest,
-    ) -> BoxFuture<'_, Result<ProxyResponse>>;
-
-    /// Benchmark a specific model's capability on an instance.
-    /// Default: returns empty samples (offering does not support benchmarking yet).
+    /// Benchmark a model's capability on an instance.
     fn benchmark(
         &self,
-        endpoint: &str,
+        ctx: &ProviderContext,
         model: &str,
         capability: Capability,
     ) -> BoxFuture<'_, Result<BenchmarkSample>> {
-        let _ = (endpoint, model, capability);
-        Box::pin(async move { Ok(BenchmarkSample { samples: vec![], capability }) })
+        let _ = (ctx, model, capability);
+        Box::pin(async move {
+            Ok(BenchmarkSample {
+                samples: vec![],
+                capability,
+            })
+        })
     }
 
     /// Sync a resource from one instance to another.
-    /// Default: not supported.
     fn sync_resource(
         &self,
         resource: &str,
@@ -84,77 +150,83 @@ pub trait Offering: Send + Sync + 'static {
         let _ = (resource, from, to);
         Box::pin(async {
             Ok(SyncProgress::Failed {
-                reason: "sync not supported for this offering".to_string(),
+                reason: "sync not supported".to_string(),
             })
         })
     }
 }
 
-// ── Trait Support Types ─────────────────────────────────────────
+// ── Provider Registry ───────────────────────────────────────────
 
-/// How the orchestrator discovers instances of this offering type.
+/// Single registry for all providers. Replaces OfferingRegistry + AdapterRegistry.
+pub struct ProviderRegistry {
+    providers: HashMap<OfferingKind, Arc<dyn Provider>>,
+}
+
+impl ProviderRegistry {
+    pub fn new() -> Self {
+        Self {
+            providers: HashMap::new(),
+        }
+    }
+
+    pub fn register(&mut self, provider: Arc<dyn Provider>) {
+        let kind = provider.kind();
+        self.providers.insert(kind, provider);
+    }
+
+    pub fn get(&self, kind: OfferingKind) -> Option<&Arc<dyn Provider>> {
+        self.providers.get(&kind)
+    }
+
+    pub fn kinds(&self) -> impl Iterator<Item = OfferingKind> + '_ {
+        self.providers.keys().copied()
+    }
+
+    pub fn all(&self) -> impl Iterator<Item = &Arc<dyn Provider>> {
+        self.providers.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.providers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty()
+    }
+}
+
+// ── Support Types ───────────────────────────────────────────────
+
+/// How the orchestrator discovers instances of this provider.
 #[derive(Debug, Clone)]
 pub enum DiscoveryConfig {
-    /// Probe a well-known port on discovered stones.
-    PortProbe { default_port: u16 },
     /// Filter Moss topology by offering name.
     TopologyFilter { offering_name: String },
-    /// Manually configured endpoint (cloud providers, HuggingFace).
+    /// Manually configured endpoint (cloud providers).
     Configured,
 }
 
 /// Result of a successful health probe.
 #[derive(Debug, Clone)]
 pub struct ProbeResult {
-    /// Service version string.
     pub version: Option<String>,
-    /// Capabilities confirmed by this specific instance.
     pub capabilities: Vec<Capability>,
-    /// Real-time VRAM free bytes (ComfyUI provides this; Ollama does not).
     pub vram_free_bytes: Option<u64>,
-    /// Offering-specific metadata (opaque to domain).
     pub metadata: serde_json::Value,
 }
 
 /// A model or resource available on a service instance.
 #[derive(Debug, Clone)]
 pub struct ServiceModel {
-    /// Model identifier (e.g., "llama3.2:3b", "flux-dev.safetensors").
     pub name: String,
-    /// Capabilities this specific model supports.
     pub capabilities: Vec<Capability>,
-    /// Specialization tags derived from model name/metadata.
     pub specializations: Vec<String>,
-    /// VRAM consumption when loaded (bytes). None if unknown.
     pub vram_bytes: Option<u64>,
-    /// Offering-specific model metadata.
     pub metadata: serde_json::Value,
 }
 
-/// Incoming proxy request — the raw HTTP request from the client.
-pub struct ProxyRequest {
-    pub method: http::Method,
-    pub path: String,
-    pub headers: http::HeaderMap,
-    pub body: ProxyBody,
-}
-
-/// Proxy response — the raw HTTP response from the offering instance.
-pub struct ProxyResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: ProxyBody,
-}
-
-/// Proxy body — either a complete buffer or a byte stream.
-pub enum ProxyBody {
-    /// Complete response (JSON, image bytes, audio bytes).
-    Complete(Vec<u8>),
-    /// Streaming response (Ollama NDJSON, SSE progress, chunked audio).
-    Stream(Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>>),
-}
-
-/// A single benchmark measurement for one capability on one instance.
+/// A single benchmark measurement.
 #[derive(Debug, Clone)]
 pub struct BenchmarkSample {
     pub samples: Vec<Sample>,
@@ -168,8 +240,6 @@ pub struct Sample {
     pub tokens_per_second: f64,
     pub total_duration_ms: u64,
 }
-
-use serde::{Deserialize, Serialize};
 
 /// Progress/completion of a resource sync operation.
 #[derive(Debug, Clone)]

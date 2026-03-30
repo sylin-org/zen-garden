@@ -1,14 +1,19 @@
-//! Offering abstraction boundary.
+//! Provider abstraction boundary.
 //!
-//! Defines the `Offering` trait and the `OfferingRegistry`. This module
-//! lives between the domain layer (which never imports it) and the
-//! offerings layer (which implements the trait).
+//! Defines the `Provider` trait, canonical inference types, and the
+//! `ProviderRegistry`. This module lives between the domain layer
+//! (which never imports it) and the providers layer (which implements
+//! the trait).
 
-pub mod registry;
+pub mod inference;
 pub mod traits;
 
-pub use registry::OfferingRegistry;
+pub use inference::{
+    BoxStream, ChatMessage, ChunkChoice, EmbedRequest, EmbedResponse, EmbeddingData,
+    InferenceChunk, InferenceChoice, InferenceRequest, InferenceResponse, SpeechAudio,
+    SpeechRequest, SpeechResponse, TranscribeRequest, TranscribeResponse, Usage,
+};
 pub use traits::{
-    BenchmarkSample, BoxFuture, DiscoveryConfig, Offering, ProbeResult, ProxyBody, ProxyRequest,
-    ProxyResponse, Sample, ServiceModel, SyncProgress,
+    BenchmarkSample, BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext,
+    ProviderRegistry, Sample, ServiceModel, SyncProgress,
 };

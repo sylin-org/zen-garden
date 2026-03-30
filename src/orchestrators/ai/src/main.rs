@@ -176,6 +176,7 @@ async fn main() -> Result<()> {
         .route("/api/providers", axum::routing::get(api::dashboard::get_providers))
         .route("/api/providers", axum::routing::post(api::dashboard::add_provider))
         .route("/api/providers/{name}", axum::routing::delete(api::dashboard::delete_provider))
+        .route("/api/providers/{name}/toggle", axum::routing::patch(api::dashboard::toggle_provider))
         .route("/api/providers/test", axum::routing::post(api::provider_test::test_key))
         // Service management actions
         .route("/api/services/{offering}/pull", axum::routing::post(api::service_actions::pull_model))

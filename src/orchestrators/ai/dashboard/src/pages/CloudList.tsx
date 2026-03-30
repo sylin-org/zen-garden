@@ -37,6 +37,18 @@ export function CloudList({ status }: CloudListProps) {
     }
   }
 
+  const [toggling, setToggling] = useState<string | null>(null);
+
+  async function handleToggle(providerName: string) {
+    setToggling(providerName);
+    try {
+      await fetch(`/api/providers/${providerName}/toggle`, { method: "PATCH" });
+      reload();
+    } finally {
+      setToggling(null);
+    }
+  }
+
   // Group configured providers by kind
   const byKind = new Map<string, ConfiguredProvider[]>();
   for (const p of providers) {
@@ -177,6 +189,7 @@ export function CloudList({ status }: CloudListProps) {
                       <th className="text-left py-1 font-medium">Key</th>
                       <th className="text-left py-1 font-medium">Priority</th>
                       <th className="text-left py-1 font-medium">Status</th>
+                      <th className="text-center py-1 font-medium">Enabled</th>
                       <th className="text-right py-1 font-medium">Actions</th>
                     </tr>
                   </thead>
@@ -194,7 +207,9 @@ export function CloudList({ status }: CloudListProps) {
                       return (
                         <tr
                           key={key.name}
-                          className="border-t border-[#2e303a]/50"
+                          className={`border-t border-[#2e303a]/50 ${
+                            !key.enabled ? "opacity-40" : ""
+                          }`}
                         >
                           <td className="py-2 font-mono text-gray-200">
                             <Link
@@ -225,6 +240,26 @@ export function CloudList({ status }: CloudListProps) {
                             ) : (
                               <span className="text-red-400">unhealthy</span>
                             )}
+                          </td>
+                          <td className="py-2 text-center">
+                            <button
+                              onClick={() => handleToggle(key.name)}
+                              disabled={toggling === key.name}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
+                                key.enabled
+                                  ? "bg-purple-600"
+                                  : "bg-gray-600"
+                              }`}
+                              title={key.enabled ? "Disable this provider" : "Enable this provider"}
+                            >
+                              <span
+                                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                                  key.enabled
+                                    ? "translate-x-4.5"
+                                    : "translate-x-0.5"
+                                }`}
+                              />
+                            </button>
                           </td>
                           <td className="py-2 text-right">
                             <div className="flex items-center justify-end gap-2">

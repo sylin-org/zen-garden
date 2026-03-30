@@ -123,6 +123,13 @@ impl CloudProviderStore {
         }
     }
 
+    /// Set enabled/disabled state for a provider.
+    pub fn set_enabled(&mut self, name: &str, enabled: bool) {
+        if let Some(provider) = self.providers.iter_mut().find(|p| p.name == name) {
+            provider.enabled = enabled;
+        }
+    }
+
     /// Remove a provider by name.
     pub fn remove(&mut self, name: &str) -> bool {
         let before = self.providers.len();

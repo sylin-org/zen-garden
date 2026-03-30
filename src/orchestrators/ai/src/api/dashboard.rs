@@ -344,6 +344,149 @@ pub async fn add_provider(
     Json(serde_json::json!({"status": "ok", "name": provider_name, "models": model_count}))
 }
 
+/// `PATCH /api/providers/:name/toggle` — enable or disable a cloud provider.
+///
+/// When disabled: removes the provider's models from the directory and
+/// its instance from the registry. Models disappear from capability lists.
+/// When enabled: triggers an immediate sync (probe + enumerate).
+pub async fn toggle_provider(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    let (kind, new_enabled, endpoint) = {
+        let mut store = state.cloud_store.write().await;
+        let provider = match store.all().iter().find(|p| p.name == name) {
+            Some(p) => p,
+            None => {
+                return Json(serde_json::json!({"status": "not_found", "name": name}));
+            }
+        };
+        let kind = provider.kind;
+        let new_enabled = !provider.enabled;
+        let endpoint = provider.base_url.clone();
+
+        // Toggle the enabled flag
+        store.set_enabled(&name, new_enabled);
+        if let Err(e) = store.save().await {
+            tracing::warn!(error = %e, "failed to persist cloud provider store");
+        }
+        (kind, new_enabled, endpoint)
+    };
+
+    if new_enabled {
+        // Re-enable: trigger a sync for this provider
+        tracing::info!(provider = %name, "cloud provider enabled — triggering sync");
+
+        // The cloud_sync task will pick it up on next cycle, but also do an
+        // immediate probe+enumerate via the Provider trait.
+        if let Some(provider_impl) = state.providers.get(kind).cloned() {
+            let api_key = {
+                let store = state.cloud_store.read().await;
+                store
+                    .all()
+                    .iter()
+                    .find(|p| p.name == name)
+                    .map(|p| p.api_key.clone())
+            };
+
+            let ctx = crate::catalog::ProviderContext {
+                endpoint: endpoint.clone(),
+                model: None,
+                api_key,
+            };
+
+            // Register instance
+            let instance = ServiceInstance {
+                stone: Stone {
+                    id: format!("cloud-{name}"),
+                    name: format!("cloud:{name}"),
+                },
+                endpoint: endpoint.clone(),
+                kind,
+                gpu: Gpu {
+                    name: None,
+                    compute: ComputeType::Cpu,
+                },
+                vram: Vram {
+                    total_bytes: 0,
+                    budget_bytes: 0,
+                    free_bytes: None,
+                },
+                health: InstanceHealth::Profiling,
+                models_available: vec![],
+                models_loaded: vec![],
+                capabilities: vec![],
+                queue_depth: 0,
+                last_seen: std::time::Instant::now(),
+                metadata: serde_json::json!({"cloud": true, "provider": name}),
+                priority: -10,
+            };
+            state.upsert_instance(instance).await;
+
+            // Probe + enumerate in background
+            let state_bg = state.clone();
+            let name_bg = name.clone();
+            tokio::spawn(async move {
+                if provider_impl.probe(&ctx).await.is_ok() {
+                    state_bg
+                        .set_instance_health(&endpoint, InstanceHealth::Healthy)
+                        .await;
+                    if let Ok(models) = provider_impl.enumerate(&ctx).await {
+                        let model_names: Vec<String> =
+                            models.iter().map(|m| m.name.clone()).collect();
+                        state_bg
+                            .update_instance_models(&endpoint, model_names, vec![])
+                            .await;
+                        for sm in &models {
+                            let fqn = ModelFqn::new(kind.as_str(), &name_bg, &sm.name, None);
+                            let metadata = ModelMetadata {
+                                context_length: sm
+                                    .metadata
+                                    .get("input_token_limit")
+                                    .and_then(|v| v.as_u64()),
+                                ..Default::default()
+                            };
+                            state_bg
+                                .directory_upsert(
+                                    fqn,
+                                    sm.capabilities.clone(),
+                                    sm.specializations.clone(),
+                                    metadata,
+                                )
+                                .await;
+                        }
+                    }
+                }
+            });
+        }
+    } else {
+        // Disable: remove models from directory and instance from registry
+        tracing::info!(provider = %name, "cloud provider disabled — removing models");
+        state
+            .directory_remove_provider(kind.as_str(), &name)
+            .await;
+        state.remove_instance(&endpoint).await;
+    }
+
+    state
+        .emit_event(
+            "providers.updated",
+            &serde_json::json!({
+                "action": "toggle",
+                "name": name,
+                "enabled": new_enabled,
+            })
+            .to_string(),
+        )
+        .await;
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "name": name,
+        "enabled": new_enabled,
+    }))
+}
+
 /// `DELETE /api/providers/:name` — remove a cloud provider.
 pub async fn delete_provider(
     State(state): State<AppState>,

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import type { DashboardStatus, ModelStatus } from "../types";
 import { CAPABILITY_LABELS, formatBytes } from "../types";
@@ -15,6 +16,7 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
   const { name } = useParams<{ name: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const expandedModel = searchParams.get("model");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const cap = status.capabilities.find((c) => c.capability === name);
   const label = CAPABILITY_LABELS[name ?? ""] ?? name ?? "Unknown";
@@ -34,9 +36,15 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
   const recommended = status.recommendations[cap.capability];
 
   // Flat model list: all models serving this capability
-  const models = status.models.filter((m) =>
+  const allModels = status.models.filter((m) =>
     m.capabilities.includes(cap.capability),
   );
+
+  const models = searchQuery
+    ? allModels.filter((m) =>
+        m.model.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : allModels;
 
   // Collect unique stone names from all placements
   const stoneNames = [
@@ -86,11 +94,20 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
     });
   }
 
-  // Determine provider for a model (first offering from placement)
+  // Determine provider for a model (first offering from placement, fallback to MFQN)
   function modelProvider(model: ModelStatus): { name: string; cloud: boolean } {
     const offerings = [...new Set(model.available_on.map((p) => p.offering))];
-    const first = offerings[0] ?? "unknown";
-    return { name: first, cloud: isCloudOffering(first) };
+    if (offerings.length > 0) {
+      const first = offerings[0];
+      return { name: first, cloud: isCloudOffering(first) };
+    }
+    // Fallback: parse the first MFQN instance string (source|locator|model|...)
+    const mfqn = model.instances[0];
+    if (mfqn) {
+      const source = mfqn.split("|")[0];
+      return { name: source, cloud: isCloudOffering(source) };
+    }
+    return { name: "unknown", cloud: false };
   }
 
   return (
@@ -206,8 +223,19 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
       )}
 
       {/* Flat model table */}
-      {models.length > 0 && (
+      {allModels.length > 0 && (
         <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg overflow-hidden">
+          {allModels.length > 5 && (
+            <div className="px-3 py-2 border-b border-[#2e303a]">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter models..."
+                className="w-full bg-[#0f1117] border border-[#2e303a] rounded px-3 py-1.5 text-[12px] text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+              />
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-[12px]">
               <thead>
@@ -232,21 +260,21 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
               <tbody className="divide-y divide-[#2e303a]/50">
                 {models.map((model) => {
                   const provider = modelProvider(model);
-                  const isRec = model.name === recommended;
-                  const isPin = model.name === pinned;
-                  const isExp = expandedModel === model.name;
+                  const isRec = model.model === recommended;
+                  const isPin = model.model === pinned;
+                  const isExp = expandedModel === model.model;
 
                   return (
                     <ModelRow
-                      key={model.name}
+                      key={model.model}
                       model={model}
                       provider={provider}
                       stoneEntries={stoneEntries}
                       isRecommended={isRec}
                       isPinned={isPin}
                       isExpanded={isExp}
-                      onToggleExpand={() => toggleExpand(model.name)}
-                      onPin={() => pinModel(model.name)}
+                      onToggleExpand={() => toggleExpand(model.model)}
+                      onPin={() => pinModel(model.model)}
                     />
                   );
                 })}
@@ -332,7 +360,7 @@ function ModelRow({
               *
             </span>
           )}
-          {model.name}
+          {model.model}
         </td>
         <td className="px-3 py-1.5">
           <Link
@@ -349,7 +377,9 @@ function ModelRow({
           </Link>
         </td>
         <td className="px-3 py-1.5 font-mono text-gray-500">
-          {model.parameter_size ?? (provider.cloud ? "cloud" : "-")}
+          {model.metadata.parameter_size
+            ? `${model.metadata.parameter_size}${model.metadata.quantization_level ? ` ${model.metadata.quantization_level}` : ""}`
+            : (provider.cloud ? "cloud" : "-")}
         </td>
         {/* Stone grid (local only) */}
         {stoneEntries.map((se) => {
@@ -394,7 +424,7 @@ function ModelRow({
                 onPin();
               }}
               className="text-[10px] px-1.5 py-0.5 rounded bg-[#2e303a] text-gray-400 hover:bg-purple-500/20 hover:text-purple-300"
-              title={`Pin ${model.name}`}
+              title={`Pin ${model.model}`}
             >
               pin
             </button>
@@ -409,34 +439,34 @@ function ModelRow({
           >
             <div className="grid grid-cols-2 gap-4 text-[11px]">
               <div className="space-y-1">
-                <DetailRow label="Family" value={model.family} />
+                <DetailRow label="Family" value={model.metadata.family} />
                 <DetailRow
                   label="Parameters"
-                  value={model.parameter_size}
+                  value={model.metadata.parameter_size}
                 />
                 <DetailRow
                   label="Quantization"
-                  value={model.quantization_level}
+                  value={model.metadata.quantization_level}
                 />
                 <DetailRow
                   label="Context"
                   value={
-                    model.context_length
-                      ? `${model.context_length.toLocaleString()} tokens`
+                    model.metadata.context_length
+                      ? `${model.metadata.context_length.toLocaleString()} tokens`
                       : null
                   }
                 />
                 <DetailRow
                   label="VRAM"
                   value={
-                    model.vram_bytes ? formatBytes(model.vram_bytes) : null
+                    model.metadata.vram_bytes ? formatBytes(model.metadata.vram_bytes) : null
                   }
                 />
                 <DetailRow
                   label="Disk"
                   value={
-                    model.size_disk > 0
-                      ? formatBytes(model.size_disk)
+                    model.metadata.size_disk > 0
+                      ? formatBytes(model.metadata.size_disk)
                       : provider.cloud
                         ? "cloud"
                         : null

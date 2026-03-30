@@ -16,6 +16,7 @@ interface ServiceDetailProps {
 export function ServiceDetail({ status }: ServiceDetailProps) {
   const { name } = useParams<{ name: string }>();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Find instances for this service kind
   const instances = status.instances.filter(
@@ -39,9 +40,15 @@ export function ServiceDetail({ status }: ServiceDetailProps) {
   }
 
   // All models served by this offering (check placement offering field)
-  const models = status.models.filter((m) =>
+  const allModels = status.models.filter((m) =>
     m.available_on.some((p) => p.offering === name),
   );
+
+  const models = searchQuery
+    ? allModels.filter((m) =>
+        m.model.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : allModels;
 
   // Unique stones
   const stoneNames = [...new Set(instances.map((i) => i.stone_name))];
@@ -93,15 +100,26 @@ export function ServiceDetail({ status }: ServiceDetailProps) {
       )}
 
       {/* Full model table */}
-      {models.length > 0 && (
+      {allModels.length > 0 && (
         <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg overflow-hidden">
-          <div className="px-4 py-2 border-b border-[#2e303a]">
-            <span className="text-sm font-medium text-gray-200">
-              All Models
-            </span>
-            <span className="ml-2 text-[11px] text-gray-500">
-              {models.length} total
-            </span>
+          <div className="px-4 py-2 border-b border-[#2e303a] flex items-center justify-between gap-3">
+            <div>
+              <span className="text-sm font-medium text-gray-200">
+                All Models
+              </span>
+              <span className="ml-2 text-[11px] text-gray-500">
+                {models.length}{searchQuery ? ` / ${allModels.length}` : ""} total
+              </span>
+            </div>
+            {allModels.length > 5 && (
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter models..."
+                className="bg-[#0f1117] border border-[#2e303a] rounded px-3 py-1 text-[12px] text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 w-56"
+              />
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12px]">
@@ -130,19 +148,19 @@ export function ServiceDetail({ status }: ServiceDetailProps) {
               </thead>
               <tbody className="divide-y divide-[#2e303a]/50">
                 {models.map((model) => {
-                  const isExp = expanded === model.name;
+                  const isExp = expanded === model.model;
                   const loaded = model.available_on.some((p) => p.loaded);
 
                   return (
                     <ServiceModelRow
-                      key={model.name}
+                      key={model.model}
                       model={model}
                       stoneEntries={stoneEntries}
                       isExpanded={isExp}
                       loaded={loaded}
                       offering={name ?? ""}
                       onToggleExpand={() =>
-                        setExpanded(isExp ? null : model.name)
+                        setExpanded(isExp ? null : model.model)
                       }
                     />
                   );
@@ -417,7 +435,7 @@ function ServiceModelRow({
         const res = await fetch(`/api/services/${offering}/${action}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: model.name, endpoint }),
+          body: JSON.stringify({ model: model.model, endpoint }),
         });
         if (res.ok) {
           setActionState("success");
@@ -429,15 +447,15 @@ function ServiceModelRow({
       }
       setTimeout(() => setActionState("idle"), 3000);
     },
-    [offering, model.name],
+    [offering, model.model],
   );
 
   const handleDelete = useCallback(async () => {
-    if (!confirm(`Delete ${model.name} from all instances?`)) return;
+    if (!confirm(`Delete ${model.model} from all instances?`)) return;
     setActionState("loading");
     try {
       const res = await fetch(
-        `/api/services/${offering}/models/${encodeURIComponent(model.name)}`,
+        `/api/services/${offering}/models/${encodeURIComponent(model.model)}`,
         { method: "DELETE" },
       );
       if (res.ok) {
@@ -449,7 +467,7 @@ function ServiceModelRow({
       setActionState("error");
     }
     setTimeout(() => setActionState("idle"), 3000);
-  }, [offering, model.name]);
+  }, [offering, model.model]);
 
   return (
     <>
@@ -457,7 +475,7 @@ function ServiceModelRow({
         className="text-gray-400 cursor-pointer hover:bg-[#22232d] transition-colors"
         onClick={onToggleExpand}
       >
-        <td className="px-3 py-1.5 font-mono text-gray-200">{model.name}</td>
+        <td className="px-3 py-1.5 font-mono text-gray-200">{model.model}</td>
         <td className="px-3 py-1.5">
           <div className="flex flex-wrap gap-1">
             {model.capabilities.map((cap) => (
@@ -475,16 +493,16 @@ function ServiceModelRow({
           </div>
         </td>
         <td className="px-3 py-1.5 font-mono text-gray-500">
-          {model.parameter_size ?? "-"}
+          {model.metadata.parameter_size ?? "-"}
         </td>
         <td className="px-3 py-1.5 font-mono text-gray-500">
-          {model.quantization_level ?? "-"}
+          {model.metadata.quantization_level ?? "-"}
         </td>
         <td className="px-3 py-1.5 font-mono text-gray-500">
-          {model.size_disk > 0 ? formatBytes(model.size_disk) : "-"}
+          {model.metadata.size_disk > 0 ? formatBytes(model.metadata.size_disk) : "-"}
         </td>
         <td className="px-3 py-1.5 font-mono text-gray-500">
-          {model.vram_bytes ? formatBytes(model.vram_bytes) : "-"}
+          {model.metadata.vram_bytes ? formatBytes(model.metadata.vram_bytes) : "-"}
         </td>
         {stoneEntries.map((se) => {
           const placement = model.available_on.find(
@@ -553,30 +571,30 @@ function ServiceModelRow({
           >
             <div className="grid grid-cols-2 gap-4 text-[11px]">
               <div className="space-y-1">
-                <DetailRow label="Family" value={model.family} />
-                <DetailRow label="Parameters" value={model.parameter_size} />
+                <DetailRow label="Family" value={model.metadata.family} />
+                <DetailRow label="Parameters" value={model.metadata.parameter_size} />
                 <DetailRow
                   label="Quantization"
-                  value={model.quantization_level}
+                  value={model.metadata.quantization_level}
                 />
                 <DetailRow
                   label="Context"
                   value={
-                    model.context_length
-                      ? `${model.context_length.toLocaleString()} tokens`
+                    model.metadata.context_length
+                      ? `${model.metadata.context_length.toLocaleString()} tokens`
                       : null
                   }
                 />
                 <DetailRow
                   label="VRAM"
                   value={
-                    model.vram_bytes ? formatBytes(model.vram_bytes) : null
+                    model.metadata.vram_bytes ? formatBytes(model.metadata.vram_bytes) : null
                   }
                 />
                 <DetailRow
                   label="Disk"
                   value={
-                    model.size_disk > 0 ? formatBytes(model.size_disk) : null
+                    model.metadata.size_disk > 0 ? formatBytes(model.metadata.size_disk) : null
                   }
                 />
               </div>
@@ -605,7 +623,7 @@ function ServiceModelRow({
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({
-                            model: model.name,
+                            model: model.model,
                             endpoint: p.endpoint,
                           }),
                         });

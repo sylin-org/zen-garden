@@ -1,28 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import type { ModelStatus } from "../types";
 
-// ── Port mapping ────────────────────────────────────────────────
-
-const PROXY_PORTS: Record<string, number> = {
-  chat: 21434,
-  embed: 21434,
-  vision: 21434,
-  tools: 21434,
-  think: 21434,
-  speak: 21437,
-  transcribe: 21436,
-  translate: 21439,
-  rerank: 21438,
-  imagine: 21435,
-  edit: 21435,
-  render: 21435,
-};
-
-function proxyUrl(capability: string, path: string): string {
-  const port = PROXY_PORTS[capability] ?? 21434;
-  return `http://${window.location.hostname}:${port}${path}`;
-}
-
 // ── Props ───────────────────────────────────────────────────────
 
 interface TryItProps {
@@ -46,7 +24,7 @@ function SpeakButton({ text }: { text: string }) {
   async function handleSpeak() {
     setSpeaking(true);
     try {
-      const res = await fetch(proxyUrl("speak", "/v1/audio/speech"), {
+      const res = await fetch("/v1/audio/speech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -56,7 +34,7 @@ function SpeakButton({ text }: { text: string }) {
           response_format: "wav",
         }),
       });
-      if (!res.ok) throw new Error(`Speech failed: ${res.status}`);
+      if (!res.ok) throw new Error(await parseApiError(res));
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       if (audioRef.current) {
@@ -103,12 +81,29 @@ function ModelSelector({
       className="bg-[#1a1b23] border border-[#2e303a] rounded px-2 py-1.5 text-[12px] text-gray-300 focus:outline-none focus:border-blue-500/50"
     >
       {models.map((m) => (
-        <option key={m.name} value={m.name}>
-          {m.name}
+        <option key={m.model} value={m.model}>
+          {m.model}
         </option>
       ))}
     </select>
   );
+}
+
+// ── Error parsing ──────────────────────────────────────────────
+
+/**
+ * Parse a structured error response from the unified API.
+ *
+ * The backend always returns: `{ error: { code, message, status } }`
+ * This function extracts the human-readable message.
+ */
+async function parseApiError(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    return body?.error?.message ?? `Error ${res.status}`;
+  } catch {
+    return `Error ${res.status}`;
+  }
 }
 
 // ── Error / Loading display ─────────────────────────────────────
@@ -132,37 +127,95 @@ function StatusBar({ state }: { state: RequestState }) {
   return null;
 }
 
+// ── SSE stream reader helper ────────────────────────────────────
+
+async function readSseStream(
+  response: Response,
+  onChunk: (content: string) => void,
+): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      // Keep the last incomplete line in the buffer
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        const payload = trimmed.slice(6);
+        if (payload === "[DONE]") return;
+
+        try {
+          const parsed = JSON.parse(payload);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) onChunk(delta);
+        } catch {
+          // Skip non-JSON lines
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 // ── Chat / Tools / Think panel ──────────────────────────────────
 
 function ChatPanel({ models }: { models: ModelStatus[] }) {
-  const [model, setModel] = useState(models[0]?.name ?? "");
+  const [model, setModel] = useState(models[0]?.model ?? "");
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState("");
+  const [streaming, setStreaming] = useState(false);
   const [state, setState] = useState<RequestState>({ loading: false, error: null });
+  const abortRef = useRef<AbortController | null>(null);
 
   async function send() {
     if (!prompt.trim() || !model) return;
     setState({ loading: true, error: null });
     setResponse("");
+    setStreaming(true);
+
+    abortRef.current = new AbortController();
+
     try {
-      const res = await fetch(proxyUrl("chat", "/api/chat"), {
+      const res = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: prompt }],
-          stream: false,
+          stream: true,
         }),
+        signal: abortRef.current.signal,
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`${res.status}: ${text.slice(0, 300)}`);
+        throw new Error(await parseApiError(res));
       }
-      const data = await res.json();
-      setResponse(data.message?.content ?? JSON.stringify(data, null, 2));
+
+      await readSseStream(res, (chunk) => {
+        setResponse((prev) => prev + chunk);
+      });
+
       setState({ loading: false, error: null });
     } catch (e: unknown) {
-      setState({ loading: false, error: e instanceof Error ? e.message : "Request failed" });
+      if (e instanceof DOMException && e.name === "AbortError") {
+        setState({ loading: false, error: null });
+      } else {
+        setState({ loading: false, error: e instanceof Error ? e.message : "Request failed" });
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
     }
   }
 
@@ -185,13 +238,19 @@ function ChatPanel({ models }: { models: ModelStatus[] }) {
         rows={3}
         className="w-full bg-[#1a1b23] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 placeholder-gray-600 resize-y focus:outline-none focus:border-blue-500/50"
       />
-      <StatusBar state={state} />
+      {streaming && (
+        <div className="flex items-center gap-2 text-[12px] text-gray-500">
+          <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          Streaming...
+        </div>
+      )}
+      {!streaming && <StatusBar state={state} />}
       {response && (
         <div className="space-y-2">
           <pre className="bg-[#0d0e14] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 whitespace-pre-wrap max-h-80 overflow-y-auto">
             {response}
           </pre>
-          <SpeakButton text={response} />
+          {!streaming && <SpeakButton text={response} />}
         </div>
       )}
     </div>
@@ -200,10 +259,16 @@ function ChatPanel({ models }: { models: ModelStatus[] }) {
 
 // ── Embed panel ─────────────────────────────────────────────────
 
+interface EmbedResult {
+  dimensions: number;
+  preview: number[];
+  usage: { prompt_tokens?: number; total_tokens?: number } | null;
+}
+
 function EmbedPanel({ models }: { models: ModelStatus[] }) {
-  const [model, setModel] = useState(models[0]?.name ?? "");
+  const [model, setModel] = useState(models[0]?.model ?? "");
   const [text, setText] = useState("");
-  const [result, setResult] = useState<{ dimensions: number; preview: number[] } | null>(null);
+  const [result, setResult] = useState<EmbedResult | null>(null);
   const [state, setState] = useState<RequestState>({ loading: false, error: null });
 
   async function embed() {
@@ -211,18 +276,21 @@ function EmbedPanel({ models }: { models: ModelStatus[] }) {
     setState({ loading: true, error: null });
     setResult(null);
     try {
-      const res = await fetch(proxyUrl("embed", "/api/embed"), {
+      const res = await fetch("/v1/embeddings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, input: text }),
       });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(await parseApiError(res));
       }
       const data = await res.json();
-      const embeddings: number[] = data.embeddings?.[0] ?? data.embedding ?? [];
-      setResult({ dimensions: embeddings.length, preview: embeddings.slice(0, 5) });
+      const embedding: number[] = data.data?.[0]?.embedding ?? [];
+      setResult({
+        dimensions: embedding.length,
+        preview: embedding.slice(0, 5),
+        usage: data.usage ?? null,
+      });
       setState({ loading: false, error: null });
     } catch (e: unknown) {
       setState({ loading: false, error: e instanceof Error ? e.message : "Request failed" });
@@ -262,6 +330,14 @@ function EmbedPanel({ models }: { models: ModelStatus[] }) {
               {result.dimensions > 5 ? ", ..." : ""}]
             </span>
           </div>
+          {result.usage && (
+            <div>
+              <span className="text-gray-500">Tokens:</span>{" "}
+              <span className="font-mono text-[11px]">
+                {result.usage.prompt_tokens ?? result.usage.total_tokens ?? "-"}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -271,18 +347,20 @@ function EmbedPanel({ models }: { models: ModelStatus[] }) {
 // ── Vision panel ────────────────────────────────────────────────
 
 function VisionPanel({ models }: { models: ModelStatus[] }) {
-  const [model, setModel] = useState(models[0]?.name ?? "");
+  const [model, setModel] = useState(models[0]?.model ?? "");
   const [prompt, setPrompt] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [response, setResponse] = useState("");
+  const [streaming, setStreaming] = useState(false);
   const [state, setState] = useState<RequestState>({ loading: false, error: null });
 
   async function send() {
     if (!prompt.trim() || !model || !imageUrl.trim()) return;
     setState({ loading: true, error: null });
     setResponse("");
+    setStreaming(true);
     try {
-      const res = await fetch(proxyUrl("vision", "/api/chat"), {
+      const res = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -290,22 +368,28 @@ function VisionPanel({ models }: { models: ModelStatus[] }) {
           messages: [
             {
               role: "user",
-              content: prompt,
-              images: [imageUrl],
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: imageUrl } },
+              ],
             },
           ],
-          stream: false,
+          stream: true,
         }),
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`${res.status}: ${text.slice(0, 300)}`);
+        throw new Error(await parseApiError(res));
       }
-      const data = await res.json();
-      setResponse(data.message?.content ?? JSON.stringify(data, null, 2));
+
+      await readSseStream(res, (chunk) => {
+        setResponse((prev) => prev + chunk);
+      });
+
       setState({ loading: false, error: null });
     } catch (e: unknown) {
       setState({ loading: false, error: e instanceof Error ? e.message : "Request failed" });
+    } finally {
+      setStreaming(false);
     }
   }
 
@@ -334,13 +418,19 @@ function VisionPanel({ models }: { models: ModelStatus[] }) {
         rows={2}
         className="w-full bg-[#1a1b23] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 placeholder-gray-600 resize-y focus:outline-none focus:border-blue-500/50"
       />
-      <StatusBar state={state} />
+      {streaming && (
+        <div className="flex items-center gap-2 text-[12px] text-gray-500">
+          <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          Streaming...
+        </div>
+      )}
+      {!streaming && <StatusBar state={state} />}
       {response && (
         <div className="space-y-2">
           <pre className="bg-[#0d0e14] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 whitespace-pre-wrap max-h-80 overflow-y-auto">
             {response}
           </pre>
-          <SpeakButton text={response} />
+          {!streaming && <SpeakButton text={response} />}
         </div>
       )}
     </div>
@@ -364,7 +454,7 @@ function SpeakPanel() {
     setState({ loading: true, error: null });
     setAudioUrl(null);
     try {
-      const res = await fetch(proxyUrl("speak", "/v1/audio/speech"), {
+      const res = await fetch("/v1/audio/speech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -375,8 +465,7 @@ function SpeakPanel() {
         }),
       });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(await parseApiError(res));
       }
       const blob = await res.blob();
       setAudioUrl(URL.createObjectURL(blob));
@@ -445,13 +534,13 @@ function TranscribePanel() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(proxyUrl("transcribe", "/inference"), {
+      formData.append("model", "whisper-1");
+      const res = await fetch("/v1/audio/transcriptions", {
         method: "POST",
         body: formData,
       });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(await parseApiError(res));
       }
       const data = await res.json();
       setResult(data.text ?? JSON.stringify(data, null, 2));
@@ -509,38 +598,59 @@ const LANGUAGES = [
   { code: "hi", name: "Hindi" },
 ] as const;
 
-function TranslatePanel() {
+function TranslatePanel({ models }: { models: ModelStatus[] }) {
+  const [model, setModel] = useState(models[0]?.model ?? "");
   const [text, setText] = useState("");
   const [source, setSource] = useState("en");
   const [target, setTarget] = useState("es");
   const [result, setResult] = useState("");
+  const [streaming, setStreaming] = useState(false);
   const [state, setState] = useState<RequestState>({ loading: false, error: null });
+
+  const sourceName = LANGUAGES.find((l) => l.code === source)?.name ?? source;
+  const targetName = LANGUAGES.find((l) => l.code === target)?.name ?? target;
 
   async function translate() {
     if (!text.trim()) return;
     setState({ loading: true, error: null });
     setResult("");
+    setStreaming(true);
     try {
-      const res = await fetch(proxyUrl("translate", "/translate"), {
+      const res = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: text, source, target }),
+        body: JSON.stringify({
+          model: model || undefined,
+          messages: [
+            {
+              role: "system",
+              content: `You are a professional translator. Translate the following text from ${sourceName} to ${targetName}. Output only the translation, no explanations.`,
+            },
+            { role: "user", content: text },
+          ],
+          stream: true,
+        }),
       });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(await parseApiError(res));
       }
-      const data = await res.json();
-      setResult(data.translatedText ?? JSON.stringify(data, null, 2));
+
+      await readSseStream(res, (chunk) => {
+        setResult((prev) => prev + chunk);
+      });
+
       setState({ loading: false, error: null });
     } catch (e: unknown) {
       setState({ loading: false, error: e instanceof Error ? e.message : "Request failed" });
+    } finally {
+      setStreaming(false);
     }
   }
 
   return (
     <div className="space-y-3">
       <div className="flex gap-2 items-end flex-wrap">
+        <ModelSelector models={models} selected={model} onSelect={setModel} />
         <select
           value={source}
           onChange={(e) => setSource(e.target.value)}
@@ -575,13 +685,133 @@ function TranslatePanel() {
         rows={3}
         className="w-full bg-[#1a1b23] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 placeholder-gray-600 resize-y focus:outline-none focus:border-blue-500/50"
       />
-      <StatusBar state={state} />
+      {streaming && (
+        <div className="flex items-center gap-2 text-[12px] text-gray-500">
+          <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          Translating...
+        </div>
+      )}
+      {!streaming && <StatusBar state={state} />}
       {result && (
         <div className="space-y-2">
           <pre className="bg-[#0d0e14] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 whitespace-pre-wrap">
             {result}
           </pre>
-          <SpeakButton text={result} />
+          {!streaming && <SpeakButton text={result} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Image generation panel ──────────────────────────────────────
+
+function ImagePanel({ models }: { models: ModelStatus[] }) {
+  const [model, setModel] = useState(models[0]?.model ?? "");
+  const [prompt, setPrompt] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const [state, setState] = useState<RequestState>({ loading: false, error: null });
+
+  async function generate() {
+    if (!prompt.trim() || !model) return;
+    setState({ loading: true, error: null });
+    setImages([]);
+    setText("");
+
+    try {
+      const res = await fetch("/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          stream: false,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(await parseApiError(res));
+      }
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new Error("No content in response");
+      }
+
+      // Content may be a string (text only) or array of parts (text + images)
+      if (typeof content === "string") {
+        setText(content);
+      } else if (Array.isArray(content)) {
+        const newImages: string[] = [];
+        const textParts: string[] = [];
+
+        for (const part of content) {
+          if (part.type === "text" && part.text) {
+            textParts.push(part.text);
+          } else if (part.type === "image_url" && part.image_url?.url) {
+            newImages.push(part.image_url.url);
+          }
+        }
+
+        setImages(newImages);
+        if (textParts.length > 0) setText(textParts.join("\n"));
+      }
+
+      setState({ loading: false, error: null });
+    } catch (e) {
+      setState({
+        loading: false,
+        error: e instanceof Error ? e.message : "Unknown error",
+      });
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <ModelSelector models={models} selected={model} onSelect={setModel} />
+        <button
+          onClick={generate}
+          disabled={state.loading || !prompt.trim()}
+          className="px-4 py-1.5 text-[12px] rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {state.loading ? "Generating..." : "Generate"}
+        </button>
+      </div>
+
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder="Describe the image you want to generate..."
+        rows={3}
+        className="w-full bg-[#0f1117] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-200 resize-vertical focus:border-blue-500/50 focus:outline-none"
+      />
+
+      <StatusBar state={state} />
+
+      {text && (
+        <div className="bg-[#0f1117] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 whitespace-pre-wrap">
+          {text}
+        </div>
+      )}
+
+      {images.length > 0 && (
+        <div className="grid grid-cols-1 gap-3">
+          {images.map((src, idx) => (
+            <div
+              key={idx}
+              className="border border-[#2e303a] rounded overflow-hidden bg-[#0f1117]"
+            >
+              <img
+                src={src}
+                alt={`Generated image ${idx + 1}`}
+                className="max-w-full h-auto"
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -591,88 +821,123 @@ function TranslatePanel() {
 // ── Rerank panel ────────────────────────────────────────────────
 
 function RerankPanel() {
-  const [query, setQuery] = useState("");
-  const [docs, setDocs] = useState("");
-  const [results, setResults] = useState<{ index: number; score: number; text: string }[]>([]);
-  const [state, setState] = useState<RequestState>({ loading: false, error: null });
-
-  async function rerank() {
-    if (!query.trim() || !docs.trim()) return;
-    setState({ loading: true, error: null });
-    setResults([]);
-    try {
-      const documents = docs.split("\n").filter((d) => d.trim());
-      const res = await fetch(proxyUrl("rerank", "/rerank"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, documents }),
-      });
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status}: ${body.slice(0, 300)}`);
-      }
-      const data = await res.json();
-      const ranked = (data.results ?? data ?? []) as { index: number; relevance_score?: number; score?: number }[];
-      setResults(
-        ranked.map((r) => ({
-          index: r.index,
-          score: r.relevance_score ?? r.score ?? 0,
-          text: documents[r.index] ?? "",
-        })),
-      );
-      setState({ loading: false, error: null });
-    } catch (e: unknown) {
-      setState({ loading: false, error: e instanceof Error ? e.message : "Request failed" });
-    }
-  }
-
   return (
-    <div className="space-y-3">
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Query..."
-        className="w-full bg-[#1a1b23] border border-[#2e303a] rounded px-3 py-1.5 text-[12px] text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-      />
-      <textarea
-        value={docs}
-        onChange={(e) => setDocs(e.target.value)}
-        placeholder="Documents (one per line)..."
-        rows={4}
-        className="w-full bg-[#1a1b23] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 placeholder-gray-600 resize-y focus:outline-none focus:border-blue-500/50"
-      />
-      <button
-        onClick={rerank}
-        disabled={state.loading || !query.trim() || !docs.trim()}
-        className="px-3 py-1.5 rounded bg-blue-600 text-white text-[12px] hover:bg-blue-500 disabled:opacity-40"
-      >
-        Rerank
-      </button>
-      <StatusBar state={state} />
-      {results.length > 0 && (
-        <div className="bg-[#0d0e14] border border-[#2e303a] rounded divide-y divide-[#2e303a]/50">
-          {results.map((r, i) => (
-            <div key={i} className="px-3 py-2 flex items-start gap-3">
-              <span className="text-[11px] font-mono text-gray-500 shrink-0 w-12">
-                {r.score.toFixed(4)}
-              </span>
-              <span className="text-[12px] text-gray-300">{r.text}</span>
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg px-4 py-6 text-center">
+      <p className="text-[12px] text-gray-500">
+        Reranking is not available via the unified API.
+      </p>
+      <p className="text-[11px] text-gray-600 mt-1">
+        Use the provider-specific endpoint directly, or leverage embedding similarity.
+      </p>
     </div>
   );
 }
 
 // ── Placeholder for ComfyUI capabilities ────────────────────────
 
-function ComingSoonPanel() {
+// ── Media generation panel (video, music) ──────────────────────
+// Uses /v1/chat/completions — the provider handles responseModalities
+// and returns media as content parts or audio data.
+
+function MediaPanel({ models, mediaType }: { models: ModelStatus[]; mediaType: "video" | "music" }) {
+  const [model, setModel] = useState(models[0]?.model ?? "");
+  const [prompt, setPrompt] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [state, setState] = useState<RequestState>({ loading: false, error: null });
+
+  const placeholder = mediaType === "video"
+    ? "Describe the video you want to generate..."
+    : "Describe the music you want to generate (genre, mood, instruments)...";
+
+  async function generate() {
+    if (!prompt.trim() || !model) return;
+    setState({ loading: true, error: null });
+    setResult(null);
+    setAudioUrl(null);
+
+    try {
+      const res = await fetch("/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          stream: false,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(await parseApiError(res));
+      }
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content;
+
+      if (!content) throw new Error("No content in response");
+
+      if (typeof content === "string") {
+        setResult(content);
+      } else if (Array.isArray(content)) {
+        const textParts: string[] = [];
+        for (const part of content) {
+          if (part.type === "text" && part.text) {
+            textParts.push(part.text);
+          } else if (part.type === "image_url" && part.image_url?.url) {
+            // Audio/video may come as data URIs
+            const url = part.image_url.url;
+            if (url.startsWith("data:audio/") || url.startsWith("data:video/")) {
+              setAudioUrl(url);
+            }
+          }
+        }
+        if (textParts.length > 0) setResult(textParts.join("\n"));
+      }
+
+      setState({ loading: false, error: null });
+    } catch (e) {
+      setState({ loading: false, error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  }
+
   return (
-    <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg px-4 py-6 text-center">
-      <p className="text-[12px] text-gray-500">
-        Coming soon — requires ComfyUI
-      </p>
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <ModelSelector models={models} selected={model} onSelect={setModel} />
+        <button
+          onClick={generate}
+          disabled={state.loading || !prompt.trim()}
+          className="px-4 py-1.5 text-[12px] rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {state.loading ? "Generating..." : "Generate"}
+        </button>
+      </div>
+
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder={placeholder}
+        rows={3}
+        className="w-full bg-[#0f1117] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-200 resize-vertical focus:border-blue-500/50 focus:outline-none"
+      />
+
+      <StatusBar state={state} />
+
+      {result && (
+        <div className="bg-[#0f1117] border border-[#2e303a] rounded px-3 py-2 text-[12px] text-gray-300 whitespace-pre-wrap">
+          {result}
+        </div>
+      )}
+
+      {audioUrl && (
+        <div className="bg-[#0f1117] border border-[#2e303a] rounded p-3">
+          {mediaType === "video" ? (
+            <video controls src={audioUrl} className="max-w-full h-auto rounded" />
+          ) : (
+            <audio controls src={audioUrl} className="w-full" />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -689,18 +954,20 @@ function PanelForCapability({ capability, models }: TryItProps) {
       return <EmbedPanel models={models} />;
     case "vision":
       return <VisionPanel models={models} />;
-    case "speak":
+    case "speech":
       return <SpeakPanel />;
     case "transcribe":
       return <TranscribePanel />;
     case "translate":
-      return <TranslatePanel />;
+      return <TranslatePanel models={models} />;
     case "rerank":
       return <RerankPanel />;
-    case "imagine":
-    case "edit":
-    case "render":
-      return <ComingSoonPanel />;
+    case "image":
+      return <ImagePanel models={models} />;
+    case "video":
+      return <MediaPanel models={models} mediaType="video" />;
+    case "music":
+      return <MediaPanel models={models} mediaType="music" />;
     default:
       return (
         <p className="text-[12px] text-gray-500">

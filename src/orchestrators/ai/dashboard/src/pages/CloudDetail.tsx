@@ -1,29 +1,30 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import type { DashboardStatus, InstanceStatus } from "../types";
+import type { DashboardStatus, InstanceStatus, ConfiguredProvider } from "../types";
 import { findCatalogEntry, CAP_COLORS } from "../utils/cloudCatalog";
 
 interface CloudDetailProps {
   status: DashboardStatus;
 }
 
-interface ConfiguredProvider {
-  name: string;
-  kind: string;
-  base_url: string;
-  masked_key: string;
-  enabled: boolean;
-  priority: number;
-  capabilities: string[];
-  model_count: number;
+/** Parse a structured health string like "unhealthy { since: ..., reason: \"...\" }" */
+function parseHealthReason(health: string): string | null {
+  if (health === "healthy") return null;
+  // Try to extract reason from structured format
+  const reasonMatch = health.match(/reason:\s*"([^"]+)"/);
+  if (reasonMatch) return reasonMatch[1];
+  // Try unquoted reason
+  const reasonMatch2 = health.match(/reason:\s*([^,}]+)/);
+  if (reasonMatch2) return reasonMatch2[1].trim();
+  // If it's just "unhealthy" with no details
+  if (health.startsWith("unhealthy")) return "Provider unreachable";
+  return health;
 }
 
 export function CloudDetail({ status }: CloudDetailProps) {
   const { name } = useParams<{ name: string }>();
   const [provider, setProvider] = useState<ConfiguredProvider | null>(null);
   const [loaded, setLoaded] = useState(false);
-
-  const catalog = findCatalogEntry(name ?? "");
 
   useEffect(() => {
     fetch("/api/providers")
@@ -36,17 +37,53 @@ export function CloudDetail({ status }: CloudDetailProps) {
       .catch(() => setLoaded(true));
   }, [name]);
 
-  // Find instances that match this cloud provider
-  const instances: InstanceStatus[] = status.instances.filter(
-    (i) => i.kind === name,
-  );
+  // Resolve the catalog entry from the provider's kind (not the name/locator)
+  const catalog = provider
+    ? findCatalogEntry(provider.kind)
+    : findCatalogEntry(name ?? "");
 
-  // Models from this cloud provider
-  const models = status.models.filter((m) =>
-    m.available_on.some((p) => p.offering === name),
-  );
+  // Find instances matching this provider: filter by provider's base_url or kind
+  const instances: InstanceStatus[] = status.instances.filter((i) => {
+    if (provider) {
+      // Match by kind AND check endpoint contains the base_url domain
+      if (i.kind === provider.kind) {
+        // For cloud instances, the endpoint often contains the base_url
+        if (provider.base_url) {
+          try {
+            const providerHost = new URL(provider.base_url).hostname;
+            return i.endpoint.includes(providerHost);
+          } catch {
+            // Fallback to kind match
+          }
+        }
+        return true;
+      }
+      return false;
+    }
+    return i.kind === name;
+  });
 
-  const displayName = catalog?.name ?? name ?? "Unknown";
+  // Models: filter by MFQN instances where source matches kind AND locator matches name
+  const models = status.models.filter((m) => {
+    if (provider) {
+      return m.instances.some((mfqn) => {
+        const parts = mfqn.split("|");
+        const source = parts[0];
+        const locator = parts[1];
+        return (
+          source === provider.kind &&
+          locator === provider.name
+        );
+      });
+    }
+    // Fallback: match by available_on offering field
+    return m.available_on.some((p) => p.offering === name);
+  });
+
+  const kindLabel = catalog?.name ?? provider?.kind ?? name ?? "Unknown";
+  const displayName = provider
+    ? `${kindLabel} / ${provider.name}`
+    : kindLabel;
 
   if (loaded && !provider) {
     return (
@@ -64,12 +101,12 @@ export function CloudDetail({ status }: CloudDetailProps) {
           </Link>
           <span className="text-gray-600">/</span>
           <span className="text-gray-100 text-sm font-medium">
-            {displayName}
+            {name ?? "Unknown"}
           </span>
         </div>
         <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg p-6 text-center">
           <p className="text-sm text-gray-400 mb-2">
-            {displayName} is not configured yet.
+            Provider &quot;{name}&quot; is not configured yet.
           </p>
           <Link
             to={`/infra/cloud/${name}/edit`}
@@ -143,6 +180,13 @@ export function CloudDetail({ status }: CloudDetailProps) {
           </Link>
         </div>
 
+        {/* Health error detail */}
+        {inst && inst.health !== "healthy" && (
+          <div className="mb-3 px-3 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+            {parseHealthReason(inst.health) ?? "Provider is unreachable"}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 text-[12px]">
           {provider && (
             <>
@@ -156,6 +200,18 @@ export function CloudDetail({ status }: CloudDetailProps) {
                 <span className="text-gray-500">Priority</span>
                 <span className="ml-2 text-gray-300 font-mono">
                   {provider.priority}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">Kind</span>
+                <span className="ml-2 text-gray-300 font-mono">
+                  {provider.kind}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">Name</span>
+                <span className="ml-2 text-gray-300 font-mono">
+                  {provider.name}
                 </span>
               </div>
             </>
@@ -197,10 +253,10 @@ export function CloudDetail({ status }: CloudDetailProps) {
           <div className="divide-y divide-[#2e303a]/30">
             {models.map((model) => (
               <div
-                key={model.name}
+                key={model.model}
                 className="px-4 py-1.5 flex items-center justify-between text-[12px] hover:bg-[#22232d]"
               >
-                <span className="font-mono text-gray-300">{model.name}</span>
+                <span className="font-mono text-gray-300">{model.model}</span>
                 <div className="flex items-center gap-2">
                   {model.capabilities.map((c) => (
                     <span

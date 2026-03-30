@@ -53,21 +53,32 @@ export interface ModelPlacement {
   loaded: boolean;
 }
 
-export interface ModelStatus {
-  name: string;
-  capabilities: string[];
-  specializations: string[];
+export interface ModelMetadata {
+  parameter_count: number | null;
   parameter_size: string | null;
   quantization_level: string | null;
   family: string | null;
+  families: string[];
+  format: string | null;
   size_disk: number;
   vram_bytes: number | null;
   context_length: number | null;
+}
+
+export interface ModelStatus {
+  model: string;
+  parameters: string | null;
+  model_identity: string;
+  capabilities: string[];
+  specializations: string[];
+  metadata: ModelMetadata;
+  instances: string[];
+  instance_count: number;
   available_on: ModelPlacement[];
 }
 
 export interface FeatureConfig {
-  auto_pull_mode: "Off" | "Sync" | "OnDemand";
+  auto_pull_mode: "off" | "sync" | "on_demand";
   delete_on_idle: boolean;
   metrics_enabled: boolean;
   pins: Record<string, string>;
@@ -100,6 +111,17 @@ export interface OrchestratorJob {
   error: string | null;
 }
 
+export interface ConfiguredProvider {
+  name: string;
+  kind: string;
+  base_url: string;
+  masked_key: string;
+  enabled: boolean;
+  priority: number;
+  capabilities: string[];
+  model_count: number;
+}
+
 export interface DashboardStatus {
   capabilities: CapabilityStatus[];
   stones: StoneStatus[];
@@ -115,38 +137,37 @@ export interface DashboardStatus {
 // ── Display Helpers ─────────────────────────────────────────────
 
 /** User-facing capabilities in display order.
- * `generate` is excluded — it's an internal fitness/benchmark concept.
- * Chat covers the user-facing text generation use case. */
+ * Names describe the output type (Image, Video, Speech, Music)
+ * or the action when output is text (Chat, Transcribe, Translate). */
 export const ALL_CAPABILITIES = [
   "chat",
-  "embed",
-  "vision",
-  "tools",
   "think",
-  "imagine",
-  "edit",
-  "render",
-  "transcribe",
-  "speak",
-  "rerank",
+  "tools",
   "translate",
+  "vision",
+  "transcribe",
+  "embed",
+  "rerank",
+  "image",
+  "video",
+  "speech",
+  "music",
 ] as const;
 
 /** Human-friendly labels for capabilities. */
 export const CAPABILITY_LABELS: Record<string, string> = {
-  generate: "Generate",
   chat: "Chat",
-  embed: "Embed",
-  vision: "Vision",
-  tools: "Tools",
   think: "Think",
-  imagine: "Imagine",
-  edit: "Edit",
-  render: "Render",
-  transcribe: "Transcribe",
-  speak: "Speak",
-  rerank: "Rerank",
+  tools: "Tools",
   translate: "Translate",
+  vision: "Vision",
+  transcribe: "Transcribe",
+  embed: "Embed",
+  rerank: "Rerank",
+  image: "Image",
+  video: "Video",
+  speech: "Speech",
+  music: "Music",
 };
 
 export function formatBytes(bytes: number): string {

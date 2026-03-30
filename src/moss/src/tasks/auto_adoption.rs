@@ -17,9 +17,108 @@ use crate::domain::{
 };
 use crate::infra::config::AdoptionConfig;
 use crate::AppState;
+use garden_common::detection::{DetectionPipeline, HealthCheck, PortConfig, ProcessSignature};
 use garden_common::{OfferingMode, ServiceHealthStatus};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
+
+/// Result of a detection attempt — unifies the process-based pipeline
+/// and the legacy command-based orchestrator into a single return type.
+enum DetectOutcome {
+    /// Service detected. `port` is populated only by the process pipeline.
+    Detected { port: Option<u16> },
+    /// Service not detected.
+    NotDetected,
+}
+
+/// Detect a service using either process-based pipeline (new) or
+/// command-based orchestrator (legacy). Process-based takes precedence
+/// when the manifest defines a `process` section.
+async fn detect_offering(
+    manifest: &garden_common::manifests::Offering,
+    legacy_orchestrator: &DetectionOrchestrator,
+    pipeline: &DetectionPipeline,
+    remembered_port: Option<u16>,
+) -> DetectOutcome {
+    // New path: process-based detection (DETECT-0001)
+    if let Some(proc_cfg) = manifest.adopted.as_ref().and_then(|a| a.process.as_ref()) {
+        let signature = ProcessSignature {
+            executable: proc_cfg.executable.clone(),
+            windows_executable: proc_cfg.windows_executable.clone(),
+            linux_executable: proc_cfg.linux_executable.clone(),
+            cmdline_contains: proc_cfg.cmdline_contains.clone(),
+        };
+
+        let health = manifest
+            .adopted
+            .as_ref()
+            .and_then(|a| a.health.as_ref())
+            .map(|h| HealthCheck {
+                path: h.path.clone(),
+                expected_status: h.expected_status,
+                response_contains: h.response_contains.clone(),
+            });
+
+        let ports = manifest
+            .adopted
+            .as_ref()
+            .and_then(|a| a.ports.as_ref())
+            .map(|p| PortConfig {
+                default: p.default,
+                range: p.range,
+                remember: p.remember,
+            })
+            .unwrap_or(PortConfig {
+                default: manifest.default_host_port(),
+                range: None,
+                remember: true,
+            });
+
+        let result = pipeline
+            .detect(&signature, health.as_ref(), &ports, remembered_port)
+            .await;
+
+        tracing::debug!(
+            offering = %manifest.name,
+            detected = result.detected,
+            port = ?result.port,
+            pid = ?result.pid,
+            details = %result.details,
+            "process-based detection"
+        );
+
+        return if result.detected {
+            DetectOutcome::Detected { port: result.port }
+        } else {
+            DetectOutcome::NotDetected
+        };
+    }
+
+    // Legacy path: command-based detection
+    match legacy_orchestrator.detect(manifest).await {
+        Ok(result) if result.detected && result.stable => {
+            DetectOutcome::Detected { port: None }
+        }
+        Ok(result) if result.detected => {
+            // Detected but not yet stable — treat as not detected for callers
+            // that need stable results. Log for observability.
+            tracing::trace!(
+                offering = %manifest.name,
+                "legacy detection: detected but not stable"
+            );
+            DetectOutcome::NotDetected
+        }
+        Ok(_) => DetectOutcome::NotDetected,
+        Err(e) => {
+            tracing::warn!(
+                offering = %manifest.name,
+                error = ?e,
+                "legacy detection failed"
+            );
+            DetectOutcome::NotDetected
+        }
+    }
+}
 
 /// Background auto-adoption loop
 ///
@@ -63,6 +162,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
     let orchestrator = DetectionOrchestrator::new(detector.clone());
     let connectivity = ConnectivityOrchestrator::new(detector);
 
+    // Process-based detection pipeline (DETECT-0001)
+    let process_pipeline = garden_common::detection::DetectionPipeline::new();
+
     // Track elapsed time for schedule phases
     let start_time = Instant::now();
     let mut scan_count: u32 = 0;
@@ -96,6 +198,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
         }
         scan_count = scan_count.saturating_add(1);
 
+        // Refresh process snapshot for this scan cycle (DETECT-0001)
+        process_pipeline.refresh().await;
+
         // Get manifests that support adopted mode
         let adoptable_manifests = state
             .manifest_registry
@@ -128,9 +233,30 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                 None => continue,
             };
 
-            match orchestrator.detect(manifest).await {
-                Ok(result) if result.detected => {
-                    // Still running — check connectivity
+            let outcome = detect_offering(manifest, &orchestrator, &process_pipeline, Some(location.port)).await;
+
+            match outcome {
+                DetectOutcome::Detected { port } => {
+                    // Update port if the pipeline discovered a different one
+                    if let Some(p) = port {
+                        if p != location.port {
+                            tracing::info!(
+                                offering = %offering_name,
+                                old_port = location.port,
+                                new_port = p,
+                                "adopted offering port changed"
+                            );
+                            state
+                                .update_offering(&offering_id, true, |o| {
+                                    o.location.port = p;
+                                    true
+                                })
+                                .await;
+                            state_changed = true;
+                        }
+                    }
+
+                    // Connectivity enforcement
                     let connectivity_outcome = connectivity
                         .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
                         .await
@@ -157,7 +283,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         state_changed = true;
                     }
                 }
-                Ok(_) | Err(_) => {
+                DetectOutcome::NotDetected => {
                     // Detection failed — demote back to candidates
                     tracing::warn!(
                         offering = %offering_name,
@@ -190,9 +316,30 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                 None => continue,
             };
 
-            match orchestrator.detect(manifest).await {
-                Ok(result) if result.detected && result.stable => {
-                    // Detected and stable — promote to active pool
+            let outcome = detect_offering(manifest, &orchestrator, &process_pipeline, Some(location.port)).await;
+
+            match outcome {
+                DetectOutcome::Detected { port } => {
+                    // Update port if the pipeline discovered a different one
+                    if let Some(p) = port {
+                        if p != location.port {
+                            tracing::info!(
+                                offering = %offering_name,
+                                old_port = location.port,
+                                new_port = p,
+                                "candidate offering port changed"
+                            );
+                            state
+                                .update_offering(&offering_id, true, |o| {
+                                    o.location.port = p;
+                                    true
+                                })
+                                .await;
+                            state_changed = true;
+                        }
+                    }
+
+                    // Detected — promote to active pool
                     let connectivity_outcome = connectivity
                         .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
                         .await
@@ -227,8 +374,8 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             .await;
                     }
                 }
-                _ => {
-                    // Not detected or not stable yet — stay in candidates silently
+                DetectOutcome::NotDetected => {
+                    // Not detected — stay in candidates silently
                     tracing::trace!(offering = %offering_name, "Adopted candidate not detected, staying in candidates");
                 }
             }
@@ -251,8 +398,10 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             }
 
             // Try detection
-            match orchestrator.detect(manifest).await {
-                Ok(result) if result.detected && result.stable => {
+            let outcome = detect_offering(manifest, &orchestrator, &process_pipeline, None).await;
+
+            match outcome {
+                DetectOutcome::Detected { port } => {
                     // ── Compatibility gate ────────────────────────────
                     // Check hardware compatibility rules before adopting.
                     // e.g. ollama-cpu must NOT be adopted on GPU-equipped stones.
@@ -273,7 +422,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
                     tracing::info!(
                         offering = %manifest.name,
-                        version = ?result.version,
+                        port = ?port,
                         "Auto-adopting detected offering"
                     );
 
@@ -292,7 +441,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     );
                     let location = garden_common::OfferingLocation {
                         host: "localhost".to_string(),
-                        port: manifest.default_host_port(),
+                        port: port.unwrap_or_else(|| manifest.default_host_port()),
                         protocol,
                         agnostic_port: None,
                         port_map: std::collections::HashMap::new(),
@@ -344,7 +493,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         name: adopted_fqn,
                         offering: manifest.name.clone(),
                         category: manifest.category.clone(),
-                        version: result.version.unwrap_or_else(|| "unknown".to_string()),
+                        version: "unknown".to_string(),
                         status: garden_common::OfferingStatus::Running,
                         health,
                         sub_capabilities: Vec::new(), // Populated by capabilities discovery task
@@ -385,26 +534,10 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             format!("Auto-adopted {}", manifest.name),
                         ));
                 }
-                Ok(result) if result.detected && !result.stable => {
+                DetectOutcome::NotDetected => {
                     tracing::debug!(
                         offering = %manifest.name,
-                        "Detected but not yet stable (waiting for stability threshold)"
-                    );
-                }
-                Ok(result) => {
-                    tracing::debug!(
-                        offering = %manifest.name,
-                        detected = result.detected,
-                        methods_tried = result.methods_tried,
-                        details = %result.details,
                         "Detection completed (not detected)"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        offering = %manifest.name,
-                        error = ?e,
-                        "Detection failed for offering"
                     );
                 }
             }

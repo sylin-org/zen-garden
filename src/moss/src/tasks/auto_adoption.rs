@@ -111,78 +111,38 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
         // Track if we need to persist changes
         let mut state_changed = false;
 
-        // Phase 1: Validate health of already-adopted offerings
-        // Snapshot adopted offerings to avoid holding write lock during async work
-        let adopted_snapshot: Vec<(
-            String,
-            String,
-            garden_common::OfferingLocation,
-            ServiceHealthStatus,
-        )> = {
+        // Phase 1A: Validate active adopted offerings
+        // If detection fails, demote back to candidates.
+        let active_adopted: Vec<(String, String, garden_common::OfferingLocation)> = {
             let offerings = state.offerings.read().await;
             offerings
                 .iter()
                 .filter(|o| o.is_adopted())
-                .map(|o| {
-                    (
-                        o.offering_id.clone(),
-                        o.offering.clone(),
-                        o.location.clone(),
-                        o.health.clone(),
-                    )
-                })
+                .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone()))
                 .collect()
         };
 
-        for (offering_id, offering_name, location, old_health) in adopted_snapshot {
-            // Find the manifest for this adopted offering
+        for (offering_id, offering_name, location) in active_adopted {
             let manifest = match state.manifest_registry.get_offering(&offering_name) {
                 Some(m) => m,
-                None => continue, // Manifest not found, skip validation
+                None => continue,
             };
 
-            // Run detection to check if still available
             match orchestrator.detect(manifest).await {
                 Ok(result) if result.detected => {
+                    // Still running — check connectivity
                     let connectivity_outcome = connectivity
                         .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
                         .await
                         .unwrap_or_else(|e| {
-                            tracing::warn!(
-                                offering = %offering_name,
-                                error = %e,
-                                "Connectivity enforcement failed"
-                            );
+                            tracing::warn!(offering = %offering_name, error = %e, "Connectivity enforcement failed");
                             crate::domain::ConnectivityOutcome {
                                 status: ConnectivityStatus::Failed,
-                                details: format!("Connectivity enforcement error: {}", e),
+                                details: format!("Connectivity enforcement error: {e}"),
                             }
                         });
 
-                    // Offering is available
-                    if old_health != ServiceHealthStatus::Healthy {
-                        tracing::info!(
-                            offering = %offering_name,
-                            "Adopted offering came back online, marking healthy"
-                        );
-                        state
-                            .update_offering(&offering_id, false, |o| {
-                                o.health = ServiceHealthStatus::Healthy;
-                                true
-                            })
-                            .await;
-                        state_changed = true;
-
-                        state
-                            .console
-                            .emit(garden_common::console::ConsoleEvent::new(
-                                garden_common::console::EventCategory::Services,
-                                garden_common::console::EventStatus::Healthy,
-                                format!("{} is back online", offering_name),
-                            ));
-                    }
-
-                    if !connectivity_outcome.is_ok() && old_health == ServiceHealthStatus::Healthy {
+                    if !connectivity_outcome.is_ok() {
                         tracing::warn!(
                             offering = %offering_name,
                             details = %connectivity_outcome.details,
@@ -198,28 +158,78 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     }
                 }
                 Ok(_) | Err(_) => {
-                    // Offering not detected - mark unhealthy (but don't remove)
-                    if old_health == ServiceHealthStatus::Healthy {
+                    // Detection failed — demote back to candidates
+                    tracing::warn!(
+                        offering = %offering_name,
+                        "Adopted offering not detected, demoting to candidates"
+                    );
+                    state.demote_adopted(&offering_id).await;
+                    state_changed = true;
+
+                    state.console.emit(garden_common::console::ConsoleEvent::new(
+                        garden_common::console::EventCategory::Services,
+                        garden_common::console::EventStatus::Disconnected,
+                        format!("{} no longer detected", offering_name),
+                    ));
+                }
+            }
+        }
+
+        // Phase 1B: Check adopted candidates — promote if detection succeeds
+        let candidate_snapshot: Vec<(String, String, garden_common::OfferingLocation)> = {
+            let candidates = state.adopted_candidates.read().await;
+            candidates
+                .iter()
+                .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone()))
+                .collect()
+        };
+
+        for (offering_id, offering_name, location) in candidate_snapshot {
+            let manifest = match state.manifest_registry.get_offering(&offering_name) {
+                Some(m) => m,
+                None => continue,
+            };
+
+            match orchestrator.detect(manifest).await {
+                Ok(result) if result.detected && result.stable => {
+                    // Detected and stable — promote to active pool
+                    let connectivity_outcome = connectivity
+                        .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(offering = %offering_name, error = %e, "Connectivity enforcement failed");
+                            crate::domain::ConnectivityOutcome {
+                                status: ConnectivityStatus::Failed,
+                                details: format!("Connectivity enforcement error: {e}"),
+                            }
+                        });
+
+                    state.promote_adopted(&offering_id).await;
+                    state_changed = true;
+
+                    state.console.emit(garden_common::console::ConsoleEvent::new(
+                        garden_common::console::EventCategory::Services,
+                        garden_common::console::EventStatus::Healthy,
+                        format!("{} detected, now active", offering_name),
+                    ));
+
+                    if !connectivity_outcome.is_ok() {
                         tracing::warn!(
                             offering = %offering_name,
-                            "Adopted offering not responding, marking offline"
+                            details = %connectivity_outcome.details,
+                            "Connectivity checks failed for newly promoted offering"
                         );
                         state
                             .update_offering(&offering_id, false, |o| {
-                                o.health = ServiceHealthStatus::Offline;
+                                o.health = ServiceHealthStatus::Degraded;
                                 true
                             })
                             .await;
-                        state_changed = true;
-
-                        state
-                            .console
-                            .emit(garden_common::console::ConsoleEvent::new(
-                                garden_common::console::EventCategory::Services,
-                                garden_common::console::EventStatus::Disconnected,
-                                format!("{} is offline", offering_name),
-                            ));
                     }
+                }
+                _ => {
+                    // Not detected or not stable yet — stay in candidates silently
+                    tracing::trace!(offering = %offering_name, "Adopted candidate not detected, staying in candidates");
                 }
             }
         }

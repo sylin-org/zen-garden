@@ -181,6 +181,7 @@ pub async fn build_test_state() -> AppState {
             }),
         }),
         offerings: Arc::new(RwLock::new(Vec::new())),
+        adopted_candidates: Arc::new(RwLock::new(Vec::new())),
         manifest_registry,
         platform: Arc::new(domain::Platform {
             docker,

@@ -750,26 +750,46 @@ async fn build_state(
         }
     }
 
-    // Phase 10.5: Load unified offerings from disk (includes managed, adopted, borrowed)
-    let offerings = match infra::load_offerings().await {
-        Ok(offerings) => {
-            let managed = offerings.iter().filter(|o| o.is_managed()).count();
-            let adopted = offerings.iter().filter(|o| o.is_adopted()).count();
-            let borrowed = offerings.iter().filter(|o| o.is_borrowed()).count();
-            if !offerings.is_empty() {
+    // Phase 10.5: Load offerings from disk, split into active and candidates
+    //
+    // Managed and borrowed → active pool (Docker manages their lifecycle).
+    // Adopted → candidates pool (must pass detection before becoming active).
+    //
+    // This prevents ghost services: an adopted offering that was persisted
+    // from a previous run only appears in topology after the auto-adoption
+    // task confirms it's actually running.
+    let (offerings, adopted_candidates) = match infra::load_offerings().await {
+        Ok(all) => {
+            let mut active: Vec<garden_common::Offering> = Vec::new();
+            let mut candidates: Vec<garden_common::Offering> = Vec::new();
+
+            for offering in all {
+                if offering.is_adopted() {
+                    candidates.push(offering);
+                } else {
+                    active.push(offering);
+                }
+            }
+
+            let managed = active.iter().filter(|o| o.is_managed()).count();
+            let borrowed = active.iter().filter(|o| o.is_borrowed()).count();
+            if !active.is_empty() || !candidates.is_empty() {
                 tracing::info!(
-                    total = offerings.len(),
+                    active = active.len(),
                     managed = managed,
-                    adopted = adopted,
                     borrowed = borrowed,
-                    "Restored unified offerings from disk"
+                    adopted_candidates = candidates.len(),
+                    "Loaded offerings: active={}, adopted candidates={} (pending detection)",
+                    active.len(),
+                    candidates.len(),
                 );
             }
-            offerings
+
+            (active, candidates)
         }
         Err(e) => {
-            tracing::warn!(error = ?e, "Failed to load unified offerings, starting fresh");
-            Vec::new()
+            tracing::warn!(error = ?e, "Failed to load offerings, starting fresh");
+            (Vec::new(), Vec::new())
         }
     };
 
@@ -836,6 +856,7 @@ async fn build_state(
             }),
         }),
         offerings: Arc::new(RwLock::new(offerings)),
+        adopted_candidates: Arc::new(RwLock::new(adopted_candidates)),
         manifest_registry: manifest_registry.clone(),
         platform: Arc::new(crate::domain::Platform {
             docker: docker.clone(),

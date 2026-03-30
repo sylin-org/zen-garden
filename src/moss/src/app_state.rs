@@ -63,7 +63,12 @@ pub struct AppState {
     /// Current domain — this stone's identity, local storage, topology, capabilities, metrics.
     pub current: Arc<crate::domain::Current>,
 
-    /// Unified offerings registry (all modes: managed, adopted, borrowed).
+    /// Active offerings registry (managed, borrowed, and detection-confirmed adopted).
+    ///
+    /// Only offerings that are confirmed present belong here. Managed and
+    /// borrowed offerings enter on load (Docker manages their lifecycle).
+    /// Adopted offerings enter only after the auto-adoption task confirms
+    /// detection — never loaded directly from disk into this collection.
     ///
     /// **Write access**: use gateway methods only (`update_offering`,
     /// `update_offering_by_name`, `update_offerings_batch`, `upsert_offering`,
@@ -71,6 +76,17 @@ pub struct AppState {
     /// Direct `.write()` is reserved for `app_state.rs` internals.
     /// **Read access**: `.read()` is fine from anywhere.
     pub offerings: Arc<RwLock<Vec<Offering>>>,
+
+    /// Adopted offering candidates — cold storage loaded from disk.
+    ///
+    /// Persisted configurations for adopted services. These are NOT active
+    /// — they don't appear in topology or API responses. The auto-adoption
+    /// task reads from here, runs detection, and on success moves the entry
+    /// to the active `offerings` pool via `promote_adopted()`.
+    ///
+    /// This preserves port/protocol/control configuration across restarts
+    /// so that re-adoption is instant when the service comes back.
+    pub adopted_candidates: Arc<RwLock<Vec<Offering>>>,
 
     /// Manifest registry - single source of truth for all manifests
     /// Contains both software (sw) and hardware (hw) manifests
@@ -277,13 +293,67 @@ impl AppState {
         &self.current.stone.name
     }
 
+    /// Promote an adopted candidate to the active offerings pool.
+    ///
+    /// Called by the auto-adoption task after detection succeeds. Moves
+    /// the offering from `adopted_candidates` to `offerings`, making it
+    /// visible in topology and API responses.
+    ///
+    /// Returns true if the offering was found in candidates and promoted.
+    pub async fn promote_adopted(&self, offering_id: &str) -> bool {
+        let candidate = {
+            let mut candidates = self.adopted_candidates.write().await;
+            let idx = candidates.iter().position(|o| o.offering_id == offering_id);
+            idx.map(|i| candidates.remove(i))
+        };
+
+        if let Some(mut offering) = candidate {
+            offering.status = garden_common::OfferingStatus::Running;
+            offering.health = garden_common::ServiceHealthStatus::Healthy;
+            let name = offering.offering.clone();
+            self.offerings.write().await.push(offering);
+            tracing::info!(offering = %name, "Promoted adopted candidate to active pool");
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Demote an adopted offering back to candidates (detection failed).
+    ///
+    /// Moves the offering from `offerings` to `adopted_candidates`,
+    /// removing it from topology and API visibility.
+    pub async fn demote_adopted(&self, offering_id: &str) -> bool {
+        let offering = {
+            let mut offerings = self.offerings.write().await;
+            let idx = offerings.iter().position(|o| o.offering_id == offering_id && o.is_adopted());
+            idx.map(|i| offerings.remove(i))
+        };
+
+        if let Some(mut o) = offering {
+            o.status = garden_common::OfferingStatus::Stopped;
+            o.health = garden_common::ServiceHealthStatus::Offline;
+            let name = o.offering.clone();
+            self.adopted_candidates.write().await.push(o);
+            tracing::info!(offering = %name, "Demoted adopted offering back to candidates");
+            true
+        } else {
+            false
+        }
+    }
+
     /// Persist offerings to disk
     ///
-    /// Reads the current offerings and saves to disk atomically.
+    /// Saves BOTH active offerings AND adopted candidates so that
+    /// configuration (port, protocol, control) survives restarts.
     pub(crate) async fn persist_offerings(&self) -> anyhow::Result<()> {
-        let offerings = self.offerings.read().await;
-        crate::infra::save_offerings(&offerings).await?;
-        drop(offerings);
+        let active = self.offerings.read().await;
+        let candidates = self.adopted_candidates.read().await;
+        let mut all: Vec<Offering> = active.iter().cloned().collect();
+        all.extend(candidates.iter().cloned());
+        drop(active);
+        drop(candidates);
+        crate::infra::save_offerings(&all).await?;
 
         // Offerings persistence is the canonical mutation boundary for offering state.
         // Reconcile the tools projection immediately so automation consumers get

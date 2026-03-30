@@ -6,8 +6,8 @@
 use crate::types::{AdoptedControlLevel, HealthMethod};
 use serde::{Deserialize, Serialize};
 
-/// OS-specific detection rules
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// OS-specific detection rules (legacy command-based).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OsDetectionRules {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub windows: Option<Vec<DetectionRule>>,
@@ -114,6 +114,73 @@ pub struct HttpProbeDetection {
     /// Timeout in milliseconds (default: 2000)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub timeout_ms: Option<u64>,
+}
+
+// ── Process-Based Detection (DETECT-0001) ──────────────────────
+
+/// Process-based detection configuration.
+///
+/// Replaces command-based detection with native process matching.
+/// Cross-platform: same definition works on Windows, Linux, macOS.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessDetection {
+    /// Executable name to match (case-insensitive substring).
+    /// e.g., "python", "ollama", "whisper-server"
+    pub executable: String,
+
+    /// Platform-specific executable name override.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub windows_executable: Option<String>,
+
+    /// Platform-specific executable name override.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub linux_executable: Option<String>,
+
+    /// Command line must contain this substring (case-insensitive).
+    /// e.g., "speech.py", "serve", "main.py"
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cmdline_contains: Option<String>,
+}
+
+/// Health verification for process-based detection.
+///
+/// HTTP probe on the discovered port to confirm service identity.
+/// Required for generic executables (python), optional for unique ones.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthVerification {
+    /// HTTP path to probe (e.g., "/health", "/system_stats").
+    pub path: String,
+
+    /// Expected HTTP status code (default: 200).
+    #[serde(default = "default_expected_status")]
+    pub expected_status: u16,
+
+    /// Response body must contain this string.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub response_contains: Option<String>,
+}
+
+fn default_expected_status() -> u16 {
+    200
+}
+
+/// Port configuration for process-based detection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortDetectionConfig {
+    /// Default port to try if TCP table lookup yields nothing.
+    pub default: u16,
+
+    /// Port range to scan as last resort [start, end].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub range: Option<(u16, u16)>,
+
+    /// Persist discovered port across restarts.
+    #[serde(default = "default_true")]
+    pub remember: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Control configuration for adopted offerings

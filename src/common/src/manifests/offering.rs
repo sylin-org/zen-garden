@@ -29,7 +29,10 @@
 
 use crate::manifests::connection::ConnectionProfile;
 use crate::manifests::connectivity::ConnectivityConfig;
-use crate::manifests::detection::{ControlConfig, HealthConfig, LocationConfig, OsDetectionRules};
+use crate::manifests::detection::{
+    ControlConfig, HealthConfig, HealthVerification, LocationConfig, OsDetectionRules,
+    PortDetectionConfig, ProcessDetection,
+};
 use crate::types::AdoptedControlLevel;
 use crate::{CompatibilityRules, CoordinationMode, OfferingMode, TaskDefinition};
 use anyhow::{Context, Result};
@@ -107,8 +110,24 @@ pub struct ManagedConfig {
 /// Adopted mode: native service detection and control
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdoptedConfig {
-    /// OS-specific detection rules
+    /// OS-specific detection rules (legacy command-based).
+    /// Deprecated: use `process` + `health` + `ports` instead.
+    #[serde(default)]
     pub detection: OsDetectionRules,
+
+    /// Process-based detection (DETECT-0001).
+    /// Cross-platform: matches process executable + cmdline pattern.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub process: Option<ProcessDetection>,
+
+    /// Health verification for process-based detection.
+    /// HTTP probe on discovered port to confirm service identity.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub health: Option<HealthVerification>,
+
+    /// Port configuration for process-based detection.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ports: Option<PortDetectionConfig>,
 
     /// Control commands (start/stop/restart)
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -915,6 +934,9 @@ impl OfferingRegistry {
             managed: None,
             adopted: Some(AdoptedConfig {
                 detection: adopted_file.detection,
+                process: adopted_file.process,
+                health: adopted_file.health,
+                ports: adopted_file.ports,
                 control: adopted_file.control,
                 default_control_level: adopted_file.default_control_level.unwrap_or_default(),
                 health_check: adopted_file.health_check,
@@ -1094,7 +1116,12 @@ struct AdoptedFile {
     description: Option<String>,
     #[serde(default)]
     tags: Option<Vec<String>>,
+    #[serde(default)]
     detection: OsDetectionRules,
+    // DETECT-0001: process-based detection (new format)
+    process: Option<ProcessDetection>,
+    health: Option<HealthVerification>,
+    ports: Option<PortDetectionConfig>,
     control: Option<ControlConfig>,
     default_control_level: Option<AdoptedControlLevel>,
     health_check: Option<HealthConfig>,

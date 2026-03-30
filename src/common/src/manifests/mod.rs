@@ -24,7 +24,8 @@ pub use category::{
 // Detection and control types
 pub use detection::{
     CommandDetection, ContainerInspectDetection, ControlConfig, DetectionConfig, DetectionMethod,
-    DetectionRule, HealthConfig, HttpProbeDetection, LocationConfig, OsDetectionRules,
+    DetectionRule, HealthConfig, HealthVerification, HttpProbeDetection, LocationConfig,
+    OsDetectionRules, PortDetectionConfig, ProcessDetection,
 };
 
 pub use ceremony::{CeremonyMode, CeremonyPolicy, ExecConfig, RollbackConfig};

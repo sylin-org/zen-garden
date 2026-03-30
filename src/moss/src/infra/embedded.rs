@@ -530,7 +530,11 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
         description: Option<String>,
         #[serde(default)]
         tags: Option<Vec<String>>,
+        #[serde(default)]
         detection: OsDetectionRules,
+        process: Option<garden_common::manifests::ProcessDetection>,
+        health: Option<garden_common::manifests::HealthVerification>,
+        ports: Option<garden_common::manifests::PortDetectionConfig>,
         control: Option<ControlConfig>,
         default_control_level: Option<AdoptedControlLevel>,
         health_check: Option<HealthConfig>,
@@ -593,6 +597,9 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                     managed: None,
                     adopted: Some(AdoptedConfig {
                         detection: file.detection,
+                        process: file.process,
+                        health: file.health,
+                        ports: file.ports,
                         control: file.control,
                         default_control_level: file.default_control_level.unwrap_or_default(),
                         health_check: file.health_check,

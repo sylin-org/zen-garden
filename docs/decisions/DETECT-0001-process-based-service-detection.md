@@ -10,165 +10,195 @@ last_verified: 2026-03-30
 **Date**: 2026-03-30
 **Status**: Proposed
 **Applies to**: `garden-common`, `garden-moss` (auto-adoption subsystem)
+**Depends on**: Process detection catalog (08), manifest analysis (09)
 
 ---
 
 ## Context
 
-The current adopted service detection uses shell commands (`powershell
--Command "..."`, `pgrep`, `pip show`) and HTTP probes to determine if a
-service is installed and running. This approach has systemic reliability
-issues:
+### Current State
 
-1. **PowerShell returns exit code 0 for everything** — empty pipelines,
-   missing commands, failed filters all exit 0. The detection engine
-   checks exit codes, so false positives are endemic on Windows.
+The adopted service detection uses shell commands (`powershell -Command`,
+`pgrep`, `pip show`, `where`, `which`) and HTTP probes. Testing every
+manifest against a live Windows machine running 6 AI services revealed:
 
-2. **`Get-Process` doesn't populate CommandLine** — requires WMI
-   (`Get-CimInstance Win32_Process`) instead, which the detection
-   never used.
+**5 of 7 command-based detection rules fail:**
 
-3. **`cmd /C` adds banner text to stdout** — version string contains
-   digits that match `\d+` patterns, causing false positive detection.
+| Service | Command | Failure |
+|---------|---------|---------|
+| ComfyUI | `comfy --help` | CLI not installed (portable build) |
+| whisper.cpp | `where whisper-server.exe` | Binary not in PATH |
+| OpenedAI Speech | PowerShell `Get-Process` pipeline | Exit 0 with empty output (false positive) |
+| Infinity | `pip show infinity-emb` | System pip, package in venv only |
+| LibreTranslate | `pip show libretranslate` | System pip, package in venv only |
 
-4. **`pip show` uses system Python, not venvs** — services installed
-   in virtual environments aren't found by the system pip.
+**Root causes (systemic, not per-manifest):**
+1. PowerShell returns exit 0 for empty pipelines, missing commands, and failed filters
+2. `Get-Process` doesn't populate CommandLine (need WMI `Win32_Process`)
+3. `cmd /C` adds version banner to stdout (digits match `\d+` patterns)
+4. `pip show` checks system Python, not virtualenvs
+5. `where`/`which` only check PATH, not actual install locations
+6. Per-platform shell syntax creates maintenance burden with no reliability gain
 
-5. **Platform-specific shell syntax** — each manifest needs separate
-   Windows/Linux/macOS detection sections with different commands that
-   do the same thing (find a process).
+**HTTP probes work** but depend on knowing the correct port. When a
+service runs on a non-default port (e.g., OpenedAI Speech on 8001
+instead of 8000 due to conflict with whisper.cpp), the probe fails.
 
-These issues caused false positive adoption of OpenedAI Speech on
-Windows stones where the service wasn't installed, because Python
-processes existed (for other services) and the PowerShell command
-returned exit 0.
+### What Actually Works (From Live Investigation)
 
-### What Actually Works
+**WMI/procfs** reliably provides process inventory:
+- PID, executable name, full command line, executable path
+- Available via `sysinfo` crate (already a dependency), cross-platform
+- No shell commands, no exit code ambiguity
 
-Investigation on a live Windows machine running 6 AI services revealed:
+**TCP table** maps PIDs to actual listening ports:
+- Windows: `GetExtendedTcpTable` or `Get-NetTCPConnection`
+- Linux: `/proc/net/tcp`
+- No assumed ports — the OS knows what each process is bound to
 
-- **WMI (`Win32_Process`)** reliably provides PID, executable name,
-  full command line, and executable path for every process.
-- **`GetNetTCPConnection`** maps PIDs to listening TCP ports.
-- **Each service has a unique fingerprint** in its command line args,
-  even when the executable name is generic (`python.exe`).
-- **The `sysinfo` crate** (already a dependency) provides cross-platform
-  process enumeration with command lines.
-- **Port mapping** is available via platform APIs (Windows:
-  `GetExtendedTcpTable`, Linux: `/proc/net/tcp`).
+**Each service has a unique fingerprint** observable in the process
+inventory, even when the executable is generic (`python.exe`):
+
+| Service | Executable | Unique Signal in CommandLine |
+|---------|-----------|----------------------------|
+| Ollama | `ollama` | `serve` |
+| ComfyUI | `python` | `main.py` (generic — needs health verify) |
+| whisper.cpp | `whisper-server` | unique name |
+| OpenedAI Speech | `python` | `speech.py` |
+| Infinity | `python` | `start.py` (generic — needs health verify) |
+| LibreTranslate | `libretranslate` | unique name |
+
+### Parent-Child Process Chains
+
+Python venv services spawn child processes. The venv python launches
+system python, and the **child** holds the listening port:
+
+```
+venv/python.exe (PID 32760, no port)
+  └→ C:\Python312\python.exe speech.py --port 8001 (PID 32100, port 8001)
+```
+
+Both parent and child have `speech.py` in their command line.
+Detection must follow the process tree to find the port holder.
+
+### ollama vs ollama-cpu
+
+These are the SAME binary (`ollama.exe serve`) on the SAME port
+(11434). The difference is runtime environment
+(`CUDA_VISIBLE_DEVICES=""`). Process detection cannot distinguish
+them. This is handled post-adoption via capabilities classification.
 
 ---
 
 ## Decision
 
 Replace shell-command-based detection with a **process inventory +
-port mapping + health verification** pipeline. Detection is data
-matching against a system snapshot, not command execution.
+TCP port mapping + health verification** pipeline.
+
+### Core Principle
+
+Detection is **data matching against a system snapshot**, not command
+execution. The system snapshot is captured once per scan cycle via
+native APIs. Every offering's detection reads from the same cached
+snapshot.
 
 ### Detection Pipeline
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ 1. PROCESS SNAPSHOT (runs once per scan cycle)      │
-│    sysinfo::System::refresh_processes()             │
-│    → Vec<ProcessInfo> { pid, name, cmdline, exe }   │
-│    Cached. Every offering reads from the same       │
-│    snapshot. No per-offering process enumeration.    │
-├─────────────────────────────────────────────────────┤
-│ 2. PORT MAP (runs once per scan cycle)              │
-│    Platform-native TCP table enumeration:            │
-│    Windows: GetExtendedTcpTable (IP Helper API)     │
-│    Linux: parse /proc/net/tcp                       │
-│    → HashMap<PID, Vec<u16>> (PID → listening ports) │
-│    Combined with step 1: each process now has its   │
-│    listening ports attached.                         │
-├─────────────────────────────────────────────────────┤
-│ 3. SERVICE MATCHING (per offering manifest)         │
-│    Match process snapshot against manifest rules:    │
-│    - executable name (exact or pattern)             │
-│    - cmdline contains (substring or regex)          │
-│    - optional: port extraction from cmdline         │
-│    → Matched processes with discovered ports        │
-├─────────────────────────────────────────────────────┤
-│ 4. HEALTH VERIFICATION (per matched process)        │
-│    Optional HTTP probe on discovered port:           │
-│    - path: /health (or service-specific)            │
-│    - expected_status: 200                           │
-│    - response_match: unique string for this service │
-│    → Confirmed operational service with known port  │
-├─────────────────────────────────────────────────────┤
-│ 5. PORT MEMORY (persistence)                        │
-│    Store discovered port for fast re-detection:      │
-│    - Next boot: probe remembered port first         │
-│    - If remembered port fails: run full pipeline    │
-└─────────────────────────────────────────────────────┘
+1. PROCESS SNAPSHOT (once per scan cycle, cached)
+   sysinfo crate → Vec<ProcessInfo> { pid, name, cmdline, exe_path }
+   Cross-platform. Same interface on Windows, Linux, macOS.
+
+2. TCP PORT MAP (once per scan cycle, cached)
+   Platform-native API → HashMap<PID, Vec<u16>>
+   Windows: GetExtendedTcpTable (iphlpapi)
+   Linux: /proc/net/tcp + /proc/{pid}/fd
+   Maps every process to its listening ports.
+
+3. SERVICE MATCHING (per offering manifest)
+   Match process snapshot against manifest signature:
+   - executable name (case-insensitive substring)
+   - cmdline_contains (substring match)
+   → List of candidate processes with their ports
+
+4. PARENT-CHILD RESOLUTION (for venv services)
+   If matched process has no listening port:
+   - Check child processes (same cmdline pattern)
+   - Use the child's port
+   → Matched process with discovered port
+
+5. HEALTH VERIFICATION (per matched candidate)
+   HTTP probe on discovered port:
+   - path + expected_status + response_contains
+   → Confirmed: service identity + operational status + actual port
+
+6. PORT MEMORY (persistence)
+   Store discovered port in adopted offering config.
+   Next boot: fast-path probe on remembered port before full scan.
 ```
 
 ### Manifest Format
 
+Detection rules become declarative process signatures:
+
 ```yaml
 detection:
+  # Process matching (required)
   process:
-    # Required: executable name to match (case-insensitive)
-    executable: python
-    # Optional: platform-specific executable name
+    executable: python           # match process name (cross-platform)
+    cmdline_contains: speech.py  # match in command line args
+    # Platform-specific executable override (optional)
     windows_executable: python.exe
     linux_executable: python3
-    # Optional: command line must contain this substring
-    cmdline_contains: "speech.py"
-    # Optional: regex for more complex matching
-    cmdline_pattern: "speech\\.py"
-    # Optional: extract port from command line
-    port_extract: "--port\\s+(\\d+)"
 
-  # Optional: verify the service is operational
+  # Health verification (required for generic executables, optional for unique ones)
   health:
-    path: /health
+    path: /health                # HTTP endpoint to probe
     expected_status: 200
-    # Optional: response body must contain this string
-    response_contains: '"status"'
+    response_contains: '"status"' # body must contain this string
 
   # Port configuration
   ports:
-    default: 8000
-    # Scan range if default and cmdline extraction both fail
-    range: [8000, 8010]
-    # Remember discovered port across restarts
-    remember: true
-
-  # Scan timing (inherits from global config if not specified)
-  scan:
-    interval_secs: 30
-    stability_threshold: 2   # consecutive successful detections
+    default: 8000                # try this first if no port in TCP table
+    range: [8000, 8010]          # scan range as last resort
+    remember: true               # persist discovered port across restarts
 ```
 
-### Per-Service Detection Rules
+No platform-specific sections for detection. No shell commands. No
+exit code parsing. The `sysinfo` crate handles platform differences.
+
+### Per-Service Rules (Updated)
 
 **Ollama:**
 ```yaml
 detection:
   process:
     executable: ollama
-    cmdline_contains: "serve"
+    cmdline_contains: serve
   health:
     path: /
     response_contains: "Ollama is running"
   ports:
     default: 11434
 ```
+Risk: Low. Unique binary.
 
 **ComfyUI:**
 ```yaml
 detection:
   process:
     executable: python
-    cmdline_contains: "main.py"
+    cmdline_contains: main.py
   health:
     path: /system_stats
     expected_status: 200
+    response_contains: '"system"'
   ports:
     default: 8188
 ```
+Risk: Medium. `main.py` is generic. Health verification mandatory
+to confirm identity. `response_contains: '"system"'` matches the
+ComfyUI-specific `/system_stats` JSON shape.
 
 **whisper.cpp:**
 ```yaml
@@ -182,37 +212,43 @@ detection:
   ports:
     default: 8000
     range: [8000, 8010]
-    port_extract: "--port\\s+(\\d+)"
+    remember: true
 ```
+Risk: Low. Unique binary name.
 
 **OpenedAI Speech:**
 ```yaml
 detection:
   process:
     executable: python
-    cmdline_contains: "speech.py"
+    cmdline_contains: speech.py
   health:
     path: /health
     response_contains: '"status"'
   ports:
     default: 8000
     range: [8000, 8010]
-    port_extract: "--port\\s+(\\d+)"
+    remember: true
 ```
+Risk: Low. `speech.py` is unique. Parent-child resolution needed
+(venv python → system python holds the port).
 
 **Infinity:**
 ```yaml
 detection:
   process:
     executable: python
-    cmdline_contains: "start.py"
+    cmdline_contains: start.py
   health:
     path: /health
     response_contains: '"unix"'
   ports:
     default: 7997
     range: [7990, 8000]
+    remember: true
 ```
+Risk: Medium. `start.py` is generic. Health verification mandatory.
+Infinity's `/health` returns `{"unix": timestamp}` — unique signature.
 
 **LibreTranslate:**
 ```yaml
@@ -226,83 +262,192 @@ detection:
   ports:
     default: 5000
     range: [5000, 5010]
-    port_extract: "--port\\s+(\\d+)"
+    remember: true
 ```
+Risk: Low. Unique entry point name.
 
-### Parent-Child Process Handling
+**ollama-cpu:**
 
-Python venv services spawn child processes. The venv python launches
-the system python, and the CHILD holds the listening port:
+Not a separate detection target. Ollama is detected once as `ollama`.
+Post-adoption, the capabilities system determines GPU availability.
+If no GPU → classified as ollama-cpu equivalent. If GPU → classified
+as ollama (GPU). The manifest for ollama-cpu becomes a configuration
+variant, not a separate adopted offering.
 
-```
-venv/python.exe (PID 100) → C:\Python312\python.exe (PID 200, port 8001)
-```
+### Scan Timing
 
-The detection engine must handle this:
-1. Match the parent process by cmdline (`speech.py`)
-2. If the parent has no listening port, check its children
-3. A child with the same cmdline pattern inherits the match
-4. The port comes from whichever process (parent or child) is listening
+- **Process snapshot + port map**: once per cycle (10-30s configurable)
+- **Service matching**: every cycle, against cached snapshot
+- **Health verification**: on first detection and when process reappears
+  after absence. Not every cycle for confirmed services.
+- **Re-verification**: confirmed services re-probed at longer interval
+  (5 minutes) or when process disappears from snapshot.
+- **Manually launched services**: detected within one scan cycle.
 
-### Scan Cycle
+### Two-Collection Integration
 
-The process snapshot + port map run **once per scan cycle** (every
-10-30 seconds, configurable). All offering manifests match against
-the same cached snapshot. This is O(manifests × processes) string
-matching — fast, no I/O per offering.
+Works with the adopted offerings two-collection architecture:
+- **candidates pool**: persisted adopted configs (cold storage)
+- **active pool**: detection-confirmed services (visible in topology)
 
-The health verification runs only for newly matched processes (not
-every cycle for already-confirmed services). Confirmed services are
-re-verified at a longer interval (5 minutes) or when the process
-disappears from the snapshot.
-
-This means manually launched services are picked up within one scan
-cycle (10-30 seconds).
+Pipeline result feeds into `promote_adopted()` / `demote_adopted()`:
+- Detection succeeds → promote candidate to active pool
+- Detection fails for active offering → demote to candidates
+- New service detected (not in candidates) → create and adopt
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Process Inventory Module (`garden-common`)
+### Phase 1: Process Inventory (`garden-common`)
 
-New module: `detection::process_inventory`
+New module: `detection::inventory`
 
-- `ProcessSnapshot` struct: cached process list with command lines
-- `PortMap` struct: PID → listening ports
-- `ProcessSnapshot::capture()` — uses `sysinfo` crate
-- `PortMap::capture()` — platform-specific TCP table enumeration
-- Cross-platform: same interface, different implementations
+```rust
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub name: String,          // executable name
+    pub cmdline: String,       // full command line
+    pub exe_path: String,      // executable path
+    pub listening_ports: Vec<u16>,
+}
+
+pub struct SystemSnapshot {
+    processes: Vec<ProcessInfo>,
+    captured_at: Instant,
+}
+
+impl SystemSnapshot {
+    /// Capture process list + TCP port map.
+    /// Uses sysinfo crate for processes, platform API for ports.
+    pub fn capture() -> Self;
+
+    /// Find processes matching a signature.
+    pub fn find(&self, sig: &ProcessSignature) -> Vec<&ProcessInfo>;
+}
+```
+
+Platform-specific port mapping:
+- `inventory::windows` — `GetExtendedTcpTable` via `windows` crate
+- `inventory::linux` — parse `/proc/net/tcp`
 
 ### Phase 2: Service Matcher (`garden-common`)
 
-New module: `detection::service_matcher`
+New module: `detection::matcher`
 
-- `ProcessSignature` struct: parsed from manifest YAML
-- `ServiceMatch` struct: matched process with discovered port
-- `match_service(signature, snapshot, port_map) -> Option<ServiceMatch>`
-- Parent-child resolution for venv processes
+```rust
+pub struct ProcessSignature {
+    pub executable: String,
+    pub windows_executable: Option<String>,
+    pub linux_executable: Option<String>,
+    pub cmdline_contains: Option<String>,
+}
+
+pub struct HealthCheck {
+    pub path: String,
+    pub expected_status: u16,
+    pub response_contains: Option<String>,
+}
+
+pub struct PortConfig {
+    pub default: u16,
+    pub range: Option<(u16, u16)>,
+    pub remember: bool,
+}
+
+pub struct DetectionMatch {
+    pub pid: u32,
+    pub port: u16,
+    pub health_verified: bool,
+}
+```
 
 ### Phase 3: Detection Pipeline (`garden-common`)
 
 New module: `detection::pipeline`
 
-- `DetectionPipeline` struct: orchestrates snapshot → match → verify
-- Replaces `detect_by_command` as the primary detection method
-- `detect_by_command` and `detect_by_http_probe` remain for backward
-  compatibility but are deprecated for new manifests
+```rust
+pub struct DetectionPipeline {
+    snapshot: Arc<RwLock<SystemSnapshot>>,
+    refresh_interval: Duration,
+}
 
-### Phase 4: Moss Integration
+impl DetectionPipeline {
+    /// Refresh the system snapshot (call once per scan cycle).
+    pub async fn refresh(&self);
 
-- `DetectionOrchestrator` updated to use the pipeline
-- Manifest types extended for new detection format
-- Auto-adoption task uses process-based detection
-- Port memory in persisted offering config
+    /// Detect a service using its manifest signature.
+    pub async fn detect(
+        &self,
+        process_sig: &ProcessSignature,
+        health: Option<&HealthCheck>,
+        ports: &PortConfig,
+        remembered_port: Option<u16>,
+    ) -> DetectionResult;
+}
 
-### Phase 5: Manifest Migration
+pub struct DetectionResult {
+    pub detected: bool,
+    pub port: Option<u16>,
+    pub pid: Option<u32>,
+    pub details: String,
+}
+```
 
-- All adopted manifests updated to new format
-- Old `command` sections removed (or kept as deprecated fallback)
-- Testing on Windows and Linux stones
+### Phase 4: Manifest Types (`garden-common`)
+
+Extend `garden_common::manifests` with new detection format:
+
+```rust
+pub struct ProcessDetection {
+    pub executable: String,
+    pub windows_executable: Option<String>,
+    pub linux_executable: Option<String>,
+    pub cmdline_contains: Option<String>,
+}
+
+pub struct HealthVerification {
+    pub path: String,
+    pub expected_status: u16,
+    pub response_contains: Option<String>,
+}
+
+pub struct PortDetectionConfig {
+    pub default: u16,
+    pub range: Option<(u16, u16)>,
+    pub remember: bool,
+}
+```
+
+Deserialized from the new YAML `detection.process` / `detection.health`
+/ `detection.ports` sections. Coexists with existing `detection.windows`
+/ `detection.linux` sections for backward compatibility.
+
+### Phase 5: Moss Integration
+
+- `DetectionOrchestrator::detect()` checks for new-format detection
+  first. Falls back to old command-based detection if no process
+  signature is defined.
+- Auto-adoption task uses `DetectionPipeline::refresh()` once per
+  cycle, then `detect()` per offering.
+- Port memory integrated into persisted offering config
+  (`offering.location.port`).
+
+### Phase 6: Manifest Migration
+
+Update all 7 adopted manifests:
+- Replace `detection.windows/linux/macos` command sections with
+  `detection.process` + `detection.health` + `detection.ports`
+- Keep old sections commented out during transition
+- Remove after validation on both Windows and Linux stones
+
+### Phase 7: ollama-cpu Consolidation
+
+- Remove `ollama-cpu.adopted.yaml` as separate detection target
+- Ollama detection produces a single offering
+- Post-adoption GPU capability check classifies as GPU or CPU-only
+- Configuration differences (env vars, memory limits) applied as
+  offering attributes, not separate manifests
 
 ---
 
@@ -310,23 +455,24 @@ New module: `detection::pipeline`
 
 ### Positive
 
-- No shell command execution for detection (no exit code ambiguity)
-- Cross-platform with single manifest section (no per-OS commands)
-- Process snapshot is shared across all offerings (efficient)
-- Port discovery from cmdline or TCP table (handles non-default ports)
-- Manually launched services detected within seconds
-- Parent-child process handling for venv services
+- No shell command execution for detection — deterministic behavior
+- Cross-platform with single manifest section
+- Process snapshot shared across all offerings — efficient
+- Port discovered from TCP table — handles non-default ports
+- Manually launched services detected within one scan cycle
+- Parent-child process resolution handles venv services
+- Eliminates all 5 known false positive/negative detection failures
 
 ### Negative
 
 - Platform-specific code for TCP table enumeration (2 implementations)
-- `sysinfo` crate refreshes may have overhead on large process tables
-- Port range scanning adds latency for first-time detection
-- Parent-child resolution adds complexity
+- `sysinfo` refresh has overhead on large process tables (~5-10ms)
+- Generic cmdline patterns (`start.py`, `main.py`) require health
+  verification — detection is two-step, not instant
+- ollama-cpu consolidation changes the offering model
 
 ### Neutral
 
-- Old `command` and `http_probe` detection methods remain for backward
-  compatibility (no breaking changes to existing manifests)
-- Manifest format change is additive (new `process` section alongside
-  existing `detection` sections)
+- Old `command` and `http_probe` methods remain for backward compat
+- Manifest format change is additive (new sections alongside existing)
+- Stability threshold still applies (consecutive successful detections)

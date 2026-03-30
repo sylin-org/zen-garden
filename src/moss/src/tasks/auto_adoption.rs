@@ -335,7 +335,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                                     true
                                 })
                                 .await;
-                            state_changed = true;
+                            // state_changed set below by promote
                         }
                     }
 

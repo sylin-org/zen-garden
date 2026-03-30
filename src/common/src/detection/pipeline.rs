@@ -4,8 +4,7 @@
 //! runs service matching + health probes against it for each offering.
 
 use super::inventory::SystemSnapshot;
-use super::matcher::{match_processes, ProcessMatch, ProcessSignature};
-use anyhow::Result;
+use super::matcher::{match_processes, ProcessSignature};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;

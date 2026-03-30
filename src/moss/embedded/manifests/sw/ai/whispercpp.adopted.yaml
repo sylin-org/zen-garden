@@ -97,6 +97,20 @@ detection:
       stability_threshold: 1
       cache_ttl_secs: 60
 
+# DETECT-0001: Process-based detection (takes precedence over legacy detection above)
+process:
+  windows_executable: whisper-server.exe
+  linux_executable: whisper-server
+  executable: whisper-server
+health:
+  path: /health
+  expected_status: 200
+  response_contains: '"status"'
+ports:
+  default: 8000
+  range: [8000, 8010]
+  remember: true
+
 # CONTROL
 control:
   level: monitor

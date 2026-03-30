@@ -129,6 +129,18 @@ detection:
       stability_threshold: 1
       cache_ttl_secs: 60
 
+# DETECT-0001: Process-based detection (takes precedence over legacy detection above)
+process:
+  executable: ollama
+  cmdline_contains: serve
+health:
+  path: /
+  expected_status: 200
+  response_contains: "Ollama is running"
+ports:
+  default: 11434
+  remember: true
+
 # Control configuration (defines what Moss can do)
 control:
   # Options:

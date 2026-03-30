@@ -107,6 +107,20 @@ detection:
       stability_threshold: 1
       cache_ttl_secs: 120
 
+# DETECT-0001: Process-based detection (takes precedence over legacy detection above)
+process:
+  windows_executable: libretranslate.exe
+  linux_executable: libretranslate
+  executable: libretranslate
+health:
+  path: /health
+  expected_status: 200
+  response_contains: '"status"'
+ports:
+  default: 5000
+  range: [5000, 5010]
+  remember: true
+
 # CONTROL
 control:
   level: monitor

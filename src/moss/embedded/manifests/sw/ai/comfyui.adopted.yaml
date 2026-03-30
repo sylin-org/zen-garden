@@ -83,6 +83,18 @@ detection:
       stability_threshold: 1
       cache_ttl_secs: 60
 
+# DETECT-0001: Process-based detection (takes precedence over legacy detection above)
+process:
+  executable: python
+  cmdline_contains: main.py
+health:
+  path: /system_stats
+  expected_status: 200
+  response_contains: '"system"'
+ports:
+  default: 8188
+  remember: true
+
 # CONTROL
 control:
   level: monitor

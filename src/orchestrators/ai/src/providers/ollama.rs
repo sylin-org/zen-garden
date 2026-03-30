@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use crate::catalog::inference::*;
 use crate::catalog::traits::{
-    BenchmarkSample, BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext, Sample,
-    ServiceModel, SyncProgress,
+    BenchmarkSample, BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider,
+    ProviderContext, Sample, ServiceModel, SyncProgress,
 };
 use crate::domain::types::{Capability, OfferingKind, ServiceInstance};
 use crate::offerings::ollama::client::OllamaClient;
@@ -433,6 +433,46 @@ impl Provider for OllamaProvider {
 
             Ok(SyncProgress::Completed { bytes_transferred })
         })
+    }
+
+    // ── Form Schema (ORCH-0017) ──────────────────────────────────
+
+    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
+        match capability {
+            Capability::Chat | Capability::Think | Capability::Tools | Capability::Vision => {
+                FormSchema {
+                    schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string", "title": "Message", "minLength": 1},
+                            "temperature": {"type": "number", "title": "Temperature", "minimum": 0, "maximum": 2, "default": 0.7},
+                            "max_tokens": {"type": "integer", "title": "Max Tokens", "minimum": 1, "maximum": 128000, "default": 4096},
+                            "system": {"type": "string", "title": "System Prompt"}
+                        },
+                        "required": ["message"]
+                    }),
+                    ui_schema: serde_json::json!({
+                        "message": {"ui:widget": "textarea", "ui:options": {"rows": 3}},
+                        "system": {"ui:widget": "textarea", "ui:options": {"rows": 2}},
+                        "temperature": {"ui:widget": "range"},
+                        "ui:order": ["message", "system", "temperature", "max_tokens"]
+                    }),
+                }
+            }
+            Capability::Embed => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string", "title": "Text to embed", "minLength": 1}
+                    },
+                    "required": ["input"]
+                }),
+                ui_schema: serde_json::json!({
+                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 2}}
+                }),
+            },
+            _ => FormSchema::default(),
+        }
     }
 }
 

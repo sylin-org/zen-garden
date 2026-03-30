@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::catalog::inference::*;
 use crate::catalog::traits::{
-    BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext, ServiceModel,
+    BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
 use crate::domain::types::{Capability, OfferingKind};
 
@@ -173,6 +173,24 @@ impl Provider for WhisperCppProvider {
 
             Ok(TranscribeResponse { text })
         })
+    }
+
+    // ── Form Schema (ORCH-0017) ──────────────────────────────────
+
+    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
+        match capability {
+            Capability::Transcribe => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "language": {"type": "string", "title": "Language", "description": "Language code, e.g. en, es, ja (auto-detect if empty)"},
+                        "response_format": {"type": "string", "title": "Format", "enum": ["json", "text", "srt", "verbose_json", "vtt"], "default": "json"}
+                    }
+                }),
+                ui_schema: serde_json::json!({}),
+            },
+            _ => FormSchema::default(),
+        }
     }
 }
 

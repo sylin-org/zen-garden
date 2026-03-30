@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::catalog::inference::*;
 use crate::catalog::traits::{
-    BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext, ServiceModel,
+    BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
 use crate::domain::types::{Capability, OfferingKind};
 
@@ -226,6 +226,39 @@ impl Provider for SpeachesProvider {
 
             Ok(TranscribeResponse { text })
         })
+    }
+
+    // ── Form Schema (ORCH-0017) ──────────────────────────────────
+
+    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
+        match capability {
+            Capability::Speech => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string", "title": "Text", "minLength": 1},
+                        "voice": {"type": "string", "title": "Voice", "default": "af_heart", "description": "Kokoro voice ID"},
+                        "speed": {"type": "number", "title": "Speed", "minimum": 0.25, "maximum": 4.0, "default": 1.0},
+                        "response_format": {"type": "string", "title": "Format", "enum": ["mp3", "wav"], "default": "mp3"}
+                    },
+                    "required": ["input"]
+                }),
+                ui_schema: serde_json::json!({
+                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 3}},
+                    "speed": {"ui:widget": "range"}
+                }),
+            },
+            Capability::Transcribe => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "language": {"type": "string", "title": "Language (optional)", "description": "ISO-639-1 code"}
+                    }
+                }),
+                ui_schema: serde_json::json!({}),
+            },
+            _ => FormSchema::default(),
+        }
     }
 }
 

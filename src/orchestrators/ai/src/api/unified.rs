@@ -373,6 +373,74 @@ pub async fn models(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
+/// `GET /v1/models/{model}/form?capability={cap}` — form schema for a model.
+///
+/// Returns a JSON Schema + UI Schema that the dashboard renders via RJSF.
+/// The provider decides what parameters to expose for this model+capability.
+pub async fn model_form(
+    State(state): State<AppState>,
+    axum::extract::Path(model_name): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let capability_str = params.get("capability").map(|s| s.as_str()).unwrap_or("chat");
+
+    // Parse capability
+    let capability = match Capability::ALL.iter().find(|c| c.as_str() == capability_str) {
+        Some(c) => *c,
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &format!("Unknown capability: {capability_str}"),
+            );
+        }
+    };
+
+    // Find the model in the directory to determine its provider
+    let source = {
+        let dir = state.directory.read().await;
+        let entries = dir.find_by_model_name(&model_name);
+        entries
+            .first()
+            .and_then(|e| e.instances.first())
+            .map(|fqn| fqn.source.clone())
+            .unwrap_or_default()
+    };
+
+    // Look up the offering kind from the source string
+    let kind = match crate::domain::types::OfferingKind::from_str(&source) {
+        Some(k) => k,
+        None => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &format!("No provider found for model '{model_name}'"),
+            );
+        }
+    };
+
+    // Get the form schema from the provider
+    let provider = match state.providers.get(kind) {
+        Some(p) => p,
+        None => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &format!("Provider '{source}' not registered"),
+            );
+        }
+    };
+
+    let form = provider.form_schema(&model_name, capability);
+
+    let body = serde_json::json!({
+        "model": model_name,
+        "provider": source,
+        "capability": capability_str,
+        "schema": form.schema,
+        "uiSchema": form.ui_schema,
+    });
+
+    Json(body).into_response()
+}
+
 // ── Helpers ─────────────────────────────────────────────────────
 
 /// Resolve a model name — reuses logic from proxy.rs.

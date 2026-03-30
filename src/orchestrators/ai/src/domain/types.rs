@@ -119,6 +119,29 @@ impl OfferingKind {
         }
     }
 
+    /// Parse an offering kind from its `as_str()` representation.
+    /// Covers both local and cloud providers.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "ollama" => Some(Self::Ollama),
+            "comfyui" => Some(Self::ComfyUi),
+            "speaches" => Some(Self::Speaches),
+            "whispercpp" => Some(Self::WhisperCpp),
+            "openedai-speech" => Some(Self::OpenedaiSpeech),
+            "infinity" => Some(Self::Infinity),
+            "libretranslate" => Some(Self::LibreTranslate),
+            "huggingface" => Some(Self::HuggingFace),
+            "openai" => Some(Self::OpenAi),
+            "anthropic" => Some(Self::Anthropic),
+            "stability-ai" => Some(Self::StabilityAi),
+            "elevenlabs" => Some(Self::ElevenLabs),
+            "cohere" => Some(Self::Cohere),
+            "deepgram" => Some(Self::Deepgram),
+            "google" => Some(Self::Google),
+            _ => None,
+        }
+    }
+
     /// All local (non-cloud) offering type names used for topology filtering.
     pub const LOCAL_OFFERING_NAMES: &[&str] = &[
         "ollama",

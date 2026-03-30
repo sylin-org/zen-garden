@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::catalog::inference::*;
 use crate::catalog::traits::{
-    BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext, ServiceModel,
+    BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
 use crate::domain::types::{Capability, OfferingKind};
 use crate::offerings::infinity::client::InfinityClient;
@@ -142,6 +142,26 @@ impl Provider for InfinityProvider {
                 .context("parse Infinity embed response")?;
             Ok(response)
         })
+    }
+
+    // ── Form Schema (ORCH-0017) ──────────────────────────────────
+
+    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
+        match capability {
+            Capability::Embed => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string", "title": "Text to embed", "minLength": 1}
+                    },
+                    "required": ["input"]
+                }),
+                ui_schema: serde_json::json!({
+                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 2}}
+                }),
+            },
+            _ => FormSchema::default(),
+        }
     }
 }
 

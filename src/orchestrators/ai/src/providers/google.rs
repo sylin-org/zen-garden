@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use crate::catalog::inference::*;
 use crate::catalog::traits::{
-    BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext, ServiceModel,
+    BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
 use crate::domain::types::{Capability, OfferingKind};
 
@@ -544,6 +544,107 @@ impl Provider for GoogleProvider {
 
             Ok(TranscribeResponse { text })
         })
+    }
+
+    // ── Form Schema (ORCH-0017) ──────────────────────────────────
+
+    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
+        match capability {
+            Capability::Chat | Capability::Think | Capability::Tools | Capability::Vision => {
+                FormSchema {
+                    schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string", "title": "Message", "minLength": 1},
+                            "temperature": {"type": "number", "title": "Temperature", "minimum": 0, "maximum": 2.0, "default": 0.7},
+                            "max_tokens": {"type": "integer", "title": "Max Tokens", "minimum": 1, "maximum": 1048576, "default": 4096},
+                            "system": {"type": "string", "title": "System Prompt"}
+                        },
+                        "required": ["message"]
+                    }),
+                    ui_schema: serde_json::json!({
+                        "message": {"ui:widget": "textarea", "ui:options": {"rows": 3}},
+                        "system": {"ui:widget": "textarea", "ui:options": {"rows": 2}},
+                        "temperature": {"ui:widget": "range"},
+                        "ui:order": ["message", "system", "temperature", "max_tokens"]
+                    }),
+                }
+            }
+            Capability::Embed => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string", "title": "Text to embed", "minLength": 1}
+                    },
+                    "required": ["input"]
+                }),
+                ui_schema: serde_json::json!({
+                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 2}}
+                }),
+            },
+            Capability::Speech => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string", "title": "Text", "minLength": 1},
+                        "voice": {"type": "string", "title": "Voice", "enum": ["Kore", "Aoede", "Charon", "Fenrir", "Orus", "Leda", "Puck", "Zephyr", "Sage", "River"], "default": "Kore"}
+                    },
+                    "required": ["input"]
+                }),
+                ui_schema: serde_json::json!({
+                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 3}}
+                }),
+            },
+            Capability::Image => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "title": "Prompt", "minLength": 1},
+                        "aspect_ratio": {"type": "string", "title": "Aspect Ratio", "enum": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"], "default": "1:1"}
+                    },
+                    "required": ["prompt"]
+                }),
+                ui_schema: serde_json::json!({
+                    "prompt": {"ui:widget": "textarea", "ui:options": {"rows": 3}}
+                }),
+            },
+            Capability::Transcribe => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "language": {"type": "string", "title": "Language (optional)"}
+                    }
+                }),
+                ui_schema: serde_json::json!({}),
+            },
+            Capability::Video => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "title": "Prompt", "minLength": 1},
+                        "aspect_ratio": {"type": "string", "title": "Aspect Ratio", "enum": ["16:9", "9:16"], "default": "16:9"},
+                        "duration": {"type": "string", "title": "Duration", "enum": ["4", "6", "8"], "default": "8"}
+                    },
+                    "required": ["prompt"]
+                }),
+                ui_schema: serde_json::json!({
+                    "prompt": {"ui:widget": "textarea", "ui:options": {"rows": 3}}
+                }),
+            },
+            Capability::Music => FormSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "title": "Prompt", "minLength": 1, "description": "Describe genre, mood, instruments, tempo"}
+                    },
+                    "required": ["prompt"]
+                }),
+                ui_schema: serde_json::json!({
+                    "prompt": {"ui:widget": "textarea", "ui:options": {"rows": 3}}
+                }),
+            },
+            _ => FormSchema::default(),
+        }
     }
 }
 

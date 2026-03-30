@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use crate::catalog::inference::*;
 use crate::catalog::traits::{
-    BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext, ServiceModel,
+    BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
 use crate::domain::types::{Capability, OfferingKind};
 
@@ -259,6 +259,34 @@ impl Provider for AnthropicProvider {
                     as BoxStream<'static, Result<InferenceChunk>>,
             )
         })
+    }
+
+    // ── Form Schema (ORCH-0017) ──────────────────────────────────
+
+    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
+        match capability {
+            Capability::Chat | Capability::Think | Capability::Tools | Capability::Vision => {
+                FormSchema {
+                    schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string", "title": "Message", "minLength": 1},
+                            "temperature": {"type": "number", "title": "Temperature", "minimum": 0, "maximum": 1.0, "default": 0.7, "description": "Anthropic range: 0-1"},
+                            "max_tokens": {"type": "integer", "title": "Max Tokens", "minimum": 1, "maximum": 128000, "default": 4096},
+                            "system": {"type": "string", "title": "System Prompt"}
+                        },
+                        "required": ["message"]
+                    }),
+                    ui_schema: serde_json::json!({
+                        "message": {"ui:widget": "textarea", "ui:options": {"rows": 3}},
+                        "system": {"ui:widget": "textarea", "ui:options": {"rows": 2}},
+                        "temperature": {"ui:widget": "range"},
+                        "ui:order": ["message", "system", "temperature", "max_tokens"]
+                    }),
+                }
+            }
+            _ => FormSchema::default(),
+        }
     }
 }
 

@@ -23,6 +23,20 @@ use super::inference::{
 /// Boxed future for object-safe async methods.
 pub type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
+// ── Form Schema (ORCH-0017) ─────────────────────────────────────
+
+/// JSON Schema + UI Schema pair for rendering parameter forms.
+///
+/// The dashboard fetches this from `GET /v1/models/{model}/form`
+/// and renders it via RJSF (react-jsonschema-form).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct FormSchema {
+    /// JSON Schema (draft-07) describing form fields.
+    pub schema: serde_json::Value,
+    /// RJSF UI Schema — widget overrides, layout hints, help text.
+    pub ui_schema: serde_json::Value,
+}
+
 // ── Provider Context ────────────────────────────────────────────
 
 /// Everything a provider needs for a single operation.
@@ -114,6 +128,17 @@ pub trait Provider: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<TranscribeResponse>> {
         let _ = (ctx, req);
         Box::pin(async { anyhow::bail!("transcription not supported") })
+    }
+
+    // ── Form Schema (ORCH-0017) ──────────────────────────────────
+
+    /// Return a JSON Schema describing the parameters this provider
+    /// accepts for the given model and capability.
+    ///
+    /// The dashboard renders this as a form via RJSF. Default: empty
+    /// schema (shows a basic prompt input only).
+    fn form_schema(&self, _model: &str, _capability: Capability) -> FormSchema {
+        FormSchema::default()
     }
 
     // ── Optional ────────────────────────────────────────────────

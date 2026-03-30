@@ -14,6 +14,6 @@ pub use inference::{
     SpeechRequest, SpeechResponse, TranscribeRequest, TranscribeResponse, Usage,
 };
 pub use traits::{
-    BenchmarkSample, BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext,
-    ProviderRegistry, Sample, ServiceModel, SyncProgress,
+    BenchmarkSample, BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider,
+    ProviderContext, ProviderRegistry, Sample, ServiceModel, SyncProgress,
 };

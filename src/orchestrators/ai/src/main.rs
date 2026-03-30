@@ -194,6 +194,7 @@ async fn main() -> Result<()> {
         .route("/v1/audio/speech", axum::routing::post(api::unified::speech))
         .route("/v1/audio/transcriptions", axum::routing::post(api::unified::transcriptions))
         .route("/v1/models", axum::routing::get(api::unified::models))
+        .route("/v1/models/{model}/form", axum::routing::get(api::unified::model_form))
         .with_state(state.clone())
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))

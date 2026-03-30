@@ -92,8 +92,10 @@ detection:
       cache_ttl_secs: 60
 
 # DETECT-0001: Process-based detection
+# Speaches runs as python via uvicorn, not as a standalone binary.
+# Match python process with speaches in the command line.
 process:
-  executable: speaches
+  executable: python
   cmdline_contains: speaches
 health:
   path: /health

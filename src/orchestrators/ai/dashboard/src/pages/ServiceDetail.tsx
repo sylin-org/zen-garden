@@ -8,6 +8,7 @@ import type {
 import { formatBytes } from "../types";
 import { stoneColor } from "../utils/stoneColors";
 import { isCloudOffering, CAP_COLORS } from "../utils/cloudCatalog";
+import { ModelTryIt } from "../components/ModelTryIt";
 
 interface ServiceDetailProps {
   status: DashboardStatus;
@@ -636,10 +637,49 @@ function ServiceModelRow({
                 ))}
               </div>
             </div>
+            {model.capabilities.length > 0 && (
+              <ServiceModelTryIt model={model.model} capabilities={model.capabilities} />
+            )}
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+// ── Service Model TryIt (with capability selector) ─────────────
+
+function ServiceModelTryIt({
+  model,
+  capabilities,
+}: {
+  model: string;
+  capabilities: string[];
+}) {
+  const [selectedCap, setSelectedCap] = useState(capabilities[0]);
+
+  return (
+    <div className="mt-3 border-t border-[#2e303a]/50 pt-3">
+      {capabilities.length > 1 && (
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-[10px] text-gray-500 uppercase tracking-wider">
+            Capability
+          </span>
+          <select
+            value={selectedCap}
+            onChange={(e) => setSelectedCap(e.target.value)}
+            className="bg-[#0f1117] border border-[#2e303a] rounded px-2 py-1 text-[11px] text-gray-300 focus:outline-none focus:border-blue-500/50"
+          >
+            {capabilities.map((cap) => (
+              <option key={cap} value={cap}>
+                {cap}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <ModelTryIt model={model} capability={selectedCap} />
+    </div>
   );
 }
 

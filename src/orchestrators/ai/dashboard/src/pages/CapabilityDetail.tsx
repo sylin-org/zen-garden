@@ -1,10 +1,106 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import type { DashboardStatus, ModelStatus } from "../types";
 import { CAPABILITY_LABELS, formatBytes } from "../types";
 import { stoneColor } from "../utils/stoneColors";
 import { isCloudOffering } from "../utils/cloudCatalog";
-import { TryIt } from "../components/TryIt";
+import { ModelTryIt } from "../components/ModelTryIt";
+
+// ── Sort State ─────────────────────────────────────────────────
+
+type SortDir = "asc" | "desc" | null;
+
+interface SortState {
+  column: string;
+  direction: SortDir;
+}
+
+const DEFAULT_SORT: SortState = { column: "params", direction: "desc" };
+
+function parseParamSize(raw: string | undefined | null): number {
+  if (!raw) return 0;
+  const lower = raw.toLowerCase().trim();
+  if (lower === "cloud") return 0;
+  const match = lower.match(/^([\d.]+)\s*([bkmgt])?/);
+  if (!match) return 0;
+  const value = parseFloat(match[1]);
+  switch (match[2]) {
+    case "t": return value * 1e12;
+    case "g": return value * 1e9;
+    case "b": return value * 1e9;
+    case "m": return value * 1e6;
+    case "k": return value * 1e3;
+    default:  return value;
+  }
+}
+
+function useSortState(capabilityName: string): [SortState, (column: string) => void] {
+  const storageKey = `zen-ai-sort-${capabilityName}`;
+
+  const [sort, setSort] = useState<SortState>(() => {
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved) as SortState;
+        if (parsed.column !== undefined && parsed.direction !== undefined) {
+          return parsed;
+        }
+      }
+    } catch { /* ignore corrupt data */ }
+    return DEFAULT_SORT;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(sort));
+    } catch { /* quota exceeded — ignore */ }
+  }, [sort, storageKey]);
+
+  const toggleSort = useCallback((column: string) => {
+    setSort((prev) => {
+      if (prev.column === column) {
+        if (prev.direction === "asc") return { column, direction: "desc" };
+        if (prev.direction === "desc") return { column: "", direction: null };
+        return { column, direction: "asc" };
+      }
+      return { column, direction: "asc" };
+    });
+  }, []);
+
+  return [sort, toggleSort];
+}
+
+function SortHeader({
+  label,
+  column,
+  sort,
+  onSort,
+  className = "",
+}: {
+  label: string;
+  column: string;
+  sort: SortState;
+  onSort: (col: string) => void;
+  className?: string;
+}) {
+  const active = sort.column === column;
+  const arrow = active
+    ? sort.direction === "asc"
+      ? " \u25B2"
+      : " \u25BC"
+    : "";
+
+  return (
+    <th
+      className={`py-1.5 font-medium cursor-pointer select-none hover:text-gray-300 transition-colors ${className}`}
+      onClick={() => onSort(column)}
+    >
+      {label}{arrow}
+    </th>
+  );
+}
+
+// ── Props ──────────────────────────────────────────────────────
 
 interface CapabilityDetailProps {
   status: DashboardStatus;
@@ -57,6 +153,34 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
     name: sn,
     color: stoneColor(sn),
   }));
+
+  const [sort, toggleSort] = useSortState(name ?? "unknown");
+
+  const sortedModels = [...models].sort((a, b) => {
+    if (!sort.column || !sort.direction) return 0;
+    const dir = sort.direction === "asc" ? 1 : -1;
+
+    switch (sort.column) {
+      case "model":
+        return dir * a.model.localeCompare(b.model);
+      case "provider":
+        return dir * modelProvider(a).name.localeCompare(modelProvider(b).name);
+      case "params": {
+        const aSize = parseParamSize(a.metadata.parameter_size);
+        const bSize = parseParamSize(b.metadata.parameter_size);
+        const diff = aSize - bSize;
+        return diff !== 0 ? dir * diff : a.model.localeCompare(b.model);
+      }
+      case "context": {
+        const aCtx = a.metadata.context_length ?? 0;
+        const bCtx = b.metadata.context_length ?? 0;
+        const diff = aCtx - bCtx;
+        return diff !== 0 ? dir * diff : a.model.localeCompare(b.model);
+      }
+      default:
+        return 0;
+    }
+  });
 
   function toggleExpand(modelName: string) {
     if (expandedModel === modelName) {
@@ -217,11 +341,6 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
         </div>
       )}
 
-      {/* Try It — right under the elected model, stable position */}
-      {cap.state !== "not_installed" && name && (
-        <TryIt capability={name} models={models} />
-      )}
-
       {/* Flat model table */}
       {allModels.length > 0 && (
         <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg overflow-hidden">
@@ -240,9 +359,9 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b border-[#2e303a] text-gray-500 text-left">
-                  <th className="px-3 py-1.5 font-medium">Model</th>
-                  <th className="px-3 py-1.5 font-medium">Provider</th>
-                  <th className="px-3 py-1.5 font-medium">Params</th>
+                  <SortHeader label="Model" column="model" sort={sort} onSort={toggleSort} className="px-3" />
+                  <SortHeader label="Provider" column="provider" sort={sort} onSort={toggleSort} className="px-3" />
+                  <SortHeader label="Params" column="params" sort={sort} onSort={toggleSort} className="px-3" />
                   {stoneEntries.map((se) => (
                     <th
                       key={se.name}
@@ -258,7 +377,7 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#2e303a]/50">
-                {models.map((model) => {
+                {sortedModels.map((model) => {
                   const provider = modelProvider(model);
                   const isRec = model.model === recommended;
                   const isPin = model.model === pinned;
@@ -268,6 +387,7 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
                     <ModelRow
                       key={model.model}
                       model={model}
+                      capability={name!}
                       provider={provider}
                       stoneEntries={stoneEntries}
                       isRecommended={isRec}
@@ -314,6 +434,7 @@ interface StoneEntry {
 
 interface ModelRowProps {
   model: ModelStatus;
+  capability: string;
   provider: { name: string; cloud: boolean };
   stoneEntries: StoneEntry[];
   isRecommended: boolean;
@@ -325,6 +446,7 @@ interface ModelRowProps {
 
 function ModelRow({
   model,
+  capability,
   provider,
   stoneEntries,
   isRecommended,
@@ -515,6 +637,7 @@ function ModelRow({
                 </div>
               </div>
             </div>
+            <ModelTryIt model={model.model} capability={capability} />
           </td>
         </tr>
       )}

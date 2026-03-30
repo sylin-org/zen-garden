@@ -147,7 +147,13 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
             <span className="text-gray-200">{label}</span>.
           </p>
           <p className="text-[12px] text-gray-500">
-            Install a compatible offering, or{" "}
+            <Link
+              to="/infra/services"
+              className="text-blue-400 hover:underline"
+            >
+              Install a compatible offering
+            </Link>
+            , or{" "}
             <Link
               to="/infra/cloud"
               className="text-purple-400 hover:underline"
@@ -162,11 +168,27 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
       {cap.state === "needs_setup" && (
         <div className="bg-[#1a1b23] border border-yellow-500/40 rounded-lg p-4">
           <p className="text-sm text-gray-400 mb-1">
-            {cap.offerings.join(", ")} installed, but no {label} models
-            available.
+            {cap.offerings.map((o, i) => (
+              <span key={o}>
+                {i > 0 && ", "}
+                <Link
+                  to={`/infra/services/${o}`}
+                  className="text-blue-400 hover:underline"
+                >
+                  {o}
+                </Link>
+              </span>
+            ))}{" "}
+            installed, but no {label} models available.
           </p>
           <p className="text-[12px] text-yellow-400/80">
-            Pull a model, or{" "}
+            <Link
+              to={`/infra/services/${cap.offerings[0]}`}
+              className="text-yellow-300 hover:underline"
+            >
+              Pull a model
+            </Link>
+            , or{" "}
             <Link
               to="/infra/cloud"
               className="text-purple-400 hover:underline"

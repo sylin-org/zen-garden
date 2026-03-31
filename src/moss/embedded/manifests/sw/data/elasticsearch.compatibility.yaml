@@ -1,24 +1,23 @@
-﻿# Elasticsearch Compatibility Rules
+# Elasticsearch Compatibility Rules
 # Supported architectures: amd64, arm64 only (NO arm32 support)
 # Requires host sysctl: vm.max_map_count=262144
-version: "1"
 
 compatibility_rules:
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "Elasticsearch does not provide official ARM32 Docker images"
     suggestion: "Use OpenSearch (has ARM32 community images) or PostgreSQL with full-text search"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 2048
+    when:
+      - host.ram.total.mb < 2048
     reason: "Elasticsearch JVM requires at least 2GB RAM for stable operation"
     suggestion: "Increase stone memory, or use OpenSearch/PostgreSQL depending on the use-case"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 4096
+    when:
+      - host.ram.total.mb < 4096
     reason: "Elasticsearch performs best with 4GB+ RAM (2GB heap + filesystem cache)"
     suggestion: "Consider increasing RAM for production workloads"
     warn_only: true

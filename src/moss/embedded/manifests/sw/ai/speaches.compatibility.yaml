@@ -1,32 +1,31 @@
-version: "1"
-
 # Pre-install compatibility checks (evaluated in order, first match wins)
 compatibility_rules:
   # No NVIDIA GPU → fall back to CPU image (same API, no GPU acceleration)
   - name: "no-nvidia-gpu"
-    condition:
-      requires_ai_any: ['cuda']
+    when:
+      - host.ai.runtime LACKS cuda
     reason: "No NVIDIA GPU detected. Speaches STT/TTS will run on CPU (slower for large models)."
     fallback:
       image: "ghcr.io/speaches-ai/speaches:latest-cpu"
       name: "cpu"
 
   - name: "low-vram-warning"
-    condition:
-      vram_mb_less_than: 2048
+    when:
+      - host.gpu.vram.total.mb < 2048
     reason: "Whisper large-v3 requires ~3GB VRAM; medium requires ~2.6GB"
     suggestion: "Use smaller models: tiny (~400MB), base (~500MB), small (~1GB)"
     warn_only: true
+    continue: true
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 2048
+    when:
+      - host.ram.total.mb < 2048
     reason: "Speaches with whisper models requires at least 2GB RAM"
     suggestion: "Increase stone memory or use the tiny model"
 
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "Speaches Docker images require amd64 or arm64"
     suggestion: "Use amd64 or arm64 hardware"
 

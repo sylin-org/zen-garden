@@ -2,25 +2,24 @@
 # AGPL v3 licensed self-hosted cloud platform
 # Excellent multi-arch support: amd64, arm64, arm32v7, arm32v6, arm32v5, i386, ppc64le, riscv64, s390x
 # No AVX/SSE requirements (PHP application)
-version: "1"
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 256
+    when:
+      - host.ram.total.mb < 256
     reason: "Nextcloud requires at least 256MB RAM for basic operation"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "Nextcloud recommends 512MB+ RAM per process for comfortable operation"
     suggestion: "Consider increasing RAM for multiple users and apps"
     warn_only: true
 
   - name: "recommended-memory"
-    condition:
-      memory_mb_less_than: 1024
+    when:
+      - host.ram.total.mb < 1024
     reason: "Nextcloud with apps and preview generation benefits from 1GB+ RAM"
     suggestion: "For production use with multiple users, consider 1GB+ RAM"
     warn_only: true

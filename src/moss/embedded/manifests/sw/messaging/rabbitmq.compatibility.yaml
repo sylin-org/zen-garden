@@ -1,18 +1,17 @@
-﻿# RabbitMQ Compatibility Rules
+# RabbitMQ Compatibility Rules
 # Erlang VM is highly portable - no AVX/SSE requirements
 # Supported architectures: amd64, arm64v8, arm32v7, arm32v6, i386, ppc64le, riscv64, s390x
-version: "1"
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "RabbitMQ (Erlang VM) requires 128MB base plus ~100KB per connection; 512MB minimum for practical use"
     suggestion: "Increase stone memory or run fewer services"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 1024
+    when:
+      - host.ram.total.mb < 1024
     reason: "RabbitMQ performs best with 1GB+ RAM; memory watermark and GC overhead may cause issues"
     suggestion: "Consider increasing RAM for production workloads"
     warn_only: true

@@ -3,31 +3,30 @@
 # Multi-arch support: amd64, arm64v8
 # ARM32 not officially supported
 # No AVX/SSE requirements (Go binary)
-version: "1"
 
 compatibility_rules:
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "InfluxDB does not officially support ARM32 architectures"
     suggestion: "Use ARM64 device (Pi 4+, Pi Zero 2 W) or x86_64"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 256
+    when:
+      - host.ram.total.mb < 256
     reason: "InfluxDB requires at least 256MB RAM for basic operation"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "InfluxDB benefits from 512MB+ RAM for reliable operation"
     suggestion: "Consider increasing RAM for time series workloads"
     warn_only: true
 
   - name: "production-memory-warning"
-    condition:
-      memory_mb_less_than: 2048
+    when:
+      - host.ram.total.mb < 2048
     reason: "InfluxDB production deployments typically need 2GB+ RAM"
     suggestion: "For high-cardinality workloads, consider 2GB+ RAM"
     warn_only: true

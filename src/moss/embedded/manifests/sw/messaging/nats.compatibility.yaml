@@ -2,12 +2,11 @@
 # Apache 2.0 licensed lightweight messaging system
 # Excellent multi-arch support: amd64, arm64, arm/v7, arm/v6, 386, ppc64le, s390x
 # Very low resource requirements - ideal for edge/IoT
-version: "1"
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 64
+    when:
+      - host.ram.total.mb < 64
     reason: "NATS is lightweight but requires at least 64MB RAM"
     suggestion: "Increase stone memory"
 

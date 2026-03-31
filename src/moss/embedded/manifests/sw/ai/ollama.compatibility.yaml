@@ -1,46 +1,48 @@
-﻿# Ollama Compatibility Rules
+# Ollama Compatibility Rules
 # MIT licensed local LLM runtime
 # Supported architectures: amd64, arm64 (NO arm32)
 # GPU optional but recommended: CUDA (NVIDIA), ROCm (AMD), Metal (Apple)
-version: "1"
 
 compatibility_rules:
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "Ollama does not provide ARM32 Docker images"
     suggestion: "Use amd64 or arm64 hardware for Ollama"
 
   - name: "no-gpu-warning"
-    condition:
-      requires_ai_any: ['cuda', 'rocm', 'metal']
+    when:
+      - host.ai.runtime LACKS cuda,rocm,metal
     reason: "Ollama performs best with GPU acceleration"
     suggestion: "No GPU detected. Ollama will run in CPU-only mode with degraded performance. Small models (tinyllama, phi) work on CPU."
     warn_only: true
+    continue: true
 
   - name: "low-vram-warning"
-    condition:
-      vram_mb_less_than: 4096
+    when:
+      - host.gpu.vram.total.mb < 4096
     reason: "Most useful LLM models require 4GB+ VRAM"
     suggestion: "Limited VRAM. Use small quantized models (Q4) or CPU mode. Consider tinyllama, phi-2, or gemma:2b."
     warn_only: true
+    continue: true
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 4096
+    when:
+      - host.ram.total.mb < 4096
     reason: "Ollama with most models requires at least 4GB RAM"
     suggestion: "Increase stone memory or use tiny models (tinyllama ~2GB)"
 
   - name: "marginal-memory-warning"
-    condition:
-      memory_mb_less_than: 8192
+    when:
+      - host.ram.total.mb < 8192
     reason: "8GB+ RAM recommended for running 7B parameter models"
     suggestion: "Consider using smaller models or increasing RAM for better performance"
     warn_only: true
+    continue: true
 
   - name: "celeron-avx-warning"
-    condition:
-      processor_patterns: ["J4105", "J3455", "J3160", "J4005", "N4100", "N5000"]
+    when:
+      - host.cpu.pattern HAS j4105,j3455,j3160,j4005,n4100,n5000
     reason: "Celeron J/N-series CPUs lack AVX; Ollama performance will be significantly degraded"
     suggestion: "CPU-only inference will be slow. Consider a GPU-equipped stone or remote inference."
     warn_only: true

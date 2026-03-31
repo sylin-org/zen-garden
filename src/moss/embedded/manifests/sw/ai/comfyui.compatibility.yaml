@@ -1,5 +1,3 @@
-version: "1"
-
 # ComfyUI hardware compatibility (three-tier: NVIDIA → ROCm → CPU)
 #
 # Default image: yanwk/comfyui-boot:cu130-slim-v2 (NVIDIA CUDA 13.0)
@@ -9,9 +7,9 @@ version: "1"
 compatibility_rules:
   # No NVIDIA GPU — check if AMD GPU available for ROCm fallback
   - name: "no-nvidia-use-rocm"
-    condition:
-      requires_ai_any: ['cuda']
-      has_ai_any: ['rocm']
+    when:
+      - host.ai.runtime LACKS cuda
+      - host.ai.runtime HAS rocm
     reason: "No NVIDIA GPU detected. Using AMD ROCm image for GPU-accelerated inference."
     fallback:
       image: "yanwk/comfyui-boot:rocm"
@@ -19,29 +17,30 @@ compatibility_rules:
 
   # No GPU at all — CPU fallback (very slow, but functional)
   - name: "no-gpu-use-cpu"
-    condition:
-      requires_ai_any: ['cuda']
+    when:
+      - host.ai.runtime LACKS cuda
     reason: "No GPU detected. ComfyUI will run on CPU (very slow — expect minutes per image)."
     fallback:
       image: "yanwk/comfyui-boot:cpu"
       name: "cpu"
 
   - name: "low-vram-warning"
-    condition:
-      vram_mb_less_than: 4096
+    when:
+      - host.gpu.vram.total.mb < 4096
     reason: "Most Stable Diffusion models require 4GB+ VRAM; Flux requires 12GB+"
     suggestion: "Use SD 1.5 models with 4GB VRAM. SDXL needs 8GB+, Flux needs 12GB+."
     warn_only: true
+    continue: true
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 8192
+    when:
+      - host.ram.total.mb < 8192
     reason: "ComfyUI requires at least 8GB RAM for model loading and inference"
     suggestion: "Increase stone memory to 16GB+ for comfortable operation"
 
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "ComfyUI Docker images require amd64"
     suggestion: "Use amd64 hardware with NVIDIA or AMD GPU"
 

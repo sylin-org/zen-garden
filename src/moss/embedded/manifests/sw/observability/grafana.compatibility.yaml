@@ -2,24 +2,23 @@
 # AGPL v3 licensed visualization platform
 # Good multi-arch support: amd64, arm64, armv7
 # No AVX/SSE requirements
-version: "1"
 
 compatibility_rules:
   - name: "arm32v6-not-supported"
-    condition:
-      architectures: ["armv6l"]
+    when:
+      - host.architecture IS armv6l
     reason: "Grafana does not provide ARM32v6 Docker images"
     suggestion: "Use armv7 or arm64 hardware (Pi 2 or newer)"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 256
+    when:
+      - host.ram.total.mb < 256
     reason: "Grafana requires at least 256MB RAM for stable operation"
     suggestion: "Increase stone memory"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "Grafana with multiple dashboards benefits from 512MB+ RAM"
     suggestion: "Consider increasing RAM for heavy dashboard usage"
     warn_only: true

@@ -1,37 +1,37 @@
-﻿# Ollama CPU-Only Compatibility Rules
+# Ollama CPU-Only Compatibility Rules
 # For thin client stones without GPU (Dell Wyse 5070, etc.)
 # Same Ollama binary; GPU features disabled via environment
-version: "1"
 
 compatibility_rules:
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "Ollama does not provide ARM32 Docker images"
     suggestion: "Use amd64 or arm64 hardware for Ollama"
 
   - name: "gpu-present-use-ollama"
-    condition:
-      has_gpu: true
+    when:
+      - host.gpu IS present
     reason: "This stone has a GPU — use the 'ollama' (GPU) offering instead of 'ollama-cpu'"
     suggestion: "Install 'ollama' rather than 'ollama-cpu'. GPU-equipped stones should run the GPU offering for generation models."
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 2048
+    when:
+      - host.ram.total.mb < 2048
     reason: "Ollama CPU mode with embedding models requires at least 2 GB RAM"
     suggestion: "Increase stone memory to at least 2 GB or choose a different role for this machine"
 
   - name: "marginal-memory-warning"
-    condition:
-      memory_mb_less_than: 4096
+    when:
+      - host.ram.total.mb < 4096
     reason: "4 GB+ RAM recommended for comfortable CPU inference headroom"
     suggestion: "Models will load but system may swap under concurrent requests. Consider upgrading RAM."
     warn_only: true
+    continue: true
 
   - name: "celeron-avx-info"
-    condition:
-      processor_patterns: ["J4105", "J3455", "J3160", "J4005", "N4100", "N5000"]
+    when:
+      - host.cpu.pattern HAS j4105,j3455,j3160,j4005,n4100,n5000
     reason: "Celeron J/N-series CPUs lack AVX; inference will be slower but functional for embedding"
     suggestion: "Embedding models (all-minilm, nomic-embed-text) work fine without AVX. Avoid generation models on this hardware."
     warn_only: true

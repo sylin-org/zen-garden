@@ -3,24 +3,23 @@
 # Multi-arch support: amd64, arm64, arm32v7
 # No AVX/SSE requirements
 # Requires kernel 5.6+ or WireGuard module
-version: "1"
 
 compatibility_rules:
   - name: "arm32v6-not-supported"
-    condition:
-      architectures: ["armv6l"]
+    when:
+      - host.architecture IS armv6l
     reason: "WireGuard Docker image requires ARMv7 or newer"
     suggestion: "Use Raspberry Pi 2 or newer (ARM32v7+) or ARM64 device"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 64
+    when:
+      - host.ram.total.mb < 64
     reason: "WireGuard requires at least 64MB RAM"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 128
+    when:
+      - host.ram.total.mb < 128
     reason: "WireGuard with multiple peers benefits from 128MB+ RAM"
     suggestion: "Consider increasing RAM for many concurrent connections"
     warn_only: true

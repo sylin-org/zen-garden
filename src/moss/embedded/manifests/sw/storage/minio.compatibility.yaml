@@ -3,24 +3,23 @@
 # Official multi-arch support: amd64, arm64
 # ARM32 not officially supported
 # No AVX/SSE requirements (Go binary)
-version: "1"
 
 compatibility_rules:
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "MinIO does not officially support ARM32 architectures"
     suggestion: "Use ARM64 hardware (Pi 4+, Apple Silicon) or x86_64"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 256
+    when:
+      - host.ram.total.mb < 256
     reason: "MinIO requires at least 256MB RAM for basic operation"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "MinIO performs better with 512MB+ RAM for concurrent operations"
     suggestion: "Consider increasing RAM for better performance with multiple clients"
     warn_only: true

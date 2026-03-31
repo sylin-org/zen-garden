@@ -1,25 +1,24 @@
-﻿# OpenSearch Compatibility Rules
+# OpenSearch Compatibility Rules
 # Apache 2.0 licensed (Linux Foundation governance since Sept 2024)
 # Supported architectures: amd64, arm64 (NO arm32)
 # Requires host sysctl: vm.max_map_count=262144
-version: "1"
 
 compatibility_rules:
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "OpenSearch does not provide ARM32 Docker images"
     suggestion: "Use PostgreSQL with full-text search on ARM32 devices"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 2048
+    when:
+      - host.ram.total.mb < 2048
     reason: "OpenSearch JVM requires at least 2GB RAM for stable operation"
     suggestion: "Increase stone memory or use PostgreSQL with full-text search"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 4096
+    when:
+      - host.ram.total.mb < 4096
     reason: "OpenSearch performs best with 4GB+ RAM (2GB heap + filesystem cache)"
     suggestion: "Consider increasing RAM for production workloads"
     warn_only: true

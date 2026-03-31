@@ -2,18 +2,17 @@
 # AGPL-3.0 licensed metasearch engine
 # Excellent multi-arch support: amd64, arm64
 # Python/Flask-based — no AVX/SSE requirements
-version: "1"
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 128
+    when:
+      - host.ram.total.mb < 128
     reason: "SearXNG requires at least 128MB RAM"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 256
+    when:
+      - host.ram.total.mb < 256
     reason: "SearXNG with many search engines benefits from 256MB+ RAM"
     suggestion: "Consider increasing RAM for better performance with concurrent queries"
     warn_only: true

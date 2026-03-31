@@ -2,18 +2,17 @@
 # Apache 2.0 licensed metrics collection (CNCF graduated)
 # Go binary with excellent multi-arch support: amd64, arm64, armv7, armv6
 # No AVX/SSE requirements
-version: "1"
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 256
+    when:
+      - host.ram.total.mb < 256
     reason: "Prometheus requires at least 256MB RAM for TSDB operations"
     suggestion: "Increase stone memory or reduce retention period"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "Prometheus memory usage grows with metric count and retention"
     suggestion: "Consider increasing RAM for larger deployments"
     warn_only: true

@@ -1,17 +1,12 @@
 # MongoDB Compatibility Rules
 # Ensures MongoDB offerings work across diverse stone hardware
 
-version: "1"
-
 # Pre-install compatibility checks (evaluated in order, first match wins)
 compatibility_rules:
   # Known incompatible processors (Tier 1: Fastest)
   - name: "j4105-celeron-no-avx"
-    condition:
-      processor_patterns:
-        - "J4105"
-        - "J3455"
-        - "J3160"
+    when:
+      - host.cpu.pattern HAS j4105,j3455,j3160
     reason: "Celeron J-series processors lack AVX extensions required by MongoDB 5+"
     fallback:
       image: "mongo:4.4"
@@ -19,8 +14,8 @@ compatibility_rules:
 
   # CPU feature detection (Tier 2: Fast)
   - name: "missing-avx-feature"
-    condition:
-      cpu_features_missing: ["avx"]
+    when:
+      - host.cpu.features LACKS avx
     reason: "MongoDB 5.0+ requires AVX CPU support"
     fallback:
       image: "mongo:4.4"
@@ -28,8 +23,8 @@ compatibility_rules:
 
   # Older processors without SSE4.2
   - name: "missing-sse42-feature"
-    condition:
-      cpu_features_missing: ["sse4_2"]
+    when:
+      - host.cpu.features LACKS sse4_2
     reason: "MongoDB 4.4+ requires SSE4.2 CPU support"
     fallback:
       image: "mongo:4.2"
@@ -37,15 +32,15 @@ compatibility_rules:
 
   # ARMv6 unsupported (no fallback = deny)
   - name: "armv6-unsupported"
-    condition:
-      architectures: ["armv6l"]
+    when:
+      - host.architecture IS armv6l
     reason: "MongoDB requires ARMv7 or later architecture"
     suggestion: "Upgrade to ARMv7/ARMv8 hardware or use a lighter database"
 
   # Insufficient memory (no fallback = deny)
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "MongoDB requires at least 512MB of RAM"
     suggestion: "Increase stone memory or use Redis/SQLite instead"
 

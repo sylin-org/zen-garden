@@ -3,31 +3,30 @@
 # Multi-arch support: amd64, arm64
 # ARM32 not officially supported
 # No AVX/SSE requirements (Node.js)
-version: "1"
 
 compatibility_rules:
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "n8n does not officially support ARM32 architectures"
     suggestion: "Use ARM64 device (Pi 4+, Pi Zero 2 W) or x86_64"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "n8n requires at least 512MB RAM for basic operation"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 1024
+    when:
+      - host.ram.total.mb < 1024
     reason: "n8n recommends 1GB+ RAM to avoid memory errors during workflow execution"
     suggestion: "Consider increasing RAM for reliable workflow execution"
     warn_only: true
 
   - name: "recommended-memory"
-    condition:
-      memory_mb_less_than: 2048
+    when:
+      - host.ram.total.mb < 2048
     reason: "n8n performs best with 2GB+ RAM for complex workflows"
     suggestion: "For production use with complex workflows, consider 2GB+ RAM"
     warn_only: true

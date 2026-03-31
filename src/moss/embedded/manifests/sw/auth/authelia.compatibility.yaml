@@ -2,24 +2,23 @@
 # Apache 2.0 licensed authentication/authorization server
 # Multi-arch support: amd64, arm64, arm32v7
 # No AVX/SSE requirements (Go binary)
-version: "1"
 
 compatibility_rules:
   - name: "arm32v6-not-supported"
-    condition:
-      architectures: ["armv6l"]
+    when:
+      - host.architecture IS armv6l
     reason: "Authelia Docker image requires ARMv7 or newer"
     suggestion: "Use Raspberry Pi 2 or newer (ARM32v7+) or ARM64 device"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 64
+    when:
+      - host.ram.total.mb < 64
     reason: "Authelia requires at least 64MB RAM"
     suggestion: "Increase stone memory allocation"
 
   - name: "argon2-memory-warning"
-    condition:
-      memory_mb_less_than: 128
+    when:
+      - host.ram.total.mb < 128
     reason: "Argon2id password hashing may require additional memory"
     suggestion: "Consider 128MB+ RAM if using file-based user provider with Argon2id"
     warn_only: true

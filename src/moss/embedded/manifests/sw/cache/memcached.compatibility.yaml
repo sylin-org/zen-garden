@@ -2,13 +2,12 @@
 # Memcached is highly portable with minimal requirements.
 # No AVX or special CPU features needed.
 # Supported architectures: amd64, arm64v8, arm32v7, arm32v6, arm32v5, i386, ppc64le, riscv64, s390x
-version: "1"
 
 compatibility_rules:
   # Very low memory warning (< 128MB total makes caching impractical)
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 128
+    when:
+      - host.ram.total.mb < 128
     reason: "Systems with less than 128MB RAM may have insufficient space for effective caching"
     suggestion: "Consider using a larger instance or reducing memcached memory allocation with -m flag"
     warn_only: true  # Still runs, just may not be useful

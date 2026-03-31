@@ -1,11 +1,9 @@
-﻿# .NET Aspire Dashboard Compatibility Rules
-
-version: "1"
+# .NET Aspire Dashboard Compatibility Rules
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "Aspire Dashboard requires at least 512MB RAM (practical minimum)"
     suggestion: "Increase stone memory or disable observability components"
 

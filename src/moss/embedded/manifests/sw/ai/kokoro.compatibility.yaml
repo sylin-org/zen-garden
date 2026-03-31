@@ -1,18 +1,16 @@
-version: "1"
-
 compatibility_rules:
   # No NVIDIA GPU → fall back to CPU image (same API, ONNX inference)
   - name: "no-nvidia-gpu"
-    condition:
-      requires_ai_any: ['cuda']
+    when:
+      - host.ai.runtime LACKS cuda
     reason: "No NVIDIA GPU detected. Kokoro TTS will run on CPU via ONNX (5x realtime — still fast)."
     fallback:
       image: "ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4"
       name: "cpu"
 
   - name: "arm32-not-supported"
-    condition:
-      architectures: ["armv7l", "armv6l"]
+    when:
+      - host.architecture IN (armv7l,armv6l)
     reason: "Kokoro-FastAPI Docker images require amd64 or arm64"
     suggestion: "Use amd64 or arm64 hardware"
 

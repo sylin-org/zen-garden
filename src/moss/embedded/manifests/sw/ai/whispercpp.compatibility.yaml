@@ -1,22 +1,21 @@
-version: "1"
-
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 1024
+    when:
+      - host.ram.total.mb < 1024
     reason: "whisper.cpp with base model requires at least 1GB RAM"
     suggestion: "Use the tiny model (~75MB) or increase memory"
 
   - name: "large-model-memory"
-    condition:
-      memory_mb_less_than: 4096
+    when:
+      - host.ram.total.mb < 4096
     reason: "whisper large-v3 model requires ~3GB RAM"
     suggestion: "Use base or small models, or increase memory to 4GB+"
     warn_only: true
+    continue: true
 
   - name: "gpu-acceleration-note"
-    condition:
-      requires_ai_any: ['cuda']
+    when:
+      - host.ai.runtime LACKS cuda
     reason: "Pre-built whisper.cpp binaries are CPU-only (AVX2/FMA optimized). GPU builds require compiling from source with CUDA/ROCm."
     suggestion: "CPU inference is fast for most models. For large-v3 with real-time performance, build from source with GPU support."
     warn_only: true

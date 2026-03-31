@@ -2,18 +2,17 @@
 # GPL licensed MySQL-compatible database
 # Excellent multi-arch support: amd64, arm64, arm32v7, i386, ppc64le, s390x
 # No AVX/SSE requirements
-version: "1"
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 512
+    when:
+      - host.ram.total.mb < 512
     reason: "MariaDB requires at least 512MB RAM for stable operation"
     suggestion: "Increase stone memory or use SQLite for minimal deployments"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 1024
+    when:
+      - host.ram.total.mb < 1024
     reason: "MariaDB performs best with 1GB+ RAM for InnoDB buffer pool"
     suggestion: "Consider increasing RAM for production workloads"
     warn_only: true

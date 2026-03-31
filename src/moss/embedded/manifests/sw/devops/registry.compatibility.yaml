@@ -2,7 +2,6 @@
 # Apache 2.0 licensed OCI Distribution implementation (CNCF Graduated)
 # Excellent multi-arch support: amd64, arm32v6, arm32v7, arm64v8, ppc64le, riscv64, s390x
 # No AVX/SSE requirements (Go binary)
-version: "1"
 
 # Registry uses multi-arch manifest - same tag works on all architectures
 image_selection:
@@ -16,14 +15,14 @@ image_selection:
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 64
+    when:
+      - host.ram.total.mb < 64
     reason: "Docker Registry requires at least 64MB RAM"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 128
+    when:
+      - host.ram.total.mb < 128
     reason: "Docker Registry benefits from 128MB+ RAM for concurrent pulls"
     suggestion: "Consider increasing RAM for multiple simultaneous image operations"
     warn_only: true

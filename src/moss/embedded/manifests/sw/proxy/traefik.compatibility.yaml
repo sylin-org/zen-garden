@@ -2,18 +2,17 @@
 # MIT licensed cloud-native reverse proxy
 # Excellent multi-arch support: amd64, arm32v6, arm64v8, ppc64le, riscv64, s390x
 # No AVX/SSE requirements (Go binary)
-version: "1"
 
 compatibility_rules:
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 64
+    when:
+      - host.ram.total.mb < 64
     reason: "Traefik requires at least 64MB RAM for basic operation"
     suggestion: "Increase stone memory allocation"
 
   - name: "low-memory-warning"
-    condition:
-      memory_mb_less_than: 128
+    when:
+      - host.ram.total.mb < 128
     reason: "Traefik with many routes benefits from 128MB+ RAM"
     suggestion: "Consider increasing RAM for complex routing configurations"
     warn_only: true

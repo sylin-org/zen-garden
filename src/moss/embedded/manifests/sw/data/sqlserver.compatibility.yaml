@@ -1,17 +1,15 @@
-﻿# SQL Server (Linux container) Compatibility Rules
-
-version: "1"
+# SQL Server (Linux container) Compatibility Rules
 
 compatibility_rules:
   - name: "non-x86_64-unsupported"
-    condition:
-      architectures: ["aarch64", "arm64", "armv7l", "armv6l"]
+    when:
+      - host.architecture IN (aarch64,arm64,armv7l,armv6l)
     reason: "SQL Server Linux container images are supported only on x86_64 (amd64)"
     suggestion: "Use PostgreSQL or MongoDB on ARM, or move to x86_64 hardware"
 
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 2048
+    when:
+      - host.ram.total.mb < 2048
     reason: "SQL Server containers require at least ~2GB RAM"
     suggestion: "Increase stone memory or choose PostgreSQL instead"
 

@@ -141,8 +141,15 @@ impl Provider for OllamaProvider {
             let models = model_infos
                 .into_iter()
                 .map(|info| {
-                    let capabilities = ollama_capabilities_from_strings(&info.capabilities);
+                    let mut capabilities = ollama_capabilities_from_strings(&info.capabilities);
                     let specializations = infer_specializations(&info.name, &info.family);
+
+                    // Add Ocr capability for OCR-specialized models
+                    if specializations.contains(&"ocr".to_string())
+                        && !capabilities.contains(&Capability::Ocr)
+                    {
+                        capabilities.push(Capability::Ocr);
+                    }
                     ServiceModel {
                         name: info.name,
                         capabilities,

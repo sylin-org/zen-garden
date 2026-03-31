@@ -194,6 +194,7 @@ pub enum Capability {
 
     // Understanding
     Vision,     // image/video + text → text
+    Ocr,        // document/image → structured text extraction
     Transcribe, // audio → text
 
     // Vectors
@@ -215,6 +216,7 @@ impl Capability {
             Self::Tools => "tools",
             Self::Translate => "translate",
             Self::Vision => "vision",
+            Self::Ocr => "ocr",
             Self::Transcribe => "transcribe",
             Self::Embed => "embed",
             Self::Rerank => "rerank",
@@ -232,6 +234,7 @@ impl Capability {
         Self::Tools,
         Self::Translate,
         Self::Vision,
+        Self::Ocr,
         Self::Transcribe,
         Self::Embed,
         Self::Rerank,

@@ -97,6 +97,7 @@ export const CAP_COLORS: Record<string, string> = {
   tools: "bg-cyan-500/20 text-cyan-400",
   translate: "bg-sky-500/20 text-sky-400",
   vision: "bg-amber-500/20 text-amber-400",
+  ocr: "bg-lime-500/20 text-lime-400",
   transcribe: "bg-teal-500/20 text-teal-400",
   embed: "bg-blue-500/20 text-blue-400",
   rerank: "bg-indigo-500/20 text-indigo-400",

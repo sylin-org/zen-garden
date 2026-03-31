@@ -15,4 +15,6 @@ pub mod ollama;
 pub mod openai;
 pub mod openedai_speech;
 pub mod speaches;
+pub mod docling;
+pub mod kokoro;
 pub mod whispercpp;

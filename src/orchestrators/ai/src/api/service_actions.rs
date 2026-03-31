@@ -36,6 +36,8 @@ fn resolve_offering_kind(name: &str) -> Option<OfferingKind> {
         "openedai-speech" => Some(OfferingKind::OpenedaiSpeech),
         "infinity" => Some(OfferingKind::Infinity),
         "libretranslate" => Some(OfferingKind::LibreTranslate),
+        "docling" => Some(OfferingKind::Docling),
+        "kokoro" => Some(OfferingKind::Kokoro),
         "huggingface" => Some(OfferingKind::HuggingFace),
         "openai" => Some(OfferingKind::OpenAi),
         "anthropic" => Some(OfferingKind::Anthropic),

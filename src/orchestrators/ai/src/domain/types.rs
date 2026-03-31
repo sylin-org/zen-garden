@@ -24,6 +24,8 @@ pub enum OfferingKind {
     OpenedaiSpeech,
     Infinity,
     LibreTranslate,
+    Docling,
+    Kokoro,
     HuggingFace,
     // Cloud providers
     OpenAi,
@@ -47,6 +49,8 @@ impl OfferingKind {
             Self::OpenedaiSpeech => Some(21437),
             Self::Infinity => Some(21438),
             Self::LibreTranslate => Some(21439),
+            Self::Docling => None,                 // no proxy — custom convert API
+            Self::Kokoro => None,                  // no proxy — OpenAI-compatible TTS
             Self::HuggingFace => None,             // cloud — no proxy
             Self::OpenAi => None,
             Self::Anthropic => None,
@@ -68,6 +72,8 @@ impl OfferingKind {
             Self::OpenedaiSpeech => "openedai-speech",
             Self::Infinity => "infinity",
             Self::LibreTranslate => "libretranslate",
+            Self::Docling => "docling",
+            Self::Kokoro => "kokoro",
             Self::HuggingFace => "huggingface",
             Self::OpenAi => "openai",
             Self::Anthropic => "anthropic",
@@ -90,6 +96,8 @@ impl OfferingKind {
             Self::OpenedaiSpeech => Some(8001),
             Self::Infinity => Some(7997),
             Self::LibreTranslate => Some(5000),
+            Self::Docling => Some(5001),
+            Self::Kokoro => Some(8880),
             Self::HuggingFace => None,
             Self::OpenAi => None,
             Self::Anthropic => None,
@@ -114,6 +122,8 @@ impl OfferingKind {
             "openedai-speech" => Some(Self::OpenedaiSpeech),
             "infinity" => Some(Self::Infinity),
             "libretranslate" => Some(Self::LibreTranslate),
+            "docling" => Some(Self::Docling),
+            "kokoro" => Some(Self::Kokoro),
             "huggingface" => Some(Self::HuggingFace),
             _ => None,
         }
@@ -130,6 +140,8 @@ impl OfferingKind {
             "openedai-speech" => Some(Self::OpenedaiSpeech),
             "infinity" => Some(Self::Infinity),
             "libretranslate" => Some(Self::LibreTranslate),
+            "docling" => Some(Self::Docling),
+            "kokoro" => Some(Self::Kokoro),
             "huggingface" => Some(Self::HuggingFace),
             "openai" => Some(Self::OpenAi),
             "anthropic" => Some(Self::Anthropic),
@@ -152,6 +164,8 @@ impl OfferingKind {
         "openedai-speech",
         "infinity",
         "libretranslate",
+        "docling",
+        "kokoro",
     ];
 
     /// Whether this offering type is a cloud provider (priority -10 by default).

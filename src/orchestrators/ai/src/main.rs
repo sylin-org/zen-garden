@@ -86,6 +86,8 @@ async fn main() -> Result<()> {
     providers.register(Arc::new(providers::libretranslate::LibreTranslateProvider::new()));
     providers.register(Arc::new(providers::speaches::SpeachesProvider::new()));
     providers.register(Arc::new(providers::whispercpp::WhisperCppProvider::new()));
+    providers.register(Arc::new(providers::docling::DoclingProvider::new()));
+    providers.register(Arc::new(providers::kokoro::KokoroProvider::new()));
 
     // ── Cloud Providers ─────────────────────────────────────────────
     let cloud_store = CloudProviderStore::load(&cli.data_dir).await;

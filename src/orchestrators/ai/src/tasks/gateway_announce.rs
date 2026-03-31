@@ -197,6 +197,7 @@ async fn register_offering_gateways(
     registered: &mut Vec<String>,
 ) {
     let kinds: Vec<_> = state.providers.kinds().collect();
+    let instances = state.instances.read().await;
 
     for kind in kinds {
         let offering_name = kind.as_str();
@@ -206,6 +207,19 @@ async fn register_offering_gateways(
             Some(p) => p,
             None => continue,
         };
+
+        // Only register offerings that have at least one healthy instance
+        let has_instance = instances
+            .values()
+            .any(|i| i.kind == kind && i.is_routable());
+        if !has_instance {
+            // Deregister if previously registered but no longer has instances
+            if registered.contains(&offering_name.to_string()) {
+                deregister_moss(moss_gw, stone_endpoint, offering_name).await;
+                registered.retain(|r| r != offering_name);
+            }
+            continue;
+        }
 
         let fqn = match garden_common::offerings::OfferingFqn::with_instance(
             offering_name,

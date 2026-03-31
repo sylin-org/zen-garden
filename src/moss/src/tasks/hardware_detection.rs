@@ -84,10 +84,16 @@ fn build_ai_capabilities_summary(
     let mut total_vram_mb: u64 = 0;
     let mut gpu_count: usize = 0;
 
+    let ai_runtime_names: HashSet<&str> =
+        ["cuda", "rocm", "directml", "openvino"].into_iter().collect();
+
     for gpu in gpus {
-        // Collect unique runtimes (both simple and versioned formats)
-        for runtime in &gpu.ai_runtimes {
-            runtimes.insert(runtime.clone());
+        // Derive runtimes from capabilities (not ai_runtimes)
+        for cap in &gpu.capabilities {
+            let lower = cap.to_lowercase();
+            if ai_runtime_names.contains(lower.as_str()) {
+                runtimes.insert(lower);
+            }
         }
 
         // Collect unique vendors (lowercase for consistency)

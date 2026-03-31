@@ -1,176 +1,141 @@
-//! Host fact tree — the hardware state a predicate evaluates against.
+//! Fact resolution for predicate evaluation (COMPAT-0002).
+//!
+//! The `FactSource` trait resolves dotted fact names directly against
+//! hardware data. `HardwareCapabilities` implements it — no intermediate
+//! struct, no conversion step.
 
+use super::predicate::Fact;
 use std::collections::HashSet;
 
-/// Hardware facts about a stone, structured for predicate evaluation.
+/// Resolves facts for predicate evaluation.
 ///
-/// Populated from `HardwareCapabilities` by moss at startup. All fields
-/// use `Option` or empty collections so that missing detection results
-/// in predicates evaluating to `false` (not errors).
-#[derive(Debug, Clone, Default)]
-pub struct HostFacts {
-    /// CPU architecture: x86_64, aarch64, armv7l, armv6l
-    pub architecture: Option<String>,
-    /// OS family: linux, windows, macos
-    pub os_family: Option<String>,
-    /// Full CPU model string (e.g., "Intel Celeron J4105")
-    pub cpu_model: Option<String>,
-    /// Substring-matchable CPU identifiers, lowercased (e.g., "j4105")
-    pub cpu_patterns: HashSet<String>,
-    /// CPU feature flags: avx, avx2, sse4_2, avx512, ...
-    pub cpu_features: HashSet<String>,
-    /// Total system RAM in MB
-    pub ram_total_mb: Option<u64>,
-    /// GPU hardware present
-    pub gpu_present: bool,
-    /// Number of GPUs
-    pub gpu_count: u32,
-    /// Aggregate VRAM across all GPUs in MB
-    pub gpu_vram_total_mb: u64,
-    /// NPU hardware present
-    pub npu_present: bool,
-    /// Detected AI runtime toolkits: cuda, rocm, directml, openvino
-    pub ai_runtimes: HashSet<String>,
+/// Implementors map the `host.*` fact namespace to their internal structure.
+/// The predicate evaluator calls these methods — one per fact type.
+pub trait FactSource {
+    fn resolve_set(&self, fact: Fact) -> HashSet<String>;
+    fn resolve_scalar(&self, fact: Fact) -> Option<String>;
+    fn resolve_numeric(&self, fact: Fact) -> f64;
+    fn resolve_bool(&self, fact: Fact) -> bool;
 }
 
-impl HostFacts {
-    /// Build from cached `HardwareCapabilities` (fast path — no I/O).
-    pub fn from_capabilities(caps: &crate::types::hardware::HardwareCapabilities) -> Self {
-        let gpus = &caps.hardware.gpus;
+/// Known AI runtime names (filtered from gpu.capabilities).
+const AI_RUNTIME_NAMES: &[&str] = &["cuda", "rocm", "directml", "openvino"];
 
-        let has_runtime = |runtime_name: &str| {
-            gpus.iter().any(|g| {
-                g.ai_runtimes.iter().any(|r| {
-                    let r_lower = r.to_lowercase();
-                    let runtime_lower = runtime_name.to_lowercase();
-                    r_lower == runtime_lower
-                        || r_lower.starts_with(&format!("{}:", runtime_lower))
-                })
-            })
-        };
-
-        let mut ai_runtimes = HashSet::new();
-        for name in &["cuda", "rocm", "directml", "openvino"] {
-            if has_runtime(name) {
-                ai_runtimes.insert(name.to_string());
+impl FactSource for crate::types::hardware::HardwareCapabilities {
+    fn resolve_set(&self, fact: Fact) -> HashSet<String> {
+        match fact {
+            Fact::AiRuntime => {
+                // Derive from gpu.capabilities — no ai_runtimes field needed
+                self.hardware
+                    .gpus
+                    .iter()
+                    .flat_map(|g| &g.capabilities)
+                    .filter(|c| AI_RUNTIME_NAMES.contains(&c.to_lowercase().as_str()))
+                    .map(|c| c.to_lowercase())
+                    .collect()
             }
-        }
-
-        // Extract CPU pattern identifiers (lowercased substrings for matching)
-        let cpu_patterns = caps
-            .hardware
-            .cpu
-            .model
-            .as_deref()
-            .map(|model| extract_cpu_patterns(model))
-            .unwrap_or_default();
-
-        let cpu_features = caps
-            .hardware
-            .cpu
-            .features
-            .as_ref()
-            .map(|feats| feats.iter().map(|f| f.to_lowercase()).collect())
-            .unwrap_or_default();
-
-        Self {
-            architecture: Some(caps.hardware.cpu.architecture.clone()),
-            os_family: caps.runtime.as_ref().map(|r| r.os.clone()),
-            cpu_model: caps.hardware.cpu.model.clone(),
-            cpu_patterns,
-            cpu_features,
-            ram_total_mb: Some(caps.hardware.memory.total_mb),
-            gpu_present: !gpus.is_empty(),
-            gpu_count: gpus.len() as u32,
-            gpu_vram_total_mb: gpus.iter().filter_map(|g| g.vram_mb).sum(),
-            npu_present: false, // TODO: detect NPU when hardware support is added
-            ai_runtimes,
+            Fact::CpuFeatures => self
+                .hardware
+                .cpu
+                .features
+                .as_ref()
+                .map(|feats| feats.iter().map(|f| f.to_lowercase()).collect())
+                .unwrap_or_default(),
+            Fact::CpuPattern => self
+                .hardware
+                .cpu
+                .model
+                .as_deref()
+                .map(extract_cpu_patterns)
+                .unwrap_or_default(),
+            _ => HashSet::new(),
         }
     }
 
-    /// Build from live system detection (slow path — shells out to system tools).
-    pub fn from_live_detection() -> Self {
-        let (cpu_model, cpu_features_vec, architecture) =
-            crate::metrics::system::get_cpu_info().unwrap_or_else(|_| {
-                (
-                    "Unknown".to_string(),
-                    vec![],
-                    std::env::consts::ARCH.to_string(),
-                )
-            });
-
-        let resources = crate::metrics::system::collect_stone_resources().ok();
-        let ram_total_mb = resources
-            .as_ref()
-            .map(|r| r.memory.total_bytes / 1024 / 1024);
-
-        let gpus = crate::metrics::system::detect_gpus();
-
-        let has_runtime = |runtime_name: &str| {
-            gpus.iter().any(|g| {
-                g.ai_runtimes.iter().any(|r| {
-                    let r_lower = r.to_lowercase();
-                    let runtime_lower = runtime_name.to_lowercase();
-                    r_lower == runtime_lower
-                        || r_lower.starts_with(&format!("{}:", runtime_lower))
-                })
-            })
-        };
-
-        let mut ai_runtimes = HashSet::new();
-        for name in &["cuda", "rocm", "directml", "openvino"] {
-            if has_runtime(name) {
-                ai_runtimes.insert(name.to_string());
-            }
-        }
-
-        let cpu_patterns = extract_cpu_patterns(&cpu_model);
-        let cpu_features = cpu_features_vec
-            .iter()
-            .map(|f| f.to_lowercase())
-            .collect();
-
-        Self {
-            architecture: Some(architecture),
-            os_family: Some(std::env::consts::OS.to_string()),
-            cpu_model: Some(cpu_model),
-            cpu_patterns,
-            cpu_features,
-            ram_total_mb,
-            gpu_present: !gpus.is_empty(),
-            gpu_count: gpus.len() as u32,
-            gpu_vram_total_mb: gpus.iter().filter_map(|g| g.vram_mb).sum(),
-            npu_present: false,
-            ai_runtimes,
+    fn resolve_scalar(&self, fact: Fact) -> Option<String> {
+        match fact {
+            Fact::Architecture => Some(self.hardware.cpu.architecture.clone()),
+            Fact::OsFamily => self.runtime.as_ref().map(|r| {
+                // runtime.os may be "windows/Microsoft Windows 11 Pro" — extract family
+                r.os.split('/').next().unwrap_or(&r.os).to_lowercase()
+            }),
+            Fact::CpuModel => self.hardware.cpu.model.clone(),
+            _ => None,
         }
     }
 
-    /// Build from cached capabilities with live fallback when cache is incomplete.
-    pub fn detect(cached: Option<&crate::types::hardware::HardwareCapabilities>) -> Self {
-        if let Some(caps) = cached {
-            if caps.detection_status == crate::DetectionStatus::Complete {
-                return Self::from_capabilities(caps);
+    fn resolve_numeric(&self, fact: Fact) -> f64 {
+        match fact {
+            Fact::RamTotalMb => self.hardware.memory.total_mb as f64,
+            Fact::GpuCount => self.hardware.gpus.len() as f64,
+            Fact::GpuVramTotalMb => {
+                self.hardware
+                    .gpus
+                    .iter()
+                    .filter_map(|g| g.vram_mb)
+                    .sum::<u64>() as f64
             }
+            Fact::GpuVramTotalGb => {
+                let mb: u64 = self
+                    .hardware
+                    .gpus
+                    .iter()
+                    .filter_map(|g| g.vram_mb)
+                    .sum();
+                mb as f64 / 1024.0
+            }
+            _ => 0.0,
         }
-        Self::from_live_detection()
+    }
+
+    fn resolve_bool(&self, fact: Fact) -> bool {
+        match fact {
+            Fact::Gpu => !self.hardware.gpus.is_empty(),
+            Fact::Npu => false, // TODO: detect NPU when hardware support is added
+            _ => false,
+        }
     }
 }
 
 /// Extract matchable CPU pattern identifiers from a model string.
 ///
-/// Lowercases the model and extracts tokens that match known CPU pattern
-/// identifiers (Celeron J/N series, Atom, etc.).
+/// Lowercases the model and extracts tokens that contain digits
+/// (e.g., "j4105" from "Intel Celeron J4105").
 fn extract_cpu_patterns(model: &str) -> HashSet<String> {
     let lower = model.to_lowercase();
-    let mut patterns = HashSet::new();
+    lower
+        .split(|c: char| c.is_whitespace() || c == '-' || c == '_' || c == '@')
+        .filter(|t| !t.is_empty() && t.chars().any(|c| c.is_ascii_digit()))
+        .map(|t| t.to_string())
+        .collect()
+}
 
-    // Extract tokens that look like CPU identifiers (alphanumeric sequences)
-    for token in lower.split(|c: char| c.is_whitespace() || c == '-' || c == '_' || c == '@') {
-        let trimmed = token.trim();
-        if !trimmed.is_empty() && trimmed.chars().any(|c| c.is_ascii_digit()) {
-            patterns.insert(trimmed.to_string());
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_cpu_patterns_celeron() {
+        let patterns = extract_cpu_patterns("Intel Celeron J4105");
+        assert!(patterns.contains("j4105"));
+        assert!(!patterns.contains("intel"));
+        assert!(!patterns.contains("celeron"));
     }
 
-    patterns
+    #[test]
+    fn extract_cpu_patterns_ryzen() {
+        let patterns = extract_cpu_patterns("AMD Ryzen 7 7700 8-Core Processor");
+        assert!(patterns.contains("7"));
+        assert!(patterns.contains("7700"));
+        assert!(patterns.contains("8"));
+    }
+
+    #[test]
+    fn extract_cpu_patterns_i7() {
+        let patterns = extract_cpu_patterns("12th Gen Intel(R) Core(TM) i7-12700KF");
+        assert!(patterns.contains("12th"));
+        assert!(patterns.contains("i7"));
+        // i7 doesn't contain a digit... let me check
+        // Actually "i7" has '7' which is a digit
+    }
 }

@@ -11,15 +11,14 @@
 //!
 //! # Usage
 //! ```rust,ignore
-//! use garden_common::compatibility::{Predicate, HostFacts};
+//! use garden_common::compatibility::{Predicate, FactSource};
 //!
 //! let p = Predicate::parse("host.ai.runtime LACKS cuda")?;
-//! let facts = HostFacts::from_capabilities(&caps);
-//! assert!(p.check(&facts));
+//! assert!(p.check(&caps)); // caps: &dyn FactSource
 //! ```
 
 mod facts;
 mod predicate;
 
-pub use facts::HostFacts;
+pub use facts::FactSource;
 pub use predicate::{check_all, CmpOp, Condition, Fact, FactType, Predicate, PredicateError};

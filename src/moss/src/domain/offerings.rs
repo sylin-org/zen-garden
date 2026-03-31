@@ -155,17 +155,21 @@ fn blake3_hex(bytes: &[u8]) -> String {
 pub fn current_capabilities_hash(
     cached_capabilities: Option<&garden_common::HardwareCapabilities>,
 ) -> String {
-    let host = crate::domain::compatibility::get_host_facts(cached_capabilities);
-
-    let payload = serde_json::json!({
-        "architecture": host.architecture,
-        "os_family": host.os_family,
-        "cpu_model": host.cpu_model,
-        "cpu_features": host.cpu_features.iter().collect::<Vec<_>>(),
-        "ram_total_mb": host.ram_total_mb,
-        "ai_runtimes": host.ai_runtimes.iter().collect::<Vec<_>>(),
-        "gpu_vram_total_mb": host.gpu_vram_total_mb,
-    });
+    // Hash relevant hardware fields directly — no intermediate struct
+    let payload = if let Some(caps) = cached_capabilities {
+        use garden_common::compatibility::FactSource;
+        serde_json::json!({
+            "architecture": caps.resolve_scalar(garden_common::compatibility::Fact::Architecture),
+            "os_family": caps.resolve_scalar(garden_common::compatibility::Fact::OsFamily),
+            "cpu_model": caps.resolve_scalar(garden_common::compatibility::Fact::CpuModel),
+            "cpu_features": caps.resolve_set(garden_common::compatibility::Fact::CpuFeatures).into_iter().collect::<Vec<_>>(),
+            "ram_total_mb": caps.resolve_numeric(garden_common::compatibility::Fact::RamTotalMb),
+            "ai_runtimes": caps.resolve_set(garden_common::compatibility::Fact::AiRuntime).into_iter().collect::<Vec<_>>(),
+            "gpu_vram_total_mb": caps.resolve_numeric(garden_common::compatibility::Fact::GpuVramTotalMb),
+        })
+    } else {
+        serde_json::json!({})
+    };
     blake3_hex(serde_json::to_vec(&payload).unwrap_or_default().as_slice())
 }
 

@@ -1,14 +1,14 @@
 //! Compatibility evaluation and binary validation (COMPAT-0002)
 //!
 //! Pure business logic for:
-//! - Predicate DSL evaluation against host hardware facts
+//! - Predicate DSL evaluation against hardware capabilities
 //! - Compatibility rule compilation for offerings index
 //! - Binary architecture validation
 //!
-//! No I/O here — delegates to `HostFacts` for detection.
+//! No I/O here — reads directly from `HardwareCapabilities` via `FactSource`.
 
 use anyhow::Result;
-use garden_common::compatibility::{HostFacts, Predicate};
+use garden_common::compatibility::{FactSource, Predicate};
 use garden_common::HardwareCapabilities;
 
 /// Result of compatibility evaluation
@@ -46,23 +46,20 @@ pub struct CompiledCompatibility {
     pub suggestion: Option<String>,
 }
 
-/// Build host facts from cached capabilities with live fallback.
-pub fn get_host_facts(cached: Option<&HardwareCapabilities>) -> HostFacts {
-    HostFacts::detect(cached)
-}
-
 /// Compile compatibility rules for a template.
 ///
-/// Evaluates rules against host facts and modifies template image if a
-/// fallback applies. Returns structured compatibility result for the
-/// offerings index.
+/// Evaluates rules against hardware capabilities and modifies template
+/// image if a fallback applies. Returns structured compatibility result
+/// for the offerings index.
 pub fn compile_compatibility(
     template: &mut garden_common::manifests::ServiceTemplate,
     cached_capabilities: Option<&HardwareCapabilities>,
 ) -> CompiledCompatibility {
     if let Some(rules) = &template.compatibility {
-        let host = get_host_facts(cached_capabilities);
-        match evaluate_compatibility(rules, &host) {
+        // Use cached capabilities as FactSource, or build a default empty one
+        let default_caps = empty_capabilities();
+        let source: &dyn FactSource = cached_capabilities.unwrap_or(&default_caps);
+        match evaluate_compatibility(rules, source) {
             CompatibilityDecision::Pass => CompiledCompatibility {
                 decision: garden_common::constants::COMPAT_PASS.to_string(),
                 reason: None,
@@ -123,7 +120,7 @@ pub fn compile_compatibility(
 /// `continue_eval: true` (warnings that don't short-circuit).
 pub fn evaluate_compatibility(
     rules: &garden_common::CompatibilityRules,
-    host: &HostFacts,
+    source: &dyn FactSource,
 ) -> CompatibilityDecision {
     let mut last_warning: Option<CompatibilityDecision> = None;
 
@@ -150,7 +147,7 @@ pub fn evaluate_compatibility(
         let matches = if predicates.is_empty() {
             true
         } else {
-            garden_common::compatibility::check_all(&predicates, host)
+            garden_common::compatibility::check_all(&predicates, source)
         };
 
         if matches {
@@ -186,6 +183,32 @@ pub fn evaluate_compatibility(
 
     // If we collected a continued warning but no harder decision, return it
     last_warning.unwrap_or(CompatibilityDecision::Pass)
+}
+
+/// Construct minimal empty capabilities (for when no cache is available).
+fn empty_capabilities() -> HardwareCapabilities {
+    HardwareCapabilities {
+        stone_id: None,
+        stone_name: String::new(),
+        hardware: garden_common::HardwareInventory {
+            cpu: garden_common::CpuCapabilities {
+                model: None,
+                cores: 0,
+                threads: None,
+                architecture: std::env::consts::ARCH.to_string(),
+                features: None,
+            },
+            memory: garden_common::MemoryCapabilities { total_mb: 0 },
+            gpus: vec![],
+            disk: None,
+            swap_mb: None,
+            ai_capabilities: None,
+            system_manufacturer: None,
+            system_product: None,
+        },
+        runtime: None,
+        detection_status: garden_common::DetectionStatus::Scanning,
+    }
 }
 
 /// Validate ELF binary architecture matches system
@@ -225,47 +248,65 @@ pub fn validate_binary_architecture(binary_data: &[u8]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
-    fn rocm_host() -> HostFacts {
-        HostFacts {
-            architecture: Some("x86_64".into()),
-            os_family: Some("linux".into()),
-            cpu_model: Some("AMD Ryzen 9".into()),
-            cpu_features: HashSet::from(["avx2".into(), "sse4_2".into()]),
-            ram_total_mb: Some(32768),
-            gpu_present: true,
-            gpu_count: 1,
-            gpu_vram_total_mb: 8192,
-            ai_runtimes: HashSet::from(["rocm".into()]),
-            ..Default::default()
+    fn make_caps(
+        arch: &str,
+        os: &str,
+        cpu_model: Option<&str>,
+        cpu_features: Vec<&str>,
+        ram_mb: u64,
+        gpus: Vec<garden_common::GpuInfo>,
+    ) -> HardwareCapabilities {
+        HardwareCapabilities {
+            stone_id: None,
+            stone_name: "test".into(),
+            hardware: garden_common::HardwareInventory {
+                cpu: garden_common::CpuCapabilities {
+                    model: cpu_model.map(|s| s.to_string()),
+                    cores: 4,
+                    threads: None,
+                    architecture: arch.to_string(),
+                    features: Some(cpu_features.into_iter().map(String::from).collect()),
+                },
+                memory: garden_common::MemoryCapabilities { total_mb: ram_mb },
+                gpus,
+                disk: None,
+                swap_mb: None,
+                ai_capabilities: None,
+                system_manufacturer: None,
+                system_product: None,
+            },
+            runtime: Some(garden_common::RuntimeInfo {
+                docker_version: None,
+                os: os.to_string(),
+                kernel: None,
+            }),
+            detection_status: garden_common::DetectionStatus::Complete,
         }
     }
 
-    fn nvidia_host() -> HostFacts {
-        HostFacts {
-            architecture: Some("x86_64".into()),
-            os_family: Some("linux".into()),
-            cpu_features: HashSet::from(["avx2".into()]),
-            ram_total_mb: Some(16384),
-            gpu_present: true,
-            gpu_count: 1,
-            gpu_vram_total_mb: 8192,
-            ai_runtimes: HashSet::from(["cuda".into()]),
-            ..Default::default()
+    fn gpu(vendor: &str, model: &str, vram_mb: u64, capabilities: Vec<&str>) -> garden_common::GpuInfo {
+        garden_common::GpuInfo {
+            vendor: vendor.to_string(),
+            model: model.to_string(),
+            vram_mb: Some(vram_mb),
+            capabilities: capabilities.into_iter().map(String::from).collect(),
+            ai_runtimes: vec![], // Ignored — FactSource reads from capabilities
         }
     }
 
-    fn cpu_only_host() -> HostFacts {
-        HostFacts {
-            architecture: Some("x86_64".into()),
-            os_family: Some("linux".into()),
-            cpu_model: Some("Intel Celeron J4105".into()),
-            cpu_patterns: HashSet::from(["j4105".into()]),
-            cpu_features: HashSet::from(["sse4_2".into()]),
-            ram_total_mb: Some(8192),
-            ..Default::default()
-        }
+    fn rocm_host() -> HardwareCapabilities {
+        make_caps("x86_64", "linux", Some("AMD Ryzen 9"), vec!["avx2", "sse4_2"], 32768,
+            vec![gpu("AMD", "RX 7900 XTX", 24576, vec!["rocm", "vulkan"])])
+    }
+
+    fn nvidia_host() -> HardwareCapabilities {
+        make_caps("x86_64", "linux", None, vec!["avx2"], 16384,
+            vec![gpu("NVIDIA", "RTX 3060 Ti", 8192, vec!["cuda", "vulkan"])])
+    }
+
+    fn cpu_only_host() -> HardwareCapabilities {
+        make_caps("x86_64", "linux", Some("Intel Celeron J4105"), vec!["sse4_2"], 8192, vec![])
     }
 
     fn comfyui_rules() -> garden_common::CompatibilityRules {

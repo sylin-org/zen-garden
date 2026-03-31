@@ -10,9 +10,7 @@
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
-use crate::domain::compatibility::{
-    evaluate_compatibility, get_host_facts, CompatibilityDecision,
-};
+use crate::domain::compatibility::{evaluate_compatibility, CompatibilityDecision};
 use crate::domain::connection;
 use crate::domain::{ConnectivityOrchestrator, ConnectivityStatus, DetectionOrchestrator};
 use crate::infra::config::AdoptionConfig;
@@ -407,9 +405,9 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     // e.g. ollama-cpu must NOT be adopted on GPU-equipped stones.
                     if let Some(rules) = &manifest.compatibility {
                         let cached_caps = state.current.capabilities.read().await;
-                        let host = get_host_facts(cached_caps.as_ref());
-                        if let CompatibilityDecision::Fail { reason, .. } =
-                            evaluate_compatibility(rules, &host)
+                        if let Some(caps) = cached_caps.as_ref()
+                            && let CompatibilityDecision::Fail { reason, .. } =
+                                evaluate_compatibility(rules, caps)
                         {
                             tracing::info!(
                                 offering = %manifest.name,

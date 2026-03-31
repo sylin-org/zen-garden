@@ -8,9 +8,7 @@
 //! This is pure domain logic - delegates I/O to infra layer.
 
 use crate::docker::Client;
-use crate::domain::compatibility::{
-    evaluate_compatibility, get_host_facts, CompatibilityDecision,
-};
+use crate::domain::compatibility::{evaluate_compatibility, CompatibilityDecision};
 use crate::domain::connection;
 use crate::AppState;
 use garden_common::manifests::ManifestRegistry;
@@ -66,9 +64,10 @@ pub async fn adopt_offering_container(
     let guidance_template = entry.guidance.clone();
 
     // Compute expected image based on compatibility rules.
-    if let Some(rules) = &template.compatibility {
-        let host = get_host_facts(cached_capabilities);
-        match evaluate_compatibility(rules, &host) {
+    if let Some(rules) = &template.compatibility
+        && let Some(caps) = cached_capabilities
+    {
+        match evaluate_compatibility(rules, caps) {
             CompatibilityDecision::Pass => {}
             CompatibilityDecision::Warning { .. } => {
                 // Warning: proceed with caution, but don't change image

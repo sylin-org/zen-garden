@@ -9,7 +9,7 @@
 //! value       = identifier | number | 'present'
 //! ```
 
-use super::facts::HostFacts;
+use super::facts::FactSource;
 use std::fmt;
 
 // ============================================================================
@@ -304,63 +304,49 @@ impl Predicate {
         Ok(Predicate { fact, condition })
     }
 
-    /// Evaluate this predicate against a host's facts.
+    /// Evaluate this predicate against a fact source.
     ///
     /// Returns `false` if the referenced fact is missing/None.
-    pub fn check(&self, host: &HostFacts) -> bool {
-        match (&self.fact, &self.condition) {
-            // ── Set facts ──────────────────────────────────────────
-            (Fact::AiRuntime, Condition::Has(vals)) => {
-                vals.iter().any(|v| host.ai_runtimes.contains(v))
+    pub fn check(&self, source: &dyn FactSource) -> bool {
+        match &self.condition {
+            // ── Set operators ──────────────────────────────────────
+            Condition::Has(vals) => {
+                let set = source.resolve_set(self.fact);
+                vals.iter().any(|v| set.contains(v))
             }
-            (Fact::AiRuntime, Condition::HasAll(vals)) => {
-                vals.iter().all(|v| host.ai_runtimes.contains(v))
+            Condition::HasAll(vals) => {
+                let set = source.resolve_set(self.fact);
+                vals.iter().all(|v| set.contains(v))
             }
-            (Fact::AiRuntime, Condition::Lacks(vals)) => {
-                vals.iter().all(|v| !host.ai_runtimes.contains(v))
-            }
-
-            (Fact::CpuFeatures, Condition::Has(vals)) => {
-                vals.iter().any(|v| host.cpu_features.contains(v))
-            }
-            (Fact::CpuFeatures, Condition::HasAll(vals)) => {
-                vals.iter().all(|v| host.cpu_features.contains(v))
-            }
-            (Fact::CpuFeatures, Condition::Lacks(vals)) => {
-                vals.iter().all(|v| !host.cpu_features.contains(v))
+            Condition::Lacks(vals) => {
+                let set = source.resolve_set(self.fact);
+                vals.iter().all(|v| !set.contains(v))
             }
 
-            (Fact::CpuPattern, Condition::Has(vals)) => {
-                vals.iter().any(|v| host.cpu_patterns.contains(v))
-            }
-            (Fact::CpuPattern, Condition::HasAll(vals)) => {
-                vals.iter().all(|v| host.cpu_patterns.contains(v))
-            }
-            (Fact::CpuPattern, Condition::Lacks(vals)) => {
-                vals.iter().all(|v| !host.cpu_patterns.contains(v))
-            }
-
-            // ── Scalar facts ───────────────────────────────────────
-            (fact, Condition::Is(val)) => scalar_value(fact, host)
+            // ── Scalar operators ───────────────────────────────────
+            Condition::Is(val) => source
+                .resolve_scalar(self.fact)
                 .map(|s| s.eq_ignore_ascii_case(val))
                 .unwrap_or(false),
-            (fact, Condition::IsNot(val)) => scalar_value(fact, host)
+            Condition::IsNot(val) => source
+                .resolve_scalar(self.fact)
                 .map(|s| !s.eq_ignore_ascii_case(val))
                 .unwrap_or(false),
-            (fact, Condition::In(vals)) => scalar_value(fact, host)
+            Condition::In(vals) => source
+                .resolve_scalar(self.fact)
                 .map(|s| vals.iter().any(|v| s.eq_ignore_ascii_case(v)))
                 .unwrap_or(false),
-            (fact, Condition::NotIn(vals)) => scalar_value(fact, host)
+            Condition::NotIn(vals) => source
+                .resolve_scalar(self.fact)
                 .map(|s| vals.iter().all(|v| !s.eq_ignore_ascii_case(v)))
                 .unwrap_or(false),
 
-            // ── Boolean facts ──────────────────────────────────────
-            (Fact::Gpu, Condition::Present(expected)) => host.gpu_present == *expected,
-            (Fact::Npu, Condition::Present(expected)) => host.npu_present == *expected,
+            // ── Boolean operators ──────────────────────────────────
+            Condition::Present(expected) => source.resolve_bool(self.fact) == *expected,
 
-            // ── Numeric facts ──────────────────────────────────────
-            (fact, Condition::Cmp { op, value }) => {
-                let actual = numeric_value(fact, host);
+            // ── Numeric operators ──────────────────────────────────
+            Condition::Cmp { op, value } => {
+                let actual = source.resolve_numeric(self.fact);
                 match op {
                     CmpOp::Gte => actual >= *value,
                     CmpOp::Gt => actual > *value,
@@ -368,41 +354,15 @@ impl Predicate {
                     CmpOp::Lt => actual < *value,
                 }
             }
-
-            // Type-validated at parse time — unreachable in practice
-            _ => false,
         }
     }
 }
 
-/// Evaluate all predicates against host facts (AND semantics).
+/// Evaluate all predicates against a fact source (AND semantics).
 ///
 /// Short-circuits on the first `false`.
-pub fn check_all(predicates: &[Predicate], host: &HostFacts) -> bool {
-    predicates.iter().all(|p| p.check(host))
-}
-
-// ============================================================================
-// Scalar / numeric value extraction
-// ============================================================================
-
-fn scalar_value<'a>(fact: &Fact, host: &'a HostFacts) -> Option<&'a str> {
-    match fact {
-        Fact::Architecture => host.architecture.as_deref(),
-        Fact::OsFamily => host.os_family.as_deref(),
-        Fact::CpuModel => host.cpu_model.as_deref(),
-        _ => None,
-    }
-}
-
-fn numeric_value(fact: &Fact, host: &HostFacts) -> f64 {
-    match fact {
-        Fact::RamTotalMb => host.ram_total_mb.unwrap_or(0) as f64,
-        Fact::GpuCount => host.gpu_count as f64,
-        Fact::GpuVramTotalMb => host.gpu_vram_total_mb as f64,
-        Fact::GpuVramTotalGb => (host.gpu_vram_total_mb as f64) / 1024.0,
-        _ => 0.0,
-    }
+pub fn check_all(predicates: &[Predicate], source: &dyn FactSource) -> bool {
+    predicates.iter().all(|p| p.check(source))
 }
 
 // ============================================================================
@@ -834,14 +794,65 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    fn test_host() -> HostFacts {
-        HostFacts {
+    /// Test fact source — lightweight stand-in for HardwareCapabilities.
+    #[derive(Default, Clone)]
+    struct TestFacts {
+        architecture: Option<String>,
+        os_family: Option<String>,
+        cpu_model: Option<String>,
+        cpu_patterns: HashSet<String>,
+        cpu_features: HashSet<String>,
+        ram_total_mb: u64,
+        gpu_present: bool,
+        gpu_count: u32,
+        gpu_vram_total_mb: u64,
+        npu_present: bool,
+        ai_runtimes: HashSet<String>,
+    }
+
+    impl FactSource for TestFacts {
+        fn resolve_set(&self, fact: Fact) -> HashSet<String> {
+            match fact {
+                Fact::AiRuntime => self.ai_runtimes.clone(),
+                Fact::CpuFeatures => self.cpu_features.clone(),
+                Fact::CpuPattern => self.cpu_patterns.clone(),
+                _ => HashSet::new(),
+            }
+        }
+        fn resolve_scalar(&self, fact: Fact) -> Option<String> {
+            match fact {
+                Fact::Architecture => self.architecture.clone(),
+                Fact::OsFamily => self.os_family.clone(),
+                Fact::CpuModel => self.cpu_model.clone(),
+                _ => None,
+            }
+        }
+        fn resolve_numeric(&self, fact: Fact) -> f64 {
+            match fact {
+                Fact::RamTotalMb => self.ram_total_mb as f64,
+                Fact::GpuCount => self.gpu_count as f64,
+                Fact::GpuVramTotalMb => self.gpu_vram_total_mb as f64,
+                Fact::GpuVramTotalGb => self.gpu_vram_total_mb as f64 / 1024.0,
+                _ => 0.0,
+            }
+        }
+        fn resolve_bool(&self, fact: Fact) -> bool {
+            match fact {
+                Fact::Gpu => self.gpu_present,
+                Fact::Npu => self.npu_present,
+                _ => false,
+            }
+        }
+    }
+
+    fn test_host() -> TestFacts {
+        TestFacts {
             architecture: Some("x86_64".into()),
             os_family: Some("linux".into()),
             cpu_model: Some("Intel Celeron J4105".into()),
             cpu_patterns: HashSet::from(["j4105".into()]),
             cpu_features: HashSet::from(["sse4_2".into()]),
-            ram_total_mb: Some(8192),
+            ram_total_mb: 8192,
             gpu_present: true,
             gpu_count: 1,
             gpu_vram_total_mb: 6144,
@@ -1098,7 +1109,7 @@ mod tests {
 
     #[test]
     fn eval_missing_fact_is_false() {
-        let empty = HostFacts::default();
+        let empty = TestFacts::default();
         let p = Predicate::parse("host.architecture IS x86_64").unwrap();
         assert!(!p.check(&empty));
     }
@@ -1463,7 +1474,7 @@ mod tests {
 
     #[test]
     fn eval_numeric_zero() {
-        let empty = HostFacts::default();
+        let empty = TestFacts::default();
         let p = Predicate::parse("host.ram.total.mb < 1").unwrap();
         // ram_total_mb is None → 0 < 1 is true
         assert!(p.check(&empty));
@@ -1488,7 +1499,7 @@ mod tests {
 
     #[test]
     fn eval_has_any_first_match() {
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
@@ -1498,7 +1509,7 @@ mod tests {
 
     #[test]
     fn eval_has_any_second_match() {
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["rocm".into()]),
             ..Default::default()
         };
@@ -1508,7 +1519,7 @@ mod tests {
 
     #[test]
     fn eval_has_any_none_match() {
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["directml".into()]),
             ..Default::default()
         };
@@ -1518,7 +1529,7 @@ mod tests {
 
     #[test]
     fn eval_has_all_true() {
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["cuda".into(), "rocm".into(), "openvino".into()]),
             ..Default::default()
         };
@@ -1528,7 +1539,7 @@ mod tests {
 
     #[test]
     fn eval_has_all_partial() {
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
@@ -1538,7 +1549,7 @@ mod tests {
 
     #[test]
     fn eval_lacks_multi_all_absent() {
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["directml".into()]),
             ..Default::default()
         };
@@ -1548,7 +1559,7 @@ mod tests {
 
     #[test]
     fn eval_lacks_multi_one_present() {
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
@@ -1558,14 +1569,14 @@ mod tests {
 
     #[test]
     fn eval_lacks_empty_set() {
-        let host = HostFacts::default();
+        let host = TestFacts::default();
         let p = Predicate::parse("host.ai.runtime LACKS cuda").unwrap();
         assert!(p.check(&host)); // empty set lacks everything
     }
 
     #[test]
     fn eval_has_empty_set() {
-        let host = HostFacts::default();
+        let host = TestFacts::default();
         let p = Predicate::parse("host.ai.runtime HAS cuda").unwrap();
         assert!(!p.check(&host)); // empty set has nothing
     }
@@ -1604,14 +1615,14 @@ mod tests {
 
     #[test]
     fn eval_is_missing_fact() {
-        let empty = HostFacts::default();
+        let empty = TestFacts::default();
         let p = Predicate::parse("host.os.family IS linux").unwrap();
         assert!(!p.check(&empty));
     }
 
     #[test]
     fn eval_is_not_missing_fact() {
-        let empty = HostFacts::default();
+        let empty = TestFacts::default();
         let p = Predicate::parse("host.os.family IS NOT linux").unwrap();
         // Missing fact → false (not "not equals linux")
         assert!(!p.check(&empty));
@@ -1633,7 +1644,7 @@ mod tests {
 
     #[test]
     fn eval_not_in_missing_fact() {
-        let empty = HostFacts::default();
+        let empty = TestFacts::default();
         let p = Predicate::parse("host.os.family NOT IN (linux,macos)").unwrap();
         assert!(!p.check(&empty)); // missing → false
     }
@@ -1648,7 +1659,7 @@ mod tests {
 
     #[test]
     fn eval_gpu_present_false() {
-        let host = HostFacts {
+        let host = TestFacts {
             gpu_present: false,
             ..Default::default()
         };
@@ -1658,7 +1669,7 @@ mod tests {
 
     #[test]
     fn eval_gpu_not_present_true() {
-        let host = HostFacts {
+        let host = TestFacts {
             gpu_present: false,
             ..Default::default()
         };
@@ -1728,21 +1739,21 @@ mod tests {
             Predicate::parse("host.ai.runtime HAS rocm").unwrap(),
         ];
         // AMD-only stone
-        let host = HostFacts {
+        let host = TestFacts {
             ai_runtimes: HashSet::from(["rocm".into()]),
             ..Default::default()
         };
         assert!(check_all(&predicates, &host));
 
         // NVIDIA stone — should NOT match
-        let nvidia = HostFacts {
+        let nvidia = TestFacts {
             ai_runtimes: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
         assert!(!check_all(&predicates, &nvidia));
 
         // No GPU stone — should NOT match (has neither)
-        let no_gpu = HostFacts::default();
+        let no_gpu = TestFacts::default();
         assert!(!check_all(&predicates, &no_gpu));
     }
 
@@ -1752,11 +1763,11 @@ mod tests {
         let predicates = vec![
             Predicate::parse("host.ai.runtime LACKS cuda").unwrap(),
         ];
-        let no_gpu = HostFacts::default();
+        let no_gpu = TestFacts::default();
         assert!(check_all(&predicates, &no_gpu));
 
         // NVIDIA stone — should NOT match
-        let nvidia = HostFacts {
+        let nvidia = TestFacts {
             ai_runtimes: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
@@ -1768,13 +1779,13 @@ mod tests {
         let predicates = vec![
             Predicate::parse("host.cpu.pattern HAS j4105,j3455,j3160").unwrap(),
         ];
-        let celeron = HostFacts {
+        let celeron = TestFacts {
             cpu_patterns: HashSet::from(["j4105".into()]),
             ..Default::default()
         };
         assert!(check_all(&predicates, &celeron));
 
-        let ryzen = HostFacts {
+        let ryzen = TestFacts {
             cpu_patterns: HashSet::from(["ryzen9".into()]),
             ..Default::default()
         };
@@ -1789,7 +1800,7 @@ mod tests {
             Predicate::parse("host.cpu.features LACKS sse4_2,avx,avx2,avx512").unwrap(),
         ];
         // Old x86_64 without any SIMD
-        let old_x86 = HostFacts {
+        let old_x86 = TestFacts {
             architecture: Some("x86_64".into()),
             cpu_features: HashSet::from(["sse2".into()]),
             ..Default::default()
@@ -1797,7 +1808,7 @@ mod tests {
         assert!(check_all(&predicates, &old_x86));
 
         // x86_64 with AVX — should NOT match
-        let modern_x86 = HostFacts {
+        let modern_x86 = TestFacts {
             architecture: Some("x86_64".into()),
             cpu_features: HashSet::from(["sse4_2".into(), "avx".into(), "avx2".into()]),
             ..Default::default()
@@ -1805,7 +1816,7 @@ mod tests {
         assert!(!check_all(&predicates, &modern_x86));
 
         // ARM — should NOT match (architecture doesn't match)
-        let arm = HostFacts {
+        let arm = TestFacts {
             architecture: Some("aarch64".into()),
             cpu_features: HashSet::new(),
             ..Default::default()
@@ -1818,13 +1829,13 @@ mod tests {
         let predicates = vec![
             Predicate::parse("host.os.family NOT IN (linux,macos)").unwrap(),
         ];
-        let windows = HostFacts {
+        let windows = TestFacts {
             os_family: Some("windows".into()),
             ..Default::default()
         };
         assert!(check_all(&predicates, &windows));
 
-        let linux = HostFacts {
+        let linux = TestFacts {
             os_family: Some("linux".into()),
             ..Default::default()
         };
@@ -1836,13 +1847,13 @@ mod tests {
         let predicates = vec![
             Predicate::parse("host.gpu IS present").unwrap(),
         ];
-        let gpu_stone = HostFacts {
+        let gpu_stone = TestFacts {
             gpu_present: true,
             ..Default::default()
         };
         assert!(check_all(&predicates, &gpu_stone));
 
-        let cpu_stone = HostFacts {
+        let cpu_stone = TestFacts {
             gpu_present: false,
             ..Default::default()
         };
@@ -1856,17 +1867,17 @@ mod tests {
             Predicate::parse("host.architecture IN (armv7l,armv6l)").unwrap(),
             Predicate::parse("host.ram.total.mb < 512").unwrap(),
         ];
-        let tiny_arm = HostFacts {
+        let tiny_arm = TestFacts {
             architecture: Some("armv7l".into()),
-            ram_total_mb: Some(256),
+            ram_total_mb: 256,
             ..Default::default()
         };
         assert!(check_all(&predicates, &tiny_arm));
 
         // Enough memory — fails second predicate
-        let big_arm = HostFacts {
+        let big_arm = TestFacts {
             architecture: Some("armv7l".into()),
-            ram_total_mb: Some(1024),
+            ram_total_mb: 1024,
             ..Default::default()
         };
         assert!(!check_all(&predicates, &big_arm));

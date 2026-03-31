@@ -703,9 +703,16 @@ pub async fn install_service_task(
         .unwrap_or("latest")
         .to_string();
 
+    // Resolve FQN-specific volume paths so instances get isolated data dirs.
+    // e.g., comfyui → volumes/comfyui/, comfyui::prod → volumes/comfyui--prod/
+    let fqn_volumes = match garden_common::offerings::OfferingFqn::parse(service_name) {
+        Ok(fqn) => compiled.volumes_for_fqn(&fqn),
+        Err(_) => compiled.volumes.clone(),
+    };
+
     // Extract seed files (initial configuration) into volume directories.
     // Must happen before container creation so configs are present at first boot.
-    match crate::infra::embedded::extract_seeds(offering_type, &compiled.volumes) {
+    match crate::infra::embedded::extract_seeds(offering_type, &fqn_volumes) {
         Ok(n) if n > 0 => {
             emit_job_progress(
                 state,
@@ -739,7 +746,7 @@ pub async fn install_service_task(
             .map(|(_, h, c)| (*h, *c))
             .collect(),
         environment: compiled.environment,
-        volumes: compiled.volumes,
+        volumes: fqn_volumes,
         config_files: vec![],
     };
     let actual_ports = match state

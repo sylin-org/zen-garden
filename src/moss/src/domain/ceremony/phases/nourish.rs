@@ -83,12 +83,14 @@ async fn build_nourish_spec(
             .unwrap_or_default()
     };
 
-    // Parse the manifest template
-    let manifest = state.manifest_registry.get_offering(offering);
+    // Parse the manifest template with FQN-specific volume isolation
+    let fqn = garden_common::offerings::OfferingFqn::parse(offering)
+        .context("Invalid offering FQN")?;
+    let manifest = state.manifest_registry.get_offering(&fqn.offering);
 
     if let Some(manifest) = manifest {
         let template = manifest
-            .parse_template()
+            .parse_template_for_fqn(&fqn)
             .context("Failed to parse template")?;
 
         if !patches.is_empty() {

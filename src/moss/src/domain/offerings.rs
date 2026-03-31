@@ -80,6 +80,39 @@ impl CompiledOffering {
             .map(|(_, h, c)| (h, c))
             .collect()
     }
+
+    /// Remap volume host paths for FQN-specific isolation.
+    ///
+    /// The compiled offering caches volumes under the offering name directory.
+    /// When deploying a named instance (e.g., `comfyui::prod`), this remaps
+    /// the paths to use the FQN-encoded directory instead:
+    /// - `comfyui`       → `{volumes_dir}/comfyui/...`
+    /// - `comfyui::prod` → `{volumes_dir}/comfyui--prod/...`
+    pub fn volumes_for_fqn(
+        &self,
+        fqn: &garden_common::offerings::OfferingFqn,
+    ) -> Vec<(String, String)> {
+        let encoded = fqn.encoded_for_container();
+        if encoded == self.name {
+            return self.volumes.clone();
+        }
+
+        let base = garden_common::constants::paths::volumes_dir();
+        let old_prefix = format!("{}/{}/", base, self.name);
+        let new_prefix = format!("{}/{}/", base, encoded);
+
+        self.volumes
+            .iter()
+            .map(|(host, container)| {
+                let remapped = if host.starts_with(&old_prefix) {
+                    format!("{}{}", new_prefix, &host[old_prefix.len()..])
+                } else {
+                    host.clone()
+                };
+                (remapped, container.clone())
+            })
+            .collect()
+    }
 }
 
 /// Fingerprint for cache invalidation

@@ -56,7 +56,7 @@ pub async fn adopt_offering_container(
         None => return Ok(None),
     };
 
-    let mut template = match entry.parse_template() {
+    let mut template = match entry.parse_template_for_fqn(&fqn) {
         Ok(t) => t,
         Err(_) => return Ok(None),
     };

@@ -27,16 +27,16 @@ pub async fn build_spec_from_manifest(
     };
 
     // Resolve the offering type (strip instance suffix for FQN lookups)
-    let offering_type = OfferingFqn::parse(service_name)
-        .map(|fqn| fqn.offering.clone())
-        .unwrap_or_else(|_| service_name.to_string());
+    let fqn = OfferingFqn::parse(service_name)
+        .context("Invalid offering FQN")?;
+    let offering_type = fqn.offering.clone();
 
     let manifest = state
         .manifest_registry
         .get_offering(&offering_type)
         .context("No manifest for offering")?;
     let template = manifest
-        .parse_template()
+        .parse_template_for_fqn(&fqn)
         .context("Failed to parse template")?;
 
     let effective = crate::domain::config_compose::compose(&template, &patches)

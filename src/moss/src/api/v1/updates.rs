@@ -677,14 +677,18 @@ async fn execute_offering_update(
             .unwrap_or_default()
     };
 
+    // Parse FQN for volume isolation (comfyui::prod → comfyui--prod/)
+    let fqn = garden_common::offerings::OfferingFqn::parse(name)
+        .map_err(|e| anyhow::anyhow!("Invalid offering FQN '{}': {}", name, e))?;
+
     let spec = if !patches.is_empty() {
         // Compose manifest template + patches, override image with target
         let manifest = state
             .manifest_registry
-            .get_offering(name)
+            .get_offering(&fqn.offering)
             .ok_or_else(|| anyhow::anyhow!("No manifest for '{}'", name))?;
         let template = manifest
-            .parse_template()
+            .parse_template_for_fqn(&fqn)
             .map_err(|e| anyhow::anyhow!("Failed to parse template for '{}': {}", name, e))?;
         let effective = crate::domain::config_compose::compose(&template, &patches)
             .map_err(|e| anyhow::anyhow!("Failed to compose config for '{}': {}", name, e))?;
@@ -698,12 +702,13 @@ async fn execute_offering_update(
             config_files: effective.config_files,
         }
     } else {
+        let fqn_volumes = compiled.volumes_for_fqn(&fqn);
         crate::docker::ContainerSpec {
             image: target_image.clone(),
             command: None,
             ports: compiled.ports_vec(),
             environment: compiled.environment,
-            volumes: compiled.volumes,
+            volumes: fqn_volumes,
             config_files: vec![],
         }
     };

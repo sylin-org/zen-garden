@@ -602,7 +602,11 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
         .get(&offering)
         .ok_or_else(|| anyhow::anyhow!("Template for '{}' not found", offering))?;
 
-    let template = match entry.parse_template() {
+    // Parse FQN for volume isolation (comfyui::prod → comfyui--prod/)
+    let fqn = garden_common::offerings::OfferingFqn::parse(service_name)
+        .unwrap_or_else(|_| garden_common::offerings::OfferingFqn::parse(&offering).unwrap());
+
+    let template = match entry.parse_template_for_fqn(&fqn) {
         Ok(t) => t,
         Err(e) => {
             // Restore status on template load failure

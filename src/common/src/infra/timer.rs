@@ -495,23 +495,42 @@ ExecStart=/usr/bin/curl -s -X POST {}/api/v1/nurturing/{}/trigger
             self.api_base_url, offering_name
         );
 
-        // Create scheduled task using schtasks
-        // /SC MINUTE for recurring, /MO for interval
+        // Create scheduled task using schtasks.
+        // /SC MINUTE /MO N supports up to 1439 minutes.
+        // For intervals >= 1440 minutes (24h), use /SC DAILY instead.
+        let mut args = vec![
+            "/Create".to_string(),
+            "/F".to_string(), // Force overwrite if exists
+        ];
+
+        if interval_minutes >= 1440 {
+            let interval_days = (interval_minutes / 1440).max(1);
+            args.extend([
+                "/SC".to_string(),
+                "DAILY".to_string(),
+                "/MO".to_string(),
+                interval_days.to_string(),
+            ]);
+        } else {
+            args.extend([
+                "/SC".to_string(),
+                "MINUTE".to_string(),
+                "/MO".to_string(),
+                interval_minutes.to_string(),
+            ]);
+        }
+
+        args.extend([
+            "/TN".to_string(),
+            task_name.clone(),
+            "/TR".to_string(),
+            format!("cmd /c {}", trigger_command),
+            "/RL".to_string(),
+            "LIMITED".to_string(), // Run with limited privileges
+        ]);
+
         let output = Command::new("schtasks")
-            .args([
-                "/Create",
-                "/F", // Force overwrite if exists
-                "/SC",
-                "MINUTE",
-                "/MO",
-                &interval_minutes.to_string(),
-                "/TN",
-                &task_name,
-                "/TR",
-                &format!("cmd /c {}", trigger_command),
-                "/RL",
-                "LIMITED", // Run with limited privileges
-            ])
+            .args(&args)
             .output()
             .await
             .context("Failed to create scheduled task")?;

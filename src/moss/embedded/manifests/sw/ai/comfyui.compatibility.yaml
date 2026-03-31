@@ -1,11 +1,30 @@
 version: "1"
 
+# ComfyUI hardware compatibility (three-tier: NVIDIA → ROCm → CPU)
+#
+# Default image: yanwk/comfyui-boot:cu130-slim-v2 (NVIDIA CUDA 13.0)
+# Fallback 1: yanwk/comfyui-boot:rocm (AMD ROCm 7.2, RDNA 2/3/4)
+# Fallback 2: yanwk/comfyui-boot:cpu (CPU-only, very slow)
+
 compatibility_rules:
-  - name: "gpu-required"
+  # No NVIDIA GPU — check if AMD GPU available for ROCm fallback
+  - name: "no-nvidia-use-rocm"
     condition:
       requires_ai_any: ['cuda']
-    reason: "ComfyUI requires an NVIDIA GPU with CUDA support for image generation"
-    suggestion: "Install on a stone with an NVIDIA GPU (RTX 3060+ recommended)"
+      has_ai_any: ['rocm']
+    reason: "No NVIDIA GPU detected. Using AMD ROCm image for GPU-accelerated inference."
+    fallback:
+      image: "yanwk/comfyui-boot:rocm"
+      name: "rocm"
+
+  # No GPU at all — CPU fallback (very slow, but functional)
+  - name: "no-gpu-use-cpu"
+    condition:
+      requires_ai_any: ['cuda']
+    reason: "No GPU detected. ComfyUI will run on CPU (very slow — expect minutes per image)."
+    fallback:
+      image: "yanwk/comfyui-boot:cpu"
+      name: "cpu"
 
   - name: "low-vram-warning"
     condition:
@@ -20,11 +39,11 @@ compatibility_rules:
     reason: "ComfyUI requires at least 8GB RAM for model loading and inference"
     suggestion: "Increase stone memory to 16GB+ for comfortable operation"
 
-  - name: "arm-not-supported"
+  - name: "arm32-not-supported"
     condition:
       architectures: ["armv7l", "armv6l"]
-    reason: "ComfyUI Docker images are only available for amd64 and arm64"
-    suggestion: "Use amd64 or arm64 hardware with NVIDIA GPU"
+    reason: "ComfyUI Docker images require amd64"
+    suggestion: "Use amd64 hardware with NVIDIA or AMD GPU"
 
 post_install_healthcheck:
   enabled: true
@@ -33,12 +52,22 @@ post_install_healthcheck:
   patterns:
     - pattern: "CUDA.*error|cuda.*fail|RuntimeError.*CUDA"
       reason: "NVIDIA GPU initialization failed"
-      suggestion: "Check NVIDIA drivers (550+) and nvidia-container-toolkit installation"
+      suggestion: "Check NVIDIA drivers (550+) and nvidia-container-toolkit"
+      fallback:
+        image: "yanwk/comfyui-boot:cpu"
+        name: "cpu"
+
+    - pattern: "HIP.*error|hip.*fail|ROCm.*error"
+      reason: "AMD ROCm GPU initialization failed"
+      suggestion: "Check ROCm drivers (6.4+) and /dev/kfd /dev/dri permissions"
+      fallback:
+        image: "yanwk/comfyui-boot:cpu"
+        name: "cpu"
 
     - pattern: "Cannot allocate memory|OOM|OutOfMemoryError"
       reason: "Insufficient GPU memory for the loaded model"
-      suggestion: "Use a smaller checkpoint or reduce image resolution"
+      suggestion: "Use a smaller checkpoint or add --lowvram to CLI_ARGS"
 
     - pattern: "No such file or directory.*checkpoint"
       reason: "No model checkpoints found"
-      suggestion: "Download a checkpoint to the comfyui-data volume: models/checkpoints/"
+      suggestion: "Download a checkpoint to the comfyui-models volume under models/checkpoints/"

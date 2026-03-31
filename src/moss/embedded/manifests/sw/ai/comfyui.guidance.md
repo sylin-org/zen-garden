@@ -6,43 +6,100 @@ trigger: post_install
 # ComfyUI — Image Generation
 
 **Web UI:** http://{{server-name}}:{{port}}
+**Image:** `yanwk/comfyui-boot` (auto-selects NVIDIA/AMD/CPU variant)
 
 ## Getting Started
 
-ComfyUI starts with no models. Download at least one checkpoint to begin generating images.
+ComfyUI starts with **no models**. Download at least one checkpoint to begin generating images.
 
 ### Download a Checkpoint
 
-Place checkpoint files in the data volume under `models/checkpoints/`:
+Place checkpoint files in the `comfyui-models` volume under `checkpoints/`:
 
-```bash
-# Example: download Flux-dev (requires HuggingFace account)
-# Or download SD 1.5 / SDXL checkpoints from civitai.com
-```
+**Popular models:**
+- **Flux-dev** (12GB VRAM) — state-of-the-art, requires HuggingFace account
+- **SDXL** (8GB VRAM) — high quality, broad community support
+- **SD 1.5** (4GB VRAM) — lightweight, huge model ecosystem
 
-Models directory structure:
+Download from [CivitAI](https://civitai.com/) or [HuggingFace](https://huggingface.co/) and place `.safetensors` files in the models volume.
+
+### Model Directory Structure
+
 ```
-models/
-  checkpoints/    # Main model files (.safetensors)
+comfyui-models/
+  checkpoints/    # Main model files (.safetensors, .ckpt)
   loras/          # LoRA fine-tune adapters
   vae/            # VAE models
   controlnet/     # ControlNet models
   clip/           # CLIP text encoders
+  clip_vision/    # CLIP vision encoders
+  text_encoders/  # Text encoder models (T5, etc.)
+  upscale_models/ # Upscaling models (ESRGAN, etc.)
+  embeddings/     # Textual inversion embeddings
 ```
+
+### Install Custom Nodes
+
+Open the web UI and use **ComfyUI-Manager** (pre-installed) to browse and install custom nodes. Nodes persist in the `comfyui-custom-nodes` volume across container updates.
+
+## Hardware Variants
+
+Zen Garden auto-selects the best image for your hardware:
+
+| GPU | Image Tag | Performance |
+|-----|-----------|-------------|
+| NVIDIA (RTX 3060+) | `cu130-slim-v2` | Best — full CUDA acceleration |
+| AMD (RX 6000/7000) | `rocm` | Good — ROCm acceleration |
+| No GPU | `cpu` | Very slow — minutes per image |
+
+### AMD ROCm Notes
+
+For RX 7900 XTX/XT/GRE, set `HSA_OVERRIDE_GFX_VERSION=11.0.0` in CLI_ARGS or environment. For RX 6000 series, the `rocm6` tag may perform better.
+
+**Performance tip:** Add `PYTORCH_TUNABLEOP_ENABLED=1` to environment — improves performance after first-run kernel compilation.
+
+## User Scripts
+
+The `comfyui-scripts` volume contains a `pre-start.sh` hook that runs before ComfyUI launches. Use it to:
+- Auto-install custom nodes
+- Download models
+- Set environment variables
+- Run maintenance tasks
+
+## API Usage
+
+ComfyUI exposes a full REST API on port {{port}}:
+
+| Purpose | Endpoint |
+|---------|----------|
+| System stats / health | `GET /system_stats` |
+| Submit workflow | `POST /prompt` (JSON workflow graph) |
+| Queue status | `GET /queue` |
+| Job tracking | `GET /api/jobs` |
+| Available models | `GET /models/checkpoints` |
+| Available nodes | `GET /object_info` |
+| Upload image | `POST /upload/image` |
+| View output | `GET /view?filename=...&type=output` |
+| Free VRAM | `POST /free {"unload_models": true}` |
+| WebSocket events | `WS /ws?clientId=<uuid>` |
 
 ### AI Orchestrator Integration
 
-When the AI Orchestrator is running, ComfyUI instances are automatically discovered and available via:
-- `POST /api/imagine` — text-to-image generation
-- `POST /api/edit` — image-to-image editing
+When the AI Orchestrator is running, ComfyUI instances are automatically discovered and available for the **Image** capability. The orchestrator can submit workflows programmatically via the `/prompt` endpoint.
 
-The orchestrator routes requests to the best available ComfyUI instance based on VRAM availability and queue depth.
+## Useful CLI_ARGS
 
-## Useful Commands
+Set via the `CLI_ARGS` environment variable:
 
-| Purpose | URL |
-|---------|-----|
-| System stats | `http://{{server-name}}:{{port}}/system_stats` |
-| Queue status | `http://{{server-name}}:{{port}}/queue` |
-| Available checkpoints | `http://{{server-name}}:{{port}}/models/checkpoints` |
-| Free VRAM | `POST http://{{server-name}}:{{port}}/free {"unload_models": true}` |
+| Flag | Effect |
+|------|--------|
+| `--lowvram` | Aggressive VRAM offloading (4-6GB GPUs) |
+| `--novram` | Maximum offloading to system RAM |
+| `--cpu` | Force CPU-only (no GPU) |
+| `--fast` | Experimental optimizations |
+| `--disable-smart-memory` | More predictable VRAM usage |
+| `--enable-cors-header` | Enable CORS for cross-origin API access |
+
+## Security
+
+ComfyUI has **no built-in authentication**. Access is controlled at the network level. Do not expose port {{port}} to the public internet without a reverse proxy with authentication.

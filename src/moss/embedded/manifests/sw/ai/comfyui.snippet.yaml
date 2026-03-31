@@ -1,15 +1,32 @@
 container_name: comfyui
-image: mmartial/comfyui-nvidia-docker:latest
+image: yanwk/comfyui-boot:cu130-slim-v2
 ports:
   default: [8188, 8188]
 volumes:
-  - comfyui-data:/basedir
-  - comfyui-venv:/comfy/mnt
+  # Models — populate with checkpoints, LoRAs, VAE, ControlNet, etc.
+  - comfyui-models:/root/ComfyUI/models
+  - comfyui-hf-cache:/root/.cache/huggingface/hub
+  # Custom nodes — persisted across container updates
+  - comfyui-custom-nodes:/root/ComfyUI/custom_nodes
+  - comfyui-pip-local:/root/.local
+  # User data — input images, generated output, saved workflows
+  - comfyui-input:/root/ComfyUI/input
+  - comfyui-output:/root/ComfyUI/output
+  - comfyui-user:/root/ComfyUI/user
+  # Cache and config
+  - comfyui-cache:/root/.cache
+  - comfyui-config:/root/.config
+  - comfyui-scripts:/root/user-scripts
 environment:
-  WANTED_UID: "1000"
-  WANTED_GID: "1000"
-  SECURITY_LEVEL: "normal"
-  USE_UV: "true"
+  CLI_ARGS: "--enable-cors-header"
+# GPU passthrough for NVIDIA stones
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [gpu]
 healthcheck:
   test: ["CMD", "curl", "-f", "http://localhost:8188/system_stats"]
   interval: 30s

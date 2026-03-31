@@ -1149,4 +1149,802 @@ mod tests {
             assert_eq!(p, reparsed, "Roundtrip failed: '{}' → '{}'", input, displayed);
         }
     }
+
+    // ================================================================
+    // Extensive test suite
+    // ================================================================
+
+    // ── Case insensitivity (operators + facts) ─────────────────────
+
+    #[test]
+    fn parse_operator_lowercase() {
+        let p = Predicate::parse("host.ai.runtime has cuda").unwrap();
+        assert_eq!(p.condition, Condition::Has(vec!["cuda".into()]));
+    }
+
+    #[test]
+    fn parse_operator_mixed_case() {
+        let p = Predicate::parse("host.ai.runtime Has cuda").unwrap();
+        assert_eq!(p.condition, Condition::Has(vec!["cuda".into()]));
+    }
+
+    #[test]
+    fn parse_operator_lacks_lowercase() {
+        let p = Predicate::parse("host.ai.runtime lacks cuda").unwrap();
+        assert_eq!(p.condition, Condition::Lacks(vec!["cuda".into()]));
+    }
+
+    #[test]
+    fn parse_operator_is_not_mixed_case() {
+        let p = Predicate::parse("host.architecture Is Not armv7l").unwrap();
+        assert_eq!(p.condition, Condition::IsNot("armv7l".into()));
+    }
+
+    #[test]
+    fn parse_operator_not_in_lowercase() {
+        let p = Predicate::parse("host.os.family not in (linux,macos)").unwrap();
+        assert_eq!(
+            p.condition,
+            Condition::NotIn(vec!["linux".into(), "macos".into()])
+        );
+    }
+
+    #[test]
+    fn parse_fact_mixed_case() {
+        let p = Predicate::parse("HOST.AI.RUNTIME HAS cuda").unwrap();
+        assert_eq!(p.fact, Fact::AiRuntime);
+    }
+
+    #[test]
+    fn parse_fact_camel_case() {
+        let p = Predicate::parse("Host.Ai.Runtime HAS cuda").unwrap();
+        assert_eq!(p.fact, Fact::AiRuntime);
+    }
+
+    // ── Values are case-sensitive ──────────────────────────────────
+
+    #[test]
+    fn values_stored_lowercase() {
+        let p = Predicate::parse("host.ai.runtime HAS CUDA").unwrap();
+        // Values are lowercased during parse
+        assert_eq!(p.condition, Condition::Has(vec!["cuda".into()]));
+    }
+
+    // ── Whitespace handling ────────────────────────────────────────
+
+    #[test]
+    fn parse_leading_trailing_whitespace() {
+        let p = Predicate::parse("  host.ai.runtime HAS cuda  ").unwrap();
+        assert_eq!(p.condition, Condition::Has(vec!["cuda".into()]));
+    }
+
+    #[test]
+    fn parse_extra_internal_whitespace() {
+        let p = Predicate::parse("host.ai.runtime    HAS    cuda").unwrap();
+        assert_eq!(p.condition, Condition::Has(vec!["cuda".into()]));
+    }
+
+    #[test]
+    fn parse_spaces_in_parens() {
+        let p = Predicate::parse("host.architecture IN ( armv7l , armv6l )").unwrap();
+        assert_eq!(
+            p.condition,
+            Condition::In(vec!["armv7l".into(), "armv6l".into()])
+        );
+    }
+
+    // ── Empty / malformed input ────────────────────────────────────
+
+    #[test]
+    fn reject_empty_string() {
+        let err = Predicate::parse("").unwrap_err();
+        assert!(err.message.contains("Empty predicate"));
+    }
+
+    #[test]
+    fn reject_whitespace_only() {
+        let err = Predicate::parse("   ").unwrap_err();
+        assert!(err.message.contains("Empty predicate"));
+    }
+
+    #[test]
+    fn reject_fact_only() {
+        let err = Predicate::parse("host.architecture").unwrap_err();
+        assert!(err.message.contains("Expected operator"));
+    }
+
+    #[test]
+    fn reject_fact_operator_no_value() {
+        let err = Predicate::parse("host.ai.runtime HAS").unwrap_err();
+        assert!(err.message.contains("Expected value"));
+    }
+
+    #[test]
+    fn reject_is_no_value() {
+        let err = Predicate::parse("host.architecture IS").unwrap_err();
+        assert!(err.message.contains("Expected value"));
+    }
+
+    #[test]
+    fn reject_numeric_no_value() {
+        let err = Predicate::parse("host.ram.total.mb <").unwrap_err();
+        assert!(err.message.contains("Expected numeric"));
+    }
+
+    #[test]
+    fn reject_numeric_non_number() {
+        let err = Predicate::parse("host.ram.total.mb < abc").unwrap_err();
+        assert!(err.message.contains("not a valid number"));
+    }
+
+    #[test]
+    fn reject_unclosed_paren() {
+        let err = Predicate::parse("host.architecture IN (armv7l,armv6l").unwrap_err();
+        assert!(err.message.contains("Unclosed parenthesis"));
+    }
+
+    #[test]
+    fn reject_not_without_in() {
+        let err = Predicate::parse("host.os.family NOT AROUND linux").unwrap_err();
+        assert!(err.message.contains("Did you mean 'NOT IN'"));
+    }
+
+    #[test]
+    fn reject_is_not_no_value() {
+        let err = Predicate::parse("host.architecture IS NOT").unwrap_err();
+        assert!(err.message.contains("Expected value"));
+    }
+
+    // ── Every fact name resolves ───────────────────────────────────
+
+    #[test]
+    fn parse_all_facts() {
+        let cases = [
+            ("host.architecture IS x86_64", Fact::Architecture),
+            ("host.os.family IS linux", Fact::OsFamily),
+            ("host.cpu.model IS test", Fact::CpuModel),
+            ("host.cpu.pattern HAS j4105", Fact::CpuPattern),
+            ("host.cpu.features HAS avx", Fact::CpuFeatures),
+            ("host.ram.total.mb < 1024", Fact::RamTotalMb),
+            ("host.gpu IS present", Fact::Gpu),
+            ("host.gpu.count >= 1", Fact::GpuCount),
+            ("host.gpu.vram.total.mb >= 4096", Fact::GpuVramTotalMb),
+            ("host.gpu.vram.total.gb >= 4", Fact::GpuVramTotalGb),
+            ("host.npu IS present", Fact::Npu),
+            ("host.ai.runtime HAS cuda", Fact::AiRuntime),
+        ];
+        for (input, expected_fact) in cases {
+            let p = Predicate::parse(input).unwrap();
+            assert_eq!(p.fact, expected_fact, "Failed for: {}", input);
+        }
+    }
+
+    // ── Type enforcement: every invalid combo ──────────────────────
+
+    #[test]
+    fn reject_has_on_scalar() {
+        let err = Predicate::parse("host.architecture HAS x86_64").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_has_on_boolean() {
+        let err = Predicate::parse("host.gpu HAS true").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_lacks_on_scalar() {
+        let err = Predicate::parse("host.architecture LACKS x86_64").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_lacks_on_numeric() {
+        let err = Predicate::parse("host.ram.total.mb LACKS 4096").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_is_on_set() {
+        let err = Predicate::parse("host.ai.runtime IS cuda").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_is_on_numeric() {
+        let err = Predicate::parse("host.ram.total.mb IS 4096").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_in_on_set() {
+        let err = Predicate::parse("host.ai.runtime IN (cuda,rocm)").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_in_on_numeric() {
+        let err = Predicate::parse("host.ram.total.mb IN (4096,8192)").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_not_in_on_set() {
+        let err = Predicate::parse("host.cpu.features NOT IN (avx,avx2)").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_present_on_scalar() {
+        let err = Predicate::parse("host.architecture IS present").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_present_on_numeric() {
+        let err = Predicate::parse("host.ram.total.mb IS present").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_present_on_set() {
+        let err = Predicate::parse("host.ai.runtime IS present").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_gte_on_set() {
+        let err = Predicate::parse("host.ai.runtime >= 5").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_gte_on_scalar() {
+        let err = Predicate::parse("host.architecture >= 5").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    #[test]
+    fn reject_gte_on_boolean() {
+        let err = Predicate::parse("host.gpu >= 1").unwrap_err();
+        assert!(err.message.contains("Type mismatch"), "{}", err.message);
+    }
+
+    // ── Numeric operators: all four ────────────────────────────────
+
+    #[test]
+    fn parse_numeric_gt() {
+        let p = Predicate::parse("host.ram.total.mb > 4096").unwrap();
+        assert_eq!(
+            p.condition,
+            Condition::Cmp { op: CmpOp::Gt, value: 4096.0 }
+        );
+    }
+
+    #[test]
+    fn parse_numeric_lte() {
+        let p = Predicate::parse("host.gpu.vram.total.mb <= 8192").unwrap();
+        assert_eq!(
+            p.condition,
+            Condition::Cmp { op: CmpOp::Lte, value: 8192.0 }
+        );
+    }
+
+    #[test]
+    fn eval_numeric_gt_true() {
+        let p = Predicate::parse("host.ram.total.mb > 4096").unwrap();
+        assert!(p.check(&test_host())); // 8192 > 4096
+    }
+
+    #[test]
+    fn eval_numeric_gt_boundary_false() {
+        let p = Predicate::parse("host.ram.total.mb > 8192").unwrap();
+        assert!(!p.check(&test_host())); // 8192 > 8192 is false
+    }
+
+    #[test]
+    fn eval_numeric_gte_boundary_true() {
+        let p = Predicate::parse("host.ram.total.mb >= 8192").unwrap();
+        assert!(p.check(&test_host())); // 8192 >= 8192 is true
+    }
+
+    #[test]
+    fn eval_numeric_lt_boundary_false() {
+        let p = Predicate::parse("host.ram.total.mb < 8192").unwrap();
+        assert!(!p.check(&test_host())); // 8192 < 8192 is false
+    }
+
+    #[test]
+    fn eval_numeric_lte_boundary_true() {
+        let p = Predicate::parse("host.ram.total.mb <= 8192").unwrap();
+        assert!(p.check(&test_host())); // 8192 <= 8192 is true
+    }
+
+    #[test]
+    fn eval_numeric_zero() {
+        let empty = HostFacts::default();
+        let p = Predicate::parse("host.ram.total.mb < 1").unwrap();
+        // ram_total_mb is None → 0 < 1 is true
+        assert!(p.check(&empty));
+    }
+
+    #[test]
+    fn eval_gpu_count() {
+        let p = Predicate::parse("host.gpu.count >= 1").unwrap();
+        assert!(p.check(&test_host())); // gpu_count = 1
+    }
+
+    #[test]
+    fn eval_vram_gb_derived() {
+        // 6144 MB = 6.0 GB
+        let p = Predicate::parse("host.gpu.vram.total.gb >= 6").unwrap();
+        assert!(p.check(&test_host()));
+        let p2 = Predicate::parse("host.gpu.vram.total.gb >= 7").unwrap();
+        assert!(!p2.check(&test_host()));
+    }
+
+    // ── Set operations: thorough ───────────────────────────────────
+
+    #[test]
+    fn eval_has_any_first_match() {
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["cuda".into()]),
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.ai.runtime HAS cuda,rocm").unwrap();
+        assert!(p.check(&host)); // has cuda (first)
+    }
+
+    #[test]
+    fn eval_has_any_second_match() {
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["rocm".into()]),
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.ai.runtime HAS cuda,rocm").unwrap();
+        assert!(p.check(&host)); // has rocm (second)
+    }
+
+    #[test]
+    fn eval_has_any_none_match() {
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["directml".into()]),
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.ai.runtime HAS cuda,rocm").unwrap();
+        assert!(!p.check(&host)); // has neither
+    }
+
+    #[test]
+    fn eval_has_all_true() {
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["cuda".into(), "rocm".into(), "openvino".into()]),
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.ai.runtime HAS cuda AND rocm").unwrap();
+        assert!(p.check(&host));
+    }
+
+    #[test]
+    fn eval_has_all_partial() {
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["cuda".into()]),
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.ai.runtime HAS cuda AND rocm").unwrap();
+        assert!(!p.check(&host)); // has cuda but not rocm
+    }
+
+    #[test]
+    fn eval_lacks_multi_all_absent() {
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["directml".into()]),
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.ai.runtime LACKS cuda,rocm").unwrap();
+        assert!(p.check(&host)); // has neither cuda nor rocm
+    }
+
+    #[test]
+    fn eval_lacks_multi_one_present() {
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["cuda".into()]),
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.ai.runtime LACKS cuda,rocm").unwrap();
+        assert!(!p.check(&host)); // has cuda
+    }
+
+    #[test]
+    fn eval_lacks_empty_set() {
+        let host = HostFacts::default();
+        let p = Predicate::parse("host.ai.runtime LACKS cuda").unwrap();
+        assert!(p.check(&host)); // empty set lacks everything
+    }
+
+    #[test]
+    fn eval_has_empty_set() {
+        let host = HostFacts::default();
+        let p = Predicate::parse("host.ai.runtime HAS cuda").unwrap();
+        assert!(!p.check(&host)); // empty set has nothing
+    }
+
+    // ── Scalar IS / IS NOT ─────────────────────────────────────────
+
+    #[test]
+    fn eval_is_true() {
+        let p = Predicate::parse("host.architecture IS x86_64").unwrap();
+        assert!(p.check(&test_host()));
+    }
+
+    #[test]
+    fn eval_is_false() {
+        let p = Predicate::parse("host.architecture IS aarch64").unwrap();
+        assert!(!p.check(&test_host()));
+    }
+
+    #[test]
+    fn eval_is_case_insensitive() {
+        let p = Predicate::parse("host.architecture IS X86_64").unwrap();
+        assert!(p.check(&test_host())); // scalar comparison is case-insensitive
+    }
+
+    #[test]
+    fn eval_is_not_true() {
+        let p = Predicate::parse("host.architecture IS NOT aarch64").unwrap();
+        assert!(p.check(&test_host()));
+    }
+
+    #[test]
+    fn eval_is_not_false() {
+        let p = Predicate::parse("host.architecture IS NOT x86_64").unwrap();
+        assert!(!p.check(&test_host()));
+    }
+
+    #[test]
+    fn eval_is_missing_fact() {
+        let empty = HostFacts::default();
+        let p = Predicate::parse("host.os.family IS linux").unwrap();
+        assert!(!p.check(&empty));
+    }
+
+    #[test]
+    fn eval_is_not_missing_fact() {
+        let empty = HostFacts::default();
+        let p = Predicate::parse("host.os.family IS NOT linux").unwrap();
+        // Missing fact → false (not "not equals linux")
+        assert!(!p.check(&empty));
+    }
+
+    // ── NOT IN ─────────────────────────────────────────────────────
+
+    #[test]
+    fn eval_not_in_true() {
+        let p = Predicate::parse("host.os.family NOT IN (windows,macos)").unwrap();
+        assert!(p.check(&test_host())); // linux not in list
+    }
+
+    #[test]
+    fn eval_not_in_false() {
+        let p = Predicate::parse("host.os.family NOT IN (linux,macos)").unwrap();
+        assert!(!p.check(&test_host())); // linux IS in list
+    }
+
+    #[test]
+    fn eval_not_in_missing_fact() {
+        let empty = HostFacts::default();
+        let p = Predicate::parse("host.os.family NOT IN (linux,macos)").unwrap();
+        assert!(!p.check(&empty)); // missing → false
+    }
+
+    // ── Boolean facts ──────────────────────────────────────────────
+
+    #[test]
+    fn eval_gpu_present_true() {
+        let p = Predicate::parse("host.gpu IS present").unwrap();
+        assert!(p.check(&test_host())); // gpu_present = true
+    }
+
+    #[test]
+    fn eval_gpu_present_false() {
+        let host = HostFacts {
+            gpu_present: false,
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.gpu IS present").unwrap();
+        assert!(!p.check(&host));
+    }
+
+    #[test]
+    fn eval_gpu_not_present_true() {
+        let host = HostFacts {
+            gpu_present: false,
+            ..Default::default()
+        };
+        let p = Predicate::parse("host.gpu IS NOT present").unwrap();
+        assert!(p.check(&host));
+    }
+
+    #[test]
+    fn eval_npu_present_false_default() {
+        let p = Predicate::parse("host.npu IS present").unwrap();
+        assert!(!p.check(&test_host())); // npu_present = false
+    }
+
+    // ── cpu.pattern fact ───────────────────────────────────────────
+
+    #[test]
+    fn eval_cpu_pattern_no_match() {
+        let p = Predicate::parse("host.cpu.pattern HAS j3455,n4100").unwrap();
+        assert!(!p.check(&test_host())); // host only has j4105
+    }
+
+    #[test]
+    fn eval_cpu_pattern_lacks_true() {
+        let p = Predicate::parse("host.cpu.pattern LACKS j3455,n4100").unwrap();
+        assert!(p.check(&test_host()));
+    }
+
+    #[test]
+    fn eval_cpu_pattern_lacks_false() {
+        let p = Predicate::parse("host.cpu.pattern LACKS j4105").unwrap();
+        assert!(!p.check(&test_host())); // host has j4105
+    }
+
+    // ── cpu.features fact ──────────────────────────────────────────
+
+    #[test]
+    fn eval_cpu_features_has_true() {
+        let p = Predicate::parse("host.cpu.features HAS sse4_2").unwrap();
+        assert!(p.check(&test_host()));
+    }
+
+    #[test]
+    fn eval_cpu_features_has_false() {
+        let p = Predicate::parse("host.cpu.features HAS avx").unwrap();
+        assert!(!p.check(&test_host())); // host only has sse4_2
+    }
+
+    #[test]
+    fn eval_cpu_features_lacks_multi() {
+        let p = Predicate::parse("host.cpu.features LACKS avx,avx2,avx512").unwrap();
+        assert!(p.check(&test_host())); // host has none of these
+    }
+
+    #[test]
+    fn eval_cpu_features_lacks_multi_one_present() {
+        let p = Predicate::parse("host.cpu.features LACKS sse4_2,avx").unwrap();
+        assert!(!p.check(&test_host())); // host has sse4_2
+    }
+
+    // ── check_all: real-world rule combinations ────────────────────
+
+    #[test]
+    fn check_all_comfyui_rocm_fallback() {
+        // ComfyUI no-nvidia-use-rocm rule
+        let predicates = vec![
+            Predicate::parse("host.ai.runtime LACKS cuda").unwrap(),
+            Predicate::parse("host.ai.runtime HAS rocm").unwrap(),
+        ];
+        // AMD-only stone
+        let host = HostFacts {
+            ai_runtimes: HashSet::from(["rocm".into()]),
+            ..Default::default()
+        };
+        assert!(check_all(&predicates, &host));
+
+        // NVIDIA stone — should NOT match
+        let nvidia = HostFacts {
+            ai_runtimes: HashSet::from(["cuda".into()]),
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &nvidia));
+
+        // No GPU stone — should NOT match (has neither)
+        let no_gpu = HostFacts::default();
+        assert!(!check_all(&predicates, &no_gpu));
+    }
+
+    #[test]
+    fn check_all_comfyui_cpu_fallback() {
+        // ComfyUI no-gpu-use-cpu rule
+        let predicates = vec![
+            Predicate::parse("host.ai.runtime LACKS cuda").unwrap(),
+        ];
+        let no_gpu = HostFacts::default();
+        assert!(check_all(&predicates, &no_gpu));
+
+        // NVIDIA stone — should NOT match
+        let nvidia = HostFacts {
+            ai_runtimes: HashSet::from(["cuda".into()]),
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &nvidia));
+    }
+
+    #[test]
+    fn check_all_mongodb_celeron_fallback() {
+        let predicates = vec![
+            Predicate::parse("host.cpu.pattern HAS j4105,j3455,j3160").unwrap(),
+        ];
+        let celeron = HostFacts {
+            cpu_patterns: HashSet::from(["j4105".into()]),
+            ..Default::default()
+        };
+        assert!(check_all(&predicates, &celeron));
+
+        let ryzen = HostFacts {
+            cpu_patterns: HashSet::from(["ryzen9".into()]),
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &ryzen));
+    }
+
+    #[test]
+    fn check_all_milvus_simd_check() {
+        // Milvus x86_64-missing-simd rule: x86_64 AND lacks all SIMD
+        let predicates = vec![
+            Predicate::parse("host.architecture IS x86_64").unwrap(),
+            Predicate::parse("host.cpu.features LACKS sse4_2,avx,avx2,avx512").unwrap(),
+        ];
+        // Old x86_64 without any SIMD
+        let old_x86 = HostFacts {
+            architecture: Some("x86_64".into()),
+            cpu_features: HashSet::from(["sse2".into()]),
+            ..Default::default()
+        };
+        assert!(check_all(&predicates, &old_x86));
+
+        // x86_64 with AVX — should NOT match
+        let modern_x86 = HostFacts {
+            architecture: Some("x86_64".into()),
+            cpu_features: HashSet::from(["sse4_2".into(), "avx".into(), "avx2".into()]),
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &modern_x86));
+
+        // ARM — should NOT match (architecture doesn't match)
+        let arm = HostFacts {
+            architecture: Some("aarch64".into()),
+            cpu_features: HashSet::new(),
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &arm));
+    }
+
+    #[test]
+    fn check_all_pihole_windows_reject() {
+        let predicates = vec![
+            Predicate::parse("host.os.family NOT IN (linux,macos)").unwrap(),
+        ];
+        let windows = HostFacts {
+            os_family: Some("windows".into()),
+            ..Default::default()
+        };
+        assert!(check_all(&predicates, &windows));
+
+        let linux = HostFacts {
+            os_family: Some("linux".into()),
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &linux));
+    }
+
+    #[test]
+    fn check_all_ollama_cpu_gpu_present_reject() {
+        let predicates = vec![
+            Predicate::parse("host.gpu IS present").unwrap(),
+        ];
+        let gpu_stone = HostFacts {
+            gpu_present: true,
+            ..Default::default()
+        };
+        assert!(check_all(&predicates, &gpu_stone));
+
+        let cpu_stone = HostFacts {
+            gpu_present: false,
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &cpu_stone));
+    }
+
+    #[test]
+    fn check_all_memory_and_architecture() {
+        // Combined: arm32 AND low memory
+        let predicates = vec![
+            Predicate::parse("host.architecture IN (armv7l,armv6l)").unwrap(),
+            Predicate::parse("host.ram.total.mb < 512").unwrap(),
+        ];
+        let tiny_arm = HostFacts {
+            architecture: Some("armv7l".into()),
+            ram_total_mb: Some(256),
+            ..Default::default()
+        };
+        assert!(check_all(&predicates, &tiny_arm));
+
+        // Enough memory — fails second predicate
+        let big_arm = HostFacts {
+            architecture: Some("armv7l".into()),
+            ram_total_mb: Some(1024),
+            ..Default::default()
+        };
+        assert!(!check_all(&predicates, &big_arm));
+    }
+
+    // ── Parse: every actual manifest predicate ─────────────────────
+
+    #[test]
+    fn parse_all_manifest_predicates() {
+        // Every unique predicate from the 39 migrated manifests
+        let predicates = [
+            "host.ai.runtime LACKS cuda",
+            "host.ai.runtime LACKS cuda,rocm,metal",
+            "host.ai.runtime HAS rocm",
+            "host.gpu IS present",
+            "host.gpu.vram.total.mb < 1024",
+            "host.gpu.vram.total.mb < 2048",
+            "host.gpu.vram.total.mb < 4096",
+            "host.ram.total.mb < 64",
+            "host.ram.total.mb < 128",
+            "host.ram.total.mb < 256",
+            "host.ram.total.mb < 512",
+            "host.ram.total.mb < 1024",
+            "host.ram.total.mb < 2048",
+            "host.ram.total.mb < 4096",
+            "host.ram.total.mb < 8192",
+            "host.ram.total.mb < 16384",
+            "host.architecture IS armv6l",
+            "host.architecture IS armv7l",
+            "host.architecture IS aarch64",
+            "host.architecture IS x86_64",
+            "host.architecture IN (armv7l,armv6l)",
+            "host.architecture IN (aarch64,arm64,armv7l,armv6l)",
+            "host.os.family NOT IN (linux,macos)",
+            "host.cpu.pattern HAS j4105,j3455,j3160",
+            "host.cpu.pattern HAS j4105,j3455,j3160,j4005,n4100,n5000",
+            "host.cpu.pattern HAS j4105,j3455,j3160,j4005,j5005,n4100,n5000",
+            "host.cpu.features LACKS avx",
+            "host.cpu.features LACKS sse4_2",
+            "host.cpu.features LACKS sse4_2,avx,avx2,avx512",
+        ];
+        for input in predicates {
+            let result = Predicate::parse(input);
+            assert!(result.is_ok(), "Failed to parse '{}': {}", input, result.unwrap_err());
+        }
+    }
+
+    // ── Error message quality ──────────────────────────────────────
+
+    #[test]
+    fn error_suggests_valid_operators() {
+        let err = Predicate::parse("host.ai.runtime CONTAINS cuda").unwrap_err();
+        assert!(err.message.contains("HAS"), "Should suggest HAS: {}", err.message);
+        assert!(err.message.contains("LACKS"), "Should suggest LACKS: {}", err.message);
+    }
+
+    #[test]
+    fn error_suggests_valid_facts() {
+        let err = Predicate::parse("host.ai.gpu_type HAS nvidia").unwrap_err();
+        assert!(err.message.contains("host.ai.runtime"), "Should suggest host.ai.runtime: {}", err.message);
+    }
+
+    #[test]
+    fn error_type_mismatch_shows_valid_ops() {
+        let err = Predicate::parse("host.ram.total.mb HAS 4096").unwrap_err();
+        assert!(err.message.contains(">="), "Should suggest >=: {}", err.message);
+        assert!(err.message.contains("<"), "Should suggest <: {}", err.message);
+    }
+
+    #[test]
+    fn error_has_position() {
+        let err = Predicate::parse("host.ai.runtime NOPE cuda").unwrap_err();
+        assert!(err.position.is_some(), "Should have position");
+    }
+
+    #[test]
+    fn error_has_input() {
+        let err = Predicate::parse("host.ai.runtime NOPE cuda").unwrap_err();
+        assert_eq!(err.input, "host.ai.runtime NOPE cuda");
+    }
 }

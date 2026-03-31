@@ -23,6 +23,12 @@ pub struct CompiledOffering {
     #[serde(default)]
     pub tags: Vec<String>,
     pub image: String, // effective image after compatibility evaluation
+    /// Manifest-level command override (e.g., whisper-server args).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
+    /// Config file mappings for file-based configuration injection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_files: Vec<garden_common::manifests::ConfigFileMapping>,
     /// Named ports: name -> (host_port, container_port)
     /// Convention: "default" is the primary service port
     pub ports: std::collections::HashMap<String, (u16, u16)>,
@@ -305,6 +311,8 @@ pub fn rebuild_offerings_index(
             description: entry.description(),
             tags: entry.tags(),
             image: template.image,
+            command: template.command,
+            config_files: template.config_files,
             ports: template.ports,
             environment: template.environment,
             volumes: template.volumes,

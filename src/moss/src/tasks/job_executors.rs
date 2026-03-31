@@ -740,14 +740,14 @@ pub async fn install_service_task(
     let manifest_ports_named = compiled.ports_vec_named();
     let spec = crate::docker::ContainerSpec {
         image: compiled.image.clone(),
-        command: None,
+        command: compiled.command,
         ports: manifest_ports_named
             .iter()
             .map(|(_, h, c)| (*h, *c))
             .collect(),
         environment: compiled.environment,
         volumes: fqn_volumes,
-        config_files: vec![],
+        config_files: compiled.config_files,
     };
     let actual_ports = match state
         .platform

@@ -496,6 +496,8 @@ async fn fetch_remote_offerings(
             description: view.description,
             tags: view.tags,
             image: view.image,
+            command: None,                           // Not included in OfferingView
+            config_files: vec![],                    // Not included in OfferingView
             ports: std::collections::HashMap::new(), // Not included in OfferingView
             environment: vec![],                     // Not included in OfferingView
             volumes: vec![],                         // Not included in OfferingView

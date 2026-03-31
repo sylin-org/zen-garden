@@ -293,6 +293,8 @@ mod tests {
             description: "MongoDB with replica set support".to_string(),
             tags: vec!["database".to_string()],
             image: "mongo:7".to_string(),
+            command: None,
+            config_files: vec![],
             ports: HashMap::new(),
             environment: vec![],
             volumes: vec![],

@@ -1,0 +1,38 @@
+version: "1"
+
+compatibility_rules:
+  # No GPU → use CPU-only image (smaller, no CUDA overhead)
+  - name: "no-nvidia-gpu"
+    condition:
+      requires_ai_any: ['cuda']
+    reason: "No NVIDIA GPU detected. Docling will run on CPU (~3 sec/page)."
+    fallback:
+      image: "ghcr.io/docling-project/docling-serve-cpu:latest"
+      name: "cpu"
+
+  - name: "insufficient-memory"
+    condition:
+      memory_mb_less_than: 2048
+    reason: "Docling requires at least 2 GB RAM for document processing"
+    suggestion: "Increase stone memory"
+
+  - name: "arm32-not-supported"
+    condition:
+      architectures: ["armv7l", "armv6l"]
+    reason: "Docling Docker images require amd64 or arm64"
+    suggestion: "Use amd64 or arm64 hardware"
+
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 60
+  patterns:
+    - pattern: "CUDA.*error|cuda.*fail"
+      reason: "GPU initialization failed"
+      fallback:
+        image: "ghcr.io/docling-project/docling-serve-cpu:latest"
+        name: "cpu"
+
+    - pattern: "Cannot allocate memory|OOM"
+      reason: "Insufficient memory for document processing"
+      suggestion: "Increase stone RAM or process smaller documents"

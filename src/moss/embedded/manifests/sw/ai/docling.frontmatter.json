@@ -1,0 +1,12 @@
+{
+  "name": "docling",
+  "description": "Docling — document extraction from PDFs, images, DOCX, PPTX, XLSX with table and layout detection",
+  "category": "ai",
+  "tags": ["ai", "ocr", "document", "pdf", "extraction", "table", "layout"],
+  "port": 5001,
+  "modes": ["managed"],
+  "connection": {
+    "protocol": "http",
+    "uri_template": "http://{host}:{port}"
+  }
+}

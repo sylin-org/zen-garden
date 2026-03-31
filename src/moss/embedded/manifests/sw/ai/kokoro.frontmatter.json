@@ -1,0 +1,12 @@
+{
+  "name": "kokoro",
+  "description": "Kokoro TTS — high-quality text-to-speech with 67 voices across 10 languages",
+  "category": "ai",
+  "tags": ["ai", "tts", "text-to-speech", "voice", "kokoro", "openai-compatible"],
+  "port": 8880,
+  "modes": ["managed"],
+  "connection": {
+    "protocol": "http",
+    "uri_template": "http://{host}:{port}"
+  }
+}

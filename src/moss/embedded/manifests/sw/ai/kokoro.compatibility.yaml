@@ -1,0 +1,32 @@
+version: "1"
+
+compatibility_rules:
+  # No NVIDIA GPU → fall back to CPU image (same API, ONNX inference)
+  - name: "no-nvidia-gpu"
+    condition:
+      requires_ai_any: ['cuda']
+    reason: "No NVIDIA GPU detected. Kokoro TTS will run on CPU via ONNX (5x realtime — still fast)."
+    fallback:
+      image: "ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4"
+      name: "cpu"
+
+  - name: "arm32-not-supported"
+    condition:
+      architectures: ["armv7l", "armv6l"]
+    reason: "Kokoro-FastAPI Docker images require amd64 or arm64"
+    suggestion: "Use amd64 or arm64 hardware"
+
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 120
+  patterns:
+    - pattern: "CUDA.*error|cuda.*fail"
+      reason: "GPU initialization failed"
+      fallback:
+        image: "ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4"
+        name: "cpu"
+
+    - pattern: "Cannot allocate memory|OOM"
+      reason: "Insufficient memory for Kokoro model"
+      suggestion: "Ensure at least 2 GB RAM available"

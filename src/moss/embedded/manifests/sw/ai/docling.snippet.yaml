@@ -1,0 +1,17 @@
+container_name: docling
+image: ghcr.io/docling-project/docling-serve:latest
+ports:
+  default: [5001, 5001]
+environment:
+  DOCLING_SERVE_ENABLE_UI: "true"
+  DOCLING_SERVE_HOST: "0.0.0.0"
+  DOCLING_SERVE_PORT: "5001"
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 60s
+restart: unless-stopped
+networks:
+  - zen-garden

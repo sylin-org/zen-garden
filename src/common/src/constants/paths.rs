@@ -23,11 +23,21 @@ pub fn stone_user() -> String {
 }
 
 /// Get data directory (default: /var/lib/zen-garden on Linux, .zen-garden on Windows)
+///
+/// Always returns an absolute path. On Linux this is a fixed system path.
+/// On Windows, `.zen-garden` lives alongside the service executable — the
+/// relative name is resolved against the current working directory at startup
+/// so that Docker bind mounts and other external tools receive an absolute path.
 pub fn data_dir() -> String {
     std::env::var("GARDEN_DATA_DIR").unwrap_or_else(|_| {
         #[cfg(target_os = "windows")]
         {
-            ".zen-garden".to_string()
+            // Resolve .zen-garden relative to CWD so the path is absolute.
+            // Docker bind mounts reject relative paths on Windows.
+            let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            base.join(".zen-garden")
+                .to_string_lossy()
+                .into_owned()
         }
         #[cfg(target_os = "linux")]
         {
@@ -39,9 +49,10 @@ pub fn data_dir() -> String {
 /// Get shared data directory for cross-process data
 ///
 /// A stable, absolute, system-wide location for data shared between Moss and
-/// other processes (Koan clients, containers). Unlike `data_dir()` which may
-/// be relative on Windows (`.zen-garden`), this always resolves to an absolute
-/// path so external processes can locate it by well-known convention.
+/// other processes (Koan clients, containers). On Windows this uses
+/// `%ProgramData%\zen-garden` (machine-wide) while `data_dir()` uses
+/// `.zen-garden` next to the service. On Linux both resolve to the same
+/// `/var/lib/zen-garden`.
 ///
 /// | Platform | Default |
 /// |----------|---------|
@@ -129,7 +140,7 @@ pub fn companions_dir() -> String {
     std::env::var("GARDEN_companions_dir").unwrap_or_else(|_| {
         #[cfg(target_os = "windows")]
         {
-            ".zen-garden\\Companions".to_string()
+            format!(r"{}\companions", data_dir())
         }
         #[cfg(target_os = "linux")]
         {

@@ -568,7 +568,7 @@ impl Offering {
         }
         // Try parsing managed config for port
         if let Some(ref managed) = self.managed
-            && let Ok(template) = self.parse_managed_template(managed)
+            && let Ok(template) = self.parse_managed_template(managed, &self.name)
         {
             let port = template.default_host_port();
             if port != 30000 {
@@ -588,21 +588,46 @@ impl Offering {
         }
     }
 
-    /// Parse managed config snippet into ServiceTemplate
+    /// Parse managed config snippet into ServiceTemplate.
+    ///
+    /// Volumes are namespaced under the offering name. For FQN-specific isolation
+    /// (e.g., `comfyui::prod` gets its own volume directories), use
+    /// [`parse_template_for_fqn`] instead.
     pub fn parse_template(&self) -> Result<ServiceTemplate> {
+        self.parse_template_with_namespace(&self.name)
+    }
+
+    /// Parse managed config snippet with FQN-specific volume isolation.
+    ///
+    /// Volumes are namespaced under the FQN's encoded name so that
+    /// `comfyui` and `comfyui::prod` get separate data directories:
+    /// - `comfyui`       → `{volumes_dir}/comfyui/comfyui-models`
+    /// - `comfyui::prod` → `{volumes_dir}/comfyui--prod/comfyui-models`
+    pub fn parse_template_for_fqn(
+        &self,
+        fqn: &crate::offerings::OfferingFqn,
+    ) -> Result<ServiceTemplate> {
+        self.parse_template_with_namespace(&fqn.encoded_for_container())
+    }
+
+    fn parse_template_with_namespace(&self, volume_namespace: &str) -> Result<ServiceTemplate> {
         let managed = self
             .managed
             .as_ref()
             .with_context(|| format!("Offering '{}' has no managed config", self.name))?;
-        self.parse_managed_template(managed)
+        self.parse_managed_template(managed, volume_namespace)
     }
 
-    fn parse_managed_template(&self, managed: &ManagedConfig) -> Result<ServiceTemplate> {
+    fn parse_managed_template(
+        &self,
+        managed: &ManagedConfig,
+        volume_namespace: &str,
+    ) -> Result<ServiceTemplate> {
         let yaml = managed.snippet_yaml.replace("\r\n", "\n");
 
         // Try parsing as snippet format first (direct service config)
         if let Ok(service_config) = serde_yml::from_str::<ServiceConfig>(&yaml) {
-            return Ok(self.service_config_to_template(service_config));
+            return Ok(self.service_config_to_template(service_config, volume_namespace));
         }
 
         // Fallback: try parsing as compose file (services: wrapper)
@@ -620,10 +645,14 @@ impl Offering {
             .with_context(|| format!("Service '{}' not found in compose file", self.name))?
             .clone();
 
-        Ok(self.service_config_to_template(service_config))
+        Ok(self.service_config_to_template(service_config, volume_namespace))
     }
 
-    fn service_config_to_template(&self, config: ServiceConfig) -> ServiceTemplate {
+    fn service_config_to_template(
+        &self,
+        config: ServiceConfig,
+        volume_namespace: &str,
+    ) -> ServiceTemplate {
         let environment = match &config.environment {
             Some(serde_yml::Value::Sequence(list)) => list
                 .iter()
@@ -647,12 +676,13 @@ impl Offering {
                 let parts: Vec<&str> = v.split(':').collect();
                 if parts.len() >= 2 {
                     let host_path = if parts[0].starts_with('/') || parts[0].contains('\\') {
-                        // Absolute path specified in manifest - use as-is
+                        // Absolute path specified in manifest — use as-is
                         parts[0].to_string()
                     } else {
-                        // Relative volume name - resolve to volumes_dir()
+                        // Relative volume name — resolve per-FQN:
+                        //   {volumes_dir}/{volume_namespace}/{volume_name}
                         let base = crate::constants::paths::volumes_dir();
-                        format!("{}/{}", base, parts[0])
+                        format!("{}/{}/{}", base, volume_namespace, parts[0])
                     };
                     Some((host_path, parts[1].to_string()))
                 } else {

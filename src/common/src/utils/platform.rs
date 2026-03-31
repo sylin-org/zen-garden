@@ -19,12 +19,11 @@ pub struct WindowsPaths;
 #[cfg(target_os = "windows")]
 impl PlatformPaths for WindowsPaths {
     fn data_dir(&self) -> PathBuf {
-        let programdata = std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".into());
-        PathBuf::from(programdata).join("zen-garden")
+        PathBuf::from(crate::constants::paths::data_dir())
     }
 
     fn config_dir(&self) -> PathBuf {
-        PathBuf::from(".zen-garden")
+        PathBuf::from(crate::constants::paths::config_dir())
     }
 
     fn temp_dir(&self) -> PathBuf {
@@ -111,9 +110,10 @@ mod tests {
 
         let data = paths.data_dir();
         assert!(data.to_string_lossy().contains("zen-garden"));
+        assert!(data.is_absolute(), "data_dir must be absolute on Windows");
 
         let config = paths.config_dir();
-        assert_eq!(config.to_string_lossy(), ".zen-garden");
+        assert!(config.to_string_lossy().contains("zen-garden"));
     }
 
     #[cfg(target_os = "linux")]

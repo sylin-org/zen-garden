@@ -27,11 +27,11 @@ export const SERVICE_CATALOG: readonly ServiceCatalogEntry[] = [
   {
     id: "speaches",
     name: "Speaches",
-    description: "STT + TTS server — OpenAI-compatible speech processing (Whisper + Kokoro)",
+    description: "STT + TTS server — OpenAI-compatible speech processing (Whisper + Kokoro). Auto-selects GPU/CPU image.",
     capabilities: ["transcribe", "speech"],
     port: 8000,
     gpuRequired: false,
-    cpuVariant: true,
+    cpuVariant: false,
     dockerImage: "ghcr.io/speaches-ai/speaches",
     docsUrl: "https://speaches.ai/",
   },

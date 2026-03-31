@@ -12,12 +12,20 @@ environment:
   WHISPER__COMPUTE_TYPE: "default"
   LOG_LEVEL: "info"
   ENABLE_UI: "true"
+# GPU passthrough for NVIDIA stones (ignored on CPU fallback image)
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [gpu]
 healthcheck:
   test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
   interval: 30s
   timeout: 10s
   retries: 3
-  start_period: 60s
+  start_period: 120s
 restart: unless-stopped
 networks:
   - zen-garden

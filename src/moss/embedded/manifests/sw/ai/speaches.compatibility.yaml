@@ -1,12 +1,15 @@
 version: "1"
 
+# Pre-install compatibility checks (evaluated in order, first match wins)
 compatibility_rules:
-  - name: "no-gpu-info"
+  # No NVIDIA GPU → fall back to CPU image (same API, no GPU acceleration)
+  - name: "no-nvidia-gpu"
     condition:
       requires_ai_any: ['cuda']
-    reason: "Speaches performs best with GPU acceleration (10-50x faster for large models)"
-    suggestion: "No GPU detected. Use the CPU image (speaches:latest-cpu) or small models (tiny, base)."
-    warn_only: true
+    reason: "No NVIDIA GPU detected. Speaches STT/TTS will run on CPU (slower for large models)."
+    fallback:
+      image: "ghcr.io/speaches-ai/speaches:latest-cpu"
+      name: "cpu"
 
   - name: "low-vram-warning"
     condition:
@@ -34,7 +37,10 @@ post_install_healthcheck:
   patterns:
     - pattern: "CUDA.*error|cuda.*fail"
       reason: "GPU initialization failed"
-      suggestion: "Check NVIDIA drivers and nvidia-container-toolkit. Use the CPU image as fallback."
+      suggestion: "Check NVIDIA drivers and nvidia-container-toolkit."
+      fallback:
+        image: "ghcr.io/speaches-ai/speaches:latest-cpu"
+        name: "cpu"
 
     - pattern: "Cannot allocate memory|OOM"
       reason: "Insufficient memory for whisper model"

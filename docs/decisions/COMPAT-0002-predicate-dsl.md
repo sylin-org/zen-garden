@@ -32,6 +32,11 @@ express hardware conditions. This design has three structural flaws:
    are three different fields that read almost identically but have different semantics.
    Manifest authors cannot reliably distinguish them without reading Rust source code.
 
+An audit of all 40 compatibility manifests revealed two silent field-drop bugs already
+in production (`has_ai_any` in ComfyUI, `cpu_features_missing_all` in Milvus), and
+six condition fields that were never used by any manifest (`os_family`, `has_ai_runtime`,
+`requires_ai_all`, `ai_present_any`, `processor_models`, `vram_mb_at_least`).
+
 ---
 
 ## Decision
@@ -46,7 +51,7 @@ expression  = fact OPERATOR value_expr
 value_expr  = value (('AND' | 'OR') value)*
             | '(' value (',' value)* ')'
 
-OPERATOR    = HAS | LACKS | IS | IS NOT | IN
+OPERATOR    = HAS | LACKS | IS | IS NOT | IN | NOT IN
             | '>=' | '>' | '<' | '<='
 
 fact        = dotted identifier (lowercase)
@@ -62,63 +67,142 @@ value       = lowercase identifier | number | 'present'
 
 ### Operators
 
+| Operator | Fact type | Semantics | Example |
+|----------|-----------|-----------|---------|
+| `HAS` | set | Contains any listed value (OR) | `host.ai.runtime HAS cuda` |
+| `HAS ... AND` | set | Contains all listed values | `host.ai.runtime HAS cuda AND rocm` |
+| `LACKS` | set | Contains none of listed values | `host.ai.runtime LACKS cuda` |
+| `IS` | scalar/bool | Exact equality | `host.architecture IS armv7l` |
+| `IS NOT` | scalar/bool | Not equal | `host.architecture IS NOT armv7l` |
+| `IN` | scalar | Value is one of listed | `host.architecture IN (armv7l,armv6l)` |
+| `NOT IN` | scalar | Value is none of listed | `host.os.family NOT IN (linux,macos)` |
+| `>=` `>` `<` `<=` | numeric | Numeric comparison | `host.ram.total.mb < 8192` |
+
+#### Set operators
+
 ```
-# Set membership
+# Single value
 host.ai.runtime HAS cuda
-host.ai.runtime HAS cuda,rocm                  # any of (OR)
-host.ai.runtime HAS (cuda,rocm)                # any of (OR) — parens for grouping
-host.ai.runtime HAS cuda OR rocm               # any of (OR) — keyword form
-host.ai.runtime HAS cuda AND rocm              # all of (AND)
 host.ai.runtime LACKS cuda
-host.ai.runtime LACKS (cuda,rocm)              # none of listed
 
-# Scalar equality
-host.architecture IS armv7l
-host.architecture IS NOT armv7l
-host.architecture IN (armv7l,armv6l)
+# Multiple values — OR (has at least one)
+host.ai.runtime HAS cuda,rocm
+host.ai.runtime HAS (cuda,rocm)
+host.ai.runtime HAS cuda OR rocm
 
-# Boolean presence
-host.gpu IS present
-host.gpu IS NOT present
-host.npu IS present
+# Multiple values — AND (has all)
+host.ai.runtime HAS cuda AND rocm
 
-# Numeric comparison
-host.vram.total.mb >= 4096
-host.ram.total.mb < 8192
+# None of listed
+host.ai.runtime LACKS (cuda,rocm)
 ```
 
 Comma inside parentheses is OR (list of alternatives). Parentheses serve as scope
 isolation (PEMDAS principle) — they can group a value set, and in future extensions,
 a sub-expression.
 
+#### Scalar operators
+
+```
+host.architecture IS armv7l
+host.architecture IS NOT armv7l
+host.architecture IN (armv7l,armv6l)
+host.os.family NOT IN (linux,macos)
+```
+
+#### Boolean presence
+
+```
+host.gpu IS present
+host.gpu IS NOT present
+host.npu IS present
+```
+
+#### Numeric operators
+
+```
+host.ram.total.mb < 8192
+host.gpu.vram.total.mb >= 4096
+```
+
 ### Fact Namespace
 
-Facts use a dotted hierarchy rooted at `host`:
+Facts use a dotted hierarchy rooted at `host`. The hierarchy is typed — each fact has
+a declared type that determines which operators are valid against it.
 
-| Fact | Type | Description |
-|------|------|-------------|
-| `host.ai.runtime` | set | Detected AI runtimes: cuda, rocm, directml, openvino |
-| `host.cpu.features` | set | CPU feature flags: avx, avx2, sse4_2, ... |
-| `host.cpu.model` | scalar | CPU model string |
-| `host.architecture` | scalar | Architecture: x86_64, aarch64, armv7l, ... |
-| `host.os.family` | scalar | OS family: linux, windows |
-| `host.gpu` | boolean | GPU hardware present |
-| `host.gpu.count` | numeric | Number of GPUs |
-| `host.npu` | boolean | NPU hardware present |
-| `host.vram.total.mb` | numeric | Total GPU VRAM (aggregate across GPUs) |
-| `host.vram.total.gb` | numeric | Total GPU VRAM in GB |
-| `host.ram.total.mb` | numeric | Total system RAM |
-| `host.ram.total.gb` | numeric | Total system RAM in GB |
+```
+host.
+├── architecture                # scalar: x86_64, aarch64, armv7l, armv6l
+├── os.
+│   └── family                  # scalar: linux, windows, macos
+│
+├── cpu.
+│   ├── model                   # scalar: "Intel Celeron J4105", etc.
+│   ├── pattern                 # set: j4105, j3455, n4100, ... (substring match)
+│   └── features                # set: avx, avx2, sse4_2, avx512, ...
+│
+├── ram.
+│   └── total.mb                # numeric: total system RAM in MB
+│
+├── gpu                         # boolean: GPU hardware present
+├── gpu.
+│   ├── count                   # numeric: number of GPUs
+│   └── vram.
+│       ├── total.mb            # numeric: aggregate VRAM in MB
+│       └── total.gb            # numeric: aggregate VRAM in GB
+│
+├── npu                         # boolean: NPU hardware present
+│
+└── ai.
+    └── runtime                 # set: cuda, rocm, directml, openvino
+```
 
-The dotted namespace is extensible without schema changes. Future facts
-(`host.vram.used.mb`, `host.vram.per_gpu.mb`, `host.disk.total.gb`,
-`host.kernel.version`) register in the fact registry, not in the grammar.
+#### Fact registry
+
+| Fact | Type | Source | Description |
+|------|------|--------|-------------|
+| `host.architecture` | scalar | `uname -m` | CPU architecture |
+| `host.os.family` | scalar | compile target | Operating system family |
+| `host.cpu.model` | scalar | `/proc/cpuinfo` | Full CPU model string |
+| `host.cpu.pattern` | set | derived from model | Substring-matchable CPU identifiers |
+| `host.cpu.features` | set | `/proc/cpuinfo` flags | CPU feature flags |
+| `host.ram.total.mb` | numeric | sysinfo | Total system RAM |
+| `host.gpu` | boolean | device detection | Any GPU hardware present |
+| `host.gpu.count` | numeric | device enumeration | Number of GPUs |
+| `host.gpu.vram.total.mb` | numeric | GPU driver query | Aggregate VRAM across all GPUs |
+| `host.gpu.vram.total.gb` | numeric | derived | Aggregate VRAM in GB |
+| `host.npu` | boolean | device detection | NPU hardware present |
+| `host.ai.runtime` | set | toolkit detection | Detected AI runtime toolkits |
+
+The dotted namespace is extensible without schema changes. Future facts register in
+the fact registry, not in the grammar:
+
+| Reserved fact | Type | Purpose |
+|---------------|------|---------|
+| `host.gpu.vram.per_gpu.mb` | numeric | Largest single-GPU VRAM |
+| `host.ram.available.mb` | numeric | Available (not just total) RAM |
+| `host.disk.total.gb` | numeric | Root filesystem size |
+| `host.disk.available.gb` | numeric | Root filesystem free space |
+| `host.kernel.version` | scalar | Kernel version string |
+| `host.ai.runtime` + semver | set+ver | Versioned runtime (cuda >= 12.0) |
+
+#### Type enforcement
+
+The parser validates operator-fact type compatibility at parse time:
+
+| Fact type | Valid operators |
+|-----------|---------------|
+| set | `HAS`, `LACKS` |
+| scalar | `IS`, `IS NOT`, `IN`, `NOT IN` |
+| boolean | `IS present`, `IS NOT present` |
+| numeric | `>=`, `>`, `<`, `<=` |
+
+A type mismatch (e.g., `host.ram.total.mb HAS 4096`) is a parse error, not a
+runtime evaluation that silently returns false.
 
 ### Manifest Format
 
 ```yaml
-version: "1"
-
 compatibility_rules:
   - name: no-nvidia-use-rocm
     when:
@@ -140,7 +224,7 @@ compatibility_rules:
 
   - name: low-vram
     when:
-      - host.vram.total.mb < 4096
+      - host.gpu.vram.total.mb < 4096
     warn_only: true
     continue: true
     reason: "Most SD models need 4GB+ VRAM"
@@ -173,6 +257,31 @@ deployment, complementing the pre-install DSL evaluation.
 
 ---
 
+## Migration Reference
+
+Every condition field in the current manifests maps to the new DSL. This table covers
+the complete set of conditions found across all 40 manifests:
+
+| Current field | Used by | New DSL |
+|---------------|---------|---------|
+| `memory_mb_less_than: N` | 28 offerings | `host.ram.total.mb < N` |
+| `architectures: [a,b]` | 22 offerings | `host.architecture IN (a,b)` |
+| `requires_ai_any: [x]` | 7 offerings | `host.ai.runtime HAS x` |
+| `requires_ai_any: [x,y]` | 1 offering (ollama) | `host.ai.runtime HAS x,y` |
+| `vram_mb_less_than: N` | 7 offerings | `host.gpu.vram.total.mb < N` |
+| `processor_patterns: [p1,p2]` | 6 offerings | `host.cpu.pattern HAS p1,p2` |
+| `cpu_features_missing: [f]` | 4 offerings | `host.cpu.features LACKS f` |
+| `has_gpu: true` | 1 offering (ollama-cpu) | `host.gpu IS present` |
+| `has_gpu: false` | — | `host.gpu IS NOT present` |
+| `os_family_not: [a,b]` | 1 offering (pihole) | `host.os.family NOT IN (a,b)` |
+| `os_family: [a]` | — (never used) | `host.os.family IS a` |
+| `has_ai_runtime: true` | — (never used) | `host.ai.runtime HAS cuda,rocm,directml,openvino` |
+| `vram_mb_at_least: N` | — (never used) | `host.gpu.vram.total.mb >= N` |
+| **`has_ai_any`** (bug) | comfyui | `host.ai.runtime HAS rocm` |
+| **`cpu_features_missing_all`** (bug) | milvus | `host.cpu.features LACKS sse4_2,avx,avx2,avx512` |
+
+---
+
 ## Implementation Requirements
 
 ### Parser
@@ -183,7 +292,14 @@ clear error messages:
 ```
 Error in rule 'no-nvidia-use-rocm', predicate 1:
   host.ai.runtime HAZ cuda
-                   ^^^ Unknown operator 'HAZ'. Valid: HAS, LACKS, IS, IS NOT, IN, >=, <, <=, >
+                   ^^^ Unknown operator 'HAZ'. Valid: HAS, LACKS, IS, IS NOT, IN, NOT IN, >=, <, <=, >
+```
+
+```
+Error in rule 'low-vram', predicate 1:
+  host.ram.total.mb HAS 4096
+                    ^^^ Type mismatch: 'host.ram.total.mb' is numeric, but HAS requires a set fact.
+                        Did you mean: host.ram.total.mb >= 4096
 ```
 
 ### Build-Time Validation
@@ -205,8 +321,8 @@ parser and fail the build on:
 
 The grammar reserves space for future extensions without breaking changes:
 - **Semver comparison**: `host.ai.runtime HAS cuda >= 12.0` (requires a semver parser)
-- **Sub-expressions in parens**: `(host.gpu IS present AND host.vram.total.mb >= 4096)`
-- **Per-GPU facts**: `host.vram.per_gpu.mb >= 8192`
+- **Sub-expressions in parens**: `(host.gpu IS present AND host.gpu.vram.total.mb >= 4096)`
+- **Per-GPU facts**: `host.gpu.vram.per_gpu.mb >= 8192`
 
 These are not implemented in the initial release.
 
@@ -214,9 +330,10 @@ These are not implemented in the initial release.
 
 ## Migration
 
-This is a break-and-rebuild. All existing `.compatibility.yaml` manifests are rewritten
-to the new DSL format. The old `RuleCondition` struct and `evaluate_compatibility()`
-function are removed entirely. No backward compatibility shim.
+This is a break-and-rebuild. All 40 existing `.compatibility.yaml` manifests are
+rewritten to the new DSL format. The old `RuleCondition` struct and
+`evaluate_compatibility()` function are removed entirely. No backward compatibility
+shim.
 
 ---
 
@@ -230,3 +347,6 @@ function are removed entirely. No backward compatibility shim.
 - The dotted fact namespace is extensible without schema or struct changes.
 - Manifest authors can read and write rules without consulting Rust source code.
 - Build-time validation catches errors at CI, not in production.
+- Type enforcement prevents operator/fact mismatches at parse time.
+- `NOT IN` enables clean negated set-membership for scalar facts (pihole's
+  "not linux, not macos" becomes `host.os.family NOT IN (linux,macos)`).

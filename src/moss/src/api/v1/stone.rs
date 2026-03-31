@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::domain::validate_binary_architecture;
+use crate::domain::compatibility::validate_binary_architecture;
 use crate::AppState;
 use garden_common::{
     constants::{MOSS_BINARY, RAKE_BINARY},

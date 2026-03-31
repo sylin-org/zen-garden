@@ -49,8 +49,8 @@ pub use garden_common::ServiceInfo;
 
 // Re-export domain functions and types
 pub use domain::{
-    adopt_existing_containers, adopt_offering_container, compatibility::CompiledCompatibility,
-    ensure_offerings_index, get_compiled_offering, reconcile_services,
+    adopt_existing_containers, adopt_offering_container, ensure_offerings_index,
+    get_compiled_offering, reconcile_services,
 };
 
 // Re-export tasks for background execution

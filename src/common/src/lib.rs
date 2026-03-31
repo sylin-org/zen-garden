@@ -127,7 +127,6 @@ pub use types::{
     ResolveRequest,
     ResolveResponse,
     ResolveServiceInfo,
-    RuleCondition,
     RuntimeInfo,
     ScheduledTask,
     ServiceHealthStatus,

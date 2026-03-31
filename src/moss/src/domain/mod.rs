@@ -66,11 +66,7 @@ pub mod traits;
 
 pub use adoption::{adopt_existing_containers, adopt_offering_container, AdoptionResult};
 pub use cloud_drive::{classify_rename, DriveAction};
-pub use compatibility::{
-    compile_compatibility, evaluate_compatibility, get_current_compat_capabilities,
-    validate_binary_architecture, CompatCheckCapabilities, CompatibilityDecision,
-    CompiledCompatibility,
-};
+// compatibility: use crate::domain::compatibility::{...} directly
 pub use connection::{
     build_hostname, default_template, extract_ip, infer_protocol, resolve_connection, resolve_uris,
     ResolvedConnection,

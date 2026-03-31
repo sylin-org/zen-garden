@@ -58,6 +58,19 @@ For RX 7900 XTX/XT/GRE, set `HSA_OVERRIDE_GFX_VERSION=11.0.0` in CLI_ARGS or env
 
 **Performance tip:** Add `PYTORCH_TUNABLEOP_ENABLED=1` to environment — improves performance after first-run kernel compilation.
 
+### AMD on Windows (DirectML)
+
+Docker Desktop does not support AMD GPU passthrough. On Windows, AMD GPUs expose DirectML — but `/dev/kfd` (Linux ROCm) does not exist, and Docker Desktop does not expose `/dev/dxg` (WSL2 GPU device).
+
+**To enable GPU acceleration on Windows with AMD:**
+
+1. Install **Docker CE inside a WSL2 Ubuntu distro** (not Docker Desktop)
+2. Install AMD's [ROCDXG library](https://github.com/ROCm/librocdxg) inside WSL2
+3. Launch containers with `--device=/dev/dxg` and mount the ROCDXG libraries
+4. Set `HSA_ENABLE_DXG_DETECTION=1` in the container environment
+
+Without this setup, ComfyUI falls back to CPU mode. This is a Docker Desktop limitation, not a Zen Garden or ComfyUI issue.
+
 ## User Scripts
 
 The `comfyui-scripts` volume contains a `pre-start.sh` hook that runs before ComfyUI launches. Use it to:

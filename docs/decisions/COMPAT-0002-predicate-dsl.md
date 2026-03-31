@@ -186,6 +186,35 @@ the fact registry, not in the grammar:
 | `host.kernel.version` | scalar | Kernel version string |
 | `host.ai.runtime` + semver | set+ver | Versioned runtime (cuda >= 12.0) |
 
+#### Validated value catalog
+
+Exhaustive inventory of all values observed across the 39 migrated software manifests.
+The parser should accept these and flag anything outside this set as a warning (not
+an error — new values are valid, but typos should be catchable).
+
+| Fact | Known values | Used by |
+|------|-------------|---------|
+| `host.architecture` | `x86_64`, `aarch64`, `arm64`, `armv7l`, `armv6l` | 25 predicates across 22 offerings |
+| `host.os.family` | `linux`, `macos`, `windows` | 1 predicate (pihole) |
+| `host.cpu.pattern` | `j4105`, `j3455`, `j3160`, `j4005`, `j5005`, `n4100`, `n5000` | 5 predicates (mongodb, ollama, ollama-cpu, milvus, weaviate) |
+| `host.cpu.features` | `avx`, `avx2`, `avx512`, `sse4_2` | 4 predicates (mongodb, milvus, weaviate) |
+| `host.ai.runtime` | `cuda`, `rocm`, `metal`, `directml`, `openvino` | 10 predicates across 8 AI offerings |
+| `host.gpu` | `present` (boolean) | 1 predicate (ollama-cpu) |
+| `host.ram.total.mb` | 64–16384 range | 65 predicates across 28 offerings |
+| `host.gpu.vram.total.mb` | 1024–4096 range | 5 predicates across 5 AI offerings |
+
+**Operator usage across all 116 predicates:**
+
+| Operator | Count | Typical pattern |
+|----------|-------|-----------------|
+| `<` | 70 | `host.ram.total.mb < N` (memory/VRAM thresholds) |
+| `IN` | 13 | `host.architecture IN (armv7l,armv6l)` |
+| `IS` | 10 | `host.architecture IS armv6l` |
+| `LACKS` | 14 | `host.ai.runtime LACKS cuda` |
+| `HAS` | 7 | `host.ai.runtime HAS rocm`, `host.cpu.pattern HAS ...` |
+| `IS present` | 1 | `host.gpu IS present` |
+| `NOT IN` | 1 | `host.os.family NOT IN (linux,macos)` |
+
 #### Type enforcement
 
 The parser validates operator-fact type compatibility at parse time:

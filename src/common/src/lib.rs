@@ -6,6 +6,7 @@ pub mod api_utils;
 pub mod client;
 pub mod command_manifest;
 pub mod companion;
+pub mod compatibility;
 pub mod console;
 pub mod constants;
 pub mod detection;

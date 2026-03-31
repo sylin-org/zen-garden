@@ -1,34 +1,36 @@
-//! Gateway announcement task — single coordinated gateway for all offerings.
+//! Gateway announcement task — event-driven registration.
 //!
-//! Two-registration model:
+//! Registers offering FQNs with Moss ONLY when healthy instances exist.
+//! Deregisters when the last instance of an offering goes offline.
+//!
+//! Architecture:
 //! 1. Register mDNS name with Koi (hostname becomes resolvable)
-//! 2. Register one gateway entry per active offering type with Moss
-//! 3. Heartbeat both every 30s
-//! 4. Graceful deregister on shutdown
+//! 2. Subscribe to registry.updated events from the dashboard channel
+//! 3. On each event, diff current offerings vs registered offerings
+//! 4. Register new, deregister removed
+//! 5. Periodic heartbeat for mDNS lease renewal
+//! 6. Graceful deregister on shutdown
 
 use crate::AppState;
 use orchestrator_common::gateway::{GatewayParams, KoiMdnsClient, MossGatewayClient};
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-/// Default heartbeat interval (seconds).
-const HEARTBEAT_INTERVAL_SECS: u64 = 30;
-
-/// Default mDNS lease (seconds).
+/// mDNS lease TTL (seconds).
 const MDNS_LEASE_SECS: u32 = 60;
+
+/// mDNS heartbeat interval — must be less than lease TTL.
+const MDNS_HEARTBEAT_SECS: u64 = 30;
 
 /// mDNS service name for the AI orchestrator.
 const MDNS_NAME: &str = "ZenGarden orchestrator: AI";
 
-/// Run the gateway announcement lifecycle.
-///
-/// Boot -> register mDNS -> wait for stone -> register per-offering gateways -> heartbeat loop.
-/// On shutdown (token cancelled) -> deregister all.
 pub async fn run(state: AppState, shutdown: CancellationToken) {
     let koi = KoiMdnsClient::new(&state.koi_endpoint);
     let moss_gw = MossGatewayClient::new();
 
-    // ── Phase 1: mDNS announce via Koi ───────────────────────────
+    // ── Phase 1: mDNS announce via Koi ──────────────────────────
     let mdns_id = loop {
         if shutdown.is_cancelled() {
             return;
@@ -65,7 +67,7 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         }
     };
 
-    // ── Phase 2: Wait for tended stone ───────────────────────────
+    // ── Phase 2: Wait for tended stone ──────────────────────────
     let stone_endpoint = loop {
         if shutdown.is_cancelled() {
             deregister_mdns(&koi, &mdns_id).await;
@@ -73,7 +75,6 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         }
 
         if let Some(ep) = state.tended_endpoint().await {
-            tracing::debug!(endpoint = %ep, "Gateway: stone available for gateway registration");
             break ep;
         }
 
@@ -86,7 +87,7 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         }
     };
 
-    // ── Phase 3: Resolve host identity via Koi ───────────────────
+    // ── Phase 3: Resolve host identity ──────────────────────────
     let (hostname, self_ip) = match koi.get_host_info().await {
         Ok(info) => {
             let ip = info.ip.unwrap_or_else(|| {
@@ -115,111 +116,134 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         }
     };
 
-    // ── Phase 4: Register per-offering gateways with Moss ────────
-    let mut registered_offerings = Vec::new();
-    register_offering_gateways(
-        &state,
-        &moss_gw,
-        &stone_endpoint,
-        &hostname,
-        &self_ip,
-        &mut registered_offerings,
-    )
-    .await;
+    // ── Phase 4: Event-driven registration loop ─────────────────
+    //
+    // Subscribe to dashboard events. On each "registry.updated" event,
+    // compute which offerings have healthy instances and diff against
+    // what's currently registered. Register new, deregister removed.
+    //
+    // Also runs a periodic mDNS heartbeat and Moss lease renewal.
 
-    // ── Phase 5: Heartbeat loop ──────────────────────────────────
-    let mut interval = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
-    interval.tick().await; // consume immediate first tick
+    let mut event_rx = state.dashboard_tx.subscribe();
+    let mut mdns_interval = tokio::time::interval(Duration::from_secs(MDNS_HEARTBEAT_SECS));
+    mdns_interval.tick().await; // consume immediate first tick
 
-    let mut last_registered_endpoint = stone_endpoint;
+    let mut registered: HashSet<String> = HashSet::new();
+    let mut current_endpoint = stone_endpoint;
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
-                tracing::info!("Gateway: deregistering (shutdown)");
+                tracing::info!("Gateway: deregistering all (shutdown)");
                 deregister_mdns(&koi, &mdns_id).await;
-                for offering in &registered_offerings {
-                    deregister_moss(&moss_gw, &last_registered_endpoint, offering).await;
+                for offering in &registered {
+                    deregister_moss(&moss_gw, &current_endpoint, offering).await;
                 }
                 return;
             }
-            _ = interval.tick() => {
-                // mDNS heartbeat
+
+            // React to instance registry changes
+            event = event_rx.recv() => {
+                match event {
+                    Ok(ev) if ev.event_type == "registry.updated" => {
+                        // Check if tended stone changed
+                        if let Some(ep) = state.tended_endpoint().await {
+                            if ep != current_endpoint {
+                                tracing::info!(
+                                    old = %current_endpoint,
+                                    new = %ep,
+                                    "Gateway: tended stone changed"
+                                );
+                                for offering in &registered {
+                                    deregister_moss(&moss_gw, &current_endpoint, offering).await;
+                                }
+                                registered.clear();
+                                current_endpoint = ep;
+                            }
+                        }
+
+                        sync_registrations(
+                            &state, &moss_gw, &current_endpoint,
+                            &hostname, &self_ip, &mut registered,
+                        ).await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "Gateway: event consumer lagged");
+                        // Catch up by doing a full sync
+                        sync_registrations(
+                            &state, &moss_gw, &current_endpoint,
+                            &hostname, &self_ip, &mut registered,
+                        ).await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Gateway: event channel closed, stopping");
+                        return;
+                    }
+                    _ => {} // ignore other event types
+                }
+            }
+
+            // Periodic mDNS heartbeat + Moss lease renewal
+            _ = mdns_interval.tick() => {
                 if let Err(e) = koi.heartbeat(&mdns_id).await {
                     tracing::warn!(error = %e, "Gateway: mDNS heartbeat failed");
                 }
 
-                let current_endpoint = match state.tended_endpoint().await {
-                    Some(ep) => ep,
-                    None => {
-                        tracing::debug!("Gateway: no tended endpoint, skipping heartbeat");
-                        continue;
-                    }
-                };
-
-                // Stone switch: deregister from old stone before registering with new.
-                if current_endpoint != last_registered_endpoint && !registered_offerings.is_empty() {
-                    tracing::info!(
-                        old = %last_registered_endpoint,
-                        new = %current_endpoint,
-                        "Gateway: tended stone changed, deregistering from old stone"
-                    );
-                    for offering in &registered_offerings {
-                        deregister_moss(&moss_gw, &last_registered_endpoint, offering).await;
-                    }
-                    registered_offerings.clear();
-                }
-
-                // Re-register / heartbeat all offering gateways
-                register_offering_gateways(
-                    &state,
-                    &moss_gw,
-                    &current_endpoint,
-                    &hostname,
-                    &self_ip,
-                    &mut registered_offerings,
-                )
-                .await;
-
-                last_registered_endpoint = current_endpoint;
+                // Renew Moss leases for currently registered offerings
+                // (also catches up if an event was missed)
+                sync_registrations(
+                    &state, &moss_gw, &current_endpoint,
+                    &hostname, &self_ip, &mut registered,
+                ).await;
             }
         }
     }
 }
 
-/// Register a gateway entry for each active offering type.
-async fn register_offering_gateways(
+/// Compute which offerings should be registered based on healthy instances,
+/// then register new ones and deregister stale ones.
+async fn sync_registrations(
     state: &AppState,
     moss_gw: &MossGatewayClient,
     stone_endpoint: &str,
     hostname: &str,
     self_ip: &str,
-    registered: &mut Vec<String>,
+    registered: &mut HashSet<String>,
 ) {
-    let kinds: Vec<_> = state.providers.kinds().collect();
-    let instances = state.instances.read().await;
+    // Compute the set of offering kinds that have healthy instances + proxy ports
+    let desired: HashSet<String> = {
+        let instances = state.instances.read().await;
+        let mut set = HashSet::new();
+        for inst in instances.values() {
+            if inst.is_routable() && inst.kind.proxy_port().is_some() {
+                set.insert(inst.kind.as_str().to_string());
+            }
+        }
+        set
+    };
 
-    for kind in kinds {
-        let offering_name = kind.as_str();
+    // Deregister offerings that no longer have healthy instances
+    let to_remove: Vec<String> = registered
+        .difference(&desired)
+        .cloned()
+        .collect();
+    for offering in &to_remove {
+        tracing::info!(offering = %offering, "Gateway: deregistering (no healthy instances)");
+        deregister_moss(moss_gw, stone_endpoint, offering).await;
+        registered.remove(offering);
+    }
 
-        // Only register offerings that have a proxy port
+    // Register offerings that are new or need lease renewal
+    for offering_name in &desired {
+        let kind = match crate::domain::types::OfferingKind::from_str(offering_name) {
+            Some(k) => k,
+            None => continue,
+        };
+
         let proxy_port = match kind.proxy_port() {
             Some(p) => p,
             None => continue,
         };
-
-        // Only register offerings that have at least one healthy instance
-        let has_instance = instances
-            .values()
-            .any(|i| i.kind == kind && i.is_routable());
-        if !has_instance {
-            // Deregister if previously registered but no longer has instances
-            if registered.contains(&offering_name.to_string()) {
-                deregister_moss(moss_gw, stone_endpoint, offering_name).await;
-                registered.retain(|r| r != offering_name);
-            }
-            continue;
-        }
 
         let fqn = match garden_common::offerings::OfferingFqn::with_instance(
             offering_name,
@@ -242,17 +266,21 @@ async fn register_offering_gateways(
             source: "zen-garden.ai.orchestrator".to_string(),
         };
 
-        match moss_gw.register(stone_endpoint, offering_name, &params).await {
+        match moss_gw
+            .register(stone_endpoint, offering_name, &params)
+            .await
+        {
             Ok(resp) => {
-                tracing::info!(
-                    offering = %offering_name,
-                    lease_id = %resp.lease_id,
-                    ttl = resp.ttl_seconds,
-                    "Gateway: registered offering with Moss"
-                );
-                if !registered.contains(&offering_name.to_string()) {
-                    registered.push(offering_name.to_string());
+                if registered.insert(offering_name.clone()) {
+                    // First time registering this offering
+                    tracing::info!(
+                        offering = %offering_name,
+                        lease_id = %resp.lease_id,
+                        ttl = resp.ttl_seconds,
+                        "Gateway: registered offering with Moss"
+                    );
                 }
+                // else: silent lease renewal (logged at debug)
             }
             Err(e) => {
                 tracing::warn!(

@@ -370,15 +370,15 @@ pub fn configure(state: AppState) -> Router {
         )
         // Offering volumes — file I/O in offering bind mounts (ORCH-0019)
         .route(
-            "/api/v1/stone/offerings/{fqn}/volumes/{volume}/*path",
+            "/api/v1/stone/offerings/{fqn}/volumes/{volume}/{*path}",
             put(api::v1::offering_volumes::put_volume_file),
         )
         .route(
-            "/api/v1/stone/offerings/{fqn}/volumes/{volume}/*path",
+            "/api/v1/stone/offerings/{fqn}/volumes/{volume}/{*path}",
             get(api::v1::offering_volumes::get_volume_file),
         )
         .route(
-            "/api/v1/stone/offerings/{fqn}/volumes/{volume}/*path",
+            "/api/v1/stone/offerings/{fqn}/volumes/{volume}/{*path}",
             head(api::v1::offering_volumes::head_volume_file),
         )
         // Greenhouse — manifest authoring + file CRUD

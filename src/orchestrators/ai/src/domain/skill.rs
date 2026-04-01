@@ -174,6 +174,10 @@ pub struct ContentSlot {
     pub content_type: ContentType,
     /// Whether this input must be provided.
     pub required: bool,
+    /// If set, render as a paint overlay on the referenced role's image.
+    /// The dashboard shows a canvas brush tool instead of a dropzone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<String>,
 }
 
 /// Content type for input/output blocks.
@@ -383,6 +387,7 @@ mod tests {
                 role: "source".into(),
                 content_type: ContentType::Image,
                 required: true,
+                overlay: None,
             }],
             mappings: vec![
                 SkillMapping::Content {

@@ -162,6 +162,7 @@ impl Provider for ComfyUiProvider {
             crate::skills::builtin::image_upscale(&[]),
             crate::skills::builtin::image_generate(&[]),
             crate::skills::builtin::image_img2img(&[]),
+            crate::skills::builtin::image_inpaint(&[]),
         ]
     }
 
@@ -223,6 +224,7 @@ impl Provider for ComfyUiProvider {
                 "image.upscale" => crate::skills::builtin::image_upscale(&[]),
                 "image.generate" => crate::skills::builtin::image_generate(&[]),
                 "image.img2img" => crate::skills::builtin::image_img2img(&[]),
+                "image.inpaint" => crate::skills::builtin::image_inpaint(&[]),
                 other => anyhow::bail!("unknown skill: {}", other),
             };
 
@@ -313,6 +315,7 @@ impl Provider for ComfyUiProvider {
                 "image.upscale" => crate::skills::builtin::image_upscale(&[]),
                 "image.generate" => crate::skills::builtin::image_generate(&[]),
                 "image.img2img" => crate::skills::builtin::image_img2img(&[]),
+                "image.inpaint" => crate::skills::builtin::image_inpaint(&[]),
                 other => anyhow::bail!("unknown skill: {}", other),
             };
 

@@ -178,6 +178,8 @@ export interface SkillContentSlot {
   role: string;
   content_type: "image" | "text";
   required: boolean;
+  /** If set, render as a paint overlay on the referenced role's image (e.g., "source"). */
+  overlay?: string;
 }
 
 export interface SkillModelRef {

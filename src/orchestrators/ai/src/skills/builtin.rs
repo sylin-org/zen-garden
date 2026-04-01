@@ -21,6 +21,7 @@ const UPSCALE_8X_JSON: &str = include_str!("upscale_8x.json");
 const UPSCALE_16X_JSON: &str = include_str!("upscale_16x.json");
 const GENERATE_WORKFLOW_JSON: &str = include_str!("generate_workflow.json");
 const IMG2IMG_WORKFLOW_JSON: &str = include_str!("img2img_workflow.json");
+const INPAINT_WORKFLOW_JSON: &str = include_str!("inpaint_workflow.json");
 
 fn load_workflow(json: &str) -> serde_json::Value {
     serde_json::from_str(json).expect("embedded workflow is valid JSON")
@@ -51,6 +52,7 @@ pub fn image_upscale(_available_models: &[String]) -> SkillDefinition {
             role: "source".into(),
             content_type: ContentType::Image,
             required: true,
+            overlay: None,
         }],
         mappings: vec![
             SkillMapping::Content {
@@ -126,6 +128,7 @@ pub fn image_generate(available_checkpoints: &[String]) -> SkillDefinition {
             role: "prompt".into(),
             content_type: ContentType::Text,
             required: true,
+            overlay: None,
         }],
         mappings: vec![
             SkillMapping::Content {
@@ -238,11 +241,13 @@ pub fn image_img2img(available_checkpoints: &[String]) -> SkillDefinition {
                 role: "source".into(),
                 content_type: ContentType::Image,
                 required: true,
+                overlay: None,
             },
             ContentSlot {
                 role: "prompt".into(),
                 content_type: ContentType::Text,
                 required: true,
+                overlay: None,
             },
         ],
         mappings: vec![
@@ -316,7 +321,137 @@ pub fn image_img2img(available_checkpoints: &[String]) -> SkillDefinition {
     }
 }
 
+// ── image.inpaint ─────────────────────────────────────────────
+
+pub fn image_inpaint(available_checkpoints: &[String]) -> SkillDefinition {
+    let workflow = load_workflow(INPAINT_WORKFLOW_JSON);
+    let parsed = parser::parse_workflow(&workflow)
+        .expect("embedded inpaint workflow parses correctly");
+
+    let (checkpoint_options, default_checkpoint) = inpaint_checkpoint_options(available_checkpoints);
+
+    let mut workflows = HashMap::new();
+    workflows.insert("inpaint".into(), workflow);
+
+    SkillDefinition {
+        name: "image.inpaint".into(),
+        display_name: "Inpaint".into(),
+        capability: Capability::Image,
+        description: "Edit specific regions of an image using a mask and prompt".into(),
+        provider_kind: crate::domain::types::OfferingKind::ComfyUi,
+        vram_mb: 4096,
+        content_slots: vec![
+            ContentSlot {
+                role: "source".into(),
+                content_type: ContentType::Image,
+                required: true,
+                overlay: None,
+            },
+            ContentSlot {
+                role: "mask".into(),
+                content_type: ContentType::Image,
+                required: true,
+                overlay: Some("source".into()),
+            },
+            ContentSlot {
+                role: "prompt".into(),
+                content_type: ContentType::Text,
+                required: true,
+                overlay: None,
+            },
+        ],
+        mappings: vec![
+            SkillMapping::Content {
+                role: "source".into(),
+                content_type: ContentType::Image,
+                placeholder: "PLACEHOLDER_IMAGE".into(),
+            },
+            SkillMapping::Content {
+                role: "mask".into(),
+                content_type: ContentType::Image,
+                placeholder: "PLACEHOLDER_MASK".into(),
+            },
+            SkillMapping::Content {
+                role: "prompt".into(),
+                content_type: ContentType::Text,
+                placeholder: "PLACEHOLDER_PROMPT".into(),
+            },
+            SkillMapping::Param {
+                field: "negative".into(),
+                label: "Negative Prompt".into(),
+                node: None,
+                input: None,
+                placeholder: Some("PLACEHOLDER_NEGATIVE".into()),
+                param_type: ParamType::Text,
+                default: Some(serde_json::json!("blurry, watermark, low quality, deformed")),
+            },
+            SkillMapping::Param {
+                field: "checkpoint".into(),
+                label: "Model".into(),
+                node: None,
+                input: None,
+                placeholder: Some("PLACEHOLDER_CHECKPOINT".into()),
+                param_type: ParamType::Options { options: checkpoint_options },
+                default: Some(serde_json::json!(default_checkpoint)),
+            },
+            SkillMapping::Param {
+                field: "strength".into(),
+                label: "Strength".into(),
+                node: Some("7".into()),
+                input: Some("denoise".into()),
+                placeholder: None,
+                param_type: ParamType::Range { min: 0.0, max: 1.0, step: Some(0.05) },
+                default: Some(serde_json::json!(1.0)),
+            },
+            SkillMapping::Param {
+                field: "steps".into(),
+                label: "Steps".into(),
+                node: Some("7".into()),
+                input: Some("steps".into()),
+                placeholder: None,
+                param_type: ParamType::Range { min: 1.0, max: 50.0, step: Some(1.0) },
+                default: Some(serde_json::json!(20)),
+            },
+            SkillMapping::Param {
+                field: "seed".into(),
+                label: "Seed".into(),
+                node: Some("7".into()),
+                input: Some("seed".into()),
+                placeholder: None,
+                param_type: ParamType::Auto { kind: AutoKind::RandomInt },
+                default: None,
+            },
+        ],
+        diagram: Some(parsed.diagram),
+        required_models: recommended_inpaint_models()
+            .into_iter()
+            .map(|m| ModelRef {
+                filename: m.filename,
+                model_type: m.model_type,
+                description: Some(m.description),
+            })
+            .collect(),
+        default_workflow: "inpaint".into(),
+        workflows,
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────
+
+fn inpaint_checkpoint_options(available: &[String]) -> (Vec<ParamOption>, String) {
+    let effective: Vec<String> = if available.is_empty() {
+        recommended_inpaint_models()
+            .iter()
+            .map(|m| m.filename.clone())
+            .collect()
+    } else {
+        available.to_vec()
+    };
+
+    let default = effective.first().cloned().unwrap_or_default();
+    let options = effective.iter().map(|m| ParamOption::simple(m.as_str())).collect();
+    (options, default)
+}
 
 fn checkpoint_options(available: &[String]) -> (Vec<ParamOption>, String) {
     let effective: Vec<String> = if available.is_empty() {
@@ -343,6 +478,17 @@ pub fn recommended_checkpoint_models() -> Vec<RecommendedModel> {
         size_bytes: 4_265_380_512,
         license: "CreativeML Open RAIL-M".into(),
         description: "Stable Diffusion 1.5 — versatile, runs on 4GB+ VRAM.".into(),
+    }]
+}
+
+pub fn recommended_inpaint_models() -> Vec<RecommendedModel> {
+    vec![RecommendedModel {
+        filename: "sd-v1-5-inpainting.ckpt".into(),
+        model_type: "checkpoints".into(),
+        url: "https://huggingface.co/runwayml/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt".into(),
+        size_bytes: 4_265_380_512,
+        license: "CreativeML Open RAIL-M".into(),
+        description: "SD 1.5 inpainting — dedicated inpainting checkpoint.".into(),
     }]
 }
 

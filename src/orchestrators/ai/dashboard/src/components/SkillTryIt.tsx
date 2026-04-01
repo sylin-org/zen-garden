@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import type { SkillFormResponse, SkillMapping, ParamOption } from "../types";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { MaskPainter } from "./MaskPainter";
 
 interface SkillTryItProps {
   skillName: string;
@@ -161,16 +162,43 @@ export function SkillTryIt({ skillName, disabled = false }: SkillTryItProps) {
       )}
 
       {/* Content inputs — from content mappings */}
-      {contentMappings.map((m) =>
-        m.content_type === "image" ? (
-          <ImageDropzone
-            key={m.role}
-            role={m.role}
-            data={contentData[m.role]}
-            name={contentNames[m.role]}
-            onSet={setContent}
-          />
-        ) : (
+      {contentMappings.map((m) => {
+        // Check if this slot has an overlay (mask painter)
+        const slot = form.content_slots.find((s) => s.role === m.role);
+        const overlayTarget = slot?.overlay;
+
+        if (m.content_type === "image" && overlayTarget) {
+          // Render mask painter overlay on the target image
+          const sourceData = contentData[overlayTarget];
+          if (!sourceData) {
+            return (
+              <div key={m.role} className="text-[11px] text-gray-500 italic">
+                Upload the source image first to paint the mask.
+              </div>
+            );
+          }
+          return (
+            <MaskPainter
+              key={m.role}
+              sourceImage={sourceData}
+              onMaskChange={(maskUri) => setContent(m.role, maskUri, "mask.png")}
+            />
+          );
+        }
+
+        if (m.content_type === "image") {
+          return (
+            <ImageDropzone
+              key={m.role}
+              role={m.role}
+              data={contentData[m.role]}
+              name={contentNames[m.role]}
+              onSet={setContent}
+            />
+          );
+        }
+
+        return (
           <TextInput
             key={m.role}
             role={m.role}
@@ -178,7 +206,8 @@ export function SkillTryIt({ skillName, disabled = false }: SkillTryItProps) {
             value={contentData[m.role] ?? ""}
             onChange={(val) => setContent(m.role, val, "")}
           />
-        ),
+        );
+      }
       )}
 
       {/* Parameter inputs — from param mappings */}

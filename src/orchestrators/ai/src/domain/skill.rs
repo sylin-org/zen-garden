@@ -43,9 +43,11 @@ pub struct SkillDefinition {
     pub diagram: Option<String>,
     /// Models that must be installed for this skill to work.
     pub required_models: Vec<ModelRef>,
-    /// Provider-specific workflow template (e.g., ComfyUI node graph JSON).
+    /// Default workflow template name. Overridden by `parameters.workflow` if present.
+    pub default_workflow: String,
+    /// Named workflow templates. The provider selects one at execution time.
     #[serde(skip)]
-    pub workflow: serde_json::Value,
+    pub workflows: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // ── Mappings ──────────────────────────────────────────────────
@@ -61,12 +63,20 @@ pub enum SkillMapping {
         content_type: ContentType,
         placeholder: String,
     },
-    /// Form parameter → specific node.input in the workflow.
+    /// Form parameter → workflow value.
+    /// Two targeting methods (mutually exclusive):
+    /// - `placeholder`: string substitution throughout the workflow tree
+    /// - `node` + `input`: set a specific node's input by node ID
+    /// Neither is required (e.g., `field: "workflow"` is consumed by the provider).
     Param {
         field: String,
-        node: String,
-        input: String,
         label: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        placeholder: Option<String>,
         #[serde(flatten)]
         param_type: ParamType,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -359,6 +369,9 @@ mod tests {
     use super::*;
 
     fn upscale_skill() -> SkillDefinition {
+        let mut workflows = std::collections::HashMap::new();
+        workflows.insert("upscale_4x".into(), serde_json::json!({}));
+
         SkillDefinition {
             name: "image.upscale".into(),
             display_name: "Upscale".into(),
@@ -379,13 +392,14 @@ mod tests {
                 },
                 SkillMapping::Param {
                     field: "upscale_model".into(),
-                    node: "2".into(),
-                    input: "model_name".into(),
-                    label: "Model".into(),
+                    label: "Style".into(),
+                    node: None,
+                    input: None,
+                    placeholder: Some("PLACEHOLDER_MODEL".into()),
                     param_type: ParamType::Options {
                         options: vec![
-                            ParamOption::named("RealESRGAN_x4plus.pth", "4x"),
-                            ParamOption::named("RealESRGAN_x4plus_anime_6B.pth", "4x Anime"),
+                            ParamOption::named("RealESRGAN_x4plus.pth", "Realistic"),
+                            ParamOption::named("RealESRGAN_x4plus_anime_6B.pth", "Anime"),
                         ],
                     },
                     default: Some(serde_json::json!("RealESRGAN_x4plus.pth")),
@@ -397,7 +411,8 @@ mod tests {
                 model_type: "upscale_models".into(),
                 description: Some("4x upscaler".into()),
             }],
-            workflow: serde_json::json!({}),
+            default_workflow: "upscale_4x".into(),
+            workflows,
         }
     }
 
@@ -458,8 +473,9 @@ mod tests {
     fn mapping_serde_round_trip() {
         let mapping = SkillMapping::Param {
             field: "seed".into(),
-            node: "5".into(),
-            input: "seed".into(),
+            node: Some("5".into()),
+            input: Some("seed".into()),
+            placeholder: None,
             label: "Seed".into(),
             param_type: ParamType::Auto { kind: AutoKind::RandomInt },
             default: None,
@@ -519,8 +535,9 @@ mod tests {
     fn options_param_serde() {
         let mapping = SkillMapping::Param {
             field: "width".into(),
-            node: "4".into(),
-            input: "width".into(),
+            node: Some("4".into()),
+            input: Some("width".into()),
+            placeholder: None,
             label: "Width".into(),
             param_type: ParamType::Options {
                 options: vec![
@@ -541,8 +558,9 @@ mod tests {
     fn range_param_serde() {
         let mapping = SkillMapping::Param {
             field: "strength".into(),
-            node: "6".into(),
-            input: "denoise".into(),
+            node: Some("6".into()),
+            input: Some("denoise".into()),
+            placeholder: None,
             label: "Strength".into(),
             param_type: ParamType::Range { min: 0.0, max: 1.0, step: Some(0.05) },
             default: Some(serde_json::json!(0.7)),

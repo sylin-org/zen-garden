@@ -17,7 +17,7 @@ mod tests {
     fn full_pipeline_upscale_workflow_to_skill() {
         // 1. Load the embedded workflow
         let wf_json: serde_json::Value =
-            serde_json::from_str(include_str!("upscale_workflow.json")).unwrap();
+            serde_json::from_str(include_str!("upscale_4x.json")).unwrap();
 
         // 2. Parse it
         let parsed = parser::parse_workflow(&wf_json).unwrap();
@@ -73,12 +73,13 @@ mod tests {
         let image_mapping = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Content { content_type: ContentType::Image, .. }));
         assert!(image_mapping.is_some(), "image content mapping exists");
 
-        // 4. Verify the workflow is a valid template
-        assert!(skill.workflow.is_object());
-        assert!(skill.workflow.get("1").is_some(), "node 1 (LoadImage)");
-        assert!(skill.workflow.get("2").is_some(), "node 2 (UpscaleModelLoader)");
-        assert!(skill.workflow.get("3").is_some(), "node 3 (ImageUpscaleWithModel)");
-        assert!(skill.workflow.get("4").is_some(), "node 4 (SaveImage)");
+        // 4. Verify the default workflow is a valid template
+        let wf = skill.workflows.get(&skill.default_workflow).expect("default workflow exists");
+        assert!(wf.is_object());
+        assert!(wf.get("1").is_some(), "node 1 (LoadImage)");
+        assert!(wf.get("2").is_some(), "node 2 (UpscaleModelLoader)");
+        assert!(wf.get("3").is_some(), "node 3 (ImageUpscaleWithModel)");
+        assert!(wf.get("4").is_some(), "node 4 (SaveImage)");
     }
 
     // ================================================================
@@ -210,7 +211,7 @@ mod tests {
     #[test]
     fn mermaid_diagram_has_all_edges_for_upscale() {
         let wf: serde_json::Value =
-            serde_json::from_str(include_str!("upscale_workflow.json")).unwrap();
+            serde_json::from_str(include_str!("upscale_4x.json")).unwrap();
         let parsed = parser::parse_workflow(&wf).unwrap();
 
         // 3 edges: 1→3 (image), 2→3 (model), 3→4 (output)
@@ -221,7 +222,7 @@ mod tests {
     #[test]
     fn mermaid_diagram_labels_are_readable() {
         let wf: serde_json::Value =
-            serde_json::from_str(include_str!("upscale_workflow.json")).unwrap();
+            serde_json::from_str(include_str!("upscale_4x.json")).unwrap();
         let parsed = parser::parse_workflow(&wf).unwrap();
 
         // Labels should be human-readable, not raw class_type
@@ -276,15 +277,21 @@ mod tests {
     }
 
     #[test]
-    fn skill_falls_back_to_first_model_when_no_realesrgan() {
-        let models = vec!["SomeCustom_4x.pth".into(), "4x-AnimeSharp.pth".into()];
-        let skill = builtin::image_upscale(&models);
+    fn upscale_has_zoom_and_style_params() {
+        let skill = builtin::image_upscale(&[]);
 
-        let model_mapping = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Param { field, .. } if field == "upscale_model"));
-        if let Some(SkillMapping::Param { default: Some(d), .. }) = model_mapping {
-            assert_eq!(d, &serde_json::json!("SomeCustom_4x.pth"));
-        } else {
-            panic!("expected upscale_model mapping with default");
+        // Zoom selects workflow template
+        let zoom = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Param { field, .. } if field == "workflow"));
+        assert!(zoom.is_some(), "workflow (zoom) param exists");
+        if let Some(SkillMapping::Param { param_type: ParamType::Options { options }, .. }) = zoom {
+            assert_eq!(options.len(), 4, "2x, 4x, 8x, 16x");
+        }
+
+        // Style selects model via placeholder
+        let style = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Param { field, .. } if field == "upscale_model"));
+        assert!(style.is_some(), "style param exists");
+        if let Some(SkillMapping::Param { placeholder, .. }) = style {
+            assert_eq!(placeholder.as_deref(), Some("PLACEHOLDER_MODEL"));
         }
     }
 

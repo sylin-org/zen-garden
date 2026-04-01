@@ -409,7 +409,7 @@ pub(crate) async fn list_models(
 
 /// Execute a workflow by iterating the skill's declarative mappings.
 ///
-/// Pipeline: apply mappings → submit → poll → extract.
+/// Pipeline: select template → apply mappings → submit → poll → extract.
 /// Zero skill-specific branches.
 async fn execute_workflow(
     http: &Client,
@@ -417,10 +417,21 @@ async fn execute_workflow(
     req: &WorkflowRequest,
     skill: &SkillDefinition,
 ) -> Result<WorkflowJob> {
-    let mut workflow = skill.workflow.clone();
     let params = &req.parameters;
 
-    // Apply all mappings
+    // 1. Select workflow template: parameters.workflow overrides default_workflow
+    let template_name = params
+        .get("workflow")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&skill.default_workflow);
+
+    let mut workflow = skill
+        .workflows
+        .get(template_name)
+        .cloned()
+        .with_context(|| format!("unknown workflow template: {template_name}"))?;
+
+    // 2. Apply all mappings
     for mapping in &skill.mappings {
         match mapping {
             SkillMapping::Content { role, content_type, placeholder } => {
@@ -444,14 +455,34 @@ async fn execute_workflow(
                     }
                 }
             }
-            SkillMapping::Param { field, node, input, param_type, default, .. } => {
+            SkillMapping::Param { field, node, input, placeholder, param_type, default, .. } => {
+                // Skip the "workflow" field — already consumed above
+                if field == "workflow" {
+                    continue;
+                }
+
                 let value = resolve_param_value(params, field, param_type, default.as_ref());
-                set_node_input(&mut workflow, node, input, value);
+                if value.is_null() {
+                    continue;
+                }
+
+                // Placeholder substitution (string values throughout the tree)
+                if let Some(ph) = placeholder {
+                    if let Some(s) = value.as_str() {
+                        fill_placeholder(&mut workflow, ph, s);
+                        continue;
+                    }
+                }
+
+                // Node-targeted (set specific node input by ID)
+                if let (Some(n), Some(i)) = (node, input) {
+                    set_node_input(&mut workflow, n, i, value);
+                }
             }
         }
     }
 
-    // Submit + poll + extract
+    // 3. Submit + poll + extract
     submit_and_poll(http, endpoint, &req.skill, workflow).await
 }
 

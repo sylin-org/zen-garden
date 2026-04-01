@@ -61,73 +61,85 @@ Not every provider needs skills. Ollama's chat completions are fully described b
 the model + capability — no skill layer required. Skills add value when a provider
 supports multiple distinct operations within a single capability.
 
-#### Skill definition — mapping-driven
+#### Skill definition — mapping-driven, data-only
 
-Each skill carries declarative **mappings** that describe how user inputs connect to
-the provider's implementation. No JSON Schema, no UI Schema — the mappings ARE the
-schema.
+A skill is a **JSON file**, not code. Skills are pure data — mappings, metadata, and
+references to workflow templates. The orchestrator renders the form, the provider
+executes the workflow. Adding a new skill requires zero code changes.
 
-```rust
-pub struct SkillDefinition {
-    pub name: String,
-    pub display_name: String,
-    pub capability: Capability,
-    pub description: String,
-    pub provider_kind: OfferingKind,
-    pub vram_mb: u64,
-    pub content_slots: Vec<ContentSlot>,
-    pub mappings: Vec<SkillMapping>,
-    pub diagram: Option<String>,
-    pub required_models: Vec<ModelRef>,
-    pub workflow: serde_json::Value,
+```json
+{
+  "name": "image.upscale",
+  "display_name": "Upscale",
+  "capability": "image",
+  "description": "Enhance image resolution using AI super-resolution",
+  "provider_kind": "comfyui",
+  "vram_mb": 1024,
+  "default_workflow": "upscale_4x",
+  "content_slots": [
+    { "role": "source", "content_type": "image", "required": true }
+  ],
+  "mappings": [
+    { "type": "content", "role": "source", "content_type": "image",
+      "placeholder": "PLACEHOLDER_IMAGE" },
+    { "type": "param", "field": "workflow", "label": "Zoom",
+      "param_type": "options", "default": "upscale_4x",
+      "options": [
+        { "value": "upscale_2x",  "label": "2x" },
+        { "value": "upscale_4x",  "label": "4x" },
+        { "value": "upscale_8x",  "label": "8x" },
+        { "value": "upscale_16x", "label": "16x" }
+      ]},
+    { "type": "param", "field": "upscale_model", "label": "Style",
+      "placeholder": "PLACEHOLDER_MODEL", "param_type": "options",
+      "default": "RealESRGAN_x4plus.pth",
+      "options": [
+        { "value": "RealESRGAN_x4plus.pth", "label": "Realistic" },
+        { "value": "RealESRGAN_x4plus_anime_6B.pth", "label": "Anime" }
+      ]}
+  ],
+  "required_models": [
+    { "filename": "RealESRGAN_x4plus.pth", "model_type": "upscale_models" },
+    { "filename": "RealESRGAN_x4plus_anime_6B.pth", "model_type": "upscale_models" }
+  ]
 }
 ```
 
 **Mappings** are the single source of truth for the form UI and the execution engine:
 
-```rust
-pub enum SkillMapping {
-    /// User content (image/text) → placeholder in workflow.
-    /// `content_type` determines handling: image = upload first, text = substitute.
-    Content {
-        role: String,
-        content_type: ContentType,
-        placeholder: String,
-    },
-    /// Form parameter → specific node.input in workflow.
-    /// Options decouple display labels from wire values.
-    Param {
-        field: String,
-        node: String,
-        input: String,
-        label: String,
-        param_type: ParamType,
-        default: Option<Value>,
-    },
-}
-```
+| Mapping type | Purpose | Handling |
+|-------------|---------|----------|
+| `content` | User-provided input (image, text) | `content_type` determines: image = upload first then substitute placeholder; text = substitute placeholder directly |
+| `param` | Form parameter → workflow value | If `placeholder` is set: string substitution throughout the workflow. If `node`+`input` is set: set `workflow[node]["inputs"][input] = value` |
 
 **ParamType** variants:
 
 | Type | Rendering | Example |
 |------|-----------|---------|
-| `Options` | Radio (≤4) or select (>4). Each option has `value` (wire) and optional `label` (display). | Zoom: "4x", "Anime" |
-| `Range` | Slider with min/max/step | Steps: 1–50 |
-| `Auto` | Pre-filled editable field (e.g., random seed) | Seed: 498423072 |
-| `Text` | Textarea | Negative prompt |
+| `options` | Radio (≤4) or select (>4). Each option has `value` (wire) and optional `label` (display). | Style: "Realistic", "Anime" |
+| `range` | Slider with min/max/step | Steps: 1–50 |
+| `auto` | Pre-filled editable field (e.g., random seed) | Seed: 498423072 |
+| `text` | Textarea | Negative prompt |
 
-When `Options` carries just an array of values (no labels), display = wire value.
+When options carry no `label`, display = wire value (e.g., width: 512, 768, 1024).
 When options carry a `label`, the user sees the label but the wire sends the value.
 
-The execution engine iterates mappings — zero skill-specific branches:
-1. `Content(image)` → upload to provider, substitute placeholder
-2. `Content(text)` → substitute placeholder
-3. `Param` → set `workflow[node]["inputs"][input] = value`
-4. `Auto` → generate value if user didn't provide one
+#### Workflow selection
 
-Internal implementation details (which workflow template to use for 2x vs 4x upscale,
-how to chain pipeline stages) are owned by the provider. The mapping system does not
-expose or constrain provider internals.
+Every skill has a `default_workflow` — the template used when no override is present.
+
+If a parameter has `field: "workflow"`, its value overrides the default. The provider
+loads the named template instead. The user sees a friendly label (e.g., "Zoom: 4x"),
+the wire value is a template name (e.g., `"upscale_4x"`).
+
+The execution engine:
+1. Read `parameters.workflow` — if present, use it; otherwise use `default_workflow`
+2. Load the named template from the provider's template registry
+3. Iterate mappings: substitute content placeholders, set param values
+4. Submit to the provider
+
+This means a single skill can fan out to multiple workflow templates without any
+code changes. The template selection is data-driven.
 
 #### Built-in vs imported skills
 

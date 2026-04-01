@@ -1,5 +1,6 @@
 import { Routes, Route } from "react-router-dom";
 import { useStatus } from "./hooks/useStatus";
+import { useSkills } from "./hooks/useSkills";
 import { Sidebar } from "./components/Sidebar";
 import { Overview } from "./pages/Overview";
 import { CapabilityDetail } from "./pages/CapabilityDetail";
@@ -13,10 +14,11 @@ import { Settings } from "./pages/Settings";
 
 function App() {
   const { status, loading, error } = useStatus();
+  const { skills } = useSkills();
 
   return (
     <div className="flex min-h-screen bg-[#0f1117] text-gray-400 font-[system-ui]">
-      <Sidebar status={status} />
+      <Sidebar status={status} skills={skills} />
 
       <main className="flex-1 min-w-0 p-6 overflow-y-auto">
         {loading && !status && (
@@ -45,7 +47,7 @@ function App() {
             <Route path="/" element={<Overview status={status} />} />
             <Route
               path="/capability/:name"
-              element={<CapabilityDetail status={status} />}
+              element={<CapabilityDetail status={status} skills={skills} />}
             />
             <Route
               path="/infra/services"

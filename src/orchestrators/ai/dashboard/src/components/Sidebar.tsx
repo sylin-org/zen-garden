@@ -1,10 +1,11 @@
 import { NavLink } from "react-router-dom";
-import type { DashboardStatus, CapabilityState } from "../types";
+import type { DashboardStatus, CapabilityState, SkillInfo } from "../types";
 import { ALL_CAPABILITIES, CAPABILITY_LABELS } from "../types";
 import { isCloudOffering } from "../utils/cloudCatalog";
 
 interface SidebarProps {
   status: DashboardStatus | null;
+  skills?: SkillInfo[];
 }
 
 const STATE_DOT: Record<CapabilityState, string> = {
@@ -45,7 +46,12 @@ function countCloudProviders(status: DashboardStatus | null): number {
   return kinds.size;
 }
 
-export function Sidebar({ status }: SidebarProps) {
+function skillCountForCapability(skills: SkillInfo[] | undefined, cap: string): number {
+  if (!skills) return 0;
+  return skills.filter((s) => s.capability === cap).length;
+}
+
+export function Sidebar({ status, skills }: SidebarProps) {
   const localCount = countLocalServices(status);
   const cloudCount = countCloudProviders(status);
 
@@ -85,24 +91,32 @@ export function Sidebar({ status }: SidebarProps) {
 
         {ALL_CAPABILITIES.map((cap) => {
           const state = capabilityState(status, cap);
+          const skillCount = skillCountForCapability(skills, cap);
           return (
             <NavLink
               key={cap}
               to={`/capability/${cap}`}
               className={({ isActive }) =>
-                `flex items-center gap-2 px-4 py-1 text-[13px] ${
+                `flex items-center justify-between px-4 py-1 text-[13px] ${
                   isActive
                     ? "text-gray-100 bg-[#1a1b23]"
-                    : state === "not_installed"
+                    : state === "not_installed" && skillCount === 0
                       ? "text-gray-500 hover:text-gray-300 hover:bg-[#1a1b23]/50"
                       : "text-gray-400 hover:text-gray-200 hover:bg-[#1a1b23]/50"
                 }`
               }
             >
-              <span
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATE_DOT[state]}`}
-              />
-              {CAPABILITY_LABELS[cap] ?? cap}
+              <span className="flex items-center gap-2">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATE_DOT[state]}`}
+                />
+                {CAPABILITY_LABELS[cap] ?? cap}
+              </span>
+              {skillCount > 0 && (
+                <span className="text-[10px] text-amber-400 font-mono">
+                  +{skillCount}
+                </span>
+              )}
             </NavLink>
           );
         })}

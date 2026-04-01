@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
-import type { DashboardStatus, ModelStatus } from "../types";
+import type { DashboardStatus, ModelStatus, SkillInfo } from "../types";
 import { CAPABILITY_LABELS, formatBytes } from "../types";
 import { stoneColor } from "../utils/stoneColors";
 import { isCloudOffering } from "../utils/cloudCatalog";
 import { ModelTryIt } from "../components/ModelTryIt";
+import { SkillTryIt } from "../components/SkillTryIt";
 
 // ── Sort State ─────────────────────────────────────────────────
 
@@ -104,11 +105,12 @@ function SortHeader({
 
 interface CapabilityDetailProps {
   status: DashboardStatus;
+  skills?: SkillInfo[];
 }
 
 // ── Main Component ──────────────────────────────────────────────
 
-export function CapabilityDetail({ status }: CapabilityDetailProps) {
+export function CapabilityDetail({ status, skills = [] }: CapabilityDetailProps) {
   const { name } = useParams<{ name: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const expandedModel = searchParams.get("model");
@@ -340,6 +342,23 @@ export function CapabilityDetail({ status }: CapabilityDetailProps) {
           </p>
         </div>
       )}
+
+      {/* Skills block */}
+      {(() => {
+        const capSkills = skills.filter((s) => s.capability === name);
+        if (capSkills.length === 0) return null;
+
+        return (
+          <div className="space-y-2">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              Skills
+            </h3>
+            {capSkills.map((skill) => (
+              <SkillBlock key={skill.name} skill={skill} />
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Flat model table */}
       {allModels.length > 0 && (
@@ -658,6 +677,70 @@ function DetailRow({
     <div className="flex">
       <span className="text-gray-500 w-24 shrink-0">{label}</span>
       <span className="text-gray-300 font-mono">{value ?? "-"}</span>
+    </div>
+  );
+}
+
+// ── Skill Block ──────────────────────────────────────────────────
+
+const SKILL_STATUS_STYLES: Record<string, { bg: string; label: string }> = {
+  ready: { bg: "bg-emerald-400/10 text-emerald-400 border-emerald-400/30", label: "Ready" },
+  degraded: { bg: "bg-yellow-400/10 text-yellow-400 border-yellow-400/30", label: "Degraded" },
+  initializing: { bg: "bg-blue-400/10 text-blue-400 border-blue-400/30", label: "Initializing" },
+  provisioning: { bg: "bg-blue-400/10 text-blue-400 border-blue-400/30", label: "Provisioning" },
+  failed: { bg: "bg-red-400/10 text-red-400 border-red-400/30", label: "Failed" },
+};
+
+function SkillBlock({ skill }: { skill: SkillInfo }) {
+  const [expanded, setExpanded] = useState(false);
+  const statusStyle = SKILL_STATUS_STYLES[skill.status] ?? SKILL_STATUS_STYLES.failed;
+
+  return (
+    <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg overflow-hidden">
+      <button
+        className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#1e1f28] transition-colors text-left"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-amber-400 text-sm">⚡</span>
+          <div>
+            <span className="text-sm font-medium text-gray-100">
+              {skill.display_name}
+            </span>
+            <span className="ml-2 text-[11px] text-gray-500">
+              {skill.description}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${statusStyle.bg}`}
+          >
+            {statusStyle.label}
+          </span>
+          <span className="text-gray-600 text-xs">{expanded ? "▲" : "▼"}</span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-4 border-t border-[#2e303a]">
+          {skill.status === "ready" || skill.status === "degraded" ? (
+            <div className="pt-3">
+              <SkillTryIt skillName={skill.name} />
+            </div>
+          ) : (
+            <div className="pt-3 text-xs text-gray-500">
+              {skill.status === "initializing" && "Downloading required models..."}
+              {skill.status === "provisioning" && "Deploying models to instances..."}
+              {skill.status === "failed" && (
+                <span className="text-red-400">
+                  Provisioning failed. Check orchestrator logs.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

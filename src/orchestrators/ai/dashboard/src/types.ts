@@ -172,6 +172,42 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   music: "Music",
 };
 
+// ── Skill Types ─────────────────────────────────────────────────
+
+export type SkillStatus = "initializing" | "provisioning" | "ready" | "degraded" | "failed";
+
+export interface SkillContentSlot {
+  role: string;
+  content_type: "image" | "text";
+  required: boolean;
+}
+
+export interface SkillModelRef {
+  filename: string;
+  model_type: string;
+  description: string | null;
+}
+
+export interface SkillInfo {
+  name: string;
+  display_name: string;
+  capability: string;
+  description: string;
+  status: SkillStatus;
+  content_slots: SkillContentSlot[];
+  has_diagram: boolean;
+  required_models: SkillModelRef[];
+}
+
+export interface SkillPresentation {
+  display_name: string;
+  description: string;
+  schema: Record<string, unknown>;
+  ui_schema: Record<string, unknown>;
+  content: SkillContentSlot[];
+  diagram: string | null;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];

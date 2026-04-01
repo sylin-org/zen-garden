@@ -629,6 +629,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
         environment: template.environment,
         volumes: template.volumes,
         config_files: template.config_files,
+        device_requests: template.device_requests,
     };
 
     // Perform Docker upgrade

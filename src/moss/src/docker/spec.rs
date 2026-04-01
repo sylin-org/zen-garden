@@ -30,6 +30,8 @@ pub struct ContainerSpec {
     /// At install time, empty config files are created on the host and bind-mounted
     /// into the container. Config patches write content to these files and restart.
     pub config_files: Vec<garden_common::manifests::offering::ConfigFileMapping>,
+    /// GPU device requests from manifest `deploy.resources.reservations.devices`.
+    pub device_requests: Vec<garden_common::manifests::GpuDeviceRequest>,
 }
 
 impl ContainerSpec {

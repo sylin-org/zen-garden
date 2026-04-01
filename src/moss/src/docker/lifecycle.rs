@@ -497,6 +497,27 @@ impl Client {
         let mut full_env = spec.environment.clone();
         full_env.extend(net.env_inject);
 
+        // GPU device requests from manifest deploy.resources.reservations.devices
+        let device_requests = if !spec.device_requests.is_empty() {
+            Some(
+                spec.device_requests
+                    .iter()
+                    .map(|dr| bollard::models::DeviceRequest {
+                        driver: if dr.driver.is_empty() {
+                            None
+                        } else {
+                            Some(dr.driver.clone())
+                        },
+                        count: Some(dr.count),
+                        capabilities: Some(dr.capabilities.clone()),
+                        ..Default::default()
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
         let host_config = HostConfig {
             port_bindings: Some(port_bindings),
             binds: Some(binds),
@@ -507,6 +528,7 @@ impl Client {
                 name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                 maximum_retry_count: None,
             }),
+            device_requests,
             ..Default::default()
         };
 

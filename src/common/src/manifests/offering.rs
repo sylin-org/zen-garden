@@ -273,6 +273,8 @@ pub struct ServiceTemplate {
     pub compatibility: Option<CompatibilityRules>,
     pub tasks: HashMap<String, TaskDefinition>,
     pub network: NetworkRequirements,
+    /// GPU device requests parsed from `deploy.resources.reservations.devices`.
+    pub device_requests: Vec<GpuDeviceRequest>,
 }
 
 impl ServiceTemplate {
@@ -437,6 +439,48 @@ struct ServiceConfig {
     tasks: HashMap<String, TaskDefinition>,
     #[serde(default)]
     network: NetworkRequirements,
+    #[serde(default)]
+    deploy: Option<DeployConfig>,
+}
+
+/// Docker Compose `deploy` section — GPU device reservations.
+#[derive(Debug, Deserialize, Clone, Default)]
+struct DeployConfig {
+    #[serde(default)]
+    resources: Option<ResourcesConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct ResourcesConfig {
+    #[serde(default)]
+    reservations: Option<ReservationsConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct ReservationsConfig {
+    #[serde(default)]
+    devices: Vec<DeviceReservation>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeviceReservation {
+    #[serde(default)]
+    driver: Option<String>,
+    #[serde(default)]
+    count: Option<serde_yml::Value>, // "all" or a number
+    #[serde(default)]
+    capabilities: Vec<Vec<String>>,
+}
+
+/// Parsed GPU device request for container creation.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GpuDeviceRequest {
+    /// Driver name (e.g., "nvidia")
+    pub driver: String,
+    /// Number of devices: -1 = all, N = specific count
+    pub count: i64,
+    /// Required capabilities (e.g., [["gpu"]])
+    pub capabilities: Vec<Vec<String>>,
 }
 
 // ============================================================================
@@ -691,6 +735,38 @@ impl Offering {
             })
             .collect();
 
+        // Parse GPU device requests from deploy.resources.reservations.devices
+        let device_requests = config
+            .deploy
+            .as_ref()
+            .and_then(|d| d.resources.as_ref())
+            .and_then(|r| r.reservations.as_ref())
+            .map(|res| {
+                res.devices
+                    .iter()
+                    .filter(|dev| {
+                        dev.capabilities
+                            .iter()
+                            .any(|caps| caps.iter().any(|c| c == "gpu"))
+                    })
+                    .map(|dev| {
+                        let count = match &dev.count {
+                            Some(serde_yml::Value::String(s)) if s == "all" => -1,
+                            Some(serde_yml::Value::Number(n)) => {
+                                n.as_i64().unwrap_or(1)
+                            }
+                            _ => -1, // default: all GPUs
+                        };
+                        GpuDeviceRequest {
+                            driver: dev.driver.clone().unwrap_or_else(|| String::new()),
+                            count,
+                            capabilities: dev.capabilities.clone(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         ServiceTemplate {
             image: config.image,
             command: config.command,
@@ -701,6 +777,7 @@ impl Offering {
             compatibility: self.compatibility.clone(),
             tasks: config.tasks,
             network: config.network,
+            device_requests,
         }
     }
 }

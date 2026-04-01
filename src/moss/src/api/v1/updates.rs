@@ -700,16 +700,20 @@ async fn execute_offering_update(
             environment: effective.environment,
             volumes: effective.volumes,
             config_files: effective.config_files,
+            device_requests: template.device_requests,
         }
     } else {
         let fqn_volumes = compiled.volumes_for_fqn(&fqn);
+        let compiled_ports = compiled.ports_vec();
+        let compiled_device_requests = compiled.device_requests;
         crate::docker::ContainerSpec {
             image: target_image.clone(),
             command: None,
-            ports: compiled.ports_vec(),
+            ports: compiled_ports,
             environment: compiled.environment,
             volumes: fqn_volumes,
             config_files: vec![],
+            device_requests: compiled_device_requests,
         }
     };
 

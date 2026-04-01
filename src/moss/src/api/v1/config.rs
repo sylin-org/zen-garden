@@ -370,6 +370,7 @@ fn effective_to_container_spec(
         environment: effective.environment.clone(),
         volumes: effective.volumes.clone(),
         config_files: effective.config_files.clone(),
+        device_requests: vec![],
     }
 }
 

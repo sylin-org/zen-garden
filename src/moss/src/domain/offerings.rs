@@ -45,6 +45,9 @@ pub struct CompiledOffering {
     /// `Independent` (default) = no election. `Elected` = Primary/Dormant roles.
     #[serde(default)]
     pub coordination: garden_common::CoordinationMode,
+    /// GPU device requests from manifest `deploy.resources.reservations.devices`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub device_requests: Vec<garden_common::manifests::GpuDeviceRequest>,
 }
 
 impl CompiledOffering {
@@ -322,6 +325,7 @@ pub fn rebuild_offerings_index(
             tasks: template.tasks,
             network: template.network,
             coordination: entry.coordination.clone(),
+            device_requests: template.device_requests,
         });
     }
 

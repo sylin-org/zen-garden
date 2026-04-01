@@ -87,6 +87,7 @@ pub async fn build_spec_from_manifest(
         environment: effective.environment,
         volumes: effective.volumes,
         config_files: effective.config_files,
+        device_requests: template.device_requests,
     })
 }
 

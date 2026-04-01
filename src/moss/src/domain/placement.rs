@@ -516,6 +516,7 @@ async fn fetch_remote_offerings(
             tasks: std::collections::HashMap::new(), // Not included in OfferingView
             network: garden_common::manifests::NetworkRequirements::default(), // Not included in OfferingView
             coordination: garden_common::CoordinationMode::default(), // Remote views don't expose coordination
+            device_requests: vec![], // Not included in OfferingView
         })
         .collect();
 

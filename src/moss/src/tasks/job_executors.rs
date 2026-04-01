@@ -748,6 +748,7 @@ pub async fn install_service_task(
         environment: compiled.environment,
         volumes: fqn_volumes,
         config_files: compiled.config_files,
+        device_requests: compiled.device_requests,
     };
     let actual_ports = match state
         .platform
@@ -1353,6 +1354,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             environment: compiled.environment,
             volumes: compiled.volumes,
             config_files: vec![],
+            device_requests: vec![],
         };
         let actual_ports = match state
             .platform

@@ -105,6 +105,7 @@ async fn build_nourish_spec(
                 environment: effective.environment,
                 volumes: effective.volumes,
                 config_files: effective.config_files,
+                device_requests: template.device_requests.clone(),
             })
         } else {
             // No patches — use template directly
@@ -116,6 +117,7 @@ async fn build_nourish_spec(
                 environment: template.environment,
                 volumes: template.volumes,
                 config_files: template.config_files,
+                device_requests: template.device_requests.clone(),
             })
         }
     } else {
@@ -127,6 +129,7 @@ async fn build_nourish_spec(
             environment: Vec::new(),
             volumes: Vec::new(),
             config_files: vec![],
+            device_requests: vec![],
         })
     }
 }

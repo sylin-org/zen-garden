@@ -188,6 +188,7 @@ pub fn to_container_spec(resolved: &ResolvedOffering) -> ContainerSpec {
         environment: resolved.environment.clone(),
         volumes: resolved.volumes.clone(),
         config_files: vec![],
+        device_requests: vec![],
     }
 }
 
@@ -309,6 +310,7 @@ mod tests {
             tasks: HashMap::new(),
             network: Default::default(),
             coordination: Default::default(),
+            device_requests: vec![],
         }];
 
         // Same image family, different tag

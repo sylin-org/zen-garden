@@ -480,6 +480,7 @@ impl Client {
             // only used for spec comparison in needs_cycle(), where
             // config files are handled separately (file write + restart).
             config_files: vec![],
+            device_requests: vec![],
         })
     }
 

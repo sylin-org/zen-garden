@@ -164,7 +164,7 @@ async fn proxy_inference(
     // Route — snapshot state, no locks held during routing
     let decision = {
         let mut instances = state.app.instances.read().await.clone();
-        let models = state.app.directory.read().await.clone();
+        let models = state.app.directory_legacy.read().await.clone();
         let tiers = state.app.tiers.read().await.clone();
         let gpu_matrix = {
             let run = state.app.benchmark_run.read().await;
@@ -375,7 +375,7 @@ async fn proxy_inference(
 /// Merge `/api/tags` from all healthy instances into a unified response.
 async fn proxy_merged_tags(state: &ProxyState) -> Result<Response, StatusCode> {
     let instances = state.app.instances.read().await;
-    let directory = state.app.directory.read().await;
+    let directory = state.app.directory_legacy.read().await;
 
     let mut merged: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
@@ -485,7 +485,7 @@ async fn proxy_show(
 
     // ── Catalog fallback ──────────────────────────────────────
     let model_name = model_name.ok_or(StatusCode::BAD_REQUEST)?;
-    let directory = state.app.directory.read().await;
+    let directory = state.app.directory_legacy.read().await;
 
     let entry = directory.get(&model_name).ok_or_else(|| {
         tracing::debug!(model = %model_name, "show: model not in catalog");

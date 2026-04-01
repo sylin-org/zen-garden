@@ -1,24 +1,27 @@
-//! Shared application state for all HTTP handlers and background tasks.
+//! Shared application state — thin facade over domain objects (ORCH-0020).
 //!
-//! Follows the Moss pattern: every field is `Arc` or cheap-to-clone.
-//! Mutation goes through methods that acquire write locks.
+//! Domains own their mutable state privately and publish immutable snapshots
+//! via `watch`. API handlers read snapshots with zero locks.
+//!
+//! Delegation methods on AppState exist temporarily during migration.
+//! Call sites will be updated to use domains directly, then shims removed.
 
 use crate::catalog::ProviderRegistry;
-use crate::offerings::ollama::OllamaClient;
-use crate::domain::advisor::TopologyAdvice;
-use crate::domain::demand::DemandLedger;
+use crate::domain::directory_domain::{DirectoryDomain, DirectorySnapshot};
+use crate::domain::intelligence::{IntelligenceDomain, IntelligenceSnapshot};
+use crate::domain::observability::{ObservabilityDomain, ObservabilitySnapshot};
+use crate::domain::registry::{RegistryDomain, RegistrySnapshot};
+use crate::domain::skills_domain::{SkillsDomain, SkillsSnapshot};
 use crate::domain::fitness::BenchmarkRun;
-use crate::domain::lease::LeaseManager;
-use crate::domain::metrics::MetricsEngine;
-use crate::domain::skill::{SkillRegistry, WorkflowJob};
-use crate::domain::{recommendation, tiering};
+use crate::domain::skill::{SkillDefinition, SkillStatus, WorkflowJob};
 use crate::domain::types::*;
 use crate::offerings::cloud::CloudProviderStore;
-use std::collections::{HashMap, VecDeque};
+use crate::offerings::ollama::OllamaClient;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tokio_util::sync::CancellationToken;
 
 pub use orchestrator_common::events::DashboardEvent;
@@ -27,71 +30,50 @@ pub use orchestrator_common::persistence::TendedStone;
 /// Shared state for the AI Orchestrator.
 #[derive(Clone)]
 pub struct AppState {
-    // ── Discovery ──
+    // ── Domains (black boxes — own mutable state, publish snapshots) ──
+    pub registry: Arc<RegistryDomain>,
+    pub directory: Arc<DirectoryDomain>,
+    pub intelligence: Arc<IntelligenceDomain>,
+    pub observability: Arc<ObservabilityDomain>,
+    pub skills: Arc<SkillsDomain>,
+
+    // ── Immutable (set at startup) ──
+    pub providers: Arc<ProviderRegistry>,
+    pub ollama_client: OllamaClient,
     pub koi_endpoint: String,
     pub explicit_stone: Option<String>,
     pub dashboard_port: u16,
-    pub tended_stone: Arc<RwLock<Option<TendedStone>>>,
+    pub data_dir: String,
+    pub start_time: Instant,
 
-    // ── Provider Registry ──
-    pub providers: Arc<ProviderRegistry>,
-
-    // ── Ollama Client (for proxy and service actions) ──
-    pub ollama_client: OllamaClient,
-
-    // ── Cloud Provider Store ──
-    pub cloud_store: Arc<RwLock<CloudProviderStore>>,
-
-    // ── Instance Registry ──
-    pub instances: Arc<RwLock<HashMap<String, ServiceInstance>>>,
-    pub tiers: Arc<RwLock<Vec<Tier>>>,
-
-    // ── Model Directory (ORCH-0015) ──
-    pub directory: Arc<RwLock<ModelDirectory>>,
-
-    // ── Routing ──
-    pub leases: Arc<RwLock<LeaseManager>>,
-    pub queue_depths: Arc<RwLock<HashMap<String, Arc<AtomicU32>>>>,
-
-    // ── Configuration ──
+    // ── Rarely mutated (stays RwLock — user-action speed) ──
     pub config: Arc<RwLock<OrchestratorConfig>>,
-
-    // ── Metrics ──
-    pub metrics: Arc<RwLock<MetricsEngine>>,
-
-    // ── Demand Ledger (ORCH-0009) ──
-    pub demand_ledger: Arc<RwLock<DemandLedger>>,
-
-    // ── Events ──
-    pub dashboard_tx: broadcast::Sender<DashboardEvent>,
-
-    // ── Jobs ──
-    pub jobs: Arc<RwLock<VecDeque<OrchestratorJob>>>,
-
-    // ── Metric Events ──
-    pub metrics_tx: mpsc::UnboundedSender<MetricEvent>,
-
-    // ── Placement ──
-    pub placement: Arc<RwLock<PlacementPlan>>,
-
-    // ── Advisor ──
-    pub advisor: Arc<RwLock<TopologyAdvice>>,
-
-    // ── Recommendations (ORCH-0011) ──
-    pub recommended_models: Arc<RwLock<HashMap<String, String>>>,
-
-    // ── Skills (ORCH-0018) ──
-    pub skill_registry: Arc<RwLock<SkillRegistry>>,
-    pub workflow_jobs: Arc<RwLock<HashMap<String, WorkflowJob>>>,
-
-    // ── Fitness ──
+    pub cloud_store: Arc<RwLock<CloudProviderStore>>,
+    pub tended_stone: Arc<RwLock<Option<TendedStone>>>,
     pub benchmark_run: Arc<RwLock<BenchmarkRun>>,
     pub benchmark_cancel: Arc<RwLock<Option<CancellationToken>>>,
 
+    // ── Channels (already lock-free) ──
+    pub dashboard_tx: broadcast::Sender<DashboardEvent>,
+    pub metrics_tx: mpsc::UnboundedSender<MetricEvent>,
+
     // ── Lifecycle ──
     pub shutdown: CancellationToken,
-    pub start_time: Instant,
-    pub data_dir: String,
+
+    // ── Legacy fields (kept during migration, will be removed) ──
+    // These are the old RwLock fields. Call sites that still reference them
+    // will be migrated incrementally. The domains are the source of truth.
+    pub instances: Arc<RwLock<HashMap<String, ServiceInstance>>>,
+    pub tiers: Arc<RwLock<Vec<Tier>>>,
+    pub queue_depths: Arc<RwLock<HashMap<String, Arc<AtomicU32>>>>,
+    pub directory_legacy: Arc<RwLock<ModelDirectory>>,
+    pub recommended_models: Arc<RwLock<HashMap<String, String>>>,
+    pub skill_registry: Arc<RwLock<crate::domain::skill::SkillRegistry>>,
+    pub workflow_jobs: Arc<RwLock<HashMap<String, WorkflowJob>>>,
+    pub metrics: Arc<RwLock<crate::domain::metrics::MetricsEngine>>,
+    pub demand_ledger: Arc<RwLock<crate::domain::demand::DemandLedger>>,
+    pub jobs: Arc<RwLock<std::collections::VecDeque<OrchestratorJob>>>,
+    pub leases: Arc<RwLock<crate::domain::lease::LeaseManager>>,
 }
 
 impl AppState {
@@ -110,55 +92,97 @@ impl AppState {
     ) -> Self {
         let (dashboard_tx, _) =
             broadcast::channel(garden_common::constants::channels::SSE_DASHBOARD);
+
         let metrics_enabled = config.features.metrics_enabled;
-        let mut engine = MetricsEngine::new();
-        engine.enabled = metrics_enabled;
+
+        // Create watch channels for each domain
+        let (reg_tx, _) = watch::channel(Arc::new(RegistrySnapshot::empty()));
+        let (dir_tx, _) = watch::channel(Arc::new(DirectorySnapshot::empty()));
+        let (intel_tx, _) = watch::channel(Arc::new(IntelligenceSnapshot::empty()));
+        let (obs_tx, _) = watch::channel(Arc::new(ObservabilitySnapshot::empty()));
+        let (skills_tx, _) = watch::channel(Arc::new(SkillsSnapshot::empty()));
+
+        // Build domains
+        let registry = Arc::new(RegistryDomain::new(reg_tx));
+        let directory = Arc::new(DirectoryDomain::new(dir_tx));
+
+        let reg_rx = registry.subscribe();
+        let dir_rx = directory.subscribe();
+        let intelligence = Arc::new(IntelligenceDomain::new(intel_tx, reg_rx, dir_rx));
+
+        let observability = Arc::new(ObservabilityDomain::new(obs_tx, metrics_enabled));
+        let skills = Arc::new(SkillsDomain::new(skills_tx));
+
+        // Legacy fields — kept during migration
+        let mut legacy_metrics = crate::domain::metrics::MetricsEngine::new();
+        legacy_metrics.enabled = metrics_enabled;
 
         Self {
+            // Domains
+            registry,
+            directory,
+            intelligence,
+            observability,
+            skills,
+
+            // Immutable
+            providers: Arc::new(providers),
+            ollama_client,
             koi_endpoint,
             explicit_stone,
             dashboard_port,
-            tended_stone: Arc::new(RwLock::new(None)),
-            providers: Arc::new(providers),
-            ollama_client,
-            cloud_store: Arc::new(RwLock::new(cloud_store)),
-            instances: Arc::new(RwLock::new(HashMap::new())),
-            tiers: Arc::new(RwLock::new(Vec::new())),
-            directory: Arc::new(RwLock::new(ModelDirectory::new())),
-            leases: Arc::new(RwLock::new(LeaseManager::new())),
-            queue_depths: Arc::new(RwLock::new(HashMap::new())),
+            data_dir,
+            start_time: Instant::now(),
+
+            // Rarely mutated
             config: Arc::new(RwLock::new(config)),
-            metrics: Arc::new(RwLock::new(engine)),
-            demand_ledger: Arc::new(RwLock::new(DemandLedger::new())),
-            dashboard_tx,
-            jobs: Arc::new(RwLock::new(VecDeque::with_capacity(20))),
-            metrics_tx,
-            placement: Arc::new(RwLock::new(PlacementPlan::default())),
-            advisor: Arc::new(RwLock::new(TopologyAdvice::empty())),
-            recommended_models: Arc::new(RwLock::new(HashMap::new())),
-            skill_registry: Arc::new(RwLock::new(SkillRegistry::new())),
-            workflow_jobs: Arc::new(RwLock::new(HashMap::new())),
+            cloud_store: Arc::new(RwLock::new(cloud_store)),
+            tended_stone: Arc::new(RwLock::new(None)),
             benchmark_run: Arc::new(RwLock::new(BenchmarkRun::idle())),
             benchmark_cancel: Arc::new(RwLock::new(None)),
+
+            // Channels
+            dashboard_tx,
+            metrics_tx,
+
+            // Lifecycle
             shutdown,
-            start_time: Instant::now(),
-            data_dir,
+
+            // Legacy (migration shims — will be removed)
+            instances: Arc::new(RwLock::new(HashMap::new())),
+            tiers: Arc::new(RwLock::new(Vec::new())),
+            queue_depths: Arc::new(RwLock::new(HashMap::new())),
+            directory_legacy: Arc::new(RwLock::new(ModelDirectory::new())),
+            recommended_models: Arc::new(RwLock::new(HashMap::new())),
+            skill_registry: Arc::new(RwLock::new(crate::domain::skill::SkillRegistry::new())),
+            workflow_jobs: Arc::new(RwLock::new(HashMap::new())),
+            metrics: Arc::new(RwLock::new(legacy_metrics)),
+            demand_ledger: Arc::new(RwLock::new(crate::domain::demand::DemandLedger::new())),
+            jobs: Arc::new(RwLock::new(std::collections::VecDeque::with_capacity(20))),
+            leases: Arc::new(RwLock::new(crate::domain::lease::LeaseManager::new())),
         }
     }
 
-    // ── Instance Management ──────────────────────────────────────
+    // ════════════════════════════════════════════════════════════════
+    // Delegation methods — call both legacy RwLock AND new domain.
+    // These ensure both paths stay in sync during incremental migration.
+    // Once all call sites use domains directly, these will be removed.
+    // ════════════════════════════════════════════════════════════════
 
-    /// Register or update a service instance. Recomputes tiers afterward.
-    ///
-    /// If an existing instance for the same stone (matched by `stone.id` or
-    /// `stone.name`) is registered under a different endpoint — e.g. after a
-    /// DHCP lease change — the stale entry is evicted first.
-    pub async fn upsert_instance(&self, mut instance: ServiceInstance) {
+    // ── Instance Management (delegates to Registry domain) ──────
+
+    pub async fn upsert_instance(&self, instance: ServiceInstance) {
         let endpoint = instance.endpoint.clone();
         let stone_name = instance.stone.name.clone();
         let stone_id = instance.stone.id.clone();
+        let kind = instance.kind;
 
-        // Ensure queue-depth counter exists
+        // Write to domain
+        let config = self.config.read().await;
+        self.registry.upsert_instance(instance.clone(), &config).await;
+        drop(config);
+
+        // Write to legacy
         {
             let mut depths = self.queue_depths.write().await;
             depths
@@ -166,15 +190,12 @@ impl AppState {
                 .or_insert_with(|| Arc::new(AtomicU32::new(0)));
         }
 
-        // Evict stale instance for the same stone AND same offering kind
-        // at a different endpoint (e.g. DHCP lease change).
-        // Different offerings on the same stone coexist (different ports).
         let stale_endpoint = {
             let reg = self.instances.read().await;
             reg.iter()
                 .find(|(ep, existing)| {
                     *ep != &endpoint
-                        && existing.kind == instance.kind
+                        && existing.kind == kind
                         && (existing.stone.name == stone_name
                             || (!stone_id.is_empty()
                                 && !existing.stone.id.is_empty()
@@ -183,36 +204,18 @@ impl AppState {
                 .map(|(ep, _)| ep.clone())
         };
         if let Some(ref stale_ep) = stale_endpoint {
-            tracing::info!(
-                stone = %stone_name,
-                old_endpoint = %stale_ep,
-                new_endpoint = %endpoint,
-                "evicting stale instance (IP changed)"
-            );
             let mut depths = self.queue_depths.write().await;
             depths.remove(stale_ep);
         }
 
         {
             let mut reg = self.instances.write().await;
-
-            // Preserve known HW data when the incoming instance has zeroes.
-            let donor = stale_endpoint
-                .as_ref()
-                .and_then(|ep| reg.remove(ep))
-                .or_else(|| reg.get(&endpoint).cloned());
-
-            if let Some(existing) = donor {
-                if instance.vram.total_bytes == 0 && existing.vram.total_bytes > 0 {
-                    instance.vram.total_bytes = existing.vram.total_bytes;
-                    instance.vram.budget_bytes = existing.vram.budget_bytes;
-                }
-                if instance.gpu.name.is_none() && existing.gpu.name.is_some() {
-                    instance.gpu.name = existing.gpu.name;
-                }
+            if let Some(stale_ep) = &stale_endpoint {
+                reg.remove(stale_ep);
             }
-
-            reg.insert(endpoint.clone(), instance);
+            // Use the domain snapshot as source of truth for the legacy map
+            let snap = self.registry.snapshot();
+            *reg = (*snap.instances).clone();
         }
 
         self.recompute_tiers().await;
@@ -220,8 +223,9 @@ impl AppState {
         self.emit_event("registry.updated", "{}").await;
     }
 
-    /// Remove an instance from the registry.
     pub async fn remove_instance(&self, endpoint: &str) {
+        self.registry.remove_instance(endpoint).await;
+
         {
             let mut reg = self.instances.write().await;
             reg.remove(endpoint);
@@ -231,90 +235,92 @@ impl AppState {
         self.emit_event("registry.updated", "{}").await;
     }
 
-    /// Mark instance healthy/unhealthy.
     pub async fn set_instance_health(&self, endpoint: &str, health: InstanceHealth) {
-        let mut changed = false;
+        let changed = self.registry.set_instance_health(endpoint, health.clone()).await;
+
         {
             let mut reg = self.instances.write().await;
             if let Some(inst) = reg.get_mut(endpoint) {
-                if inst.health != health {
-                    inst.health = health;
-                    changed = true;
-                }
+                inst.health = health;
             }
         }
+
         if changed {
             self.recompute_tiers().await;
-        }
-    }
-
-    /// Update instance model inventory and load state.
-    pub async fn update_instance_models(
-        &self,
-        endpoint: &str,
-        models_available: Vec<String>,
-        models_loaded: Vec<LoadedModel>,
-    ) {
-        {
-            let mut reg = self.instances.write().await;
-            if let Some(inst) = reg.get_mut(endpoint) {
-                inst.models_available = models_available;
-                inst.models_loaded = models_loaded;
-            }
-        }
-        self.refresh_recommendations().await;
-    }
-
-    /// Merge hardware data into an existing instance (partial update).
-    pub async fn update_instance_hw(
-        &self,
-        endpoint: &str,
-        vram_total_bytes: u64,
-        gpu_name: Option<String>,
-    ) {
-        let stone_name = {
-            let mut reg = self.instances.write().await;
-            if let Some(inst) = reg.get_mut(endpoint) {
-                let mut changed = false;
-                if vram_total_bytes > 0 && inst.vram.total_bytes != vram_total_bytes {
-                    inst.vram.total_bytes = vram_total_bytes;
-                    changed = true;
-                }
-                if let Some(ref name) = gpu_name {
-                    if inst.gpu.name.as_deref() != Some(name) {
-                        inst.gpu.name = Some(name.clone());
-                        changed = true;
-                    }
-                }
-                if changed {
-                    Some(inst.stone.name.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
-        if let Some(stone_name) = stone_name {
-            let budget = self.vram_budget_for(&stone_name, vram_total_bytes).await;
-            {
-                let mut reg = self.instances.write().await;
-                if let Some(inst) = reg.get_mut(endpoint) {
-                    inst.vram.budget_bytes = budget;
-                }
-            }
-            self.recompute_tiers().await;
+            self.refresh_recommendations().await;
             self.emit_event("registry.updated", "{}").await;
         }
     }
 
-    // ── Model Registry ───────────────────────────────────────────
+    pub async fn update_instance_models(
+        &self,
+        endpoint: &str,
+        available: Vec<String>,
+        loaded: Vec<LoadedModel>,
+    ) {
+        self.registry
+            .update_instance_models(endpoint, available.clone(), loaded.clone())
+            .await;
 
-    // ── Model Directory (ORCH-0015) ─────────────────────────────
+        {
+            let mut reg = self.instances.write().await;
+            if let Some(inst) = reg.get_mut(endpoint) {
+                inst.models_available = available;
+                inst.models_loaded = loaded;
+            }
+        }
+        self.refresh_recommendations().await;
+        self.emit_event("registry.updated", "{}").await;
+    }
 
-    /// Contribute a model to the directory. Called by discovery and cloud_sync
-    /// after enumerating models from an offering.
+    pub async fn update_instance_hw(
+        &self,
+        endpoint: &str,
+        vram_total: u64,
+        gpu_name: Option<String>,
+    ) {
+        let config = self.config.read().await;
+        self.registry
+            .update_instance_hw(endpoint, vram_total, gpu_name.clone(), &config)
+            .await;
+        drop(config);
+
+        {
+            let mut reg = self.instances.write().await;
+            if let Some(inst) = reg.get_mut(endpoint) {
+                if vram_total > 0 {
+                    inst.vram.total_bytes = vram_total;
+                    let config = self.config.blocking_read();
+                    inst.vram.budget_bytes = config
+                        .stones
+                        .get(&inst.stone.name)
+                        .and_then(|s| s.vram_budget_mb)
+                        .map(|mb| mb * 1_048_576)
+                        .unwrap_or(vram_total);
+                }
+                if gpu_name.is_some() {
+                    inst.gpu.name = gpu_name;
+                }
+            }
+        }
+        self.recompute_tiers().await;
+        self.emit_event("registry.updated", "{}").await;
+    }
+
+    async fn recompute_tiers(&self) {
+        let instances = self.instances.read().await;
+        let new_tiers = crate::domain::tiering::compute_tiers(&instances);
+        let mut tiers = self.tiers.write().await;
+        *tiers = new_tiers;
+    }
+
+    pub async fn queue_counter(&self, endpoint: &str) -> Arc<AtomicU32> {
+        // Prefer domain, fall back to legacy
+        self.registry.queue_counter(endpoint).await
+    }
+
+    // ── Directory (delegates to Directory domain) ───────────────
+
     pub async fn directory_upsert(
         &self,
         fqn: ModelFqn,
@@ -322,43 +328,29 @@ impl AppState {
         specializations: Vec<String>,
         metadata: ModelMetadata,
     ) {
+        self.directory
+            .upsert(fqn.clone(), capabilities.clone(), specializations.clone(), metadata.clone())
+            .await;
+
+        // Legacy
         {
-            let mut dir = self.directory.write().await;
+            let mut dir = self.directory_legacy.write().await;
             dir.upsert(fqn, capabilities, specializations, metadata);
         }
         self.refresh_recommendations().await;
     }
 
-    /// Remove all models from a provider (source + locator) from the directory.
-    /// Called when an instance goes offline.
     pub async fn directory_remove_provider(&self, source: &str, locator: &str) {
+        self.directory.remove_provider(source, locator).await;
+
         {
-            let mut dir = self.directory.write().await;
+            let mut dir = self.directory_legacy.write().await;
             dir.remove_provider(source, locator);
         }
         self.refresh_recommendations().await;
     }
 
-    // ── Tier Recomputation ───────────────────────────────────────
-
-    async fn recompute_tiers(&self) {
-        let instances = self.instances.read().await;
-        let new_tiers = tiering::compute_tiers(&instances);
-        let mut tiers = self.tiers.write().await;
-        *tiers = new_tiers;
-    }
-
-    // ── Queue Depth ──────────────────────────────────────────────
-
-    pub async fn queue_counter(&self, endpoint: &str) -> Arc<AtomicU32> {
-        let depths = self.queue_depths.read().await;
-        depths
-            .get(endpoint)
-            .cloned()
-            .unwrap_or_else(|| Arc::new(AtomicU32::new(0)))
-    }
-
-    // ── Events ───────────────────────────────────────────────────
+    // ── Events ──────────────────────────────────────────────────
 
     pub async fn emit_event(&self, event_type: &str, data: &str) {
         let _ = self.dashboard_tx.send(DashboardEvent {
@@ -367,27 +359,18 @@ impl AppState {
         });
     }
 
-    // ── Jobs ─────────────────────────────────────────────────────
-
-    const MAX_JOBS: usize = 20;
+    // ── Jobs (delegates to Observability domain) ────────────────
 
     pub async fn create_job(&self, kind: JobKind) -> String {
-        let id = format!("job-{}", chrono::Utc::now().timestamp_millis());
-        let job = OrchestratorJob {
-            id: id.clone(),
-            kind: kind.clone(),
-            status: JobStatus::Queued,
-            progress: None,
-            started_at: chrono::Utc::now(),
-            completed_at: None,
-            error: None,
-        };
+        let id = self.observability.create_job(kind.clone()).await;
 
-        let mut jobs = self.jobs.write().await;
-        if jobs.len() >= Self::MAX_JOBS {
-            jobs.pop_front();
+        // Legacy
+        {
+            let mut jobs = self.jobs.write().await;
+            // Sync from domain snapshot
+            let snap = self.observability.snapshot();
+            *jobs = snap.jobs.iter().cloned().collect();
         }
-        jobs.push_back(job);
 
         self.emit_event(
             "job.created",
@@ -399,34 +382,33 @@ impl AppState {
     }
 
     pub async fn update_job(&self, id: &str, status: JobStatus, progress: Option<String>) {
+        self.observability.update_job(id, status, progress).await;
+
         let mut jobs = self.jobs.write().await;
-        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
-            job.status = status;
-            if progress.is_some() {
-                job.progress = progress;
-            }
-        }
+        let snap = self.observability.snapshot();
+        *jobs = snap.jobs.iter().cloned().collect();
     }
 
     pub async fn complete_job(&self, id: &str) {
-        let mut jobs = self.jobs.write().await;
-        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
-            job.status = JobStatus::Completed;
-            job.completed_at = Some(chrono::Utc::now());
+        self.observability.complete_job(id).await;
+
+        {
+            let mut jobs = self.jobs.write().await;
+            let snap = self.observability.snapshot();
+            *jobs = snap.jobs.iter().cloned().collect();
         }
-        drop(jobs);
         self.emit_event("job.completed", &serde_json::json!({"id": id}).to_string())
             .await;
     }
 
     pub async fn fail_job(&self, id: &str, error: &str) {
-        let mut jobs = self.jobs.write().await;
-        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
-            job.status = JobStatus::Failed;
-            job.completed_at = Some(chrono::Utc::now());
-            job.error = Some(error.to_string());
+        self.observability.fail_job(id, error).await;
+
+        {
+            let mut jobs = self.jobs.write().await;
+            let snap = self.observability.snapshot();
+            *jobs = snap.jobs.iter().cloned().collect();
         }
-        drop(jobs);
         self.emit_event(
             "job.failed",
             &serde_json::json!({"id": id, "error": error}).to_string(),
@@ -434,7 +416,7 @@ impl AppState {
         .await;
     }
 
-    // ── Config ───────────────────────────────────────────────────
+    // ── Config ──────────────────────────────────────────────────
 
     pub async fn vram_budget_for(&self, stone_name: &str, vram_total: u64) -> u64 {
         let config = self.config.read().await;
@@ -446,37 +428,24 @@ impl AppState {
             .unwrap_or(vram_total)
     }
 
-    // ── Recommendations ────────────────────────────────────────
-
-    /// All user-facing recommendation capabilities (extended for multi-offering).
-    const ALL_CAPABILITIES: &[&str] = &[
-        "quick",
-        "chat",
-        "synthesis",
-        "vision",
-        "ocr",
-        "tools",
-        "thinking",
-        "embedding",
-        "image",
-        "video",
-        "transcribe",
-        "speech",
-        "music",
-        "rerank",
-        "translate",
-    ];
+    // ── Recommendations (legacy — delegates to Intelligence) ────
 
     pub async fn refresh_recommendations(&self) {
-        let models = self.directory.read().await.clone();
+        let models = self.directory_legacy.read().await.clone();
         let instances = self.instances.read().await.clone();
         let gpu_matrix = self.benchmark_run.read().await.gpu_matrix.clone();
         let pins = self.config.read().await.features.pins.clone();
 
-        let mut cache = HashMap::with_capacity(Self::ALL_CAPABILITIES.len());
-        for &cap in Self::ALL_CAPABILITIES {
+        let mut cache = HashMap::with_capacity(15);
+        for &cap in &[
+            "quick", "chat", "synthesis", "vision", "ocr", "tools", "thinking",
+            "embedding", "image", "video", "transcribe", "speech", "music",
+            "rerank", "translate",
+        ] {
             let pin = pins.get(cap).map(|s| s.as_str());
-            let resp = recommendation::recommend(cap, &models, &instances, &gpu_matrix, pin);
+            let resp = crate::domain::recommendation::recommend(
+                cap, &models, &instances, &gpu_matrix, pin,
+            );
             if let Some(selected) = resp.selected {
                 cache.insert(cap.to_string(), selected);
             }
@@ -485,7 +454,7 @@ impl AppState {
         *self.recommended_models.write().await = cache;
     }
 
-    // ── Tending ──────────────────────────────────────────────────
+    // ── Tending ─────────────────────────────────────────────────
 
     pub async fn tend_to(&self, stone: TendedStone) {
         tracing::info!(

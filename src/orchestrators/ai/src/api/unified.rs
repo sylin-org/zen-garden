@@ -346,7 +346,7 @@ pub async fn transcriptions(
 
 /// `GET /v1/models` — merged model list from the directory.
 pub async fn models(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let dir = state.directory.read().await;
+    let dir = state.directory_legacy.read().await;
 
     let data: Vec<serde_json::Value> = dir
         .entries()
@@ -397,7 +397,7 @@ pub async fn model_form(
 
     // Find the model in the directory to determine its provider
     let source = {
-        let dir = state.directory.read().await;
+        let dir = state.directory_legacy.read().await;
         let entries = dir.find_by_model_name(&model_name);
         entries
             .first()
@@ -455,7 +455,7 @@ async fn route_model(
     capability: Option<Capability>,
 ) -> Result<RoutingDecision, Response> {
     let mut instances = state.instances.read().await.clone();
-    let directory = state.directory.read().await.clone();
+    let directory = state.directory_legacy.read().await.clone();
     let tiers = state.tiers.read().await.clone();
     let gpu_matrix = state.benchmark_run.read().await.gpu_matrix.clone();
 

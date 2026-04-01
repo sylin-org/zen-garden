@@ -427,7 +427,7 @@ pub async fn delete_model(
             state_bg.complete_job(&job_id_bg).await;
             // Remove this model's FQN for each endpoint that had it
             {
-                let mut dir = state_bg.directory.write().await;
+                let mut dir = state_bg.directory_legacy.write().await;
                 for endpoint in &endpoints {
                     let fqn = ModelFqn::new(kind.as_str(), endpoint, &model_bg, None);
                     dir.remove_fqn(&fqn);

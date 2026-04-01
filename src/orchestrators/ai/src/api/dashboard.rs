@@ -134,7 +134,7 @@ pub struct ModelPlacement {
 /// `GET /api/status` — full snapshot for page load.
 pub async fn get_status(State(state): State<AppState>) -> Json<DashboardStatus> {
     let instances = state.instances.read().await;
-    let directory = state.directory.read().await;
+    let directory = state.directory_legacy.read().await;
     let config = state.config.read().await;
     let jobs = state.jobs.read().await;
     let queue_depths = state.queue_depths.read().await;
@@ -640,7 +640,7 @@ fn build_directory_entries(
 
 /// `GET /api/directory` — model directory snapshot.
 pub async fn get_directory(State(state): State<AppState>) -> Json<Vec<DirectoryEntry>> {
-    let dir = state.directory.read().await;
+    let dir = state.directory_legacy.read().await;
     let instances = state.instances.read().await;
     Json(build_directory_entries(&dir, &instances))
 }

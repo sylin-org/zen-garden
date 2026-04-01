@@ -8,6 +8,7 @@
 //! Provider files import from there for protocol knowledge.
 
 pub mod anthropic;
+pub mod comfyui;
 pub mod google;
 pub mod infinity;
 pub mod libretranslate;

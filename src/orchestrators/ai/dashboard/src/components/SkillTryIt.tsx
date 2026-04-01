@@ -4,6 +4,7 @@ import { MermaidDiagram } from "./MermaidDiagram";
 
 interface SkillTryItProps {
   skillName: string;
+  disabled?: boolean;
 }
 
 type JobStatus = "idle" | "uploading" | "running" | "completed" | "failed";
@@ -15,7 +16,7 @@ interface JobResult {
   usage?: { duration_ms: number };
 }
 
-export function SkillTryIt({ skillName }: SkillTryItProps) {
+export function SkillTryIt({ skillName, disabled = false }: SkillTryItProps) {
   const [schema, setSchema] = useState<SkillPresentation | null>(null);
   const [schemaLoading, setSchemaLoading] = useState(true);
   const [imageData, setImageData] = useState<string | null>(null);
@@ -262,21 +263,28 @@ export function SkillTryIt({ skillName }: SkillTryItProps) {
       )}
 
       {/* Submit */}
-      <button
-        onClick={handleSubmit}
-        disabled={!imageData || jobStatus === "uploading" || jobStatus === "running"}
-        className={`px-4 py-1.5 rounded text-xs font-medium transition-colors ${
-          !imageData || jobStatus === "uploading" || jobStatus === "running"
-            ? "bg-gray-700 text-gray-500 cursor-not-allowed"
-            : "bg-blue-600 text-white hover:bg-blue-500"
-        }`}
-      >
-        {jobStatus === "uploading"
-          ? "Uploading..."
-          : jobStatus === "running"
-            ? "Processing..."
-            : "Upscale"}
-      </button>
+      {(() => {
+        const busy = jobStatus === "uploading" || jobStatus === "running";
+        const canSubmit = !disabled && !!imageData && !busy;
+        const label = busy
+          ? jobStatus === "uploading" ? "Uploading..." : "Processing..."
+          : disabled
+            ? "Waiting for instance..."
+            : schema?.display_name ?? "Run";
+        return (
+          <button
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className={`px-4 py-1.5 rounded text-xs font-medium transition-colors ${
+              canSubmit
+                ? "bg-blue-600 text-white hover:bg-blue-500"
+                : "bg-gray-700 text-gray-500 cursor-not-allowed"
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })()}
 
       {/* Error */}
       {errorMsg && (

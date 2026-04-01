@@ -9,9 +9,11 @@
 //! Path traversal is validated — `..` segments are rejected.
 
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
+use futures_util::StreamExt;
+use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
 
@@ -21,11 +23,12 @@ type VolumePath = (String, String, String);
 /// `PUT /api/v1/stone/offerings/{fqn}/volumes/{volume}/*path`
 ///
 /// Write a file to the offering's volume. Creates intermediate directories.
-/// Accepts raw binary body.
+/// Streams the request body to a temp file, then atomically renames.
+/// Never buffers the full body in memory.
 pub async fn put_volume_file(
     State(_state): State<AppState>,
     Path((fqn, volume, file_path)): Path<VolumePath>,
-    body: axum::body::Bytes,
+    request: Request,
 ) -> Response {
     if has_path_traversal(&file_path) {
         return bad_request_response("PATH_TRAVERSAL", "Path contains '..' segments");
@@ -36,24 +39,60 @@ pub async fn put_volume_file(
         Err(e) => return e.into_response(),
     };
 
+    let dest = std::path::Path::new(&host_path);
+
     // Create parent directories
-    if let Some(parent) = std::path::Path::new(&host_path).parent() {
+    if let Some(parent) = dest.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
             return internal_response(&format!("Failed to create directory: {e}"));
         }
     }
 
-    let existed = tokio::fs::try_exists(&host_path).await.unwrap_or(false);
+    let existed = tokio::fs::try_exists(&dest).await.unwrap_or(false);
 
-    if let Err(e) = tokio::fs::write(&host_path, &body).await {
-        return internal_response(&format!("Failed to write file: {e}"));
+    // Stream body to a temp file — never buffer in memory
+    let tmp_path = format!("{host_path}.tmp");
+    let mut file = match tokio::fs::File::create(&tmp_path).await {
+        Ok(f) => f,
+        Err(e) => return internal_response(&format!("Failed to create temp file: {e}")),
+    };
+
+    let mut stream = request.into_body().into_data_stream();
+    let mut written: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                if let Err(e) = file.write_all(&bytes).await {
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    return internal_response(&format!("Failed to write chunk: {e}"));
+                }
+                written += bytes.len() as u64;
+            }
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                return internal_response(&format!("Failed to read request body: {e}"));
+            }
+        }
+    }
+
+    if let Err(e) = file.flush().await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return internal_response(&format!("Failed to flush file: {e}"));
+    }
+    drop(file);
+
+    // Atomic rename
+    if let Err(e) = tokio::fs::rename(&tmp_path, &dest).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return internal_response(&format!("Failed to rename temp file: {e}"));
     }
 
     tracing::info!(
         fqn = %fqn,
         volume = %volume,
         path = %file_path,
-        bytes = body.len(),
+        bytes = written,
         "wrote file to offering volume"
     );
 
@@ -66,7 +105,8 @@ pub async fn put_volume_file(
 
 /// `GET /api/v1/stone/offerings/{fqn}/volumes/{volume}/*path`
 ///
-/// Read a file from the offering's volume. Returns binary with Content-Type.
+/// Read a file from the offering's volume. Streams from disk — never
+/// buffers the full file in memory.
 pub async fn get_volume_file(
     State(_state): State<AppState>,
     Path((fqn, volume, file_path)): Path<VolumePath>,
@@ -80,25 +120,32 @@ pub async fn get_volume_file(
         Err(e) => return e.into_response(),
     };
 
-    match tokio::fs::read(&host_path).await {
-        Ok(bytes) => {
-            let content_type = mime_from_extension(&file_path);
-            let len = bytes.len();
-
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type)
-                .header(header::CONTENT_LENGTH, len)
-                .body(Body::from(bytes))
-                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-        }
+    let meta = match tokio::fs::metadata(&host_path).await {
+        Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            not_found_response(&format!("File not found: {file_path}"))
+            return not_found_response(&format!("File not found: {file_path}"));
         }
         Err(e) => {
-            internal_response(&format!("Failed to read file: {e}"))
+            return internal_response(&format!("Failed to stat file: {e}"));
         }
-    }
+    };
+
+    let file = match tokio::fs::File::open(&host_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            return internal_response(&format!("Failed to open file: {e}"));
+        }
+    };
+
+    let content_type = mime_from_extension(&file_path);
+    let stream = tokio_util::io::ReaderStream::new(file);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, meta.len())
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 /// `HEAD /api/v1/stone/offerings/{fqn}/volumes/{volume}/*path`

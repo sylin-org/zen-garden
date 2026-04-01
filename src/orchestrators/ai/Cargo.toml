@@ -47,7 +47,7 @@ chrono = "0.4"
 clap = { version = "4.4", features = ["derive", "env"] }
 
 # Shutdown coordination
-tokio-util = { version = "0.7", features = ["rt"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
 
 # Pin/BoxFuture for object-safe async trait
 pin-project-lite = "0.2"

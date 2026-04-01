@@ -683,11 +683,22 @@ function DetailRow({
 
 // ── Skill Block ──────────────────────────────────────────────────
 
+function skillState(skill: SkillInfo): "available" | "preparing" | "unavailable" {
+  if (skill.available) return "available";
+  if (skill.instances && skill.instances.length > 0) return "preparing";
+  return "unavailable";
+}
+
+const SKILL_BADGE_STYLES = {
+  available:   { bg: "bg-emerald-400/10 text-emerald-400 border-emerald-400/30", label: "Available" },
+  preparing:   { bg: "bg-amber-400/10 text-amber-400 border-amber-400/30", label: "Preparing" },
+  unavailable: { bg: "bg-gray-600/10 text-gray-500 border-gray-600/30", label: "Not Available" },
+} as const;
+
 function SkillBlock({ skill }: { skill: SkillInfo }) {
   const [expanded, setExpanded] = useState(false);
-  const availStyle = skill.available
-    ? { bg: "bg-emerald-400/10 text-emerald-400 border-emerald-400/30", label: "Available" }
-    : { bg: "bg-gray-600/10 text-gray-500 border-gray-600/30", label: "Not Available" };
+  const state = skillState(skill);
+  const badge = SKILL_BADGE_STYLES[state];
 
   return (
     <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg overflow-hidden">
@@ -696,7 +707,7 @@ function SkillBlock({ skill }: { skill: SkillInfo }) {
         onClick={() => setExpanded((e) => !e)}
       >
         <div className="flex items-center gap-3">
-          <span className="text-amber-400 text-sm">⚡</span>
+          <span className="text-amber-400 text-sm">&#9889;</span>
           <div>
             <span className="text-sm font-medium text-gray-100">
               {skill.display_name}
@@ -724,23 +735,22 @@ function SkillBlock({ skill }: { skill: SkillInfo }) {
             </div>
           )}
           <span
-            className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${availStyle.bg}`}
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${badge.bg}`}
           >
-            {availStyle.label}
+            {badge.label}
           </span>
-          <span className="text-gray-600 text-xs">{expanded ? "▲" : "▼"}</span>
+          <span className="text-gray-600 text-xs">{expanded ? "\u25B2" : "\u25BC"}</span>
         </div>
       </button>
 
       {expanded && (
         <div className="px-4 pb-4 border-t border-[#2e303a]">
-          {skill.available ? (
-            <div className="pt-3">
-              <SkillTryIt skillName={skill.name} />
-            </div>
-          ) : (
-            <div className="pt-3 text-xs text-gray-500">
-              Setting up — downloading and deploying required models...
+          <div className="pt-3">
+            <SkillTryIt skillName={skill.name} disabled={!skill.available} />
+          </div>
+          {state === "preparing" && (
+            <div className="mt-2 text-[11px] text-amber-400/70">
+              Preparing — downloading and deploying required models...
             </div>
           )}
         </div>

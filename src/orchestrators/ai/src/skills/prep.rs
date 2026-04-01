@@ -173,6 +173,8 @@ pub async fn model_exists_on_instance(
 }
 
 /// Push a cached model file to a remote instance via Moss PUT.
+///
+/// Streams from disk — never loads the full file into memory.
 pub async fn push_model_to_instance(
     http: &Client,
     moss_endpoint: &str,
@@ -181,9 +183,10 @@ pub async fn push_model_to_instance(
     model_path: &str,
     local_path: &Path,
 ) -> Result<()> {
-    let bytes = tokio::fs::read(local_path)
+    let file_size = tokio::fs::metadata(local_path)
         .await
-        .with_context(|| format!("read cached model: {}", local_path.display()))?;
+        .with_context(|| format!("stat cached model: {}", local_path.display()))?
+        .len();
 
     let url = format!(
         "{moss_endpoint}/api/v1/stone/offerings/{fqn}/volumes/{volume}/{model_path}"
@@ -191,14 +194,23 @@ pub async fn push_model_to_instance(
 
     tracing::info!(
         url = %url,
-        bytes = bytes.len(),
-        "pushing model to instance"
+        bytes = file_size,
+        "streaming model to instance"
     );
 
+    let file = tokio::fs::File::open(local_path)
+        .await
+        .with_context(|| format!("open cached model: {}", local_path.display()))?;
+
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let body = reqwest::Body::wrap_stream(stream);
+
+    // No global timeout — large files need sustained throughput, not a wall clock.
+    // The underlying TCP will detect dead connections via keepalive.
     let resp = http
         .put(&url)
-        .body(bytes)
-        .timeout(std::time::Duration::from_secs(120))
+        .header(reqwest::header::CONTENT_LENGTH, file_size)
+        .body(body)
         .send()
         .await
         .with_context(|| format!("PUT model to: {url}"))?;
@@ -208,6 +220,12 @@ pub async fn push_model_to_instance(
         let text = resp.text().await.unwrap_or_default();
         anyhow::bail!("push model failed HTTP {status}: {text}");
     }
+
+    tracing::info!(
+        model_path = %model_path,
+        bytes = file_size,
+        "model pushed to instance"
+    );
 
     Ok(())
 }

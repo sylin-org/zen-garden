@@ -186,14 +186,6 @@ export interface SkillModelRef {
   description: string | null;
 }
 
-export interface SkillStoneStatus {
-  stone_name: string;
-  endpoint: string;
-  ready: boolean;
-  reason: string;
-  vram_mb: number;
-}
-
 export interface SkillInfo {
   name: string;
   display_name: string;
@@ -202,9 +194,17 @@ export interface SkillInfo {
   available: boolean;
   vram_mb: number;
   content_slots: SkillContentSlot[];
-  has_diagram: boolean;
+  diagram: string | null;
   required_models: SkillModelRef[];
-  instances: SkillStoneStatus[];
+  instances: SkillInstanceView[];
+}
+
+export interface SkillInstanceView {
+  stone_name: string;
+  endpoint: string;
+  ready: boolean;
+  reason: string;
+  vram_mb: number;
 }
 
 export interface SkillPresentation {

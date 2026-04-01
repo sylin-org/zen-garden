@@ -136,55 +136,11 @@ pub async fn get_job(
 
 // ── GET /v1/skills ─────────────────────────────────────────────
 
-/// List all registered skills.
+/// List all registered skills with computed availability.
 pub async fn list_skills(State(state): State<AppState>) -> Response {
-    // Snapshot data — zero locks
-    let skills_snap = state.skills.snapshot().clone();
-    let skill_list: Vec<_> = skills_snap.skills.iter().cloned().collect();
-
-    let reg_snap = state.registry.snapshot().clone();
-    let instance_snapshot: Vec<_> = reg_snap
-        .instances
-        .values()
-        .filter(|i| i.kind == crate::domain::types::OfferingKind::ComfyUi)
-        .map(|i| (i.stone.name.clone(), i.vram.total_bytes, i.health.is_routable()))
-        .collect();
-
-    // Build response without any locks held
-    let skills: Vec<_> = skill_list.iter().map(|s| {
-        let stones: Vec<_> = instance_snapshot.iter().map(|(stone_name, vram_bytes, routable)| {
-            let vram_mb = vram_bytes / 1_048_576;
-            let meets_vram = vram_mb == 0 || vram_mb >= s.definition.vram_mb;
-            let available = meets_vram && *routable;
-            serde_json::json!({
-                "stone": stone_name,
-                "available": available,
-                "reason": if !routable {
-                    "unhealthy"
-                } else if !meets_vram {
-                    "insufficient_vram"
-                } else {
-                    "ready"
-                },
-                "vram_mb": vram_mb,
-            })
-        }).collect();
-
-        serde_json::json!({
-            "name": s.definition.name,
-            "display_name": s.definition.display_name,
-            "capability": s.definition.capability,
-            "description": s.definition.description,
-            "available": s.available,
-            "vram_mb": s.definition.vram_mb,
-            "content_slots": s.definition.content_slots,
-            "has_diagram": s.definition.diagram.is_some(),
-            "required_models": s.definition.required_models,
-            "stones": stones,
-        })
-    }).collect();
-
-    (StatusCode::OK, Json(skills)).into_response()
+    let snap = state.skills.snapshot().clone();
+    // SkillView already contains definition + available + instances
+    (StatusCode::OK, Json(&*snap.skills)).into_response()
 }
 
 // ── GET /v1/skills/{skill}/form ────────────────────────────────

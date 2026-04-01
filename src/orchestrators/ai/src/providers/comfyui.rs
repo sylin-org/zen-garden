@@ -3,7 +3,8 @@
 //! Implements the `Provider` trait for ComfyUI instances:
 //! - Probe via `GET /system_stats` (version, device info, VRAM)
 //! - Enumerate via `GET /models/{type}` (installed model inventory)
-//! - Workflow execution via `POST /prompt` + WebSocket progress tracking
+//! - Skills via `skills::builtin` (dynamic from installed models)
+//! - Workflow execution via `POST /prompt` + polling
 //!
 //! ComfyUI API reference: `docs/reference/comfyui-api.md`
 
@@ -15,13 +16,14 @@ use crate::catalog::traits::{
     BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
 use crate::domain::skill::{
-    ContentSlot, ContentType, ModelRef, SkillDefinition, WorkflowJob,
-    WorkflowJobStatus, WorkflowRequest,
+    ContentType, SkillDefinition, WorkflowJob, WorkflowJobStatus, WorkflowRequest,
 };
 use crate::domain::types::{Capability, OfferingKind};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const ENUMERATE_TIMEOUT: Duration = Duration::from_secs(10);
+const WORKFLOW_TIMEOUT: Duration = Duration::from_secs(300);
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 const COMFYUI_CAPABILITIES: &[Capability] = &[Capability::Image];
 
@@ -83,7 +85,6 @@ impl Provider for ComfyUiProvider {
 
             let stats: SystemStats = resp.json().await.context("parse system_stats")?;
 
-            // Extract VRAM from first CUDA/GPU device
             let vram_free = stats
                 .devices
                 .iter()
@@ -113,7 +114,6 @@ impl Provider for ComfyUiProvider {
         let endpoint = ctx.endpoint.clone();
 
         Box::pin(async move {
-            // Query all model categories in parallel
             let (checkpoints, upscale_models, loras, vae) = tokio::join!(
                 list_models(&self.http, &endpoint, "checkpoints"),
                 list_models(&self.http, &endpoint, "upscale_models"),
@@ -126,12 +126,7 @@ impl Provider for ComfyUiProvider {
             let loras = loras.unwrap_or_default();
             let vae = vae.unwrap_or_default();
 
-            // Build a single ServiceModel representing this ComfyUI instance.
-            // Individual models are tracked in metadata — the instance itself
-            // is the routable unit, not individual checkpoint files.
-            let capabilities = vec![Capability::Image];
             let mut specializations = Vec::new();
-
             if !upscale_models.is_empty() {
                 specializations.push("upscale".to_string());
             }
@@ -139,15 +134,14 @@ impl Provider for ComfyUiProvider {
                 specializations.push("generate".to_string());
             }
 
-            // Compute total model inventory for metadata
             let model_count =
                 checkpoints.len() + upscale_models.len() + loras.len() + vae.len();
 
             Ok(vec![ServiceModel {
                 name: "comfyui".to_string(),
-                capabilities,
+                capabilities: vec![Capability::Image],
                 specializations,
-                vram_bytes: None, // VRAM is per-instance, reported in probe
+                vram_bytes: None,
                 metadata: serde_json::json!({
                     "provider": "comfyui",
                     "model_count": model_count,
@@ -168,17 +162,13 @@ impl Provider for ComfyUiProvider {
         Box::pin(async move {
             let mut skills = Vec::new();
 
-            // Upscale skill: available when upscale models are installed
             let upscale_models = list_models(&self.http, &endpoint, "upscale_models")
                 .await
                 .unwrap_or_default();
 
             if !upscale_models.is_empty() {
-                skills.push(build_upscale_skill(&upscale_models));
+                skills.push(crate::skills::builtin::image_upscale(&upscale_models));
             }
-
-            // Future: image.generate (when checkpoints present),
-            // image.img2img, image.inpaint, image.remove_bg, etc.
 
             Ok(skills)
         })
@@ -192,10 +182,12 @@ impl Provider for ComfyUiProvider {
         let endpoint = ctx.endpoint.clone();
 
         Box::pin(async move {
-            match req.skill.as_str() {
-                "image.upscale" => execute_upscale(&self.http, &endpoint, &req).await,
+            let workflow_template = match req.skill.as_str() {
+                "image.upscale" => crate::skills::builtin::image_upscale(&[]).implementation,
                 other => anyhow::bail!("unknown skill: {}", other),
-            }
+            };
+
+            execute_workflow(&self.http, &endpoint, &req, workflow_template).await
         })
     }
 
@@ -229,7 +221,6 @@ impl Provider for ComfyUiProvider {
 
 // ── ComfyUI API Types ──────────────────────────────────────────
 
-/// Response from `GET /system_stats`.
 #[derive(Debug, serde::Deserialize)]
 struct SystemStats {
     system: SystemInfo,
@@ -260,7 +251,11 @@ struct DeviceInfo {
 // ── Helpers ────────────────────────────────────────────────────
 
 /// Query `GET /models/{model_type}` and return the list of filenames.
-async fn list_models(http: &Client, endpoint: &str, model_type: &str) -> Result<Vec<String>> {
+pub(crate) async fn list_models(
+    http: &Client,
+    endpoint: &str,
+    model_type: &str,
+) -> Result<Vec<String>> {
     let resp = http
         .get(format!("{endpoint}/models/{model_type}"))
         .timeout(ENUMERATE_TIMEOUT)
@@ -281,118 +276,34 @@ async fn list_models(http: &Client, endpoint: &str, model_type: &str) -> Result<
         .with_context(|| format!("parse comfyui models/{model_type}"))
 }
 
-// ── Built-in Skills ────────────────────────────────────────────
-
-/// Build the `image.upscale` skill definition from installed models.
-fn build_upscale_skill(available_models: &[String]) -> SkillDefinition {
-    // Build enum of available models for the parameter schema
-    let model_enum: Vec<serde_json::Value> = available_models
-        .iter()
-        .map(|m| serde_json::Value::String(m.clone()))
-        .collect();
-
-    let default_model = available_models.first().cloned().unwrap_or_default();
-
-    SkillDefinition {
-        name: "image.upscale".into(),
-        capability: Capability::Image,
-        description: "Upscale an image using an AI upscaling model".into(),
-        content_slots: vec![ContentSlot {
-            role: "source".into(),
-            content_type: ContentType::Image,
-            required: true,
-        }],
-        parameter_schema: FormSchema {
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "upscale_model": {
-                        "type": "string",
-                        "title": "Upscale Model",
-                        "enum": model_enum,
-                        "default": default_model
-                    }
-                }
-            }),
-            ui_schema: serde_json::json!({
-                "upscale_model": { "ui:widget": "select" }
-            }),
-        },
-        diagram: Some(
-            "graph LR\n    A[Load Image] --> C[Upscale]\n    B[Load Model] --> C\n    C --> D[Save Image]".into()
-        ),
-        required_models: available_models
-            .iter()
-            .map(|m| ModelRef {
-                filename: m.clone(),
-                model_type: "upscale_models".into(),
-                description: None,
-            })
-            .collect(),
-        implementation: upscale_workflow_template(),
-    }
-}
-
-/// The ComfyUI workflow template for image upscaling.
-///
-/// Placeholders:
-/// - `PLACEHOLDER_IMAGE` → uploaded filename (from POST /upload/image)
-/// - `PLACEHOLDER_MODEL` → upscale model filename
-fn upscale_workflow_template() -> serde_json::Value {
-    serde_json::json!({
-        "load_image": {
-            "class_type": "LoadImage",
-            "inputs": { "image": "PLACEHOLDER_IMAGE" }
-        },
-        "load_model": {
-            "class_type": "UpscaleModelLoader",
-            "inputs": { "model_name": "PLACEHOLDER_MODEL" }
-        },
-        "upscale": {
-            "class_type": "ImageUpscaleWithModel",
-            "inputs": {
-                "upscale_model": ["load_model", 0],
-                "image": ["load_image", 0]
-            }
-        },
-        "save": {
-            "class_type": "SaveImage",
-            "inputs": {
-                "images": ["upscale", 0],
-                "filename_prefix": "zen-upscale"
-            }
-        }
-    })
-}
-
 // ── Workflow Execution ─────────────────────────────────────────
 
-const WORKFLOW_TIMEOUT: Duration = Duration::from_secs(300);
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
-
-/// Execute the `image.upscale` workflow on a ComfyUI instance.
-async fn execute_upscale(
+/// Execute a workflow on a ComfyUI instance.
+///
+/// Pipeline: resolve input → upload image → fill template → submit → poll → extract result.
+async fn execute_workflow(
     http: &Client,
     endpoint: &str,
     req: &WorkflowRequest,
+    mut workflow: serde_json::Value,
 ) -> Result<WorkflowJob> {
-    // 1. Extract input image from content blocks
+    // 1. Extract and upload input image
     let image_content = req
         .content
         .iter()
         .find(|c| c.content_type == ContentType::Image)
-        .context("image.upscale requires an image content block")?;
+        .context("workflow requires an image content block")?;
 
     let image_bytes = resolve_content_bytes(http, image_content).await?;
+    let uploaded_name = upload_image(http, endpoint, &image_bytes).await?;
 
-    // 2. Select upscale model from parameters (or use first available)
+    // 2. Resolve model from parameters or query available
     let model_name = req
         .parameters
         .get("upscale_model")
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // If no model specified, query available models and pick first
     let model_name = match model_name {
         Some(m) => m,
         None => {
@@ -400,24 +311,24 @@ async fn execute_upscale(
             models
                 .into_iter()
                 .next()
-                .context("no upscale models installed on this ComfyUI instance")?
+                .context("no upscale models installed")?
         }
     };
 
-    // 3. Upload image to ComfyUI
-    let uploaded_name = upload_image(http, endpoint, &image_bytes).await?;
+    // 3. Fill placeholders in workflow template
+    fill_placeholder(&mut workflow, "PLACEHOLDER_IMAGE", &uploaded_name);
+    fill_placeholder(&mut workflow, "PLACEHOLDER_MODEL", &model_name);
 
-    // 4. Fill workflow template
-    let mut workflow = upscale_workflow_template();
-    workflow["load_image"]["inputs"]["image"] = serde_json::Value::String(uploaded_name);
-    workflow["load_model"]["inputs"]["model_name"] = serde_json::Value::String(model_name);
+    // 4. Submit workflow
+    let client_id = format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
 
-    // 5. Submit workflow
-    let client_id = format!("{:x}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos());
-    let prompt_response = http
+    let resp = http
         .post(format!("{endpoint}/prompt"))
         .json(&serde_json::json!({
             "prompt": workflow,
@@ -428,23 +339,19 @@ async fn execute_upscale(
         .await
         .context("POST comfyui /prompt")?;
 
-    if !prompt_response.status().is_success() {
-        let status = prompt_response.status();
-        let text = prompt_response.text().await.unwrap_or_default();
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
         anyhow::bail!("comfyui /prompt failed HTTP {status}: {text}");
     }
 
-    let prompt_result: serde_json::Value = prompt_response
-        .json()
-        .await
-        .context("parse /prompt response")?;
-
+    let prompt_result: serde_json::Value = resp.json().await.context("parse /prompt response")?;
     let prompt_id = prompt_result["prompt_id"]
         .as_str()
-        .context("missing prompt_id in /prompt response")?
+        .context("missing prompt_id")?
         .to_string();
 
-    // 6. Poll for completion (WebSocket would be better, but polling is simpler for MVP)
+    // 5. Poll for completion
     let start = std::time::Instant::now();
     let output_images = loop {
         if start.elapsed() > WORKFLOW_TIMEOUT {
@@ -469,9 +376,7 @@ async fn execute_upscale(
             Err(_) => continue,
         };
 
-        // Check if our prompt is in the history
         if let Some(entry) = history_json.get(&prompt_id) {
-            // Check for execution errors
             if let Some(status) = entry.get("status") {
                 if status.get("status_str").and_then(|s| s.as_str()) == Some("error") {
                     let messages = status
@@ -479,11 +384,10 @@ async fn execute_upscale(
                         .and_then(|m| m.as_array())
                         .map(|arr| format!("{:?}", arr))
                         .unwrap_or_else(|| "unknown error".into());
-                    anyhow::bail!("comfyui workflow execution failed: {}", messages);
+                    anyhow::bail!("workflow execution failed: {messages}");
                 }
             }
 
-            // Extract output images from the "save" node
             if let Some(outputs) = entry.get("outputs") {
                 let images = extract_output_images(outputs);
                 if !images.is_empty() {
@@ -493,7 +397,7 @@ async fn execute_upscale(
         }
     };
 
-    // 7. Build result with asset URLs
+    // 6. Build result
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let content: Vec<crate::domain::skill::ContentBlock> = output_images
@@ -512,7 +416,7 @@ async fn execute_upscale(
 
     Ok(WorkflowJob {
         id: prompt_id,
-        skill: "image.upscale".into(),
+        skill: req.skill.clone(),
         status: WorkflowJobStatus::Completed,
         progress: Some(1.0),
         content: Some(content),
@@ -521,13 +425,12 @@ async fn execute_upscale(
     })
 }
 
-/// Resolve a ContentBlock to raw bytes (inline base64 or URL fetch).
+/// Resolve a ContentBlock to raw bytes (base64 inline or URL fetch).
 async fn resolve_content_bytes(
     http: &Client,
     content: &crate::domain::skill::ContentBlock,
 ) -> Result<Vec<u8>> {
     if let Some(data) = &content.data {
-        // Strip data URI prefix if present: "data:image/png;base64,..." → base64 payload
         let base64_str = if let Some((_prefix, payload)) = data.split_once(";base64,") {
             payload
         } else {
@@ -553,22 +456,22 @@ async fn resolve_content_bytes(
         resp.bytes()
             .await
             .map(|b| b.to_vec())
-            .with_context(|| format!("read content URL body: {url}"))
+            .with_context(|| format!("read body: {url}"))
     } else {
         anyhow::bail!("content block has neither 'data' nor 'url'")
     }
 }
 
-/// Upload an image to ComfyUI via POST /upload/image.
+/// Upload an image to ComfyUI via `POST /upload/image`.
 async fn upload_image(http: &Client, endpoint: &str, image_bytes: &[u8]) -> Result<String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let filename = format!("zen-input-{:x}.png", nanos);
+    let filename = format!("zen-input-{nanos:x}.png");
 
     let part = reqwest::multipart::Part::bytes(image_bytes.to_vec())
-        .file_name(filename.clone())
+        .file_name(filename)
         .mime_str("image/png")?;
 
     let form = reqwest::multipart::Form::new()
@@ -586,7 +489,7 @@ async fn upload_image(http: &Client, endpoint: &str, image_bytes: &[u8]) -> Resu
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("comfyui /upload/image failed HTTP {status}: {text}");
+        anyhow::bail!("/upload/image failed HTTP {status}: {text}");
     }
 
     let result: serde_json::Value = resp.json().await.context("parse upload response")?;
@@ -597,11 +500,30 @@ async fn upload_image(http: &Client, endpoint: &str, image_bytes: &[u8]) -> Resu
         .context("missing 'name' in upload response")
 }
 
-/// Extract output image references from a ComfyUI history entry's outputs.
+/// Replace a placeholder string throughout a workflow JSON tree.
+fn fill_placeholder(workflow: &mut serde_json::Value, placeholder: &str, value: &str) {
+    match workflow {
+        serde_json::Value::String(s) if s == placeholder => {
+            *s = value.to_string();
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values_mut() {
+                fill_placeholder(v, placeholder, value);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                fill_placeholder(v, placeholder, value);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Extract output image references from ComfyUI history outputs.
 fn extract_output_images(outputs: &serde_json::Value) -> Vec<OutputImage> {
     let mut images = Vec::new();
 
-    // outputs is an object keyed by node ID → {"images": [...]}
     if let Some(obj) = outputs.as_object() {
         for (_node_id, node_output) in obj {
             if let Some(img_array) = node_output.get("images").and_then(|v| v.as_array()) {
@@ -685,82 +607,35 @@ mod tests {
         assert_eq!(stats.devices[0].vram_total, 8589410304);
     }
 
+    // ── Placeholder filling ────────────────────────────────────
+
     #[test]
-    fn parse_empty_model_list() {
-        let json: Vec<String> = serde_json::from_str("[]").unwrap();
-        assert!(json.is_empty());
+    fn fill_placeholder_replaces_strings() {
+        let mut wf = serde_json::json!({
+            "node": { "inputs": { "image": "PLACEHOLDER_IMAGE" } }
+        });
+        fill_placeholder(&mut wf, "PLACEHOLDER_IMAGE", "photo.png");
+        assert_eq!(wf["node"]["inputs"]["image"], "photo.png");
     }
 
     #[test]
-    fn parse_model_list() {
-        let json: Vec<String> =
-            serde_json::from_str(r#"["4x-UltraSharp.pth", "RealESRGAN_x4plus.pth"]"#).unwrap();
-        assert_eq!(json.len(), 2);
-        assert_eq!(json[0], "4x-UltraSharp.pth");
-    }
-
-    // ── Skill building ─────────────────────────────────────────
-
-    #[test]
-    fn build_upscale_skill_populates_model_enum() {
-        let models = vec!["4x-UltraSharp.pth".into(), "RealESRGAN_x4plus.pth".into()];
-        let skill = build_upscale_skill(&models);
-
-        assert_eq!(skill.name, "image.upscale");
-        assert_eq!(skill.capability, Capability::Image);
-        assert_eq!(skill.content_slots.len(), 1);
-        assert_eq!(skill.content_slots[0].role, "source");
-        assert!(skill.content_slots[0].required);
-        assert!(skill.diagram.is_some());
-        assert_eq!(skill.required_models.len(), 2);
-
-        // Parameter schema should have the model enum
-        let props = &skill.parameter_schema.schema["properties"]["upscale_model"];
-        let enum_vals = props["enum"].as_array().unwrap();
-        assert_eq!(enum_vals.len(), 2);
-        assert_eq!(enum_vals[0], "4x-UltraSharp.pth");
-        assert_eq!(props["default"], "4x-UltraSharp.pth");
+    fn fill_placeholder_preserves_non_matching() {
+        let mut wf = serde_json::json!({
+            "node": { "inputs": { "image": "PLACEHOLDER_IMAGE", "prefix": "zen" } }
+        });
+        fill_placeholder(&mut wf, "PLACEHOLDER_IMAGE", "photo.png");
+        assert_eq!(wf["node"]["inputs"]["prefix"], "zen");
     }
 
     #[test]
-    fn build_upscale_skill_single_model() {
-        let models = vec!["4x-UltraSharp.pth".into()];
-        let skill = build_upscale_skill(&models);
-
-        assert_eq!(skill.required_models.len(), 1);
-        assert_eq!(skill.required_models[0].model_type, "upscale_models");
-    }
-
-    // ── Workflow template ──────────────────────────────────────
-
-    #[test]
-    fn workflow_template_has_correct_structure() {
-        let tmpl = upscale_workflow_template();
-
-        assert!(tmpl.get("load_image").is_some());
-        assert!(tmpl.get("load_model").is_some());
-        assert!(tmpl.get("upscale").is_some());
-        assert!(tmpl.get("save").is_some());
-
-        assert_eq!(tmpl["load_image"]["class_type"], "LoadImage");
-        assert_eq!(tmpl["load_model"]["class_type"], "UpscaleModelLoader");
-        assert_eq!(tmpl["upscale"]["class_type"], "ImageUpscaleWithModel");
-        assert_eq!(tmpl["save"]["class_type"], "SaveImage");
-    }
-
-    #[test]
-    fn workflow_template_placeholder_filling() {
-        let mut tmpl = upscale_workflow_template();
-        tmpl["load_image"]["inputs"]["image"] = serde_json::json!("my-photo.png");
-        tmpl["load_model"]["inputs"]["model_name"] = serde_json::json!("4x-UltraSharp.pth");
-
-        assert_eq!(tmpl["load_image"]["inputs"]["image"], "my-photo.png");
-        assert_eq!(tmpl["load_model"]["inputs"]["model_name"], "4x-UltraSharp.pth");
-
-        // Edges should still reference node outputs correctly
-        assert_eq!(tmpl["upscale"]["inputs"]["upscale_model"][0], "load_model");
-        assert_eq!(tmpl["upscale"]["inputs"]["image"][0], "load_image");
-        assert_eq!(tmpl["save"]["inputs"]["images"][0], "upscale");
+    fn fill_placeholder_handles_arrays() {
+        let mut wf = serde_json::json!({
+            "node": { "inputs": { "model": ["2", 0], "name": "PLACEHOLDER_MODEL" } }
+        });
+        fill_placeholder(&mut wf, "PLACEHOLDER_MODEL", "4x-UltraSharp.pth");
+        assert_eq!(wf["node"]["inputs"]["name"], "4x-UltraSharp.pth");
+        // Array edge reference should be untouched
+        assert_eq!(wf["node"]["inputs"]["model"][0], "2");
     }
 
     // ── Output extraction ──────────────────────────────────────
@@ -774,35 +649,13 @@ mod tests {
                 ]
             }
         });
-
         let images = extract_output_images(&outputs);
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].filename, "zen-upscale_00001_.png");
-        assert_eq!(images[0].subfolder, "");
     }
 
     #[test]
-    fn extract_output_images_multiple_nodes() {
-        let outputs = serde_json::json!({
-            "4": {
-                "images": [
-                    { "filename": "img1.png", "subfolder": "", "type": "output" },
-                    { "filename": "img2.png", "subfolder": "", "type": "output" }
-                ]
-            },
-            "7": {
-                "images": [
-                    { "filename": "img3.png", "subfolder": "sub", "type": "output" }
-                ]
-            }
-        });
-
-        let images = extract_output_images(&outputs);
-        assert_eq!(images.len(), 3);
-    }
-
-    #[test]
-    fn extract_output_images_skips_temp_type() {
+    fn extract_output_images_skips_temp() {
         let outputs = serde_json::json!({
             "4": {
                 "images": [
@@ -811,7 +664,6 @@ mod tests {
                 ]
             }
         });
-
         let images = extract_output_images(&outputs);
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].filename, "result.png");
@@ -819,17 +671,15 @@ mod tests {
 
     #[test]
     fn extract_output_images_empty() {
-        let outputs = serde_json::json!({});
-        let images = extract_output_images(&outputs);
-        assert!(images.is_empty());
+        assert!(extract_output_images(&serde_json::json!({})).is_empty());
     }
 
     #[test]
-    fn extract_output_images_no_images_key() {
+    fn extract_output_images_multiple_nodes() {
         let outputs = serde_json::json!({
-            "4": { "text": "some output" }
+            "4": { "images": [{ "filename": "a.png", "subfolder": "", "type": "output" }] },
+            "7": { "images": [{ "filename": "b.png", "subfolder": "sub", "type": "output" }] }
         });
-        let images = extract_output_images(&outputs);
-        assert!(images.is_empty());
+        assert_eq!(extract_output_images(&outputs).len(), 2);
     }
 }

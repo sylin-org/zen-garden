@@ -11,6 +11,7 @@ pub mod domain;
 pub mod infra;
 pub mod offerings;
 pub mod providers;
+pub mod skills;
 pub mod tasks;
 
 pub use app_state::AppState;

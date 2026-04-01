@@ -436,6 +436,173 @@ impl<'de> Deserialize<'de> for ModelFqn {
     }
 }
 
+// ── Skill FQN ────────────────────────────────────────────────
+
+/// Error when parsing a Skill FQN string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillFqnError {
+    Empty,
+    BlankSegment { position: &'static str },
+    WrongSegmentCount(usize),
+}
+
+impl fmt::Display for SkillFqnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(f, "empty skill FQN"),
+            Self::BlankSegment { position } => write!(f, "blank segment: {position}"),
+            Self::WrongSegmentCount(n) => write!(f, "expected 2 or 4 segments, got {n}"),
+        }
+    }
+}
+
+impl std::error::Error for SkillFqnError {}
+
+/// Fully-qualified skill name.
+///
+/// Two forms:
+/// - **Identity** (2 segments): `capability|moniker` — e.g., `image|upscale`
+/// - **Instance** (4 segments): `location|provider|capability|moniker` — e.g.,
+///   `stone-indigo-nave|comfyui|image|upscale`
+///
+/// The identity form identifies a skill across the garden.
+/// The instance form identifies a specific provider instance that can serve the skill.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SkillFqn {
+    /// Stone name (instance form only).
+    pub location: Option<String>,
+    /// Provider / offering kind (instance form only).
+    pub provider: Option<String>,
+    /// Capability: "image", "speech", "ocr", etc.
+    pub capability: String,
+    /// Skill moniker: "upscale", "generate", "transform", etc.
+    pub moniker: String,
+}
+
+impl SkillFqn {
+    /// Construct a skill identity (capability + moniker).
+    pub fn identity(capability: impl Into<String>, moniker: impl Into<String>) -> Self {
+        Self {
+            location: None,
+            provider: None,
+            capability: capability.into(),
+            moniker: moniker.into(),
+        }
+    }
+
+    /// Construct a skill instance (all 4 segments).
+    pub fn instance(
+        location: impl Into<String>,
+        provider: impl Into<String>,
+        capability: impl Into<String>,
+        moniker: impl Into<String>,
+    ) -> Self {
+        Self {
+            location: Some(location.into()),
+            provider: Some(provider.into()),
+            capability: capability.into(),
+            moniker: moniker.into(),
+        }
+    }
+
+    /// Parse a pipe-delimited skill FQN string.
+    ///
+    /// Accepts 2 segments (identity) or 4 segments (instance).
+    pub fn parse(input: &str) -> Result<Self, SkillFqnError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(SkillFqnError::Empty);
+        }
+
+        let parts: Vec<&str> = input.split('|').collect();
+        match parts.len() {
+            2 => {
+                if parts[0].is_empty() {
+                    return Err(SkillFqnError::BlankSegment { position: "capability" });
+                }
+                if parts[1].is_empty() {
+                    return Err(SkillFqnError::BlankSegment { position: "moniker" });
+                }
+                Ok(Self::identity(parts[0], parts[1]))
+            }
+            4 => {
+                if parts[0].is_empty() {
+                    return Err(SkillFqnError::BlankSegment { position: "location" });
+                }
+                if parts[1].is_empty() {
+                    return Err(SkillFqnError::BlankSegment { position: "provider" });
+                }
+                if parts[2].is_empty() {
+                    return Err(SkillFqnError::BlankSegment { position: "capability" });
+                }
+                if parts[3].is_empty() {
+                    return Err(SkillFqnError::BlankSegment { position: "moniker" });
+                }
+                Ok(Self::instance(parts[0], parts[1], parts[2], parts[3]))
+            }
+            n => Err(SkillFqnError::WrongSegmentCount(n)),
+        }
+    }
+
+    /// Canonical pipe-delimited string.
+    pub fn fqn(&self) -> String {
+        match (&self.location, &self.provider) {
+            (Some(loc), Some(prov)) => {
+                format!("{}|{}|{}|{}", loc, prov, self.capability, self.moniker)
+            }
+            _ => format!("{}|{}", self.capability, self.moniker),
+        }
+    }
+
+    /// Whether this is an instance FQN (has location + provider).
+    pub fn is_instance(&self) -> bool {
+        self.location.is_some() && self.provider.is_some()
+    }
+
+    /// Extract the identity (capability + moniker), dropping location + provider.
+    pub fn to_identity(&self) -> Self {
+        Self::identity(&self.capability, &self.moniker)
+    }
+
+    /// The dotted name used in skill registries and API paths: "image.upscale".
+    pub fn dotted(&self) -> String {
+        format!("{}.{}", self.capability, self.moniker)
+    }
+
+    /// Parse a dotted name ("image.upscale") into an identity FQN.
+    pub fn from_dotted(input: &str) -> Result<Self, SkillFqnError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(SkillFqnError::Empty);
+        }
+        match input.split_once('.') {
+            Some((cap, mon)) if !cap.is_empty() && !mon.is_empty() => {
+                Ok(Self::identity(cap, mon))
+            }
+            _ => Err(SkillFqnError::WrongSegmentCount(1)),
+        }
+    }
+}
+
+impl fmt::Display for SkillFqn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.fqn())
+    }
+}
+
+impl Serialize for SkillFqn {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.fqn())
+    }
+}
+
+impl<'de> Deserialize<'de> for SkillFqn {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Partial FQN for pins and queries. Missing fields match everything.
 ///
 /// Parse by pipe count:
@@ -1409,5 +1576,95 @@ mod tests {
         let filter2 = ModelFilter::parse("ollama|qwen3.5:9b").unwrap();
         let matches2 = dir.matching_fqns(&filter2, None);
         assert_eq!(matches2.len(), 2);
+    }
+
+    // ── SkillFqn ──────────────────────────────────────────────
+
+    #[test]
+    fn skill_fqn_identity() {
+        let fqn = SkillFqn::identity("image", "upscale");
+        assert_eq!(fqn.capability, "image");
+        assert_eq!(fqn.moniker, "upscale");
+        assert!(!fqn.is_instance());
+        assert_eq!(fqn.fqn(), "image|upscale");
+        assert_eq!(fqn.dotted(), "image.upscale");
+    }
+
+    #[test]
+    fn skill_fqn_instance() {
+        let fqn = SkillFqn::instance("stone-indigo-nave", "comfyui", "image", "upscale");
+        assert!(fqn.is_instance());
+        assert_eq!(fqn.fqn(), "stone-indigo-nave|comfyui|image|upscale");
+        assert_eq!(fqn.dotted(), "image.upscale");
+        assert_eq!(fqn.to_identity().fqn(), "image|upscale");
+    }
+
+    #[test]
+    fn skill_fqn_parse_identity() {
+        let fqn = SkillFqn::parse("image|upscale").unwrap();
+        assert_eq!(fqn.capability, "image");
+        assert_eq!(fqn.moniker, "upscale");
+        assert!(!fqn.is_instance());
+    }
+
+    #[test]
+    fn skill_fqn_parse_instance() {
+        let fqn = SkillFqn::parse("stone-indigo-nave|comfyui|image|generate").unwrap();
+        assert_eq!(fqn.location.as_deref(), Some("stone-indigo-nave"));
+        assert_eq!(fqn.provider.as_deref(), Some("comfyui"));
+        assert_eq!(fqn.capability, "image");
+        assert_eq!(fqn.moniker, "generate");
+    }
+
+    #[test]
+    fn skill_fqn_parse_rejects_empty() {
+        assert_eq!(SkillFqn::parse(""), Err(SkillFqnError::Empty));
+    }
+
+    #[test]
+    fn skill_fqn_parse_rejects_wrong_count() {
+        assert!(matches!(SkillFqn::parse("a|b|c"), Err(SkillFqnError::WrongSegmentCount(3))));
+        assert!(matches!(SkillFqn::parse("a"), Err(SkillFqnError::WrongSegmentCount(1))));
+    }
+
+    #[test]
+    fn skill_fqn_parse_rejects_blank_segment() {
+        assert!(matches!(SkillFqn::parse("|upscale"), Err(SkillFqnError::BlankSegment { position: "capability" })));
+        assert!(matches!(SkillFqn::parse("image|"), Err(SkillFqnError::BlankSegment { position: "moniker" })));
+    }
+
+    #[test]
+    fn skill_fqn_from_dotted() {
+        let fqn = SkillFqn::from_dotted("image.upscale").unwrap();
+        assert_eq!(fqn.capability, "image");
+        assert_eq!(fqn.moniker, "upscale");
+        assert!(!fqn.is_instance());
+    }
+
+    #[test]
+    fn skill_fqn_from_dotted_rejects_invalid() {
+        assert!(SkillFqn::from_dotted("").is_err());
+        assert!(SkillFqn::from_dotted("noDot").is_err());
+        assert!(SkillFqn::from_dotted(".upscale").is_err());
+        assert!(SkillFqn::from_dotted("image.").is_err());
+    }
+
+    #[test]
+    fn skill_fqn_serde_roundtrip() {
+        let fqn = SkillFqn::instance("stone-indigo-nave", "comfyui", "image", "upscale");
+        let json = serde_json::to_string(&fqn).unwrap();
+        assert_eq!(json, "\"stone-indigo-nave|comfyui|image|upscale\"");
+
+        let parsed: SkillFqn = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, fqn);
+    }
+
+    #[test]
+    fn skill_fqn_display() {
+        let identity = SkillFqn::identity("speech", "clone_voice");
+        assert_eq!(format!("{identity}"), "speech|clone_voice");
+
+        let instance = SkillFqn::instance("stone-azure-pool", "speaches", "speech", "synthesize");
+        assert_eq!(format!("{instance}"), "stone-azure-pool|speaches|speech|synthesize");
     }
 }

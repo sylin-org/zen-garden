@@ -7,6 +7,7 @@ status: accepted
 # ORCH-0018: Skills, Workflow API, and Synthetic Capabilities
 
 **Date**: 2026-03-31
+**Amended**: 2026-04-01 — API endpoints, mapping-driven definitions, job IDs
 **Status**: Accepted
 
 ---
@@ -41,7 +42,7 @@ the orchestrator's capability model and a provider's concrete implementation.
 ```
 Offering: ComfyUI
   Capability: Image
-    Skills: upscale, generate, img2img, inpaint, remove_bg
+    Skills: upscale, generate, transform
 
 Offering: Speaches
   Capability: Speech
@@ -56,107 +57,144 @@ Skills are dynamic — they come from what's installed (models + workflow templa
 from a hardcoded list. If a ComfyUI instance has upscale models installed, it advertises
 `image.upscale`. If it doesn't, it doesn't.
 
-#### Skill definition
+Not every provider needs skills. Ollama's chat completions are fully described by
+the model + capability — no skill layer required. Skills add value when a provider
+supports multiple distinct operations within a single capability.
+
+#### Skill definition — mapping-driven
+
+Each skill carries declarative **mappings** that describe how user inputs connect to
+the provider's implementation. No JSON Schema, no UI Schema — the mappings ARE the
+schema.
 
 ```rust
 pub struct SkillDefinition {
-    /// Unique name: "image.upscale", "image.generate", "speech.clone_voice"
     pub name: String,
-    /// Parent capability for routing
+    pub display_name: String,
     pub capability: Capability,
-    /// Human-readable description
     pub description: String,
-    /// What inputs the skill requires
-    pub content_schema: Vec<ContentSlot>,
-    /// Tuning parameters (JSON Schema + RJSF UI Schema)
-    pub parameter_schema: FormSchema,
-    /// Optional Mermaid diagram of the pipeline
+    pub provider_kind: OfferingKind,
+    pub vram_mb: u64,
+    pub content_slots: Vec<ContentSlot>,
+    pub mappings: Vec<SkillMapping>,
     pub diagram: Option<String>,
-    /// Models that must be installed for this skill to work
     pub required_models: Vec<ModelRef>,
-    /// Provider-specific implementation data (e.g., ComfyUI workflow JSON)
-    pub implementation: serde_json::Value,
-}
-
-pub struct ContentSlot {
-    /// Role name: "source", "mask", "prompt", "negative"
-    pub role: String,
-    /// Content type: Image, Text
-    pub content_type: ContentType,
-    /// Whether this input is required
-    pub required: bool,
+    pub workflow: serde_json::Value,
 }
 ```
 
-Skills are **provider-agnostic**. ComfyUI implements them as workflow templates. Another
-provider implements them as direct API calls. The orchestrator doesn't care — it dispatches
-to the provider, which handles the implementation.
+**Mappings** are the single source of truth for the form UI and the execution engine:
+
+```rust
+pub enum SkillMapping {
+    /// User content (image/text) → placeholder in workflow.
+    /// `content_type` determines handling: image = upload first, text = substitute.
+    Content {
+        role: String,
+        content_type: ContentType,
+        placeholder: String,
+    },
+    /// Form parameter → specific node.input in workflow.
+    /// Options decouple display labels from wire values.
+    Param {
+        field: String,
+        node: String,
+        input: String,
+        label: String,
+        param_type: ParamType,
+        default: Option<Value>,
+    },
+}
+```
+
+**ParamType** variants:
+
+| Type | Rendering | Example |
+|------|-----------|---------|
+| `Options` | Radio (≤4) or select (>4). Each option has `value` (wire) and optional `label` (display). | Zoom: "4x", "Anime" |
+| `Range` | Slider with min/max/step | Steps: 1–50 |
+| `Auto` | Pre-filled editable field (e.g., random seed) | Seed: 498423072 |
+| `Text` | Textarea | Negative prompt |
+
+When `Options` carries just an array of values (no labels), display = wire value.
+When options carry a `label`, the user sees the label but the wire sends the value.
+
+The execution engine iterates mappings — zero skill-specific branches:
+1. `Content(image)` → upload to provider, substitute placeholder
+2. `Content(text)` → substitute placeholder
+3. `Param` → set `workflow[node]["inputs"][input] = value`
+4. `Auto` → generate value if user didn't provide one
+
+Internal implementation details (which workflow template to use for 2x vs 4x upscale,
+how to chain pipeline stages) are owned by the provider. The mapping system does not
+expose or constrain provider internals.
 
 #### Built-in vs imported skills
 
-**Built-in skills** are pre-registered with curated workflow templates, known-good
-parameter schemas, and validated model requirements. They ship with the orchestrator.
+**Built-in skills** are pre-registered with curated mappings, validated model
+requirements, and embedded workflow templates. They ship with the orchestrator.
 
-**Imported skills** come from user-uploaded ComfyUI workflows (PNG with embedded metadata
-or exported JSON). They go through an import flow before becoming available.
+**Imported skills** come from user-uploaded ComfyUI workflows (PNG with embedded
+metadata or exported JSON). They go through an import flow before becoming available.
 
-### 2. Workflow API — OpenAI-shaped request envelope
+### 2. Skill API — capability-namespaced endpoints
 
-The API uses a familiar structure inspired by the OpenAI API design language, adapted
-for pipeline operations.
-
-#### Submit
+Skills are invoked through capability-namespaced endpoints. The pattern is consistent
+across all capabilities:
 
 ```
-POST /v1/workflows/run
+POST /v1/{capability}/skill/{skill-moniker}
+```
+
+This coexists with the existing capability defaults (`/v1/chat/completions`,
+`/v1/audio/speech`, etc.). Skills are the named, parameterized extensions.
+
+#### Invoke a skill
+
+```
+POST /v1/image/skill/upscale
 ```
 
 ```json
 {
-  "capability": "image",
-  "skill": "upscale",
   "content": [
-    { "type": "image", "url": "https://example.com/photo.png" }
+    { "type": "image", "role": "source", "data": "<base64>" }
   ],
   "parameters": {
-    "scale": 4,
-    "upscale_model": "4x-UltraSharp"
+    "zoom": "4x",
+    "style": "realistic"
   }
 }
 ```
 
-**Content blocks** carry the inputs. Each block has:
+The capability is in the URL path (routing). The skill moniker is in the URL path
+(operation selection). The body is pure data — content blocks + parameters. No routing
+metadata in the payload.
 
-| Field | Purpose |
-|-------|---------|
-| `type` | `image` or `text` |
-| `role` | Optional disambiguator: `source`, `mask`, `prompt`, `negative` |
-| `data` | Inline base64 (caller's choice) |
-| `url` | URL reference — orchestrator fetches and caches (caller's choice) |
-
-Content supports both inline (`data`) and URL (`url`) modes. Output is always a URL
-to a cached asset.
-
-#### Response (immediate)
+#### Response (immediate — 202 Accepted)
 
 ```json
 {
-  "id": "job-019d45dc",
-  "skill": "image.upscale",
+  "id": "019d45dc-8a3b-7def-9012-3456789abcde",
+  "skill": "upscale",
   "status": "queued"
 }
 ```
 
+Job IDs are GUIDv7s (time-sortable, globally unique).
+
 #### Poll status
 
 ```
-GET /v1/workflows/jobs/{id}
+GET /v1/jobs/{id}
 ```
+
+Job IDs are globally unique — no capability namespace needed for polling.
 
 ```json
 {
-  "id": "job-019d45dc",
-  "skill": "image.upscale",
+  "id": "019d45dc-8a3b-7def-9012-3456789abcde",
+  "skill": "upscale",
   "status": "running",
   "progress": 0.65
 }
@@ -166,11 +204,11 @@ GET /v1/workflows/jobs/{id}
 
 ```json
 {
-  "id": "job-019d45dc",
-  "skill": "image.upscale",
+  "id": "019d45dc-8a3b-7def-9012-3456789abcde",
+  "skill": "upscale",
   "status": "completed",
   "content": [
-    { "type": "image", "format": "png", "url": "/v1/workflows/assets/019d45dc-result.png" }
+    { "type": "image", "format": "png", "url": "/v1/jobs/019d45dc/assets/result.png" }
   ],
   "usage": {
     "duration_ms": 3200
@@ -182,8 +220,8 @@ GET /v1/workflows/jobs/{id}
 
 ```json
 {
-  "id": "job-019d45dc",
-  "skill": "image.upscale",
+  "id": "019d45dc-8a3b-7def-9012-3456789abcde",
+  "skill": "upscale",
   "status": "failed",
   "error": {
     "code": "model_not_found",
@@ -196,35 +234,27 @@ GET /v1/workflows/jobs/{id}
 
 `queued` → `running` → `completed` | `failed`
 
-#### Streaming progress
-
-```
-GET /v1/workflows/jobs/{id}/stream
-```
-
-SSE events with progress updates. Same pattern as Moss install job streams.
-
 #### Asset retrieval
 
 ```
-GET /v1/workflows/assets/{id}
+GET /v1/jobs/{id}/assets/{filename}
 ```
 
 Binary response with proper `Content-Type`. Cached with TTL, caller downloads if they
 need permanent storage.
 
-#### Additional endpoints
+#### Discovery and management
 
 ```
-GET  /v1/skills                     — list all registered skills
-GET  /v1/skills/{skill}/form        — schema + diagram for TryIt UI
-POST /v1/skills/import              — import a community workflow
-GET  /v1/workflows/jobs             — list recent jobs
+GET  /v1/skills                          — list all registered skills
+GET  /v1/skills/{capability}.{skill}/form — mappings + diagram for TryIt UI
+POST /v1/skills/import                   — import a community workflow
+GET  /v1/jobs                            — list recent jobs
 ```
 
 ### 3. Skill TryIt — dashboard integration
 
-The skill form endpoint returns everything the dashboard needs:
+The skill form endpoint returns mappings directly — no JSON Schema translation:
 
 ```
 GET /v1/skills/image.upscale/form
@@ -232,36 +262,33 @@ GET /v1/skills/image.upscale/form
 
 ```json
 {
-  "schema": {
-    "type": "object",
-    "properties": {
-      "scale": { "type": "integer", "enum": [2, 4], "default": 4 },
-      "upscale_model": { "type": "string", "enum": ["4x-UltraSharp", "RealESRGAN_x4plus"] }
-    }
-  },
-  "ui_schema": {
-    "scale": { "ui:widget": "radio" },
-    "upscale_model": { "ui:widget": "select" }
-  },
-  "content": [
-    { "role": "source", "type": "image", "required": true }
+  "display_name": "Upscale",
+  "description": "Enhance image resolution using AI super-resolution",
+  "content_slots": [
+    { "role": "source", "content_type": "image", "required": true }
+  ],
+  "mappings": [
+    { "type": "content", "role": "source", "content_type": "image", "placeholder": "PLACEHOLDER_IMAGE" },
+    { "type": "param", "field": "zoom", "label": "Zoom", "param_type": "options",
+      "options": [
+        { "value": "RealESRGAN_x4plus.pth", "label": "4x" },
+        { "value": "RealESRGAN_x4plus_anime_6B.pth", "label": "4x Anime" }
+      ],
+      "default": "RealESRGAN_x4plus.pth" }
   ],
   "diagram": "graph LR\n    A[Load Image] --> B[Upscale 4x]\n    B --> C[Save Image]"
 }
 ```
 
-The dashboard renders:
-- **Mermaid diagram** (optional — only when the provider returns one)
-- **RJSF form** from schema + ui_schema
-- **Content upload zones** from content slots
-- **Submit → progress bar → result display**
+The dashboard renders controls directly from mappings:
+- `Content(image)` → image dropzone
+- `Content(text)` → textarea
+- `Param(options)` → radio (≤4) or select (>4), labels displayed, wire values sent
+- `Param(range)` → slider
+- `Param(auto)` → pre-filled editable number with re-roll button
+- `Param(text)` → textarea
 
 The same `SkillTryIt` component works for every skill. No per-skill frontend code.
-The `diagram` field is `Option` — when absent, nothing renders. Simple skills
-(text in → text out) show just the form. Complex pipelines (ComfyUI) show the graph.
-
-The existing model TryIt (`GET /v1/models/{model}/form`) returns the same shape.
-Both use the same dashboard component, fed different data.
 
 ### 4. Workflow import flow
 
@@ -290,31 +317,21 @@ The import endpoint returns a preview:
 
 ```json
 {
-  "import_id": "imp-abc123",
+  "import_id": "019d45dc-1234-7abc-8def-567890abcdef",
   "name": "anime_style_transfer",
   "capability": "image",
   "required_models": [
     { "name": "animagine-xl-3.1.safetensors", "size_gb": 6.4, "license": "Fair AI Public License 1.0", "source": "civitai", "installed": false },
-    { "name": "anime-style-lora.safetensors", "size_gb": 0.14, "license": "CC-BY-NC-4.0", "source": "civitai", "installed": false },
     { "name": "4x-UltraSharp.pth", "size_gb": 0.065, "license": "MIT", "source": "github", "installed": true }
   ],
   "detected_parameters": [
     { "name": "prompt", "type": "text", "required": true, "expose": true },
-    { "name": "negative", "type": "text", "required": false, "expose": true, "default": "blurry, watermark" },
-    { "name": "strength", "type": "number", "required": false, "expose": true, "default": 0.7, "min": 0.0, "max": 1.0 },
-    { "name": "steps", "type": "number", "required": false, "expose": false, "default": 30 },
-    { "name": "cfg", "type": "number", "required": false, "expose": false, "default": 7.5 },
-    { "name": "sampler", "type": "string", "required": false, "expose": false, "default": "dpmpp_2m" }
+    { "name": "strength", "type": "number", "required": false, "expose": true, "default": 0.7, "min": 0.0, "max": 1.0 }
   ],
   "total_download_gb": 6.54,
-  "diagram": "graph LR\n    A[Prompt] --> B[SDXL Checkpoint]\n    B --> C[LoRA]\n    C --> D[KSampler]\n    D --> E[VAE Decode]\n    E --> F[Upscale 4x]\n    F --> G[Output]"
+  "diagram": "graph LR\n    A[Prompt] --> B[SDXL]\n    B --> C[LoRA]\n    C --> D[KSampler]\n    D --> E[Output]"
 }
 ```
-
-The user reviews:
-- Which models to download (with sizes and licenses shown)
-- Which parameters to expose vs hide (pre-selected by the orchestrator)
-- The pipeline diagram
 
 #### Step 3 — Confirm and install
 
@@ -324,7 +341,7 @@ POST /v1/skills/import/{import_id}/confirm
 
 ```json
 {
-  "exposed_parameters": ["prompt", "negative", "strength"],
+  "exposed_parameters": ["prompt", "strength"],
   "accept_licenses": true
 }
 ```
@@ -337,18 +354,6 @@ The orchestrator creates a multi-step job:
 
 The skill is available once at least one instance has all required models.
 
-#### License visibility
-
-The dashboard model inventory permanently shows license information:
-
-| Model | Size | License | Used by |
-|-------|------|---------|---------|
-| SDXL Base 1.0 | 6.4 GB | CreativeML Open RAIL-M | generate, img2img |
-| 4x-UltraSharp | 65 MB | MIT | upscale |
-| anime-style LoRA | 144 MB | CC-BY-NC-4.0 | anime_style_transfer |
-
-Models used by zero skills are flagged for cleanup.
-
 ### 5. Skill sync across stones
 
 When a new ComfyUI instance joins the garden, the orchestrator replicates skills to it:
@@ -358,70 +363,55 @@ When a new ComfyUI instance joins the garden, the orchestrator replicates skills
 3. Push workflow templates
 4. Instance starts advertising the skills
 
-This uses the existing `Provider::sync_resource()` trait method. The pattern is the same
-as Ollama model sync — just models + workflow templates instead of just models.
-
 Sync is automatic on instance join and can be triggered manually via the dashboard.
 
 ### 6. Provider trait extension
 
-The Provider trait gains one method:
+The Provider trait gains skill-related methods:
 
 ```rust
-fn workflow(
-    &self,
-    ctx: &ProviderContext,
-    skill: &str,
-    content: Vec<ContentBlock>,
-    parameters: serde_json::Value,
-) -> BoxFuture<'_, Result<WorkflowJob>>;
+/// Declare built-in skills this provider supports.
+fn builtin_skills(&self) -> Vec<SkillDefinition> { Vec::new() }
+
+/// Check if a specific instance can serve a skill.
+fn check_skill_readiness(&self, ctx, skill) -> Result<SkillReadiness>;
+
+/// Make an instance ready for a skill (download models, push workflows).
+fn provision_skill(&self, ctx, skill, cache_dir, moss_endpoint, fqn) -> Result<()>;
+
+/// Execute a skill on a ready instance.
+fn workflow(&self, ctx, req, skill_def) -> Result<WorkflowJob>;
 ```
 
-Default implementation returns "not supported." Only providers with pipeline capabilities
-(ComfyUI initially) override it. The existing `infer`, `embed`, `speak`, `transcribe`
-methods are unchanged.
+Default implementations return "not supported." Only providers with pipeline capabilities
+(ComfyUI initially) override them.
 
 ### 7. Routing
 
 Skill requests route through the existing `select_instance()` algorithm:
 
-1. `capability: image` + `skill: upscale` → filter instances that advertise this skill
-2. Standard routing: health check, VRAM tier, queue depth, fitness score
-3. Dispatch to the selected instance's provider
+1. Capability from URL path → filter instances by capability
+2. Skill moniker → filter instances that advertise this skill
+3. Standard routing: health check, VRAM tier, queue depth, fitness score
+4. Dispatch to the selected instance's provider
 
-The skill name is an additional filter on the existing capability-based routing. An
-instance that has `Capability::Image` but lacks the `upscale` skill is not a candidate.
-
----
-
-## Example skills across providers
-
-| Provider | Capability | Skills |
-|----------|-----------|--------|
-| ComfyUI | Image | upscale, generate, img2img, inpaint, remove_bg |
-| Ollama | Chat, Vision, Tools, Embed | (model-level, no skills needed) |
-| Speaches | Speech, Transcribe | synthesize, clone_voice, transcribe |
-| Docling | Ocr | extract, convert |
-| Kokoro | Speech | synthesize (high-quality voices) |
-| Infinity | Embed, Rerank | embed, rerank |
-
-Not every provider needs skills. Ollama's chat completions are fully described by
-the model + capability — no skill layer required. Skills add value when a provider
-supports multiple distinct operations within a single capability.
+The skill name is an additional filter on the existing capability-based routing.
 
 ---
 
 ## Consequences
 
 - ComfyUI becomes a first-class citizen in the orchestrator, not just a proxied service.
-- Complex image operations (upscale, inpaint, generate) are exposed as clean API
+- Complex image operations (upscale, generate, transform) are exposed as clean API
   endpoints without leaking ComfyUI internals (node graphs, workflow JSON).
+- The skill endpoint pattern (`/v1/{capability}/skill/{moniker}`) is consistent across
+  all capabilities and coexists with existing default endpoints.
 - Community workflows can be imported and published as new skills without code changes.
-- The dashboard TryIt UI works for skills out of the box via schema-driven rendering.
+- The dashboard TryIt UI renders from mappings — no per-skill frontend code.
+- Mapping-driven definitions mean adding a new skill is pure data, no Rust code.
+- Job IDs are GUIDv7s — time-sortable and globally unique.
 - Model licensing is visible and tracked from import through the lifetime of the skill.
 - Skill sync ensures new stones get the full skill set automatically.
-- The async job pattern (submit → poll → retrieve) handles long-running operations
-  that the synchronous inference API cannot.
-- The Provider trait extension is minimal (one method) and backward-compatible.
+- The async job pattern (submit → poll → retrieve) handles long-running operations.
 - Mermaid diagrams give users visibility into pipeline internals without exposing
   ComfyUI's node editor complexity.

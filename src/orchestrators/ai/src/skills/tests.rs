@@ -57,23 +57,28 @@ mod tests {
         assert!(diagram.contains("Save Image"), "diagram has Save Image node");
         assert!(diagram.contains("-->"), "diagram has edges");
 
-        // Verify parameter schema has the model dropdown
-        let schema = &skill.parameter_schema.schema;
-        let model_prop = &schema["properties"]["upscale_model"];
-        assert_eq!(model_prop["type"], "string");
-        let enum_vals = model_prop["enum"].as_array().unwrap();
-        assert_eq!(enum_vals.len(), 2);
-        // Should prefer RealESRGAN as default (BSD licensed)
-        assert_eq!(model_prop["default"], "RealESRGAN_x4plus.pth");
+        // Verify mappings include model param with both options
+        let model_mapping = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Param { field, .. } if field == "upscale_model"));
+        assert!(model_mapping.is_some(), "upscale_model mapping exists");
+        if let Some(SkillMapping::Param { default, param_type, .. }) = model_mapping {
+            assert_eq!(default.as_ref().unwrap(), &serde_json::json!("RealESRGAN_x4plus.pth"));
+            if let ParamType::Options { options } = param_type {
+                assert_eq!(options.len(), 2);
+            } else {
+                panic!("expected Options param type");
+            }
+        }
 
-        // 4. Verify the implementation is a valid workflow template
-        let impl_wf = &skill.implementation;
-        assert!(impl_wf.is_object());
-        // All 4 nodes present
-        assert!(impl_wf.get("1").is_some(), "node 1 (LoadImage)");
-        assert!(impl_wf.get("2").is_some(), "node 2 (UpscaleModelLoader)");
-        assert!(impl_wf.get("3").is_some(), "node 3 (ImageUpscaleWithModel)");
-        assert!(impl_wf.get("4").is_some(), "node 4 (SaveImage)");
+        // Verify content mapping for image
+        let image_mapping = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Content { content_type: ContentType::Image, .. }));
+        assert!(image_mapping.is_some(), "image content mapping exists");
+
+        // 4. Verify the workflow is a valid template
+        assert!(skill.workflow.is_object());
+        assert!(skill.workflow.get("1").is_some(), "node 1 (LoadImage)");
+        assert!(skill.workflow.get("2").is_some(), "node 2 (UpscaleModelLoader)");
+        assert!(skill.workflow.get("3").is_some(), "node 3 (ImageUpscaleWithModel)");
+        assert!(skill.workflow.get("4").is_some(), "node 4 (SaveImage)");
     }
 
     // ================================================================
@@ -244,11 +249,13 @@ mod tests {
         assert!(!skill.required_models.is_empty());
         assert!(skill.required_models.iter().any(|m| m.filename.contains("RealESRGAN")));
 
-        // Enum should show recommended models as options
-        let enum_vals = skill.parameter_schema.schema["properties"]["upscale_model"]["enum"]
-            .as_array()
-            .unwrap();
-        assert!(!enum_vals.is_empty());
+        // Mappings should show recommended models as options
+        let model_mapping = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Param { field, .. } if field == "upscale_model"));
+        if let Some(SkillMapping::Param { param_type: ParamType::Options { options }, .. }) = model_mapping {
+            assert!(!options.is_empty());
+        } else {
+            panic!("expected Options param for upscale_model");
+        }
     }
 
     #[test]
@@ -260,10 +267,12 @@ mod tests {
         ];
         let skill = builtin::image_upscale(&models);
 
-        let default = skill.parameter_schema.schema["properties"]["upscale_model"]["default"]
-            .as_str()
-            .unwrap();
-        assert_eq!(default, "RealESRGAN_x4plus.pth");
+        let model_mapping = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Param { field, .. } if field == "upscale_model"));
+        if let Some(SkillMapping::Param { default: Some(d), .. }) = model_mapping {
+            assert_eq!(d, &serde_json::json!("RealESRGAN_x4plus.pth"));
+        } else {
+            panic!("expected upscale_model mapping with default");
+        }
     }
 
     #[test]
@@ -271,29 +280,34 @@ mod tests {
         let models = vec!["SomeCustom_4x.pth".into(), "4x-AnimeSharp.pth".into()];
         let skill = builtin::image_upscale(&models);
 
-        let default = skill.parameter_schema.schema["properties"]["upscale_model"]["default"]
-            .as_str()
-            .unwrap();
-        assert_eq!(default, "SomeCustom_4x.pth");
+        let model_mapping = skill.mappings.iter().find(|m| matches!(m, SkillMapping::Param { field, .. } if field == "upscale_model"));
+        if let Some(SkillMapping::Param { default: Some(d), .. }) = model_mapping {
+            assert_eq!(d, &serde_json::json!("SomeCustom_4x.pth"));
+        } else {
+            panic!("expected upscale_model mapping with default");
+        }
     }
 
     #[test]
-    fn skill_presentation_round_trip() {
+    fn skill_form_view_round_trip() {
         let models = vec!["RealESRGAN_x4plus.pth".into()];
         let skill = builtin::image_upscale(&models);
-        let pres = SkillPresentation::from_definition(&skill);
+        let view = SkillFormView::from_definition(&skill);
 
-        // Presentation should serialize cleanly
-        let json = serde_json::to_value(&pres).unwrap();
-        assert!(json.get("schema").is_some());
-        assert!(json.get("ui_schema").is_some());
-        assert!(json.get("content").is_some());
+        let json = serde_json::to_value(&view).unwrap();
+        assert!(json.get("mappings").is_some());
+        assert!(json.get("content_slots").is_some());
         assert!(json.get("diagram").is_some());
 
         // Content slots preserved
-        assert_eq!(json["content"][0]["role"], "source");
-        assert_eq!(json["content"][0]["content_type"], "image");
-        assert_eq!(json["content"][0]["required"], true);
+        assert_eq!(json["content_slots"][0]["role"], "source");
+        assert_eq!(json["content_slots"][0]["content_type"], "image");
+        assert_eq!(json["content_slots"][0]["required"], true);
+
+        // Mappings include content and param entries
+        let mappings = json["mappings"].as_array().unwrap();
+        assert!(mappings.iter().any(|m| m["type"] == "content"));
+        assert!(mappings.iter().any(|m| m["type"] == "param"));
     }
 
     // ================================================================
@@ -371,6 +385,8 @@ mod tests {
             id: "prompt-abc123".into(),
             skill: "image.upscale".into(),
             status: WorkflowJobStatus::Queued,
+            prompt_id: None,
+            endpoint: None,
             progress: None,
             content: None,
             error: None,
@@ -391,6 +407,8 @@ mod tests {
             id: "prompt-abc123".into(),
             skill: "image.upscale".into(),
             status: WorkflowJobStatus::Running,
+            prompt_id: None,
+            endpoint: None,
             progress: Some(0.65),
             content: None,
             error: None,
@@ -408,6 +426,8 @@ mod tests {
             id: "prompt-abc123".into(),
             skill: "image.upscale".into(),
             status: WorkflowJobStatus::Completed,
+            prompt_id: None,
+            endpoint: None,
             progress: Some(1.0),
             content: Some(vec![ContentBlock {
                 content_type: ContentType::Image,

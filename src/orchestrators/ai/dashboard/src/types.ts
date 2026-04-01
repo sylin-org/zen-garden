@@ -207,13 +207,29 @@ export interface SkillInstanceView {
   vram_mb: number;
 }
 
-export interface SkillPresentation {
+// ── Mapping-driven skill form (replaces JSON Schema) ──────────
+
+export interface SkillFormResponse {
   display_name: string;
   description: string;
-  schema: Record<string, unknown>;
-  ui_schema: Record<string, unknown>;
-  content: SkillContentSlot[];
+  content_slots: SkillContentSlot[];
+  mappings: SkillMapping[];
   diagram: string | null;
+}
+
+export type SkillMapping =
+  | { type: "content"; role: string; content_type: "image" | "text"; placeholder: string }
+  | { type: "param"; field: string; node: string; input: string; label: string; default?: unknown } & ParamTypeDef;
+
+export type ParamTypeDef =
+  | { param_type: "options"; options: ParamOption[] }
+  | { param_type: "range"; min: number; max: number; step?: number }
+  | { param_type: "auto"; kind: "random_int" }
+  | { param_type: "text" };
+
+export interface ParamOption {
+  value: unknown;
+  label?: string;
 }
 
 export function formatBytes(bytes: number): string {

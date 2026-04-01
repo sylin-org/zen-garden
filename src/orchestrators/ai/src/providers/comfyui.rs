@@ -16,7 +16,8 @@ use crate::catalog::traits::{
     BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
 use crate::domain::skill::{
-    ContentType, SkillDefinition, WorkflowJob, WorkflowJobStatus, WorkflowRequest,
+    AutoKind, ContentType, ParamType, SkillDefinition, SkillMapping,
+    WorkflowJob, WorkflowJobStatus, WorkflowRequest,
 };
 use crate::domain::types::{Capability, OfferingKind};
 
@@ -243,14 +244,17 @@ impl Provider for ComfyUiProvider {
                     }
                 };
 
-                // Check if model already exists on instance
-                let volume = &rec.model_type;
+                // Check if model already exists on instance.
+                // Volume is "comfyui-models" (the Docker volume name).
+                // Path is "{model_type}/{filename}" (subdirectory within the volume).
+                let volume = "comfyui-models";
+                let model_path = format!("{}/{}", rec.model_type, rec.filename);
                 if crate::skills::prep::model_exists_on_instance(
                     &self.http,
                     &moss_endpoint,
                     &fqn,
                     volume,
-                    &rec.filename,
+                    &model_path,
                 )
                 .await
                 {
@@ -279,7 +283,7 @@ impl Provider for ComfyUiProvider {
                     &moss_endpoint,
                     &fqn,
                     volume,
-                    &rec.filename,
+                    &model_path,
                     &local_path,
                 )
                 .await
@@ -304,14 +308,15 @@ impl Provider for ComfyUiProvider {
         let endpoint = ctx.endpoint.clone();
 
         Box::pin(async move {
-            let workflow_template = match req.skill.as_str() {
-                "image.upscale" => crate::skills::builtin::image_upscale(&[]).implementation,
-                "image.generate" => crate::skills::builtin::image_generate(&[]).implementation,
-                "image.img2img" => crate::skills::builtin::image_img2img(&[]).implementation,
+            // Look up skill definition to get workflow + mappings
+            let skill_def = match req.skill.as_str() {
+                "image.upscale" => crate::skills::builtin::image_upscale(&[]),
+                "image.generate" => crate::skills::builtin::image_generate(&[]),
+                "image.img2img" => crate::skills::builtin::image_img2img(&[]),
                 other => anyhow::bail!("unknown skill: {}", other),
             };
 
-            execute_workflow(&self.http, &endpoint, &req, workflow_template).await
+            execute_workflow(&self.http, &endpoint, &req, &skill_def).await
         })
     }
 
@@ -400,104 +405,108 @@ pub(crate) async fn list_models(
         .with_context(|| format!("parse comfyui models/{model_type}"))
 }
 
-// ── Workflow Execution ─────────────────────────────────────────
+// ── Mapping-Driven Workflow Execution ──────────────────────────
 
-/// Execute a workflow on a ComfyUI instance.
+/// Execute a workflow by iterating the skill's declarative mappings.
 ///
-/// Generalised pipeline: resolve inputs → fill template → submit → poll → extract.
+/// Pipeline: apply mappings → submit → poll → extract.
+/// Zero skill-specific branches.
 async fn execute_workflow(
     http: &Client,
     endpoint: &str,
     req: &WorkflowRequest,
-    mut workflow: serde_json::Value,
+    skill: &SkillDefinition,
 ) -> Result<WorkflowJob> {
-    // 1. Upload input image (if provided)
-    if let Some(image_content) = req.content.iter().find(|c| c.content_type == ContentType::Image) {
-        let image_bytes = resolve_content_bytes(http, image_content).await?;
-        let uploaded_name = upload_image(http, endpoint, &image_bytes).await?;
-        fill_placeholder(&mut workflow, "PLACEHOLDER_IMAGE", &uploaded_name);
-    }
-
-    // 2. Fill text placeholders from content blocks
-    if let Some(text_content) = req.content.iter().find(|c| {
-        c.content_type == ContentType::Text
-            || c.role.as_deref() == Some("prompt")
-    }) {
-        let prompt = text_content.data.as_deref().unwrap_or("");
-        fill_placeholder(&mut workflow, "PLACEHOLDER_PROMPT", prompt);
-    }
-
-    // 3. Fill parameter-driven placeholders
+    let mut workflow = skill.workflow.clone();
     let params = &req.parameters;
 
-    // Negative prompt
-    let negative = params.get("negative").and_then(|v| v.as_str()).unwrap_or("");
-    fill_placeholder(&mut workflow, "PLACEHOLDER_NEGATIVE", negative);
+    // Apply all mappings
+    for mapping in &skill.mappings {
+        match mapping {
+            SkillMapping::Content { role, content_type, placeholder } => {
+                let content_block = req.content.iter().find(|c| {
+                    c.role.as_deref() == Some(role)
+                });
 
-    // Upscale model
-    if let Some(model) = params.get("upscale_model").and_then(|v| v.as_str()) {
-        fill_placeholder(&mut workflow, "PLACEHOLDER_MODEL", model);
-    } else if workflow.to_string().contains("PLACEHOLDER_MODEL") {
-        // Auto-select first available upscale model
-        let models = list_models(http, endpoint, "upscale_models").await.unwrap_or_default();
-        if let Some(first) = models.first() {
-            fill_placeholder(&mut workflow, "PLACEHOLDER_MODEL", first);
-        }
-    }
-
-    // Checkpoint model
-    if let Some(ckpt) = params.get("checkpoint").and_then(|v| v.as_str()) {
-        fill_placeholder(&mut workflow, "PLACEHOLDER_CHECKPOINT", ckpt);
-    } else if workflow.to_string().contains("PLACEHOLDER_CHECKPOINT") {
-        let models = list_models(http, endpoint, "checkpoints").await.unwrap_or_default();
-        if let Some(first) = models.first() {
-            fill_placeholder(&mut workflow, "PLACEHOLDER_CHECKPOINT", first);
-        }
-    }
-
-    // 4. Apply numeric parameters to workflow nodes
-    // Width/height for EmptyLatentImage
-    if let Some(width) = params.get("width").and_then(|v| v.as_u64()) {
-        fill_numeric(&mut workflow, "EmptyLatentImage", "width", width);
-    }
-    if let Some(height) = params.get("height").and_then(|v| v.as_u64()) {
-        fill_numeric(&mut workflow, "EmptyLatentImage", "height", height);
-    }
-
-    // Steps and CFG for KSampler
-    if let Some(steps) = params.get("steps").and_then(|v| v.as_u64()) {
-        fill_numeric(&mut workflow, "KSampler", "steps", steps);
-    }
-
-    // Denoise/strength for img2img
-    if let Some(strength) = params.get("strength").and_then(|v| v.as_f64()) {
-        fill_float(&mut workflow, "KSampler", "denoise", strength);
-    }
-
-    // Random seed
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    fill_numeric(&mut workflow, "KSampler", "seed", seed);
-
-    // 5. Skill-specific post-processing
-    // Upscale 2x: inject ImageScaleBy(0.5x) after the upscale node
-    let scale = params.get("scale").and_then(|v| v.as_u64()).unwrap_or(4);
-    if req.skill == "image.upscale" && scale == 2 {
-        let scale_node_id = "5";
-        workflow[scale_node_id] = serde_json::json!({
-            "class_type": "ImageScaleBy",
-            "inputs": {
-                "image": ["3", 0],
-                "upscale_method": "lanczos",
-                "scale_by": 0.5
+                match content_type {
+                    ContentType::Image => {
+                        if let Some(block) = content_block {
+                            let image_bytes = resolve_content_bytes(http, block).await?;
+                            let uploaded_name = upload_image(http, endpoint, &image_bytes).await?;
+                            fill_placeholder(&mut workflow, placeholder, &uploaded_name);
+                        }
+                    }
+                    ContentType::Text => {
+                        let text = content_block
+                            .and_then(|b| b.data.as_deref())
+                            .unwrap_or("");
+                        fill_placeholder(&mut workflow, placeholder, text);
+                    }
+                }
             }
-        });
-        workflow["4"]["inputs"]["images"] = serde_json::json!([scale_node_id, 0]);
+            SkillMapping::Param { field, node, input, param_type, default, .. } => {
+                let value = resolve_param_value(params, field, param_type, default.as_ref());
+                set_node_input(&mut workflow, node, input, value);
+            }
+        }
     }
 
-    // 4. Submit workflow
+    // Submit + poll + extract
+    submit_and_poll(http, endpoint, &req.skill, workflow).await
+}
+
+/// Resolve a parameter value from the request, falling back to default or auto-generation.
+fn resolve_param_value(
+    params: &serde_json::Value,
+    field: &str,
+    param_type: &ParamType,
+    default: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    // User-provided value takes priority
+    if let Some(value) = params.get(field) {
+        if !value.is_null() {
+            return value.clone();
+        }
+    }
+
+    // Auto-generated value
+    if let ParamType::Auto { kind } = param_type {
+        return match kind {
+            AutoKind::RandomInt => {
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64;
+                serde_json::json!(seed)
+            }
+        };
+    }
+
+    // Default value
+    default.cloned().unwrap_or(serde_json::Value::Null)
+}
+
+/// Set a value on a specific node's input by node ID.
+fn set_node_input(workflow: &mut serde_json::Value, node_id: &str, input_name: &str, value: serde_json::Value) {
+    if value.is_null() {
+        return;
+    }
+    if let Some(inputs) = workflow
+        .get_mut(node_id)
+        .and_then(|n| n.get_mut("inputs"))
+        .and_then(|i| i.as_object_mut())
+    {
+        inputs.insert(input_name.to_string(), value);
+    }
+}
+
+/// Submit workflow to ComfyUI, poll for completion, extract output images.
+async fn submit_and_poll(
+    http: &Client,
+    endpoint: &str,
+    skill_name: &str,
+    workflow: serde_json::Value,
+) -> Result<WorkflowJob> {
     let client_id = format!(
         "{:x}",
         std::time::SystemTime::now()
@@ -529,7 +538,7 @@ async fn execute_workflow(
         .context("missing prompt_id")?
         .to_string();
 
-    // 5. Poll for completion
+    // Poll for completion
     let start = std::time::Instant::now();
     let output_images = loop {
         if start.elapsed() > WORKFLOW_TIMEOUT {
@@ -575,7 +584,6 @@ async fn execute_workflow(
         }
     };
 
-    // 6. Build result
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let content: Vec<crate::domain::skill::ContentBlock> = output_images
@@ -593,9 +601,11 @@ async fn execute_workflow(
         .collect();
 
     Ok(WorkflowJob {
-        id: prompt_id,
-        skill: req.skill.clone(),
+        id: prompt_id.clone(),
+        skill: skill_name.to_string(),
         status: WorkflowJobStatus::Completed,
+        prompt_id: Some(prompt_id),
+        endpoint: Some(endpoint.to_string()),
         progress: Some(1.0),
         content: Some(content),
         error: None,
@@ -676,32 +686,6 @@ async fn upload_image(http: &Client, endpoint: &str, image_bytes: &[u8]) -> Resu
         .as_str()
         .map(String::from)
         .context("missing 'name' in upload response")
-}
-
-/// Set a numeric input value on all nodes of a given class_type.
-fn fill_numeric(workflow: &mut serde_json::Value, class_type: &str, field: &str, value: u64) {
-    if let Some(obj) = workflow.as_object_mut() {
-        for (_id, node) in obj.iter_mut() {
-            if node.get("class_type").and_then(|v| v.as_str()) == Some(class_type) {
-                if let Some(inputs) = node.get_mut("inputs").and_then(|v| v.as_object_mut()) {
-                    inputs.insert(field.to_string(), serde_json::json!(value));
-                }
-            }
-        }
-    }
-}
-
-/// Set a float input value on all nodes of a given class_type.
-fn fill_float(workflow: &mut serde_json::Value, class_type: &str, field: &str, value: f64) {
-    if let Some(obj) = workflow.as_object_mut() {
-        for (_id, node) in obj.iter_mut() {
-            if node.get("class_type").and_then(|v| v.as_str()) == Some(class_type) {
-                if let Some(inputs) = node.get_mut("inputs").and_then(|v| v.as_object_mut()) {
-                    inputs.insert(field.to_string(), serde_json::json!(value));
-                }
-            }
-        }
-    }
 }
 
 /// Replace a placeholder string throughout a workflow JSON tree.

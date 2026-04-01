@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import type { SkillPresentation } from "../types";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 interface SkillTryItProps {
   skillName: string;
@@ -154,9 +155,7 @@ export function SkillTryIt({ skillName }: SkillTryItProps) {
       {/* Mermaid diagram */}
       {schema.diagram && (
         <div className="bg-[#0d0e14] rounded px-3 py-2 border border-gray-800">
-          <pre className="text-[10px] text-gray-500 font-mono whitespace-pre">
-            {schema.diagram}
-          </pre>
+          <MermaidDiagram chart={schema.diagram} />
         </div>
       )}
 

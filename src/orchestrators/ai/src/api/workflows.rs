@@ -139,7 +139,6 @@ pub async fn get_job(
 /// List all registered skills with computed availability.
 pub async fn list_skills(State(state): State<AppState>) -> Response {
     let snap = state.skills.snapshot().clone();
-    // SkillView already contains definition + available + instances
     (StatusCode::OK, Json(&*snap.skills)).into_response()
 }
 

@@ -73,6 +73,6 @@ impl DirectoryDomain {
         let snapshot = Arc::new(DirectorySnapshot {
             directory: Arc::new(dir.clone()),
         });
-        let _ = self.tx.send(snapshot);
+        self.tx.send_modify(|current| *current = snapshot);
     }
 }

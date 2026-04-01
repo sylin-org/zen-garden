@@ -159,6 +159,11 @@ impl SkillsDomain {
             skills: Arc::new(skills),
             workflow_jobs: Arc::new(state.workflow_jobs.clone()),
         });
-        let _ = self.tx.send(snapshot);
+
+        // Use send_modify instead of send — send() silently drops the value
+        // when there are no receivers, but send_modify always updates.
+        self.tx.send_modify(|current| {
+            *current = snapshot;
+        });
     }
 }

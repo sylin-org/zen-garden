@@ -202,6 +202,100 @@ impl Provider for ComfyUiProvider {
         })
     }
 
+    fn provision_skill(
+        &self,
+        ctx: &ProviderContext,
+        skill_name: &str,
+        cache_dir: &std::path::Path,
+        moss_endpoint: &str,
+        fqn: &str,
+    ) -> BoxFuture<'_, Result<()>> {
+        let endpoint = ctx.endpoint.clone();
+        let skill_name = skill_name.to_string();
+        let cache_dir = cache_dir.to_path_buf();
+        let moss_endpoint = moss_endpoint.to_string();
+        let fqn = fqn.to_string();
+
+        Box::pin(async move {
+            // Look up skill definition to get required_models
+            let skill_def = match skill_name.as_str() {
+                "image.upscale" => crate::skills::builtin::image_upscale(&[]),
+                "image.generate" => crate::skills::builtin::image_generate(&[]),
+                "image.img2img" => crate::skills::builtin::image_img2img(&[]),
+                other => anyhow::bail!("unknown skill: {}", other),
+            };
+
+            // Aggregate recommended models for download URLs
+            let mut recommended: Vec<crate::skills::builtin::RecommendedModel> = Vec::new();
+            recommended.extend(crate::skills::builtin::recommended_upscale_models());
+            recommended.extend(crate::skills::builtin::recommended_checkpoint_models());
+
+            for model_ref in &skill_def.required_models {
+                let rec = recommended.iter().find(|r| r.filename == model_ref.filename);
+                let rec = match rec {
+                    Some(r) => r,
+                    None => {
+                        tracing::debug!(
+                            filename = %model_ref.filename,
+                            "model not in recommended list — skipping"
+                        );
+                        continue;
+                    }
+                };
+
+                // Check if model already exists on instance
+                let volume = &rec.model_type;
+                if crate::skills::prep::model_exists_on_instance(
+                    &self.http,
+                    &moss_endpoint,
+                    &fqn,
+                    volume,
+                    &rec.filename,
+                )
+                .await
+                {
+                    tracing::debug!(
+                        filename = %rec.filename,
+                        endpoint = %endpoint,
+                        "model already on instance"
+                    );
+                    continue;
+                }
+
+                // Download to local cache
+                let local_path = crate::skills::prep::ensure_cached(
+                    &self.http,
+                    &cache_dir,
+                    &rec.model_type,
+                    &rec.filename,
+                    &rec.url,
+                )
+                .await
+                .with_context(|| format!("cache model: {}", rec.filename))?;
+
+                // Push to instance via Moss volume API
+                crate::skills::prep::push_model_to_instance(
+                    &self.http,
+                    &moss_endpoint,
+                    &fqn,
+                    volume,
+                    &rec.filename,
+                    &local_path,
+                )
+                .await
+                .with_context(|| format!("push model {} to {}", rec.filename, endpoint))?;
+
+                tracing::info!(
+                    filename = %rec.filename,
+                    endpoint = %endpoint,
+                    "model provisioned on instance"
+                );
+            }
+
+            Ok(())
+        })
+    }
+
     fn workflow(
         &self,
         ctx: &ProviderContext,

@@ -179,8 +179,9 @@ impl ObservabilityDomain {
 
     fn publish(&self, state: &ObservabilityState) {
         let jobs: Vec<_> = state.jobs.iter().rev().cloned().collect();
-        let _ = self.tx.send(Arc::new(ObservabilitySnapshot {
+        let snapshot = Arc::new(ObservabilitySnapshot {
             jobs: Arc::new(jobs),
-        }));
+        });
+        self.tx.send_modify(|current| *current = snapshot);
     }
 }

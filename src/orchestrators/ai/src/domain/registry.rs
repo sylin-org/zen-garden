@@ -225,6 +225,6 @@ impl RegistryDomain {
             queue_counters: Arc::new(state.queue_counters.clone()),
         });
 
-        let _ = self.tx.send(snapshot);
+        self.tx.send_modify(|current| *current = snapshot);
     }
 }

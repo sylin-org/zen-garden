@@ -126,9 +126,10 @@ impl IntelligenceRunner {
                 }
             }
 
-            let _ = self.tx.send(Arc::new(IntelligenceSnapshot {
+            let snapshot = Arc::new(IntelligenceSnapshot {
                 recommendations: Arc::new(cache),
-            }));
+            });
+            self.tx.send_modify(|current| *current = snapshot);
         }
     }
 }

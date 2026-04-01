@@ -160,6 +160,7 @@ pub async fn list_skills(State(state): State<AppState>) -> Response {
             "capability": s.capability,
             "description": s.description,
             "status": s.status,
+            "vram_mb": s.vram_mb,
             "content_slots": s.content_slots,
             "has_diagram": s.diagram.is_some(),
             "required_models": s.required_models,

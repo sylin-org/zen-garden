@@ -35,6 +35,9 @@ pub struct SkillDefinition {
     pub description: String,
     /// Current lifecycle status.
     pub status: SkillStatus,
+    /// Minimum GPU VRAM required to run this skill (MB).
+    /// Instances below this threshold won't be provisioned.
+    pub vram_mb: u64,
     /// What inputs the skill requires.
     pub content_slots: Vec<ContentSlot>,
     /// Tuning parameters (JSON Schema + RJSF UI Schema).
@@ -280,6 +283,7 @@ mod tests {
             capability: Capability::Image,
             description: "Enhance image resolution using AI super-resolution".into(),
             status: SkillStatus::Ready,
+            vram_mb: 1024,
             content_slots: vec![ContentSlot {
                 role: "source".into(),
                 content_type: ContentType::Image,

@@ -53,6 +53,7 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
         capability: Capability::Image,
         description: "Enhance image resolution using AI super-resolution".into(),
         status: crate::domain::skill::SkillStatus::Initializing,
+        vram_mb: 1024,
         content_slots: vec![ContentSlot {
             role: "source".into(),
             content_type: ContentType::Image,
@@ -94,6 +95,219 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
             .collect(),
         implementation: workflow,
     }
+}
+
+// ── image.generate ─────────────────────────────────────────────
+
+const GENERATE_WORKFLOW_JSON: &str = include_str!("generate_workflow.json");
+
+/// Build the `image.generate` skill definition (text-to-image).
+pub fn image_generate(available_checkpoints: &[String]) -> SkillDefinition {
+    let workflow: serde_json::Value =
+        serde_json::from_str(GENERATE_WORKFLOW_JSON).expect("embedded generate workflow is valid JSON");
+
+    let parsed = parser::parse_workflow(&workflow)
+        .expect("embedded generate workflow parses correctly");
+
+    let effective_checkpoints: Vec<String> = if available_checkpoints.is_empty() {
+        recommended_checkpoint_models()
+            .iter()
+            .map(|m| m.filename.clone())
+            .collect()
+    } else {
+        available_checkpoints.to_vec()
+    };
+
+    let checkpoint_enum: Vec<serde_json::Value> = effective_checkpoints
+        .iter()
+        .map(|m| serde_json::Value::String(m.clone()))
+        .collect();
+    let default_checkpoint = effective_checkpoints.first().cloned().unwrap_or_default();
+
+    SkillDefinition {
+        name: "image.generate".into(),
+        display_name: "Generate".into(),
+        capability: Capability::Image,
+        description: "Create an image from a text description".into(),
+        status: crate::domain::skill::SkillStatus::Initializing,
+        vram_mb: 4096,
+        content_slots: vec![
+            ContentSlot {
+                role: "prompt".into(),
+                content_type: ContentType::Text,
+                required: true,
+            },
+        ],
+        parameter_schema: FormSchema {
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "negative": {
+                        "type": "string",
+                        "title": "Negative Prompt",
+                        "description": "What to avoid in the generated image",
+                        "default": "blurry, watermark, low quality, deformed"
+                    },
+                    "width": {
+                        "type": "integer",
+                        "title": "Width",
+                        "enum": [512, 768, 1024],
+                        "default": 512
+                    },
+                    "height": {
+                        "type": "integer",
+                        "title": "Height",
+                        "enum": [512, 768, 1024],
+                        "default": 512
+                    },
+                    "steps": {
+                        "type": "integer",
+                        "title": "Steps",
+                        "description": "More steps = higher quality, slower",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 20
+                    },
+                    "checkpoint": {
+                        "type": "string",
+                        "title": "Model",
+                        "enum": checkpoint_enum,
+                        "default": default_checkpoint
+                    }
+                },
+                "required": ["negative"]
+            }),
+            ui_schema: serde_json::json!({
+                "negative": { "ui:widget": "textarea", "ui:options": { "rows": 2 } },
+                "width": { "ui:widget": "select" },
+                "height": { "ui:widget": "select" },
+                "steps": { "ui:widget": "range" },
+                "checkpoint": { "ui:widget": "select" }
+            }),
+        },
+        diagram: Some(parsed.diagram),
+        required_models: recommended_checkpoint_models()
+            .into_iter()
+            .map(|m| ModelRef {
+                filename: m.filename,
+                model_type: m.model_type,
+                description: Some(m.description),
+            })
+            .collect(),
+        implementation: workflow,
+    }
+}
+
+// ── image.img2img ──────────────────────────────────────────────
+
+const IMG2IMG_WORKFLOW_JSON: &str = include_str!("img2img_workflow.json");
+
+/// Build the `image.img2img` skill definition (image + prompt → transformed image).
+pub fn image_img2img(available_checkpoints: &[String]) -> SkillDefinition {
+    let workflow: serde_json::Value =
+        serde_json::from_str(IMG2IMG_WORKFLOW_JSON).expect("embedded img2img workflow is valid JSON");
+
+    let parsed = parser::parse_workflow(&workflow)
+        .expect("embedded img2img workflow parses correctly");
+
+    let effective_checkpoints: Vec<String> = if available_checkpoints.is_empty() {
+        recommended_checkpoint_models()
+            .iter()
+            .map(|m| m.filename.clone())
+            .collect()
+    } else {
+        available_checkpoints.to_vec()
+    };
+
+    let checkpoint_enum: Vec<serde_json::Value> = effective_checkpoints
+        .iter()
+        .map(|m| serde_json::Value::String(m.clone()))
+        .collect();
+    let default_checkpoint = effective_checkpoints.first().cloned().unwrap_or_default();
+
+    SkillDefinition {
+        name: "image.img2img".into(),
+        display_name: "Transform".into(),
+        capability: Capability::Image,
+        description: "Transform an image guided by a text prompt".into(),
+        status: crate::domain::skill::SkillStatus::Initializing,
+        vram_mb: 4096,
+        content_slots: vec![
+            ContentSlot {
+                role: "source".into(),
+                content_type: ContentType::Image,
+                required: true,
+            },
+            ContentSlot {
+                role: "prompt".into(),
+                content_type: ContentType::Text,
+                required: true,
+            },
+        ],
+        parameter_schema: FormSchema {
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "strength": {
+                        "type": "number",
+                        "title": "Strength",
+                        "description": "How much to transform (0.0 = no change, 1.0 = full generation)",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "default": 0.7
+                    },
+                    "negative": {
+                        "type": "string",
+                        "title": "Negative Prompt",
+                        "default": "blurry, watermark, low quality"
+                    },
+                    "steps": {
+                        "type": "integer",
+                        "title": "Steps",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 20
+                    },
+                    "checkpoint": {
+                        "type": "string",
+                        "title": "Model",
+                        "enum": checkpoint_enum,
+                        "default": default_checkpoint
+                    }
+                }
+            }),
+            ui_schema: serde_json::json!({
+                "strength": { "ui:widget": "range" },
+                "negative": { "ui:widget": "textarea", "ui:options": { "rows": 2 } },
+                "steps": { "ui:widget": "range" },
+                "checkpoint": { "ui:widget": "select" }
+            }),
+        },
+        diagram: Some(parsed.diagram),
+        required_models: recommended_checkpoint_models()
+            .into_iter()
+            .map(|m| ModelRef {
+                filename: m.filename,
+                model_type: m.model_type,
+                description: Some(m.description),
+            })
+            .collect(),
+        implementation: workflow,
+    }
+}
+
+// ── Recommended Models ─────────────────────────────────────────
+
+/// Recommended checkpoint models for generation skills.
+pub fn recommended_checkpoint_models() -> Vec<RecommendedModel> {
+    vec![RecommendedModel {
+        filename: "v1-5-pruned-emaonly.safetensors".into(),
+        model_type: "checkpoints".into(),
+        url: "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors".into(),
+        size_bytes: 4_265_380_512,
+        license: "CreativeML Open RAIL-M".into(),
+        description: "Stable Diffusion 1.5 — versatile, runs on 4GB+ VRAM.".into(),
+    }]
 }
 
 /// Recommended upscale models with download URLs.

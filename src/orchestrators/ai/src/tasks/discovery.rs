@@ -511,10 +511,19 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
         }
 
         // Provision: download to cache → push to instance
+        let instance_vram_mb = {
+            let instances = state.instances.read().await;
+            instances
+                .get(endpoint)
+                .map(|i| i.vram.total_bytes / 1_048_576)
+                .unwrap_or(0)
+        };
+
         let instances_to_provision = vec![(
             endpoint.to_string(),
             moss_endpoint.clone(),
             offering_fqn.clone(),
+            instance_vram_mb,
         )];
 
         // Update status to Provisioning before starting

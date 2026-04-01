@@ -197,13 +197,19 @@ pub async fn push_model_to_instance(
 /// 1. Download missing models to local cache
 /// 2. For each ComfyUI instance, check readiness and push missing models
 /// 3. Return whether at least one instance is fully provisioned
+/// Instance info for provisioning: (comfyui_endpoint, moss_endpoint, fqn, vram_mb)
+pub type InstanceTarget = (String, String, String, u64);
+
 pub async fn provision_skill(
     http: &Client,
     cache_dir: &Path,
     skill: &SkillDefinition,
-    instances: &[(String, String, String)], // (comfyui_endpoint, moss_endpoint, fqn)
+    instances: &[InstanceTarget],
 ) -> Result<ProvisionResult> {
-    let recommended = super::builtin::recommended_upscale_models();
+    // Aggregate all recommended models across all skill types
+    let mut recommended: Vec<super::builtin::RecommendedModel> = Vec::new();
+    recommended.extend(super::builtin::recommended_upscale_models());
+    recommended.extend(super::builtin::recommended_checkpoint_models());
 
     // 1. Ensure all required models are cached locally
     let mut cached_models: HashMap<String, PathBuf> = HashMap::new();
@@ -243,10 +249,22 @@ pub async fn provision_skill(
         });
     }
 
-    // 2. Push to each instance
+    // 2. Push to each instance (skip those with insufficient VRAM)
     let mut live_count = 0;
+    let mut skipped_vram = 0;
 
-    for (comfyui_endpoint, moss_endpoint, fqn) in instances {
+    for (comfyui_endpoint, moss_endpoint, fqn, instance_vram_mb) in instances {
+        if *instance_vram_mb > 0 && *instance_vram_mb < skill.vram_mb {
+            tracing::info!(
+                instance = %comfyui_endpoint,
+                vram_mb = instance_vram_mb,
+                required_mb = skill.vram_mb,
+                "skipping instance — insufficient VRAM for skill"
+            );
+            skipped_vram += 1;
+            continue;
+        }
+
         let mut all_present = true;
 
         for model_ref in &skill.required_models {

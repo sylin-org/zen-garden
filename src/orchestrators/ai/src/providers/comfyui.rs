@@ -160,22 +160,26 @@ impl Provider for ComfyUiProvider {
         let endpoint = ctx.endpoint.clone();
 
         Box::pin(async move {
-            // Always return built-in skills — status tracks readiness.
-            // Installed models enrich the parameter enum but don't gate registration.
-            let upscale_models = list_models(&self.http, &endpoint, "upscale_models")
-                .await
-                .unwrap_or_default();
+            // Query installed models — enriches parameter dropdowns and status
+            let (upscale_models, checkpoints) = tokio::join!(
+                list_models(&self.http, &endpoint, "upscale_models"),
+                list_models(&self.http, &endpoint, "checkpoints"),
+            );
+            let upscale_models = upscale_models.unwrap_or_default();
+            let checkpoints = checkpoints.unwrap_or_default();
 
-            let mut skill = crate::skills::builtin::image_upscale(&upscale_models);
+            use crate::domain::skill::SkillStatus;
 
-            // Set status based on whether models are installed
-            skill.status = if upscale_models.is_empty() {
-                crate::domain::skill::SkillStatus::Initializing
-            } else {
-                crate::domain::skill::SkillStatus::Ready
-            };
+            let mut upscale = crate::skills::builtin::image_upscale(&upscale_models);
+            upscale.status = if upscale_models.is_empty() { SkillStatus::Initializing } else { SkillStatus::Ready };
 
-            Ok(vec![skill])
+            let mut generate = crate::skills::builtin::image_generate(&checkpoints);
+            generate.status = if checkpoints.is_empty() { SkillStatus::Initializing } else { SkillStatus::Ready };
+
+            let mut img2img = crate::skills::builtin::image_img2img(&checkpoints);
+            img2img.status = if checkpoints.is_empty() { SkillStatus::Initializing } else { SkillStatus::Ready };
+
+            Ok(vec![upscale, generate, img2img])
         })
     }
 
@@ -189,6 +193,8 @@ impl Provider for ComfyUiProvider {
         Box::pin(async move {
             let workflow_template = match req.skill.as_str() {
                 "image.upscale" => crate::skills::builtin::image_upscale(&[]).implementation,
+                "image.generate" => crate::skills::builtin::image_generate(&[]).implementation,
+                "image.img2img" => crate::skills::builtin::image_img2img(&[]).implementation,
                 other => anyhow::bail!("unknown skill: {}", other),
             };
 
@@ -285,56 +291,87 @@ pub(crate) async fn list_models(
 
 /// Execute a workflow on a ComfyUI instance.
 ///
-/// Pipeline: resolve input → upload image → fill template → submit → poll → extract result.
+/// Generalised pipeline: resolve inputs → fill template → submit → poll → extract.
 async fn execute_workflow(
     http: &Client,
     endpoint: &str,
     req: &WorkflowRequest,
     mut workflow: serde_json::Value,
 ) -> Result<WorkflowJob> {
-    // 1. Extract and upload input image
-    let image_content = req
-        .content
-        .iter()
-        .find(|c| c.content_type == ContentType::Image)
-        .context("workflow requires an image content block")?;
+    // 1. Upload input image (if provided)
+    if let Some(image_content) = req.content.iter().find(|c| c.content_type == ContentType::Image) {
+        let image_bytes = resolve_content_bytes(http, image_content).await?;
+        let uploaded_name = upload_image(http, endpoint, &image_bytes).await?;
+        fill_placeholder(&mut workflow, "PLACEHOLDER_IMAGE", &uploaded_name);
+    }
 
-    let image_bytes = resolve_content_bytes(http, image_content).await?;
-    let uploaded_name = upload_image(http, endpoint, &image_bytes).await?;
+    // 2. Fill text placeholders from content blocks
+    if let Some(text_content) = req.content.iter().find(|c| {
+        c.content_type == ContentType::Text
+            || c.role.as_deref() == Some("prompt")
+    }) {
+        let prompt = text_content.data.as_deref().unwrap_or("");
+        fill_placeholder(&mut workflow, "PLACEHOLDER_PROMPT", prompt);
+    }
 
-    // 2. Resolve model from parameters or query available
-    let model_name = req
-        .parameters
-        .get("upscale_model")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    // 3. Fill parameter-driven placeholders
+    let params = &req.parameters;
 
-    let model_name = match model_name {
-        Some(m) => m,
-        None => {
-            let models = list_models(http, endpoint, "upscale_models").await?;
-            models
-                .into_iter()
-                .next()
-                .context("no upscale models installed")?
+    // Negative prompt
+    let negative = params.get("negative").and_then(|v| v.as_str()).unwrap_or("");
+    fill_placeholder(&mut workflow, "PLACEHOLDER_NEGATIVE", negative);
+
+    // Upscale model
+    if let Some(model) = params.get("upscale_model").and_then(|v| v.as_str()) {
+        fill_placeholder(&mut workflow, "PLACEHOLDER_MODEL", model);
+    } else if workflow.to_string().contains("PLACEHOLDER_MODEL") {
+        // Auto-select first available upscale model
+        let models = list_models(http, endpoint, "upscale_models").await.unwrap_or_default();
+        if let Some(first) = models.first() {
+            fill_placeholder(&mut workflow, "PLACEHOLDER_MODEL", first);
         }
-    };
+    }
 
-    // 3. Fill placeholders in workflow template
-    fill_placeholder(&mut workflow, "PLACEHOLDER_IMAGE", &uploaded_name);
-    fill_placeholder(&mut workflow, "PLACEHOLDER_MODEL", &model_name);
+    // Checkpoint model
+    if let Some(ckpt) = params.get("checkpoint").and_then(|v| v.as_str()) {
+        fill_placeholder(&mut workflow, "PLACEHOLDER_CHECKPOINT", ckpt);
+    } else if workflow.to_string().contains("PLACEHOLDER_CHECKPOINT") {
+        let models = list_models(http, endpoint, "checkpoints").await.unwrap_or_default();
+        if let Some(first) = models.first() {
+            fill_placeholder(&mut workflow, "PLACEHOLDER_CHECKPOINT", first);
+        }
+    }
 
-    // 3b. Handle scale factor — the upscale model always produces 4x.
-    // For 2x, insert a downscale node between upscale and save.
-    let scale = req
-        .parameters
-        .get("scale")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(4);
+    // 4. Apply numeric parameters to workflow nodes
+    // Width/height for EmptyLatentImage
+    if let Some(width) = params.get("width").and_then(|v| v.as_u64()) {
+        fill_numeric(&mut workflow, "EmptyLatentImage", "width", width);
+    }
+    if let Some(height) = params.get("height").and_then(|v| v.as_u64()) {
+        fill_numeric(&mut workflow, "EmptyLatentImage", "height", height);
+    }
 
-    if scale == 2 {
-        // Rewire: upscale(4x) → ImageScaleBy(0.5x) → save
-        // The 4x model output at 0.5x = 2x of original.
+    // Steps and CFG for KSampler
+    if let Some(steps) = params.get("steps").and_then(|v| v.as_u64()) {
+        fill_numeric(&mut workflow, "KSampler", "steps", steps);
+    }
+
+    // Denoise/strength for img2img
+    if let Some(strength) = params.get("strength").and_then(|v| v.as_f64()) {
+        fill_float(&mut workflow, "KSampler", "denoise", strength);
+    }
+
+    // Random seed
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    fill_numeric(&mut workflow, "KSampler", "seed", seed);
+
+    // 5. Skill-specific post-processing
+    // Upscale 2x: inject ImageScaleBy(0.5x) after the upscale node
+    let scale = params.get("scale").and_then(|v| v.as_u64()).unwrap_or(4);
+    if req.skill == "image.upscale" && scale == 2 {
         let scale_node_id = "5";
         workflow[scale_node_id] = serde_json::json!({
             "class_type": "ImageScaleBy",
@@ -344,7 +381,6 @@ async fn execute_workflow(
                 "scale_by": 0.5
             }
         });
-        // Rewire save to read from the scale node instead of upscale
         workflow["4"]["inputs"]["images"] = serde_json::json!([scale_node_id, 0]);
     }
 
@@ -527,6 +563,32 @@ async fn upload_image(http: &Client, endpoint: &str, image_bytes: &[u8]) -> Resu
         .as_str()
         .map(String::from)
         .context("missing 'name' in upload response")
+}
+
+/// Set a numeric input value on all nodes of a given class_type.
+fn fill_numeric(workflow: &mut serde_json::Value, class_type: &str, field: &str, value: u64) {
+    if let Some(obj) = workflow.as_object_mut() {
+        for (_id, node) in obj.iter_mut() {
+            if node.get("class_type").and_then(|v| v.as_str()) == Some(class_type) {
+                if let Some(inputs) = node.get_mut("inputs").and_then(|v| v.as_object_mut()) {
+                    inputs.insert(field.to_string(), serde_json::json!(value));
+                }
+            }
+        }
+    }
+}
+
+/// Set a float input value on all nodes of a given class_type.
+fn fill_float(workflow: &mut serde_json::Value, class_type: &str, field: &str, value: f64) {
+    if let Some(obj) = workflow.as_object_mut() {
+        for (_id, node) in obj.iter_mut() {
+            if node.get("class_type").and_then(|v| v.as_str()) == Some(class_type) {
+                if let Some(inputs) = node.get_mut("inputs").and_then(|v| v.as_object_mut()) {
+                    inputs.insert(field.to_string(), serde_json::json!(value));
+                }
+            }
+        }
+    }
 }
 
 /// Replace a placeholder string throughout a workflow JSON tree.

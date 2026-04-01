@@ -510,82 +510,104 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
             continue;
         }
 
-        // Provision: download to cache → push to instance
-        let instance_vram_mb = {
-            let instances = state.instances.read().await;
-            instances
-                .get(endpoint)
-                .map(|i| i.vram.total_bytes / 1_048_576)
-                .unwrap_or(0)
-        };
-
-        let instances_to_provision = vec![(
-            endpoint.to_string(),
-            moss_endpoint.clone(),
-            offering_fqn.clone(),
-            instance_vram_mb,
-        )];
-
-        // Update status to Provisioning before starting
+        // Skip if already provisioning or ready (avoid duplicate downloads)
         {
-            let mut registry = state.skill_registry.write().await;
-            if let Some(s) = registry.get_mut(&skill_name) {
-                s.status = crate::domain::skill::SkillStatus::Provisioning;
+            let registry = state.skill_registry.read().await;
+            if let Some(existing) = registry.get(&skill_name) {
+                match existing.status {
+                    crate::domain::skill::SkillStatus::Provisioning
+                    | crate::domain::skill::SkillStatus::Ready
+                    | crate::domain::skill::SkillStatus::Degraded => {
+                        continue;
+                    }
+                    _ => {}
+                }
             }
         }
 
-        match crate::skills::prep::provision_skill(
-            &http,
-            &cache_dir,
-            &skill,
-            &instances_to_provision,
-        )
-        .await
-        {
-            Ok(result) => {
-                // Map provisioning result to skill status
-                let new_status = match result.state {
-                    crate::skills::prep::SkillState::Live => {
-                        crate::domain::skill::SkillStatus::Ready
-                    }
-                    crate::skills::prep::SkillState::Degraded => {
-                        crate::domain::skill::SkillStatus::Degraded
-                    }
-                    _ => crate::domain::skill::SkillStatus::Provisioning,
-                };
+        // Spawn provisioning as a background task — don't block discovery
+        let prov_state = state.clone();
+        let prov_endpoint = endpoint.to_string();
+        let prov_moss = moss_endpoint.clone();
+        let prov_fqn = offering_fqn.clone();
+        let prov_cache = cache_dir.clone();
+        let prov_http = http.clone();
+        let prov_skill = skill.clone();
 
-                // Update skill status in registry
-                {
-                    let mut registry = state.skill_registry.write().await;
-                    if let Some(s) = registry.get_mut(&skill_name) {
-                        s.status = new_status;
-                    }
+        tokio::spawn(async move {
+            let instance_vram_mb = {
+                let instances = prov_state.instances.read().await;
+                instances
+                    .get(&prov_endpoint)
+                    .map(|i| i.vram.total_bytes / 1_048_576)
+                    .unwrap_or(0)
+            };
+
+            let instances_to_provision = vec![(
+                prov_endpoint.clone(),
+                prov_moss,
+                prov_fqn,
+                instance_vram_mb,
+            )];
+
+            // Update status to Provisioning
+            {
+                let mut registry = prov_state.skill_registry.write().await;
+                if let Some(s) = registry.get_mut(&skill_name) {
+                    s.status = crate::domain::skill::SkillStatus::Provisioning;
                 }
-
-                tracing::info!(
-                    skill = %skill_name,
-                    live = result.live_instances,
-                    total = result.total_instances,
-                    status = ?new_status,
-                    "skill provisioned"
-                );
             }
-            Err(e) => {
-                // Mark as Failed
-                {
-                    let mut registry = state.skill_registry.write().await;
-                    if let Some(s) = registry.get_mut(&skill_name) {
-                        s.status = crate::domain::skill::SkillStatus::Failed;
+
+            match crate::skills::prep::provision_skill(
+                &prov_http,
+                &prov_cache,
+                &prov_skill,
+                &instances_to_provision,
+            )
+            .await
+            {
+                Ok(result) => {
+                    let new_status = match result.state {
+                        crate::skills::prep::SkillState::Live => {
+                            crate::domain::skill::SkillStatus::Ready
+                        }
+                        crate::skills::prep::SkillState::Degraded => {
+                            crate::domain::skill::SkillStatus::Degraded
+                        }
+                        _ => crate::domain::skill::SkillStatus::Provisioning,
+                    };
+
+                    {
+                        let mut registry = prov_state.skill_registry.write().await;
+                        if let Some(s) = registry.get_mut(&skill_name) {
+                            s.status = new_status;
+                        }
                     }
-                }
 
-                tracing::warn!(
-                    skill = %skill_name,
-                    error = %e,
-                    "skill provisioning failed"
-                );
+                    tracing::info!(
+                        skill = %skill_name,
+                        live = result.live_instances,
+                        total = result.total_instances,
+                        status = ?new_status,
+                        "skill provisioned"
+                    );
+                }
+                Err(e) => {
+                    {
+                        let mut registry = prov_state.skill_registry.write().await;
+                        if let Some(s) = registry.get_mut(&skill_name) {
+                            s.status = crate::domain::skill::SkillStatus::Failed;
+                        }
+                    }
+
+                    tracing::warn!(
+                        skill = %skill_name,
+                        error = %e,
+                        "skill provisioning failed"
+                    );
+                }
             }
-        }
+        });
     }
 }
 

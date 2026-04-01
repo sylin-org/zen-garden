@@ -712,7 +712,23 @@ function SkillBlock({ skill }: { skill: SkillInfo }) {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* Stone availability squares */}
+          {skill.stones && skill.stones.length > 0 && (
+            <div className="flex items-center gap-1" title={skill.stones.map(s =>
+              `${s.stone}: ${s.reason}${s.reason === "insufficient_vram" ? ` (${s.vram_mb}MB < ${skill.vram_mb}MB)` : ""}`
+            ).join("\n")}>
+              {skill.stones.map((s) => (
+                <span
+                  key={s.stone}
+                  className={`w-2.5 h-2.5 rounded-sm ${
+                    s.available ? "bg-emerald-400" : s.reason === "insufficient_vram" ? "bg-yellow-500" : "bg-gray-600"
+                  }`}
+                  title={`${s.stone}: ${s.reason}`}
+                />
+              ))}
+            </div>
+          )}
           <span
             className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${statusStyle.bg}`}
           >

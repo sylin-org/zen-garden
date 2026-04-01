@@ -153,7 +153,32 @@ pub async fn get_job(
 /// List all registered skills.
 pub async fn list_skills(State(state): State<AppState>) -> Response {
     let registry = state.skill_registry.read().await;
+    // Build per-stone availability for each skill
+    let instances = state.instances.read().await;
+    let comfyui_instances: Vec<_> = instances
+        .values()
+        .filter(|i| i.kind == crate::domain::types::OfferingKind::ComfyUi)
+        .collect();
+
     let skills: Vec<_> = registry.list().iter().map(|s| {
+        let stones: Vec<_> = comfyui_instances.iter().map(|inst| {
+            let vram_mb = inst.vram.total_bytes / 1_048_576;
+            let meets_vram = vram_mb == 0 || vram_mb >= s.vram_mb;
+            let available = meets_vram && inst.health.is_routable();
+            serde_json::json!({
+                "stone": inst.stone.name,
+                "available": available,
+                "reason": if !inst.health.is_routable() {
+                    "unhealthy"
+                } else if !meets_vram {
+                    "insufficient_vram"
+                } else {
+                    "ready"
+                },
+                "vram_mb": vram_mb,
+            })
+        }).collect();
+
         serde_json::json!({
             "name": s.name,
             "display_name": s.display_name,
@@ -164,6 +189,7 @@ pub async fn list_skills(State(state): State<AppState>) -> Response {
             "content_slots": s.content_slots,
             "has_diagram": s.diagram.is_some(),
             "required_models": s.required_models,
+            "stones": stones,
         })
     }).collect();
 

@@ -7,3 +7,6 @@
 
 pub mod parser;
 pub mod builtin;
+
+#[cfg(test)]
+mod tests;

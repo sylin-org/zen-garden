@@ -291,7 +291,6 @@ mod tests {
             model: model.to_string(),
             vram_mb: Some(vram_mb),
             capabilities: capabilities.into_iter().map(String::from).collect(),
-            ai_runtimes: vec![], // Ignored — FactSource reads from capabilities
         }
     }
 

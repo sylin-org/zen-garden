@@ -807,13 +807,13 @@ mod tests {
         gpu_count: u32,
         gpu_vram_total_mb: u64,
         npu_present: bool,
-        ai_runtimes: HashSet<String>,
+        runtime_capabilities: HashSet<String>,
     }
 
     impl FactSource for TestFacts {
         fn resolve_set(&self, fact: Fact) -> HashSet<String> {
             match fact {
-                Fact::AiRuntime => self.ai_runtimes.clone(),
+                Fact::AiRuntime => self.runtime_capabilities.clone(),
                 Fact::CpuFeatures => self.cpu_features.clone(),
                 Fact::CpuPattern => self.cpu_patterns.clone(),
                 _ => HashSet::new(),
@@ -857,7 +857,7 @@ mod tests {
             gpu_count: 1,
             gpu_vram_total_mb: 6144,
             npu_present: false,
-            ai_runtimes: HashSet::from(["rocm".into()]),
+            runtime_capabilities: HashSet::from(["rocm".into()]),
         }
     }
 
@@ -1500,7 +1500,7 @@ mod tests {
     #[test]
     fn eval_has_any_first_match() {
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["cuda".into()]),
+            runtime_capabilities: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
         let p = Predicate::parse("host.ai.runtime HAS cuda,rocm").unwrap();
@@ -1510,7 +1510,7 @@ mod tests {
     #[test]
     fn eval_has_any_second_match() {
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["rocm".into()]),
+            runtime_capabilities: HashSet::from(["rocm".into()]),
             ..Default::default()
         };
         let p = Predicate::parse("host.ai.runtime HAS cuda,rocm").unwrap();
@@ -1520,7 +1520,7 @@ mod tests {
     #[test]
     fn eval_has_any_none_match() {
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["directml".into()]),
+            runtime_capabilities: HashSet::from(["directml".into()]),
             ..Default::default()
         };
         let p = Predicate::parse("host.ai.runtime HAS cuda,rocm").unwrap();
@@ -1530,7 +1530,7 @@ mod tests {
     #[test]
     fn eval_has_all_true() {
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["cuda".into(), "rocm".into(), "openvino".into()]),
+            runtime_capabilities: HashSet::from(["cuda".into(), "rocm".into(), "openvino".into()]),
             ..Default::default()
         };
         let p = Predicate::parse("host.ai.runtime HAS cuda AND rocm").unwrap();
@@ -1540,7 +1540,7 @@ mod tests {
     #[test]
     fn eval_has_all_partial() {
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["cuda".into()]),
+            runtime_capabilities: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
         let p = Predicate::parse("host.ai.runtime HAS cuda AND rocm").unwrap();
@@ -1550,7 +1550,7 @@ mod tests {
     #[test]
     fn eval_lacks_multi_all_absent() {
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["directml".into()]),
+            runtime_capabilities: HashSet::from(["directml".into()]),
             ..Default::default()
         };
         let p = Predicate::parse("host.ai.runtime LACKS cuda,rocm").unwrap();
@@ -1560,7 +1560,7 @@ mod tests {
     #[test]
     fn eval_lacks_multi_one_present() {
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["cuda".into()]),
+            runtime_capabilities: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
         let p = Predicate::parse("host.ai.runtime LACKS cuda,rocm").unwrap();
@@ -1740,14 +1740,14 @@ mod tests {
         ];
         // AMD-only stone
         let host = TestFacts {
-            ai_runtimes: HashSet::from(["rocm".into()]),
+            runtime_capabilities: HashSet::from(["rocm".into()]),
             ..Default::default()
         };
         assert!(check_all(&predicates, &host));
 
         // NVIDIA stone — should NOT match
         let nvidia = TestFacts {
-            ai_runtimes: HashSet::from(["cuda".into()]),
+            runtime_capabilities: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
         assert!(!check_all(&predicates, &nvidia));
@@ -1768,7 +1768,7 @@ mod tests {
 
         // NVIDIA stone — should NOT match
         let nvidia = TestFacts {
-            ai_runtimes: HashSet::from(["cuda".into()]),
+            runtime_capabilities: HashSet::from(["cuda".into()]),
             ..Default::default()
         };
         assert!(!check_all(&predicates, &nvidia));

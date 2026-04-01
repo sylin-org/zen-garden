@@ -164,11 +164,9 @@ impl Command for StatusCommand {
                 .gpus
                 .iter()
                 .filter(|gpu| {
-                    !gpu.ai_runtimes.is_empty()
-                        || gpu
-                            .capabilities
-                            .iter()
-                            .any(|c| c == "cuda" || c == "rocm" || c == "vulkan" || c == "directml")
+                    gpu.capabilities
+                        .iter()
+                        .any(|c| c == "cuda" || c == "rocm" || c == "vulkan" || c == "directml")
                 })
                 .collect();
 
@@ -199,52 +197,22 @@ impl Command for StatusCommand {
                         "Unknown".to_string()
                     };
 
-                    // Runtime details
-                    let runtime_str = if !gpu.ai_runtimes.is_empty() {
-                        // Use detected AI runtimes, format them nicely
-                        // Filter to show only versioned runtimes (skip base names like "cuda")
-                        let versioned: Vec<String> = gpu
-                            .ai_runtimes
+                    // Runtime details — read directly from capabilities
+                    let runtime_str = {
+                        let formatted: Vec<String> = gpu
+                            .capabilities
                             .iter()
-                            .filter(|r| r.contains(':'))
-                            .map(|r| {
-                                // Format "cuda:12.2" -> "CUDA 12.2"
-                                let parts: Vec<&str> = r.split(':').collect();
-                                if parts.len() == 2 {
-                                    format!("{} {}", parts[0].to_uppercase(), parts[1])
-                                } else {
-                                    r.to_uppercase()
-                                }
+                            .map(|c| match c.as_str() {
+                                "cuda" => "CUDA".to_string(),
+                                "rocm" => "ROCm".to_string(),
+                                "directml" => "DirectML".to_string(),
+                                "openvino" => "OpenVINO".to_string(),
+                                "vulkan" => "Vulkan".to_string(),
+                                "opencl" => "OpenCL".to_string(),
+                                other => other.to_uppercase(),
                             })
                             .collect();
-
-                        // Also include non-versioned runtimes (directml, openvino, etc.)
-                        let simple: Vec<String> = gpu
-                            .ai_runtimes
-                            .iter()
-                            .filter(|r: &&String| !r.contains(':'))
-                            .map(|r: &String| {
-                                // Special case formatting
-                                match r.as_str() {
-                                    "directml" => "DirectML".to_string(),
-                                    "openvino" => "OpenVINO".to_string(),
-                                    _ => r.to_uppercase(),
-                                }
-                            })
-                            .collect();
-
-                        let mut all = versioned;
-                        all.extend(simple);
-
-                        if all.is_empty() {
-                            // Fallback to capabilities
-                            gpu.capabilities.join(", ")
-                        } else {
-                            all.join(", ")
-                        }
-                    } else {
-                        // Fallback to capabilities if runtime not detected
-                        gpu.capabilities.join(", ")
+                        formatted.join(", ")
                     };
 
                     // Format: device_name | vram - runtime

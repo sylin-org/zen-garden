@@ -25,7 +25,6 @@ impl FactSource for crate::types::hardware::HardwareCapabilities {
     fn resolve_set(&self, fact: Fact) -> HashSet<String> {
         match fact {
             Fact::AiRuntime => {
-                // Derive from gpu.capabilities — no ai_runtimes field needed
                 self.hardware
                     .gpus
                     .iter()

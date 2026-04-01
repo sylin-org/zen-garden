@@ -88,7 +88,7 @@ fn build_ai_capabilities_summary(
         ["cuda", "rocm", "directml", "openvino"].into_iter().collect();
 
     for gpu in gpus {
-        // Derive runtimes from capabilities (not ai_runtimes)
+        // Derive runtimes from capabilities
         for cap in &gpu.capabilities {
             let lower = cap.to_lowercase();
             if ai_runtime_names.contains(lower.as_str()) {
@@ -155,14 +155,6 @@ fn merge_gpus(cached: &[GpuInfo], fresh: &[GpuInfo]) -> Vec<GpuInfo> {
                 }
             }
 
-            // Union AI runtimes (dedup, case-insensitive)
-            let mut ai_runtimes: Vec<String> = fresh_gpu.ai_runtimes.clone();
-            for rt in &cached_gpu.ai_runtimes {
-                if !ai_runtimes.iter().any(|r| r.eq_ignore_ascii_case(rt)) {
-                    ai_runtimes.push(rt.clone());
-                }
-            }
-
             if fresh_gpu.vram_mb.is_none() && cached_gpu.vram_mb.is_some() {
                 tracing::info!(
                     vendor = %fresh_gpu.vendor,
@@ -177,7 +169,6 @@ fn merge_gpus(cached: &[GpuInfo], fresh: &[GpuInfo]) -> Vec<GpuInfo> {
                 model: fresh_gpu.model.clone(),
                 vram_mb,
                 capabilities,
-                ai_runtimes,
             });
         } else {
             // New GPU not in cache, add as-is
@@ -502,23 +493,15 @@ mod tests {
             model: model.to_string(),
             vram_mb: vram,
             capabilities: vec![],
-            ai_runtimes: vec![],
         }
     }
 
-    fn gpu_full(
-        vendor: &str,
-        model: &str,
-        vram: Option<u64>,
-        caps: Vec<&str>,
-        runtimes: Vec<&str>,
-    ) -> GpuInfo {
+    fn gpu_with_caps(vendor: &str, model: &str, vram: Option<u64>, caps: Vec<&str>) -> GpuInfo {
         GpuInfo {
             vendor: vendor.to_string(),
             model: model.to_string(),
             vram_mb: vram,
             capabilities: caps.into_iter().map(String::from).collect(),
-            ai_runtimes: runtimes.into_iter().map(String::from).collect(),
         }
     }
 
@@ -575,19 +558,17 @@ mod tests {
 
     #[test]
     fn merge_capabilities_union() {
-        let cached = vec![gpu_full(
+        let cached = vec![gpu_with_caps(
             "AMD",
             "Radeon RX 7900 XTX",
             Some(24517),
-            vec!["vulkan", "directml"],
-            vec!["rocm/6.0"],
+            vec!["vulkan", "directml", "rocm"],
         )];
-        let fresh = vec![gpu_full(
+        let fresh = vec![gpu_with_caps(
             "AMD",
             "Radeon RX 7900 XTX",
             None,
             vec!["vulkan", "opencl"],
-            vec!["rocm/6.1"],
         )];
 
         let result = merge_gpus(&cached, &fresh);
@@ -596,8 +577,7 @@ mod tests {
         assert!(result[0].capabilities.contains(&"vulkan".to_string()));
         assert!(result[0].capabilities.contains(&"opencl".to_string()));
         assert!(result[0].capabilities.contains(&"directml".to_string()));
-        assert!(result[0].ai_runtimes.contains(&"rocm/6.1".to_string()));
-        assert!(result[0].ai_runtimes.contains(&"rocm/6.0".to_string()));
+        assert!(result[0].capabilities.contains(&"rocm".to_string()));
     }
 
     #[test]

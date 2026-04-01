@@ -164,7 +164,7 @@ pub fn current_capabilities_hash(
             "cpu_model": caps.resolve_scalar(garden_common::compatibility::Fact::CpuModel),
             "cpu_features": caps.resolve_set(garden_common::compatibility::Fact::CpuFeatures).into_iter().collect::<Vec<_>>(),
             "ram_total_mb": caps.resolve_numeric(garden_common::compatibility::Fact::RamTotalMb),
-            "ai_runtimes": caps.resolve_set(garden_common::compatibility::Fact::AiRuntime).into_iter().collect::<Vec<_>>(),
+            "gpu_capabilities": caps.resolve_set(garden_common::compatibility::Fact::AiRuntime).into_iter().collect::<Vec<_>>(),
             "gpu_vram_total_mb": caps.resolve_numeric(garden_common::compatibility::Fact::GpuVramTotalMb),
         })
     } else {

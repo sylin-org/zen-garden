@@ -712,11 +712,6 @@ pub fn detect_gpus() -> Vec<GpuInfo> {
         }
     }
 
-    // ai_runtimes is legacy — capabilities is the source of truth.
-    // No toolkit detection, no container scanning. Hardware capabilities
-    // are set during GPU enumeration; the compatibility DSL reads them
-    // directly via FactSource.
-
     gpus
 }
 
@@ -751,7 +746,7 @@ fn detect_nvidia_gpus() -> Result<Vec<GpuInfo>> {
                     model,
                     vram_mb,
                     capabilities,
-                    ai_runtimes: Vec::new(),
+
                 })
             } else {
                 None
@@ -784,7 +779,7 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
                     model,
                     vram_mb: None, // Would need additional query
                     capabilities,
-                    ai_runtimes: Vec::new(),
+
                 })
             })
             .collect();
@@ -818,7 +813,7 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
                         model,
                         vram_mb: None,
                         capabilities: vec!["vulkan".to_string()], // Unknown without rocm-smi
-                        ai_runtimes: Vec::new(),
+    
                     }
                 })
                 .collect();
@@ -854,7 +849,7 @@ fn detect_intel_gpus() -> Result<Vec<GpuInfo>> {
                         model,
                         vram_mb: None,
                         capabilities: vec!["vulkan".to_string()],
-                        ai_runtimes: Vec::new(),
+    
                     }
                 })
                 .collect();
@@ -985,7 +980,7 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
                     model: name,
                     vram_mb,
                     capabilities,
-                    ai_runtimes: Vec::new(),
+
                 })
             })
             .collect();

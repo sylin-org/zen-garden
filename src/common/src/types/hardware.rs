@@ -34,17 +34,10 @@ pub struct GpuInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vram_mb: Option<u64>,
     /// Hardware capabilities: "cuda", "rocm", "vulkan", "directml", "opencl".
-    /// This is the single source of truth for what the GPU supports.
+    /// Single source of truth for what the GPU supports.
     /// The compatibility DSL reads from this field via `host.ai.runtime`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub capabilities: Vec<String>,
-
-    /// Legacy field — kept for backward-compatible deserialization of cached
-    /// capabilities JSON. Not populated by new detection code. The compatibility
-    /// DSL reads from `capabilities` instead.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    #[deprecated(note = "Use capabilities instead — ai_runtimes is legacy")]
-    pub ai_runtimes: Vec<String>,
 }
 
 /// Live system resources (collected every 5s for CPU/memory, 30s for storage)

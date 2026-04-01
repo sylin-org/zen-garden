@@ -150,8 +150,7 @@ mod tests {
             vendor: "NVIDIA".into(),
             model: "RTX 4090".into(),
             vram_mb: Some(24576),
-            capabilities: vec![],
-            ai_runtimes: vec!["cuda".into()],
+            capabilities: vec!["cuda".into()],
         };
         let hw = minimal_hw(32768, 16, "x86_64", vec![gpu]);
         assert_eq!(StoneProfile::detect(&hw), StoneProfile::Workbench);

@@ -517,6 +517,14 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
             offering_fqn.clone(),
         )];
 
+        // Update status to Provisioning before starting
+        {
+            let mut registry = state.skill_registry.write().await;
+            if let Some(s) = registry.get_mut(&skill_name) {
+                s.status = crate::domain::skill::SkillStatus::Provisioning;
+            }
+        }
+
         match crate::skills::prep::provision_skill(
             &http,
             &cache_dir,
@@ -526,19 +534,46 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
         .await
         {
             Ok(result) => {
+                // Map provisioning result to skill status
+                let new_status = match result.state {
+                    crate::skills::prep::SkillState::Live => {
+                        crate::domain::skill::SkillStatus::Ready
+                    }
+                    crate::skills::prep::SkillState::Degraded => {
+                        crate::domain::skill::SkillStatus::Degraded
+                    }
+                    _ => crate::domain::skill::SkillStatus::Provisioning,
+                };
+
+                // Update skill status in registry
+                {
+                    let mut registry = state.skill_registry.write().await;
+                    if let Some(s) = registry.get_mut(&skill_name) {
+                        s.status = new_status;
+                    }
+                }
+
                 tracing::info!(
                     skill = %skill_name,
                     live = result.live_instances,
                     total = result.total_instances,
-                    state = ?result.state,
+                    status = ?new_status,
                     "skill provisioned"
                 );
             }
             Err(e) => {
+                // Mark as Failed
+                {
+                    let mut registry = state.skill_registry.write().await;
+                    if let Some(s) = registry.get_mut(&skill_name) {
+                        s.status = crate::domain::skill::SkillStatus::Failed;
+                    }
+                }
+
                 tracing::warn!(
                     skill = %skill_name,
                     error = %e,
-                    "skill provisioning failed (non-fatal)"
+                    "skill provisioning failed"
                 );
             }
         }

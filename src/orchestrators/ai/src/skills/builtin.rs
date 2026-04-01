@@ -44,6 +44,7 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
         display_name: "Upscale".into(),
         capability: Capability::Image,
         description: "Enhance image resolution using AI super-resolution".into(),
+        status: crate::domain::skill::SkillStatus::Initializing,
         content_slots: vec![ContentSlot {
             role: "source".into(),
             content_type: ContentType::Image,

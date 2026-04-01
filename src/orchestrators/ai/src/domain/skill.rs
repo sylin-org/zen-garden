@@ -33,6 +33,8 @@ pub struct SkillDefinition {
     pub capability: Capability,
     /// Short description shown as subtitle in the UI.
     pub description: String,
+    /// Current lifecycle status.
+    pub status: SkillStatus,
     /// What inputs the skill requires.
     pub content_slots: Vec<ContentSlot>,
     /// Tuning parameters (JSON Schema + RJSF UI Schema).
@@ -45,6 +47,22 @@ pub struct SkillDefinition {
     /// Provider-specific implementation data (e.g., ComfyUI workflow template JSON).
     #[serde(skip)]
     pub implementation: serde_json::Value,
+}
+
+/// Lifecycle status of a skill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillStatus {
+    /// Skill registered, models being downloaded to orchestrator cache.
+    Initializing,
+    /// Models cached, being pushed to instances.
+    Provisioning,
+    /// At least one instance fully provisioned — skill accepts requests.
+    Ready,
+    /// Some instances ready, others still provisioning.
+    Degraded,
+    /// Provisioning failed.
+    Failed,
 }
 
 /// Declares a single input slot for a skill.
@@ -187,6 +205,11 @@ impl SkillRegistry {
         self.skills.get(name)
     }
 
+    /// Look up a skill mutably (for status updates).
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut SkillDefinition> {
+        self.skills.get_mut(name)
+    }
+
     /// List all registered skills.
     pub fn list(&self) -> Vec<&SkillDefinition> {
         let mut skills: Vec<_> = self.skills.values().collect();
@@ -256,6 +279,7 @@ mod tests {
             display_name: "Upscale".into(),
             capability: Capability::Image,
             description: "Enhance image resolution using AI super-resolution".into(),
+            status: SkillStatus::Ready,
             content_slots: vec![ContentSlot {
                 role: "source".into(),
                 content_type: ContentType::Image,

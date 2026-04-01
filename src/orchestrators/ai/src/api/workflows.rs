@@ -22,15 +22,44 @@ pub async fn run_workflow(
     State(state): State<AppState>,
     Json(req): Json<WorkflowRequest>,
 ) -> Response {
-    // 1. Look up the skill (validates it exists)
+    // 1. Look up the skill and check readiness
     {
         let registry = state.skill_registry.read().await;
-        if registry.get(&req.skill).is_none() {
+        match registry.get(&req.skill) {
+            None => {
                 return error_response(
                     StatusCode::NOT_FOUND,
                     "skill_not_found",
                     &format!("Unknown skill '{}'. Use GET /v1/skills to list available skills.", req.skill),
                 );
+            }
+            Some(skill) => {
+                use crate::domain::skill::SkillStatus;
+                match skill.status {
+                    SkillStatus::Ready | SkillStatus::Degraded => {} // OK to proceed
+                    SkillStatus::Initializing => {
+                        return error_response(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "skill_initializing",
+                            &format!("Skill '{}' is downloading required models. Try again shortly.", skill.display_name),
+                        );
+                    }
+                    SkillStatus::Provisioning => {
+                        return error_response(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "skill_provisioning",
+                            &format!("Skill '{}' is being deployed to instances. Try again shortly.", skill.display_name),
+                        );
+                    }
+                    SkillStatus::Failed => {
+                        return error_response(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "skill_failed",
+                            &format!("Skill '{}' failed to provision. Check orchestrator logs.", skill.display_name),
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -130,6 +159,7 @@ pub async fn list_skills(State(state): State<AppState>) -> Response {
             "display_name": s.display_name,
             "capability": s.capability,
             "description": s.description,
+            "status": s.status,
             "content_slots": s.content_slots,
             "has_diagram": s.diagram.is_some(),
             "required_models": s.required_models,

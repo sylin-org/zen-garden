@@ -160,17 +160,22 @@ impl Provider for ComfyUiProvider {
         let endpoint = ctx.endpoint.clone();
 
         Box::pin(async move {
-            let mut skills = Vec::new();
-
+            // Always return built-in skills — status tracks readiness.
+            // Installed models enrich the parameter enum but don't gate registration.
             let upscale_models = list_models(&self.http, &endpoint, "upscale_models")
                 .await
                 .unwrap_or_default();
 
-            if !upscale_models.is_empty() {
-                skills.push(crate::skills::builtin::image_upscale(&upscale_models));
-            }
+            let mut skill = crate::skills::builtin::image_upscale(&upscale_models);
 
-            Ok(skills)
+            // Set status based on whether models are installed
+            skill.status = if upscale_models.is_empty() {
+                crate::domain::skill::SkillStatus::Initializing
+            } else {
+                crate::domain::skill::SkillStatus::Ready
+            };
+
+            Ok(vec![skill])
         })
     }
 

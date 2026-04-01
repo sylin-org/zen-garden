@@ -158,9 +158,25 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
+    // Intelligence reactive loop (ORCH-0020): subscribes to Registry + Directory
+    // changes, recomputes recommendations asynchronously.
+    {
+        let intel_runner = zen_garden_ai_orchestrator::domain::intelligence::IntelligenceRunner::new(
+            state.intelligence.tx_clone(),
+            state.registry.subscribe(),
+            state.directory.subscribe(),
+        );
+        let intel_config = state.config.clone();
+        let intel_bench = state.benchmark_run.clone();
+        let intel_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            intel_runner.run(intel_config, intel_bench, intel_shutdown).await;
+        });
+    }
+
     tracing::info!(
-        tasks = 6,
-        "background tasks spawned (discovery, gateway, health, metrics_flush, metrics_processor, cloud_sync)"
+        tasks = 7,
+        "background tasks spawned (discovery, gateway, health, metrics_flush, metrics_processor, cloud_sync, intelligence)"
     );
 
     // ── CORS — wide open for all APIs and proxy ports ────────────

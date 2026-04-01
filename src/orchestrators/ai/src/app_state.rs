@@ -8,7 +8,7 @@
 
 use crate::catalog::ProviderRegistry;
 use crate::domain::directory_domain::{DirectoryDomain, DirectorySnapshot};
-use crate::domain::intelligence::{IntelligenceDomain, IntelligenceSnapshot};
+use crate::domain::intelligence::{IntelligenceDomain, IntelligenceRunner, IntelligenceSnapshot};
 use crate::domain::observability::{ObservabilityDomain, ObservabilitySnapshot};
 use crate::domain::registry::{RegistryDomain, RegistrySnapshot};
 use crate::domain::skills_domain::{SkillsDomain, SkillsSnapshot};
@@ -105,10 +105,10 @@ impl AppState {
         // Build domains
         let registry = Arc::new(RegistryDomain::new(reg_tx));
         let directory = Arc::new(DirectoryDomain::new(dir_tx));
-
-        let reg_rx = registry.subscribe();
-        let dir_rx = directory.subscribe();
-        let intelligence = Arc::new(IntelligenceDomain::new(intel_tx, reg_rx, dir_rx));
+        // IntelligenceDomain uses a separate sender for borrow() reads.
+        // IntelligenceRunner gets the real sender + watch receivers.
+        // They share the same channel — runner sends, domain borrows.
+        let intelligence = Arc::new(IntelligenceDomain::new(intel_tx.clone()));
 
         let observability = Arc::new(ObservabilityDomain::new(obs_tx, metrics_enabled));
         let skills = Arc::new(SkillsDomain::new(skills_tx));

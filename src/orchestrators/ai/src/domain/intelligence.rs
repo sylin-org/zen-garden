@@ -32,7 +32,13 @@ impl IntelligenceSnapshot {
 
 // ── Domain ─────────────────────────────────────────────────────
 
+/// The domain object — lives in AppState behind Arc.
 pub struct IntelligenceDomain {
+    tx: watch::Sender<Arc<IntelligenceSnapshot>>,
+}
+
+/// The reactive runner — spawned as a background task, owns the watch receivers.
+pub struct IntelligenceRunner {
     tx: watch::Sender<Arc<IntelligenceSnapshot>>,
     registry_rx: watch::Receiver<Arc<RegistrySnapshot>>,
     directory_rx: watch::Receiver<Arc<DirectorySnapshot>>,
@@ -46,6 +52,25 @@ const ALL_CAPABILITIES: &[&str] = &[
 ];
 
 impl IntelligenceDomain {
+    pub fn new(tx: watch::Sender<Arc<IntelligenceSnapshot>>) -> Self {
+        Self { tx }
+    }
+
+    pub fn snapshot(&self) -> watch::Ref<'_, Arc<IntelligenceSnapshot>> {
+        self.tx.borrow()
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<Arc<IntelligenceSnapshot>> {
+        self.tx.subscribe()
+    }
+
+    /// Clone the sender for the IntelligenceRunner.
+    pub fn tx_clone(&self) -> watch::Sender<Arc<IntelligenceSnapshot>> {
+        self.tx.clone()
+    }
+}
+
+impl IntelligenceRunner {
     pub fn new(
         tx: watch::Sender<Arc<IntelligenceSnapshot>>,
         registry_rx: watch::Receiver<Arc<RegistrySnapshot>>,
@@ -56,14 +81,6 @@ impl IntelligenceDomain {
             registry_rx,
             directory_rx,
         }
-    }
-
-    pub fn snapshot(&self) -> watch::Ref<'_, Arc<IntelligenceSnapshot>> {
-        self.tx.borrow()
-    }
-
-    pub fn subscribe(&self) -> watch::Receiver<Arc<IntelligenceSnapshot>> {
-        self.tx.subscribe()
     }
 
     /// Reactive loop — subscribes to Registry + Directory, recomputes on change.

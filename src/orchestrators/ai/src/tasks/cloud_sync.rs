@@ -98,13 +98,14 @@ async fn sync_all(state: &AppState) {
             priority: config.priority,
         };
 
-        state.upsert_instance(instance).await;
+        { let cfg = state.config.read().await; state.registry.upsert_instance(instance, &cfg).await; drop(cfg); };
 
         // Register cached models for immediate availability (with provider-level caps)
         for model_name in &config.cached_models {
             let fqn = ModelFqn::new(kind.as_str(), &name, model_name, None);
             state
-                .directory_upsert(
+                .directory
+                .upsert(
                     fqn,
                     config.capabilities.clone(),
                     vec!["cloud".to_string()],
@@ -124,6 +125,7 @@ async fn sync_all(state: &AppState) {
         match provider.probe(&ctx).await {
             Ok(_) => {
                 state
+                    .registry
                     .set_instance_health(&endpoint, InstanceHealth::Healthy)
                     .await;
 
@@ -135,6 +137,7 @@ async fn sync_all(state: &AppState) {
                         let count = model_names.len();
 
                         state
+                            .registry
                             .update_instance_models(&endpoint, model_names.clone(), vec![])
                             .await;
 
@@ -142,7 +145,8 @@ async fn sync_all(state: &AppState) {
                         // re-registering with per-model capabilities. This prevents
                         // the union-merge from retaining stale provider-level caps.
                         state
-                            .directory_remove_provider(kind.as_str(), &name)
+                            .directory
+                            .remove_provider(kind.as_str(), &name)
                             .await;
 
                         // Register each model with its own capabilities (not provider-level)
@@ -156,7 +160,8 @@ async fn sync_all(state: &AppState) {
                                 ..Default::default()
                             };
                             state
-                                .directory_upsert(
+                                .directory
+                                .upsert(
                                     fqn,
                                     sm.capabilities.clone(),
                                     sm.specializations.clone(),

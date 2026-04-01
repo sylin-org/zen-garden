@@ -122,8 +122,7 @@ async fn main() -> Result<()> {
 
     {
         let snapshot = persistence::load_metrics(&cli.data_dir).await;
-        let mut metrics = state.metrics.write().await;
-        metrics.restore_from_snapshot(snapshot);
+        state.observability.restore_metrics(snapshot).await;
     }
 
     // ── Background Tasks ────────────────────────────────────────────

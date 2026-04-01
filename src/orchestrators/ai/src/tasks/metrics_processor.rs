@@ -6,7 +6,6 @@
 
 use crate::app_state::AppState;
 use crate::domain::types::MetricEvent;
-use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -29,20 +28,14 @@ pub async fn run(
                     ..
                 } = event
                 {
-                    let mut ledger = state.demand_ledger.write().await;
-                    ledger.record_request(
-                        Instant::now(),
-                        capability,
-                        model,
-                        stone,
-                        tokens_out,
-                        eval_duration_ns,
-                    );
+                    state
+                        .observability
+                        .record_demand(capability, model, stone, tokens_out, eval_duration_ns)
+                        .await;
                 }
 
                 // Feed the existing metrics engine
-                let mut metrics = state.metrics.write().await;
-                metrics.process_event(event);
+                state.observability.process_event(event).await;
             }
             _ = shutdown.cancelled() => return,
         }

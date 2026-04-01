@@ -58,7 +58,7 @@ pub async fn chat_completions(
     let ctx = build_context(&decision, &state).await;
 
     // Queue depth management
-    let counter = state.queue_counter(&decision.target_endpoint).await;
+    let counter = state.registry.queue_counter(&decision.target_endpoint).await;
     counter.fetch_add(1, Ordering::Relaxed);
 
     if req.stream {
@@ -346,7 +346,8 @@ pub async fn transcriptions(
 
 /// `GET /v1/models` — merged model list from the directory.
 pub async fn models(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let dir = state.directory_legacy.read().await;
+    let dir_snap = state.directory.snapshot().clone();
+    let dir = &dir_snap.directory;
 
     let data: Vec<serde_json::Value> = dir
         .entries()
@@ -397,8 +398,8 @@ pub async fn model_form(
 
     // Find the model in the directory to determine its provider
     let source = {
-        let dir = state.directory_legacy.read().await;
-        let entries = dir.find_by_model_name(&model_name);
+        let dir_snap = state.directory.snapshot().clone();
+        let entries = dir_snap.directory.find_by_model_name(&model_name);
         entries
             .first()
             .and_then(|e| e.instances.first())
@@ -454,18 +455,15 @@ async fn route_model(
     state: &AppState,
     capability: Option<Capability>,
 ) -> Result<RoutingDecision, Response> {
-    let mut instances = state.instances.read().await.clone();
-    let directory = state.directory_legacy.read().await.clone();
-    let tiers = state.tiers.read().await.clone();
+    let reg_snap = state.registry.snapshot().clone();
+    let dir_snap = state.directory.snapshot().clone();
     let gpu_matrix = state.benchmark_run.read().await.gpu_matrix.clone();
 
-    // Patch live queue depths
-    {
-        let depths = state.queue_depths.read().await;
-        for (ep, counter) in depths.iter() {
-            if let Some(inst) = instances.get_mut(ep) {
-                inst.queue_depth = counter.load(Ordering::Relaxed);
-            }
+    // Patch live queue depths from snapshot atomics
+    let mut instances = (*reg_snap.instances).clone();
+    for (ep, counter) in reg_snap.queue_counters.iter() {
+        if let Some(inst) = instances.get_mut(ep) {
+            inst.queue_depth = counter.load(Ordering::Relaxed);
         }
     }
 
@@ -475,13 +473,13 @@ async fn route_model(
         Some(&gpu_matrix)
     };
 
-    let recent_demand = state.metrics.read().await.demand_shares(300);
+    let recent_demand = state.observability.demand_shares(300).await;
 
     routing::select_instance(
         model,
         &instances,
-        &directory,
-        &tiers,
+        &dir_snap.directory,
+        &reg_snap.tiers,
         64,
         fitness_ref,
         &recent_demand,

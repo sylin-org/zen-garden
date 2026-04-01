@@ -89,6 +89,7 @@ pub async fn pull_model(
     }
 
     let job_id = state
+        .observability
         .create_job(JobKind::ModelPull {
             model: req.model.clone(),
             targets: req.targets.clone(),
@@ -105,6 +106,7 @@ pub async fn pull_model(
         use futures_util::StreamExt;
 
         state_bg
+            .observability
             .update_job(&job_id_bg, crate::domain::types::JobStatus::Running, None)
             .await;
 
@@ -122,6 +124,7 @@ pub async fn pull_model(
                                 {
                                     if let Some(status) = progress.get("status").and_then(|s| s.as_str()) {
                                         state_bg
+                                            .observability
                                             .update_job(
                                                 &job_id_bg,
                                                 crate::domain::types::JobStatus::Running,
@@ -147,9 +150,9 @@ pub async fn pull_model(
         }
 
         if failed {
-            state_bg.fail_job(&job_id_bg, "pull failed on one or more targets").await;
+            state_bg.observability.fail_job(&job_id_bg, "pull failed on one or more targets").await;
         } else {
-            state_bg.complete_job(&job_id_bg).await;
+            state_bg.observability.complete_job(&job_id_bg).await;
         }
 
         state_bg
@@ -184,8 +187,8 @@ pub async fn refresh_models(
 
     // Find all instance endpoints for this offering kind
     let endpoints: Vec<String> = {
-        let instances = state.instances.read().await;
-        instances
+        let snap = state.registry.snapshot().clone();
+        snap.instances
             .values()
             .filter(|i| i.kind == kind)
             .map(|i| i.endpoint.clone())
@@ -232,18 +235,13 @@ pub async fn refresh_models(
                         context_length: sm.metadata.get("context_length").and_then(|v| v.as_u64()),
                     };
                     let caps: Vec<Capability> = sm.capabilities.clone();
-                    state.directory_upsert(fqn, caps, sm.specializations.clone(), meta).await;
+                    state.directory.upsert(fqn, caps, sm.specializations.clone(), meta).await;
                 }
 
                 // Update instance model lists
                 // For full accuracy we'd need loaded models too, but enumerate gives available.
                 // We update models_available; loaded state stays as-is from health checks.
-                {
-                    let mut instances = state.instances.write().await;
-                    if let Some(inst) = instances.get_mut(endpoint) {
-                        inst.models_available = model_names;
-                    }
-                }
+                state.registry.update_instance_models(endpoint, model_names, vec![]).await;
 
                 total_models += model_count;
                 tracing::info!(endpoint = %endpoint, models = model_count, "refreshed models");
@@ -385,8 +383,8 @@ pub async fn delete_model(
 
     // Find all instances of this offering kind to delete from
     let endpoints: Vec<String> = {
-        let instances = state.instances.read().await;
-        instances
+        let snap = state.registry.snapshot().clone();
+        snap.instances
             .values()
             .filter(|i| i.kind == kind && i.models_available.contains(&model))
             .map(|i| i.endpoint.clone())
@@ -398,6 +396,7 @@ pub async fn delete_model(
     }
 
     let job_id = state
+        .observability
         .create_job(JobKind::ModelDelete {
             model: model.clone(),
             targets: endpoints.clone(),
@@ -410,6 +409,7 @@ pub async fn delete_model(
 
     tokio::spawn(async move {
         state_bg
+            .observability
             .update_job(&job_id_bg, crate::domain::types::JobStatus::Running, None)
             .await;
 
@@ -422,16 +422,13 @@ pub async fn delete_model(
         }
 
         if failed {
-            state_bg.fail_job(&job_id_bg, "delete failed on one or more instances").await;
+            state_bg.observability.fail_job(&job_id_bg, "delete failed on one or more instances").await;
         } else {
-            state_bg.complete_job(&job_id_bg).await;
+            state_bg.observability.complete_job(&job_id_bg).await;
             // Remove this model's FQN for each endpoint that had it
-            {
-                let mut dir = state_bg.directory_legacy.write().await;
-                for endpoint in &endpoints {
-                    let fqn = ModelFqn::new(kind.as_str(), endpoint, &model_bg, None);
-                    dir.remove_fqn(&fqn);
-                }
+            for endpoint in &endpoints {
+                let fqn = ModelFqn::new(kind.as_str(), endpoint, &model_bg, None);
+                state_bg.directory.remove_fqn(&fqn).await;
             }
         }
 

@@ -24,8 +24,7 @@ pub async fn run_workflow(
 ) -> Response {
     // 1. Look up the skill and check readiness
     {
-        let registry = state.skill_registry.read().await;
-        match registry.get(&req.skill) {
+        match state.skills.get_skill(&req.skill).await {
             None => {
                 return error_response(
                     StatusCode::NOT_FOUND,
@@ -64,14 +63,18 @@ pub async fn run_workflow(
     }
 
     // 2. Find a ComfyUI instance that can serve this skill
-    let instances = state.instances.read().await;
-    let candidate = instances.values().find(|inst| {
-        inst.kind == crate::domain::types::OfferingKind::ComfyUi
-            && inst.health.is_routable()
-    });
+    let reg_snap = state.registry.snapshot().clone();
+    let endpoint = reg_snap
+        .instances
+        .values()
+        .find(|inst| {
+            inst.kind == crate::domain::types::OfferingKind::ComfyUi
+                && inst.health.is_routable()
+        })
+        .map(|inst| inst.endpoint.clone());
 
-    let endpoint = match candidate {
-        Some(inst) => inst.endpoint.clone(),
+    let endpoint = match endpoint {
+        Some(ep) => ep,
         None => {
             return error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -80,7 +83,6 @@ pub async fn run_workflow(
             );
         }
     };
-    drop(instances);
 
     // 3. Build provider context
     let ctx = ProviderContext {
@@ -107,10 +109,7 @@ pub async fn run_workflow(
     match provider.workflow(&ctx, req).await {
         Ok(job) => {
             // Store the job for polling
-            {
-                let mut jobs = state.workflow_jobs.write().await;
-                jobs.insert(job.id.clone(), job.clone());
-            }
+            state.skills.submit_job(job.clone()).await;
 
             let status_code = match job.status {
                 WorkflowJobStatus::Completed => StatusCode::OK,
@@ -137,9 +136,8 @@ pub async fn get_job(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> Response {
-    let jobs = state.workflow_jobs.read().await;
-    match jobs.get(&job_id) {
-        Some(job) => (StatusCode::OK, Json(job)).into_response(),
+    match state.skills.get_job(&job_id).await {
+        Some(job) => (StatusCode::OK, Json(&job)).into_response(),
         None => error_response(
             StatusCode::NOT_FOUND,
             "job_not_found",
@@ -152,20 +150,17 @@ pub async fn get_job(
 
 /// List all registered skills.
 pub async fn list_skills(State(state): State<AppState>) -> Response {
-    // Snapshot data under brief locks — don't hold across response building
-    let skill_list: Vec<_> = {
-        let registry = state.skill_registry.read().await;
-        registry.list().iter().map(|s| (*s).clone()).collect()
-    };
+    // Snapshot data — zero locks
+    let skills_snap = state.skills.snapshot().clone();
+    let skill_list: Vec<_> = skills_snap.skills.iter().cloned().collect();
 
-    let instance_snapshot: Vec<_> = {
-        let instances = state.instances.read().await;
-        instances
-            .values()
-            .filter(|i| i.kind == crate::domain::types::OfferingKind::ComfyUi)
-            .map(|i| (i.stone.name.clone(), i.vram.total_bytes, i.health.is_routable()))
-            .collect()
-    };
+    let reg_snap = state.registry.snapshot().clone();
+    let instance_snapshot: Vec<_> = reg_snap
+        .instances
+        .values()
+        .filter(|i| i.kind == crate::domain::types::OfferingKind::ComfyUi)
+        .map(|i| (i.stone.name.clone(), i.vram.total_bytes, i.health.is_routable()))
+        .collect();
 
     // Build response without any locks held
     let skills: Vec<_> = skill_list.iter().map(|s| {
@@ -211,10 +206,9 @@ pub async fn skill_form(
     State(state): State<AppState>,
     Path(skill): Path<String>,
 ) -> Response {
-    let registry = state.skill_registry.read().await;
-    match registry.get(&skill) {
+    match state.skills.get_skill(&skill).await {
         Some(def) => {
-            let presentation = SkillPresentation::from_definition(def);
+            let presentation = SkillPresentation::from_definition(&def);
             (StatusCode::OK, Json(presentation)).into_response()
         }
         None => error_response(

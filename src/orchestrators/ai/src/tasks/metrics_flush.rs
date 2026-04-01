@@ -25,13 +25,10 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
 }
 
 async fn flush(state: &AppState) {
-    let snapshot = {
-        let metrics = state.metrics.read().await;
-        if !metrics.enabled {
-            return;
-        }
-        metrics.snapshot()
-    };
+    if !state.observability.metrics_enabled().await {
+        return;
+    }
+    let snapshot = state.observability.metrics_snapshot().await;
 
     if let Err(e) = persistence::save_metrics(&state.data_dir, &snapshot).await {
         tracing::warn!(error = %e, "failed to flush metrics");

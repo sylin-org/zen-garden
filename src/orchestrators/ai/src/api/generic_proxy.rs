@@ -31,8 +31,9 @@ pub async fn proxy_handler(
 
     // Find a healthy instance for this offering
     let target = {
-        let instances = state.app.instances.read().await;
-        instances
+        let reg_snap = state.app.registry.snapshot().clone();
+        reg_snap
+            .instances
             .values()
             .find(|i| i.kind == state.kind && i.is_routable())
             .map(|i| i.endpoint.clone())

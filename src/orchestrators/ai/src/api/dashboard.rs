@@ -133,24 +133,28 @@ pub struct ModelPlacement {
 
 /// `GET /api/status` — full snapshot for page load.
 pub async fn get_status(State(state): State<AppState>) -> Json<DashboardStatus> {
-    let instances = state.instances.read().await;
-    let directory = state.directory_legacy.read().await;
+    let reg_snap = state.registry.snapshot().clone();
+    let dir_snap = state.directory.snapshot().clone();
+    let obs_snap = state.observability.snapshot().clone();
+    let intel_snap = state.intelligence.snapshot().clone();
     let config = state.config.read().await;
-    let jobs = state.jobs.read().await;
-    let queue_depths = state.queue_depths.read().await;
-    let recommended = state.recommended_models.read().await;
+
+    let instances = &reg_snap.instances;
+    let directory = &dir_snap.directory;
+    let recommended = &intel_snap.recommendations;
 
     // Build capability statuses
-    let capabilities = build_capability_statuses(&instances, &directory, &recommended, &state);
+    let capabilities = build_capability_statuses(instances, directory, recommended, &state);
 
     // Build stone statuses (group instances by stone)
-    let stones = build_stone_statuses(&instances);
+    let stones = build_stone_statuses(instances);
 
     // Build flat instance list
     let instance_list: Vec<InstanceStatus> = instances
         .values()
         .map(|i| {
-            let qd = queue_depths
+            let qd = reg_snap
+                .queue_counters
                 .get(&i.endpoint)
                 .map(|c| c.load(Ordering::Relaxed))
                 .unwrap_or(0);
@@ -173,7 +177,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<DashboardStatus> 
         .collect();
 
     // Build model catalog from directory with placement info
-    let model_list = build_directory_entries(&directory, &instances);
+    let model_list = build_directory_entries(directory, instances);
 
     Json(DashboardStatus {
         capabilities,
@@ -181,8 +185,8 @@ pub async fn get_status(State(state): State<AppState>) -> Json<DashboardStatus> 
         instances: instance_list,
         models: model_list,
         config: config.clone(),
-        jobs: jobs.iter().rev().cloned().collect(),
-        recommendations: recommended.clone(),
+        jobs: obs_snap.jobs.iter().cloned().collect(),
+        recommendations: (**recommended).clone(),
         uptime_secs: state.start_time.elapsed().as_secs(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
@@ -222,10 +226,7 @@ pub async fn post_settings(
         let mut config = state.config.write().await;
         *config = new_config.clone();
     }
-    {
-        let mut metrics = state.metrics.write().await;
-        metrics.enabled = metrics_enabled;
-    }
+    state.observability.set_metrics_enabled(metrics_enabled).await;
 
     // Persist
     if let Err(e) =
@@ -234,7 +235,6 @@ pub async fn post_settings(
         tracing::warn!(error = %e, "failed to persist config");
     }
 
-    state.refresh_recommendations().await;
     state.emit_event("config.updated", "{}").await;
 
     Json(serde_json::json!({"status": "ok"}))
@@ -270,8 +270,8 @@ pub async fn post_defaults(
 
 /// `GET /api/jobs` — recent jobs.
 pub async fn get_jobs(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let jobs = state.jobs.read().await;
-    let jobs_vec: Vec<_> = jobs.iter().rev().cloned().collect();
+    let obs_snap = state.observability.snapshot().clone();
+    let jobs_vec: Vec<_> = obs_snap.jobs.iter().cloned().collect();
     Json(serde_json::json!({"jobs": jobs_vec}))
 }
 
@@ -421,7 +421,7 @@ pub async fn toggle_provider(
                 metadata: serde_json::json!({"cloud": true, "provider": name}),
                 priority: -10,
             };
-            state.upsert_instance(instance).await;
+            { let cfg = state.config.read().await; state.registry.upsert_instance(instance, &cfg).await; }
 
             // Probe + enumerate in background
             let state_bg = state.clone();
@@ -429,12 +429,14 @@ pub async fn toggle_provider(
             tokio::spawn(async move {
                 if provider_impl.probe(&ctx).await.is_ok() {
                     state_bg
+                        .registry
                         .set_instance_health(&endpoint, InstanceHealth::Healthy)
                         .await;
                     if let Ok(models) = provider_impl.enumerate(&ctx).await {
                         let model_names: Vec<String> =
                             models.iter().map(|m| m.name.clone()).collect();
                         state_bg
+                            .registry
                             .update_instance_models(&endpoint, model_names, vec![])
                             .await;
                         for sm in &models {
@@ -447,7 +449,8 @@ pub async fn toggle_provider(
                                 ..Default::default()
                             };
                             state_bg
-                                .directory_upsert(
+                                .directory
+                                .upsert(
                                     fqn,
                                     sm.capabilities.clone(),
                                     sm.specializations.clone(),
@@ -463,9 +466,10 @@ pub async fn toggle_provider(
         // Disable: remove models from directory and instance from registry
         tracing::info!(provider = %name, "cloud provider disabled — removing models");
         state
-            .directory_remove_provider(kind.as_str(), &name)
+            .directory
+            .remove_provider(kind.as_str(), &name)
             .await;
-        state.remove_instance(&endpoint).await;
+        state.registry.remove_instance(&endpoint).await;
     }
 
     state
@@ -640,9 +644,9 @@ fn build_directory_entries(
 
 /// `GET /api/directory` — model directory snapshot.
 pub async fn get_directory(State(state): State<AppState>) -> Json<Vec<DirectoryEntry>> {
-    let dir = state.directory_legacy.read().await;
-    let instances = state.instances.read().await;
-    Json(build_directory_entries(&dir, &instances))
+    let dir_snap = state.directory.snapshot().clone();
+    let reg_snap = state.registry.snapshot().clone();
+    Json(build_directory_entries(&dir_snap.directory, &reg_snap.instances))
 }
 
 fn build_stone_statuses(instances: &HashMap<String, ServiceInstance>) -> Vec<StoneStatus> {

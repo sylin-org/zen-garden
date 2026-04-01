@@ -163,21 +163,18 @@ async fn proxy_inference(
 
     // Route — snapshot state, no locks held during routing
     let decision = {
-        let mut instances = state.app.instances.read().await.clone();
-        let models = state.app.directory_legacy.read().await.clone();
-        let tiers = state.app.tiers.read().await.clone();
+        let reg_snap = state.app.registry.snapshot().clone();
+        let dir_snap = state.app.directory.snapshot().clone();
         let gpu_matrix = {
             let run = state.app.benchmark_run.read().await;
             run.gpu_matrix.clone()
         };
 
-        // Patch live queue depths from atomics
-        {
-            let depths = state.app.queue_depths.read().await;
-            for (ep, counter) in depths.iter() {
-                if let Some(inst) = instances.get_mut(ep) {
-                    inst.queue_depth = counter.load(Ordering::Relaxed);
-                }
+        // Patch live queue depths from snapshot atomics
+        let mut instances = (*reg_snap.instances).clone();
+        for (ep, counter) in reg_snap.queue_counters.iter() {
+            if let Some(inst) = instances.get_mut(ep) {
+                inst.queue_depth = counter.load(Ordering::Relaxed);
             }
         }
 
@@ -187,16 +184,13 @@ async fn proxy_inference(
             Some(&gpu_matrix)
         };
 
-        let recent_demand = {
-            let metrics = state.app.metrics.read().await;
-            metrics.demand_shares(300)
-        };
+        let recent_demand = state.app.observability.demand_shares(300).await;
 
         routing::select_instance(
             &model,
             &instances,
-            &models,
-            &tiers,
+            &dir_snap.directory,
+            &reg_snap.tiers,
             64,
             fitness_ref,
             &recent_demand,
@@ -231,7 +225,7 @@ async fn proxy_inference(
     );
 
     // Increment queue depth
-    let counter = state.app.queue_counter(target).await;
+    let counter = state.app.registry.queue_counter(target).await;
     counter.fetch_add(1, Ordering::Relaxed);
 
     // Re-serialize body if defaults were merged (body_json may have been mutated).
@@ -251,6 +245,7 @@ async fn proxy_inference(
             counter.fetch_sub(1, Ordering::Relaxed);
             state
                 .app
+                .registry
                 .set_instance_health(
                     target,
                     InstanceHealth::Unhealthy {
@@ -374,8 +369,10 @@ async fn proxy_inference(
 
 /// Merge `/api/tags` from all healthy instances into a unified response.
 async fn proxy_merged_tags(state: &ProxyState) -> Result<Response, StatusCode> {
-    let instances = state.app.instances.read().await;
-    let directory = state.app.directory_legacy.read().await;
+    let reg_snap = state.app.registry.snapshot().clone();
+    let dir_snap = state.app.directory.snapshot().clone();
+    let instances = &reg_snap.instances;
+    let directory = &dir_snap.directory;
 
     let mut merged: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
@@ -419,7 +416,8 @@ async fn proxy_merged_tags(state: &ProxyState) -> Result<Response, StatusCode> {
 
 /// Merge `/api/ps` from all healthy instances into a unified response.
 async fn proxy_merged_ps(state: &ProxyState) -> Result<Response, StatusCode> {
-    let instances = state.app.instances.read().await;
+    let reg_snap = state.app.registry.snapshot().clone();
+    let instances = &reg_snap.instances;
     let mut all_running = Vec::new();
 
     for inst in instances.values() {
@@ -455,8 +453,9 @@ async fn proxy_show(
 
     // Try upstream: route to an instance that has the model
     let target = if let Some(ref m) = model_name {
-        let instances = state.app.instances.read().await;
-        instances
+        let reg_snap = state.app.registry.snapshot().clone();
+        reg_snap
+            .instances
             .values()
             .find(|i| i.is_routable() && i.models_available.iter().any(|name| name == m))
             .map(|i| i.endpoint.clone())
@@ -485,7 +484,8 @@ async fn proxy_show(
 
     // ── Catalog fallback ──────────────────────────────────────
     let model_name = model_name.ok_or(StatusCode::BAD_REQUEST)?;
-    let directory = state.app.directory_legacy.read().await;
+    let dir_snap = state.app.directory.snapshot().clone();
+    let directory = &dir_snap.directory;
 
     let entry = directory.get(&model_name).ok_or_else(|| {
         tracing::debug!(model = %model_name, "show: model not in catalog");
@@ -552,19 +552,22 @@ async fn proxy_routed(
 ) -> Result<Response, StatusCode> {
     let model = extract_model(&body).or_else(|| extract_field(&body, "source"));
 
-    let target = if let Some(ref m) = model {
-        let instances = state.app.instances.read().await;
-        instances
-            .values()
-            .find(|i| i.is_routable() && i.models_available.iter().any(|name| name == m))
-            .or_else(|| instances.values().find(|i| i.is_routable()))
-            .map(|i| i.endpoint.clone())
-    } else {
-        let instances = state.app.instances.read().await;
-        instances
-            .values()
-            .find(|i| i.is_routable())
-            .map(|i| i.endpoint.clone())
+    let target = {
+        let reg_snap = state.app.registry.snapshot().clone();
+        if let Some(ref m) = model {
+            reg_snap
+                .instances
+                .values()
+                .find(|i| i.is_routable() && i.models_available.iter().any(|name| name == m))
+                .or_else(|| reg_snap.instances.values().find(|i| i.is_routable()))
+                .map(|i| i.endpoint.clone())
+        } else {
+            reg_snap
+                .instances
+                .values()
+                .find(|i| i.is_routable())
+                .map(|i| i.endpoint.clone())
+        }
     };
 
     let target = target.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
@@ -633,8 +636,8 @@ pub async fn resolve_model_field(raw: &str, state: &AppState) -> (String, Option
         drop(config);
 
         // Try recommended model cache
-        let recommended = state.recommended_models.read().await;
-        if let Some(model) = recommended.get(raw) {
+        let intel = state.intelligence.snapshot().clone();
+        if let Some(model) = intel.recommendations.get(raw) {
             return (model.clone(), Some(format!("{}→{}", raw, model)));
         }
 
@@ -664,8 +667,8 @@ pub async fn resolve_model_field(raw: &str, state: &AppState) -> (String, Option
 
     // 3. Check if it matches "recommended:{capability}" moniker pattern
     if let Some(cap_name) = raw.strip_prefix("recommended:") {
-        let recommended = state.recommended_models.read().await;
-        if let Some(model) = recommended.get(cap_name) {
+        let intel = state.intelligence.snapshot().clone();
+        if let Some(model) = intel.recommendations.get(cap_name) {
             return (model.clone(), Some(format!("recommended:{}→{}", cap_name, model)));
         }
         return (raw.to_string(), None);

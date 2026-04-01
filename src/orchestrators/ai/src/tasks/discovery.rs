@@ -142,7 +142,7 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
                     0,
                     None,
                 );
-                state.upsert_instance(instance).await;
+                { let cfg = state.config.read().await; state.registry.upsert_instance(instance, &cfg).await; drop(cfg); };
                 profile_instance(&state, &endpoint, kind).await;
             });
         }
@@ -154,14 +154,14 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
             let state = state.clone();
             tokio::spawn(async move {
                 let endpoint = {
-                    let instances = state.instances.read().await;
-                    instances
+                    let snap = state.registry.snapshot().clone();
+                    snap.instances
                         .values()
                         .find(|i| i.stone.name == stone_name)
                         .map(|i| i.endpoint.clone())
                 };
                 if let Some(ep) = endpoint {
-                    state.remove_instance(&ep).await;
+                    state.registry.remove_instance(&ep).await;
                 }
             });
         }
@@ -219,7 +219,7 @@ async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
                         vram_total,
                         gpu_name,
                     );
-                    state.upsert_instance(instance).await;
+                    { let cfg = state.config.read().await; state.registry.upsert_instance(instance, &cfg).await; drop(cfg); };
                     profile_instance(state, &endpoint, kind).await;
                 }
             }
@@ -318,19 +318,19 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
     match adapter.probe(&ctx).await {
         Ok(probe) => {
             state
+                .registry
                 .set_instance_health(endpoint, InstanceHealth::Healthy)
                 .await;
 
             // Store probe results: capabilities always, metadata when available
-            {
-                let mut reg = state.instances.write().await;
-                if let Some(inst) = reg.get_mut(endpoint) {
-                    inst.capabilities = probe.capabilities;
-                    if let Some(ref version) = probe.version {
-                        inst.metadata = serde_json::json!({ "version": version });
-                    }
-                }
-            }
+            state
+                .registry
+                .update_instance_capabilities(
+                    endpoint,
+                    probe.capabilities,
+                    probe.version,
+                )
+                .await;
         }
         Err(e) => {
             tracing::warn!(
@@ -340,6 +340,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                 "probe failed during profiling"
             );
             state
+                .registry
                 .set_instance_health(
                     endpoint,
                     InstanceHealth::Unhealthy {
@@ -354,8 +355,8 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
 
     // Resolve the stone name for building FQNs (needed for directory)
     let stone_name = {
-        let instances = state.instances.read().await;
-        instances
+        let snap = state.registry.snapshot().clone();
+        snap.instances
             .get(endpoint)
             .map(|i| i.stone.name.clone())
             .unwrap_or_default()
@@ -369,6 +370,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
 
             // Update instance model inventory
             state
+                .registry
                 .update_instance_models(endpoint, model_names, vec![])
                 .await;
 
@@ -438,7 +440,8 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                     context_length,
                 };
                 state
-                    .directory_upsert(fqn, caps, sm.specializations.clone(), meta)
+                    .directory
+                    .upsert(fqn, caps, sm.specializations.clone(), meta)
                     .await;
             }
 
@@ -481,13 +484,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
     let moss_endpoint = derive_moss_endpoint(endpoint);
 
     // Get the offering FQN for this instance
-    let offering_fqn = {
-        let instances = state.instances.read().await;
-        instances
-            .get(endpoint)
-            .map(|_| kind.as_str().to_string())
-            .unwrap_or_else(|| kind.as_str().to_string())
-    };
+    let offering_fqn = kind.as_str().to_string();
 
     let cache_dir = std::path::PathBuf::from(&state.data_dir).join("skill-cache");
     let http = reqwest::Client::builder()
@@ -500,10 +497,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
         let has_required_models = !skill.required_models.is_empty();
 
         // Register the skill definition
-        {
-            let mut registry = state.skill_registry.write().await;
-            registry.register(skill.clone());
-        }
+        state.skills.register(skill.clone()).await;
 
         if !has_required_models {
             tracing::info!(skill = %skill_name, "skill registered (no models required)");
@@ -512,8 +506,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
 
         // Skip if already provisioning or ready (avoid duplicate downloads)
         {
-            let registry = state.skill_registry.read().await;
-            if let Some(existing) = registry.get(&skill_name) {
+            if let Some(existing) = state.skills.get_skill(&skill_name).await {
                 match existing.status {
                     crate::domain::skill::SkillStatus::Provisioning
                     | crate::domain::skill::SkillStatus::Ready
@@ -536,8 +529,8 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
 
         tokio::spawn(async move {
             let instance_vram_mb = {
-                let instances = prov_state.instances.read().await;
-                instances
+                let snap = prov_state.registry.snapshot().clone();
+                snap.instances
                     .get(&prov_endpoint)
                     .map(|i| i.vram.total_bytes / 1_048_576)
                     .unwrap_or(0)
@@ -551,12 +544,10 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
             )];
 
             // Update status to Provisioning
-            {
-                let mut registry = prov_state.skill_registry.write().await;
-                if let Some(s) = registry.get_mut(&skill_name) {
-                    s.status = crate::domain::skill::SkillStatus::Provisioning;
-                }
-            }
+            prov_state
+                .skills
+                .update_status(&skill_name, crate::domain::skill::SkillStatus::Provisioning)
+                .await;
 
             match crate::skills::prep::provision_skill(
                 &prov_http,
@@ -577,12 +568,10 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                         _ => crate::domain::skill::SkillStatus::Provisioning,
                     };
 
-                    {
-                        let mut registry = prov_state.skill_registry.write().await;
-                        if let Some(s) = registry.get_mut(&skill_name) {
-                            s.status = new_status;
-                        }
-                    }
+                    prov_state
+                        .skills
+                        .update_status(&skill_name, new_status)
+                        .await;
 
                     tracing::info!(
                         skill = %skill_name,
@@ -593,12 +582,10 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                     );
                 }
                 Err(e) => {
-                    {
-                        let mut registry = prov_state.skill_registry.write().await;
-                        if let Some(s) = registry.get_mut(&skill_name) {
-                            s.status = crate::domain::skill::SkillStatus::Failed;
-                        }
-                    }
+                    prov_state
+                        .skills
+                        .update_status(&skill_name, crate::domain::skill::SkillStatus::Failed)
+                        .await;
 
                     tracing::warn!(
                         skill = %skill_name,

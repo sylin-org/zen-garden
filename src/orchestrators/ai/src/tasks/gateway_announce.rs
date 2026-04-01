@@ -212,9 +212,9 @@ async fn sync_registrations(
 ) {
     // Compute the set of offering kinds that have healthy instances + proxy ports
     let desired: HashSet<String> = {
-        let instances = state.instances.read().await;
+        let snap = state.registry.snapshot().clone();
         let mut set = HashSet::new();
-        for inst in instances.values() {
+        for inst in snap.instances.values() {
             if inst.is_routable() && inst.kind.proxy_port().is_some() {
                 set.insert(inst.kind.as_str().to_string());
             }

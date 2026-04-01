@@ -38,33 +38,11 @@ if ($deployExitCode -ne 0) {
     Write-Host "`nWARNING: Some stones failed to deploy (see summary above). Continuing..." -ForegroundColor Yellow
 }
 
-# Step 3: Start all orchestrators
-Write-Host ""
-Write-Host "[3/3] Starting orchestrators..." -ForegroundColor Yellow
-Write-Host ""
-
-$orchestrators = Get-ChildItem "$root\src\orchestrators" -Directory |
-    Where-Object { Test-Path (Join-Path $_.FullName "start.bat") }
-
-foreach ($orch in $orchestrators) {
-    Write-Host "--- $($orch.Name) ---" -ForegroundColor Cyan
-    Push-Location $orch.FullName
-    try {
-        & cmd /c start.bat
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "WARNING: $($orch.Name) start.bat returned an error." -ForegroundColor Yellow
-        }
-    }
-    finally {
-        Pop-Location
-    }
-    Write-Host ""
-}
-
 if ($deployExitCode -ne 0) {
     Write-Host "  Done (with deploy warnings - some stones failed)." -ForegroundColor Yellow
     exit 1
-} else {
+}
+else {
     Write-Host "  All done." -ForegroundColor Green
 }
 Write-Host ""

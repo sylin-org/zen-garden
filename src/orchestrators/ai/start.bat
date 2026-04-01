@@ -1,8 +1,8 @@
 @echo off
 setlocal
 
-set IMAGE=sylinorg/zen-garden-ai-orchestrator
-set TAG=latest
+set IMAGE=zen-garden-ai-orchestrator
+set TAG=dev
 set CONTAINER=zen-garden-ai-orchestrator
 
 :: Resolve workspace root (three levels up from this script)
@@ -13,7 +13,7 @@ popd
 
 echo.
 echo  Zen Garden AI Orchestrator
-echo  ──────────────────────────
+echo  ============================
 echo  Image:     %IMAGE%:%TAG%
 echo  Workspace: %WORKSPACE%
 echo.
@@ -44,12 +44,17 @@ docker run -d ^
     --restart unless-stopped ^
     %IMAGE%:%TAG%
 
+if errorlevel 1 (
+    echo ERROR: Container failed to start.
+    exit /b 1
+)
+
 echo.
 echo  Container started: %CONTAINER%
 echo  Dashboard:  http://localhost:7190
 echo  Ollama:     http://localhost:21434
 echo  ComfyUI:    http://localhost:21435
-echo  Whisper:    http://localhost:21436
+echo  Speaches:   http://localhost:21436
 echo  Speech:     http://localhost:21437
 echo  Infinity:   http://localhost:21438
 echo  Translate:  http://localhost:21439

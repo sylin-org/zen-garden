@@ -13,6 +13,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::domain::skill::{SkillDefinition, WorkflowJob, WorkflowRequest};
 use crate::domain::types::{Capability, OfferingKind, ServiceInstance};
 
 use super::inference::{
@@ -128,6 +129,30 @@ pub trait Provider: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<TranscribeResponse>> {
         let _ = (ctx, req);
         Box::pin(async { anyhow::bail!("transcription not supported") })
+    }
+
+    // ── Skills (ORCH-0018) ────────────────────────────────────────
+
+    /// Return skills this provider can serve on the given instance.
+    ///
+    /// Called during discovery after enumerate(). Skills are derived from
+    /// installed models and available node types. Default: no skills.
+    fn skills(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<Vec<SkillDefinition>>> {
+        let _ = ctx;
+        Box::pin(async { Ok(vec![]) })
+    }
+
+    /// Execute a workflow-based skill (async job).
+    ///
+    /// Returns a `WorkflowJob` with status `Queued` or `Running`.
+    /// The caller polls for completion via the job system.
+    fn workflow(
+        &self,
+        ctx: &ProviderContext,
+        req: WorkflowRequest,
+    ) -> BoxFuture<'_, Result<WorkflowJob>> {
+        let _ = (ctx, req);
+        Box::pin(async { anyhow::bail!("workflows not supported") })
     }
 
     // ── Form Schema (ORCH-0017) ──────────────────────────────────

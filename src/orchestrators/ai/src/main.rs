@@ -117,6 +117,18 @@ async fn main() -> Result<()> {
         metrics_tx,
     );
 
+    // ── Register Built-in Skills ─────────────────────────────────────
+    // Skills are known at compile time. Register immediately so they
+    // appear in the UI. Discovery updates their status as instances
+    // are profiled and models provisioned.
+    {
+        use zen_garden_ai_orchestrator::skills::builtin;
+        state.skills.register(builtin::image_upscale(&[])).await;
+        state.skills.register(builtin::image_generate(&[])).await;
+        state.skills.register(builtin::image_img2img(&[])).await;
+        tracing::info!(skills = 3, "built-in skills registered");
+    }
+
     // ── Restore Persisted State ─────────────────────────────────────
     state.load_tending().await;
 

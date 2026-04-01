@@ -458,6 +458,37 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
             );
         }
     }
+
+    // Discover skills (ORCH-0018)
+    match adapter.skills(&ctx).await {
+        Ok(skills) if !skills.is_empty() => {
+            let skill_count = skills.len();
+            let mut registry = state.skill_registry.write().await;
+            for skill in skills {
+                tracing::info!(
+                    skill = %skill.name,
+                    endpoint = %endpoint,
+                    "registered skill"
+                );
+                registry.register(skill);
+            }
+            tracing::info!(
+                endpoint = %endpoint,
+                kind = %kind,
+                skills = skill_count,
+                "discovered skills"
+            );
+        }
+        Ok(_) => {} // no skills — normal for most providers
+        Err(e) => {
+            tracing::debug!(
+                endpoint = %endpoint,
+                kind = %kind,
+                error = %e,
+                "skills discovery failed (non-fatal)"
+            );
+        }
+    }
 }
 
 /// Periodically re-query the topology to catch stones the SSE stream missed.

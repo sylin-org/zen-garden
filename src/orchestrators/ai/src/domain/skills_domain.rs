@@ -55,8 +55,26 @@ impl SkillsDomain {
 
     // ── Skill Registry ─────────────────────────────────────────
 
+    /// Register a skill. If the skill already exists with a non-Initializing
+    /// status, only update the parameter schema (model enum may have changed)
+    /// but preserve the current status. This prevents re-registration from
+    /// resetting a Provisioning/Ready skill back to Initializing.
     pub async fn register(&self, skill: SkillDefinition) {
         let mut state = self.state.lock().await;
+        if let Some(existing) = state.registry.get(&skill.name) {
+            match existing.status {
+                SkillStatus::Provisioning | SkillStatus::Ready | SkillStatus::Degraded => {
+                    // Preserve status, update schema (model list may have changed)
+                    let preserved_status = existing.status;
+                    let mut updated = skill;
+                    updated.status = preserved_status;
+                    state.registry.register(updated);
+                    self.publish(&state);
+                    return;
+                }
+                _ => {}
+            }
+        }
         state.registry.register(skill);
         self.publish(&state);
     }

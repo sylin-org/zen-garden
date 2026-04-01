@@ -518,6 +518,12 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
             }
         }
 
+        // Mark as Provisioning BEFORE spawning — prevents duplicate spawns
+        state
+            .skills
+            .update_status(&skill_name, crate::domain::skill::SkillStatus::Provisioning)
+            .await;
+
         // Spawn provisioning as a background task — don't block discovery
         let prov_state = state.clone();
         let prov_endpoint = endpoint.to_string();
@@ -542,12 +548,6 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                 prov_fqn,
                 instance_vram_mb,
             )];
-
-            // Update status to Provisioning
-            prov_state
-                .skills
-                .update_status(&skill_name, crate::domain::skill::SkillStatus::Provisioning)
-                .await;
 
             match crate::skills::prep::provision_skill(
                 &prov_http,

@@ -236,16 +236,19 @@ mod tests {
     // ================================================================
 
     #[test]
-    fn skill_with_no_models_has_empty_enum() {
-        // Edge case: builtin::image_upscale called with empty list
-        // (used internally by workflow() to get the template)
+    fn skill_with_no_installed_models_shows_recommended() {
+        // When no models are installed, the skill uses recommended models
         let skill = builtin::image_upscale(&[]);
-        assert!(skill.required_models.is_empty());
 
+        // Required models always come from recommended list
+        assert!(!skill.required_models.is_empty());
+        assert!(skill.required_models.iter().any(|m| m.filename.contains("RealESRGAN")));
+
+        // Enum should show recommended models as options
         let enum_vals = skill.parameter_schema.schema["properties"]["upscale_model"]["enum"]
             .as_array()
             .unwrap();
-        assert!(enum_vals.is_empty());
+        assert!(!enum_vals.is_empty());
     }
 
     #[test]
@@ -464,21 +467,22 @@ mod tests {
     }
 
     #[test]
-    fn registry_updates_skill_when_models_change() {
+    fn registry_updates_skill_on_re_register() {
         let mut reg = SkillRegistry::new();
 
-        // First registration with one model
-        reg.register(builtin::image_upscale(&["4x-UltraSharp.pth".into()]));
+        // First registration with no installed models
+        let mut skill1 = builtin::image_upscale(&[]);
+        skill1.status = SkillStatus::Initializing;
+        reg.register(skill1);
         let v1 = reg.get("image.upscale").unwrap();
-        assert_eq!(v1.required_models.len(), 1);
+        assert_eq!(v1.status, SkillStatus::Initializing);
 
-        // Re-register with two models (simulating discovery finding more)
-        reg.register(builtin::image_upscale(&[
-            "4x-UltraSharp.pth".into(),
-            "RealESRGAN_x4plus.pth".into(),
-        ]));
+        // Re-register after provisioning
+        let mut skill2 = builtin::image_upscale(&["RealESRGAN_x4plus.pth".into()]);
+        skill2.status = SkillStatus::Ready;
+        reg.register(skill2);
         let v2 = reg.get("image.upscale").unwrap();
-        assert_eq!(v2.required_models.len(), 2);
+        assert_eq!(v2.status, SkillStatus::Ready);
 
         // Still just one skill
         assert_eq!(reg.len(), 1);

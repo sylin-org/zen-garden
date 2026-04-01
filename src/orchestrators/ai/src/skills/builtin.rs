@@ -26,16 +26,24 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
     let parsed = parser::parse_workflow(&workflow)
         .expect("embedded upscale workflow parses correctly");
 
-    // Build the model enum for the parameter schema
-    let model_enum: Vec<serde_json::Value> = available_models
+    // Build the model enum — use installed models if any, otherwise recommended
+    let effective_models: Vec<String> = if available_models.is_empty() {
+        recommended_upscale_models()
+            .iter()
+            .map(|m| m.filename.clone())
+            .collect()
+    } else {
+        available_models.to_vec()
+    };
+
+    let model_enum: Vec<serde_json::Value> = effective_models
         .iter()
         .map(|m| serde_json::Value::String(m.clone()))
         .collect();
-    let default_model = available_models
+    let default_model = effective_models
         .iter()
-        // Prefer RealESRGAN_x4plus (BSD licensed) if available
         .find(|m| m.contains("RealESRGAN_x4plus"))
-        .or_else(|| available_models.first())
+        .or_else(|| effective_models.first())
         .cloned()
         .unwrap_or_default();
 
@@ -76,12 +84,12 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
             }),
         },
         diagram: Some(parsed.diagram),
-        required_models: available_models
-            .iter()
+        required_models: recommended_upscale_models()
+            .into_iter()
             .map(|m| ModelRef {
-                filename: m.clone(),
-                model_type: "upscale_models".into(),
-                description: None,
+                filename: m.filename,
+                model_type: m.model_type,
+                description: Some(m.description),
             })
             .collect(),
         implementation: workflow,

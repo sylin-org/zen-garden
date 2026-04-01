@@ -15,11 +15,22 @@ compatibility_rules:
       image: "yanwk/comfyui-boot:rocm"
       name: "rocm"
 
+  # AMD GPU on Windows — DirectML detected but ROCm unavailable via Docker Desktop
+  - name: "windows-amd-rocm-hint"
+    when:
+      - host.ai.runtime LACKS cuda
+      - host.ai.runtime HAS directml
+    reason: "AMD GPU detected but ROCm is not available through Docker Desktop."
+    suggestion: "Install Docker CE inside WSL2 with ROCDXG to enable GPU-accelerated inference. See: https://github.com/ROCm/librocdxg"
+    warn_only: true
+    continue: true
+
   # No GPU at all — CPU fallback (very slow, but functional)
   - name: "no-gpu-use-cpu"
     when:
       - host.ai.runtime LACKS cuda
-    reason: "No GPU detected. ComfyUI will run on CPU (very slow — expect minutes per image)."
+      - host.ai.runtime LACKS rocm
+    reason: "No GPU runtime available. ComfyUI will run on CPU (very slow — expect minutes per image)."
     fallback:
       image: "yanwk/comfyui-boot:cpu"
       name: "cpu"

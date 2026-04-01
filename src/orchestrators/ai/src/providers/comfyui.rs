@@ -333,18 +333,14 @@ async fn execute_workflow(
         .unwrap_or(4);
 
     if scale == 2 {
-        // Rewire: upscale → ImageScale (0.5x) → save
-        // The save node currently reads from the upscale node.
-        // Insert a scale node that halves the 4x result to get 2x.
+        // Rewire: upscale(4x) → ImageScaleBy(0.5x) → save
+        // The 4x model output at 0.5x = 2x of original.
         let scale_node_id = "5";
         workflow[scale_node_id] = serde_json::json!({
-            "class_type": "ImageScale",
+            "class_type": "ImageScaleBy",
             "inputs": {
                 "image": ["3", 0],
                 "upscale_method": "lanczos",
-                "width": 0,
-                "height": 0,
-                "crop": "disabled",
                 "scale_by": 0.5
             }
         });

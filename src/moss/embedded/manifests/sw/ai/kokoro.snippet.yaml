@@ -15,7 +15,8 @@ deploy:
       devices:
         - driver: nvidia
           count: all
-          capabilities: [gpu]
+          capabilities:
+            - [gpu]
 healthcheck:
   test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
   interval: 30s

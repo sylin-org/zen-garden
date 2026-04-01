@@ -11,7 +11,6 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::Duration;
 
-use crate::catalog::inference::*;
 use crate::catalog::traits::{
     BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
 };
@@ -126,7 +125,7 @@ impl Provider for ComfyUiProvider {
             // Build a single ServiceModel representing this ComfyUI instance.
             // Individual models are tracked in metadata — the instance itself
             // is the routable unit, not individual checkpoint files.
-            let mut capabilities = vec![Capability::Image];
+            let capabilities = vec![Capability::Image];
             let mut specializations = Vec::new();
 
             if !upscale_models.is_empty() {

@@ -14,5 +14,6 @@ pub mod policy;
 pub mod recommendation;
 pub mod reconciliation;
 pub mod routing;
+pub mod skill;
 pub mod tiering;
 pub mod types;

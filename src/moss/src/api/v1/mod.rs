@@ -18,6 +18,7 @@ pub mod maintenance;
 pub mod manifest;
 pub mod metrics;
 pub mod offering_capabilities;
+pub mod offering_volumes;
 pub mod offerings;
 pub mod pond;
 pub mod portrait;

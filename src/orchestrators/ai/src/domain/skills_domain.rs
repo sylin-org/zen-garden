@@ -1,9 +1,9 @@
-//! Skills domain — skill registry + workflow jobs (ORCH-0020).
+//! Skills domain — skill registry + workflow jobs + readiness (ORCH-0021).
 //!
-//! Owns skill definitions and workflow job tracking.
-//! Publishes snapshots via watch.
+//! Skills are static singletons. Availability is computed from instance
+//! readiness, not stored on the definition.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex};
 
@@ -13,7 +13,7 @@ use super::skill::*;
 
 #[derive(Debug, Clone)]
 pub struct SkillsSnapshot {
-    pub skills: Arc<Vec<SkillDefinition>>,
+    pub skills: Arc<Vec<SkillView>>,
     pub workflow_jobs: Arc<HashMap<String, WorkflowJob>>,
 }
 
@@ -35,6 +35,10 @@ pub struct SkillsDomain {
 
 struct SkillsState {
     registry: SkillRegistry,
+    /// Per (skill_name, endpoint) readiness.
+    readiness: HashMap<String, HashMap<String, SkillInstanceView>>,
+    /// Skills currently being provisioned — (skill_name, endpoint) dedup set.
+    provisioning: HashSet<(String, String)>,
     workflow_jobs: HashMap<String, WorkflowJob>,
 }
 
@@ -43,6 +47,8 @@ impl SkillsDomain {
         Self {
             state: Mutex::new(SkillsState {
                 registry: SkillRegistry::new(),
+                readiness: HashMap::new(),
+                provisioning: HashSet::new(),
                 workflow_jobs: HashMap::new(),
             }),
             tx,
@@ -53,54 +59,63 @@ impl SkillsDomain {
         self.tx.borrow()
     }
 
-    // ── Skill Registry ─────────────────────────────────────────
+    // ── Skill Registry (singletons) ────────────────────────────
 
-    /// Register a skill. If the skill already exists with a non-Initializing
-    /// status, only update the parameter schema (model enum may have changed)
-    /// but preserve the current status. This prevents re-registration from
-    /// resetting a Provisioning/Ready skill back to Initializing.
+    /// Register a skill definition (singleton — only first registration counts).
     pub async fn register(&self, skill: SkillDefinition) {
         let mut state = self.state.lock().await;
-        if let Some(existing) = state.registry.get(&skill.name) {
-            match existing.status {
-                SkillStatus::Provisioning | SkillStatus::Ready | SkillStatus::Degraded => {
-                    // Preserve status, update schema (model list may have changed)
-                    let preserved_status = existing.status;
-                    let mut updated = skill;
-                    updated.status = preserved_status;
-                    state.registry.register(updated);
-                    self.publish(&state);
-                    return;
-                }
-                _ => {}
-            }
-        }
-        state.registry.register(skill);
-        self.publish(&state);
-    }
-
-    pub async fn update_status(&self, name: &str, status: SkillStatus) {
-        let mut state = self.state.lock().await;
-        if let Some(s) = state.registry.get_mut(name) {
-            s.status = status;
+        if state.registry.get(&skill.name).is_none() {
+            state.registry.register(skill);
             self.publish(&state);
         }
     }
 
-    /// Get a skill definition (brief lock, no publish).
+    /// Get a skill definition (brief lock).
     pub async fn get_skill(&self, name: &str) -> Option<SkillDefinition> {
         let state = self.state.lock().await;
         state.registry.get(name).cloned()
     }
 
-    /// Check if a skill is in a given status.
-    pub async fn has_status(&self, name: &str, status: SkillStatus) -> bool {
+    // ── Instance Readiness ─────────────────────────────────────
+
+    /// Record readiness for a skill on a specific instance.
+    pub async fn set_readiness(
+        &self,
+        skill_name: &str,
+        endpoint: &str,
+        view: SkillInstanceView,
+    ) {
+        let mut state = self.state.lock().await;
+        state
+            .readiness
+            .entry(skill_name.to_string())
+            .or_default()
+            .insert(endpoint.to_string(), view);
+        self.publish(&state);
+    }
+
+    /// Check if a skill+endpoint is currently being provisioned.
+    pub async fn is_provisioning(&self, skill_name: &str, endpoint: &str) -> bool {
         let state = self.state.lock().await;
         state
-            .registry
-            .get(name)
-            .map(|s| s.status == status)
-            .unwrap_or(false)
+            .provisioning
+            .contains(&(skill_name.to_string(), endpoint.to_string()))
+    }
+
+    /// Mark a skill+endpoint as provisioning (prevents duplicate spawns).
+    pub async fn mark_provisioning(&self, skill_name: &str, endpoint: &str) {
+        let mut state = self.state.lock().await;
+        state
+            .provisioning
+            .insert((skill_name.to_string(), endpoint.to_string()));
+    }
+
+    /// Clear provisioning mark (on completion or failure).
+    pub async fn clear_provisioning(&self, skill_name: &str, endpoint: &str) {
+        let mut state = self.state.lock().await;
+        state
+            .provisioning
+            .remove(&(skill_name.to_string(), endpoint.to_string()));
     }
 
     // ── Workflow Jobs ──────────────────────────────────────────
@@ -116,8 +131,30 @@ impl SkillsDomain {
         state.workflow_jobs.get(id).cloned()
     }
 
+    // ── Publish ────────────────────────────────────────────────
+
     fn publish(&self, state: &SkillsState) {
-        let skills: Vec<_> = state.registry.list().into_iter().cloned().collect();
+        let skills: Vec<SkillView> = state
+            .registry
+            .list()
+            .into_iter()
+            .map(|def| {
+                let instances: Vec<SkillInstanceView> = state
+                    .readiness
+                    .get(&def.name)
+                    .map(|map| map.values().cloned().collect())
+                    .unwrap_or_default();
+
+                let available = instances.iter().any(|i| i.ready);
+
+                SkillView {
+                    definition: def.clone(),
+                    available,
+                    instances,
+                }
+            })
+            .collect();
+
         let snapshot = Arc::new(SkillsSnapshot {
             skills: Arc::new(skills),
             workflow_jobs: Arc::new(state.workflow_jobs.clone()),

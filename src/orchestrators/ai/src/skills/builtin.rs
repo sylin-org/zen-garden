@@ -52,7 +52,7 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
         display_name: "Upscale".into(),
         capability: Capability::Image,
         description: "Enhance image resolution using AI super-resolution".into(),
-        status: crate::domain::skill::SkillStatus::Initializing,
+        provider_kind: crate::domain::types::OfferingKind::ComfyUi,
         vram_mb: 1024,
         content_slots: vec![ContentSlot {
             role: "source".into(),
@@ -129,7 +129,7 @@ pub fn image_generate(available_checkpoints: &[String]) -> SkillDefinition {
         display_name: "Generate".into(),
         capability: Capability::Image,
         description: "Create an image from a text description".into(),
-        status: crate::domain::skill::SkillStatus::Initializing,
+        provider_kind: crate::domain::types::OfferingKind::ComfyUi,
         vram_mb: 4096,
         content_slots: vec![
             ContentSlot {
@@ -230,7 +230,7 @@ pub fn image_img2img(available_checkpoints: &[String]) -> SkillDefinition {
         display_name: "Transform".into(),
         capability: Capability::Image,
         description: "Transform an image guided by a text prompt".into(),
-        status: crate::domain::skill::SkillStatus::Initializing,
+        provider_kind: crate::domain::types::OfferingKind::ComfyUi,
         vram_mb: 4096,
         content_slots: vec![
             ContentSlot {

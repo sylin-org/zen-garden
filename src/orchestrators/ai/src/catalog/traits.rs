@@ -133,19 +133,43 @@ pub trait Provider: Send + Sync + 'static {
 
     // ── Skills (ORCH-0018) ────────────────────────────────────────
 
-    /// Return skills this provider can serve on the given instance.
-    ///
-    /// Called during discovery after enumerate(). Skills are derived from
-    /// installed models and available node types. Default: no skills.
-    fn skills(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<Vec<SkillDefinition>>> {
-        let _ = ctx;
-        Box::pin(async { Ok(vec![]) })
+    /// Built-in skill definitions this provider can execute.
+    /// Called once at startup to register static singletons.
+    fn builtin_skills(&self) -> Vec<SkillDefinition> {
+        vec![]
     }
 
-    /// Execute a workflow-based skill (async job).
-    ///
-    /// Returns a `WorkflowJob` with status `Queued` or `Running`.
-    /// The caller polls for completion via the job system.
+    /// Check if an instance is ready to serve a skill.
+    /// The adapter knows what "ready" means (models installed, etc.).
+    fn check_skill_readiness(
+        &self,
+        ctx: &ProviderContext,
+        skill: &str,
+    ) -> BoxFuture<'_, Result<crate::domain::skill::SkillReadiness>> {
+        let _ = (ctx, skill);
+        Box::pin(async {
+            Ok(crate::domain::skill::SkillReadiness {
+                ready: false,
+                reason: "not supported".into(),
+            })
+        })
+    }
+
+    /// Make an instance ready for a skill (download models, push workflows, etc.).
+    /// The adapter owns the provisioning details.
+    fn provision_skill(
+        &self,
+        ctx: &ProviderContext,
+        skill: &str,
+        cache_dir: &std::path::Path,
+        moss_endpoint: &str,
+        fqn: &str,
+    ) -> BoxFuture<'_, Result<()>> {
+        let _ = (ctx, skill, cache_dir, moss_endpoint, fqn);
+        Box::pin(async { anyhow::bail!("provisioning not supported") })
+    }
+
+    /// Execute a skill on a ready instance.
     fn workflow(
         &self,
         ctx: &ProviderContext,

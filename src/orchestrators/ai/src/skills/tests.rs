@@ -467,24 +467,16 @@ mod tests {
     }
 
     #[test]
-    fn registry_updates_skill_on_re_register() {
+    fn registry_is_singleton() {
         let mut reg = SkillRegistry::new();
 
-        // First registration with no installed models
-        let mut skill1 = builtin::image_upscale(&[]);
-        skill1.status = SkillStatus::Initializing;
-        reg.register(skill1);
-        let v1 = reg.get("image.upscale").unwrap();
-        assert_eq!(v1.status, SkillStatus::Initializing);
-
-        // Re-register after provisioning
-        let mut skill2 = builtin::image_upscale(&["RealESRGAN_x4plus.pth".into()]);
-        skill2.status = SkillStatus::Ready;
-        reg.register(skill2);
-        let v2 = reg.get("image.upscale").unwrap();
-        assert_eq!(v2.status, SkillStatus::Ready);
-
-        // Still just one skill
+        // First registration
+        reg.register(builtin::image_upscale(&[]));
         assert_eq!(reg.len(), 1);
+        assert_eq!(reg.get("image.upscale").unwrap().display_name, "Upscale");
+
+        // Re-register — should not duplicate
+        reg.register(builtin::image_upscale(&["RealESRGAN_x4plus.pth".into()]));
+        assert_eq!(reg.len(), 1); // still one
     }
 }

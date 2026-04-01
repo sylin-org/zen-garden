@@ -156,30 +156,49 @@ impl Provider for ComfyUiProvider {
 
     // ── Skills (ORCH-0018) ────────────────────────────────────────
 
-    fn skills(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<Vec<SkillDefinition>>> {
+    fn builtin_skills(&self) -> Vec<SkillDefinition> {
+        vec![
+            crate::skills::builtin::image_upscale(&[]),
+            crate::skills::builtin::image_generate(&[]),
+            crate::skills::builtin::image_img2img(&[]),
+        ]
+    }
+
+    fn check_skill_readiness(
+        &self,
+        ctx: &ProviderContext,
+        skill: &str,
+    ) -> BoxFuture<'_, Result<crate::domain::skill::SkillReadiness>> {
         let endpoint = ctx.endpoint.clone();
+        let skill = skill.to_string();
 
         Box::pin(async move {
-            // Query installed models — enriches parameter dropdowns and status
-            let (upscale_models, checkpoints) = tokio::join!(
-                list_models(&self.http, &endpoint, "upscale_models"),
-                list_models(&self.http, &endpoint, "checkpoints"),
-            );
-            let upscale_models = upscale_models.unwrap_or_default();
-            let checkpoints = checkpoints.unwrap_or_default();
+            let model_type = match skill.as_str() {
+                "image.upscale" => "upscale_models",
+                "image.generate" | "image.img2img" => "checkpoints",
+                _ => {
+                    return Ok(crate::domain::skill::SkillReadiness {
+                        ready: false,
+                        reason: "unknown skill".into(),
+                    })
+                }
+            };
 
-            use crate::domain::skill::SkillStatus;
+            let models = list_models(&reqwest::Client::new(), &endpoint, model_type)
+                .await
+                .unwrap_or_default();
 
-            let mut upscale = crate::skills::builtin::image_upscale(&upscale_models);
-            upscale.status = if upscale_models.is_empty() { SkillStatus::Initializing } else { SkillStatus::Ready };
-
-            let mut generate = crate::skills::builtin::image_generate(&checkpoints);
-            generate.status = if checkpoints.is_empty() { SkillStatus::Initializing } else { SkillStatus::Ready };
-
-            let mut img2img = crate::skills::builtin::image_img2img(&checkpoints);
-            img2img.status = if checkpoints.is_empty() { SkillStatus::Initializing } else { SkillStatus::Ready };
-
-            Ok(vec![upscale, generate, img2img])
+            if models.is_empty() {
+                Ok(crate::domain::skill::SkillReadiness {
+                    ready: false,
+                    reason: format!("no {} installed", model_type),
+                })
+            } else {
+                Ok(crate::domain::skill::SkillReadiness {
+                    ready: true,
+                    reason: "ready".into(),
+                })
+            }
         })
     }
 

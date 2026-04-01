@@ -683,17 +683,11 @@ function DetailRow({
 
 // ── Skill Block ──────────────────────────────────────────────────
 
-const SKILL_STATUS_STYLES: Record<string, { bg: string; label: string }> = {
-  ready: { bg: "bg-emerald-400/10 text-emerald-400 border-emerald-400/30", label: "Ready" },
-  degraded: { bg: "bg-yellow-400/10 text-yellow-400 border-yellow-400/30", label: "Degraded" },
-  initializing: { bg: "bg-blue-400/10 text-blue-400 border-blue-400/30", label: "Initializing" },
-  provisioning: { bg: "bg-blue-400/10 text-blue-400 border-blue-400/30", label: "Provisioning" },
-  failed: { bg: "bg-red-400/10 text-red-400 border-red-400/30", label: "Failed" },
-};
-
 function SkillBlock({ skill }: { skill: SkillInfo }) {
   const [expanded, setExpanded] = useState(false);
-  const statusStyle = SKILL_STATUS_STYLES[skill.status] ?? SKILL_STATUS_STYLES.failed;
+  const availStyle = skill.available
+    ? { bg: "bg-emerald-400/10 text-emerald-400 border-emerald-400/30", label: "Available" }
+    : { bg: "bg-gray-600/10 text-gray-500 border-gray-600/30", label: "Not Available" };
 
   return (
     <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg overflow-hidden">
@@ -713,26 +707,26 @@ function SkillBlock({ skill }: { skill: SkillInfo }) {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Stone availability squares */}
-          {skill.stones && skill.stones.length > 0 && (
-            <div className="flex items-center gap-1" title={skill.stones.map(s =>
-              `${s.stone}: ${s.reason}${s.reason === "insufficient_vram" ? ` (${s.vram_mb}MB < ${skill.vram_mb}MB)` : ""}`
+          {/* Instance readiness squares */}
+          {skill.instances && skill.instances.length > 0 && (
+            <div className="flex items-center gap-1" title={skill.instances.map(s =>
+              `${s.stone_name}: ${s.reason}`
             ).join("\n")}>
-              {skill.stones.map((s) => (
+              {skill.instances.map((s) => (
                 <span
-                  key={s.stone}
+                  key={s.stone_name}
                   className={`w-2.5 h-2.5 rounded-sm ${
-                    s.available ? "bg-emerald-400" : s.reason === "insufficient_vram" ? "bg-yellow-500" : "bg-gray-600"
+                    s.ready ? "bg-emerald-400" : "bg-gray-600"
                   }`}
-                  title={`${s.stone}: ${s.reason}`}
+                  title={`${s.stone_name}: ${s.reason}`}
                 />
               ))}
             </div>
           )}
           <span
-            className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${statusStyle.bg}`}
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${availStyle.bg}`}
           >
-            {statusStyle.label}
+            {availStyle.label}
           </span>
           <span className="text-gray-600 text-xs">{expanded ? "▲" : "▼"}</span>
         </div>
@@ -740,19 +734,13 @@ function SkillBlock({ skill }: { skill: SkillInfo }) {
 
       {expanded && (
         <div className="px-4 pb-4 border-t border-[#2e303a]">
-          {skill.status === "ready" || skill.status === "degraded" ? (
+          {skill.available ? (
             <div className="pt-3">
               <SkillTryIt skillName={skill.name} />
             </div>
           ) : (
             <div className="pt-3 text-xs text-gray-500">
-              {skill.status === "initializing" && "Downloading required models..."}
-              {skill.status === "provisioning" && "Deploying models to instances..."}
-              {skill.status === "failed" && (
-                <span className="text-red-400">
-                  Provisioning failed. Check orchestrator logs.
-                </span>
-              )}
+              Setting up — downloading and deploying required models...
             </div>
           )}
         </div>

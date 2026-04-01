@@ -33,30 +33,18 @@ pub async fn run_workflow(
                 );
             }
             Some(skill) => {
-                use crate::domain::skill::SkillStatus;
-                match skill.status {
-                    SkillStatus::Ready | SkillStatus::Degraded => {} // OK to proceed
-                    SkillStatus::Initializing => {
-                        return error_response(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "skill_initializing",
-                            &format!("Skill '{}' is downloading required models. Try again shortly.", skill.display_name),
-                        );
-                    }
-                    SkillStatus::Provisioning => {
-                        return error_response(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "skill_provisioning",
-                            &format!("Skill '{}' is being deployed to instances. Try again shortly.", skill.display_name),
-                        );
-                    }
-                    SkillStatus::Failed => {
-                        return error_response(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "skill_failed",
-                            &format!("Skill '{}' failed to provision. Check orchestrator logs.", skill.display_name),
-                        );
-                    }
+                // Check availability via the snapshot (ORCH-0021: readiness is per-instance, not on definition)
+                let snap = state.skills.snapshot().clone();
+                let available = snap.skills.iter()
+                    .find(|v| v.definition.name == req.skill)
+                    .map(|v| v.available)
+                    .unwrap_or(false);
+                if !available {
+                    return error_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "skill_not_ready",
+                        &format!("Skill '{}' has no ready instances. Try again shortly.", skill.display_name),
+                    );
                 }
             }
         }
@@ -166,7 +154,7 @@ pub async fn list_skills(State(state): State<AppState>) -> Response {
     let skills: Vec<_> = skill_list.iter().map(|s| {
         let stones: Vec<_> = instance_snapshot.iter().map(|(stone_name, vram_bytes, routable)| {
             let vram_mb = vram_bytes / 1_048_576;
-            let meets_vram = vram_mb == 0 || vram_mb >= s.vram_mb;
+            let meets_vram = vram_mb == 0 || vram_mb >= s.definition.vram_mb;
             let available = meets_vram && *routable;
             serde_json::json!({
                 "stone": stone_name,
@@ -183,15 +171,15 @@ pub async fn list_skills(State(state): State<AppState>) -> Response {
         }).collect();
 
         serde_json::json!({
-            "name": s.name,
-            "display_name": s.display_name,
-            "capability": s.capability,
-            "description": s.description,
-            "status": s.status,
-            "vram_mb": s.vram_mb,
-            "content_slots": s.content_slots,
-            "has_diagram": s.diagram.is_some(),
-            "required_models": s.required_models,
+            "name": s.definition.name,
+            "display_name": s.definition.display_name,
+            "capability": s.definition.capability,
+            "description": s.definition.description,
+            "available": s.available,
+            "vram_mb": s.definition.vram_mb,
+            "content_slots": s.definition.content_slots,
+            "has_diagram": s.definition.diagram.is_some(),
+            "required_models": s.definition.required_models,
             "stones": stones,
         })
     }).collect();

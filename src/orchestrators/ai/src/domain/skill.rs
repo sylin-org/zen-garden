@@ -23,6 +23,10 @@ use crate::catalog::traits::FormSchema;
 /// Skills bridge the orchestrator's capability model to a provider's
 /// concrete implementation. ComfyUI implements skills as workflow
 /// templates; other providers implement them as direct API calls.
+/// Static skill definition — a singleton registered once at startup.
+///
+/// Availability is NOT stored here. It's computed from instance readiness
+/// at query time (ORCH-0021).
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillDefinition {
     /// Internal name for API routing: "image.upscale", "image.generate"
@@ -33,10 +37,9 @@ pub struct SkillDefinition {
     pub capability: Capability,
     /// Short description shown as subtitle in the UI.
     pub description: String,
-    /// Current lifecycle status.
-    pub status: SkillStatus,
+    /// Which provider type handles execution.
+    pub provider_kind: super::types::OfferingKind,
     /// Minimum GPU VRAM required to run this skill (MB).
-    /// Instances below this threshold won't be provisioned.
     pub vram_mb: u64,
     /// What inputs the skill requires.
     pub content_slots: Vec<ContentSlot>,
@@ -52,20 +55,35 @@ pub struct SkillDefinition {
     pub implementation: serde_json::Value,
 }
 
-/// Lifecycle status of a skill.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SkillStatus {
-    /// Skill registered, models being downloaded to orchestrator cache.
-    Initializing,
-    /// Models cached, being pushed to instances.
-    Provisioning,
-    /// At least one instance fully provisioned — skill accepts requests.
-    Ready,
-    /// Some instances ready, others still provisioning.
-    Degraded,
-    /// Provisioning failed.
-    Failed,
+// ── Readiness (computed, not stored on definition) ─────────────
+
+/// Readiness of a single instance for a specific skill.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillReadiness {
+    pub ready: bool,
+    pub reason: String,
+}
+
+/// Skill view for API responses — definition + computed availability.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillView {
+    /// The static definition.
+    #[serde(flatten)]
+    pub definition: SkillDefinition,
+    /// At least one instance can serve this skill.
+    pub available: bool,
+    /// Per-instance readiness.
+    pub instances: Vec<SkillInstanceView>,
+}
+
+/// Per-instance readiness for a skill.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillInstanceView {
+    pub stone_name: String,
+    pub endpoint: String,
+    pub ready: bool,
+    pub reason: String,
+    pub vram_mb: u64,
 }
 
 /// Declares a single input slot for a skill.
@@ -282,7 +300,7 @@ mod tests {
             display_name: "Upscale".into(),
             capability: Capability::Image,
             description: "Enhance image resolution using AI super-resolution".into(),
-            status: SkillStatus::Ready,
+            provider_kind: crate::domain::types::OfferingKind::ComfyUi,
             vram_mb: 1024,
             content_slots: vec![ContentSlot {
                 role: "source".into(),

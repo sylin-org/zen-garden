@@ -174,8 +174,6 @@ export const CAPABILITY_LABELS: Record<string, string> = {
 
 // ── Skill Types ─────────────────────────────────────────────────
 
-export type SkillStatus = "initializing" | "provisioning" | "ready" | "degraded" | "failed";
-
 export interface SkillContentSlot {
   role: string;
   content_type: "image" | "text";
@@ -189,9 +187,10 @@ export interface SkillModelRef {
 }
 
 export interface SkillStoneStatus {
-  stone: string;
-  available: boolean;
-  reason: "ready" | "unhealthy" | "insufficient_vram";
+  stone_name: string;
+  endpoint: string;
+  ready: boolean;
+  reason: string;
   vram_mb: number;
 }
 
@@ -200,12 +199,12 @@ export interface SkillInfo {
   display_name: string;
   capability: string;
   description: string;
-  status: SkillStatus;
+  available: boolean;
   vram_mb: number;
   content_slots: SkillContentSlot[];
   has_diagram: boolean;
   required_models: SkillModelRef[];
-  stones: SkillStoneStatus[];
+  instances: SkillStoneStatus[];
 }
 
 export interface SkillPresentation {

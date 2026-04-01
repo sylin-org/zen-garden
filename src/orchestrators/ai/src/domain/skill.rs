@@ -25,11 +25,13 @@ use crate::catalog::traits::FormSchema;
 /// templates; other providers implement them as direct API calls.
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillDefinition {
-    /// Unique name: "image.upscale", "image.generate", "speech.clone_voice"
+    /// Internal name for API routing: "image.upscale", "image.generate"
     pub name: String,
+    /// User-facing display name: "Upscale", "Generate"
+    pub display_name: String,
     /// Parent capability for routing.
     pub capability: Capability,
-    /// Human-readable description.
+    /// Short description shown as subtitle in the UI.
     pub description: String,
     /// What inputs the skill requires.
     pub content_slots: Vec<ContentSlot>,
@@ -215,6 +217,10 @@ impl SkillRegistry {
 /// Combined schema + diagram for the TryIt UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillPresentation {
+    /// User-facing display name.
+    pub display_name: String,
+    /// Short description.
+    pub description: String,
     /// JSON Schema + UI Schema for parameter form.
     pub schema: serde_json::Value,
     pub ui_schema: serde_json::Value,
@@ -228,6 +234,8 @@ pub struct SkillPresentation {
 impl SkillPresentation {
     pub fn from_definition(def: &SkillDefinition) -> Self {
         Self {
+            display_name: def.display_name.clone(),
+            description: def.description.clone(),
             schema: def.parameter_schema.schema.clone(),
             ui_schema: def.parameter_schema.ui_schema.clone(),
             content: def.content_slots.clone(),
@@ -245,8 +253,9 @@ mod tests {
     fn upscale_skill() -> SkillDefinition {
         SkillDefinition {
             name: "image.upscale".into(),
+            display_name: "Upscale".into(),
             capability: Capability::Image,
-            description: "Upscale an image using an AI model".into(),
+            description: "Enhance image resolution using AI super-resolution".into(),
             content_slots: vec![ContentSlot {
                 role: "source".into(),
                 content_type: ContentType::Image,

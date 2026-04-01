@@ -41,8 +41,9 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
 
     SkillDefinition {
         name: "image.upscale".into(),
+        display_name: "Upscale".into(),
         capability: Capability::Image,
-        description: "Upscale an image using an AI super-resolution model (4x)".into(),
+        description: "Enhance image resolution using AI super-resolution".into(),
         content_slots: vec![ContentSlot {
             role: "source".into(),
             content_type: ContentType::Image,
@@ -52,9 +53,16 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "scale": {
+                        "type": "integer",
+                        "title": "Scale Factor",
+                        "description": "Output size multiplier",
+                        "enum": [2, 4],
+                        "default": 4
+                    },
                     "upscale_model": {
                         "type": "string",
-                        "title": "Upscale Model",
+                        "title": "Model",
                         "description": "AI model used for upscaling. RealESRGAN_x4plus is recommended for general use.",
                         "enum": model_enum,
                         "default": default_model
@@ -62,6 +70,7 @@ pub fn image_upscale(available_models: &[String]) -> SkillDefinition {
                 }
             }),
             ui_schema: serde_json::json!({
+                "scale": { "ui:widget": "radio" },
                 "upscale_model": { "ui:widget": "select" }
             }),
         },

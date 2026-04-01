@@ -127,6 +127,7 @@ pub async fn list_skills(State(state): State<AppState>) -> Response {
     let skills: Vec<_> = registry.list().iter().map(|s| {
         serde_json::json!({
             "name": s.name,
+            "display_name": s.display_name,
             "capability": s.capability,
             "description": s.description,
             "content_slots": s.content_slots,

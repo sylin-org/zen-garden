@@ -319,6 +319,34 @@ async fn execute_workflow(
     fill_placeholder(&mut workflow, "PLACEHOLDER_IMAGE", &uploaded_name);
     fill_placeholder(&mut workflow, "PLACEHOLDER_MODEL", &model_name);
 
+    // 3b. Handle scale factor — the upscale model always produces 4x.
+    // For 2x, insert a downscale node between upscale and save.
+    let scale = req
+        .parameters
+        .get("scale")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4);
+
+    if scale == 2 {
+        // Rewire: upscale → ImageScale (0.5x) → save
+        // The save node currently reads from the upscale node.
+        // Insert a scale node that halves the 4x result to get 2x.
+        let scale_node_id = "5";
+        workflow[scale_node_id] = serde_json::json!({
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": ["3", 0],
+                "upscale_method": "lanczos",
+                "width": 0,
+                "height": 0,
+                "crop": "disabled",
+                "scale_by": 0.5
+            }
+        });
+        // Rewire save to read from the scale node instead of upscale
+        workflow["4"]["inputs"]["images"] = serde_json::json!([scale_node_id, 0]);
+    }
+
     // 4. Submit workflow
     let client_id = format!(
         "{:x}",

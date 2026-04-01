@@ -90,9 +90,10 @@ pub async fn ensure_cached(
 
     tracing::info!(filename, url, "downloading model to cache");
 
+    // No global timeout — stream to disk as bytes arrive.
+    // Only the initial connection has a timeout (from the Client config).
     let resp = http
         .get(url)
-        .timeout(std::time::Duration::from_secs(600))
         .send()
         .await
         .with_context(|| format!("download model: {url}"))?;
@@ -101,26 +102,47 @@ pub async fn ensure_cached(
         anyhow::bail!("download failed HTTP {}: {}", resp.status(), url);
     }
 
-    let bytes = resp
-        .bytes()
-        .await
-        .with_context(|| format!("read model bytes: {url}"))?;
+    let total_bytes = resp.content_length();
 
-    // Write to temp file then rename (atomic)
+    // Stream to temp file — no full-file buffering in RAM
     let tmp_path = path.with_extension("tmp");
-    tokio::fs::write(&tmp_path, &bytes)
+    let mut file = tokio::fs::File::create(&tmp_path)
         .await
-        .with_context(|| format!("write cache file: {}", tmp_path.display()))?;
+        .with_context(|| format!("create temp file: {}", tmp_path.display()))?;
 
+    let mut stream = resp.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_log = std::time::Instant::now();
+
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("read chunk from: {url}"))?;
+        file.write_all(&chunk).await.with_context(|| "write chunk to cache")?;
+        downloaded += chunk.len() as u64;
+
+        // Log progress every 5 seconds
+        if last_log.elapsed() > std::time::Duration::from_secs(5) {
+            if let Some(total) = total_bytes {
+                let pct = (downloaded as f64 / total as f64 * 100.0) as u32;
+                tracing::info!(filename, downloaded, total, pct, "download progress");
+            } else {
+                tracing::info!(filename, downloaded, "download progress");
+            }
+            last_log = std::time::Instant::now();
+        }
+    }
+
+    file.flush().await?;
+    drop(file);
+
+    // Atomic rename
     tokio::fs::rename(&tmp_path, &path)
         .await
         .with_context(|| format!("rename cache file: {}", path.display()))?;
 
-    tracing::info!(
-        filename,
-        bytes = bytes.len(),
-        "model cached"
-    );
+    tracing::info!(filename, bytes = downloaded, "model cached");
 
     Ok(path)
 }

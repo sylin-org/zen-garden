@@ -152,23 +152,31 @@ pub async fn get_job(
 
 /// List all registered skills.
 pub async fn list_skills(State(state): State<AppState>) -> Response {
-    let registry = state.skill_registry.read().await;
-    // Build per-stone availability for each skill
-    let instances = state.instances.read().await;
-    let comfyui_instances: Vec<_> = instances
-        .values()
-        .filter(|i| i.kind == crate::domain::types::OfferingKind::ComfyUi)
-        .collect();
+    // Snapshot data under brief locks — don't hold across response building
+    let skill_list: Vec<_> = {
+        let registry = state.skill_registry.read().await;
+        registry.list().iter().map(|s| (*s).clone()).collect()
+    };
 
-    let skills: Vec<_> = registry.list().iter().map(|s| {
-        let stones: Vec<_> = comfyui_instances.iter().map(|inst| {
-            let vram_mb = inst.vram.total_bytes / 1_048_576;
+    let instance_snapshot: Vec<_> = {
+        let instances = state.instances.read().await;
+        instances
+            .values()
+            .filter(|i| i.kind == crate::domain::types::OfferingKind::ComfyUi)
+            .map(|i| (i.stone.name.clone(), i.vram.total_bytes, i.health.is_routable()))
+            .collect()
+    };
+
+    // Build response without any locks held
+    let skills: Vec<_> = skill_list.iter().map(|s| {
+        let stones: Vec<_> = instance_snapshot.iter().map(|(stone_name, vram_bytes, routable)| {
+            let vram_mb = vram_bytes / 1_048_576;
             let meets_vram = vram_mb == 0 || vram_mb >= s.vram_mb;
-            let available = meets_vram && inst.health.is_routable();
+            let available = meets_vram && *routable;
             serde_json::json!({
-                "stone": inst.stone.name,
+                "stone": stone_name,
                 "available": available,
-                "reason": if !inst.health.is_routable() {
+                "reason": if !routable {
                     "unhealthy"
                 } else if !meets_vram {
                     "insufficient_vram"

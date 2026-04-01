@@ -7,6 +7,7 @@
 
 pub mod parser;
 pub mod builtin;
+pub mod prep;
 
 #[cfg(test)]
 mod tests;

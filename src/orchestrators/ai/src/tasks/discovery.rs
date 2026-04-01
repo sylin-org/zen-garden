@@ -459,27 +459,9 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
         }
     }
 
-    // Discover skills (ORCH-0018)
-    match adapter.skills(&ctx).await {
-        Ok(skills) if !skills.is_empty() => {
-            let skill_count = skills.len();
-            let mut registry = state.skill_registry.write().await;
-            for skill in skills {
-                tracing::info!(
-                    skill = %skill.name,
-                    endpoint = %endpoint,
-                    "registered skill"
-                );
-                registry.register(skill);
-            }
-            tracing::info!(
-                endpoint = %endpoint,
-                kind = %kind,
-                skills = skill_count,
-                "discovered skills"
-            );
-        }
-        Ok(_) => {} // no skills — normal for most providers
+    // Discover and provision skills (ORCH-0018 / ORCH-0019)
+    let skills = match adapter.skills(&ctx).await {
+        Ok(s) => s,
         Err(e) => {
             tracing::debug!(
                 endpoint = %endpoint,
@@ -487,7 +469,94 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                 error = %e,
                 "skills discovery failed (non-fatal)"
             );
+            return;
         }
+    };
+
+    if skills.is_empty() {
+        return;
+    }
+
+    // Derive Moss endpoint from ComfyUI endpoint (same host, port 7185)
+    let moss_endpoint = derive_moss_endpoint(endpoint);
+
+    // Get the offering FQN for this instance
+    let offering_fqn = {
+        let instances = state.instances.read().await;
+        instances
+            .get(endpoint)
+            .map(|_| kind.as_str().to_string())
+            .unwrap_or_else(|| kind.as_str().to_string())
+    };
+
+    let cache_dir = std::path::PathBuf::from(&state.data_dir).join("skill-cache");
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    for skill in skills {
+        let skill_name = skill.name.clone();
+        let has_required_models = !skill.required_models.is_empty();
+
+        // Register the skill definition
+        {
+            let mut registry = state.skill_registry.write().await;
+            registry.register(skill.clone());
+        }
+
+        if !has_required_models {
+            tracing::info!(skill = %skill_name, "skill registered (no models required)");
+            continue;
+        }
+
+        // Provision: download to cache → push to instance
+        let instances_to_provision = vec![(
+            endpoint.to_string(),
+            moss_endpoint.clone(),
+            offering_fqn.clone(),
+        )];
+
+        match crate::skills::prep::provision_skill(
+            &http,
+            &cache_dir,
+            &skill,
+            &instances_to_provision,
+        )
+        .await
+        {
+            Ok(result) => {
+                tracing::info!(
+                    skill = %skill_name,
+                    live = result.live_instances,
+                    total = result.total_instances,
+                    state = ?result.state,
+                    "skill provisioned"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    skill = %skill_name,
+                    error = %e,
+                    "skill provisioning failed (non-fatal)"
+                );
+            }
+        }
+    }
+}
+
+/// Derive the Moss HTTP endpoint from a service endpoint.
+///
+/// Replaces the port in the URL with 7185 (Moss default).
+fn derive_moss_endpoint(service_endpoint: &str) -> String {
+    if let Some(colon_pos) = service_endpoint.rfind(':') {
+        format!(
+            "{}:{}",
+            &service_endpoint[..colon_pos],
+            garden_common::constants::MOSS_HTTP
+        )
+    } else {
+        format!("{service_endpoint}:{}", garden_common::constants::MOSS_HTTP)
     }
 }
 

@@ -13,9 +13,7 @@ use axum::Json;
 
 use crate::app_state::AppState;
 use crate::catalog::traits::ProviderContext;
-use crate::domain::skill::{
-    SkillPresentation, WorkflowJob, WorkflowJobStatus, WorkflowRequest,
-};
+use crate::domain::skill::{SkillPresentation, WorkflowJobStatus, WorkflowRequest};
 
 // ── POST /v1/workflows/run ─────────────────────────────────────
 
@@ -24,20 +22,17 @@ pub async fn run_workflow(
     State(state): State<AppState>,
     Json(req): Json<WorkflowRequest>,
 ) -> Response {
-    // 1. Look up the skill
-    let skill_def = {
+    // 1. Look up the skill (validates it exists)
+    {
         let registry = state.skill_registry.read().await;
-        match registry.get(&req.skill) {
-            Some(s) => s.clone(),
-            None => {
+        if registry.get(&req.skill).is_none() {
                 return error_response(
                     StatusCode::NOT_FOUND,
                     "skill_not_found",
                     &format!("Unknown skill '{}'. Use GET /v1/skills to list available skills.", req.skill),
                 );
-            }
         }
-    };
+    }
 
     // 2. Find a ComfyUI instance that can serve this skill
     let instances = state.instances.read().await;

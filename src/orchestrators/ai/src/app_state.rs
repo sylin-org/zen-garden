@@ -10,6 +10,7 @@ use crate::domain::demand::DemandLedger;
 use crate::domain::fitness::BenchmarkRun;
 use crate::domain::lease::LeaseManager;
 use crate::domain::metrics::MetricsEngine;
+use crate::domain::skill::{SkillRegistry, WorkflowJob};
 use crate::domain::{recommendation, tiering};
 use crate::domain::types::*;
 use crate::offerings::cloud::CloudProviderStore;
@@ -79,6 +80,10 @@ pub struct AppState {
     // ── Recommendations (ORCH-0011) ──
     pub recommended_models: Arc<RwLock<HashMap<String, String>>>,
 
+    // ── Skills (ORCH-0018) ──
+    pub skill_registry: Arc<RwLock<SkillRegistry>>,
+    pub workflow_jobs: Arc<RwLock<HashMap<String, WorkflowJob>>>,
+
     // ── Fitness ──
     pub benchmark_run: Arc<RwLock<BenchmarkRun>>,
     pub benchmark_cancel: Arc<RwLock<Option<CancellationToken>>>,
@@ -131,6 +136,8 @@ impl AppState {
             placement: Arc::new(RwLock::new(PlacementPlan::default())),
             advisor: Arc::new(RwLock::new(TopologyAdvice::empty())),
             recommended_models: Arc::new(RwLock::new(HashMap::new())),
+            skill_registry: Arc::new(RwLock::new(SkillRegistry::new())),
+            workflow_jobs: Arc::new(RwLock::new(HashMap::new())),
             benchmark_run: Arc::new(RwLock::new(BenchmarkRun::idle())),
             benchmark_cancel: Arc::new(RwLock::new(None)),
             shutdown,

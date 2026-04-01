@@ -11,3 +11,4 @@ pub mod proxy;
 pub mod service_actions;
 pub mod static_files;
 pub mod unified;
+pub mod workflows;

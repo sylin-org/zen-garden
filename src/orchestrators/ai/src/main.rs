@@ -198,6 +198,11 @@ async fn main() -> Result<()> {
         .route("/v1/audio/transcriptions", axum::routing::post(api::unified::transcriptions))
         .route("/v1/models", axum::routing::get(api::unified::models))
         .route("/v1/models/{model}/form", axum::routing::get(api::unified::model_form))
+        // Workflow / Skill endpoints (ORCH-0018)
+        .route("/v1/workflows/run", axum::routing::post(api::workflows::run_workflow))
+        .route("/v1/workflows/jobs/{id}", axum::routing::get(api::workflows::get_job))
+        .route("/v1/skills", axum::routing::get(api::workflows::list_skills))
+        .route("/v1/skills/{skill}/form", axum::routing::get(api::workflows::skill_form))
         .with_state(state.clone())
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))

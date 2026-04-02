@@ -191,6 +191,7 @@ pub struct ContentSlot {
 pub enum ContentType {
     Image,
     Text,
+    Audio,
 }
 
 /// A model required by a skill.

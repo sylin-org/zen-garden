@@ -12,7 +12,7 @@ type JobStatus = "idle" | "uploading" | "running" | "completed" | "failed";
 
 interface JobResult {
   status: string;
-  content?: Array<{ type: string; url?: string; format?: string }>;
+  content?: Array<{ type: string; url?: string; data?: string; format?: string }>;
   error?: { code: string; message: string };
   usage?: { duration_ms: number };
 }
@@ -51,6 +51,16 @@ export function SkillTryIt({ skillName, disabled = false }: SkillTryItProps) {
             }
           }
           setParams(defaults);
+          // Initialize content defaults from content slots
+          const contentDefaults: Record<string, string> = {};
+          for (const slot of data.content_slots) {
+            if (slot.default) {
+              contentDefaults[slot.role] = slot.default;
+            }
+          }
+          if (Object.keys(contentDefaults).length > 0) {
+            setContentData(contentDefaults);
+          }
         }
         setFormLoading(false);
       })
@@ -244,7 +254,7 @@ export function SkillTryIt({ skillName, disabled = false }: SkillTryItProps) {
       )}
 
       {/* Result */}
-      {result?.content?.[0]?.url && (
+      {result?.content && result.content.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-emerald-400 uppercase tracking-wider font-semibold">
@@ -256,22 +266,77 @@ export function SkillTryIt({ skillName, disabled = false }: SkillTryItProps) {
               </span>
             )}
           </div>
-          <img
-            src={result.content[0].url}
-            alt="Result"
-            className="max-w-full rounded border border-gray-700"
-          />
-          <a
-            href={result.content[0].url}
-            download={`${skillName.replace(".", "-")}-result.png`}
-            className="inline-block text-xs text-blue-400 hover:underline"
-          >
-            Download
-          </a>
+          {result.content.map((block, i) => (
+            <ResultBlock key={i} block={block} skillName={skillName} index={i} />
+          ))}
         </div>
       )}
     </div>
   );
+}
+
+// ── Result Block (image / audio / text) ──────────────────────
+
+function ResultBlock({
+  block,
+  skillName,
+  index,
+}: {
+  block: { type: string; url?: string; data?: string; format?: string };
+  skillName: string;
+  index: number;
+}) {
+  if (block.type === "image" && block.url) {
+    return (
+      <div>
+        <img
+          src={block.url}
+          alt="Result"
+          className="max-w-full rounded border border-gray-700"
+        />
+        <a
+          href={block.url}
+          download={`${skillName.replace(".", "-")}-result-${index}.${block.format ?? "png"}`}
+          className="inline-block text-xs text-blue-400 hover:underline mt-1"
+        >
+          Download
+        </a>
+      </div>
+    );
+  }
+
+  if (block.type === "audio" && block.url) {
+    return (
+      <div className="space-y-1">
+        <audio controls className="w-full" preload="auto">
+          <source
+            src={block.url}
+            type={`audio/${block.format === "wav" ? "wav" : block.format === "mp3" ? "mpeg" : block.format === "ogg" ? "ogg" : "flac"}`}
+          />
+          Your browser does not support the audio element.
+        </audio>
+        <a
+          href={block.url}
+          download={`${skillName.replace(".", "-")}-result-${index}.${block.format ?? "wav"}`}
+          className="inline-block text-xs text-blue-400 hover:underline"
+        >
+          Download
+        </a>
+      </div>
+    );
+  }
+
+  if (block.type === "text" && block.data) {
+    return (
+      <div className="bg-[#0d0e14] border border-gray-700 rounded px-3 py-2">
+        <pre className="text-xs text-gray-200 whitespace-pre-wrap font-mono">
+          {block.data}
+        </pre>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ── Content: Image Dropzone ───────────────────────────────────

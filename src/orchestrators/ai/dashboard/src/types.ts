@@ -176,10 +176,12 @@ export const CAPABILITY_LABELS: Record<string, string> = {
 
 export interface SkillContentSlot {
   role: string;
-  content_type: "image" | "text";
+  content_type: "image" | "text" | "audio";
   required: boolean;
   /** If set, render as a paint overlay on the referenced role's image (e.g., "source"). */
   overlay?: string;
+  /** Default value for text content slots (e.g., negative prompt default). */
+  default?: string;
 }
 
 export interface SkillModelRef {
@@ -220,7 +222,7 @@ export interface SkillFormResponse {
 }
 
 export type SkillMapping =
-  | { type: "content"; role: string; content_type: "image" | "text"; placeholder: string }
+  | { type: "content"; role: string; content_type: "image" | "text" | "audio"; placeholder: string }
   | { type: "param"; field: string; node: string; input: string; label: string; default?: unknown; placeholder?: string } & ParamTypeDef;
 
 export type ParamTypeDef =

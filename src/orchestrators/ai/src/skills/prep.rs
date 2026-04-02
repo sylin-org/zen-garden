@@ -291,7 +291,7 @@ pub async fn provision_skill(
 
     // 2. Push to each instance (skip those with insufficient VRAM)
     let mut live_count = 0;
-    let mut skipped_vram = 0;
+    let mut _skipped_vram = 0;
 
     for (comfyui_endpoint, moss_endpoint, fqn, instance_vram_mb) in instances {
         if *instance_vram_mb > 0 && *instance_vram_mb < skill.vram_mb {
@@ -301,7 +301,7 @@ pub async fn provision_skill(
                 required_mb = skill.vram_mb,
                 "skipping instance — insufficient VRAM for skill"
             );
-            skipped_vram += 1;
+            _skipped_vram += 1;
             continue;
         }
 

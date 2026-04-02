@@ -55,7 +55,7 @@ impl DependencyManifest {
     pub fn filename_for_checksum(&self, checksum: &str) -> Option<&str> {
         self.files
             .iter()
-            .find(|(_, cs)| *cs == checksum)
+            .find(|(_, cs)| cs.eq_ignore_ascii_case(checksum))
             .map(|(name, _)| name.as_str())
     }
 

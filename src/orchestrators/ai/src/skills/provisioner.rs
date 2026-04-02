@@ -7,11 +7,9 @@
 //! 2. For each instance → push cached models that are missing
 //! 3. Update skill readiness based on instance state
 
-use std::path::Path;
-
 use anyhow::{Context, Result};
 
-use crate::domain::skill::{SkillDefinition, SkillInstanceView, SkillReadiness};
+use crate::domain::skill::{SkillDefinition, SkillReadiness};
 use crate::skills::cache::{self, CachePaths, DependencyManifest, IngestResult};
 
 /// Optional event emitter for provisioning progress.
@@ -114,7 +112,7 @@ pub async fn ensure_cached(
             } else {
                 format!("sha256:{expected}")
             };
-            if checksum != expected_full {
+            if !checksum.eq_ignore_ascii_case(&expected_full) {
                 let _ = tokio::fs::remove_file(&downloaded_path).await;
                 anyhow::bail!(
                     "checksum mismatch for {}: expected {}, got {}",

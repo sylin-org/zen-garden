@@ -24,6 +24,7 @@ const REACTIVE_HALF_LIFE_SECS: f64 = 15.0 * 60.0; // 15 minutes
 const TACTICAL_HALF_LIFE_SECS: f64 = 6.0 * 3600.0; // 6 hours
 
 /// Half-life for the strategic window (replication, eviction).
+#[allow(dead_code)]
 const STRATEGIC_HALF_LIFE_SECS: f64 = 3.0 * 86400.0; // 3 days
 
 /// Minimum requests before demand weights override uniform assumption.

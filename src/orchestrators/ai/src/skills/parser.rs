@@ -248,29 +248,105 @@ fn class_type_to_label(class_type: &str) -> String {
 // ── Mermaid Generation ─────────────────────────────────────────
 
 /// Generate a Mermaid graph from the parsed nodes and edges.
+/// Core pipeline node types that belong in a diagram.
+fn is_pipeline_node(class_type: &str) -> bool {
+    let lower = class_type.to_lowercase();
+
+    // Loaders (model, image, audio)
+    if lower.contains("loader") || lower.contains("load image") || lower.contains("loadimage") {
+        return true;
+    }
+    // Samplers
+    if lower.contains("sampler") && !lower.contains("select") {
+        return true;
+    }
+    // Encoders / decoders
+    if lower.contains("encode") || lower.contains("decode") {
+        return true;
+    }
+    // Output nodes
+    if lower.contains("save") || lower.contains("preview") {
+        return true;
+    }
+    // Latent operations
+    if lower.starts_with("empty") || lower.contains("latent") {
+        return true;
+    }
+    // Conditioning
+    if lower.contains("conditioning") || lower.contains("controlnet") {
+        return true;
+    }
+    // Inpaint
+    if lower.contains("inpaint") {
+        return true;
+    }
+    // Upscale / scale
+    if lower.contains("upscale") || lower.contains("imagescale") {
+        return true;
+    }
+
+    false
+}
+
+/// Sanitize a label for Mermaid (escape special chars).
+/// Mermaid uses [] for node shapes, so inner brackets must be stripped.
+fn mermaid_safe(label: &str) -> String {
+    label
+        .replace(['[', ']', '(', ')'], "")
+        .replace(['+', '|', '"', '<', '>', '{', '}'], "")
+        .replace("  ", " ")
+        .trim()
+        .to_string()
+}
+
+const MAX_DIAGRAM_NODES: usize = 30;
+
 fn generate_mermaid(
     nodes: &HashMap<String, ParsedNode>,
     edges: &[(String, String)],
 ) -> String {
     let mut lines = vec!["graph LR".to_string()];
 
-    // Sort nodes by ID for deterministic output
-    let mut sorted_ids: Vec<&String> = nodes.keys().collect();
+    // Filter to pipeline nodes only
+    let pipeline: std::collections::HashSet<&String> = nodes.keys()
+        .filter(|id| nodes.get(*id).map(|n| is_pipeline_node(&n.class_type)).unwrap_or(false))
+        .collect();
+
+    // If still too large, truncate to the most-connected nodes
+    let included: std::collections::HashSet<&String> = if pipeline.len() > MAX_DIAGRAM_NODES {
+        // Count edges per node, keep the most connected
+        let mut edge_count: HashMap<&String, usize> = HashMap::new();
+        for (from, to) in edges {
+            if pipeline.contains(from) { *edge_count.entry(from).or_default() += 1; }
+            if pipeline.contains(to) { *edge_count.entry(to).or_default() += 1; }
+        }
+        let mut ranked: Vec<_> = pipeline.iter().collect();
+        ranked.sort_by(|a, b| edge_count.get(*b).unwrap_or(&0).cmp(&edge_count.get(*a).unwrap_or(&0)));
+        ranked.into_iter().take(MAX_DIAGRAM_NODES).copied().collect()
+    } else {
+        pipeline
+    };
+
+    // Sort for deterministic output
+    let mut sorted_ids: Vec<&&String> = included.iter().collect();
     sorted_ids.sort();
 
-    // Node declarations
+    // Node declarations — use quoted labels to handle special chars
     for id in &sorted_ids {
-        if let Some(node) = nodes.get(*id) {
-            lines.push(format!("    {}[{}]", id, node.label));
+        if let Some(node) = nodes.get(**id) {
+            let label = mermaid_safe(&node.label);
+            lines.push(format!("    {}[\"{}\"]", id, label));
         }
     }
 
-    // Edges (deduplicated)
+    // Edges — only between included nodes
     let mut seen_edges = std::collections::HashSet::new();
     for (from, to) in edges {
-        let key = format!("{}->{}", from, to);
-        if seen_edges.insert(key) {
-            lines.push(format!("    {} --> {}", from, to));
+        if included.contains(from) && included.contains(to) {
+            let key = format!("{}->{}", from, to);
+            if seen_edges.insert(key) {
+                lines.push(format!("    {} --> {}", from, to));
+            }
         }
     }
 
@@ -356,10 +432,10 @@ mod tests {
     fn parse_upscale_workflow_edges() {
         let parsed = parse_workflow(&upscale_workflow()).unwrap();
         assert!(parsed.diagram.contains("graph LR"));
-        assert!(parsed.diagram.contains("1[Load Image]"));
-        assert!(parsed.diagram.contains("2[Load Upscale Model]"));
-        assert!(parsed.diagram.contains("3[Upscale]"));
-        assert!(parsed.diagram.contains("4[Save Image]"));
+        assert!(parsed.diagram.contains("1[\"Load Image\"]"));
+        assert!(parsed.diagram.contains("2[\"Load Upscale Model\"]"));
+        assert!(parsed.diagram.contains("3[\"Upscale\"]"));
+        assert!(parsed.diagram.contains("4[\"Save Image\"]"));
         // Edges: 1→3, 2→3, 3→4
         assert!(parsed.diagram.contains("1 --> 3"));
         assert!(parsed.diagram.contains("2 --> 3"));

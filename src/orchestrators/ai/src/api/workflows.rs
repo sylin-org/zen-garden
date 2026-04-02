@@ -118,12 +118,18 @@ pub async fn invoke_skill(
             let public_id = garden_common::utils::ids::generate_guidv7();
             job.id = public_id.clone();
 
-            // Rewrite content URLs from ComfyUI endpoint to orchestrator asset path
+            // Rewrite content URLs from ComfyUI endpoint to orchestrator asset path.
+            // Preserve subfolder in query param for audio assets (subfolder=audio).
             if let Some(content) = &mut job.content {
                 for block in content.iter_mut() {
                     if let Some(url) = &block.url {
                         if let Some(filename) = extract_filename_from_comfyui_url(url) {
-                            block.url = Some(format!("/v1/jobs/{public_id}/assets/{filename}"));
+                            let subfolder = extract_subfolder_from_comfyui_url(url);
+                            let mut rewritten = format!("/v1/jobs/{public_id}/assets/{filename}");
+                            if !subfolder.is_empty() {
+                                rewritten = format!("{rewritten}?subfolder={subfolder}");
+                            }
+                            block.url = Some(rewritten);
                         }
                     }
                 }
@@ -173,6 +179,7 @@ pub async fn get_job(
 pub async fn get_job_asset(
     State(state): State<AppState>,
     Path((job_id, filename)): Path<(String, String)>,
+    query: axum::extract::Query<AssetQuery>,
 ) -> Response {
     let job = match state.skills.get_job(&job_id).await {
         Some(j) => j,
@@ -196,9 +203,11 @@ pub async fn get_job_asset(
         }
     };
 
-    // Proxy from ComfyUI's /view endpoint
+    // Proxy from ComfyUI's /view endpoint.
+    // Audio files use subfolder=audio; images use empty subfolder.
+    let subfolder = query.subfolder.as_deref().unwrap_or("");
     let proxy_url = format!(
-        "{endpoint}/view?filename={filename}&type=output&subfolder="
+        "{endpoint}/view?filename={filename}&type=output&subfolder={subfolder}"
     );
 
     let http = reqwest::Client::new();
@@ -273,6 +282,11 @@ pub async fn skill_form(
 
 // ── Helpers ───────────────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+pub struct AssetQuery {
+    subfolder: Option<String>,
+}
+
 fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
     let body = serde_json::json!({
         "error": {
@@ -289,6 +303,14 @@ fn extract_filename_from_comfyui_url(url: &str) -> Option<String> {
     url.split("filename=")
         .nth(1)
         .map(|s| s.split('&').next().unwrap_or(s).to_string())
+}
+
+/// Extract the `subfolder` query parameter from a ComfyUI URL.
+fn extract_subfolder_from_comfyui_url(url: &str) -> String {
+    url.split("subfolder=")
+        .nth(1)
+        .map(|s| s.split('&').next().unwrap_or(s).to_string())
+        .unwrap_or_default()
 }
 
 fn capability_list() -> String {

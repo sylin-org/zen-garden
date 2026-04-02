@@ -26,7 +26,16 @@ const ENUMERATE_TIMEOUT: Duration = Duration::from_secs(10);
 const WORKFLOW_TIMEOUT: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-const COMFYUI_CAPABILITIES: &[Capability] = &[Capability::Image];
+/// ComfyUI is a skill-only provider — it doesn't serve standalone inference.
+/// Its capabilities are determined by the skills loaded from disk:
+/// Image (generate, upscale, transform, inpaint), Vision (WD14 tagger),
+/// Speech (TTS), etc. This list covers all capabilities that ComfyUI
+/// skills may declare, so the dashboard shows ComfyUI under the right tabs.
+const COMFYUI_CAPABILITIES: &[Capability] = &[
+    Capability::Image,
+    Capability::Vision,
+    Capability::Speech,
+];
 
 // ── Provider ───────────────────────────────────────────────────
 
@@ -140,7 +149,7 @@ impl Provider for ComfyUiProvider {
 
             Ok(vec![ServiceModel {
                 name: "comfyui".to_string(),
-                capabilities: vec![Capability::Image],
+                capabilities: COMFYUI_CAPABILITIES.to_vec(),
                 specializations,
                 vram_bytes: None,
                 metadata: serde_json::json!({
@@ -175,31 +184,46 @@ impl Provider for ComfyUiProvider {
         let skill = skill.to_string();
 
         Box::pin(async move {
-            let model_type = match skill.as_str() {
-                "image.upscale" => "upscale_models",
-                "image.generate" | "image.img2img" => "checkpoints",
-                _ => {
-                    return Ok(crate::domain::skill::SkillReadiness {
-                        ready: false,
-                        reason: "unknown skill".into(),
-                    })
+            // Skills requiring specific model types installed on the instance
+            let model_check = match skill.as_str() {
+                "image.upscale" => Some("upscale_models"),
+                "image.generate" | "image.img2img" | "image.inpaint" => Some("checkpoints"),
+                // WD14 and TTS auto-download models — check node availability via /object_info
+                "vision.tag" => {
+                    return check_custom_node(&self.http, &endpoint, "WD14Tagger|pysssss", "ComfyUI-WD14-Tagger").await;
                 }
+                "speech.tts" => {
+                    return check_custom_node(&self.http, &endpoint, "ChatterBoxEngineNode", "TTS-Audio-Suite").await;
+                }
+                _ => None,
             };
 
-            let models = list_models(&reqwest::Client::new(), &endpoint, model_type)
-                .await
-                .unwrap_or_default();
+            match model_check {
+                Some(model_type) => {
+                    let models = list_models(&self.http, &endpoint, model_type)
+                        .await
+                        .unwrap_or_default();
 
-            if models.is_empty() {
-                Ok(crate::domain::skill::SkillReadiness {
-                    ready: false,
-                    reason: format!("no {} installed", model_type),
-                })
-            } else {
-                Ok(crate::domain::skill::SkillReadiness {
-                    ready: true,
-                    reason: "ready".into(),
-                })
+                    if models.is_empty() {
+                        Ok(crate::domain::skill::SkillReadiness {
+                            ready: false,
+                            reason: format!("no {} installed", model_type),
+                        })
+                    } else {
+                        Ok(crate::domain::skill::SkillReadiness {
+                            ready: true,
+                            reason: "ready".into(),
+                        })
+                    }
+                }
+                None => {
+                    // Unknown skills default to ready — disk-loaded skills
+                    // shouldn't require Rust match arms to be available.
+                    Ok(crate::domain::skill::SkillReadiness {
+                        ready: true,
+                        reason: "ready".into(),
+                    })
+                }
             }
         })
     }
@@ -225,6 +249,12 @@ impl Provider for ComfyUiProvider {
                 "image.generate" => crate::skills::builtin::image_generate(&[]),
                 "image.img2img" => crate::skills::builtin::image_img2img(&[]),
                 "image.inpaint" => crate::skills::builtin::image_inpaint(&[]),
+                // WD14 tagger and TTS have no orchestrator-provisioned models;
+                // custom nodes auto-download their own models.
+                "vision.tag" | "speech.tts" => {
+                    tracing::debug!(skill = %skill_name, "no provisioning needed — models auto-download");
+                    return Ok(());
+                }
                 other => anyhow::bail!("unknown skill: {}", other),
             };
 
@@ -375,6 +405,44 @@ struct DeviceInfo {
 
 // ── Helpers ────────────────────────────────────────────────────
 
+/// Check if a custom node is installed by querying /object_info/{class_type}.
+///
+/// ComfyUI's /object_info endpoint returns node definitions for installed nodes.
+/// Returns ready=true if the node class exists, ready=false with install hint otherwise.
+async fn check_custom_node(
+    http: &Client,
+    endpoint: &str,
+    class_type: &str,
+    pack_name: &str,
+) -> Result<crate::domain::skill::SkillReadiness> {
+    let resp = http
+        .get(format!("{endpoint}/object_info/{class_type}"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            if body.get(class_type).is_some() {
+                Ok(crate::domain::skill::SkillReadiness {
+                    ready: true,
+                    reason: "ready".into(),
+                })
+            } else {
+                Ok(crate::domain::skill::SkillReadiness {
+                    ready: false,
+                    reason: format!("custom node not installed: {pack_name}"),
+                })
+            }
+        }
+        _ => Ok(crate::domain::skill::SkillReadiness {
+            ready: false,
+            reason: format!("custom node not installed: {pack_name}"),
+        }),
+    }
+}
+
 /// Query `GET /models/{model_type}` and return the list of filenames.
 pub(crate) async fn list_models(
     http: &Client,
@@ -448,6 +516,15 @@ async fn execute_workflow(
                             .and_then(|b| b.data.as_deref())
                             .unwrap_or("");
                         fill_placeholder(&mut workflow, placeholder, text);
+                    }
+                    ContentType::Audio => {
+                        // Audio input content — resolve to bytes, upload via /upload/image
+                        // (ComfyUI routes audio through the same upload endpoint)
+                        if let Some(block) = content_block {
+                            let audio_bytes = resolve_content_bytes(http, block).await?;
+                            let uploaded_name = upload_audio(http, endpoint, &audio_bytes).await?;
+                            fill_placeholder(&mut workflow, placeholder, &uploaded_name);
+                        }
                     }
                 }
             }
@@ -567,7 +644,7 @@ async fn submit_and_poll(
 
     // Poll for completion
     let start = std::time::Instant::now();
-    let output_images = loop {
+    let output_assets = loop {
         if start.elapsed() > WORKFLOW_TIMEOUT {
             anyhow::bail!("workflow timed out after {}s", WORKFLOW_TIMEOUT.as_secs());
         }
@@ -603,9 +680,9 @@ async fn submit_and_poll(
             }
 
             if let Some(outputs) = entry.get("outputs") {
-                let images = extract_output_images(outputs);
-                if !images.is_empty() {
-                    break images;
+                let assets = extract_outputs(outputs);
+                if !assets.is_empty() {
+                    break assets;
                 }
             }
         }
@@ -613,17 +690,28 @@ async fn submit_and_poll(
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    let content: Vec<crate::domain::skill::ContentBlock> = output_images
+    let content: Vec<crate::domain::skill::ContentBlock> = output_assets
         .into_iter()
-        .map(|img| crate::domain::skill::ContentBlock {
-            content_type: ContentType::Image,
-            role: None,
-            data: None,
-            url: Some(format!(
-                "{endpoint}/view?filename={}&type=output&subfolder={}",
-                img.filename, img.subfolder
-            )),
-            format: Some("png".into()),
+        .map(|asset| match asset {
+            OutputAsset::File { filename, subfolder, content_type } => {
+                let format = infer_format(&filename);
+                crate::domain::skill::ContentBlock {
+                    content_type,
+                    role: None,
+                    data: None,
+                    url: Some(format!(
+                        "{endpoint}/view?filename={filename}&type=output&subfolder={subfolder}",
+                    )),
+                    format: Some(format),
+                }
+            }
+            OutputAsset::Text(text) => crate::domain::skill::ContentBlock {
+                content_type: ContentType::Text,
+                role: None,
+                data: Some(text),
+                url: None,
+                format: None,
+            },
         })
         .collect();
 
@@ -715,6 +803,65 @@ async fn upload_image(http: &Client, endpoint: &str, image_bytes: &[u8]) -> Resu
         .context("missing 'name' in upload response")
 }
 
+/// Upload audio to ComfyUI via `POST /upload/image` with correct MIME type.
+///
+/// ComfyUI uses the same `/upload/image` endpoint for all file types but
+/// routes based on the subfolder param. Audio files need correct extension
+/// and MIME type so ComfyUI stores them in the right input directory.
+async fn upload_audio(http: &Client, endpoint: &str, audio_bytes: &[u8]) -> Result<String> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let filename = format!("zen-input-{nanos:x}.wav");
+
+    let part = reqwest::multipart::Part::bytes(audio_bytes.to_vec())
+        .file_name(filename)
+        .mime_str("audio/wav")?;
+
+    let form = reqwest::multipart::Form::new()
+        .part("image", part)
+        .text("subfolder", "audio")
+        .text("overwrite", "true");
+
+    let resp = http
+        .post(format!("{endpoint}/upload/image"))
+        .multipart(form)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .context("POST comfyui /upload/image (audio)")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("/upload/image (audio) failed HTTP {status}: {text}");
+    }
+
+    let result: serde_json::Value = resp.json().await.context("parse upload response")?;
+
+    result["name"]
+        .as_str()
+        .map(String::from)
+        .context("missing 'name' in upload response")
+}
+
+/// Infer output format from filename extension.
+fn infer_format(filename: &str) -> String {
+    match filename.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "png" => "png",
+        "jpg" | "jpeg" => "jpeg",
+        "webp" => "webp",
+        "gif" => "gif",
+        "wav" => "wav",
+        "flac" => "flac",
+        "mp3" => "mp3",
+        "ogg" => "ogg",
+        _ => "bin",
+    }
+    .to_string()
+}
+
 /// Replace a placeholder string throughout a workflow JSON tree.
 fn fill_placeholder(workflow: &mut serde_json::Value, placeholder: &str, value: &str) {
     match workflow {
@@ -735,37 +882,90 @@ fn fill_placeholder(workflow: &mut serde_json::Value, placeholder: &str, value: 
     }
 }
 
-/// Extract output image references from ComfyUI history outputs.
-fn extract_output_images(outputs: &serde_json::Value) -> Vec<OutputImage> {
-    let mut images = Vec::new();
+/// Extract output assets from ComfyUI history outputs.
+///
+/// ComfyUI stores outputs under type-keyed arrays per node:
+/// - `"images"` → image files (PNG, JPG)
+/// - `"audio"` → audio files (WAV, FLAC, MP3)
+/// - `"text"` → text strings (tags, captions)
+///
+/// Each file entry has `filename`, `subfolder`, `type` (= "output").
+/// Text entries are plain strings.
+fn extract_outputs(outputs: &serde_json::Value) -> Vec<OutputAsset> {
+    let mut assets = Vec::new();
 
-    if let Some(obj) = outputs.as_object() {
-        for (_node_id, node_output) in obj {
-            if let Some(img_array) = node_output.get("images").and_then(|v| v.as_array()) {
-                for img in img_array {
-                    if let (Some(filename), Some(subfolder), Some(img_type)) = (
-                        img.get("filename").and_then(|v| v.as_str()),
-                        img.get("subfolder").and_then(|v| v.as_str()),
-                        img.get("type").and_then(|v| v.as_str()),
-                    ) {
-                        if img_type == "output" {
-                            images.push(OutputImage {
-                                filename: filename.to_string(),
-                                subfolder: subfolder.to_string(),
-                            });
-                        }
-                    }
+    let Some(obj) = outputs.as_object() else {
+        return assets;
+    };
+
+    for (_node_id, node_output) in obj {
+        // Image outputs
+        if let Some(arr) = node_output.get("images").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(asset) = parse_file_output(item, ContentType::Image) {
+                    assets.push(asset);
+                }
+            }
+        }
+
+        // Audio outputs (SaveAudio, PreviewAudio, etc.)
+        if let Some(arr) = node_output.get("audio").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(asset) = parse_file_output(item, ContentType::Audio) {
+                    assets.push(asset);
+                }
+            }
+        }
+
+        // Text outputs (generic text output nodes)
+        if let Some(arr) = node_output.get("text").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    assets.push(OutputAsset::Text(s.to_string()));
+                }
+            }
+        }
+
+        // Tag outputs (WD14 tagger, captioners — use "tags" key)
+        if let Some(arr) = node_output.get("tags").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    assets.push(OutputAsset::Text(s.to_string()));
                 }
             }
         }
     }
 
-    images
+    assets
 }
 
-struct OutputImage {
-    filename: String,
-    subfolder: String,
+/// Parse a file-based output entry (images or audio).
+fn parse_file_output(item: &serde_json::Value, content_type: ContentType) -> Option<OutputAsset> {
+    let filename = item.get("filename")?.as_str()?;
+    let subfolder = item.get("subfolder").and_then(|v| v.as_str()).unwrap_or("");
+    let file_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("output");
+
+    if file_type != "output" {
+        return None;
+    }
+
+    Some(OutputAsset::File {
+        filename: filename.to_string(),
+        subfolder: subfolder.to_string(),
+        content_type,
+    })
+}
+
+/// An output asset from a ComfyUI workflow execution.
+enum OutputAsset {
+    /// A file (image or audio) available via /view endpoint.
+    File {
+        filename: String,
+        subfolder: String,
+        content_type: ContentType,
+    },
+    /// A text string (tags, captions).
+    Text(String),
 }
 
 // ── Tests ──────────────────────────────────────────────────────
@@ -778,7 +978,9 @@ mod tests {
     fn provider_kind_and_capabilities() {
         let p = ComfyUiProvider::new();
         assert_eq!(p.kind(), OfferingKind::ComfyUi);
-        assert_eq!(p.capabilities(), &[Capability::Image]);
+        assert!(p.capabilities().contains(&Capability::Image));
+        assert!(p.capabilities().contains(&Capability::Vision));
+        assert!(p.capabilities().contains(&Capability::Speech));
     }
 
     #[test]
@@ -856,7 +1058,7 @@ mod tests {
     // ── Output extraction ──────────────────────────────────────
 
     #[test]
-    fn extract_output_images_from_history() {
+    fn extract_outputs_images_from_history() {
         let outputs = serde_json::json!({
             "4": {
                 "images": [
@@ -864,13 +1066,19 @@ mod tests {
                 ]
             }
         });
-        let images = extract_output_images(&outputs);
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].filename, "zen-upscale_00001_.png");
+        let assets = extract_outputs(&outputs);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            OutputAsset::File { filename, content_type, .. } => {
+                assert_eq!(filename, "zen-upscale_00001_.png");
+                assert_eq!(*content_type, ContentType::Image);
+            }
+            _ => panic!("expected File"),
+        }
     }
 
     #[test]
-    fn extract_output_images_skips_temp() {
+    fn extract_outputs_skips_temp() {
         let outputs = serde_json::json!({
             "4": {
                 "images": [
@@ -879,22 +1087,102 @@ mod tests {
                 ]
             }
         });
-        let images = extract_output_images(&outputs);
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].filename, "result.png");
+        let assets = extract_outputs(&outputs);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            OutputAsset::File { filename, .. } => assert_eq!(filename, "result.png"),
+            _ => panic!("expected File"),
+        }
     }
 
     #[test]
-    fn extract_output_images_empty() {
-        assert!(extract_output_images(&serde_json::json!({})).is_empty());
+    fn extract_outputs_empty() {
+        assert!(extract_outputs(&serde_json::json!({})).is_empty());
     }
 
     #[test]
-    fn extract_output_images_multiple_nodes() {
+    fn extract_outputs_multiple_nodes() {
         let outputs = serde_json::json!({
             "4": { "images": [{ "filename": "a.png", "subfolder": "", "type": "output" }] },
             "7": { "images": [{ "filename": "b.png", "subfolder": "sub", "type": "output" }] }
         });
-        assert_eq!(extract_output_images(&outputs).len(), 2);
+        assert_eq!(extract_outputs(&outputs).len(), 2);
+    }
+
+    #[test]
+    fn extract_outputs_audio() {
+        let outputs = serde_json::json!({
+            "9": {
+                "audio": [
+                    { "filename": "speech_00001_.wav", "subfolder": "", "type": "output" }
+                ]
+            }
+        });
+        let assets = extract_outputs(&outputs);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            OutputAsset::File { filename, content_type, .. } => {
+                assert_eq!(filename, "speech_00001_.wav");
+                assert_eq!(*content_type, ContentType::Audio);
+            }
+            _ => panic!("expected File"),
+        }
+    }
+
+    #[test]
+    fn extract_outputs_text() {
+        let outputs = serde_json::json!({
+            "5": {
+                "text": ["1girl, solo, long_hair, looking_at_viewer"]
+            }
+        });
+        let assets = extract_outputs(&outputs);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            OutputAsset::Text(text) => {
+                assert!(text.contains("1girl"));
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn extract_outputs_tags_wd14() {
+        let outputs = serde_json::json!({
+            "2": {
+                "tags": ["1girl, solo, long_hair, looking_at_viewer, blush"]
+            }
+        });
+        let assets = extract_outputs(&outputs);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            OutputAsset::Text(text) => {
+                assert!(text.contains("1girl"));
+                assert!(text.contains("looking_at_viewer"));
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn extract_outputs_mixed() {
+        let outputs = serde_json::json!({
+            "3": { "images": [{ "filename": "out.png", "subfolder": "", "type": "output" }] },
+            "7": { "audio": [{ "filename": "out.wav", "subfolder": "", "type": "output" }] },
+            "9": { "text": ["hello world"] },
+            "11": { "tags": ["1girl, solo"] }
+        });
+        let assets = extract_outputs(&outputs);
+        assert_eq!(assets.len(), 4);
+    }
+
+    #[test]
+    fn infer_format_from_extension() {
+        assert_eq!(infer_format("photo.png"), "png");
+        assert_eq!(infer_format("photo.jpg"), "jpeg");
+        assert_eq!(infer_format("audio.wav"), "wav");
+        assert_eq!(infer_format("audio.flac"), "flac");
+        assert_eq!(infer_format("audio.mp3"), "mp3");
+        assert_eq!(infer_format("unknown.xyz"), "bin");
     }
 }

@@ -303,5 +303,14 @@ fn embedded_skills() -> Vec<(&'static str, &'static str, Vec<(&'static str, &'st
             ("skill.json", include_str!("definitions/comfyui/inpaint/skill.json")),
             ("inpaint.json", include_str!("definitions/comfyui/inpaint/inpaint.json")),
         ]),
+        ("comfyui", "tag", vec![
+            ("skill.json", include_str!("definitions/comfyui/tag/skill.json")),
+            ("tag.json", include_str!("definitions/comfyui/tag/tag.json")),
+        ]),
+        ("comfyui", "tts", vec![
+            ("skill.json", include_str!("definitions/comfyui/tts/skill.json")),
+            ("tts.json", include_str!("definitions/comfyui/tts/tts.json")),
+            ("tts_f5.json", include_str!("definitions/comfyui/tts/tts_f5.json")),
+        ]),
     ]
 }

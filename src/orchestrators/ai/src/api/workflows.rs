@@ -112,7 +112,7 @@ pub async fn invoke_skill(
         }
     };
 
-    match provider.workflow(&ctx, req).await {
+    match provider.workflow(&ctx, req, &skill_def).await {
         Ok(mut job) => {
             // 7. Assign GUIDv7 as public ID, rewrite asset URLs
             let public_id = garden_common::utils::ids::generate_guidv7();

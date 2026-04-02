@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "name": "image.upscale",
+  "display_name": "Upscale",
+  "capability": "image",
+  "description": "Enhance image resolution using AI super-resolution",
+  "provider_kind": "comfy_ui",
+  "vram_mb": 1024,
+  "default_workflow": "upscale_4x",
+
+  "content_slots": [
+    { "role": "source", "content_type": "image", "required": true }
+  ],
+
+  "mappings": [
+    { "type": "content", "role": "source", "content_type": "image",
+      "placeholder": "PLACEHOLDER_IMAGE" },
+
+    { "type": "param", "field": "workflow", "label": "Zoom",
+      "param_type": "options", "default": "upscale_4x",
+      "options": [
+        { "value": "upscale_2x",  "label": "2x" },
+        { "value": "upscale_4x",  "label": "4x" },
+        { "value": "upscale_8x",  "label": "8x" },
+        { "value": "upscale_16x", "label": "16x" }
+      ]},
+
+    { "type": "param", "field": "upscale_model", "label": "Style",
+      "placeholder": "PLACEHOLDER_MODEL", "param_type": "options",
+      "default": "RealESRGAN_x4plus.pth",
+      "options": [
+        { "value": "RealESRGAN_x4plus.pth", "label": "Realistic" },
+        { "value": "RealESRGAN_x4plus_anime_6B.pth", "label": "Anime" }
+      ]}
+  ],
+
+  "required_models": [
+    {
+      "filename": "RealESRGAN_x4plus.pth",
+      "model_type": "upscale_models",
+      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+      "size_bytes": 67040989,
+      "license": "BSD-3-Clause",
+      "description": "General-purpose 4x upscaler. Commercial-friendly."
+    },
+    {
+      "filename": "RealESRGAN_x4plus_anime_6B.pth",
+      "model_type": "upscale_models",
+      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
+      "size_bytes": 17938799,
+      "license": "BSD-3-Clause",
+      "description": "Lightweight 4x upscaler for anime and illustration."
+    }
+  ]
+}

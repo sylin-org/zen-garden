@@ -1,10 +1,11 @@
-//! Skill system — workflow parsing, built-in skills, and ComfyUI preparation.
+//! Skill system — disk-based repository, workflow parsing, provisioning.
 //!
-//! This module bridges raw ComfyUI workflows and the skill abstraction:
-//! - `parser`: Analyzes a ComfyUI workflow JSON to extract inputs, models, and structure
-//! - `builtin`: Pre-authored skill definitions with embedded workflow templates
-//! - `prep`: Ensures a ComfyUI instance has the required models installed
+//! - `loader`: Scan disk, parse skill.json, seed embedded skills, resolve workflows
+//! - `parser`: Analyze ComfyUI workflow JSON to extract inputs, models, structure
+//! - `builtin`: Legacy built-in skill definitions (being replaced by disk-based loader)
+//! - `prep`: Stream model downloads and push to ComfyUI instances
 
+pub mod loader;
 pub mod parser;
 pub mod builtin;
 pub mod prep;

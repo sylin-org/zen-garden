@@ -117,20 +117,20 @@ async fn main() -> Result<()> {
         metrics_tx,
     );
 
-    // ── Register Built-in Skills ─────────────────────────────────────
-    // Collect built-in skills from all providers. Registered at startup
-    // so they appear in the UI immediately. Discovery updates their
-    // status as instances are profiled and models provisioned.
+    // ── Load Skills from Disk ───────────────────────────────────────
+    // 1. Seed embedded skills to {data_dir}/skills/ (version-gated)
+    // 2. Scan disk, parse skill.json, resolve workflows
+    // 3. Register in SkillRegistry — disk is the sole source of truth
     {
-        let mut count = 0;
-        for provider in state.providers.all() {
-            for skill in provider.builtin_skills() {
-                state.skills.register(skill).await;
-                count += 1;
-            }
+        let skills_dir = std::path::PathBuf::from(&cli.data_dir).join("skills");
+        zen_garden_ai_orchestrator::skills::loader::seed_embedded_skills(&skills_dir).await;
+        let skills = zen_garden_ai_orchestrator::skills::loader::load_skills(&skills_dir).await;
+        let count = skills.len();
+        for skill in skills {
+            state.skills.register(skill).await;
         }
         if count > 0 {
-            tracing::info!(skills = count, "built-in skills registered from providers");
+            tracing::info!(skills = count, "skills loaded from disk repository");
         }
     }
 

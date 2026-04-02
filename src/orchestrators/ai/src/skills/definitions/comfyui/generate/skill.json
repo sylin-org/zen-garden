@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "name": "image.generate",
+  "display_name": "Generate",
+  "capability": "image",
+  "description": "Create an image from a text description",
+  "provider_kind": "comfy_ui",
+  "vram_mb": 4096,
+  "default_workflow": "generate",
+
+  "content_slots": [
+    { "role": "prompt", "content_type": "text", "required": true }
+  ],
+
+  "mappings": [
+    { "type": "content", "role": "prompt", "content_type": "text",
+      "placeholder": "PLACEHOLDER_PROMPT" },
+
+    { "type": "param", "field": "negative", "label": "Negative Prompt",
+      "placeholder": "PLACEHOLDER_NEGATIVE", "param_type": "text",
+      "default": "blurry, watermark, low quality, deformed" },
+
+    { "type": "param", "field": "checkpoint", "label": "Model",
+      "placeholder": "PLACEHOLDER_CHECKPOINT", "param_type": "options",
+      "options": [
+        { "value": "v1-5-pruned-emaonly.safetensors" }
+      ],
+      "default": "v1-5-pruned-emaonly.safetensors" },
+
+    { "type": "param", "field": "width", "label": "Width",
+      "node": "4", "input": "width", "param_type": "options",
+      "default": 512,
+      "options": [{ "value": 512 }, { "value": 768 }, { "value": 1024 }] },
+
+    { "type": "param", "field": "height", "label": "Height",
+      "node": "4", "input": "height", "param_type": "options",
+      "default": 512,
+      "options": [{ "value": 512 }, { "value": 768 }, { "value": 1024 }] },
+
+    { "type": "param", "field": "steps", "label": "Steps",
+      "node": "5", "input": "steps", "param_type": "range",
+      "min": 1, "max": 50, "step": 1, "default": 20 },
+
+    { "type": "param", "field": "seed", "label": "Seed",
+      "node": "5", "input": "seed", "param_type": "auto",
+      "kind": "random_int" }
+  ],
+
+  "required_models": [
+    {
+      "filename": "v1-5-pruned-emaonly.safetensors",
+      "model_type": "checkpoints",
+      "url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
+      "size_bytes": 4265380512,
+      "license": "CreativeML Open RAIL-M",
+      "description": "Stable Diffusion 1.5 — versatile, runs on 4GB+ VRAM."
+    }
+  ]
+}

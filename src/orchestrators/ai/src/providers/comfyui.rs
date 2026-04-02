@@ -306,20 +306,13 @@ impl Provider for ComfyUiProvider {
         &self,
         ctx: &ProviderContext,
         req: WorkflowRequest,
+        skill: &SkillDefinition,
     ) -> BoxFuture<'_, Result<WorkflowJob>> {
         let endpoint = ctx.endpoint.clone();
+        let skill = skill.clone();
 
         Box::pin(async move {
-            // Look up skill definition to get workflow + mappings
-            let skill_def = match req.skill.as_str() {
-                "image.upscale" => crate::skills::builtin::image_upscale(&[]),
-                "image.generate" => crate::skills::builtin::image_generate(&[]),
-                "image.img2img" => crate::skills::builtin::image_img2img(&[]),
-                "image.inpaint" => crate::skills::builtin::image_inpaint(&[]),
-                other => anyhow::bail!("unknown skill: {}", other),
-            };
-
-            execute_workflow(&self.http, &endpoint, &req, &skill_def).await
+            execute_workflow(&self.http, &endpoint, &req, &skill).await
         })
     }
 

@@ -170,12 +170,14 @@ pub trait Provider: Send + Sync + 'static {
     }
 
     /// Execute a skill on a ready instance.
+    /// The `skill` parameter is the full definition loaded from disk.
     fn workflow(
         &self,
         ctx: &ProviderContext,
         req: WorkflowRequest,
+        skill: &SkillDefinition,
     ) -> BoxFuture<'_, Result<WorkflowJob>> {
-        let _ = (ctx, req);
+        let _ = (ctx, req, skill);
         Box::pin(async { anyhow::bail!("workflows not supported") })
     }
 

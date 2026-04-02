@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "name": "image.inpaint",
+  "display_name": "Inpaint",
+  "capability": "image",
+  "description": "Edit specific regions of an image using a mask and prompt",
+  "provider_kind": "comfy_ui",
+  "vram_mb": 4096,
+  "default_workflow": "inpaint",
+
+  "content_slots": [
+    { "role": "source", "content_type": "image", "required": true },
+    { "role": "mask", "content_type": "image", "required": true, "overlay": "source" },
+    { "role": "prompt", "content_type": "text", "required": true }
+  ],
+
+  "mappings": [
+    { "type": "content", "role": "source", "content_type": "image",
+      "placeholder": "PLACEHOLDER_IMAGE" },
+
+    { "type": "content", "role": "mask", "content_type": "image",
+      "placeholder": "PLACEHOLDER_MASK" },
+
+    { "type": "content", "role": "prompt", "content_type": "text",
+      "placeholder": "PLACEHOLDER_PROMPT" },
+
+    { "type": "param", "field": "negative", "label": "Negative Prompt",
+      "placeholder": "PLACEHOLDER_NEGATIVE", "param_type": "text",
+      "default": "blurry, watermark, low quality, deformed" },
+
+    { "type": "param", "field": "checkpoint", "label": "Model",
+      "placeholder": "PLACEHOLDER_CHECKPOINT", "param_type": "options",
+      "options": [
+        { "value": "sd-v1-5-inpainting.ckpt" }
+      ],
+      "default": "sd-v1-5-inpainting.ckpt" },
+
+    { "type": "param", "field": "strength", "label": "Strength",
+      "node": "7", "input": "denoise", "param_type": "range",
+      "min": 0.0, "max": 1.0, "step": 0.05, "default": 1.0 },
+
+    { "type": "param", "field": "steps", "label": "Steps",
+      "node": "7", "input": "steps", "param_type": "range",
+      "min": 1, "max": 50, "step": 1, "default": 20 },
+
+    { "type": "param", "field": "seed", "label": "Seed",
+      "node": "7", "input": "seed", "param_type": "auto",
+      "kind": "random_int" }
+  ],
+
+  "required_models": [
+    {
+      "filename": "sd-v1-5-inpainting.ckpt",
+      "model_type": "checkpoints",
+      "url": "https://huggingface.co/runwayml/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt",
+      "size_bytes": 4265380512,
+      "license": "CreativeML Open RAIL-M",
+      "description": "SD 1.5 inpainting — dedicated inpainting checkpoint."
+    }
+  ]
+}

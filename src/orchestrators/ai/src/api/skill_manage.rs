@@ -8,8 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 
 use crate::app_state::AppState;
-use crate::skills::import::analyze;
-use crate::skills::import::model_resolve::ManagerRegistry;
+use crate::skills::import::{analyze, draft_builder, model_resolve};
 
 // ── GET /v1/services/{provider}/skills/analyze?t={input} ──────
 
@@ -34,11 +33,9 @@ pub async fn analyze_skill(
     }
 
     let http = reqwest::Client::new();
+    let manager_registry = model_resolve::ManagerRegistry::fetch(&http).await;
 
-    // Load the ComfyUI Manager registry (TODO: cache this in AppState)
-    let manager_registry = ManagerRegistry::fetch(&http).await;
-
-    let result = analyze::analyze_input(
+    let result = analyze::run(
         &http,
         &query.t,
         None,
@@ -50,12 +47,8 @@ pub async fn analyze_skill(
     match result {
         Ok(analysis) => {
             // Create draft skill on disk
-            let skills_dir = std::path::Path::new(&state.data_dir)
-                .join("skills")
-                .join(&provider)
-                .join(&analysis.moniker);
-
-            if let Err(e) = create_draft_skill(&skills_dir, &analysis).await {
+            let skills_dir = std::path::Path::new(&state.data_dir).join("skills");
+            if let Err(e) = draft_builder::create_draft(&skills_dir, &provider, &analysis).await {
                 return error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "draft_creation_failed",
@@ -63,16 +56,7 @@ pub async fn analyze_skill(
                 );
             }
 
-            (StatusCode::OK, Json(serde_json::json!({
-                "moniker": analysis.moniker,
-                "display_name": analysis.display_name,
-                "models": analysis.models,
-                "inputs": analysis.inputs,
-                "diagram": analysis.diagram,
-                "source": analysis.source,
-                "preview_url": analysis.preview_url,
-                "warnings": analysis.warnings,
-            }))).into_response()
+            (StatusCode::OK, Json(&analysis)).into_response()
         }
         Err(e) => error_response(
             StatusCode::BAD_REQUEST,
@@ -80,89 +64,6 @@ pub async fn analyze_skill(
             &e.to_string(),
         ),
     }
-}
-
-/// Create a draft skill directory on disk from the analysis result.
-async fn create_draft_skill(
-    skill_dir: &std::path::Path,
-    analysis: &analyze::AnalyzeResult,
-) -> anyhow::Result<()> {
-    use tokio::fs;
-
-    fs::create_dir_all(skill_dir).await?;
-
-    // Build skill.json
-    let skill_json = serde_json::json!({
-        "version": 1,
-        "draft": true,
-        "name": format!("image.{}", analysis.moniker),
-        "display_name": analysis.display_name,
-        "capability": "image",
-        "description": format!("Imported skill: {}", analysis.display_name),
-        "provider_kind": "comfy_ui",
-        "vram_mb": 4096,
-        "default_workflow": "workflow",
-        "content_slots": analysis.inputs.iter().map(|i| serde_json::json!({
-            "role": i.role,
-            "content_type": i.content_type,
-            "required": true,
-        })).collect::<Vec<_>>(),
-        "mappings": build_mappings(&analysis.inputs),
-        "required_models": analysis.models.iter().filter_map(|m| {
-            match m {
-                crate::skills::import::model_resolve::ModelResolution::Resolved {
-                    filename, url, sha256, size_bytes, ..
-                } => Some(serde_json::json!({
-                    "filename": filename,
-                    "model_type": "checkpoints",
-                    "url": url,
-                    "size_bytes": size_bytes,
-                    "sha256": sha256,
-                })),
-                crate::skills::import::model_resolve::ModelResolution::Cached { filename } => {
-                    Some(serde_json::json!({
-                        "filename": filename,
-                        "model_type": "checkpoints",
-                    }))
-                }
-                crate::skills::import::model_resolve::ModelResolution::Unresolved { filename, .. } => {
-                    Some(serde_json::json!({
-                        "filename": filename,
-                        "model_type": "checkpoints",
-                    }))
-                }
-            }
-        }).collect::<Vec<_>>(),
-        "source": analysis.source,
-    });
-
-    let skill_json_str = serde_json::to_string_pretty(&skill_json)?;
-    fs::write(skill_dir.join("skill.json"), skill_json_str).await?;
-
-    // Write the workflow template
-    let workflow_str = serde_json::to_string_pretty(&analysis.workflow)?;
-    fs::write(skill_dir.join("workflow.json"), workflow_str).await?;
-
-    tracing::info!(
-        moniker = %analysis.moniker,
-        models = analysis.models.len(),
-        inputs = analysis.inputs.len(),
-        "created draft skill"
-    );
-
-    Ok(())
-}
-
-/// Build content + param mappings from detected inputs.
-fn build_mappings(inputs: &[analyze::DetectedInput]) -> Vec<serde_json::Value> {
-    inputs.iter().map(|i| {
-        serde_json::json!({
-            "type": "content",
-            "role": i.role,
-            "content_type": i.content_type,
-            "placeholder": i.placeholder,
-        })
-    }).collect()
 }
 
 // ── GET /v1/services/{provider}/skills ─────────────────────────

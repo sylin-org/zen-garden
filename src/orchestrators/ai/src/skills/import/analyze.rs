@@ -1,4 +1,7 @@
-//! Analyze endpoint — detect input, extract workflow, resolve models, create draft.
+//! Analyze orchestrator — detect input, fetch, extract, resolve, produce result.
+//!
+//! This is the pipeline coordinator. Each step delegates to a focused module.
+//! Failures in optional steps (model resolution, preview) are warnings, not errors.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -6,32 +9,30 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use reqwest::Client;
 
-use super::civitai;
-use super::model_resolve::{self, ManagerRegistry, ModelResolution};
-use super::png_extract;
+use super::{civitai, gen_data_parse, input_detect, model_resolve, png_extract, workflow_synth};
 use crate::skills::cache::{CachePaths, DependencyManifest};
 
-/// Result of analyzing an input — ready to become a draft skill.
+// ── Result Types ──────────────────────────────────────────────
+
+/// Complete analysis result — ready to become a draft skill.
 #[derive(Debug, serde::Serialize)]
 pub struct AnalyzeResult {
-    /// Auto-generated skill moniker.
     pub moniker: String,
-    /// Auto-generated display name.
     pub display_name: String,
-    /// The extracted ComfyUI API-format workflow.
+    pub capability: String,
     pub workflow: serde_json::Value,
-    /// Parsed workflow info (from parser.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<String>,
-    /// Detected model filenames with resolution status.
-    pub models: Vec<ModelResolution>,
-    /// Detected input nodes (images, text).
+    pub models: Vec<model_resolve::ModelResolution>,
     pub inputs: Vec<DetectedInput>,
-    /// Source tracking (if imported from URL).
-    pub source: Option<AnalyzeSource>,
-    /// Preview image URL (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_url: Option<String>,
-    /// Warnings (e.g., missing custom nodes).
-    pub warnings: Vec<AnalyzeWarning>,
+    pub warnings: Vec<Warning>,
+    /// Generation params (for the UI to display/edit).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationSummary>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -43,208 +44,354 @@ pub struct DetectedInput {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct AnalyzeSource {
+pub struct Source {
     #[serde(rename = "type")]
     pub source_type: String,
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct AnalyzeWarning {
+pub struct Warning {
     #[serde(rename = "type")]
     pub warning_type: String,
     pub message: String,
 }
 
-/// Detect input type and run the full analysis pipeline.
-pub async fn analyze_input(
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GenerationSummary {
+    pub prompt: String,
+    pub negative_prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cfg_scale: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampler: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+// ── Main Entry Point ──────────────────────────────────────────
+
+/// Run the full analysis pipeline.
+///
+/// Accepts either text input (`input`) or binary bytes (`input_bytes`).
+/// Produces an AnalyzeResult or a descriptive error.
+pub async fn run(
     http: &Client,
     input: &str,
     input_bytes: Option<&[u8]>,
     data_dir: &Path,
-    manager_registry: &ManagerRegistry,
+    manager_registry: &model_resolve::ManagerRegistry,
 ) -> Result<AnalyzeResult> {
-    // Detect input type and extract workflow
-    let (workflow, source, preview_url) = if let Some(bytes) = input_bytes {
-        // Binary upload — check if PNG
-        if png_extract::is_png(bytes) {
-            extract_from_png_bytes(bytes)?
+    let mut warnings = Vec::new();
+
+    // ── Step 1: Detect input type and extract workflow ─────────
+    let (workflow, source, preview_url, civitai_meta) = if let Some(bytes) = input_bytes {
+        if input_detect::is_png_bytes(bytes) {
+            extract_from_png(bytes, &mut warnings)?
         } else {
-            // Try as JSON
-            let json: serde_json::Value = serde_json::from_slice(bytes)
-                .context("uploaded file is not a PNG or valid JSON")?;
-            if png_extract::is_comfyui_workflow(&json) {
-                (json, None, None)
-            } else {
-                anyhow::bail!("uploaded JSON does not look like a ComfyUI workflow");
-            }
-        }
-    } else if !input.is_empty() {
-        // Text input — could be URL or JSON
-        if let Some(civitai_ref) = civitai::parse_civitai_url(input) {
-            extract_from_civitai(http, civitai_ref).await?
-        } else if input.starts_with("http://") || input.starts_with("https://") {
-            extract_from_url(http, input).await?
-        } else if input.trim_start().starts_with('{') {
-            // Try as raw JSON
-            let json: serde_json::Value = serde_json::from_str(input)
-                .context("input looks like JSON but failed to parse")?;
-            if png_extract::is_comfyui_workflow(&json) {
-                (json, None, None)
-            } else {
-                anyhow::bail!("JSON does not look like a ComfyUI workflow");
-            }
-        } else {
-            anyhow::bail!("unrecognized input — provide a CivitAI URL, PNG URL, or workflow JSON");
+            // Try as text
+            let text = std::str::from_utf8(bytes).context("binary input is not PNG or valid UTF-8")?;
+            extract_from_text(http, text, &mut warnings).await?
         }
     } else {
-        anyhow::bail!("no input provided");
+        extract_from_text(http, input, &mut warnings).await?
     };
 
-    // Parse the workflow
+    // ── Step 2: Parse the workflow ────────────────────────────
     let parsed = crate::skills::parser::parse_workflow(&workflow)
-        .map_err(|e| anyhow::anyhow!("failed to parse workflow: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("workflow parse failed: {e}"))?;
 
-    // Extract model filenames and their types
-    let model_filenames: Vec<String> = parsed.models.iter().map(|m| m.model_name.clone()).collect();
-    let model_types: HashMap<String, String> = parsed
+    // ── Step 3: Collect model filenames ────────────────────────
+    let model_pairs: Vec<(String, String)> = parsed
         .models
         .iter()
+        .filter(|m| !m.is_placeholder) // skip PLACEHOLDER_ values
         .map(|m| (m.model_name.clone(), m.model_type.clone()))
         .collect();
 
-    // Resolve models
+    // ── Step 4: Resolve models ────────────────────────────────
     let cache_paths = CachePaths::new(data_dir, "comfyui");
-    let manifest = DependencyManifest::load(&cache_paths.manifest_path).await;
-    let civitai_resources = source
+    let cache_manifest = DependencyManifest::load(&cache_paths.manifest_path).await;
+
+    // Resolve CivitAI model version IDs (best source)
+    let mut civitai_models = Vec::new();
+    if let Some(ref meta) = civitai_meta {
+        for vid in &meta.model_version_ids {
+            match civitai::resolve_model_version(http, *vid).await {
+                Some(resolved) => civitai_models.push(resolved),
+                None => {
+                    warnings.push(Warning {
+                        warning_type: "model_resolution".into(),
+                        message: format!("CivitAI model version {} could not be resolved", vid),
+                    });
+                }
+            }
+        }
+    }
+
+    let hashes = civitai_meta
         .as_ref()
-        .and_then(|s| s.image_id)
-        .map(|_| Vec::new()) // TODO: pass resources from CivitAI metadata
+        .and_then(|m| m.generation.as_ref())
+        .map(|g| g.hashes.clone())
         .unwrap_or_default();
 
-    let models = model_resolve::resolve_models(
-        http,
-        &model_filenames,
-        &model_types,
-        &manifest,
-        manager_registry,
-        &civitai_resources,
-    )
-    .await;
+    let resolution_ctx = model_resolve::ResolutionContext {
+        civitai_models,
+        hashes,
+        cache_manifest,
+        manager: model_resolve::ManagerRegistry::default(), // TODO: pass the shared one
+    };
 
-    // Detect inputs (image placeholders, text prompts)
-    let inputs = detect_inputs(&workflow, &parsed);
+    let models = model_resolve::resolve_all(http, &model_pairs, &resolution_ctx).await;
 
-    // Generate moniker from source or workflow content
+    // ── Step 5: Detect inputs ─────────────────────────────────
+    let inputs = detect_inputs(&parsed);
+
+    // ── Step 6: Build metadata ────────────────────────────────
     let moniker = generate_moniker(&source, &parsed);
-    let display_name = moniker
-        .replace('-', " ")
-        .split_whitespace()
-        .map(|w| {
-            let mut c = w.chars();
-            match c.next() {
-                None => String::new(),
-                Some(f) => f.to_uppercase().to_string() + c.as_str(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let display_name = humanize_moniker(&moniker);
+
+    let generation = civitai_meta
+        .as_ref()
+        .and_then(|m| m.generation.as_ref())
+        .map(|g| GenerationSummary {
+            prompt: g.prompt.clone(),
+            negative_prompt: g.negative_prompt.clone(),
+            steps: g.steps,
+            cfg_scale: g.cfg_scale,
+            sampler: g.sampler.clone(),
+            seed: g.seed,
+            model: g.model_name.clone(),
+        });
 
     Ok(AnalyzeResult {
         moniker,
         display_name,
+        capability: "image".into(),
         workflow,
         diagram: Some(parsed.diagram),
         models,
         inputs,
         source,
         preview_url,
-        warnings: Vec::new(),
+        warnings,
+        generation,
     })
 }
 
-/// Extract workflow from raw PNG bytes.
-fn extract_from_png_bytes(
-    bytes: &[u8],
-) -> Result<(serde_json::Value, Option<AnalyzeSource>, Option<String>)> {
-    let data = png_extract::extract_from_png(bytes)?;
+// ── Extraction Paths ──────────────────────────────────────────
 
-    let workflow = data
-        .prompt
-        .with_context(|| "PNG has no embedded ComfyUI workflow (no 'prompt' tEXt chunk)")?;
+type ExtractionResult = (
+    serde_json::Value,           // workflow
+    Option<Source>,              // source
+    Option<String>,              // preview URL
+    Option<CivitaiMetaBundle>,   // CivitAI metadata for resolution
+);
 
-    Ok((workflow, None, None))
+/// Bundle of CivitAI-specific metadata for model resolution.
+struct CivitaiMetaBundle {
+    model_version_ids: Vec<u64>,
+    generation: Option<civitai::GenerationMeta>,
 }
 
-/// Extract workflow from a CivitAI image URL.
+fn extract_from_png(
+    bytes: &[u8],
+    warnings: &mut Vec<Warning>,
+) -> Result<ExtractionResult> {
+    let extraction = png_extract::extract(bytes)?;
+
+    if let Some(workflow) = extraction.workflow {
+        return Ok((workflow, None, None, None));
+    }
+
+    // No workflow in PNG — try parameters text
+    if let Some(params_text) = extraction.parameters_text {
+        let params = gen_data_parse::parse(&params_text);
+        let workflow = workflow_synth::synthesize_txt2img(&params);
+        warnings.push(Warning {
+            warning_type: "synthesized".into(),
+            message: "No ComfyUI workflow found in PNG. Synthesized a standard txt2img workflow from generation parameters.".into(),
+        });
+        return Ok((workflow, None, None, None));
+    }
+
+    anyhow::bail!("PNG has no embedded ComfyUI workflow or generation parameters")
+}
+
+async fn extract_from_text(
+    http: &Client,
+    input: &str,
+    warnings: &mut Vec<Warning>,
+) -> Result<ExtractionResult> {
+    let input_type = input_detect::classify(input)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    match input_type {
+        input_detect::InputType::CivitaiImage { image_id } => {
+            extract_from_civitai(http, image_id, warnings).await
+        }
+        input_detect::InputType::PngUrl { url } => {
+            extract_from_url(http, &url, warnings).await
+        }
+        input_detect::InputType::GenericUrl { url } => {
+            extract_from_url(http, &url, warnings).await
+        }
+        input_detect::InputType::WorkflowJson { json } => {
+            Ok((json, None, None, None))
+        }
+        input_detect::InputType::GenerationText { text } => {
+            let params = gen_data_parse::parse(&text);
+            let workflow = workflow_synth::synthesize_txt2img(&params);
+            warnings.push(Warning {
+                warning_type: "synthesized".into(),
+                message: "Synthesized a standard txt2img workflow from generation parameters.".into(),
+            });
+            Ok((workflow, None, None, None))
+        }
+    }
+}
+
 async fn extract_from_civitai(
     http: &Client,
-    civitai_ref: civitai::CivitaiImageRef,
-) -> Result<(serde_json::Value, Option<AnalyzeSource>, Option<String>)> {
-    let image = civitai::fetch_image_metadata(http, civitai_ref.image_id).await?;
-    let preview_url = Some(image.url.clone());
-    let png_bytes = civitai::download_image(http, &image.url).await?;
+    image_id: u64,
+    warnings: &mut Vec<Warning>,
+) -> Result<ExtractionResult> {
+    let meta = civitai::fetch_image(http, image_id).await?;
 
-    let data = png_extract::extract_from_png(&png_bytes)?;
+    // Check for unsupported generators
+    if let Some(generator) = civitai::is_unsupported_generator(meta.base_model.as_deref()) {
+        anyhow::bail!("This image was generated by {generator}, which cannot be imported as a ComfyUI skill.");
+    }
 
-    let workflow = data
-        .prompt
-        .with_context(|| "CivitAI image has no embedded ComfyUI workflow")?;
-
-    let source = AnalyzeSource {
+    let source = Source {
         source_type: "civitai".into(),
-        url: format!("https://civitai.com/images/{}", civitai_ref.image_id),
-        image_id: Some(civitai_ref.image_id),
+        url: format!("https://civitai.com/images/{image_id}"),
+        image_id: Some(image_id),
+        username: Some(meta.username.clone()),
+    };
+    let preview_url = Some(meta.image_url.clone());
+
+    let civitai_bundle = CivitaiMetaBundle {
+        model_version_ids: meta.model_version_ids.clone(),
+        generation: meta.generation,
     };
 
-    Ok((workflow, Some(source), preview_url))
+    // Try to download the original image and extract workflow from PNG
+    match civitai::download_original_image(http, &meta.image_url).await {
+        Ok(bytes) if input_detect::is_png_bytes(&bytes) => {
+            let extraction = png_extract::extract(&bytes);
+            if let Ok(ext) = extraction {
+                if let Some(workflow) = ext.workflow {
+                    return Ok((workflow, Some(source), preview_url, Some(civitai_bundle)));
+                }
+            }
+            // PNG but no workflow — fall through to synthesis
+            tracing::debug!(image_id, "CivitAI PNG has no embedded workflow");
+        }
+        Ok(_) => {
+            tracing::debug!(image_id, "CivitAI image is JPEG — no embedded workflow possible");
+        }
+        Err(e) => {
+            warnings.push(Warning {
+                warning_type: "download".into(),
+                message: format!("Could not download original image: {e}"),
+            });
+        }
+    }
+
+    // No workflow from PNG — synthesize from CivitAI generation metadata
+    if let Some(ref gen_meta) = civitai_bundle.generation {
+        if !gen_meta.prompt.is_empty() || gen_meta.model_name.is_some() {
+            let params = gen_data_parse::GenerationParams {
+                prompt: gen_meta.prompt.clone(),
+                negative_prompt: gen_meta.negative_prompt.clone(),
+                steps: gen_meta.steps,
+                cfg_scale: gen_meta.cfg_scale,
+                sampler: gen_meta.sampler.clone(),
+                seed: gen_meta.seed,
+                model: gen_meta.model_name.clone(),
+                width: gen_meta.width,
+                height: gen_meta.height,
+                clip_skip: gen_meta.clip_skip,
+                extra: std::collections::HashMap::new(),
+            };
+            let workflow = workflow_synth::synthesize_txt2img(&params);
+            warnings.push(Warning {
+                warning_type: "synthesized".into(),
+                message: "No embedded workflow found. Synthesized from CivitAI generation metadata.".into(),
+            });
+            return Ok((workflow, Some(source), preview_url, Some(civitai_bundle)));
+        }
+    }
+
+    // No workflow, no generation data — but we may still have model version IDs
+    if !civitai_bundle.model_version_ids.is_empty() {
+        anyhow::bail!(
+            "CivitAI image has no generation data, but {} model(s) were identified. \
+             Provide a workflow JSON manually to create a skill with these models.",
+            civitai_bundle.model_version_ids.len()
+        );
+    }
+
+    anyhow::bail!("CivitAI image has no generation data or model information.")
 }
 
-/// Extract workflow from a direct PNG URL.
 async fn extract_from_url(
     http: &Client,
     url: &str,
-) -> Result<(serde_json::Value, Option<AnalyzeSource>, Option<String>)> {
-    let bytes = civitai::download_image(http, url).await?;
+    warnings: &mut Vec<Warning>,
+) -> Result<ExtractionResult> {
+    let bytes = civitai::download_original_image(http, url).await?;
 
-    if png_extract::is_png(&bytes) {
-        let data = png_extract::extract_from_png(&bytes)?;
-        let workflow = data
-            .prompt
-            .with_context(|| "PNG has no embedded ComfyUI workflow")?;
+    if input_detect::is_png_bytes(&bytes) {
+        let extraction = png_extract::extract(&bytes)?;
+        if let Some(workflow) = extraction.workflow {
+            let source = Source {
+                source_type: "url".into(),
+                url: url.to_string(),
+                image_id: None,
+                username: None,
+            };
+            return Ok((workflow, Some(source), Some(url.to_string()), None));
+        }
 
-        let source = AnalyzeSource {
-            source_type: "url".into(),
-            url: url.to_string(),
-            image_id: None,
-        };
+        // PNG with parameters but no workflow
+        if let Some(params_text) = extraction.parameters_text {
+            let params = gen_data_parse::parse(&params_text);
+            let workflow = workflow_synth::synthesize_txt2img(&params);
+            warnings.push(Warning {
+                warning_type: "synthesized".into(),
+                message: "PNG has no ComfyUI workflow. Synthesized from embedded parameters.".into(),
+            });
+            return Ok((workflow, None, None, None));
+        }
 
-        return Ok((workflow, Some(source), Some(url.to_string())));
+        anyhow::bail!("PNG at URL has no embedded workflow or generation parameters");
     }
 
     // Try as JSON
-    let json: serde_json::Value = serde_json::from_slice(&bytes)
-        .context("URL did not return a PNG or valid JSON")?;
+    let text = std::str::from_utf8(&bytes).context("URL returned non-PNG, non-UTF-8 content")?;
+    let json: serde_json::Value = serde_json::from_str(text)
+        .context("URL returned content that is not PNG or valid JSON")?;
 
-    if png_extract::is_comfyui_workflow(&json) {
-        let source = AnalyzeSource {
-            source_type: "url".into(),
-            url: url.to_string(),
-            image_id: None,
-        };
-        Ok((json, Some(source), None))
-    } else {
-        anyhow::bail!("URL returned JSON that is not a ComfyUI workflow");
+    if input_detect::is_comfyui_workflow(&json) {
+        return Ok((json, None, None, None));
     }
+
+    anyhow::bail!("URL returned JSON that does not look like a ComfyUI workflow")
 }
 
-/// Detect input nodes from the workflow.
-fn detect_inputs(
-    _workflow: &serde_json::Value,
-    parsed: &crate::skills::parser::ParsedWorkflow,
-) -> Vec<DetectedInput> {
+// ── Helpers ───────────────────────────────────────────────────
+
+fn detect_inputs(parsed: &crate::skills::parser::ParsedWorkflow) -> Vec<DetectedInput> {
     use crate::skills::parser::InputKind;
     let mut inputs = Vec::new();
 
@@ -256,16 +403,22 @@ fn detect_inputs(
         let role = match input.kind {
             InputKind::Image => {
                 if inputs.iter().any(|i: &DetectedInput| i.role == "source") {
-                    "mask".to_string()
+                    "mask"
                 } else {
-                    "source".to_string()
+                    "source"
                 }
             }
-            InputKind::Text => "prompt".to_string(),
+            InputKind::Text => {
+                if inputs.iter().any(|i: &DetectedInput| i.role == "prompt") {
+                    "negative"
+                } else {
+                    "prompt"
+                }
+            }
         };
 
         inputs.push(DetectedInput {
-            role,
+            role: role.to_string(),
             content_type: content_type.to_string(),
             node_id: input.node_id.clone(),
             placeholder: input.placeholder.clone(),
@@ -275,36 +428,43 @@ fn detect_inputs(
     inputs
 }
 
-/// Generate a moniker from the source or workflow content.
-fn generate_moniker(
-    source: &Option<AnalyzeSource>,
-    parsed: &crate::skills::parser::ParsedWorkflow,
-) -> String {
-    let timestamp = std::time::SystemTime::now()
+fn generate_moniker(source: &Option<Source>, parsed: &crate::skills::parser::ParsedWorkflow) -> String {
+    let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
     if let Some(source) = source {
         if let Some(id) = source.image_id {
-            return format!("imported-{id}");
+            return format!("civitai-{id}");
         }
     }
 
-    // Derive from node types
     let has_upscale = parsed.nodes.values().any(|n| n.class_type.contains("Upscale"));
     let has_ksampler = parsed.nodes.values().any(|n| n.class_type.contains("KSampler"));
     let has_inpaint = parsed.nodes.values().any(|n| n.class_type.contains("Inpaint"));
+    let has_lora = parsed.nodes.values().any(|n| n.class_type.contains("Lora"));
 
-    let prefix = if has_inpaint {
-        "imported-inpaint"
-    } else if has_upscale && !has_ksampler {
-        "imported-upscale"
-    } else if has_ksampler {
-        "imported-generate"
-    } else {
-        "imported-workflow"
-    };
+    let kind = if has_inpaint { "inpaint" }
+        else if has_upscale && !has_ksampler { "upscale" }
+        else if has_lora { "generate-lora" }
+        else if has_ksampler { "generate" }
+        else { "workflow" };
 
-    format!("{prefix}-{timestamp}")
+    format!("imported-{kind}-{ts}")
+}
+
+fn humanize_moniker(moniker: &str) -> String {
+    moniker
+        .replace('-', " ")
+        .split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().to_string() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

@@ -1,133 +1,88 @@
-//! Extract ComfyUI workflow metadata from PNG tEXt/zTXt chunks.
+//! Extract ComfyUI workflow from PNG tEXt/zTXt/iTXt chunks.
 //!
-//! ComfyUI writes two chunks into saved PNGs:
-//! - `prompt`: API format — `{ "node_id": { "class_type": "...", "inputs": {...} } }`
-//! - `workflow`: Editor format — node graph with positions, links, groups
+//! ComfyUI writes two chunks:
+//! - `prompt`: API format (execution graph) — what we need
+//! - `workflow`: Editor format (positions, links) — informational
 //!
-//! For skill creation, the `prompt` chunk is what we need (matches our parser input).
+//! Some images also have `parameters`: A1111-compatible text.
 
 use anyhow::{Context, Result};
 
-/// Extracted workflow data from a PNG file.
+/// Extracted data from a PNG file.
 #[derive(Debug)]
-pub struct PngWorkflowData {
-    /// ComfyUI API format — the execution graph. This is what we use.
-    pub prompt: Option<serde_json::Value>,
-    /// ComfyUI editor format — node positions, links. Informational only.
+pub struct PngExtraction {
+    /// ComfyUI API-format workflow (from `prompt` chunk).
     pub workflow: Option<serde_json::Value>,
+    /// A1111-format parameters text (from `parameters` chunk).
+    pub parameters_text: Option<String>,
 }
 
-/// Extract ComfyUI workflow metadata from PNG bytes.
-///
-/// Reads tEXt and zTXt chunks looking for "prompt" and "workflow" keywords.
-pub fn extract_from_png(png_bytes: &[u8]) -> Result<PngWorkflowData> {
+/// Extract workflow metadata from PNG bytes.
+/// Returns Ok with potentially empty fields — the caller decides what's required.
+pub fn extract(png_bytes: &[u8]) -> Result<PngExtraction> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
-    let reader = decoder.read_info().context("decode PNG header")?;
+    let reader = decoder.read_info().context("invalid PNG")?;
     let info = reader.info();
 
-    let mut prompt = None;
     let mut workflow = None;
+    let mut parameters_text = None;
 
-    // Check uncompressed tEXt chunks
+    // tEXt chunks (uncompressed)
     for chunk in &info.uncompressed_latin1_text {
         match chunk.keyword.as_str() {
-            "prompt" => {
-                if let Ok(val) = serde_json::from_str(&chunk.text) {
-                    prompt = Some(val);
-                }
+            "prompt" if workflow.is_none() => {
+                workflow = try_parse_json(&chunk.text);
             }
-            "workflow" => {
-                if let Ok(val) = serde_json::from_str(&chunk.text) {
-                    workflow = Some(val);
-                }
+            "parameters" if parameters_text.is_none() => {
+                parameters_text = Some(chunk.text.clone());
             }
             _ => {}
         }
     }
 
-    // Check compressed zTXt chunks
+    // zTXt chunks (compressed)
     for chunk in &info.compressed_latin1_text {
-        let text = chunk
-            .get_text()
-            .unwrap_or_default();
-
+        let text = chunk.get_text().unwrap_or_default();
         match chunk.keyword.as_str() {
-            "prompt" if prompt.is_none() => {
-                if let Ok(val) = serde_json::from_str(&text) {
-                    prompt = Some(val);
-                }
+            "prompt" if workflow.is_none() => {
+                workflow = try_parse_json(&text);
             }
-            "workflow" if workflow.is_none() => {
-                if let Ok(val) = serde_json::from_str(&text) {
-                    workflow = Some(val);
-                }
+            "parameters" if parameters_text.is_none() => {
+                parameters_text = Some(text);
             }
             _ => {}
         }
     }
 
-    // Also check iTXt (international text) chunks — some tools use these
+    // iTXt chunks (international text)
     for chunk in &info.utf8_text {
         let text = chunk.get_text().unwrap_or_default();
         match chunk.keyword.as_str() {
-            "prompt" if prompt.is_none() => {
-                if let Ok(val) = serde_json::from_str(&text) {
-                    prompt = Some(val);
-                }
+            "prompt" if workflow.is_none() => {
+                workflow = try_parse_json(&text);
             }
-            "workflow" if workflow.is_none() => {
-                if let Ok(val) = serde_json::from_str(&text) {
-                    workflow = Some(val);
-                }
+            "parameters" if parameters_text.is_none() => {
+                parameters_text = Some(text);
             }
             _ => {}
         }
     }
 
-    Ok(PngWorkflowData { prompt, workflow })
+    Ok(PngExtraction { workflow, parameters_text })
 }
 
-/// Check if raw bytes look like a PNG file (magic bytes).
-pub fn is_png(data: &[u8]) -> bool {
-    data.len() >= 8 && data[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
-}
-
-/// Check if a JSON value looks like a ComfyUI API-format workflow.
-/// Must be an object where at least one value has a "class_type" field.
-pub fn is_comfyui_workflow(value: &serde_json::Value) -> bool {
-    if let Some(obj) = value.as_object() {
-        obj.values().any(|node| {
-            node.get("class_type").is_some()
-        })
-    } else {
-        false
-    }
+fn try_parse_json(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(text).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::skills::import::input_detect;
 
     #[test]
-    fn is_png_detects_magic_bytes() {
-        let png_header = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
-        assert!(is_png(&png_header));
-        assert!(!is_png(b"not a png"));
-        assert!(!is_png(&[]));
-    }
-
-    #[test]
-    fn is_comfyui_workflow_checks_class_type() {
-        let valid = serde_json::json!({
-            "1": { "class_type": "LoadImage", "inputs": {} },
-            "2": { "class_type": "SaveImage", "inputs": {} }
-        });
-        assert!(is_comfyui_workflow(&valid));
-
-        let invalid = serde_json::json!({ "foo": "bar" });
-        assert!(!is_comfyui_workflow(&invalid));
-
-        let array = serde_json::json!([1, 2, 3]);
-        assert!(!is_comfyui_workflow(&array));
+    fn png_magic_detection() {
+        assert!(input_detect::is_png_bytes(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
+        assert!(!input_detect::is_png_bytes(b"not png"));
     }
 }

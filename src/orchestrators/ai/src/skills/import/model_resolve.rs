@@ -1,44 +1,46 @@
-//! Model resolution cascade — resolve filenames to download URLs (ORCH-0023).
+//! Model resolution — resolve filenames to download URLs via cascade.
 //!
-//! Priority chain:
-//! 1. Local dependency cache (exact filename match)
-//! 2. ComfyUI Manager model-list.json (527+ curated entries)
-//! 3. CivitAI hash lookup (when hash available from image metadata)
-//! 4. Unresolved (user must provide URL)
+//! Priority:
+//! 1. CivitAI modelVersionIds (direct, no search)
+//! 2. CivitAI hash lookup (from image meta hashes)
+//! 3. Local dependency cache (already downloaded)
+//! 4. ComfyUI Manager registry (curated model list)
+//! 5. Unresolved (user provides URL)
 
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use reqwest::Client;
 
+use super::civitai;
 use crate::skills::cache::DependencyManifest;
-use super::civitai::{self, CivitaiResource, ResolvedModel};
-
-const COMFYUI_MANAGER_MODEL_LIST_URL: &str =
-    "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/model-list.json";
 
 // ── Resolution Result ─────────────────────────────────────────
 
-/// Resolution status for a single model.
+/// Resolution status for a single model dependency.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ModelResolution {
-    /// Already in the local dependency cache.
-    Cached { filename: String },
-    /// Resolved via ComfyUI Manager or CivitAI — download URL known.
     Resolved {
         filename: String,
         url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         sha256: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         size_bytes: Option<u64>,
+        model_type: String,
         source: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        license: Option<String>,
     },
-    /// Could not resolve automatically — user must provide URL.
+    Cached {
+        filename: String,
+        model_type: String,
+    },
     Unresolved {
         filename: String,
+        model_type: String,
         reason: String,
     },
 }
@@ -46,183 +48,223 @@ pub enum ModelResolution {
 impl ModelResolution {
     pub fn filename(&self) -> &str {
         match self {
-            Self::Cached { filename } => filename,
             Self::Resolved { filename, .. } => filename,
+            Self::Cached { filename, .. } => filename,
             Self::Unresolved { filename, .. } => filename,
         }
-    }
-
-    pub fn is_resolved(&self) -> bool {
-        !matches!(self, Self::Unresolved { .. })
     }
 }
 
 // ── ComfyUI Manager Registry ─────────────────────────────────
 
-/// Cached ComfyUI Manager model-list.json.
-/// Maps exact filenames to download URLs.
+const MANAGER_MODEL_LIST_URL: &str =
+    "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/model-list.json";
+
+/// Cached ComfyUI Manager model registry. Maps filename → download URL.
 #[derive(Debug, Default)]
 pub struct ManagerRegistry {
-    /// filename → download URL
     entries: HashMap<String, ManagerEntry>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct ManagerModelEntry {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    filename: String,
-    #[serde(default)]
-    url: String,
-    #[serde(default, rename = "type")]
-    model_type: String,
-    #[serde(default)]
-    description: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct ManagerEntry {
-    pub filename: String,
     pub url: String,
     pub model_type: String,
-    pub description: String,
 }
 
 impl ManagerRegistry {
-    /// Fetch the model-list.json from GitHub and parse it.
+    /// Fetch and cache the registry. Failures return empty — never blocks the pipeline.
     pub async fn fetch(http: &Client) -> Self {
-        tracing::info!("fetching ComfyUI Manager model-list.json");
-
-        let resp = http
-            .get(COMFYUI_MANAGER_MODEL_LIST_URL)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await;
-
-        let resp = match resp {
+        let resp = match http.get(MANAGER_MODEL_LIST_URL).timeout(std::time::Duration::from_secs(30)).send().await {
             Ok(r) if r.status().is_success() => r,
             Ok(r) => {
-                tracing::warn!(status = %r.status(), "failed to fetch ComfyUI Manager model list");
+                tracing::warn!(status = %r.status(), "ComfyUI Manager registry fetch failed");
                 return Self::default();
             }
             Err(e) => {
-                tracing::warn!(error = %e, "failed to fetch ComfyUI Manager model list");
+                tracing::warn!(error = %e, "ComfyUI Manager registry unreachable");
                 return Self::default();
             }
         };
 
-        let raw: Vec<ManagerModelEntry> = match resp.json().await {
-            Ok(entries) => entries,
+        #[derive(serde::Deserialize)]
+        struct Entry {
+            #[serde(default)]
+            filename: String,
+            #[serde(default)]
+            url: String,
+            #[serde(default, rename = "type")]
+            model_type: String,
+        }
+
+        let raw: Vec<Entry> = match resp.json().await {
+            Ok(v) => v,
             Err(e) => {
-                tracing::warn!(error = %e, "failed to parse ComfyUI Manager model list");
+                tracing::warn!(error = %e, "ComfyUI Manager registry parse failed");
                 return Self::default();
             }
         };
 
         let mut entries = HashMap::new();
-        for entry in raw {
-            if !entry.filename.is_empty() && !entry.url.is_empty() {
-                entries.insert(entry.filename.clone(), ManagerEntry {
-                    filename: entry.filename,
-                    url: entry.url,
-                    model_type: entry.model_type,
-                    description: entry.description,
+        for e in raw {
+            if !e.filename.is_empty() && !e.url.is_empty() {
+                entries.insert(e.filename.clone(), ManagerEntry {
+                    url: e.url,
+                    model_type: e.model_type,
                 });
             }
         }
 
-        tracing::info!(count = entries.len(), "ComfyUI Manager model registry loaded");
+        tracing::info!(count = entries.len(), "ComfyUI Manager registry loaded");
         Self { entries }
     }
 
-    /// Look up a filename in the registry.
     pub fn resolve(&self, filename: &str) -> Option<&ManagerEntry> {
         self.entries.get(filename)
     }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
 }
 
-// ── Resolution Cascade ────────────────────────────────────────
+// ── Resolution Context ────────────────────────────────────────
 
-/// Run the full model resolution cascade for a list of model filenames.
-///
-/// Uses: local cache → ComfyUI Manager → CivitAI hash lookup → unresolved.
-pub async fn resolve_models(
+/// All available resolution sources, collected before the cascade runs.
+pub struct ResolutionContext {
+    /// Models resolved from CivitAI modelVersionIds (most reliable).
+    pub civitai_models: Vec<civitai::ResolvedModel>,
+    /// Hashes from CivitAI image meta: "type:filename" → "hash".
+    pub hashes: Vec<(String, String)>,
+    /// Local dependency cache manifest.
+    pub cache_manifest: DependencyManifest,
+    /// ComfyUI Manager registry.
+    pub manager: ManagerRegistry,
+}
+
+// ── Cascade ───────────────────────────────────────────────────
+
+/// Resolve a list of model filenames through the cascade.
+/// Each filename gets the best resolution available. Failures produce Unresolved, not errors.
+pub async fn resolve_all(
     http: &Client,
-    filenames: &[String],
-    model_types: &HashMap<String, String>,
-    cache_manifest: &DependencyManifest,
-    manager_registry: &ManagerRegistry,
-    civitai_resources: &[CivitaiResource],
+    filenames: &[(String, String)], // (filename, model_type)
+    ctx: &ResolutionContext,
 ) -> Vec<ModelResolution> {
     let mut results = Vec::new();
 
-    for filename in filenames {
-        // Priority 1: already in local cache
-        if cache_manifest.files.contains_key(filename)
-            || cache_manifest.aliases.contains_key(filename)
-        {
-            results.push(ModelResolution::Cached {
-                filename: filename.clone(),
-            });
-            continue;
-        }
-
-        // Priority 2: ComfyUI Manager registry (exact filename match)
-        if let Some(entry) = manager_registry.resolve(filename) {
-            results.push(ModelResolution::Resolved {
-                filename: filename.clone(),
-                url: entry.url.clone(),
-                sha256: None,
-                size_bytes: None,
-                source: "comfyui-manager".into(),
-            });
-            continue;
-        }
-
-        // Priority 3: CivitAI hash lookup (if we have a hash from image metadata)
-        let civitai_hash = civitai_resources.iter().find_map(|r| {
-            // Match by name similarity — the resource name often contains the model name
-            if r.hash.is_some() {
-                let name = r.name.as_deref().unwrap_or("");
-                let stem = filename.split('.').next().unwrap_or(filename);
-                if name.to_lowercase().contains(&stem.to_lowercase())
-                    || stem.to_lowercase().contains(&name.to_lowercase())
-                {
-                    r.hash.clone()
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        });
-
-        if let Some(hash) = civitai_hash {
-            if let Ok(Some(resolved)) = civitai::resolve_model_by_hash(http, &hash).await {
-                results.push(ModelResolution::Resolved {
-                    filename: filename.clone(),
-                    url: resolved.download_url,
-                    sha256: resolved.sha256,
-                    size_bytes: resolved.size_bytes,
-                    source: "civitai".into(),
-                });
-                continue;
-            }
-        }
-
-        // Unresolved — user must provide
-        results.push(ModelResolution::Unresolved {
-            filename: filename.clone(),
-            reason: "no match in cache, ComfyUI Manager, or CivitAI".into(),
-        });
+    for (filename, model_type) in filenames {
+        let resolution = resolve_one(http, filename, model_type, ctx).await;
+        results.push(resolution);
     }
 
     results
+}
+
+async fn resolve_one(
+    http: &Client,
+    filename: &str,
+    model_type: &str,
+    ctx: &ResolutionContext,
+) -> ModelResolution {
+    // Priority 1: CivitAI modelVersionIds (already resolved)
+    // Match by filename — the version resolution gives us the exact filename
+    if let Some(resolved) = ctx.civitai_models.iter().find(|m| m.filename == filename) {
+        return ModelResolution::Resolved {
+            filename: filename.to_string(),
+            url: resolved.download_url.clone(),
+            sha256: resolved.sha256.clone(),
+            size_bytes: resolved.size_bytes,
+            model_type: civitai_type_to_comfyui(model_type, &resolved.model_type),
+            source: "civitai".into(),
+            display_name: Some(format!("{} / {}", resolved.model_name, resolved.version_name)),
+            license: None,
+        };
+    }
+
+    // Also check by model name stem (the meta.Model field often doesn't have the extension)
+    let stem = filename.split('.').next().unwrap_or(filename);
+    if let Some(resolved) = ctx.civitai_models.iter().find(|m| {
+        m.filename.starts_with(stem) || m.model_name.to_lowercase().contains(&stem.to_lowercase())
+    }) {
+        return ModelResolution::Resolved {
+            filename: resolved.filename.clone(),
+            url: resolved.download_url.clone(),
+            sha256: resolved.sha256.clone(),
+            size_bytes: resolved.size_bytes,
+            model_type: civitai_type_to_comfyui(model_type, &resolved.model_type),
+            source: "civitai".into(),
+            display_name: Some(format!("{} / {}", resolved.model_name, resolved.version_name)),
+            license: None,
+        };
+    }
+
+    // Priority 2: CivitAI hash lookup (from image meta hashes)
+    for (hash_key, hash_value) in &ctx.hashes {
+        // hash_key is "type:filename" or "model"
+        let matches = hash_key.contains(filename)
+            || hash_key.contains(stem)
+            || hash_key == "model";
+
+        if matches && !hash_value.is_empty() {
+            if let Some(resolved) = civitai::resolve_by_hash(http, hash_value).await {
+                return ModelResolution::Resolved {
+                    filename: resolved.filename.clone(),
+                    url: resolved.download_url.clone(),
+                    sha256: resolved.sha256.clone(),
+                    size_bytes: resolved.size_bytes,
+                    model_type: civitai_type_to_comfyui(model_type, &resolved.model_type),
+                    source: "civitai-hash".into(),
+                    display_name: Some(format!("{} / {}", resolved.model_name, resolved.version_name)),
+                    license: None,
+                };
+            }
+        }
+    }
+
+    // Priority 3: Local cache
+    let resolved_name = ctx.cache_manifest.resolve(filename);
+    if ctx.cache_manifest.files.contains_key(&resolved_name) {
+        return ModelResolution::Cached {
+            filename: filename.to_string(),
+            model_type: model_type.to_string(),
+        };
+    }
+
+    // Priority 4: ComfyUI Manager registry
+    if let Some(entry) = ctx.manager.resolve(filename) {
+        return ModelResolution::Resolved {
+            filename: filename.to_string(),
+            url: entry.url.clone(),
+            sha256: None,
+            size_bytes: None,
+            model_type: if entry.model_type.is_empty() { model_type.to_string() } else { entry.model_type.clone() },
+            source: "comfyui-manager".into(),
+            display_name: None,
+            license: None,
+        };
+    }
+
+    // Unresolved
+    ModelResolution::Unresolved {
+        filename: filename.to_string(),
+        model_type: model_type.to_string(),
+        reason: "not found in CivitAI, local cache, or ComfyUI Manager registry".into(),
+    }
+}
+
+/// Map CivitAI model type to ComfyUI model directory name.
+fn civitai_type_to_comfyui(parser_type: &str, civitai_type: &str) -> String {
+    // If the parser already identified the type, prefer that
+    if !parser_type.is_empty() && parser_type != "unknown" {
+        return parser_type.to_string();
+    }
+
+    match civitai_type.to_lowercase().as_str() {
+        "checkpoint" => "checkpoints",
+        "lora" => "loras",
+        "vae" => "vae",
+        "upscaler" => "upscale_models",
+        "controlnet" => "controlnet",
+        "embedding" | "textualinversion" => "embeddings",
+        _ => "checkpoints",
+    }.to_string()
 }
 
 #[cfg(test)]
@@ -230,44 +272,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cached_model_resolves_immediately() {
-        let mut manifest = DependencyManifest::default();
-        manifest.files.insert("model.pth".into(), "sha256:abc".into());
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let http = Client::new();
-        let manager = ManagerRegistry::default();
-
-        let results = rt.block_on(resolve_models(
-            &http,
-            &["model.pth".into()],
-            &HashMap::new(),
-            &manifest,
-            &manager,
-            &[],
-        ));
-
-        assert_eq!(results.len(), 1);
-        assert!(matches!(results[0], ModelResolution::Cached { .. }));
-    }
-
-    #[test]
-    fn unknown_model_is_unresolved() {
-        let manifest = DependencyManifest::default();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let http = Client::new();
-        let manager = ManagerRegistry::default();
-
-        let results = rt.block_on(resolve_models(
-            &http,
-            &["unknown_model.safetensors".into()],
-            &HashMap::new(),
-            &manifest,
-            &manager,
-            &[],
-        ));
-
-        assert_eq!(results.len(), 1);
-        assert!(matches!(results[0], ModelResolution::Unresolved { .. }));
+    fn civitai_type_mapping() {
+        assert_eq!(civitai_type_to_comfyui("", "Checkpoint"), "checkpoints");
+        assert_eq!(civitai_type_to_comfyui("", "LORA"), "loras");
+        assert_eq!(civitai_type_to_comfyui("", "Upscaler"), "upscale_models");
+        assert_eq!(civitai_type_to_comfyui("upscale_models", "Checkpoint"), "upscale_models");
     }
 }

@@ -688,13 +688,55 @@ into the `comfyui-custom-nodes` volume. Deferred to a future implementation.
 When a new ComfyUI instance joins the garden, sync required node packs from
 the skill registry — same pattern as model provisioning. Deferred.
 
-### Implementation tiers
+### 24. UX principles — "just works"
+
+#### Import box on the list page
+
+The skills list page has a text input at the top — always visible, always inviting:
+"Paste a URL, drop an image, or create from scratch." Not buried behind a button
+or a modal. One input, one action. The system detects the input type and handles it.
+
+#### Live form preview in the editor
+
+Split panel in edit mode:
+- **Left**: configuration (mappings, parameters, labels, workflows)
+- **Right**: live preview of the resulting skill form
+
+The preview renders the `SkillTryIt` component with the current draft mappings.
+Updates in real-time as the user toggles parameters, changes labels, adjusts
+options. Pure client-side — no backend calls. The user sees exactly what the
+end-user form will look like.
+
+#### Status visibility on the list page
+
+Each skill row shows:
+- Colored dot: green (available), amber (preparing + progress %), gray (draft),
+  red (failed)
+- Instance count
+- Preview thumbnail (if available)
+
+At a glance, the user sees the state of everything.
+
+#### Toast notifications for provisioning
+
+After save, models download in the background. When the skill becomes available,
+a toast notification appears: "Inpaint is now ready!" The user doesn't need to
+poll or refresh. Delivered via the existing SSE dashboard event stream.
+
+#### Soft delete with undo
+
+Delete click → skill enters "deleted" state → "Undo" toast shown for 60 seconds.
+After 60 seconds, directory is actually removed and GC runs. Prevents accidents.
+The skill disappears from the list immediately (optimistic UI) but can be
+recovered within the grace period.
+
+### Implementation tiers (updated)
 
 | Tier | Features | Priority |
 |------|----------|----------|
-| 1 | CRUD API, analyze endpoint (URL/PNG/JSON), draft flag, model resolution cascade, edit form, validation, save → publish, source tracking, preview image | Must have |
-| 2 | Skill cloning, export as zip, import from zip, ComfyUI Manager model-list.json cache, custom node detection (warning only) | Should have |
-| 3 | CivitAI name fuzzy search, HuggingFace search, custom node auto-install, re-import from source, node pack sync across instances | Nice to have |
+| 1 | CRUD API, analyze endpoint (URL/PNG/JSON), draft flag, model resolution cascade, validation, save → publish, source tracking, preview image | Must have |
+| 2 | Edit form with live preview, status dots on list, toast notifications, skill cloning, ComfyUI Manager model-list.json cache, custom node detection (warning) | Should have |
+| 3 | Export/import zip, soft delete with undo, CivitAI/HF fuzzy search, custom node auto-install, re-import from source, node pack sync | Nice to have |
 
 ---
 

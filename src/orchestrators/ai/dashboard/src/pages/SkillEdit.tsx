@@ -194,13 +194,11 @@ export function SkillEdit() {
                       ) : null
                     )
                     : m.placeholder ? (
-                      /* Model/checkpoint/lora fields are tied to resolved models — read-only */
+                      /* Model/checkpoint/lora — display value, not editable */
                       <div className="flex items-center gap-2 ml-1">
-                        <span className="text-[10px] text-gray-500 w-12">Value:</span>
-                        <span className="flex-1 text-[11px] text-gray-400 font-mono bg-[#0f1117] border border-[#2e303a] rounded px-2 py-0.5">
+                        <span className="text-[11px] text-gray-300 font-mono">
                           {m.default !== undefined && m.default !== null ? String(m.default) : "—"}
                         </span>
-                        <span className="text-[9px] text-gray-600">locked</span>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 ml-1">

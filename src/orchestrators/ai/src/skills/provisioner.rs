@@ -11,18 +11,24 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::domain::skill::{ModelRef, SkillDefinition, SkillInstanceView, SkillReadiness};
+use crate::domain::skill::{SkillDefinition, SkillInstanceView, SkillReadiness};
 use crate::skills::cache::{self, CachePaths, DependencyManifest, IngestResult};
+
+/// Optional event emitter for provisioning progress.
+pub type EventEmitter = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 /// Ensure all required models for a skill are in the local cache.
 ///
 /// Downloads missing models to the workspace, computes checksums, and
 /// ingests into the cache with dedup. Returns the list of canonical
 /// filenames in the cache (after alias resolution).
+///
+/// The optional `event_tx` emits SSE dashboard events with download progress.
 pub async fn ensure_cached(
     http: &reqwest::Client,
     skill: &SkillDefinition,
     cache_paths: &CachePaths,
+    event_tx: Option<EventEmitter>,
 ) -> Result<Vec<CachedModel>> {
     cache_paths.ensure_dirs().await?;
 
@@ -71,11 +77,28 @@ pub async fn ensure_cached(
             "downloading model dependency"
         );
 
+        // Build progress callback for SSE events
+        let progress_cb: Option<cache::ProgressFn> = event_tx.as_ref().map(|tx| {
+            let tx = tx.clone();
+            let skill_name = skill.name.clone();
+            let model_name = model.filename.clone();
+            Box::new(move |downloaded: u64, total: Option<u64>| {
+                let data = serde_json::json!({
+                    "skill": skill_name,
+                    "model": model_name,
+                    "downloaded_bytes": downloaded,
+                    "total_bytes": total,
+                });
+                tx("skill.provisioning", &data.to_string());
+            }) as cache::ProgressFn
+        });
+
         let (downloaded_path, checksum) = cache::stream_download(
             http,
             url,
             &ws_path,
             model.size_bytes,
+            progress_cb,
         )
         .await
         .with_context(|| format!("download model: {}", model.filename))?;

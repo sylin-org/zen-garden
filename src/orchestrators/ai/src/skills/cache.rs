@@ -127,15 +127,20 @@ impl CachePaths {
 
 // ── Streaming Download with SHA-256 ───────────────────────────
 
+/// Progress callback: (downloaded_bytes, total_bytes_if_known).
+pub type ProgressFn = Box<dyn Fn(u64, Option<u64>) + Send + Sync>;
+
 /// Download a file by streaming to disk, computing SHA-256 during the stream.
 /// Returns the file path and the hex-encoded checksum.
 ///
 /// If a partial file exists (interrupted download), attempts HTTP Range resume.
+/// The optional `on_progress` callback fires every 5 seconds with bytes downloaded.
 pub async fn stream_download(
     http: &reqwest::Client,
     url: &str,
     dest: &Path,
     total_bytes: Option<u64>,
+    on_progress: Option<ProgressFn>,
 ) -> Result<(PathBuf, String)> {
     use sha2::{Sha256, Digest};
     use futures_util::StreamExt;
@@ -207,6 +212,9 @@ pub async fn stream_download(
                     pct,
                     "download progress"
                 );
+            }
+            if let Some(ref cb) = on_progress {
+                cb(downloaded, total);
             }
             last_log = std::time::Instant::now();
         }
@@ -315,6 +323,91 @@ pub async fn checksum_file(path: &Path) -> Result<String> {
     }
 
     Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+// ── Garbage Collection ────────────────────────────────────────
+
+/// Remove cached models that are not referenced by any skill.
+///
+/// Scans all skill.json files to collect referenced model filenames,
+/// then removes cache entries (and files) with zero references.
+pub async fn garbage_collect(
+    skills_dir: &Path,
+    cache_paths: &CachePaths,
+) -> Result<usize> {
+    let mut manifest = DependencyManifest::load(&cache_paths.manifest_path).await;
+    if manifest.files.is_empty() {
+        return Ok(0);
+    }
+
+    // Collect all model filenames referenced by any skill
+    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let providers = match super::loader::read_subdirs(skills_dir).await {
+        Ok(dirs) => dirs,
+        Err(_) => return Ok(0),
+    };
+
+    for provider_dir in providers {
+        let monikers = match super::loader::read_subdirs(&provider_dir).await {
+            Ok(dirs) => dirs,
+            Err(_) => continue,
+        };
+
+        for moniker_dir in monikers {
+            let skill_path = moniker_dir.join("skill.json");
+            if let Ok(json_str) = fs::read_to_string(&skill_path).await {
+                if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    if let Some(models) = raw.get("required_models").and_then(|v| v.as_array()) {
+                        for model in models {
+                            if let Some(filename) = model.get("filename").and_then(|v| v.as_str()) {
+                                // Add the filename and its resolved form
+                                referenced.insert(filename.to_string());
+                                referenced.insert(manifest.resolve(filename));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove unreferenced files
+    let mut removed = 0;
+    let unreferenced: Vec<String> = manifest
+        .files
+        .keys()
+        .filter(|name| !referenced.contains(*name))
+        .cloned()
+        .collect();
+
+    for name in &unreferenced {
+        let path = cache_paths.provider_dir.join(name);
+        if let Err(e) = fs::remove_file(&path).await {
+            tracing::debug!(file = %name, error = %e, "failed to remove cached model (may be already gone)");
+        }
+        manifest.files.remove(name);
+        removed += 1;
+        tracing::info!(file = %name, "GC: removed unreferenced model from cache");
+    }
+
+    // Clean stale aliases (pointing to removed files)
+    let stale_aliases: Vec<String> = manifest
+        .aliases
+        .iter()
+        .filter(|(_, target)| !manifest.files.contains_key(*target))
+        .map(|(alias, _)| alias.clone())
+        .collect();
+
+    for alias in &stale_aliases {
+        manifest.aliases.remove(alias);
+    }
+
+    if removed > 0 || !stale_aliases.is_empty() {
+        manifest.save(&cache_paths.manifest_path).await?;
+    }
+
+    Ok(removed)
 }
 
 // ── Tests ─────────────────────────────────────────────────────

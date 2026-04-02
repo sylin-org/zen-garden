@@ -548,8 +548,18 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
         tokio::spawn(async move {
             let result = async {
                 // 1. Ensure all models cached locally (download if missing)
+                let event_tx: Option<crate::skills::provisioner::EventEmitter> = {
+                    let dashboard_tx = prov_state.dashboard_tx.clone();
+                    Some(std::sync::Arc::new(move |event_type: &str, data: &str| {
+                        let _ = dashboard_tx.send(crate::app_state::DashboardEvent {
+                            event_type: event_type.to_string(),
+                            data: data.to_string(),
+                        });
+                    }))
+                };
+
                 let cached_models = crate::skills::provisioner::ensure_cached(
-                    &prov_http, &prov_skill, &prov_cache_paths,
+                    &prov_http, &prov_skill, &prov_cache_paths, event_tx,
                 ).await?;
 
                 // 2. Push cached models to the instance
@@ -619,6 +629,55 @@ async fn topology_refresh_loop(
         tokio::select! {
             _ = tokio::time::sleep(TOPOLOGY_REFRESH_INTERVAL) => {}
             _ = shutdown.cancelled() => return,
+        }
+
+        // Hot-reload: rescan skills directory for new/removed skills
+        let skills_dir = std::path::PathBuf::from(&state.data_dir).join("skills");
+        let disk_skills = crate::skills::loader::load_skills(&skills_dir).await;
+
+        // Register new skills, update existing ones
+        let current_snapshot = state.skills.snapshot().clone();
+        let current_names: std::collections::HashSet<String> = current_snapshot
+            .skills
+            .iter()
+            .map(|sv| sv.definition.name.clone())
+            .collect();
+        let disk_names: std::collections::HashSet<String> = disk_skills
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+
+        // Register new or updated skills
+        for skill in disk_skills {
+            if !current_names.contains(&skill.name) {
+                tracing::info!(skill = %skill.name, "hot-reload: new skill detected");
+            }
+            state.skills.register(skill).await;
+        }
+
+        // Unregister removed skills + GC their cached models
+        let mut any_removed = false;
+        for name in &current_names {
+            if !disk_names.contains(name) {
+                tracing::info!(skill = %name, "hot-reload: skill removed from disk");
+                state.skills.unregister(name).await;
+                any_removed = true;
+            }
+        }
+
+        if any_removed {
+            // Run GC for each provider that might have orphaned models
+            for kind in crate::domain::types::OfferingKind::LOCAL_OFFERING_NAMES {
+                let cache_paths = crate::skills::cache::CachePaths::new(
+                    std::path::Path::new(&state.data_dir),
+                    kind,
+                );
+                if let Ok(removed) = crate::skills::cache::garbage_collect(&skills_dir, &cache_paths).await {
+                    if removed > 0 {
+                        tracing::info!(provider = kind, removed, "GC: cleaned unreferenced models");
+                    }
+                }
+            }
         }
 
         discover_from_topology(&stone_endpoint, &state).await;

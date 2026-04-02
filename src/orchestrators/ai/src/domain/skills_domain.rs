@@ -61,11 +61,18 @@ impl SkillsDomain {
 
     // ── Skill Registry (singletons) ────────────────────────────
 
-    /// Register a skill definition (singleton — only first registration counts).
+    /// Register or update a skill definition.
     pub async fn register(&self, skill: SkillDefinition) {
         let mut state = self.state.lock().await;
-        if state.registry.get(&skill.name).is_none() {
-            state.registry.register(skill);
+        state.registry.register(skill);
+        self.publish(&state);
+    }
+
+    /// Unregister a skill (removed from disk).
+    pub async fn unregister(&self, name: &str) {
+        let mut state = self.state.lock().await;
+        if state.registry.remove(name).is_some() {
+            state.readiness.remove(name);
             self.publish(&state);
         }
     }

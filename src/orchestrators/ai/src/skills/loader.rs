@@ -200,7 +200,7 @@ struct RawSkillDefinition {
 }
 
 /// Read immediate subdirectories of a path.
-async fn read_subdirs(dir: &Path) -> Result<Vec<PathBuf>> {
+pub async fn read_subdirs(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut entries = fs::read_dir(dir)
         .await
         .with_context(|| format!("read_dir: {}", dir.display()))?;

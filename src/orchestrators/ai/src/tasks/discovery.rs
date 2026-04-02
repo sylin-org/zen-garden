@@ -560,6 +560,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
 
                 let cached_models = crate::skills::provisioner::ensure_cached(
                     &prov_http, &prov_skill, &prov_cache_paths, event_tx,
+                    Some(&prov_state.secrets),
                 ).await?;
 
                 // 2. Push cached models to the instance

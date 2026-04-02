@@ -29,6 +29,7 @@ pub async fn ensure_cached(
     skill: &SkillDefinition,
     cache_paths: &CachePaths,
     event_tx: Option<EventEmitter>,
+    secrets: Option<&crate::infra::secrets::SecretsStore>,
 ) -> Result<Vec<CachedModel>> {
     cache_paths.ensure_dirs().await?;
 
@@ -57,9 +58,9 @@ pub async fn ensure_cached(
             continue;
         }
 
-        // Download URL is required
-        let url = model.url.as_deref().unwrap_or("");
-        if url.is_empty() {
+        // Download URL is required — append auth tokens for known services
+        let raw_url = model.url.as_deref().unwrap_or("");
+        if raw_url.is_empty() {
             tracing::warn!(
                 model = %model.filename,
                 skill = %skill.name,
@@ -68,12 +69,15 @@ pub async fn ensure_cached(
             continue;
         }
 
+        // Append auth token for known services
+        let url = inject_auth_token(raw_url, secrets).await;
+
         // Download to workspace
         let ws_path = workspace.join(&model.filename);
         tracing::info!(
             model = %model.filename,
             skill = %skill.name,
-            url = %url,
+            url = %raw_url,
             "downloading model dependency"
         );
 
@@ -95,7 +99,7 @@ pub async fn ensure_cached(
 
         let (downloaded_path, checksum) = cache::stream_download(
             http,
-            url,
+            &url,
             &ws_path,
             model.size_bytes,
             progress_cb,
@@ -276,4 +280,34 @@ pub struct CachedModel {
     pub model_type: String,
     /// Full path to the cached file.
     pub cache_path: std::path::PathBuf,
+}
+
+/// Append auth tokens to download URLs for known services.
+async fn inject_auth_token(
+    url: &str,
+    secrets: Option<&crate::infra::secrets::SecretsStore>,
+) -> String {
+    let secrets = match secrets {
+        Some(s) => s,
+        None => return url.to_string(),
+    };
+
+    // CivitAI: append ?token={key}
+    if url.contains("civitai.com") {
+        if let Some(token) = secrets.get(crate::infra::secrets::KEY_CIVITAI).await {
+            let separator = if url.contains('?') { "&" } else { "?" };
+            return format!("{url}{separator}token={token}");
+        }
+    }
+
+    // HuggingFace: add Authorization header is better, but for URL-based downloads,
+    // HF also supports ?token= for resolve URLs
+    if url.contains("huggingface.co") {
+        if let Some(token) = secrets.get(crate::infra::secrets::KEY_HUGGINGFACE).await {
+            let separator = if url.contains('?') { "&" } else { "?" };
+            return format!("{url}{separator}token={token}");
+        }
+    }
+
+    url.to_string()
 }

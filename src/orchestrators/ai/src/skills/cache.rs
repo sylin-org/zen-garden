@@ -205,8 +205,10 @@ pub async fn stream_download(
         if last_log.elapsed() > std::time::Duration::from_secs(5) {
             if let Some(t) = total {
                 let pct = (downloaded as f64 / t as f64 * 100.0) as u32;
+                // Strip query params from URL to avoid logging secrets
+                let safe_url = url.split('?').next().unwrap_or(url);
                 tracing::info!(
-                    url = %url,
+                    url = %safe_url,
                     downloaded,
                     total = t,
                     pct,

@@ -447,6 +447,281 @@ but required for imported skills (verified after download).
 
 ---
 
+## Addendum: Skill Management, Import, and CRUD (2026-04-02)
+
+### 14. Skill CRUD — provider-scoped REST API
+
+Skills are managed through a provider-scoped REST API. Each provider owns its
+skills — DDD boundaries are respected.
+
+```
+GET    /v1/services                                         → list services
+GET    /v1/services/comfyui                                 → adapter info
+POST   /v1/services/comfyui                                 → update adapter config
+
+GET    /v1/services/comfyui/skills                          → list skills
+GET    /v1/services/comfyui/skills/new                      → empty scaffold
+GET    /v1/services/comfyui/skills/analyze?t={url_or_input} → smart import (GET)
+POST   /v1/services/comfyui/skills/analyze                  → smart import (binary upload)
+GET    /v1/services/comfyui/skills/{moniker}                → skill data
+POST   /v1/services/comfyui/skills/{moniker}                → upsert skill
+DELETE /v1/services/comfyui/skills/{moniker}                 → delete skill
+
+GET    /v1/services/comfyui/skills/{moniker}/models         → list required models
+POST   /v1/services/comfyui/skills/{moniker}/models         → add model
+DELETE /v1/services/comfyui/skills/{moniker}/models/{file}   → remove model
+POST   /v1/services/comfyui/skills/{moniker}/models/resolve → resolve filename → URL
+
+GET    /v1/services/comfyui/skills/{moniker}/workflows      → list workflow files
+POST   /v1/services/comfyui/skills/{moniker}/workflows      → upload workflow
+DELETE /v1/services/comfyui/skills/{moniker}/workflows/{name} → remove workflow
+```
+
+The `/skills/new` endpoint returns an empty scaffold — same shape as a real skill,
+all fields blank. The dashboard renders it in edit mode.
+
+### 15. Smart import — analyze endpoint
+
+The analyze endpoint accepts any input the user can throw at it:
+
+| Input | Detection | Action |
+|-------|-----------|--------|
+| CivitAI image URL | Regex: `civitai.com/images/(\d+)` | Fetch API → download PNG → extract workflow |
+| Direct PNG URL | URL ending in `.png` | Download → extract tEXt/zTXt chunks |
+| PNG file upload | POST with binary | Read tEXt/zTXt chunks directly |
+| Raw workflow JSON | `JSON.parse`, check for `class_type` keys | Direct ingest |
+
+The analyze endpoint:
+1. Detects the input type
+2. Fetches/reads the content
+3. Extracts the ComfyUI API-format workflow from PNG metadata
+4. Feeds it to the workflow parser (inputs, models, outputs, Mermaid diagram)
+5. Runs the model resolution cascade (section 16)
+6. Creates a **draft skill** on disk with `"draft": true` in `skill.json`
+7. Returns the draft's moniker
+
+The dashboard redirects to the edit form for that moniker. The user reviews,
+adjusts, and saves. **Save clears the draft flag** — the skill becomes published,
+provisioning starts.
+
+Draft skills:
+- Live in the same `skills/{provider}/{moniker}/` directory (no separate structure)
+- Flagged with `"draft": true` in `skill.json`
+- Ignored by the skill loader (not registered, not provisioned)
+- Cleaned up by GC after a TTL (e.g., 30 minutes without save)
+
+### 16. Model resolution cascade
+
+When a workflow references a model by filename, the system resolves it to a
+download URL through a priority chain:
+
+| Priority | Source | Method | Reliability |
+|----------|--------|--------|-------------|
+| 1 | Local dependency cache | Exact filename match in manifest | 100% when cached |
+| 2 | ComfyUI Manager model-list.json | Exact filename match (527+ curated entries) | 100% when present |
+| 3 | CivitAI hash lookup | `/api/v1/model-versions/by-hash/{hash}` | 100% when hash available |
+| 4 | HuggingFace Hub | Search repo name, scan files for match | High for official models |
+| 5 | CivitAI name search | `/api/v1/models?query={stem}` | Fuzzy, needs confirmation |
+| 6 | User provides | Paste URL or CivitAI model link | Manual fallback |
+
+The ComfyUI Manager `model-list.json` is fetched and cached on startup. It maps
+exact filenames to download URLs for essential models (CLIP, ControlNet, VAE,
+upscalers, base checkpoints).
+
+Each model in the edit form shows a resolution status:
+- **Green**: resolved (URL known, or already cached)
+- **Yellow**: fuzzy match found, needs user confirmation
+- **Red**: unresolved, user must provide URL
+
+A skill can be saved with unresolved models — it publishes but won't provision
+until all URLs are provided.
+
+### 17. Dashboard pages
+
+```
+/infra/services/comfyui/skills                         → List view
+/infra/services/comfyui/skills/new                     → Create (empty form)
+/infra/services/comfyui/skills/{moniker}               → View (read-only)
+/infra/services/comfyui/skills/{moniker}/edit          → Edit (form)
+```
+
+**List view**: all skills for this provider. Name, status (draft/published),
+instance count, model resolution status. "New Skill" button and smart import input.
+
+**Create/Edit view**: the skill form.
+- Skill metadata: name, display name, description, capability, VRAM
+- Smart input box (URL/file/JSON) — triggers analyze, populates the form
+- Workflow panel: Mermaid diagram, workflow file list, upload/duplicate/delete
+- Parameters panel: detected parameters as toggleable rows. Each row shows:
+  field name, label, type (options/range/auto/text), node target, default value.
+  User toggles which parameters to expose in the skill form.
+- Workflow selector: if multiple workflows, user creates a `field: "workflow"`
+  mapping with named options (like upscale Zoom)
+- Models panel: required models with resolution status (green/yellow/red),
+  resolve button, manual URL input
+- Content slots: detected inputs (image dropzones, text areas) with role names
+- Preview image (from CivitAI import or user upload)
+- Save button → validates, clears draft flag, publishes
+
+**View mode**: read-only skill details.
+- Diagram, parameters, models, instance readiness
+- Clone button → creates a draft copy, redirects to edit
+- Delete button → removes skill directory, triggers GC
+- Export button → downloads zip of skill.json + workflows + preview
+
+### 18. Validation on save
+
+Before clearing the draft flag, the backend validates:
+
+1. All workflow files referenced by `default_workflow` and workflow option values
+   exist in the skill directory
+2. All content mappings reference roles that exist in `content_slots`
+3. All param mappings with `node` + `input` reference valid node IDs in the
+   corresponding workflow templates
+4. `name`, `display_name`, `capability`, `provider_kind` are non-empty
+5. No moniker collision with an existing published skill (unless overwriting)
+
+Validation failures return specific errors:
+```json
+{
+  "errors": [
+    { "field": "workflows", "message": "Workflow 'upscale_8x' referenced but file not found" },
+    { "field": "mappings[2]", "message": "Node '99' not found in workflow 'generate'" }
+  ]
+}
+```
+
+The dashboard displays these inline on the form. The user fixes and re-saves.
+
+### 19. Source tracking
+
+Imported skills record their origin:
+
+```json
+{
+  "source": {
+    "type": "civitai",
+    "image_id": 125682754,
+    "url": "https://civitai.com/images/125682754",
+    "imported_at": "2026-04-02T01:38:00Z"
+  }
+}
+```
+
+This enables:
+- **Dedup**: don't import the same image twice (check existing skills for matching source)
+- **Provenance**: "where did this skill come from?" visible in the dashboard
+- **Re-import**: future feature — check if the source has been updated
+
+### 20. Skill cloning
+
+Available in View mode. "Clone" button creates a draft copy:
+
+1. Copies `skill.json` + all workflow files to a new moniker (e.g., `{original}-copy`)
+2. Sets `"draft": true`
+3. Redirects to edit mode
+
+The user renames, adjusts, saves. The clone is independent — editing it doesn't
+affect the original.
+
+### 21. Preview image
+
+When importing from CivitAI, the original generated image is stored as
+`preview.png` in the skill directory. Displayed in the edit form and the view
+page. Gives the user confidence that the workflow produces good results.
+
+For manually created skills, the user can upload a preview image.
+
+### 22. Skill export
+
+"Export" button in View mode packages the skill directory into a downloadable
+`.zip`:
+
+```
+{moniker}.zip
+  skill.json
+  {workflow-name}.json  (1+)
+  preview.png           (if present)
+```
+
+Another user imports this zip via the analyze endpoint (POST with file upload).
+The system detects it as a zip, extracts, creates a draft skill.
+
+### 23. Custom node detection
+
+#### Tier 1 (import-time warning)
+
+During analyze, the parser checks each `class_type` in the workflow against
+ComfyUI's `/object_info` endpoint (which lists all installed nodes). Unknown
+class types are flagged:
+
+```json
+{
+  "warnings": [
+    { "type": "missing_node", "class_type": "FaceDetailer",
+      "suggested_pack": "ComfyUI-Impact-Pack" }
+  ]
+}
+```
+
+The mapping from class_type to node pack comes from ComfyUI Manager's
+`extension-node-map.json` (maps node class names to GitHub repos).
+
+#### Tier 2 (future — automated installation)
+
+`skill.json` declares required node packs:
+
+```json
+{
+  "required_nodes": [
+    { "name": "ComfyUI-Impact-Pack",
+      "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack" }
+  ]
+}
+```
+
+The ComfyUI adapter installs them via ComfyUI Manager's API or direct git clone
+into the `comfyui-custom-nodes` volume. Deferred to a future implementation.
+
+#### Tier 3 (future — node pack provisioning across instances)
+
+When a new ComfyUI instance joins the garden, sync required node packs from
+the skill registry — same pattern as model provisioning. Deferred.
+
+### Implementation tiers
+
+| Tier | Features | Priority |
+|------|----------|----------|
+| 1 | CRUD API, analyze endpoint (URL/PNG/JSON), draft flag, model resolution cascade, edit form, validation, save → publish, source tracking, preview image | Must have |
+| 2 | Skill cloning, export as zip, import from zip, ComfyUI Manager model-list.json cache, custom node detection (warning only) | Should have |
+| 3 | CivitAI name fuzzy search, HuggingFace search, custom node auto-install, re-import from source, node pack sync across instances | Nice to have |
+
+---
+
+## File Layout Summary (updated)
+
+```
+{data_dir}/
+  skills/
+    {provider}/
+      {skill-moniker}/
+        skill.json                    — skill definition (draft: true if unpublished)
+        {workflow-name}.json          — workflow templates (1+)
+        preview.png                   — optional preview image
+
+  cache/
+    dependencies/
+      {provider}/
+        manifest.json                 — checksum + alias registry
+        {model-files}                 — cached model files
+        model-list.json               — cached ComfyUI Manager model registry
+      workspace/
+        {skill}/
+          {downloading-files}         — ephemeral workspace, cleaned after use
+```
+
+---
+
 ## Consequences
 
 - Adding a new skill is dropping JSON files in a directory — no Rust code changes.
@@ -465,3 +740,11 @@ but required for imported skills (verified after download).
 - The manifest is human-readable — an operator can inspect and manage the cache.
 - Skill definitions carry download URLs — the Rust binary has no hardcoded URLs.
 - Custom node dependencies are an acknowledged extension point for future work.
+- Smart import handles any input (URL, PNG, JSON, zip) — automagic workflow extraction.
+- Draft flag keeps unpublished skills invisible to the execution engine.
+- Validation on save catches broken skills before they go live.
+- Source tracking enables dedup and provenance for imported skills.
+- Cloning enables skill variants without manual recreation.
+- Export enables skill sharing between users and gardens.
+- The CRUD API is provider-scoped — DDD boundaries respected.
+- One code path for create, import, and edit — the draft is just a skill in edit mode.

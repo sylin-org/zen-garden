@@ -275,7 +275,131 @@ The dashboard shows:
 - **Preparing** (amber): downloading models or pushing to instances
 - **Failed** (red): dependency error, with details
 
-### 8. Model download metadata in skill.json
+### 8. Hot-reload — no restart required
+
+The orchestrator rescans `{data_dir}/skills/` on each discovery cycle (same interval
+as instance discovery, typically 30 seconds). New skill directories are loaded,
+deleted directories are unregistered. Changes to `skill.json` are picked up
+automatically.
+
+```
+Each discovery cycle:
+  scan {data_dir}/skills/
+  for each skill.json found:
+    if not registered: load + register + start provisioning
+    if registered and skill.json modified: reload definition
+  for each registered skill not on disk:
+    unregister
+```
+
+No restart needed to add, update, or remove skills. Drop files → next cycle picks
+them up. Same mechanism Moss uses for manifest hot-reload.
+
+### 9. Download progress and resume
+
+#### Progress reporting
+
+Provisioning progress is reported through the dashboard SSE event stream. The skill
+status carries per-model progress:
+
+```json
+{
+  "skill": "image.inpaint",
+  "status": "preparing",
+  "progress": {
+    "model": "sd-v1-5-inpainting.ckpt",
+    "downloaded_bytes": 2147483648,
+    "total_bytes": 4265380512
+  }
+}
+```
+
+The dashboard shows a progress bar for each model being downloaded. Multiple models
+provision concurrently — each reports independently.
+
+#### Download resume
+
+If a download is interrupted (crash, network failure), the workspace file persists.
+On the next provisioning attempt:
+
+```
+1. Check workspace for existing partial file
+2. If exists: stat its size, send HTTP Range: bytes={size}-
+3. Server supports Range: append to existing file, continue
+4. Server doesn't support Range: delete partial, restart
+```
+
+This avoids re-downloading 3.5GB of a 4GB file after a transient failure.
+
+### 10. Garbage collection
+
+When skills are deleted, their model dependencies may become orphaned in the cache.
+A periodic sweep removes unreferenced models:
+
+```
+GC sweep (runs on startup and periodically):
+  1. Collect all model filenames referenced by any skill.json
+  2. Include alias targets (resolve through aliases map)
+  3. For each file in cache/{provider}/:
+     if not referenced by any skill: delete, remove from manifest
+  4. Clean stale alias entries
+```
+
+The sweep is conservative — it only removes files with zero references. Models
+shared across multiple skills are safe as long as any referencing skill exists.
+
+The sweep runs:
+- On startup (clean up after unclean shutdown)
+- After a skill is unregistered (immediate cleanup opportunity)
+- Periodically (catch manual file deletions)
+
+### 11. License display
+
+Each model in `skill.json` carries a `license` field. The dashboard skill panel
+displays license information for all models used by the skill. The user is
+responsible for proper use — no blocking gates or acceptance dialogs.
+
+The dashboard shows:
+- License name next to each model in the skill detail panel
+- A license summary icon on the skill card (e.g., commercial-friendly vs restrictive)
+- Full license text available on hover or click
+
+License types for quick visual scanning:
+
+| Icon | Meaning | Examples |
+|------|---------|---------|
+| Green | Permissive / commercial OK | MIT, BSD, Apache-2.0 |
+| Yellow | Open with conditions | CreativeML Open RAIL-M |
+| Red | Restrictive / non-commercial | CC-BY-NC, research-only |
+
+### 12. Future extensions (acknowledged, deferred)
+
+#### Dependency integrity verification
+
+On startup, verify cached model files against manifest checksums. Full SHA-256
+verification is expensive (4GB files), so the initial implementation checks file
+existence and size only. Full checksum verification runs as a background task or
+on first use of a model.
+
+#### Custom node dependencies
+
+ComfyUI workflows may require custom node packs (Impact Pack, ControlNet Aux, etc.).
+These are Python packages installed inside the container — a different provisioning
+mechanism than model files. `skill.json` can declare:
+
+```json
+{
+  "required_nodes": [
+    { "name": "ComfyUI-Impact-Pack", "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack" }
+  ]
+}
+```
+
+The ComfyUI adapter would handle installation via the ComfyUI Manager API or
+direct git clone into the custom_nodes volume. This is an extension point — the
+`skill.json` schema supports it, but the provisioning logic is deferred.
+
+### 13. Model download metadata in skill.json
 
 Model download URLs live in `skill.json`, not in Rust code. Each required model
 entry carries everything the provider needs:
@@ -326,12 +450,18 @@ but required for imported skills (verified after download).
 ## Consequences
 
 - Adding a new skill is dropping JSON files in a directory — no Rust code changes.
+- Hot-reload picks up new skills within one discovery cycle — no restart needed.
 - Built-in skills seed the repository on first run; updates are version-gated.
 - Imported skills (from CivitAI PNGs, community workflows) use the same structure.
 - Model deduplication prevents multi-GB waste when skills share models.
 - Content-addressed caching catches renamed models and genuine conflicts.
 - Each provider owns its provisioning strategy — the orchestrator only coordinates.
 - Streaming throughout — no in-memory buffering of multi-GB model files.
-- The workspace pattern ensures no partial downloads persist across crashes.
+- Download resume avoids re-downloading gigabytes after transient failures.
+- Progress reporting gives users visibility into multi-GB model downloads.
+- The workspace pattern isolates in-flight downloads from the stable cache.
+- Garbage collection reclaims disk when skills are removed.
+- License information is visible on every skill — the user is responsible for proper use.
 - The manifest is human-readable — an operator can inspect and manage the cache.
 - Skill definitions carry download URLs — the Rust binary has no hardcoded URLs.
+- Custom node dependencies are an acknowledged extension point for future work.

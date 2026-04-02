@@ -240,7 +240,9 @@ async fn main() -> Result<()> {
         // Embedded dashboard SPA + static assets
         .route("/", axum::routing::get(api::static_files::index))
         .fallback(api::static_files::fallback)
-        .layer(cors.clone());
+        .layer(cors.clone())
+        // No body size limit — images can be multi-megabyte
+        .layer(axum::extract::DefaultBodyLimit::disable());
 
     let dashboard_addr = std::net::SocketAddr::from(([0, 0, 0, 0], cli.dashboard_port));
     let dashboard_listener = tokio::net::TcpListener::bind(dashboard_addr).await?;

@@ -8,15 +8,15 @@
     "inputs": { "image": "PLACEHOLDER_IMAGE" }
   },
   "3": {
-    "class_type": "LoadImage",
-    "inputs": { "image": "PLACEHOLDER_MASK" }
+    "class_type": "LoadImageMask",
+    "inputs": { "image": "PLACEHOLDER_MASK", "channel": "red" }
   },
   "4": {
     "class_type": "VAEEncodeForInpaint",
     "inputs": {
       "pixels": ["2", 0],
       "vae": ["1", 2],
-      "mask": ["3", 1],
+      "mask": ["3", 0],
       "grow_mask_by": 6
     }
   },

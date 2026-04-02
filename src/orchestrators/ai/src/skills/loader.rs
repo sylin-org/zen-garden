@@ -85,6 +85,11 @@ async fn load_single_skill(skill_path: &Path, skill_dir: &Path) -> Result<SkillD
     let raw: RawSkillDefinition = serde_json::from_str(&json_str)
         .with_context(|| format!("parse {}", skill_path.display()))?;
 
+    // Skip draft skills — they're managed by the CRUD API, not the loader
+    if raw.draft {
+        anyhow::bail!("draft skill (not published)");
+    }
+
     // Resolve workflow templates from the same directory
     let mut workflows = HashMap::new();
 
@@ -186,6 +191,9 @@ async fn load_single_skill(skill_path: &Path, skill_dir: &Path) -> Result<SkillD
 struct RawSkillDefinition {
     #[allow(dead_code)]
     version: u32,
+    /// Draft skills are ignored by the loader.
+    #[serde(default)]
+    draft: bool,
     name: String,
     display_name: String,
     capability: String,

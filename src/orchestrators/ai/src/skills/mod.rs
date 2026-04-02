@@ -6,6 +6,7 @@
 //! - `prep`: Stream model downloads and push to ComfyUI instances
 
 pub mod cache;
+pub mod import;
 pub mod loader;
 pub mod parser;
 pub mod provisioner;

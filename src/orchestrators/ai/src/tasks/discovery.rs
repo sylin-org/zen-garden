@@ -497,21 +497,17 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
             .unwrap_or(0)
     };
 
-    let http = reqwest::Client::new();
+    // Shared HTTP client for readiness checks (one per profile cycle, not per skill)
+    let http = &state.http;
 
     for skill_view in provider_skills {
         let skill = &skill_view.definition;
         let skill_name = skill.name.clone();
 
-        // Skip if already provisioning
-        if state.skills.is_provisioning(&skill_name, endpoint).await {
-            continue;
-        }
-
         // Check if all models are already on the instance
         let manifest = crate::skills::cache::DependencyManifest::load(&cache_paths.manifest_path).await;
         let readiness = crate::skills::provisioner::check_instance_readiness(
-            &http, skill, &manifest, &moss_endpoint, &offering_fqn, "comfyui-models",
+            http, skill, &manifest, &moss_endpoint, &offering_fqn, "comfyui-models",
         ).await;
 
         if readiness.ready {
@@ -528,78 +524,23 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
             continue;
         }
 
-        // Not ready — spawn provisioning as background task
-        state.skills.mark_provisioning(&skill_name, endpoint).await;
+        // Not ready — submit to provisioning queue (ORCH-0024).
+        // The queue handles dedup, backoff, and bounded concurrency.
+        let target = crate::domain::provisioning::ProvisioningTarget {
+            skill: skill_name.clone(),
+            endpoint: endpoint.to_string(),
+        };
 
-        let prov_state = state.clone();
-        let prov_endpoint = endpoint.to_string();
-        let prov_moss = moss_endpoint.clone();
-        let prov_fqn = offering_fqn.clone();
-        let prov_cache_paths = crate::skills::cache::CachePaths::new(
-            std::path::Path::new(&prov_state.data_dir),
-            kind.as_str(),
-        );
-        let prov_skill = skill.clone();
-        let prov_stone = stone_name.clone();
-        let prov_http = http.clone();
+        let submitted = state.provisioning.submit(
+            target,
+            crate::domain::provisioning::Priority::Discovery,
+            stone_name.clone(),
+            kind.as_str().to_string(),
+        ).await;
 
-        tokio::spawn(async move {
-            let result = async {
-                // 1. Ensure all models cached locally (download if missing)
-                let event_tx: Option<crate::skills::provisioner::EventEmitter> = {
-                    let dashboard_tx = prov_state.dashboard_tx.clone();
-                    Some(std::sync::Arc::new(move |event_type: &str, data: &str| {
-                        let _ = dashboard_tx.send(crate::app_state::DashboardEvent {
-                            event_type: event_type.to_string(),
-                            data: data.to_string(),
-                        });
-                    }))
-                };
-
-                let cached_models = crate::skills::provisioner::ensure_cached(
-                    &prov_http, &prov_skill, &prov_cache_paths, event_tx,
-                    Some(&prov_state.secrets),
-                ).await?;
-
-                // 2. Push cached models to the instance
-                crate::skills::provisioner::push_to_instance(
-                    &prov_http, &cached_models, &prov_moss, &prov_fqn, "comfyui-models",
-                ).await?;
-
-                Ok::<(), anyhow::Error>(())
-            }.await;
-
-            prov_state.skills.clear_provisioning(&skill_name, &prov_endpoint).await;
-
-            match result {
-                Ok(()) => {
-                    prov_state.skills.set_readiness(
-                        &skill_name, &prov_endpoint,
-                        crate::domain::skill::SkillInstanceView {
-                            stone_name: prov_stone,
-                            endpoint: prov_endpoint.clone(),
-                            ready: true,
-                            reason: "provisioned".into(),
-                            vram_mb: instance_vram_mb,
-                        },
-                    ).await;
-                    tracing::info!(skill = %skill_name, endpoint = %prov_endpoint, "skill provisioned");
-                }
-                Err(e) => {
-                    prov_state.skills.set_readiness(
-                        &skill_name, &prov_endpoint,
-                        crate::domain::skill::SkillInstanceView {
-                            stone_name: prov_stone,
-                            endpoint: prov_endpoint.clone(),
-                            ready: false,
-                            reason: format!("provisioning failed: {e}"),
-                            vram_mb: instance_vram_mb,
-                        },
-                    ).await;
-                    tracing::warn!(skill = %skill_name, endpoint = %prov_endpoint, error = %e, "skill provisioning failed");
-                }
-            }
-        });
+        if submitted {
+            tracing::info!(skill = %skill_name, endpoint = %endpoint, "queued skill provisioning");
+        }
     }
 }
 

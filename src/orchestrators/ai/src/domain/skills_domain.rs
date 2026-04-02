@@ -3,7 +3,7 @@
 //! Skills are static singletons. Availability is computed from instance
 //! readiness, not stored on the definition.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex};
 
@@ -37,8 +37,6 @@ struct SkillsState {
     registry: SkillRegistry,
     /// Per (skill_name, endpoint) readiness.
     readiness: HashMap<String, HashMap<String, SkillInstanceView>>,
-    /// Skills currently being provisioned — (skill_name, endpoint) dedup set.
-    provisioning: HashSet<(String, String)>,
     workflow_jobs: HashMap<String, WorkflowJob>,
 }
 
@@ -48,7 +46,6 @@ impl SkillsDomain {
             state: Mutex::new(SkillsState {
                 registry: SkillRegistry::new(),
                 readiness: HashMap::new(),
-                provisioning: HashSet::new(),
                 workflow_jobs: HashMap::new(),
             }),
             tx,
@@ -99,30 +96,6 @@ impl SkillsDomain {
             .or_default()
             .insert(endpoint.to_string(), view);
         self.publish(&state);
-    }
-
-    /// Check if a skill+endpoint is currently being provisioned.
-    pub async fn is_provisioning(&self, skill_name: &str, endpoint: &str) -> bool {
-        let state = self.state.lock().await;
-        state
-            .provisioning
-            .contains(&(skill_name.to_string(), endpoint.to_string()))
-    }
-
-    /// Mark a skill+endpoint as provisioning (prevents duplicate spawns).
-    pub async fn mark_provisioning(&self, skill_name: &str, endpoint: &str) {
-        let mut state = self.state.lock().await;
-        state
-            .provisioning
-            .insert((skill_name.to_string(), endpoint.to_string()));
-    }
-
-    /// Clear provisioning mark (on completion or failure).
-    pub async fn clear_provisioning(&self, skill_name: &str, endpoint: &str) {
-        let mut state = self.state.lock().await;
-        state
-            .provisioning
-            .remove(&(skill_name.to_string(), endpoint.to_string()));
     }
 
     // ── Workflow Jobs ──────────────────────────────────────────

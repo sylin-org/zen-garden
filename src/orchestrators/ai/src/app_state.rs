@@ -9,6 +9,7 @@ use crate::domain::fitness::BenchmarkRun;
 use crate::domain::intelligence::IntelligenceDomain;
 use crate::domain::observability::ObservabilityDomain;
 use crate::domain::registry::RegistryDomain;
+use crate::domain::provisioning_domain::ProvisioningDomain;
 use crate::domain::skills_domain::SkillsDomain;
 use crate::domain::types::*;
 use crate::offerings::cloud::CloudProviderStore;
@@ -39,6 +40,11 @@ pub struct AppState {
     pub intelligence: Arc<IntelligenceDomain>,
     pub observability: Arc<ObservabilityDomain>,
     pub skills: Arc<SkillsDomain>,
+    pub provisioning: Arc<ProvisioningDomain>,
+
+    // ── Shared infrastructure ──
+    /// Shared HTTP client for provisioning and readiness checks (code-standards §19).
+    pub http: reqwest::Client,
 
     // ── Immutable (set at startup) ──
     pub providers: Arc<ProviderRegistry>,
@@ -100,6 +106,16 @@ impl AppState {
         let intelligence = Arc::new(IntelligenceDomain::new(intel_tx.clone()));
         let observability = Arc::new(ObservabilityDomain::new(obs_tx, metrics_enabled));
         let skills = Arc::new(SkillsDomain::new(skills_tx));
+        let (provisioning, _prov_rx) = ProvisioningDomain::new(
+            crate::domain::provisioning_domain::DEFAULT_CONCURRENCY,
+        );
+        let provisioning = Arc::new(provisioning);
+
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3600))
+            .pool_max_idle_per_host(4)
+            .build()
+            .expect("shared HTTP client");
 
         Self {
             registry,
@@ -107,6 +123,8 @@ impl AppState {
             intelligence,
             observability,
             skills,
+            provisioning,
+            http,
             providers: Arc::new(providers),
             ollama_client,
             koi_endpoint,

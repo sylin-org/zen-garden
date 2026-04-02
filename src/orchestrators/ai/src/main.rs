@@ -164,6 +164,11 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
+    let _provisioning_handle = tokio::spawn(zen_garden_ai_orchestrator::skills::queue::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
+
     let metrics_flush_handle = tokio::spawn(tasks::metrics_flush::run(
         state.clone(),
         shutdown.clone(),

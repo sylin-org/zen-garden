@@ -10,6 +10,7 @@ pub mod import;
 pub mod loader;
 pub mod parser;
 pub mod provisioner;
+pub mod queue;
 pub mod builtin;
 pub mod prep;
 

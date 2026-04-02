@@ -18,6 +18,8 @@ pub mod directory_domain;
 pub mod intelligence;
 pub mod observability;
 pub mod skills_domain;
+pub mod provisioning;
+pub mod provisioning_domain;
 pub mod routing;
 pub mod skill;
 pub mod tiering;

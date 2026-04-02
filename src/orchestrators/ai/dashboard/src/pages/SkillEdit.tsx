@@ -178,10 +178,21 @@ export function SkillEdit() {
                     />
                     <span className="text-[10px] text-gray-600 font-mono">{m.field}</span>
                     <span className="text-[10px] text-gray-500 ml-auto">{m.param_type}</span>
+                    {m.param_type === "range" && "min" in m && (
+                      <span className="text-[10px] text-gray-600">[{String((m as Record<string,unknown>).min)}–{String((m as Record<string,unknown>).max)}{(m as Record<string,unknown>).step ? ` step ${String((m as Record<string,unknown>).step)}` : ""}]</span>
+                    )}
                     {m.node && <span className="text-[10px] text-gray-600">node:{m.node}</span>}
                   </div>
                   {/* Default value editor — locked for model selectors, editable for others */}
-                  {m.param_type === "auto" ? null
+                  {m.param_type === "auto" ? (
+                      m.default !== undefined && m.default !== null ? (
+                        <div className="flex items-center gap-2 ml-1">
+                          <span className="text-[10px] text-gray-500 w-12">Seed:</span>
+                          <span className="text-[11px] text-gray-400 font-mono">{String(m.default)}</span>
+                          <span className="text-[9px] text-gray-600">(original — auto-generated on each run)</span>
+                        </div>
+                      ) : null
+                    )
                     : m.placeholder ? (
                       /* Model/checkpoint/lora fields are tied to resolved models — read-only */
                       <div className="flex items-center gap-2 ml-1">

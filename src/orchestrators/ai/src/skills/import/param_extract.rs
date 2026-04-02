@@ -258,7 +258,8 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
                     default: cfg.map(|v| serde_json::json!(v)),
                 });
 
-                // Seed
+                // Seed — preserve original for reproducibility
+                let seed = get_input_number(&workflow, node_id, "seed");
                 mappings.push(SkillMapping::Param {
                     field: "seed".into(),
                     label: "Seed".into(),
@@ -268,7 +269,7 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
                     param_type: crate::domain::skill::ParamType::Auto {
                         kind: crate::domain::skill::AutoKind::RandomInt,
                     },
-                    default: None,
+                    default: seed.map(|v| serde_json::json!(v)),
                 });
 
                 // Denoise (present in img2img/inpaint workflows)

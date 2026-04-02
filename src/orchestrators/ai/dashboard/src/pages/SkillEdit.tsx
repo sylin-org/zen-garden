@@ -180,21 +180,31 @@ export function SkillEdit() {
                     <span className="text-[10px] text-gray-500 ml-auto">{m.param_type}</span>
                     {m.node && <span className="text-[10px] text-gray-600">node:{m.node}</span>}
                   </div>
-                  {/* Default value editor */}
-                  {m.param_type !== "auto" && (
-                    <div className="flex items-center gap-2 ml-1">
-                      <span className="text-[10px] text-gray-500 w-12">Default:</span>
-                      <input
-                        type={m.param_type === "range" ? "number" : "text"}
-                        value={m.default !== undefined && m.default !== null ? String(m.default) : ""}
-                        onChange={(e) => {
-                          const val = m.param_type === "range" ? parseFloat(e.target.value) || 0 : e.target.value;
-                          updateMapping(idx, { default: val });
-                        }}
-                        className="flex-1 bg-[#0f1117] border border-[#2e303a] rounded px-2 py-0.5 text-[11px] text-gray-300 focus:outline-none focus:border-blue-500/50"
-                      />
-                    </div>
-                  )}
+                  {/* Default value editor — locked for model selectors, editable for others */}
+                  {m.param_type === "auto" ? null
+                    : m.placeholder ? (
+                      /* Model/checkpoint/lora fields are tied to resolved models — read-only */
+                      <div className="flex items-center gap-2 ml-1">
+                        <span className="text-[10px] text-gray-500 w-12">Value:</span>
+                        <span className="flex-1 text-[11px] text-gray-400 font-mono bg-[#0f1117] border border-[#2e303a] rounded px-2 py-0.5">
+                          {m.default !== undefined && m.default !== null ? String(m.default) : "—"}
+                        </span>
+                        <span className="text-[9px] text-gray-600">locked</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 ml-1">
+                        <span className="text-[10px] text-gray-500 w-12">Default:</span>
+                        <input
+                          type={m.param_type === "range" ? "number" : "text"}
+                          value={m.default !== undefined && m.default !== null ? String(m.default) : ""}
+                          onChange={(e) => {
+                            const val = m.param_type === "range" ? parseFloat(e.target.value) || 0 : e.target.value;
+                            updateMapping(idx, { default: val });
+                          }}
+                          className="flex-1 bg-[#0f1117] border border-[#2e303a] rounded px-2 py-0.5 text-[11px] text-gray-300 focus:outline-none focus:border-blue-500/50"
+                        />
+                      </div>
+                    )}
                 </div>
               );
             })}

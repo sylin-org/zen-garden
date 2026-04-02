@@ -221,7 +221,7 @@ export interface SkillFormResponse {
 
 export type SkillMapping =
   | { type: "content"; role: string; content_type: "image" | "text"; placeholder: string }
-  | { type: "param"; field: string; node: string; input: string; label: string; default?: unknown } & ParamTypeDef;
+  | { type: "param"; field: string; node: string; input: string; label: string; default?: unknown; placeholder?: string } & ParamTypeDef;
 
 export type ParamTypeDef =
   | { param_type: "options"; options: ParamOption[] }

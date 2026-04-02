@@ -221,7 +221,7 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
                         content_type: "text".into(),
                         required: true,
                         overlay: None,
-                        default: None,
+                        default: current_text, // preserve original prompt as default
                     });
                 }
 

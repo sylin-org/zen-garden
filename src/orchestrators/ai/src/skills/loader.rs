@@ -51,27 +51,24 @@ pub async fn load_skills(skills_dir: &Path) -> Vec<SkillDefinition> {
 
             match load_single_skill(&skill_path, &moniker_dir).await {
                 Ok(skill) => {
-                    tracing::info!(
-                        provider = %provider_name,
-                        skill = %skill.name,
-                        workflows = skill.workflows.len(),
-                        "loaded skill from disk"
-                    );
                     skills.push(skill);
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        provider = %provider_name,
-                        moniker = %moniker_name,
-                        error = %e,
-                        "skipping skill — failed to load"
-                    );
+                    // Only warn for non-draft skills (drafts are expected to fail)
+                    if !e.to_string().contains("draft") {
+                        tracing::warn!(
+                            provider = %provider_name,
+                            moniker = %moniker_name,
+                            error = %e,
+                            "skipping skill — failed to load"
+                        );
+                    }
                 }
             }
         }
     }
 
-    tracing::info!(count = skills.len(), "skill repository loaded");
+    tracing::debug!(count = skills.len(), "skill repository scanned");
     skills
 }
 

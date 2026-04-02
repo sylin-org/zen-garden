@@ -45,7 +45,7 @@ struct Cli {
     data_dir: String,
 
     /// Log level.
-    #[arg(long, env = "RUST_LOG", default_value = "info")]
+    #[arg(long, env = "RUST_LOG", default_value = "info,orchestrator_common::topology=warn")]
     log_level: String,
 }
 

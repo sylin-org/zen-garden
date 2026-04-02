@@ -183,7 +183,7 @@ async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
                     Some(k) => k,
                     None => continue,
                 };
-                tracing::info!(
+                tracing::debug!(
                     count = stones.len(),
                     offering = %offering_name,
                     "topology: discovered AI instances"
@@ -202,12 +202,10 @@ async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
                         topo_stone.ip, service_port
                     );
 
-                    tracing::info!(
+                    tracing::debug!(
                         stone = %topo_stone.stone_name,
                         kind = %kind,
                         endpoint = %endpoint,
-                        vram_mb = vram_total / 1_048_576,
-                        gpu = ?gpu_name,
                         "topology: registering AI instance"
                     );
 
@@ -445,7 +443,7 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                     .await;
             }
 
-            tracing::info!(
+            tracing::debug!(
                 endpoint = %endpoint,
                 kind = %kind,
                 models = count,
@@ -648,12 +646,12 @@ async fn topology_refresh_loop(
             .map(|s| s.name.clone())
             .collect();
 
-        // Register new or updated skills
+        // Only register NEW skills — don't re-register existing ones
         for skill in disk_skills {
             if !current_names.contains(&skill.name) {
                 tracing::info!(skill = %skill.name, "hot-reload: new skill detected");
+                state.skills.register(skill).await;
             }
-            state.skills.register(skill).await;
         }
 
         // Unregister removed skills + GC their cached models

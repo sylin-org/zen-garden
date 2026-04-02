@@ -11,6 +11,9 @@ import { CloudDetail } from "./pages/CloudDetail";
 import { CloudEdit } from "./pages/CloudEdit";
 import { Stones } from "./pages/Stones";
 import { Settings } from "./pages/Settings";
+import { SkillsList } from "./pages/SkillsList";
+import { SkillEdit } from "./pages/SkillEdit";
+import { SkillView } from "./pages/SkillView";
 
 function App() {
   const { status, loading, error } = useStatus();
@@ -56,6 +59,18 @@ function App() {
             <Route
               path="/infra/services/:name"
               element={<ServiceDetail status={status} />}
+            />
+            <Route
+              path="/infra/services/:provider/skills"
+              element={<SkillsList />}
+            />
+            <Route
+              path="/infra/services/:provider/skills/:moniker"
+              element={<SkillView />}
+            />
+            <Route
+              path="/infra/services/:provider/skills/:moniker/edit"
+              element={<SkillEdit />}
             />
             <Route
               path="/infra/cloud"

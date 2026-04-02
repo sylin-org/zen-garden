@@ -297,6 +297,12 @@ function ServiceActions({ offering, instances, models }: ServiceActionsProps) {
           }}
           title="Coming soon"
         />
+        <Link
+          to={`/infra/services/${offering}/skills`}
+          className="px-3 py-1.5 rounded text-[12px] font-medium bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/30"
+        >
+          Manage Skills
+        </Link>
         <ActionButton
           label="Run Benchmark"
           state="idle"

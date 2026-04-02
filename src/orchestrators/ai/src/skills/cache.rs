@@ -202,7 +202,9 @@ pub async fn stream_download(
         hasher.update(&chunk);
         downloaded += chunk.len() as u64;
 
-        if last_log.elapsed() > std::time::Duration::from_secs(5) {
+        // Log less frequently for large files (every 30s if >1GB, every 10s otherwise)
+        let log_interval = if total.unwrap_or(0) > 1_000_000_000 { 30 } else { 10 };
+        if last_log.elapsed() > std::time::Duration::from_secs(log_interval) {
             if let Some(t) = total {
                 let pct = (downloaded as f64 / t as f64 * 100.0) as u32;
                 // Strip query params from URL to avoid logging secrets

@@ -31,6 +31,9 @@ pub async fn create_draft(
             if let Some(ref overlay) = s.overlay {
                 v.as_object_mut().unwrap().insert("overlay".into(), serde_json::json!(overlay));
             }
+            if let Some(ref default) = s.default {
+                v.as_object_mut().unwrap().insert("default".into(), serde_json::json!(default));
+            }
             v
         })
         .collect();
@@ -71,13 +74,26 @@ pub async fn create_draft(
         })
         .collect();
 
+    // Build a meaningful description from the generation prompt
+    let description = if let Some(ref gen_summary) = result.generation {
+        if !gen_summary.prompt.is_empty() {
+            gen_summary.prompt.clone()
+        } else if let Some(ref model) = gen_summary.model {
+            format!("Generated with {model}")
+        } else {
+            format!("Imported: {}", result.display_name)
+        }
+    } else {
+        format!("Imported: {}", result.display_name)
+    };
+
     let skill_json = serde_json::json!({
         "version": 1,
         "draft": true,
         "name": format!("{}.{}", result.capability, result.moniker),
         "display_name": result.display_name,
         "capability": result.capability,
-        "description": format!("Imported: {}", result.display_name),
+        "description": description,
         "provider_kind": "comfy_ui",
         "vram_mb": 4096,
         "default_workflow": "workflow",
@@ -85,6 +101,8 @@ pub async fn create_draft(
         "mappings": mappings,
         "required_models": required_models,
         "source": result.source,
+        "preview_url": result.preview_url,
+        "diagram": result.diagram,
     });
 
     let json_str = serde_json::to_string_pretty(&skill_json)

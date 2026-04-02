@@ -205,6 +205,93 @@ pub async fn delete_skill(
     }
 }
 
+// ── GET /v1/services/{provider}/skills/{moniker}/workflows ─────
+
+/// List workflow files in the skill directory.
+pub async fn list_workflows(
+    State(state): State<AppState>,
+    Path((provider, moniker)): Path<(String, String)>,
+) -> Response {
+    let skill_dir = std::path::Path::new(&state.data_dir)
+        .join("skills")
+        .join(&provider)
+        .join(&moniker);
+
+    let mut files = Vec::new();
+
+    // Read the skill.json to find the default_workflow
+    let default_wf = tokio::fs::read_to_string(skill_dir.join("skill.json"))
+        .await
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("default_workflow").and_then(|d| d.as_str()).map(String::from))
+        .unwrap_or_default();
+
+    if let Ok(mut entries) = tokio::fs::read_dir(&skill_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".json") && name != "skill.json" {
+                let stem = name.trim_end_matches(".json").to_string();
+                files.push(serde_json::json!({
+                    "name": stem,
+                    "filename": name,
+                    "is_default": stem == default_wf,
+                }));
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    (StatusCode::OK, Json(files)).into_response()
+}
+
+// ── GET /v1/services/{provider}/skills/{moniker}/workflows/{name} ──
+
+/// Read a workflow file's content.
+pub async fn get_workflow(
+    State(state): State<AppState>,
+    Path((provider, moniker, wf_name)): Path<(String, String, String)>,
+) -> Response {
+    let path = std::path::Path::new(&state.data_dir)
+        .join("skills")
+        .join(&provider)
+        .join(&moniker)
+        .join(format!("{wf_name}.json"));
+
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "parse_error", &e.to_string()),
+        },
+        Err(_) => error_response(StatusCode::NOT_FOUND, "not_found", &format!("Workflow '{wf_name}' not found")),
+    }
+}
+
+// ── PUT /v1/services/{provider}/skills/{moniker}/workflows/{name} ──
+
+/// Write a workflow file's content.
+pub async fn put_workflow(
+    State(state): State<AppState>,
+    Path((provider, moniker, wf_name)): Path<(String, String, String)>,
+    Json(content): Json<serde_json::Value>,
+) -> Response {
+    let path = std::path::Path::new(&state.data_dir)
+        .join("skills")
+        .join(&provider)
+        .join(&moniker)
+        .join(format!("{wf_name}.json"));
+
+    let json_str = match serde_json::to_string_pretty(&content) {
+        Ok(s) => s,
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, "serialize_error", &e.to_string()),
+    };
+
+    match tokio::fs::write(&path, json_str).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "status": "saved", "name": wf_name }))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "write_error", &e.to_string()),
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────
 
 fn error_response(status: StatusCode, code: &str, message: &str) -> Response {

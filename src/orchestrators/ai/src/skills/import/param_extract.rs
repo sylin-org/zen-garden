@@ -23,6 +23,8 @@ pub struct ContentSlotDetection {
     pub required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overlay: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
 }
 
 /// Extract parameters from a ComfyUI API-format workflow.
@@ -82,6 +84,7 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
                     content_type: "image".into(),
                     required: true,
                     overlay,
+                    default: None,
                 });
 
                 image_count += 1;
@@ -102,6 +105,7 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
                     content_type: "image".into(),
                     required: true,
                     overlay: Some("source".into()),
+                    default: None,
                 });
             }
 
@@ -186,15 +190,21 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
                     let placeholder = "PLACEHOLDER_NEGATIVE";
                     set_input_str(&mut workflow, node_id, "text", placeholder);
 
-                    mappings.push(SkillMapping::Param {
-                        field: "negative".into(),
-                        label: "Negative Prompt".into(),
-                        node: None,
-                        input: None,
-                        placeholder: Some(placeholder.into()),
-                        param_type: crate::domain::skill::ParamType::Text,
-                        default: current_text.map(|v| serde_json::Value::String(v)),
+                    // Negative prompt is a Content slot (user-provided text) with a default
+                    mappings.push(SkillMapping::Content {
+                        role: "negative".into(),
+                        content_type: crate::domain::skill::ContentType::Text,
+                        placeholder: placeholder.into(),
                     });
+
+                    content_slots.push(ContentSlotDetection {
+                        role: "negative".into(),
+                        content_type: "text".into(),
+                        required: false,
+                        overlay: None,
+                        default: current_text,
+                    });
+
                     has_negative = true;
                 } else if !is_negative && text_count == 0 {
                     let placeholder = "PLACEHOLDER_PROMPT";
@@ -211,6 +221,7 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
                         content_type: "text".into(),
                         required: true,
                         overlay: None,
+                        default: None,
                     });
                 }
 

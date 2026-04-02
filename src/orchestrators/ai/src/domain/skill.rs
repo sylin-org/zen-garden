@@ -41,6 +41,9 @@ pub struct SkillDefinition {
     /// Optional Mermaid diagram of the pipeline.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<String>,
+    /// Preview image URL (from CivitAI import or user upload).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_url: Option<String>,
     /// Models that must be installed for this skill to work.
     pub required_models: Vec<ModelRef>,
     /// Default workflow template name. Overridden by `parameters.workflow` if present.
@@ -175,9 +178,11 @@ pub struct ContentSlot {
     /// Whether this input must be provided.
     pub required: bool,
     /// If set, render as a paint overlay on the referenced role's image.
-    /// The dashboard shows a canvas brush tool instead of a dropzone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overlay: Option<String>,
+    /// Default value for text content slots (e.g., negative prompt default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
 }
 
 /// Content type for input/output blocks.
@@ -400,6 +405,7 @@ mod tests {
                 content_type: ContentType::Image,
                 required: true,
                 overlay: None,
+                default: None,
             }],
             mappings: vec![
                 SkillMapping::Content {
@@ -423,6 +429,7 @@ mod tests {
                 },
             ],
             diagram: Some("graph LR\n  A --> B".into()),
+            preview_url: None,
             required_models: vec![ModelRef {
                 filename: "RealESRGAN_x4plus.pth".into(),
                 model_type: "upscale_models".into(),

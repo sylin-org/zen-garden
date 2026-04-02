@@ -166,9 +166,6 @@ pub async fn run(
     let inputs = detect_inputs(&parsed);
 
     // ── Step 6: Build metadata ────────────────────────────────
-    let moniker = generate_moniker(&source, &parsed);
-    let display_name = humanize_moniker(&moniker);
-
     let generation = civitai_meta
         .as_ref()
         .and_then(|m| m.generation.as_ref())
@@ -181,6 +178,9 @@ pub async fn run(
             seed: g.seed,
             model: g.model_name.clone(),
         });
+
+    let moniker = generate_moniker(&source, &parsed, &models, &generation);
+    let display_name = humanize_moniker(&moniker);
 
     Ok(AnalyzeResult {
         moniker,
@@ -440,30 +440,79 @@ fn detect_inputs(parsed: &crate::skills::parser::ParsedWorkflow) -> Vec<Detected
     inputs
 }
 
-fn generate_moniker(source: &Option<Source>, parsed: &crate::skills::parser::ParsedWorkflow) -> String {
+fn generate_moniker(
+    source: &Option<Source>,
+    parsed: &crate::skills::parser::ParsedWorkflow,
+    models: &[model_resolve::ModelResolution],
+    generation: &Option<GenerationSummary>,
+) -> String {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
-    if let Some(source) = source {
-        if let Some(id) = source.image_id {
-            return format!("civitai-{id}");
+    // Try to derive a name from the primary model
+    let model_name = models.iter().find_map(|m| {
+        if let model_resolve::ModelResolution::Resolved { display_name: Some(name), .. } = m {
+            // Take the model name part (before " / version")
+            Some(name.split('/').next().unwrap_or(name).trim().to_string())
+        } else {
+            None
+        }
+    });
+
+    // Try generation model name
+    let gen_model = generation.as_ref().and_then(|g| g.model.clone());
+
+    // Pick the best name source
+    let base = model_name
+        .or(gen_model)
+        .unwrap_or_else(|| {
+            // Derive from workflow type
+            let has_upscale = parsed.nodes.values().any(|n| n.class_type.contains("Upscale"));
+            let has_ksampler = parsed.nodes.values().any(|n| n.class_type.contains("KSampler"));
+            let has_inpaint = parsed.nodes.values().any(|n| n.class_type.contains("Inpaint"));
+            let has_lora = parsed.nodes.values().any(|n| n.class_type.contains("Lora"));
+
+            if has_inpaint { "inpaint" }
+            else if has_upscale && !has_ksampler { "upscale" }
+            else if has_lora { "generate-lora" }
+            else if has_ksampler { "generate" }
+            else { "workflow" }
+            .to_string()
+        });
+
+    let slug = sanitize_moniker(&base);
+
+    // Add a short numeric suffix for uniqueness
+    let short_ts = ts % 100000;
+    format!("{slug}-{short_ts}")
+}
+
+/// Sanitize a string for use as a filesystem-safe moniker.
+fn sanitize_moniker(input: &str) -> String {
+    let slug: String = input
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect();
+
+    // Collapse multiple hyphens, trim, truncate
+    let mut result = String::new();
+    let mut prev_hyphen = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !prev_hyphen && !result.is_empty() {
+                result.push('-');
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(c);
+            prev_hyphen = false;
         }
     }
 
-    let has_upscale = parsed.nodes.values().any(|n| n.class_type.contains("Upscale"));
-    let has_ksampler = parsed.nodes.values().any(|n| n.class_type.contains("KSampler"));
-    let has_inpaint = parsed.nodes.values().any(|n| n.class_type.contains("Inpaint"));
-    let has_lora = parsed.nodes.values().any(|n| n.class_type.contains("Lora"));
-
-    let kind = if has_inpaint { "inpaint" }
-        else if has_upscale && !has_ksampler { "upscale" }
-        else if has_lora { "generate-lora" }
-        else if has_ksampler { "generate" }
-        else { "workflow" };
-
-    format!("imported-{kind}-{ts}")
+    result.trim_matches('-').chars().take(40).collect()
 }
 
 fn humanize_moniker(moniker: &str) -> String {

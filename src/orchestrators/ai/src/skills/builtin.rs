@@ -53,6 +53,7 @@ pub fn image_upscale(_available_models: &[String]) -> SkillDefinition {
             content_type: ContentType::Image,
             required: true,
             overlay: None,
+            default: None,
         }],
         mappings: vec![
             SkillMapping::Content {
@@ -92,6 +93,7 @@ pub fn image_upscale(_available_models: &[String]) -> SkillDefinition {
             },
         ],
         diagram: Some(parsed.diagram),
+        preview_url: None,
         required_models: recommended_upscale_models()
             .into_iter()
             .map(|m| ModelRef {
@@ -133,6 +135,7 @@ pub fn image_generate(available_checkpoints: &[String]) -> SkillDefinition {
             content_type: ContentType::Text,
             required: true,
             overlay: None,
+            default: None,
         }],
         mappings: vec![
             SkillMapping::Content {
@@ -208,6 +211,7 @@ pub fn image_generate(available_checkpoints: &[String]) -> SkillDefinition {
             },
         ],
         diagram: Some(parsed.diagram),
+        preview_url: None,
         required_models: recommended_checkpoint_models()
             .into_iter()
             .map(|m| ModelRef {
@@ -250,12 +254,14 @@ pub fn image_img2img(available_checkpoints: &[String]) -> SkillDefinition {
                 content_type: ContentType::Image,
                 required: true,
                 overlay: None,
+                default: None,
             },
             ContentSlot {
                 role: "prompt".into(),
                 content_type: ContentType::Text,
                 required: true,
                 overlay: None,
+                default: None,
             },
         ],
         mappings: vec![
@@ -316,6 +322,7 @@ pub fn image_img2img(available_checkpoints: &[String]) -> SkillDefinition {
             },
         ],
         diagram: Some(parsed.diagram),
+        preview_url: None,
         required_models: recommended_checkpoint_models()
             .into_iter()
             .map(|m| ModelRef {
@@ -358,18 +365,21 @@ pub fn image_inpaint(available_checkpoints: &[String]) -> SkillDefinition {
                 content_type: ContentType::Image,
                 required: true,
                 overlay: None,
+                default: None,
             },
             ContentSlot {
                 role: "mask".into(),
                 content_type: ContentType::Image,
                 required: true,
                 overlay: Some("source".into()),
+                default: None,
             },
             ContentSlot {
                 role: "prompt".into(),
                 content_type: ContentType::Text,
                 required: true,
                 overlay: None,
+                default: None,
             },
         ],
         mappings: vec![
@@ -435,6 +445,7 @@ pub fn image_inpaint(available_checkpoints: &[String]) -> SkillDefinition {
             },
         ],
         diagram: Some(parsed.diagram),
+        preview_url: None,
         required_models: recommended_inpaint_models()
             .into_iter()
             .map(|m| ModelRef {

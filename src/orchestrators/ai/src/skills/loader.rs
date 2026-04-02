@@ -178,6 +178,7 @@ async fn load_single_skill(skill_path: &Path, skill_dir: &Path) -> Result<SkillD
         content_slots,
         mappings,
         diagram,
+        preview_url: None, // Not stored in loaded skills; management API reads from skill.json
         required_models,
         default_workflow: raw.default_workflow,
         workflows,

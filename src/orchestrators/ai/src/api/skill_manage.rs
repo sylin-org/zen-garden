@@ -35,12 +35,16 @@ pub async fn analyze_skill(
     let http = reqwest::Client::new();
     let manager_registry = model_resolve::ManagerRegistry::fetch(&http).await;
 
+    // Get CivitAI API token from secrets store (enables restricted image access)
+    let civitai_token = state.secrets.get("civitai").await;
+
     let result = analyze::run(
         &http,
         &query.t,
         None,
         std::path::Path::new(&state.data_dir),
         &manager_registry,
+        civitai_token.as_deref(),
     )
     .await;
 

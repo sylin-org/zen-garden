@@ -8,7 +8,6 @@
 //! 5. Unresolved (user provides URL)
 
 use std::collections::HashMap;
-use anyhow::Result;
 use reqwest::Client;
 
 use super::civitai;
@@ -107,8 +106,15 @@ impl ManagerRegistry {
             model_type: String,
         }
 
-        let raw: Vec<Entry> = match resp.json().await {
-            Ok(v) => v,
+        #[derive(serde::Deserialize)]
+        struct RegistryResponse {
+            #[serde(default)]
+            models: Vec<Entry>,
+        }
+
+        // The registry is {"models": [...]} not a flat array
+        let raw: Vec<Entry> = match resp.json::<RegistryResponse>().await {
+            Ok(r) => r.models,
             Err(e) => {
                 tracing::warn!(error = %e, "ComfyUI Manager registry parse failed");
                 return Self::default();
@@ -154,18 +160,18 @@ pub struct ResolutionContext {
 /// Each filename gets the best resolution available. Failures produce Unresolved, not errors.
 /// After resolution, probes each URL with HEAD to detect auth requirements.
 pub async fn resolve_all(
-    http: &Client,
+    civitai: &civitai::CivitaiClient,
     filenames: &[(String, String)], // (filename, model_type)
     ctx: &ResolutionContext,
 ) -> Vec<ModelResolution> {
     let mut results = Vec::new();
 
     for (filename, model_type) in filenames {
-        let mut resolution = resolve_one(http, filename, model_type, ctx).await;
+        let mut resolution = resolve_one(civitai, filename, model_type, ctx).await;
 
         // Probe resolved URLs to detect auth requirements
         if let ModelResolution::Resolved { ref url, ref filename, ref model_type, ref source, .. } = resolution {
-            if let Some(probe_result) = probe_url(http, url).await {
+            if let Some(probe_result) = probe_url(civitai.http(), url).await {
                 if probe_result == ProbeResult::AuthRequired {
                     let secret_key = if url.contains("civitai.com") { "civitai" }
                         else if url.contains("huggingface.co") { "huggingface" }
@@ -212,7 +218,7 @@ async fn probe_url(http: &Client, url: &str) -> Option<ProbeResult> {
 }
 
 async fn resolve_one(
-    http: &Client,
+    civitai: &civitai::CivitaiClient,
     filename: &str,
     model_type: &str,
     ctx: &ResolutionContext,
@@ -257,7 +263,7 @@ async fn resolve_one(
             || hash_key == "model";
 
         if matches && !hash_value.is_empty() {
-            if let Some(resolved) = civitai::resolve_by_hash(http, hash_value).await {
+            if let Some(resolved) = civitai::resolve_by_hash(civitai, hash_value).await {
                 return ModelResolution::Resolved {
                     filename: resolved.filename.clone(),
                     url: resolved.download_url.clone(),
@@ -295,11 +301,25 @@ async fn resolve_one(
         };
     }
 
+    // Priority 5: Well-known models registry (HuggingFace ecosystem models)
+    if let Some(known) = super::known_models::lookup(filename) {
+        return ModelResolution::Resolved {
+            filename: known.filename.clone(),
+            url: known.url.clone(),
+            sha256: known.sha256.clone(),
+            size_bytes: Some(known.size_bytes),
+            model_type: known.model_type.clone(),
+            source: "known-models".into(),
+            display_name: Some(known.description.clone()),
+            license: None,
+        };
+    }
+
     // Unresolved
     ModelResolution::Unresolved {
         filename: filename.to_string(),
         model_type: model_type.to_string(),
-        reason: "not found in CivitAI, local cache, or ComfyUI Manager registry".into(),
+        reason: "not found in CivitAI, local cache, ComfyUI Manager, or known models registry".into(),
     }
 }
 

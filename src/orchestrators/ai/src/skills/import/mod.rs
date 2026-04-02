@@ -9,6 +9,8 @@
 //! - `gen_data_parse`: parse A1111-format generation data text
 //! - `workflow_synth`: synthesize a ComfyUI API workflow from generation parameters
 //! - `model_resolve`: resolve model filenames → download URLs (cascade)
+//! - `known_models`: static registry for popular HuggingFace models
+//! - `ui_to_api`: convert ComfyUI UI-format workflow to API format
 //! - `analyze`: orchestrate the full pipeline, produce an AnalyzeResult
 //! - `draft_builder`: write a draft skill.json + workflow to disk
 //!
@@ -26,5 +28,7 @@ pub mod gen_data_parse;
 pub mod workflow_synth;
 pub mod model_resolve;
 pub mod param_extract;
+pub mod known_models;
+pub mod ui_to_api;
 pub mod analyze;
 pub mod draft_builder;

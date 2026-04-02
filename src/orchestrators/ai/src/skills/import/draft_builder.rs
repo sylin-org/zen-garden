@@ -127,6 +127,20 @@ pub async fn create_draft(
         .await
         .context("write workflow.json")?;
 
+    // Write debug dump — raw mappings + models for troubleshooting
+    let debug_dump = serde_json::json!({
+        "mappings": result.mappings.iter().map(|m| serde_json::to_value(m).unwrap_or_default()).collect::<Vec<_>>(),
+        "models": result.models.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>(),
+        "content_slots": result.content_slots.iter().map(|s| serde_json::json!({
+            "role": s.role, "content_type": s.content_type, "required": s.required,
+            "default": s.default, "overlay": s.overlay,
+        })).collect::<Vec<_>>(),
+        "warnings": result.warnings.iter().map(|w| format!("{}: {}", w.warning_type, w.message)).collect::<Vec<_>>(),
+        "source": result.source,
+    });
+    let debug_str = serde_json::to_string_pretty(&debug_dump).unwrap_or_default();
+    let _ = fs::write(skill_dir.join("_debug.json"), debug_str).await;
+
     tracing::info!(
         moniker = %result.moniker,
         models = result.models.len(),

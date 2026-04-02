@@ -62,6 +62,9 @@ sha2 = "0.10"
 # PNG metadata extraction (skill import)
 png = "0.17"
 
+# Zip extraction (CivitAI workflow downloads)
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 [dev-dependencies]
 tempfile = "3"
 

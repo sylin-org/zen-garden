@@ -112,7 +112,20 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
             // ── Checkpoint loaders ────────────────────────────
             "CheckpointLoaderSimple" => {
                 let placeholder = "PLACEHOLDER_CHECKPOINT";
+                let raw_value = workflow.get(node_id)
+                    .and_then(|n| n.get("inputs"))
+                    .and_then(|i| i.get("ckpt_name"));
+                tracing::info!(
+                    node_id,
+                    raw_value = ?raw_value,
+                    "param_extract: CheckpointLoaderSimple ckpt_name raw value"
+                );
                 let current = get_input_str(&workflow, node_id, "ckpt_name");
+                tracing::info!(
+                    node_id,
+                    current = ?current,
+                    "param_extract: CheckpointLoaderSimple ckpt_name parsed as string"
+                );
                 set_input_str(&mut workflow, node_id, "ckpt_name", placeholder);
 
                 mappings.push(SkillMapping::Param {

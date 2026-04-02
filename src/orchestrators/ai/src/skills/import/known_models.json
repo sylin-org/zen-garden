@@ -1,0 +1,469 @@
+[
+  { "_comment": "── Z-Image Turbo ──────────────────────────────────────────" },
+
+  { "filename": "z_image_turbo_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 12300000000, "sha256": null,
+    "description": "Z-Image Turbo diffusion model (bf16)" },
+
+  { "filename": "z_image_turbo_nvfp4.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_nvfp4.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Z-Image Turbo diffusion model (nvfp4)" },
+
+  { "filename": "qwen_3_4b.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors",
+    "model_type": "clip", "size_bytes": 8044982048,
+    "sha256": "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a",
+    "description": "Qwen 3 4B text encoder for Z-Image Turbo" },
+
+  { "filename": "qwen_3_4b_fp8_mixed.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Qwen 3 4B text encoder fp8 mixed (Z-Image Turbo)" },
+
+  { "filename": "qwen_3_4b_fp4_mixed.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp4_mixed.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Qwen 3 4B text encoder fp4 mixed (Z-Image Turbo)" },
+
+  { "filename": "ae.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+    "model_type": "vae", "size_bytes": 335304388,
+    "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+    "description": "Z-Image Turbo VAE autoencoder" },
+
+  { "filename": "z_image_turbo_distill_patch_lora_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/loras/z_image_turbo_distill_patch_lora_bf16.safetensors",
+    "model_type": "loras", "size_bytes": 0, "sha256": null,
+    "description": "Z-Image Turbo distill patch LoRA (bf16)" },
+
+  { "_comment": "── Z-Image ────────────────────────────────────────────────" },
+
+  { "filename": "z_image_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/diffusion_models/z_image_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Z-Image diffusion model (bf16)" },
+
+  { "_comment": "── Flux 1 Dev ─────────────────────────────────────────────" },
+
+  { "filename": "flux1-dev.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Dev diffusion model" },
+
+  { "filename": "flux1-dev-fp8.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev-fp8.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Dev diffusion model (fp8)" },
+
+  { "filename": "flux1-canny-dev.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-canny-dev.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Canny Dev diffusion model" },
+
+  { "filename": "flux1-fill-dev.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-fill-dev.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Fill Dev diffusion model (inpainting)" },
+
+  { "filename": "flux1-depth-dev-lora.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-depth-dev-lora.safetensors",
+    "model_type": "loras", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Depth Dev LoRA" },
+
+  { "filename": "flux1-depth-dev-nvfp4.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-depth-dev-nvfp4.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Depth Dev diffusion model (nvfp4)" },
+
+  { "_comment": "── Flux 1 Schnell ─────────────────────────────────────────" },
+
+  { "filename": "flux1-schnell.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-schnell/resolve/main/flux1-schnell.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Schnell diffusion model" },
+
+  { "filename": "flux1-schnell-fp8.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-schnell/resolve/main/flux1-schnell-fp8.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Schnell diffusion model (fp8)" },
+
+  { "_comment": "── Flux 2 Dev ─────────────────────────────────────────────" },
+
+  { "filename": "flux2_dev_fp8mixed.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/diffusion_models/flux2_dev_fp8mixed.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 2 Dev diffusion model (fp8 mixed)" },
+
+  { "filename": "Flux2TurboComfyv2.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/loras/Flux2TurboComfyv2.safetensors",
+    "model_type": "loras", "size_bytes": 0, "sha256": null,
+    "description": "Flux 2 Turbo LoRA v2" },
+
+  { "filename": "Flux_2-Turbo-LoRA_comfyui.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/loras/Flux_2-Turbo-LoRA_comfyui.safetensors",
+    "model_type": "loras", "size_bytes": 0, "sha256": null,
+    "description": "Flux 2 Turbo LoRA for ComfyUI" },
+
+  { "filename": "mistral_3_small_flux2_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/text_encoders/mistral_3_small_flux2_bf16.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Mistral 3 Small text encoder for Flux 2 (bf16)" },
+
+  { "filename": "mistral_3_small_flux2_fp8.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Mistral 3 Small text encoder for Flux 2 (fp8)" },
+
+  { "filename": "flux2-vae.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors",
+    "model_type": "vae", "size_bytes": 0, "sha256": null,
+    "description": "Flux 2 VAE" },
+
+  { "_comment": "── Flux 1 Kontext Dev ─────────────────────────────────────" },
+
+  { "filename": "flux1-dev-kontext_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/flux1-kontext-dev_ComfyUI/resolve/main/split_files/diffusion_models/flux1-dev-kontext_fp8_scaled.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Flux 1 Kontext Dev diffusion model (fp8 scaled)" },
+
+  { "_comment": "── Flux Text Encoders (comfyanonymous) ────────────────────" },
+
+  { "filename": "clip_l.safetensors",
+    "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+    "model_type": "clip", "size_bytes": 246144152, "sha256": null,
+    "description": "CLIP-L text encoder for Flux" },
+
+  { "filename": "t5xxl_fp16.safetensors",
+    "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors",
+    "model_type": "clip", "size_bytes": 9787849474, "sha256": null,
+    "description": "T5-XXL text encoder (fp16)" },
+
+  { "filename": "t5xxl_fp8_e4m3fn.safetensors",
+    "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors",
+    "model_type": "clip", "size_bytes": 4893924738, "sha256": null,
+    "description": "T5-XXL text encoder (fp8 e4m3fn)" },
+
+  { "_comment": "── Stable Diffusion 3.5 (fp8) ────────────────────────────" },
+
+  { "filename": "sd3.5_large_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/sd3.5_large_fp8_scaled.safetensors",
+    "model_type": "checkpoints", "size_bytes": 0, "sha256": null,
+    "description": "Stable Diffusion 3.5 Large (fp8 scaled)" },
+
+  { "filename": "sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors",
+    "model_type": "checkpoints", "size_bytes": 0, "sha256": null,
+    "description": "Stable Diffusion 3.5 Medium with CLIP + T5-XXL (fp8)" },
+
+  { "filename": "clip_g.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/text_encoders/clip_g.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "CLIP-G text encoder for SD 3.5" },
+
+  { "filename": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "T5-XXL text encoder (fp8 e4m3fn scaled) for SD 3.5" },
+
+  { "_comment": "── Stable Diffusion 1.5 ──────────────────────────────────" },
+
+  { "filename": "v1-5-pruned-emaonly.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly.safetensors",
+    "model_type": "checkpoints", "size_bytes": 4265380512, "sha256": null,
+    "description": "Stable Diffusion 1.5 (pruned, EMA only)" },
+
+  { "filename": "v1-5-pruned-emaonly-fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly-fp16.safetensors",
+    "model_type": "checkpoints", "size_bytes": 0, "sha256": null,
+    "description": "Stable Diffusion 1.5 (pruned, EMA only, fp16)" },
+
+  { "_comment": "── Qwen Image ─────────────────────────────────────────────" },
+
+  { "filename": "qwen_image_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Qwen Image diffusion model (bf16)" },
+
+  { "filename": "qwen_image_fp8_e4m3fn.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Qwen Image diffusion model (fp8 e4m3fn)" },
+
+  { "filename": "qwen_2.5_vl_7b.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Qwen 2.5 VL 7B text encoder" },
+
+  { "filename": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Qwen 2.5 VL 7B text encoder (fp8 scaled)" },
+
+  { "filename": "qwen_image_vae.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+    "model_type": "vae", "size_bytes": 0, "sha256": null,
+    "description": "Qwen Image VAE" },
+
+  { "_comment": "── Qwen Image Edit ────────────────────────────────────────" },
+
+  { "filename": "qwen_image_edit_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Qwen Image Edit diffusion model (bf16)" },
+
+  { "filename": "qwen_image_edit_fp8_e4m3fn.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Qwen Image Edit diffusion model (fp8 e4m3fn)" },
+
+  { "_comment": "── HunyuanVideo 1.5 ──────────────────────────────────────" },
+
+  { "filename": "sigclip_vision_patch14_384.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/clip_vision/sigclip_vision_patch14_384.safetensors",
+    "model_type": "clip_vision", "size_bytes": 0, "sha256": null,
+    "description": "SigCLIP vision encoder (patch14 384) for HunyuanVideo 1.5" },
+
+  { "filename": "hunyuanvideo1.5_480p_t2v_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_480p_t2v_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 480p text-to-video (fp16)" },
+
+  { "filename": "hunyuanvideo1.5_480p_t2v_cfg_distilled_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_480p_t2v_cfg_distilled_fp8_scaled.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 480p text-to-video CFG distilled (fp8 scaled)" },
+
+  { "filename": "hunyuanvideo1.5_480p_i2v_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_480p_i2v_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 480p image-to-video (fp16)" },
+
+  { "filename": "hunyuanvideo1.5_480p_i2v_cfg_distilled_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_480p_i2v_cfg_distilled_fp8_scaled.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 480p image-to-video CFG distilled (fp8 scaled)" },
+
+  { "filename": "hunyuanvideo1.5_720p_t2v_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_720p_t2v_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 720p text-to-video (fp16)" },
+
+  { "filename": "hunyuanvideo1.5_720p_i2v_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_720p_i2v_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 720p image-to-video (fp16)" },
+
+  { "filename": "hunyuanvideo1.5_720p_i2v_cfg_distilled_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/diffusion_models/hunyuanvideo1.5_720p_i2v_cfg_distilled_fp8_scaled.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 720p image-to-video CFG distilled (fp8 scaled)" },
+
+  { "filename": "byt5_small_glyphxl_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/byt5_small_glyphxl_fp16.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "ByT5 Small GlyphXL text encoder (fp16) for HunyuanVideo 1.5" },
+
+  { "filename": "hunyuanvideo15_vae_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/vae/hunyuanvideo15_vae_fp16.safetensors",
+    "model_type": "vae", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo 1.5 VAE (fp16)" },
+
+  { "_comment": "── HunyuanVideo (Original) ────────────────────────────────" },
+
+  { "filename": "llava_llama3_vision.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/clip_vision/llava_llama3_vision.safetensors",
+    "model_type": "clip_vision", "size_bytes": 0, "sha256": null,
+    "description": "LLaVA LLaMA3 vision encoder for HunyuanVideo" },
+
+  { "filename": "hunyuan_video_t2v_720p_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/diffusion_models/hunyuan_video_t2v_720p_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo text-to-video 720p (bf16)" },
+
+  { "filename": "hunyuan_video_image_to_video_720p_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/diffusion_models/hunyuan_video_image_to_video_720p_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo image-to-video 720p (bf16)" },
+
+  { "filename": "llava_llama3_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/llava_llama3_fp16.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "LLaVA LLaMA3 text encoder (fp16) for HunyuanVideo" },
+
+  { "filename": "llava_llama3_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/llava_llama3_fp8_scaled.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "LLaVA LLaMA3 text encoder (fp8 scaled) for HunyuanVideo" },
+
+  { "filename": "hunyuan_video_vae_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/vae/hunyuan_video_vae_bf16.safetensors",
+    "model_type": "vae", "size_bytes": 0, "sha256": null,
+    "description": "HunyuanVideo VAE (bf16)" },
+
+  { "_comment": "── HiDream I1 ─────────────────────────────────────────────" },
+
+  { "filename": "hidream_i1_full_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/diffusion_models/hidream_i1_full_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HiDream I1 Full diffusion model (fp16)" },
+
+  { "filename": "hidream_i1_full_fp8.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/diffusion_models/hidream_i1_full_fp8.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HiDream I1 Full diffusion model (fp8)" },
+
+  { "filename": "hidream_i1_dev_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/diffusion_models/hidream_i1_dev_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HiDream I1 Dev diffusion model (bf16)" },
+
+  { "filename": "hidream_i1_dev_fp8.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/diffusion_models/hidream_i1_dev_fp8.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HiDream I1 Dev diffusion model (fp8)" },
+
+  { "filename": "hidream_i1_fast_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/diffusion_models/hidream_i1_fast_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HiDream I1 Fast diffusion model (bf16)" },
+
+  { "filename": "hidream_i1_fast_fp8.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/diffusion_models/hidream_i1_fast_fp8.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "HiDream I1 Fast diffusion model (fp8)" },
+
+  { "filename": "clip_g_hidream.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/text_encoders/clip_g_hidream.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "CLIP-G text encoder for HiDream I1" },
+
+  { "filename": "clip_l_hidream.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/text_encoders/clip_l_hidream.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "CLIP-L text encoder for HiDream I1" },
+
+  { "filename": "llama_3.1_8b_instruct_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/text_encoders/llama_3.1_8b_instruct_fp8_scaled.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "LLaMA 3.1 8B Instruct text encoder (fp8 scaled) for HiDream I1" },
+
+  { "_comment": "── Lumina Image 2.0 ──────────────────────────────────────" },
+
+  { "filename": "lumina_2_model_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/split_files/diffusion_models/lumina_2_model_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Lumina Image 2.0 diffusion model (bf16)" },
+
+  { "filename": "gemma_2_2b_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/split_files/text_encoders/gemma_2_2b_fp16.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Gemma 2 2B text encoder (fp16) for Lumina Image 2.0" },
+
+  { "filename": "lumina_2.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/all_in_one/lumina_2.safetensors",
+    "model_type": "checkpoints", "size_bytes": 0, "sha256": null,
+    "description": "Lumina Image 2.0 all-in-one checkpoint" },
+
+  { "_comment": "── Wan 2.2 ────────────────────────────────────────────────" },
+
+  { "filename": "wan2.2_t2v_high_noise_14B_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 text-to-video 14B high noise (fp16)" },
+
+  { "filename": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 text-to-video 14B high noise (fp8 scaled)" },
+
+  { "filename": "wan2.2_i2v_high_noise_14B_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 image-to-video 14B high noise (fp16)" },
+
+  { "filename": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 image-to-video 14B high noise (fp8 scaled)" },
+
+  { "filename": "wan2.2_fun_inpaint_5B_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_fun_inpaint_5B_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 Fun Inpaint 5B (bf16)" },
+
+  { "filename": "wan2.2_fun_control_5B_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_fun_control_5B_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 Fun Control 5B (bf16)" },
+
+  { "filename": "wan2.2_ti2v_5B_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 text+image-to-video 5B (fp16)" },
+
+  { "filename": "wan2.2_s2v_14B_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_s2v_14B_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 subject-to-video 14B (bf16)" },
+
+  { "filename": "wan2.2_animate_14B_bf16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_animate_14B_bf16.safetensors",
+    "model_type": "diffusion_models", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 Animate 14B (bf16)" },
+
+  { "filename": "umt5_xxl_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "UMT5-XXL text encoder (fp16) for Wan 2.2" },
+
+  { "filename": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "UMT5-XXL text encoder (fp8 e4m3fn scaled) for Wan 2.2" },
+
+  { "filename": "wav2vec2_large_english_fp16.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/audio_encoders/wav2vec2_large_english_fp16.safetensors",
+    "model_type": "clip", "size_bytes": 0, "sha256": null,
+    "description": "Wav2Vec2 Large English audio encoder (fp16) for Wan 2.2" },
+
+  { "filename": "wan2.2_vae.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors",
+    "model_type": "vae", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.2 VAE" },
+
+  { "filename": "wan_2.1_vae.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+    "model_type": "vae", "size_bytes": 0, "sha256": null,
+    "description": "Wan 2.1 VAE (legacy)" },
+
+  { "_comment": "── Upscale Models ─────────────────────────────────────────" },
+
+  { "filename": "RealESRGAN_x4plus.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Real-ESRGAN_repackaged/resolve/main/RealESRGAN_x4plus.safetensors",
+    "model_type": "upscale_models", "size_bytes": 0, "sha256": null,
+    "description": "Real-ESRGAN x4 Plus upscaler (safetensors repackaged)" },
+
+  { "filename": "RealESRGAN_x4plus.pth",
+    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+    "model_type": "upscale_models", "size_bytes": 67000000, "sha256": null,
+    "description": "Real-ESRGAN x4 Plus upscaler (original pth)" },
+
+  { "filename": "RealESRGAN_x4plus_anime_6B.pth",
+    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
+    "model_type": "upscale_models", "size_bytes": 17938799, "sha256": null,
+    "description": "Real-ESRGAN x4 Plus Anime 6B upscaler" },
+
+  { "filename": "4x-UltraSharp.pth",
+    "url": "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth",
+    "model_type": "upscale_models", "size_bytes": 67000000, "sha256": null,
+    "description": "4x UltraSharp upscaler" },
+
+  { "_comment": "── Standalone VAE ─────────────────────────────────────────" },
+
+  { "filename": "vae-ft-mse-840000-ema-pruned.safetensors",
+    "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors",
+    "model_type": "vae", "size_bytes": 334695179, "sha256": null,
+    "description": "Stability AI VAE fine-tuned MSE (EMA pruned)" }
+]

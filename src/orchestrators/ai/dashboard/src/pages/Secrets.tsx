@@ -5,6 +5,7 @@ interface SecretEntry {
   key: string;
   label: string;
   description: string;
+  url: string;
   is_set: boolean;
   masked_value?: string;
 }
@@ -109,7 +110,12 @@ export function Secrets() {
               </div>
             </div>
 
-            <p className="text-[11px] text-gray-500">{secret.description}</p>
+            <p className="text-[11px] text-gray-500">
+              {secret.description}{" "}
+              <a href={secret.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+                Get your key
+              </a>
+            </p>
 
             {editingKey === secret.key && (
               <div className="flex items-center gap-2 mt-2">

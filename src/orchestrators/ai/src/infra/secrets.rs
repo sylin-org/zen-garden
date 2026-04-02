@@ -16,14 +16,15 @@ pub const KEY_HUGGINGFACE: &str = "huggingface";
 
 /// All known secret key definitions.
 pub const ALL_KEYS: &[SecretKeyDef] = &[
-    SecretKeyDef { key: KEY_CIVITAI, label: "CivitAI", description: "API token for downloading creator-restricted models. Get yours at civitai.com/user/account" },
-    SecretKeyDef { key: KEY_HUGGINGFACE, label: "Hugging Face", description: "Access token for gated models (FLUX, Llama, etc.). Get yours at huggingface.co/settings/tokens" },
+    SecretKeyDef { key: KEY_CIVITAI, label: "CivitAI", description: "API token for downloading creator-restricted models.", url: "https://civitai.com/user/account" },
+    SecretKeyDef { key: KEY_HUGGINGFACE, label: "Hugging Face", description: "Access token for gated models (FLUX, Llama, etc.).", url: "https://huggingface.co/settings/tokens" },
 ];
 
 pub struct SecretKeyDef {
     pub key: &'static str,
     pub label: &'static str,
     pub description: &'static str,
+    pub url: &'static str,
 }
 
 /// The secrets store — thread-safe, persisted to disk.
@@ -98,6 +99,7 @@ impl SecretsStore {
                     key: def.key.to_string(),
                     label: def.label.to_string(),
                     description: def.description.to_string(),
+                    url: def.url.to_string(),
                     is_set: value.is_some(),
                     masked_value: value.map(|v| mask_value(v)),
                 }
@@ -127,6 +129,7 @@ pub struct MaskedSecret {
     pub key: String,
     pub label: String,
     pub description: String,
+    pub url: String,
     pub is_set: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub masked_value: Option<String>,

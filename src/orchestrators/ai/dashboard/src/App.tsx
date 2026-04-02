@@ -10,6 +10,7 @@ import { CloudList } from "./pages/CloudList";
 import { CloudDetail } from "./pages/CloudDetail";
 import { CloudEdit } from "./pages/CloudEdit";
 import { Stones } from "./pages/Stones";
+import { Secrets } from "./pages/Secrets";
 import { Settings } from "./pages/Settings";
 import { SkillsList } from "./pages/SkillsList";
 import { SkillEdit } from "./pages/SkillEdit";
@@ -88,6 +89,7 @@ function App() {
               path="/infra/stones"
               element={<Stones status={status} />}
             />
+            <Route path="/infra/secrets" element={<Secrets />} />
             <Route path="/settings" element={<Settings status={status} />} />
           </Routes>
         )}

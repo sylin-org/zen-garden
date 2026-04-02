@@ -56,6 +56,9 @@ pub struct AppState {
     pub benchmark_run: Arc<RwLock<BenchmarkRun>>,
     pub benchmark_cancel: Arc<RwLock<Option<CancellationToken>>>,
 
+    // ── Secrets ──
+    pub secrets: crate::infra::secrets::SecretsStore,
+
     // ── Channels (already lock-free) ──
     pub dashboard_tx: broadcast::Sender<DashboardEvent>,
     pub metrics_tx: mpsc::UnboundedSender<MetricEvent>,
@@ -75,6 +78,7 @@ impl AppState {
         providers: ProviderRegistry,
         ollama_client: OllamaClient,
         cloud_store: CloudProviderStore,
+        secrets: crate::infra::secrets::SecretsStore,
         shutdown: CancellationToken,
         metrics_tx: mpsc::UnboundedSender<MetricEvent>,
     ) -> Self {
@@ -115,6 +119,7 @@ impl AppState {
             tended_stone: Arc::new(RwLock::new(None)),
             benchmark_run: Arc::new(RwLock::new(BenchmarkRun::idle())),
             benchmark_cancel: Arc::new(RwLock::new(None)),
+            secrets,
             dashboard_tx,
             metrics_tx,
             shutdown,

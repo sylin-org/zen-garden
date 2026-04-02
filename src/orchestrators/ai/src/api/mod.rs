@@ -8,6 +8,7 @@ pub mod generic_proxy;
 pub mod health;
 pub mod provider_test;
 pub mod proxy;
+pub mod secrets;
 pub mod service_actions;
 pub mod skill_manage;
 pub mod static_files;

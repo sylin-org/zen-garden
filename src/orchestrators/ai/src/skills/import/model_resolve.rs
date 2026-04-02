@@ -38,6 +38,15 @@ pub enum ModelResolution {
         filename: String,
         model_type: String,
     },
+    /// URL resolved but download requires authentication.
+    AuthRequired {
+        filename: String,
+        url: String,
+        model_type: String,
+        source: String,
+        /// Which secret key is needed (e.g., "civitai").
+        secret_key: String,
+    },
     Unresolved {
         filename: String,
         model_type: String,
@@ -50,6 +59,7 @@ impl ModelResolution {
         match self {
             Self::Resolved { filename, .. } => filename,
             Self::Cached { filename, .. } => filename,
+            Self::AuthRequired { filename, .. } => filename,
             Self::Unresolved { filename, .. } => filename,
         }
     }
@@ -142,6 +152,7 @@ pub struct ResolutionContext {
 
 /// Resolve a list of model filenames through the cascade.
 /// Each filename gets the best resolution available. Failures produce Unresolved, not errors.
+/// After resolution, probes each URL with HEAD to detect auth requirements.
 pub async fn resolve_all(
     http: &Client,
     filenames: &[(String, String)], // (filename, model_type)
@@ -150,11 +161,54 @@ pub async fn resolve_all(
     let mut results = Vec::new();
 
     for (filename, model_type) in filenames {
-        let resolution = resolve_one(http, filename, model_type, ctx).await;
+        let mut resolution = resolve_one(http, filename, model_type, ctx).await;
+
+        // Probe resolved URLs to detect auth requirements
+        if let ModelResolution::Resolved { ref url, ref filename, ref model_type, ref source, .. } = resolution {
+            if let Some(probe_result) = probe_url(http, url).await {
+                if probe_result == ProbeResult::AuthRequired {
+                    let secret_key = if url.contains("civitai.com") { "civitai" }
+                        else if url.contains("huggingface.co") { "huggingface" }
+                        else { "unknown" };
+
+                    resolution = ModelResolution::AuthRequired {
+                        filename: filename.clone(),
+                        url: url.clone(),
+                        model_type: model_type.clone(),
+                        source: source.clone(),
+                        secret_key: secret_key.to_string(),
+                    };
+                }
+            }
+        }
+
         results.push(resolution);
     }
 
     results
+}
+
+#[derive(PartialEq)]
+enum ProbeResult {
+    Ok,
+    AuthRequired,
+    Error,
+}
+
+/// Probe a URL with HEAD to check if it's downloadable.
+async fn probe_url(http: &Client, url: &str) -> Option<ProbeResult> {
+    let resp = http
+        .head(url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+
+    match resp.status().as_u16() {
+        200..=299 => Some(ProbeResult::Ok),
+        401 | 403 => Some(ProbeResult::AuthRequired),
+        _ => Some(ProbeResult::Error),
+    }
 }
 
 async fn resolve_one(

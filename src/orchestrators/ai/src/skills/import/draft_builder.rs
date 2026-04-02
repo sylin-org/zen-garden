@@ -65,6 +65,15 @@ pub async fn create_draft(
                     "model_type": model_type,
                 })
             }
+            ModelResolution::AuthRequired { filename, url, model_type, secret_key, .. } => {
+                serde_json::json!({
+                    "filename": filename,
+                    "model_type": model_type,
+                    "url": url,
+                    "auth_required": true,
+                    "secret_key": secret_key,
+                })
+            }
             ModelResolution::Unresolved { filename, model_type, .. } => {
                 serde_json::json!({
                     "filename": filename,

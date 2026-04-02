@@ -174,6 +174,19 @@ export function Sidebar({ status, skills }: SidebarProps) {
         >
           Stones
         </NavLink>
+
+        <NavLink
+          to="/infra/secrets"
+          className={({ isActive }) =>
+            `block px-4 py-1.5 text-[13px] ${
+              isActive
+                ? "text-gray-100 bg-[#1a1b23]"
+                : "text-gray-400 hover:text-gray-200 hover:bg-[#1a1b23]/50"
+            }`
+          }
+        >
+          Secrets
+        </NavLink>
       </nav>
 
       <div className="border-t border-[#2e303a] p-2">

@@ -15,7 +15,7 @@ interface SkillData {
   default_workflow: string;
   content_slots: Array<{ role: string; content_type: string; required: boolean; overlay?: string; default?: string }>;
   mappings: SkillMapping[];
-  required_models: Array<{ filename: string; model_type: string; url?: string; description?: string; license?: string }>;
+  required_models: Array<Record<string, unknown>>;
   source?: { type: string; url?: string; image_id?: number };
   preview_url?: string;
   diagram?: string;
@@ -222,19 +222,41 @@ export function SkillEdit() {
 
           {/* Models */}
           <Section title={`Models (${skill.required_models.length})`}>
-            {skill.required_models.map((model) => (
-              <div key={model.filename} className="py-1.5 border-b border-[#2e303a]/30 last:border-0">
-                <div className="flex items-center gap-2 text-[12px]">
-                  <span className={`w-2.5 h-2.5 rounded-full ${model.url ? "bg-blue-400" : "bg-red-400"}`}
-                    title={model.url ? "Resolved — URL known" : "Unresolved — needs URL"} />
-                  <span className="text-gray-200 font-mono text-[11px]">{model.filename}</span>
-                  <span className="text-[10px] text-gray-500 ml-auto">{model.model_type}</span>
+            {skill.required_models.map((model: Record<string, unknown>) => {
+              const filename = String(model.filename ?? "");
+              const modelType = String(model.model_type ?? "");
+              const url = model.url as string | undefined;
+              const authRequired = model.auth_required as boolean | undefined;
+              const secretKey = model.secret_key as string | undefined;
+              const description = model.description as string | undefined;
+              const license = model.license as string | undefined;
+
+              const dotColor = authRequired ? "bg-amber-400" : url ? "bg-blue-400" : "bg-red-400";
+              const dotTitle = authRequired ? "Requires API key" : url ? "Resolved" : "Unresolved";
+
+              return (
+                <div key={filename} className="py-1.5 border-b border-[#2e303a]/30 last:border-0">
+                  <div className="flex items-center gap-2 text-[12px]">
+                    <span className={`w-2.5 h-2.5 rounded-full ${dotColor}`} title={dotTitle} />
+                    <span className="text-gray-200 font-mono text-[11px]">{filename}</span>
+                    <span className="text-[10px] text-gray-500 ml-auto">{modelType}</span>
+                  </div>
+                  {description && <div className="ml-5 text-[10px] text-gray-500">{String(description)}</div>}
+                  {license && <div className="ml-5 text-[10px] text-amber-400/70">License: {String(license)}</div>}
+                  {authRequired && (
+                    <div className="ml-5 text-[10px] text-amber-400">
+                      Requires API key —{" "}
+                      <a href={`/infra/secrets#${secretKey ?? "civitai"}`} className="text-blue-400 hover:underline">
+                        Add {secretKey ?? "CivitAI"} key
+                      </a>
+                    </div>
+                  )}
+                  {!url && !authRequired && (
+                    <div className="ml-5 text-[10px] text-red-400">No download URL — provide one to enable provisioning</div>
+                  )}
                 </div>
-                {model.description && <div className="ml-5 text-[10px] text-gray-500">{model.description}</div>}
-                {model.license && <div className="ml-5 text-[10px] text-amber-400/70">License: {model.license}</div>}
-                {!model.url && <div className="ml-5 text-[10px] text-red-400">No download URL — provide one to enable provisioning</div>}
-              </div>
-            ))}
+              );
+            })}
           </Section>
 
           {/* Source */}

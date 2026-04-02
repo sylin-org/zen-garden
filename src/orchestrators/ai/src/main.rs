@@ -93,6 +93,11 @@ async fn main() -> Result<()> {
     // ── Cloud Providers ─────────────────────────────────────────────
     let cloud_store = CloudProviderStore::load(&cli.data_dir).await;
 
+    // ── Secrets ────────────────────────────────────────────────────
+    let secrets = zen_garden_ai_orchestrator::infra::secrets::SecretsStore::load(
+        std::path::Path::new(&cli.data_dir),
+    ).await;
+
     let provider_count = providers.len();
     tracing::info!(providers = provider_count, "provider registry initialized");
 
@@ -113,6 +118,7 @@ async fn main() -> Result<()> {
         providers,
         ollama_client,
         cloud_store,
+        secrets,
         shutdown.clone(),
         metrics_tx,
     );
@@ -230,6 +236,10 @@ async fn main() -> Result<()> {
         .route("/v1/audio/transcriptions", axum::routing::post(api::unified::transcriptions))
         .route("/v1/models", axum::routing::get(api::unified::models))
         .route("/v1/models/{model}/form", axum::routing::get(api::unified::model_form))
+        // Secrets management
+        .route("/v1/secrets", axum::routing::get(api::secrets::list_secrets))
+        .route("/v1/secrets/{key}", axum::routing::post(api::secrets::set_secret))
+        .route("/v1/secrets/{key}", axum::routing::delete(api::secrets::delete_secret))
         // Service skill management — provider-scoped (ORCH-0023)
         .route("/v1/services/{provider}/skills", axum::routing::get(api::skill_manage::list_skills))
         .route("/v1/services/{provider}/skills/new", axum::routing::get(api::skill_manage::new_skill))

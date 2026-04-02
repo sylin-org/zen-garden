@@ -9,7 +9,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use reqwest::Client;
 
-use super::{civitai, gen_data_parse, input_detect, model_resolve, png_extract, workflow_synth};
+use super::{civitai, gen_data_parse, input_detect, model_resolve, param_extract, png_extract, workflow_synth};
 use crate::skills::cache::{CachePaths, DependencyManifest};
 
 // ── Result Types ──────────────────────────────────────────────
@@ -24,6 +24,8 @@ pub struct AnalyzeResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<String>,
     pub models: Vec<model_resolve::ModelResolution>,
+    pub mappings: Vec<crate::domain::skill::SkillMapping>,
+    pub content_slots: Vec<param_extract::ContentSlotDetection>,
     pub inputs: Vec<DetectedInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
@@ -105,15 +107,23 @@ pub async fn run(
         extract_from_text(http, input, &mut warnings).await?
     };
 
-    // ── Step 2: Parse the workflow ────────────────────────────
+    // ── Step 2: Parse the workflow (for diagram + model detection) ──
     let parsed = crate::skills::parser::parse_workflow(&workflow)
         .map_err(|e| anyhow::anyhow!("workflow parse failed: {e}"))?;
 
-    // ── Step 3: Collect model filenames ────────────────────────
+    // ── Step 2b: Extract parameters + inject placeholders ─────
+    // This walks the workflow, identifies tunable values, replaces them
+    // with PLACEHOLDER_ tokens, and generates mappings.
+    let extraction = param_extract::extract(&workflow);
+    let workflow = extraction.workflow; // use the placeholder-injected version
+    let mappings = extraction.mappings;
+    let content_slots = extraction.content_slots;
+
+    // ── Step 3: Collect model filenames (from ORIGINAL, before placeholders) ──
     let model_pairs: Vec<(String, String)> = parsed
         .models
         .iter()
-        .filter(|m| !m.is_placeholder) // skip PLACEHOLDER_ values
+        .filter(|m| !m.is_placeholder)
         .map(|m| (m.model_name.clone(), m.model_type.clone()))
         .collect();
 
@@ -179,6 +189,8 @@ pub async fn run(
         workflow,
         diagram: Some(parsed.diagram),
         models,
+        mappings,
+        content_slots,
         inputs,
         source,
         preview_url,

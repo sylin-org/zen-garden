@@ -18,26 +18,27 @@ pub async fn create_draft(
         .await
         .with_context(|| format!("create skill dir: {}", skill_dir.display()))?;
 
-    // Build skill.json
+    // Build skill.json — use extracted mappings and content slots
     let content_slots: Vec<serde_json::Value> = result
-        .inputs
+        .content_slots
         .iter()
-        .map(|i| serde_json::json!({
-            "role": i.role,
-            "content_type": i.content_type,
-            "required": true,
-        }))
+        .map(|s| {
+            let mut v = serde_json::json!({
+                "role": s.role,
+                "content_type": s.content_type,
+                "required": s.required,
+            });
+            if let Some(ref overlay) = s.overlay {
+                v.as_object_mut().unwrap().insert("overlay".into(), serde_json::json!(overlay));
+            }
+            v
+        })
         .collect();
 
     let mappings: Vec<serde_json::Value> = result
-        .inputs
+        .mappings
         .iter()
-        .map(|i| serde_json::json!({
-            "type": "content",
-            "role": i.role,
-            "content_type": i.content_type,
-            "placeholder": i.placeholder,
-        }))
+        .map(|m| serde_json::to_value(m).unwrap_or_default())
         .collect();
 
     let required_models: Vec<serde_json::Value> = result

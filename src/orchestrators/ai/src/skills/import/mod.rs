@@ -25,5 +25,6 @@ pub mod png_extract;
 pub mod gen_data_parse;
 pub mod workflow_synth;
 pub mod model_resolve;
+pub mod param_extract;
 pub mod analyze;
 pub mod draft_builder;

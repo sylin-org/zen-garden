@@ -97,6 +97,10 @@ pub fn image_upscale(_available_models: &[String]) -> SkillDefinition {
             .map(|m| ModelRef {
                 filename: m.filename,
                 model_type: m.model_type,
+                url: Some(m.url),
+                size_bytes: Some(m.size_bytes),
+                sha256: None,
+                license: Some(m.license),
                 description: Some(m.description),
             })
             .collect(),
@@ -209,6 +213,10 @@ pub fn image_generate(available_checkpoints: &[String]) -> SkillDefinition {
             .map(|m| ModelRef {
                 filename: m.filename,
                 model_type: m.model_type,
+                url: Some(m.url),
+                size_bytes: Some(m.size_bytes),
+                sha256: None,
+                license: Some(m.license),
                 description: Some(m.description),
             })
             .collect(),
@@ -313,6 +321,10 @@ pub fn image_img2img(available_checkpoints: &[String]) -> SkillDefinition {
             .map(|m| ModelRef {
                 filename: m.filename,
                 model_type: m.model_type,
+                url: Some(m.url),
+                size_bytes: Some(m.size_bytes),
+                sha256: None,
+                license: Some(m.license),
                 description: Some(m.description),
             })
             .collect(),
@@ -428,6 +440,10 @@ pub fn image_inpaint(available_checkpoints: &[String]) -> SkillDefinition {
             .map(|m| ModelRef {
                 filename: m.filename,
                 model_type: m.model_type,
+                url: Some(m.url),
+                size_bytes: Some(m.size_bytes),
+                sha256: None,
+                license: Some(m.license),
                 description: Some(m.description),
             })
             .collect(),

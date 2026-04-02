@@ -462,152 +462,131 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
         }
     }
 
-    // Register builtin skills and check/provision instance readiness (ORCH-0021)
-    let builtin_skills = adapter.builtin_skills();
-    if builtin_skills.is_empty() {
+    // Provision skills for this instance (ORCH-0022)
+    // Skills are already loaded from disk. For each skill matching this provider,
+    // ensure dependencies are cached locally and pushed to the instance.
+    let moss_endpoint = derive_moss_endpoint(endpoint);
+    let offering_fqn = kind.as_str().to_string();
+    let cache_paths = crate::skills::cache::CachePaths::new(
+        std::path::Path::new(&state.data_dir),
+        kind.as_str(),
+    );
+
+    // Get all registered skills for this provider kind
+    let skills_snapshot = state.skills.snapshot().clone();
+    let provider_skills: Vec<_> = skills_snapshot
+        .skills
+        .iter()
+        .filter(|sv| sv.definition.provider_kind == kind)
+        .collect();
+
+    if provider_skills.is_empty() {
         return;
     }
 
-    // Register all builtin skills as singletons
-    for skill in &builtin_skills {
-        state.skills.register(skill.clone()).await;
-    }
+    let stone_name = endpoint
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split(':')
+        .next()
+        .unwrap_or("unknown")
+        .to_string();
+    let instance_vram_mb = {
+        let snap = state.registry.snapshot().clone();
+        snap.instances
+            .get(endpoint)
+            .map(|i| i.vram.total_bytes / 1_048_576)
+            .unwrap_or(0)
+    };
 
-    // Derive Moss endpoint from service endpoint (same host, port 7185)
-    let moss_endpoint = derive_moss_endpoint(endpoint);
-    let offering_fqn = kind.as_str().to_string();
-    let cache_dir = std::path::PathBuf::from(&state.data_dir).join("skill-cache");
+    let http = reqwest::Client::new();
 
-    // Check and provision readiness for each skill on this instance
-    for skill in builtin_skills {
+    for skill_view in provider_skills {
+        let skill = &skill_view.definition;
         let skill_name = skill.name.clone();
 
-        // Check current readiness
-        let readiness = adapter.check_skill_readiness(&ctx, &skill_name).await;
-        match readiness {
-            Ok(r) if r.ready => {
-                let instance_vram_mb = {
-                    let snap = state.registry.snapshot().clone();
-                    snap.instances
-                        .get(endpoint)
-                        .map(|i| i.vram.total_bytes / 1_048_576)
-                        .unwrap_or(0)
-                };
-                let stone_name = ctx.endpoint
-                    .trim_start_matches("http://")
-                    .trim_start_matches("https://")
-                    .split(':')
-                    .next()
-                    .unwrap_or("unknown")
-                    .to_string();
-                state
-                    .skills
-                    .set_readiness(
-                        &skill_name,
-                        endpoint,
-                        crate::domain::skill::SkillInstanceView {
-                            stone_name,
-                            endpoint: endpoint.to_string(),
-                            ready: true,
-                            reason: r.reason,
-                            vram_mb: instance_vram_mb,
-                        },
-                    )
-                    .await;
-                tracing::debug!(skill = %skill_name, endpoint = %endpoint, "skill ready");
-                continue;
-            }
-            Ok(r) => {
-                tracing::debug!(
-                    skill = %skill_name,
-                    endpoint = %endpoint,
-                    reason = %r.reason,
-                    "skill not ready — checking if provisioning needed"
-                );
-            }
-            Err(e) => {
-                tracing::debug!(
-                    skill = %skill_name,
-                    endpoint = %endpoint,
-                    error = %e,
-                    "skill readiness check failed (non-fatal)"
-                );
-                continue;
-            }
-        }
-
-        // Skip if already provisioning for this skill+endpoint
+        // Skip if already provisioning
         if state.skills.is_provisioning(&skill_name, endpoint).await {
             continue;
         }
 
-        // Mark provisioning BEFORE spawning — prevents duplicate spawns
+        // Check if all models are already on the instance
+        let manifest = crate::skills::cache::DependencyManifest::load(&cache_paths.manifest_path).await;
+        let readiness = crate::skills::provisioner::check_instance_readiness(
+            &http, skill, &manifest, &moss_endpoint, &offering_fqn, "comfyui-models",
+        ).await;
+
+        if readiness.ready {
+            state.skills.set_readiness(
+                &skill_name, endpoint,
+                crate::domain::skill::SkillInstanceView {
+                    stone_name: stone_name.clone(),
+                    endpoint: endpoint.to_string(),
+                    ready: true,
+                    reason: readiness.reason,
+                    vram_mb: instance_vram_mb,
+                },
+            ).await;
+            continue;
+        }
+
+        // Not ready — spawn provisioning as background task
         state.skills.mark_provisioning(&skill_name, endpoint).await;
 
-        // Spawn provisioning as a background task — don't block discovery
         let prov_state = state.clone();
         let prov_endpoint = endpoint.to_string();
         let prov_moss = moss_endpoint.clone();
         let prov_fqn = offering_fqn.clone();
-        let prov_cache = cache_dir.clone();
-        let prov_adapter = adapter.clone();
-        let prov_ctx = ctx.clone();
+        let prov_cache_paths = crate::skills::cache::CachePaths::new(
+            std::path::Path::new(&prov_state.data_dir),
+            kind.as_str(),
+        );
+        let prov_skill = skill.clone();
+        let prov_stone = stone_name.clone();
+        let prov_http = http.clone();
 
         tokio::spawn(async move {
-            let instance_vram_mb = {
-                let snap = prov_state.registry.snapshot().clone();
-                snap.instances
-                    .get(&prov_endpoint)
-                    .map(|i| i.vram.total_bytes / 1_048_576)
-                    .unwrap_or(0)
-            };
-            let stone_name = prov_ctx.endpoint
-                .trim_start_matches("http://")
-                .trim_start_matches("https://")
-                .split(':')
-                .next()
-                .unwrap_or("unknown")
-                .to_string();
+            let result = async {
+                // 1. Ensure all models cached locally (download if missing)
+                let cached_models = crate::skills::provisioner::ensure_cached(
+                    &prov_http, &prov_skill, &prov_cache_paths,
+                ).await?;
 
-            let result = prov_adapter
-                .provision_skill(&prov_ctx, &skill_name, &prov_cache, &prov_moss, &prov_fqn)
-                .await;
+                // 2. Push cached models to the instance
+                crate::skills::provisioner::push_to_instance(
+                    &prov_http, &cached_models, &prov_moss, &prov_fqn, "comfyui-models",
+                ).await?;
+
+                Ok::<(), anyhow::Error>(())
+            }.await;
 
             prov_state.skills.clear_provisioning(&skill_name, &prov_endpoint).await;
 
             match result {
                 Ok(()) => {
-                    prov_state
-                        .skills
-                        .set_readiness(
-                            &skill_name,
-                            &prov_endpoint,
-                            crate::domain::skill::SkillInstanceView {
-                                stone_name,
-                                endpoint: prov_endpoint.clone(),
-                                ready: true,
-                                reason: "provisioned".into(),
-                                vram_mb: instance_vram_mb,
-                            },
-                        )
-                        .await;
+                    prov_state.skills.set_readiness(
+                        &skill_name, &prov_endpoint,
+                        crate::domain::skill::SkillInstanceView {
+                            stone_name: prov_stone,
+                            endpoint: prov_endpoint.clone(),
+                            ready: true,
+                            reason: "provisioned".into(),
+                            vram_mb: instance_vram_mb,
+                        },
+                    ).await;
                     tracing::info!(skill = %skill_name, endpoint = %prov_endpoint, "skill provisioned");
                 }
                 Err(e) => {
-                    prov_state
-                        .skills
-                        .set_readiness(
-                            &skill_name,
-                            &prov_endpoint,
-                            crate::domain::skill::SkillInstanceView {
-                                stone_name,
-                                endpoint: prov_endpoint.clone(),
-                                ready: false,
-                                reason: format!("provisioning failed: {}", e),
-                                vram_mb: instance_vram_mb,
-                            },
-                        )
-                        .await;
+                    prov_state.skills.set_readiness(
+                        &skill_name, &prov_endpoint,
+                        crate::domain::skill::SkillInstanceView {
+                            stone_name: prov_stone,
+                            endpoint: prov_endpoint.clone(),
+                            ready: false,
+                            reason: format!("provisioning failed: {e}"),
+                            vram_mb: instance_vram_mb,
+                        },
+                    ).await;
                     tracing::warn!(skill = %skill_name, endpoint = %prov_endpoint, error = %e, "skill provisioning failed");
                 }
             }

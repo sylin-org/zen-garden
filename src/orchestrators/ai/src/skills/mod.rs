@@ -5,8 +5,10 @@
 //! - `builtin`: Legacy built-in skill definitions (being replaced by disk-based loader)
 //! - `prep`: Stream model downloads and push to ComfyUI instances
 
+pub mod cache;
 pub mod loader;
 pub mod parser;
+pub mod provisioner;
 pub mod builtin;
 pub mod prep;
 

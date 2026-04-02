@@ -191,10 +191,22 @@ pub enum ContentType {
 /// A model required by a skill.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRef {
-    /// Filename as ComfyUI knows it (e.g., "4x-UltraSharp.pth").
+    /// Filename as the provider knows it (e.g., "4x-UltraSharp.pth").
     pub filename: String,
     /// Which model directory (e.g., "upscale_models", "checkpoints").
     pub model_type: String,
+    /// Download URL. The provider streams from here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Expected file size in bytes (for progress reporting).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// Expected SHA-256 checksum ("sha256:{hex}" or just the hex).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// License name (shown in dashboard skill panel).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
     /// Human-readable description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -414,6 +426,10 @@ mod tests {
             required_models: vec![ModelRef {
                 filename: "RealESRGAN_x4plus.pth".into(),
                 model_type: "upscale_models".into(),
+                url: None,
+                size_bytes: None,
+                sha256: None,
+                license: None,
                 description: Some("4x upscaler".into()),
             }],
             default_workflow: "upscale_4x".into(),

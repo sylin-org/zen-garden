@@ -5,6 +5,7 @@ pub mod compatibility;
 pub mod discovery;
 pub mod error;
 pub mod hardware;
+pub mod hardware_topology;
 pub mod health;
 pub mod lantern;
 pub mod offering;
@@ -33,6 +34,7 @@ pub use service::*;
 pub use peer_address::*;
 pub use task::*;
 pub use topology::*;
+pub use hardware_topology::*;
 
 #[cfg(test)]
 mod tests {

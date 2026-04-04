@@ -812,11 +812,32 @@ pub struct StoneInfoApi<'a> {
 }
 
 impl StoneInfoApi<'_> {
-    /// Get hardware capabilities.
+    /// Get full capabilities (Tier 1 core + Tier 2 topology).
     pub async fn capabilities(
         &self,
-    ) -> Result<crate::HardwareCapabilities, StoneApiError> {
+    ) -> Result<crate::types::hardware_topology::FullCapabilities, StoneApiError> {
         self.api.get("/api/v1/stone/capabilities").await
+    }
+
+    /// Get Tier 1 core capabilities only (fast, offering compatibility).
+    pub async fn capabilities_core(
+        &self,
+    ) -> Result<crate::HardwareCapabilities, StoneApiError> {
+        self.api.get("/api/v1/stone/capabilities/core").await
+    }
+
+    /// Get Tier 2 hardware topology only (deep, cached, ARCH-0014).
+    pub async fn capabilities_topology(
+        &self,
+    ) -> Result<crate::types::hardware_topology::HardwareTopology, StoneApiError> {
+        self.api.get("/api/v1/stone/capabilities/topology").await
+    }
+
+    /// Trigger immediate topology re-probe (flushes cache).
+    /// Returns 202 Accepted — the probe runs asynchronously.
+    pub async fn capabilities_refresh(&self) -> Result<(), StoneApiError> {
+        self.api.post_raw("/api/v1/stone/capabilities/refresh").await?;
+        Ok(())
     }
 
     /// Health check.

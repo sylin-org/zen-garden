@@ -296,3 +296,47 @@ pub async fn get_topology_v1(
 
     crate::api::ok_maybe(stones, suggestions)
 }
+
+/// GET /api/v1/garden/capabilities — Aggregate capabilities across all stones.
+///
+/// Returns `FullCapabilities` for each stone in the garden:
+/// - This stone: full Tier 1 + Tier 2 (topology available locally).
+/// - Peer stones: Tier 1 from topology cache, Tier 2 = None
+///   (peers' Tier 2 data is local to each stone — hit their
+///   `/capabilities` endpoint directly for full data).
+pub async fn get_garden_capabilities_v1(
+    State(state): State<AppState>,
+) -> crate::api::ApiResult<Vec<garden_common::types::hardware_topology::FullCapabilities>> {
+    use garden_common::types::hardware_topology::FullCapabilities;
+
+    let mut results = Vec::new();
+
+    // Self — full Tier 1 + Tier 2
+    let self_core = {
+        let guard = state.current.capabilities.read().await;
+        guard.clone().unwrap_or_else(|| {
+            crate::infra::hardware::create_skeleton(state.current.stone.name.to_string())
+        })
+    };
+    let self_topology = state.current.hardware_topology.read().await.clone();
+    results.push(FullCapabilities {
+        core: self_core,
+        topology: self_topology,
+    });
+
+    // Peers — Tier 1 from topology cache, Tier 2 = None
+    let peers = topology::get_all_stones(&state.current.topology.cache).await;
+    for peer in peers {
+        if peer.stone_id == state.current.stone.id {
+            continue;
+        }
+        if let Some(caps) = peer.capabilities {
+            results.push(FullCapabilities {
+                core: caps,
+                topology: None,
+            });
+        }
+    }
+
+    crate::api::ok(results)
+}

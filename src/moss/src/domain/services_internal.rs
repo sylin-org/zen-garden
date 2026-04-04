@@ -10,8 +10,13 @@ use crate::AppState;
 
 /// Build a Docker container spec from the offering manifest + config patches.
 ///
-/// Applies hardware-aware image resolution from the compiled offerings index,
-/// falling back to the raw manifest image if the index is unavailable.
+/// Uses the **CompiledOffering** as the base (hardware-resolved image,
+/// device_requests, command, env, volumes, ports), then applies config patch
+/// overrides. Falls back to the raw template only when the compiled offering
+/// is unavailable.
+///
+/// This matches the reference implementation in `install_service_task` which
+/// also uses `compiled.*` for all spec fields.
 pub async fn build_spec_from_manifest(
     state: &AppState,
     service_name: &str,
@@ -27,67 +32,104 @@ pub async fn build_spec_from_manifest(
     };
 
     // Resolve the offering type (strip instance suffix for FQN lookups)
-    let fqn = OfferingFqn::parse(service_name)
-        .context("Invalid offering FQN")?;
+    let fqn = OfferingFqn::parse(service_name).context("Invalid offering FQN")?;
     let offering_type = fqn.offering.clone();
 
-    let manifest = state
-        .manifest_registry
-        .get_offering(&offering_type)
-        .context("No manifest for offering")?;
-    let template = manifest
-        .parse_template_for_fqn(&fqn)
-        .context("Failed to parse template")?;
-
-    let effective = crate::domain::config_compose::compose(&template, &patches)
-        .context("Failed to compose config")?;
-
-    // Use the compiled offerings index for the image — it applies hardware
-    // capability resolution (e.g., AVX fallback: mongo:7 → mongo:4.4).
-    // Fall back to the raw manifest image if the index is unavailable.
-    let resolved_image = match crate::get_compiled_offering(
+    // Primary path: use the CompiledOffering (hardware-resolved image,
+    // device_requests, environment, command, volumes, ports, config_files).
+    // This is the same source that install_service_task uses.
+    let compiled = crate::get_compiled_offering(
         state,
         &offering_type,
         &crate::infra::persistence::OsOfferingsCache,
     )
-    .await
-    {
-        Ok(Some(compiled)) => {
-            if compiled.image != effective.image {
-                tracing::info!(
-                    service = %service_name,
-                    manifest_image = %effective.image,
-                    resolved_image = %compiled.image,
-                    "Using hardware-resolved image from compiled index"
-                );
+    .await;
+
+    let (image, command, ports, environment, volumes, config_files, device_requests) =
+        match compiled {
+            Ok(Some(compiled)) => {
+                // Resolve FQN-specific volume paths (e.g., comfyui::prod isolation)
+                let fqn_volumes = compiled.volumes_for_fqn(&fqn);
+                let ports = compiled.ports_vec();
+                (
+                    compiled.image,
+                    compiled.command,
+                    ports,
+                    compiled.environment,
+                    fqn_volumes,
+                    compiled.config_files,
+                    compiled.device_requests,
+                )
             }
-            compiled.image
+            Ok(None) | Err(_) => {
+                // Fallback: use raw template (no hardware resolution).
+                // This path should rarely execute — the compiled index is
+                // always available in production.
+                if matches!(compiled, Err(_)) {
+                    tracing::warn!(
+                        service = %service_name,
+                        "Failed to read compiled offerings index, using raw manifest template"
+                    );
+                } else {
+                    tracing::debug!(
+                        service = %service_name,
+                        "No compiled offering found, using raw manifest template"
+                    );
+                }
+                let manifest = state
+                    .manifest_registry
+                    .get_offering(&offering_type)
+                    .context("No manifest for offering")?;
+                let template = manifest
+                    .parse_template_for_fqn(&fqn)
+                    .context("Failed to parse template")?;
+                let ports = template.ports_vec();
+                (
+                    template.image,
+                    template.command,
+                    ports,
+                    template.environment,
+                    template.volumes,
+                    template.config_files,
+                    template.device_requests,
+                )
+            }
+        };
+
+    // Apply config patch overrides (command, env, volumes — same logic as compose)
+    let mut effective_command = command;
+    let mut effective_env = environment;
+    let mut effective_volumes = volumes;
+
+    let mut sorted_patches: Vec<&garden_common::types::ConfigPatch> = patches.iter().collect();
+    sorted_patches.sort_by_key(|p| p.applied_at);
+
+    for patch in sorted_patches {
+        if let Some(ref cmd) = patch.command {
+            effective_command = Some(cmd.clone());
         }
-        Ok(None) => {
-            tracing::debug!(
-                service = %service_name,
-                "No compiled offering found, using manifest image"
-            );
-            effective.image
+        for (key, value) in &patch.environment {
+            effective_env.retain(|e| !e.starts_with(&format!("{}=", key)));
+            effective_env.push(format!("{}={}", key, value));
         }
-        Err(e) => {
-            tracing::warn!(
-                service = %service_name,
-                error = ?e,
-                "Failed to read compiled offerings index, using manifest image"
-            );
-            effective.image
+        for volume in &patch.volumes {
+            let already_mounted = effective_volumes
+                .iter()
+                .any(|(_, container)| container == &volume.1);
+            if !already_mounted {
+                effective_volumes.push(volume.clone());
+            }
         }
-    };
+    }
 
     Ok(crate::docker::ContainerSpec {
-        image: resolved_image,
-        command: effective.command,
-        ports: effective.ports,
-        environment: effective.environment,
-        volumes: effective.volumes,
-        config_files: effective.config_files,
-        device_requests: template.device_requests,
+        image,
+        command: effective_command,
+        ports,
+        environment: effective_env,
+        volumes: effective_volumes,
+        config_files,
+        device_requests,
     })
 }
 

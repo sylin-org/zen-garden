@@ -1,11 +1,29 @@
+# OpenedAI Speech hardware compatibility (three-tier: NVIDIA → ROCm → CPU)
+#
+# Default image: ghcr.io/matatonic/openedai-speech:latest (NVIDIA CUDA, XTTS v2)
+# Fallback 1: ghcr.io/matatonic/openedai-speech-rocm:latest (AMD ROCm, XTTS v2)
+# Fallback 2: ghcr.io/matatonic/openedai-speech-min:latest (CPU-only, Piper only)
+
 compatibility_rules:
-  - name: "no-gpu-xtts-warning"
+  # No NVIDIA GPU — check if AMD GPU available for ROCm fallback
+  - name: "no-nvidia-use-rocm"
     when:
       - host.ai.runtime LACKS cuda
-    reason: "XTTS v2 requires an NVIDIA GPU (~4GB VRAM). Piper voices work on CPU."
-    suggestion: "Use the minimal image (openedai-speech-min) for CPU-only Piper TTS."
-    warn_only: true
-    continue: true
+      - host.ai.runtime HAS rocm
+    reason: "No NVIDIA GPU detected. Using AMD ROCm image for XTTS v2 voice synthesis."
+    fallback:
+      image: "ghcr.io/matatonic/openedai-speech-rocm:latest"
+      name: "rocm"
+
+  # No GPU at all — CPU-only with Piper backend
+  - name: "no-gpu-use-cpu"
+    when:
+      - host.ai.runtime LACKS cuda
+      - host.ai.runtime LACKS rocm
+    reason: "No GPU runtime available. Using CPU-only minimal image (Piper voices only, no XTTS v2)."
+    fallback:
+      image: "ghcr.io/matatonic/openedai-speech-min:latest"
+      name: "cpu"
 
   - name: "low-vram-warning"
     when:
@@ -35,6 +53,16 @@ post_install_healthcheck:
     - pattern: "CUDA.*error|cuda.*fail"
       reason: "GPU initialization failed"
       suggestion: "Use the minimal image (-min) for CPU-only Piper TTS"
+      fallback:
+        image: "ghcr.io/matatonic/openedai-speech-min:latest"
+        name: "cpu"
+
+    - pattern: "HIP.*error|hip.*fail|ROCm.*error"
+      reason: "AMD ROCm GPU initialization failed"
+      suggestion: "Check ROCm drivers. Fall back to CPU-only Piper."
+      fallback:
+        image: "ghcr.io/matatonic/openedai-speech-min:latest"
+        name: "cpu"
 
     - pattern: "Cannot allocate memory|OOM"
       reason: "Insufficient memory for XTTS v2 model"

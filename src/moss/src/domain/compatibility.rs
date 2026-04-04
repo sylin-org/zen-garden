@@ -75,6 +75,11 @@ pub fn compile_compatibility(
             } => {
                 let original_image = template.image.clone();
                 template.image = image.clone();
+                // Clear GPU device requests — the fallback image (CPU or ROCm)
+                // does not use the NVIDIA container runtime. Keeping them would
+                // cause "nvidia-container-cli: initialization error" on non-NVIDIA
+                // machines (OFFER-0008).
+                template.device_requests.clear();
                 CompiledCompatibility {
                     decision: garden_common::constants::COMPAT_FALLBACK.to_string(),
                     reason: Some(reason),

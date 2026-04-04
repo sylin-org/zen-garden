@@ -1,11 +1,17 @@
+# Infinity embedding server hardware compatibility (two-tier: NVIDIA → CPU)
+#
+# Default image: michaelf34/infinity:latest (NVIDIA GPU)
+# Fallback: michaelf34/infinity:latest-cpu (CPU-only, slower throughput)
+
 compatibility_rules:
-  - name: "no-gpu-info"
+  # No NVIDIA GPU — fall back to CPU image
+  - name: "no-nvidia-use-cpu"
     when:
       - host.ai.runtime LACKS cuda
-    reason: "Infinity performs best with GPU acceleration for embedding throughput"
-    suggestion: "Use the CPU image (infinity:latest-cpu) with --engine optimum for CPU-only deployment."
-    warn_only: true
-    continue: true
+    reason: "No NVIDIA GPU detected. Using CPU image for embedding inference."
+    fallback:
+      image: "michaelf34/infinity:latest-cpu"
+      name: "cpu"
 
   - name: "low-vram-warning"
     when:
@@ -34,6 +40,9 @@ post_install_healthcheck:
     - pattern: "CUDA.*error|cuda.*fail"
       reason: "GPU initialization failed"
       suggestion: "Use infinity:latest-cpu with --engine optimum"
+      fallback:
+        image: "michaelf34/infinity:latest-cpu"
+        name: "cpu"
 
     - pattern: "Connection.*refused|Failed to download.*model"
       reason: "Model download failed from HuggingFace"

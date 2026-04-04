@@ -140,6 +140,48 @@ pub async fn patch_config_v1(
         ));
     }
 
+    // OFFER-0008: Validate volume host paths to prevent arbitrary host mounts.
+    // Only absolute paths under data_dir() or shared_data_dir() are permitted.
+    // Rejects path traversal (..) and backslash separators but allows absolute
+    // paths (unlike has_path_traversal which rejects RootDir).
+    for (host_path, _container_path) in &request.volumes {
+        // Reject traversal sequences and backslash
+        if host_path.contains('\\') {
+            return Err(bad_request(
+                "INVALID_VOLUME_PATH",
+                format!("Volume host path '{}' contains backslash", host_path),
+            ));
+        }
+        let has_traversal = std::path::Path::new(host_path.as_str())
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_)));
+        if has_traversal {
+            return Err(bad_request(
+                "INVALID_VOLUME_PATH",
+                format!(
+                    "Volume host path '{}' contains path traversal sequence",
+                    host_path
+                ),
+            ));
+        }
+
+        // Require path under allowed directories (component-based prefix check)
+        let host = std::path::Path::new(host_path.as_str());
+        let data_dir = garden_common::constants::paths::data_dir();
+        let shared_dir = garden_common::constants::paths::shared_data_dir();
+        let is_allowed = host.starts_with(std::path::Path::new(&data_dir))
+            || host.starts_with(std::path::Path::new(&shared_dir));
+        if !is_allowed {
+            return Err(bad_request(
+                "INVALID_VOLUME_PATH",
+                format!(
+                    "Volume host path '{}' is outside allowed directories ({}, {})",
+                    host_path, data_dir, shared_dir
+                ),
+            ));
+        }
+    }
+
     // Build the new ConfigPatch
     let new_patch = ConfigPatch {
         owner: request.owner.clone(),

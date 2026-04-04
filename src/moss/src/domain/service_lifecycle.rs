@@ -151,12 +151,37 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
         .unwrap_or(false);
 
     if !container_exists {
-        // Self-heal: reinstall from manifest, preserving volumes
-        info!(service = %service_name, "Container missing for registered offering, reinstalling");
-        crate::domain::services_internal::rebuild_missing_container(state, service_name)
-            .await
-            .context("Container is missing and reinstall failed")?;
-        info!(service = %service_name, "Container reinstalled successfully (data preserved)");
+        // OFFER-0008: If the offering is already Installing (health monitor reconciliation
+        // in-flight), skip the redundant reconcile to avoid a Docker "name already in use"
+        // race. The health monitor will complete it.
+        let current_status = {
+            let offerings = state.offerings.read().await;
+            offerings
+                .iter()
+                .find(|o| o.offering_id == offering_id)
+                .map(|o| o.status)
+        };
+        if current_status == Some(OfferingStatus::Installing) {
+            info!(
+                service = %service_name,
+                "Container missing but reconciliation already in-flight, waiting"
+            );
+            return Err(anyhow::anyhow!(
+                "Service '{}' is being reconciled by the health monitor — try again shortly",
+                service_name
+            ));
+        }
+
+        // Self-heal: reconcile from manifest, preserving ports + volumes (OFFER-0008)
+        info!(service = %service_name, "Container missing for registered offering, reconciling");
+        let result =
+            crate::domain::services_internal::reconcile_offering(state, service_name)
+                .await
+                .context("Container is missing and reconciliation failed")?;
+
+        result.apply_port_updates(state, &offering_id).await;
+
+        info!(service = %service_name, "Container reconciled successfully (data preserved)");
     } else {
         // Check if compose-on-start needed (config patches exist)
         let needs_compose = {

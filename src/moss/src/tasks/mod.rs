@@ -31,6 +31,7 @@ pub mod metrics_collector;
 pub mod network_monitor;
 pub mod nurturing_scheduler;
 pub mod offering_orchestration;
+pub mod offering_reconciliation;
 pub mod presence_monitor;
 pub mod registry;
 pub mod state_provider;
@@ -39,17 +40,16 @@ pub mod storage_replication;
 pub mod storage_tasks;
 pub mod storage_tick_aggregator;
 pub mod supervisor;
+pub mod task_defs;
+pub mod task_registry;
 pub mod task_scheduler;
+pub mod task_trait;
 pub mod topology;
+pub mod topology_probe;
 
 pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;
-pub use coordinator::{
-    start_all_background_tasks, start_auto_adoption, start_auto_adoption_with_config,
-    start_catalog_builder, start_discovery_listener, start_docker_events,
-    start_hardware_detection, start_health_monitor, start_lantern_registration,
-    start_registry_loader, start_registry_maintenance, start_topology_maintenance,
-};
+pub use lantern::start_lantern_registration;
 pub use discovery::lantern_registration_loop;
 pub use docker::{Config as DockerMonitorConfig, Event as DockerEvent, Monitor as DockerMonitor};
 pub use docker_events::docker_events_task;

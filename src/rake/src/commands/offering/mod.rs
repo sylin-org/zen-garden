@@ -918,16 +918,17 @@ async fn handle_placement_recommendation(
             let endpoint = candidate.endpoint.clone();
             async move {
                 use crate::tending::StoneError;
+                use garden_common::client::StoneApi;
 
-                let url = format!("{}/api/v1/garden/recommend", endpoint.trim_end_matches('/'));
+                let api = StoneApi::new(client, endpoint);
                 let payload = serde_json::json!({
                     "offering": offering,
                     "preferences": [],
                     "top_n": 3
                 });
 
-                let response = client
-                    .post(&url)
+                let response = api.http()
+                    .post(&format!("{}/api/v1/garden/recommend", api.endpoint()))
                     .json(&payload)
                     .timeout(Duration::from_secs(10))
                     .send()
@@ -1457,15 +1458,14 @@ impl Command for OfferCommand {
                             }
                         }
 
-                    // POST /api/v1/stone/services with JSON body
-                    let url = format!("{}/api/v1/stone/services", api.endpoint());
+                    // Create service from offering
                     let payload = serde_json::json!({
                         "offering": service_name,
                         "ports": [],
                         "environment": {}
                     });
 
-                    let response = api.http().post(url).json(&payload).send().await?;
+                    let response = api.services().create(&payload).await?;
                     let status = response.status();
                     let body = response.json::<serde_json::Value>().await.ok();
 
@@ -1757,12 +1757,11 @@ impl Command for OfferCommand {
                             format!("image:{}", image_ref)
                         };
 
-                        let url = format!("{}/api/v1/stone/services", api.endpoint());
                         let payload = serde_json::json!({
                             "offering": fqn_string,
                         });
 
-                        let response = api.http().post(&url).json(&payload).send().await?;
+                        let response = api.services().create(&payload).await?;
                         let status = response.status();
                         let body: serde_json::Value = response.json().await?;
 

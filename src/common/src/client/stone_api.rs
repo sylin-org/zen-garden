@@ -388,6 +388,16 @@ impl ServicesApi<'_> {
         self.api.get("/api/v1/stone/services").await
     }
 
+    /// Create a service from an offering. Returns raw response for status inspection.
+    pub async fn create<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<reqwest::Response, StoneApiError> {
+        self.api
+            .post_raw_with_body("/api/v1/stone/services", body)
+            .await
+    }
+
     /// Get details for a single service.
     pub async fn get(&self, name: &str) -> Result<crate::ServiceInfo, StoneApiError> {
         let path = format!("/api/v1/stone/services/{}", urlencoding::encode(name));
@@ -1093,6 +1103,11 @@ impl StoneInfoApi<'_> {
         self.api.get("/api/v1/manifest").await
     }
 
+    /// List snapshots for offerings (nurturing/backup).
+    pub async fn snapshots(&self) -> Result<serde_json::Value, StoneApiError> {
+        self.api.get("/api/v1/stone/snapshots").await
+    }
+
     /// Notify stone of tending (visual feedback for companions).
     pub async fn notify_tending<B: Serialize>(
         &self,
@@ -1157,6 +1172,14 @@ impl GardenApi<'_> {
     /// Raw topology (all stones with full detail).
     pub async fn topology(&self) -> Result<serde_json::Value, StoneApiError> {
         self.api.get("/api/v1/garden/topology").await
+    }
+
+    /// Placement recommendations for an offering.
+    pub async fn recommend<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post("/api/v1/garden/recommend", body).await
     }
 }
 

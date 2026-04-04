@@ -264,29 +264,15 @@ impl Command for RestoreRemoteCommand {
 
             // Find matching snapshots for this offering
             // We need to look up offering_id from the offering name first
-            let services_url = format!("{}/api/v1/stone/services", api.endpoint());
-            let services_response = api.http().get(&services_url).send().await?;
-
-            let offering_id = if services_response.status().is_success() {
-                let services: serde_json::Value = services_response.json().await?;
-                services
-                    .get("data")
-                    .and_then(|d| d.get("services"))
-                    .and_then(|s| s.as_array())
-                    .and_then(|arr| {
-                        arr.iter().find_map(|svc| {
-                            let name = svc.get("name").and_then(|n| n.as_str())?;
-                            if name == self.offering {
-                                svc.get("offering_id")
-                                    .and_then(|id| id.as_str())
-                                    .map(String::from)
-                            } else {
-                                None
-                            }
-                        })
-                    })
-            } else {
-                None
+            let offering_id = match api.services().list().await {
+                Ok(services) => services.iter().find_map(|svc| {
+                    if svc.name == self.offering {
+                        Some(svc.offering_id.clone())
+                    } else {
+                        None
+                    }
+                }),
+                Err(_) => None,
             };
 
             let offering_id = offering_id.unwrap_or_else(|| self.offering.clone());
@@ -431,20 +417,14 @@ impl Command for NurturingStatusCommand {
             }
 
             // Overview of all offerings
-            let url = format!("{}/api/v1/stone/snapshots", api.endpoint());
-            let response = api.http().get(&url).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                anyhow::bail!("Failed to get nurturing status ({}): {}", status, text);
-            }
-
-            let index: ApiResponse<NurturingIndex> = response.json().await?;
+            let index_value: serde_json::Value = api.stone().snapshots().await
+                .map_err(|e| anyhow::anyhow!("Failed to get nurturing status: {}", e.display_message()))?;
+            let index: NurturingIndex = serde_json::from_value(index_value)
+                .map_err(|e| anyhow::anyhow!("Failed to parse nurturing status: {}", e))?;
 
             println!("\n{}", ui::section_header("NURTURING STATUS", &ctx.term));
 
-            if index.data.offerings.is_empty() {
+            if index.offerings.is_empty() {
                 println!(
                     "  {} No nurturing snapshots configured",
                     ui::status_indicator("info", ctx.term.supports_color)
@@ -473,7 +453,6 @@ impl Command for NurturingStatusCommand {
                 .collect();
 
             let total_snapshots: usize = index
-                .data
                 .offerings
                 .iter()
                 .map(|o| o.slot_a.is_some() as usize + o.slot_b.is_some() as usize)
@@ -482,12 +461,12 @@ impl Command for NurturingStatusCommand {
             println!(
                 "  Total Snapshots: {}  |  Offerings: {}  |  Seed Banks: {} online",
                 total_snapshots,
-                index.data.offerings.len(),
+                index.offerings.len(),
                 online_banks.len()
             );
             println!();
 
-            for slots in &index.data.offerings {
+            for slots in &index.offerings {
                 let name = slots
                     .slot_a
                     .as_ref()
@@ -755,28 +734,14 @@ impl Command for NurturingListCommand {
             // Remote backups
             if !self.local_only {
                 // Get offering_id first
-                let services_url = format!("{}/api/v1/stone/services", api.endpoint());
-
-                let offering_id: Option<String> = match api.http().get(&services_url).send().await {
-                    Ok(resp) => match resp.json::<serde_json::Value>().await {
-                        Ok(v) => v
-                            .get("data")
-                            .and_then(|d| d.get("services"))
-                            .and_then(|s| s.as_array())
-                            .and_then(|arr| {
-                                arr.iter().find_map(|svc| {
-                                    let name = svc.get("name").and_then(|n| n.as_str())?;
-                                    if name == self.offering {
-                                        svc.get("offering_id")
-                                            .and_then(|id| id.as_str())
-                                            .map(String::from)
-                                    } else {
-                                        None
-                                    }
-                                })
-                            }),
-                        Err(_) => None,
-                    },
+                let offering_id: Option<String> = match api.services().list().await {
+                    Ok(services) => services.iter().find_map(|svc| {
+                        if svc.name == self.offering {
+                            Some(svc.offering_id.clone())
+                        } else {
+                            None
+                        }
+                    }),
                     Err(_) => None,
                 };
 

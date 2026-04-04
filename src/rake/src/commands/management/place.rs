@@ -8,6 +8,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
+use garden_common::client::StoneApi;
 
 /// Place target type
 pub enum PlaceTarget {
@@ -55,14 +56,14 @@ impl PlaceCommand {
 impl Command for PlaceCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?;
+            let api = ctx.stone_api()?;
 
             match &self.target {
                 PlaceTarget::Keystone { passphrase } => {
-                    execute_place_keystone(ctx, endpoint, passphrase.clone()).await?;
+                    execute_place_keystone(ctx, api, passphrase.clone()).await?;
                 }
                 PlaceTarget::Stone { code } => {
-                    execute_place_stone(ctx, endpoint, code).await?;
+                    execute_place_stone(ctx, api, code).await?;
                 }
             }
 
@@ -80,7 +81,7 @@ impl Command for PlaceCommand {
 
 async fn execute_place_keystone(
     ctx: &Runtime,
-    endpoint: &str,
+    api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
     let pass = passphrase.unwrap_or_else(|| {
@@ -93,11 +94,20 @@ async fn execute_place_keystone(
         "changeme".to_string()
     });
 
-    let url = format!("{}/api/v1/pond/init", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "passphrase": pass });
 
-    match ctx.client.post(&url).json(&payload).send().await {
-        Ok(response) if response.status() == reqwest::StatusCode::NOT_IMPLEMENTED => {
+    match api.pond().init(&payload).await {
+        Ok(_) => {
+            println!(
+                "{}{} Pond initialized (keystone placed)",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("ok", ctx.term.supports_color)
+            );
+        }
+        Err(
+            garden_common::client::StoneApiError::HttpRaw { status, .. }
+            | garden_common::client::StoneApiError::Http { status, .. },
+        ) if status == reqwest::StatusCode::NOT_IMPLEMENTED => {
             println!(
                 "{}{} Pond security not yet implemented (Phase 3b)",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -108,27 +118,12 @@ async fn execute_place_keystone(
                 " ".repeat(ui::constants::DEFAULT_INDENT)
             );
         }
-        Ok(response) if response.status().is_success() => {
-            println!(
-                "{}{} Pond initialized (keystone placed)",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color)
-            );
-        }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to initialize pond: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -136,12 +131,36 @@ async fn execute_place_keystone(
     Ok(())
 }
 
-async fn execute_place_stone(ctx: &Runtime, endpoint: &str, code: &str) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/pond/join", endpoint.trim_end_matches('/'));
+async fn execute_place_stone(ctx: &Runtime, api: &StoneApi, code: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({ "code": code });
 
-    match ctx.client.post(&url).json(&payload).send().await {
-        Ok(response) if response.status() == reqwest::StatusCode::NOT_IMPLEMENTED => {
+    match api.pond().join(&payload).await {
+        Ok(data) => {
+            println!(
+                "{}{} Joined pond successfully (stone placed)",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("ok", ctx.term.supports_color)
+            );
+            // StoneApi unwraps ApiResponse, so `data` is the inner payload
+            if let Some(stone_name) = data.get("stone_name").and_then(|s| s.as_str()) {
+                println!(
+                    "{}Stone: {}",
+                    " ".repeat(ui::constants::DEFAULT_INDENT + 3),
+                    stone_name
+                );
+            }
+            if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
+                println!(
+                    "{}Cornerstone: {}",
+                    " ".repeat(ui::constants::DEFAULT_INDENT + 3),
+                    cornerstone
+                );
+            }
+        }
+        Err(
+            garden_common::client::StoneApiError::HttpRaw { status, .. }
+            | garden_common::client::StoneApiError::Http { status, .. },
+        ) if status == reqwest::StatusCode::NOT_IMPLEMENTED => {
             println!(
                 "{}{} Pond security not yet implemented (Phase 3b)",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -152,44 +171,12 @@ async fn execute_place_stone(ctx: &Runtime, endpoint: &str, code: &str) -> anyho
                 " ".repeat(ui::constants::DEFAULT_INDENT)
             );
         }
-        Ok(response) if response.status().is_success() => {
-            println!(
-                "{}{} Joined pond successfully (stone placed)",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color)
-            );
-            if let Ok(body) = response.json::<serde_json::Value>().await
-                && let Some(data) = body.get("data") {
-                    if let Some(stone_name) = data.get("stone_name").and_then(|s| s.as_str()) {
-                        println!(
-                            "{}Stone: {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT + 3),
-                            stone_name
-                        );
-                    }
-                    if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
-                        println!(
-                            "{}Cornerstone: {}",
-                            " ".repeat(ui::constants::DEFAULT_INDENT + 3),
-                            cornerstone
-                        );
-                    }
-                }
-        }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to join pond: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }

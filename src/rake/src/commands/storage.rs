@@ -171,27 +171,10 @@ impl Command for AddStorageCommand {
                 roles: self.roles.clone(),
             };
 
-            // POST /api/v1/stone/storage/add
-            let url = format!("{}/api/v1/stone/storage/add", api.endpoint());
-            let response = api
-                .http()
-                .post(&url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to submit storage add request: {}", e))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                anyhow::bail!("Storage add failed ({}): {}", status, text);
-            }
-
-            let result: AddStorageResponseData = response
-                .json::<ApiResponse<AddStorageResponseData>>()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-                .data;
+            let result: AddStorageResponseData = serde_json::from_value(
+                api.storage().add(&request).await
+                    .map_err(|e| anyhow::anyhow!("Storage add failed: {}", e.display_message()))?
+            ).map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
 
             if !self.quiet {
                 println!(
@@ -227,28 +210,12 @@ impl Command for AddStorageCommand {
 
 impl AddStorageCommand {
     /// Interactive device selection when no target provided.
-    async fn pick_target(&self, ctx: &Runtime, base: &str) -> anyhow::Result<String> {
+    async fn pick_target(&self, ctx: &Runtime, _base: &str) -> anyhow::Result<String> {
         use crate::ui::rendering as ui;
 
         let api = ctx.stone_api()?;
-        let url = format!("{}/api/v1/stone/storage/candidates", base);
-        let response = api
-            .http()
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch candidates: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("API error {}: {}", status, text);
-        }
-
-        let resp: CandidatesResponse = response
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse candidates: {}", e))?;
+        let resp = api.storage().candidates().await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch candidates: {}", e.display_message()))?;
 
         // Build a flat list of eligible targets from spaces (mounted volumes).
         struct EligibleTarget {
@@ -363,29 +330,14 @@ impl Command for ReleaseStorageCommand {
             use crate::ui::rendering as ui;
 
             let api = ctx.stone_api()?;
-            let base = api.endpoint();
 
             // "all" → bulk release
             if self.name == "all" {
-                let url = format!("{}/api/v1/stone/storage/release-all", base);
-                let response = api
-                    .http()
-                    .post(&url)
-                    .send()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to release: {}", e))?;
+                let data = api.storage().release_all().await
+                    .map_err(|e| anyhow::anyhow!("Release failed: {}", e.display_message()))?;
 
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let text = response.text().await.unwrap_or_default();
-                    anyhow::bail!("Release failed ({}): {}", status, text);
-                }
-
-                let results: Vec<ReleaseResponse> = response
-                    .json::<ApiResponse<Vec<ReleaseResponse>>>()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-                    .data;
+                let results: Vec<ReleaseResponse> = serde_json::from_value(data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
 
                 for r in &results {
                     if r.released {
@@ -411,25 +363,11 @@ impl Command for ReleaseStorageCommand {
                 return Ok(());
             }
 
-            let url = format!("{}/api/v1/stone/storage/banks/{}/release", base, self.name);
-            let response = api
-                .http()
-                .post(&url)
-                .send()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to release: {}", e))?;
+            let data = api.storage().release(&self.name).await
+                .map_err(|e| anyhow::anyhow!("Release failed: {}", e.display_message()))?;
 
-            if !response.status().is_success() {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                anyhow::bail!("Release failed ({}): {}", status, text);
-            }
-
-            let result: ReleaseResponse = response
-                .json::<ApiResponse<ReleaseResponse>>()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-                .data;
+            let result: ReleaseResponse = serde_json::from_value(data)
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
 
             if result.released {
                 println!(
@@ -482,53 +420,19 @@ impl Command for ListStorageCommand {
             let api = ctx.stone_api()?;
 
             // Fetch local storages
-            let banks_url = format!(
-                "{}/api/v1/stone/storage/banks",
-                api.endpoint()
-            );
-            let banks_response = api
-                .http()
-                .get(&banks_url)
-                .send()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to fetch storages: {}", e))?;
-
-            if !banks_response.status().is_success() {
-                let status = banks_response.status();
-                let text = banks_response.text().await.unwrap_or_default();
-                anyhow::bail!("API error {}: {}", status, text);
-            }
-
-            let storages: Vec<StorageInfo> = banks_response
-                .json::<ApiResponse<Vec<StorageInfo>>>()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-                .data;
+            let storages: Vec<StorageInfo> = api.storage().banks().await
+                .map_err(|e| anyhow::anyhow!("Failed to fetch storages: {}", e.display_message()))?;
 
             // Fetch garden-wide overview (includes roles from beacons)
-            let overview_url = format!("{}/api/v1/stone/storage", api.endpoint());
-            let garden_banks: Vec<GardenBankInfo> = match api.http().get(&overview_url).send().await {
-                Ok(resp) if resp.status().is_success() => resp
-                    .json::<ApiResponse<StorageOverview>>()
-                    .await
-                    .map(|r| r.data.garden_banks)
+            let garden_banks: Vec<GardenBankInfo> = match api.storage().overview().await {
+                Ok(val) => serde_json::from_value::<StorageOverview>(val)
+                    .map(|o| o.garden_banks)
                     .unwrap_or_default(),
-                _ => Vec::new(),
+                Err(_) => Vec::new(),
             };
 
             // Fetch candidates (cross-platform)
-            let candidates: Option<CandidatesResponse> = {
-                let cand_url = format!(
-                    "{}/api/v1/stone/storage/candidates",
-                    api.endpoint()
-                );
-                match api.http().get(&cand_url).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        resp.json::<CandidatesResponse>().await.ok()
-                    }
-                    _ => None,
-                }
-            };
+            let candidates: Option<CandidatesResponse> = api.storage().candidates().await.ok();
 
             // Display storages — grouped by replica set name with volumes underneath
             if storages.is_empty() && garden_banks.is_empty() {
@@ -1483,38 +1387,15 @@ impl Command for StorageStatusCommand {
             let api = ctx.stone_api()?;
 
             // Fetch local banks
-            let banks_url = format!(
-                "{}/api/v1/stone/storage/banks",
-                api.endpoint()
-            );
-            let banks_response = api
-                .http()
-                .get(&banks_url)
-                .send()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to fetch storage banks: {}", e))?;
-
-            if !banks_response.status().is_success() {
-                let status = banks_response.status();
-                let text = banks_response.text().await.unwrap_or_default();
-                anyhow::bail!("API error {}: {}", status, text);
-            }
-
-            let banks: Vec<StorageInfo> = banks_response
-                .json::<ApiResponse<Vec<StorageInfo>>>()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?
-                .data;
+            let banks: Vec<StorageInfo> = api.storage().banks().await
+                .map_err(|e| anyhow::anyhow!("Failed to fetch storage banks: {}", e.display_message()))?;
 
             // Fetch garden-wide overview for roles
-            let overview_url = format!("{}/api/v1/stone/storage", api.endpoint());
-            let garden_banks: Vec<GardenBankInfo> = match api.http().get(&overview_url).send().await {
-                Ok(resp) if resp.status().is_success() => resp
-                    .json::<ApiResponse<StorageOverview>>()
-                    .await
-                    .map(|r| r.data.garden_banks)
+            let garden_banks: Vec<GardenBankInfo> = match api.storage().overview().await {
+                Ok(val) => serde_json::from_value::<StorageOverview>(val)
+                    .map(|o| o.garden_banks)
                     .unwrap_or_default(),
-                _ => Vec::new(),
+                Err(_) => Vec::new(),
             };
 
             if banks.is_empty() && garden_banks.is_empty() {

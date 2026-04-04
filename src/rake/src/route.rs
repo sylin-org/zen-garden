@@ -440,7 +440,8 @@ pub async fn route(
                     dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*STONE))
                         .await?;
                 println!("Refreshing {}...", component);
-                refresh_component(&rt.client, &endpoint, &component, std::path::Path::new(&from))
+                let api = garden_common::client::StoneApi::new(rt.client.clone(), endpoint);
+                refresh_component(&api, &component, std::path::Path::new(&from))
                     .await?;
                 return Ok(None);
             }
@@ -916,8 +917,7 @@ async fn route_election(
 // ============================================================================
 
 async fn refresh_component(
-    client: &reqwest::Client,
-    endpoint: &str,
+    api: &garden_common::client::StoneApi,
     component: &str,
     binary_path: &std::path::Path,
 ) -> anyhow::Result<()> {
@@ -947,48 +947,31 @@ async fn refresh_component(
     let encoded = base64::engine::general_purpose::STANDARD.encode(&binary_data);
 
     println!("\u{1f680} Uploading to stone...");
-    let url = format!("{}/api/v1/system/refresh", endpoint.trim_end_matches('/'));
-    let response = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "component": normalized_component,
-            "binary_data": encoded,
-        }))
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .context("Failed to send refresh request")?;
+    let payload = serde_json::json!({
+        "component": normalized_component,
+        "binary_data": encoded,
+    });
 
-    let status = response.status();
-    let body_text = response
-        .text()
-        .await
-        .context("Failed to read response body")?;
-
-    let body: serde_json::Value = match serde_json::from_str(&body_text) {
-        Ok(json) => json,
-        Err(e) => {
-            println!("\u{2717} Invalid JSON response");
+    let body = match api.stone().refresh_binary(&payload).await {
+        Ok(data) => data,
+        Err(garden_common::client::StoneApiError::Http { status, message, .. }) => {
+            println!("\u{2717} Refresh failed");
             println!("   Status: {}", status);
-            println!(
-                "   Response body: {}",
-                body_text.chars().take(500).collect::<String>()
-            );
-            bail!("Failed to parse JSON response: {}", e);
+            println!("   Error: {}", message);
+            bail!("Refresh request failed with status {}", status);
+        }
+        Err(garden_common::client::StoneApiError::HttpRaw { status, body }) => {
+            println!("\u{2717} Refresh failed");
+            println!("   Status: {}", status);
+            if !body.is_empty() {
+                println!("   Response: {}", body.chars().take(500).collect::<String>());
+            }
+            bail!("Refresh request failed with status {}", status);
+        }
+        Err(e) => {
+            bail!("Refresh request failed: {}", e);
         }
     };
-
-    if !status.is_success() {
-        println!("\u{2717} Refresh failed");
-        println!("   Status: {}", status);
-        if let Some(error) = body.get("error") {
-            println!("   Error: {}", error);
-        }
-        if let Some(message) = body.get("message") {
-            println!("   Message: {}", message);
-        }
-        bail!("Refresh request failed with status {}", status);
-    }
 
     println!("\u{2705} {} refreshed successfully", normalized_component);
     if let Some(arch) = body.get("architecture").and_then(|v| v.as_str()) {
@@ -1000,10 +983,10 @@ async fn refresh_component(
         println!("   (This may take a few seconds)");
         tokio::time::sleep(Duration::from_secs(5)).await;
 
-        let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
+        let health_url = format!("{}/health", api.endpoint());
         for attempt in 1..=12 {
             tokio::time::sleep(Duration::from_secs(2)).await;
-            match client
+            match api.http()
                 .get(&health_url)
                 .timeout(Duration::from_secs(5))
                 .send()

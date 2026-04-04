@@ -294,8 +294,7 @@ impl FindCommand {
         );
 
         // Plant uses the services endpoint for creating services from offerings
-        let url = format!("{}/api/v1/stone/services", api.endpoint());
-        let response = api.http().post(&url).json(&payload).send().await?;
+        let response = api.services().create(&payload).await?;
         let status = response.status();
 
         if !status.is_success() && status != reqwest::StatusCode::ACCEPTED {

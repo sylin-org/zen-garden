@@ -8,6 +8,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
+use garden_common::client::StoneApi;
 
 /// Lift target type
 pub enum LiftTarget {
@@ -53,14 +54,14 @@ impl LiftCommand {
 impl Command for LiftCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?;
+            let api = ctx.stone_api()?;
 
             match &self.target {
                 LiftTarget::Keystone => {
-                    execute_lift_keystone(ctx, endpoint).await?;
+                    execute_lift_keystone(ctx, api).await?;
                 }
                 LiftTarget::Stone { name } => {
-                    execute_lift_stone(ctx, endpoint, name).await?;
+                    execute_lift_stone(ctx, api, name).await?;
                 }
             }
 
@@ -76,11 +77,19 @@ impl Command for LiftCommand {
     }
 }
 
-async fn execute_lift_keystone(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/pond", endpoint.trim_end_matches('/'));
-
-    match ctx.client.delete(&url).send().await {
-        Ok(response) if response.status() == reqwest::StatusCode::NOT_IMPLEMENTED => {
+async fn execute_lift_keystone(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()> {
+    match api.pond().drain().await {
+        Ok(_) => {
+            println!(
+                "{}{} Keystone lifted (pond removed)",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("ok", ctx.term.supports_color)
+            );
+        }
+        Err(
+            garden_common::client::StoneApiError::HttpRaw { status, .. }
+            | garden_common::client::StoneApiError::Http { status, .. },
+        ) if status == reqwest::StatusCode::NOT_IMPLEMENTED => {
             println!(
                 "{}{} Pond security not yet implemented (Phase 3b)",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -91,27 +100,12 @@ async fn execute_lift_keystone(ctx: &Runtime, endpoint: &str) -> anyhow::Result<
                 " ".repeat(ui::constants::DEFAULT_INDENT)
             );
         }
-        Ok(response) if response.status().is_success() => {
-            println!(
-                "{}{} Keystone lifted (pond removed)",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color)
-            );
-        }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to lift keystone: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -119,15 +113,20 @@ async fn execute_lift_keystone(ctx: &Runtime, endpoint: &str) -> anyhow::Result<
     Ok(())
 }
 
-async fn execute_lift_stone(ctx: &Runtime, endpoint: &str, stone_name: &str) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/api/v1/pond/stones/{}",
-        endpoint.trim_end_matches('/'),
-        stone_name
-    );
-
-    match ctx.client.delete(&url).send().await {
-        Ok(response) if response.status() == reqwest::StatusCode::NOT_IMPLEMENTED => {
+async fn execute_lift_stone(ctx: &Runtime, api: &StoneApi, stone_name: &str) -> anyhow::Result<()> {
+    match api.pond().revoke(stone_name).await {
+        Ok(_) => {
+            println!(
+                "{}{} Lifted {} from pond",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("ok", ctx.term.supports_color),
+                stone_name
+            );
+        }
+        Err(
+            garden_common::client::StoneApiError::HttpRaw { status, .. }
+            | garden_common::client::StoneApiError::Http { status, .. },
+        ) if status == reqwest::StatusCode::NOT_IMPLEMENTED => {
             println!(
                 "{}{} Pond security not yet implemented (Phase 3b)",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -138,28 +137,12 @@ async fn execute_lift_stone(ctx: &Runtime, endpoint: &str, stone_name: &str) -> 
                 " ".repeat(ui::constants::DEFAULT_INDENT)
             );
         }
-        Ok(response) if response.status().is_success() => {
-            println!(
-                "{}{} Lifted {} from pond",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color),
-                stone_name
-            );
-        }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to lift stone: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }

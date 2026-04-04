@@ -41,43 +41,34 @@ impl Command for NourishCommand {
                 }),
                 |candidate| {
                     let client = ctx.client.clone();
-                    let _stone_name = candidate.stone_name.clone();
                     let endpoint = candidate.endpoint.clone();
                     async move {
                         use crate::tending::StoneError;
+                        use garden_common::client::StoneApi;
 
-                        let url = format!("{}/api/v1/garden/updates", endpoint.trim_end_matches('/'));
+                        let api = StoneApi::new(client, endpoint);
 
-                        // Make HTTP request
-                        let response = client.get(&url).send().await.map_err(|e| {
-                            StoneError::ConnectionFailed(format!("HTTP request failed: {}", e))
+                        let data: serde_json::Value = api.garden().updates().await.map_err(|e| {
+                            match e {
+                                garden_common::client::StoneApiError::Connection(ce) => {
+                                    StoneError::ConnectionFailed(format!("HTTP request failed: {}", ce))
+                                }
+                                garden_common::client::StoneApiError::Http { status, message, .. } => {
+                                    StoneError::ResponseError(status.as_u16(), message)
+                                }
+                                garden_common::client::StoneApiError::HttpRaw { status, body } => {
+                                    StoneError::ResponseError(status.as_u16(), body)
+                                }
+                                other => StoneError::ProcessingError(format!("{}", other)),
+                            }
                         })?;
 
-                        let status = response.status();
+                        let response: GardenNourishmentResponse = serde_json::from_value(data)
+                            .map_err(|e| {
+                                StoneError::ProcessingError(format!("JSON parse failed: {}", e))
+                            })?;
 
-                        // Check response status
-                        if !status.is_success() {
-                            return Err(StoneError::ResponseError(
-                                status.as_u16(),
-                                format!("Endpoint returned {}", status),
-                            ));
-                        }
-
-                        // Read response body
-                        let text = response.text().await.map_err(|e| {
-                            StoneError::ProcessingError(format!("Failed to read response: {}", e))
-                        })?;
-
-                        // Parse JSON
-                        serde_json::from_str::<ApiResponse<GardenNourishmentResponse>>(&text).map_err(
-                            |e| {
-                                StoneError::ProcessingError(format!(
-                                    "JSON parse failed: {}. Body: {}",
-                                    e,
-                                    &text[..text.len().min(200)]
-                                ))
-                            },
-                        )
+                        Ok(ApiResponse { data: response, suggestions: None })
                     }
                 },
             )

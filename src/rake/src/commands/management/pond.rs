@@ -98,8 +98,7 @@ impl Command for PondCommand {
                     profile,
                 } => {
                     // Init uses ceremony render loop (raw HTTP protocol)
-                    let endpoint = ctx.endpoint()?;
-                    execute_pond_init(ctx, endpoint, passphrase.clone(), profile.clone()).await?;
+                    execute_pond_init(ctx, api.endpoint(), passphrase.clone(), profile.clone()).await?;
                 }
                 PondActionType::Status => {
                     execute_pond_status(ctx, api).await?;
@@ -155,7 +154,11 @@ async fn execute_pond_init(
     passphrase: Option<String>,
     profile: Option<String>,
 ) -> anyhow::Result<()> {
-    let ceremony_url = format!("{}/api/v1/pond/ceremony", endpoint.trim_end_matches('/'));
+    let api = garden_common::client::StoneApi::new(
+        ctx.client.clone(),
+        endpoint.to_string(),
+    );
+    let ceremony_url = format!("{}/api/v1/pond/ceremony", api.endpoint());
 
     // Pre-fill data from CLI flags (same pattern as koi certmesh create)
     let mut initial_data = serde_json::Map::new();

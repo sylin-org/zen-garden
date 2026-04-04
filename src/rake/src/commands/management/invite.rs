@@ -22,10 +22,10 @@ impl InviteCommand {
 impl Command for InviteCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?;
-            let url = format!("{}/api/v1/pond/invite", endpoint.trim_end_matches('/'));
+            let api = ctx.stone_api()?;
+            let payload = serde_json::json!({});
 
-            match ctx.client.post(&url).send().await {
+            match api.pond().invite_raw(&payload).await {
                 Ok(response) if response.status() == reqwest::StatusCode::NOT_IMPLEMENTED => {
                     println!(
                         "{}{} Pond security not yet implemented (Phase 3b)",

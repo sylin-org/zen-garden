@@ -9,7 +9,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use garden_common::GardenApiResponse;
+use garden_common::api_utils::ApiResponse;
 use std::collections::HashMap;
 
 /// Template info from API
@@ -81,7 +81,7 @@ async fn list_templates(client: &reqwest::Client, endpoint: &str) -> anyhow::Res
         return Ok(());
     }
 
-    let api_response: GardenApiResponse<Vec<TemplateInfo>> = response.json().await?;
+    let api_response: ApiResponse<Vec<TemplateInfo>> = response.json().await?;
     let templates = api_response.data;
     if templates.is_empty() {
         println!("\nNo templates available");

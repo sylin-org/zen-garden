@@ -277,7 +277,7 @@ async fn dispatch_execute_to_stone(
     request: &ExecuteRequest,
 ) -> StoneJobStatus {
     let url = format!(
-        "{}/api/v1/stone/nourishment/execute",
+        "{}/api/v1/stone/updates/execute",
         endpoint.trim_end_matches('/')
     );
 

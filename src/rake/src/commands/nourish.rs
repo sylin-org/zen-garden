@@ -492,7 +492,7 @@ async fn execute_with_scope(ctx: &Runtime, scope: UpdateScope) -> anyhow::Result
 
 /// Stream real-time SSE progress from one or more stone nourishment jobs.
 ///
-/// Connects to each stone's `/api/v1/stone/nourishment/stream/:job_id`
+/// Connects to each stone's `/api/v1/stone/updates/stream/:job_id`
 /// endpoint and prints status messages as they arrive. For multi-stone
 /// gardens, messages are prefixed with the stone name.
 async fn stream_nourishment_jobs(
@@ -505,7 +505,7 @@ async fn stream_nourishment_jobs(
     // we display as events arrive from each stone in turn).
     for (stone_name, endpoint, job_id) in targets {
         let url = format!(
-            "{}/api/v1/stone/nourishment/stream/{}",
+            "{}/api/v1/stone/updates/stream/{}",
             endpoint.trim_end_matches('/'),
             job_id
         );

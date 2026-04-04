@@ -27,6 +27,7 @@ use tokio_stream::StreamExt;
 
 use crate::api::responses::ApiResponse;
 use crate::AppState;
+use garden_common::console::{self, EventCategory, EventStatus};
 use garden_common::nourishment::*;
 use garden_common::HardwareCapabilities;
 
@@ -290,6 +291,7 @@ async fn dispatch_execute_to_stone(
                         job_id: Some(api_response.data.job_id),
                         state: StoneJobState::Running,
                         message: None,
+                        endpoint: Some(endpoint.to_string()),
                     }
                 }
                 Err(e) => {
@@ -299,6 +301,7 @@ async fn dispatch_execute_to_stone(
                         job_id: None,
                         state: StoneJobState::Failed,
                         message: Some(format!("Parse error: {}", e)),
+                        endpoint: None,
                     }
                 }
             }
@@ -312,6 +315,7 @@ async fn dispatch_execute_to_stone(
                 job_id: None,
                 state: StoneJobState::Failed,
                 message: Some(format!("HTTP {}: {}", status, body)),
+                endpoint: None,
             }
         }
         Err(e) => {
@@ -321,6 +325,7 @@ async fn dispatch_execute_to_stone(
                 job_id: None,
                 state: StoneJobState::Unreachable,
                 message: Some(format!("Connection error: {}", e)),
+                endpoint: None,
             }
         }
     }
@@ -466,10 +471,18 @@ pub async fn execute_stone(
     // Spawn background task
     let state = state.clone();
     let task_job_id = job_id.clone();
+    let console = state.console.clone();
 
     tokio::spawn(async move {
-        execute_updates_background(state, pending_offerings, pending_firmware, task_job_id, tx)
-            .await;
+        execute_updates_background(
+            state,
+            pending_offerings,
+            pending_firmware,
+            task_job_id,
+            tx,
+            &console,
+        )
+        .await;
     });
 
     let response = ExecuteResponse { job_id };
@@ -477,16 +490,29 @@ pub async fn execute_stone(
     crate::api::ok(response)
 }
 
-/// Background task for executing updates
+/// Background task for executing updates.
+///
+/// Emits both SSE broadcast messages (for Rake streaming) and structured
+/// ConsoleEvents (for tty1 visibility). The console events are classified
+/// as critical tty1 events so operators see real-time progress on the
+/// physical console during updates.
 async fn execute_updates_background(
     state: AppState,
     offerings: Vec<String>,
     firmware: Vec<String>,
     job_id: String,
     tx: broadcast::Sender<String>,
+    console: &std::sync::Arc<console::ConsolePrinter>,
 ) {
     tracing::info!(job_id = %job_id, "Nourishment job starting execution");
     let _ = tx.send(format!("Starting nourishment job {}", job_id));
+
+    let total = offerings.len() + firmware.len();
+    console.emit(console::ConsoleEvent::new(
+        EventCategory::Jobs,
+        EventStatus::Started,
+        format!("Nourishment: {} update(s)", total),
+    ));
 
     // Phase 1: Software updates (offerings)
     if !offerings.is_empty() {
@@ -496,21 +522,32 @@ async fn execute_updates_background(
         ));
 
         for (idx, name) in offerings.iter().enumerate() {
-            let _ = tx.send(format!(
-                "  [{}/{}] Updating {}",
-                idx + 1,
-                offerings.len(),
-                name
+            let progress = format!("[{}/{}]", idx + 1, offerings.len());
+            let _ = tx.send(format!("  {} Updating {}", progress, name));
+            console.emit(console::ConsoleEvent::new(
+                EventCategory::Services,
+                EventStatus::Upgrading,
+                format!("{} {} pulling image", progress, name),
             ));
 
-            match execute_offering_update(&state, name, &tx).await {
+            match execute_offering_update(&state, name, &tx, console).await {
                 Ok(()) => {
                     tracing::info!(job_id = %job_id, offering = %name, "Offering updated successfully");
                     let _ = tx.send(format!("    ✓ {} updated successfully", name));
+                    console.emit(console::ConsoleEvent::new(
+                        EventCategory::Services,
+                        EventStatus::Upgraded,
+                        format!("{} {}", progress, name),
+                    ));
                 }
                 Err(e) => {
                     tracing::warn!(job_id = %job_id, offering = %name, error = %e, "Offering update failed");
                     let _ = tx.send(format!("    ✗ {} failed: {}", name, e));
+                    console.emit(console::ConsoleEvent::new(
+                        EventCategory::Services,
+                        EventStatus::UpgradeError,
+                        format!("{} {} — {}", progress, name, e),
+                    ));
                 }
             }
         }
@@ -525,11 +562,12 @@ async fn execute_updates_background(
         ));
 
         for (idx, device_id) in firmware.iter().enumerate() {
-            let _ = tx.send(format!(
-                "  [{}/{}] Updating firmware: {}",
-                idx + 1,
-                firmware.len(),
-                device_id
+            let progress = format!("[{}/{}]", idx + 1, firmware.len());
+            let _ = tx.send(format!("  {} Updating firmware: {}", progress, device_id));
+            console.emit(console::ConsoleEvent::new(
+                EventCategory::Ops,
+                EventStatus::Active,
+                format!("Firmware {} {}", progress, device_id),
             ));
 
             match execute_firmware_update(device_id, &tx).await {
@@ -537,15 +575,28 @@ async fn execute_updates_background(
                     if requires_reboot {
                         needs_reboot = true;
                         tracing::info!(job_id = %job_id, device = %device_id, "Firmware updated (reboot required)");
-                        let _ = tx.send(format!("    ✓ {} updated (reboot required)", device_id));
+                        let _ = tx.send(format!(
+                            "    ✓ {} updated (reboot required)",
+                            device_id
+                        ));
                     } else {
                         tracing::info!(job_id = %job_id, device = %device_id, "Firmware updated successfully");
                         let _ = tx.send(format!("    ✓ {} updated successfully", device_id));
                     }
+                    console.emit(console::ConsoleEvent::new(
+                        EventCategory::Ops,
+                        EventStatus::Staged,
+                        format!("Firmware {} {}", progress, device_id),
+                    ));
                 }
                 Err(e) => {
                     tracing::warn!(job_id = %job_id, device = %device_id, error = %e, "Firmware update failed");
                     let _ = tx.send(format!("    ✗ {} failed: {}", device_id, e));
+                    console.emit(console::ConsoleEvent::new(
+                        EventCategory::Ops,
+                        EventStatus::RestartError,
+                        format!("Firmware {} {} — {}", progress, device_id, e),
+                    ));
                 }
             }
         }
@@ -578,8 +629,12 @@ async fn execute_updates_background(
     if needs_reboot {
         tracing::info!(job_id = %job_id, "Nourishment complete, initiating immediate reboot");
         let _ = tx.send("🔄 Firmware updates require reboot. Rebooting now...".to_string());
+        console.emit(console::ConsoleEvent::new(
+            EventCategory::Ops,
+            EventStatus::RestartTriggered,
+            "Rebooting for firmware updates".to_string(),
+        ));
 
-        // Trigger immediate system reboot
         #[cfg(target_os = "linux")]
         {
             tracing::info!(job_id = %job_id, "Executing systemctl reboot");
@@ -595,6 +650,11 @@ async fn execute_updates_background(
     } else {
         tracing::info!(job_id = %job_id, "Nourishment job complete");
         let _ = tx.send("✅ Nourishment complete".to_string());
+        console.emit(console::ConsoleEvent::new(
+            EventCategory::Jobs,
+            EventStatus::Completed,
+            format!("Nourishment: {} update(s) applied", total),
+        ));
     }
 }
 
@@ -603,6 +663,7 @@ async fn execute_offering_update(
     state: &AppState,
     name: &str,
     tx: &broadcast::Sender<String>,
+    console: &console::ConsolePrinter,
 ) -> anyhow::Result<()> {
     // Mark service as updating in registry via gateway (syncs self_entry + chirps)
     state
@@ -626,6 +687,11 @@ async fn execute_offering_update(
 
     // Step 1: Pull the latest image
     let _ = tx.send(format!("    Pulling image: {}", target_image));
+    console.emit(console::ConsoleEvent::new(
+        EventCategory::Docker,
+        EventStatus::ImagePull,
+        format!("{} → {}", name, target_image),
+    ));
     state
         .platform
         .docker
@@ -635,6 +701,11 @@ async fn execute_offering_update(
 
     // Step 2: Stop and remove the existing container
     let _ = tx.send(format!("    Stopping service: {}", name));
+    console.emit(console::ConsoleEvent::new(
+        EventCategory::Services,
+        EventStatus::Stopping,
+        name.to_string(),
+    ));
     state
         .platform
         .docker
@@ -654,6 +725,11 @@ async fn execute_offering_update(
     let _ = tx.send(format!(
         "    Creating new container with image: {}",
         target_image
+    ));
+    console.emit(console::ConsoleEvent::new(
+        EventCategory::Services,
+        EventStatus::Creating,
+        format!("{} → {}", name, target_image),
     ));
 
     // Build spec via CompiledOffering (hardware-resolved) + config patches,

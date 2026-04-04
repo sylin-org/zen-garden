@@ -16,6 +16,7 @@ pub mod borrowed;
 pub mod capabilities;
 pub mod config;
 pub mod find;
+pub mod inspect;
 pub mod list;
 pub mod observe;
 pub mod status;
@@ -28,6 +29,7 @@ pub use capabilities::{
     RefreshCapabilitiesCommand, RemoveCapabilityCommand,
 };
 pub use config::ConfigCommand;
+pub use inspect::InspectCommand;
 pub use find::{FindCommand, FindOutputFormat};
 pub use list::ListCommand;
 pub use observe::ObserveCommand;

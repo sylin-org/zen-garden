@@ -148,6 +148,10 @@ pub struct StoneJobStatus {
     pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// HTTP endpoint for this stone (for SSE streaming).
+    /// Populated by garden execute so clients can stream progress.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
 }
 
 /// State of a stone job

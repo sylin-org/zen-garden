@@ -8,6 +8,7 @@
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::tending;
+use futures_util::StreamExt;
 use garden_common::api_utils::ApiResponse;
 use garden_common::nourishment::*;
 use std::time::Duration;
@@ -453,7 +454,9 @@ async fn execute_with_scope(ctx: &Runtime, scope: UpdateScope) -> anyhow::Result
     println!("Orchestrated by: {}", stone.stone_name);
     println!("Garden Job ID: {}\n", response.data.job_id);
 
-    // Display results for each stone
+    // Display results for each stone and collect streaming targets
+    let mut stream_targets: Vec<(String, String, String)> = Vec::new(); // (stone_name, endpoint, job_id)
+
     for job in &response.data.stone_jobs {
         let status_icon = match job.state {
             StoneJobState::Running => "🔄",
@@ -471,11 +474,110 @@ async fn execute_with_scope(ctx: &Runtime, scope: UpdateScope) -> anyhow::Result
             print!(" - {}", msg);
         }
         println!();
+
+        // Collect running jobs for streaming
+        if matches!(job.state, StoneJobState::Running | StoneJobState::Pending) {
+            if let Some(ref job_id) = job.job_id {
+                if let Some(ref endpoint) = job.endpoint {
+                    stream_targets.push((
+                        job.stone_name.clone(),
+                        endpoint.clone(),
+                        job_id.clone(),
+                    ));
+                }
+            }
+        }
     }
 
-    // TODO: Stream status from each stone's job
-    // For now, just show dispatch status
+    // Stream real-time progress from each stone's nourishment job
+    if !stream_targets.is_empty() {
+        println!("\n─── Live progress ───────────────────────────────\n");
+        stream_nourishment_jobs(&ctx.client, &stream_targets).await;
+    }
 
-    println!("\n✅ Dispatch complete");
+    println!("\n✅ Nourishment complete");
     Ok(())
+}
+
+/// Stream real-time SSE progress from one or more stone nourishment jobs.
+///
+/// Connects to each stone's `/api/v1/stone/nourishment/stream/:job_id`
+/// endpoint and prints status messages as they arrive. For multi-stone
+/// gardens, messages are prefixed with the stone name.
+async fn stream_nourishment_jobs(
+    client: &reqwest::Client,
+    targets: &[(String, String, String)], // (stone_name, endpoint, job_id)
+) {
+    let multi_stone = targets.len() > 1;
+
+    // Stream sequentially (stones execute in parallel on the server side;
+    // we display as events arrive from each stone in turn).
+    for (stone_name, endpoint, job_id) in targets {
+        let url = format!(
+            "{}/api/v1/stone/nourishment/stream/{}",
+            endpoint.trim_end_matches('/'),
+            job_id
+        );
+
+        let prefix = if multi_stone {
+            format!("  [{}] ", stone_name)
+        } else {
+            "  ".to_string()
+        };
+
+        match client
+            .get(&url)
+            .header("Accept", "text/event-stream")
+            .timeout(Duration::from_secs(600)) // 10 min max for long image pulls
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                let mut stream = response.bytes_stream();
+                let mut sse_buffer = String::new();
+
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(bytes) => {
+                            sse_buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                            // Process complete SSE messages (delimited by \n\n)
+                            while let Some(pos) = sse_buffer.find("\n\n") {
+                                let message = sse_buffer[..pos].to_string();
+                                sse_buffer.drain(..pos + 2);
+
+                                // Extract data: lines from SSE message
+                                for line in message.lines() {
+                                    if let Some(data) = line.strip_prefix("data:") {
+                                        let data = data.trim();
+                                        if !data.is_empty() {
+                                            println!("{}{}", prefix, data);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("{}Stream error: {}", prefix, e);
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(response) => {
+                // Job may have already completed (404) — not an error
+                if response.status().as_u16() != 404 {
+                    eprintln!(
+                        "{}Failed to stream from {}: HTTP {}",
+                        prefix,
+                        stone_name,
+                        response.status()
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("{}Failed to connect to {}: {}", prefix, stone_name, e);
+            }
+        }
+    }
 }

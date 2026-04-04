@@ -13,6 +13,7 @@
 
 use crate::domain::events::OfferingEvent;
 use crate::AppState;
+use garden_common::console::{self, EventCategory, EventStatus};
 use garden_common::{OfferingStatus, ServiceHealthStatus};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -159,6 +160,11 @@ impl ReconciliationCoordinator {
                     .or_insert_with(ReconciliationTracker::new);
                 if tracker.is_exhausted() {
                     if pre_status != OfferingStatus::Degraded {
+                        state.console.emit(console::ConsoleEvent::new(
+                            EventCategory::Health,
+                            EventStatus::Degraded,
+                            format!("{} — reconciliation exhausted (5/5)", name),
+                        ));
                         tracing::warn!(
                             offering = %name,
                             attempts = tracker.attempts,
@@ -218,6 +224,18 @@ impl ReconciliationCoordinator {
                     return;
                 }
 
+                // Emit console event for tty1 visibility (OFFER-0008)
+                {
+                    let attempts = backoff.lock().await
+                        .get(&name)
+                        .map(|t| t.attempts + 1)
+                        .unwrap_or(1);
+                    state.console.emit(console::ConsoleEvent::new(
+                        EventCategory::Services,
+                        EventStatus::Reconciling,
+                        format!("{} (attempt {}/5)", name, attempts),
+                    ));
+                }
                 tracing::info!(
                     offering = %name,
                     target_status = %target_status,
@@ -264,6 +282,18 @@ impl ReconciliationCoordinator {
                             tracker.record_success();
                         }
 
+                        // Console event: reconciled (goes to tty1)
+                        let port_note = if result.ports_changed {
+                            "ports remapped"
+                        } else {
+                            "ports preserved"
+                        };
+                        state.console.emit(console::ConsoleEvent::new(
+                            EventCategory::Services,
+                            EventStatus::Reconciled,
+                            format!("{} — {}", name, port_note),
+                        ));
+
                         tracing::info!(
                             offering = %name,
                             status = %target_status,
@@ -271,6 +301,13 @@ impl ReconciliationCoordinator {
                         );
                     }
                     Err(e) => {
+                        // Console event: failure (goes to tty1)
+                        state.console.emit(console::ConsoleEvent::new(
+                            EventCategory::Services,
+                            EventStatus::ReconcileError,
+                            format!("{} — {:#}", name, e),
+                        ));
+
                         tracing::warn!(
                             offering = %name,
                             error = ?e,

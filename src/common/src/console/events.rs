@@ -135,6 +135,9 @@ pub enum EventStatus {
     OrphanFound,
     NoManifest,
     AdoptError,
+    Reconciling,
+    Reconciled,
+    ReconcileError,
     ScanComplete,
     ScanError,
     ListError,
@@ -322,6 +325,9 @@ impl EventStatus {
             Self::OrphanFound => "ORPHAN_FOUND  ",
             Self::NoManifest => "NO_MANIFEST   ",
             Self::AdoptError => "ADOPT_ERROR   ",
+            Self::Reconciling => "RECONCILING   ",
+            Self::Reconciled => "RECONCILED    ",
+            Self::ReconcileError => "RECONCILE_ERR ",
             Self::ScanComplete => "SCAN_COMPLETE ",
             Self::ScanError => "SCAN_ERROR    ",
             Self::ListError => "LIST_ERROR    ",
@@ -475,6 +481,7 @@ impl EventStatus {
                 | Self::ScanError
                 | Self::ListError
                 | Self::AdoptError
+                | Self::ReconcileError
                 | Self::CompatError
                 | Self::PreinstallError
                 | Self::Invalid
@@ -511,6 +518,7 @@ impl EventStatus {
                 | Self::Healthy
                 | Self::Connected
                 | Self::Upgraded
+                | Self::Reconciled
                 | Self::FirstBootDone
                 | Self::FsReady
                 | Self::PreinstallComplete

@@ -215,6 +215,18 @@ impl ConsolePrinter {
             );
         }
 
+        // Service reconciliation events (OFFER-0008: auto-recovery visibility)
+        if matches!(event.category, EventCategory::Services)
+            && matches!(
+                event.status,
+                EventStatus::Reconciling
+                    | EventStatus::Reconciled
+                    | EventStatus::ReconcileError
+            )
+        {
+            return true;
+        }
+
         // Docker connection (critical for understanding service readiness)
         if matches!(event.category, EventCategory::Docker)
             && matches!(event.status, EventStatus::Connected)

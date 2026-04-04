@@ -309,7 +309,7 @@ impl NurturingScheduler {
         let map = self.state.current.storage.volumes.read().await;
         let seed_banks: Vec<StorageInfo> = map
             .values()
-            .filter(|v| v.is_managed() && v.state.is_online())
+            .filter(|v| v.is_managed() && v.state().is_online())
             .filter_map(|v| v.to_storage_info())
             .collect();
 
@@ -333,7 +333,7 @@ impl NurturingScheduler {
                 let role = volumes_map
                     .values()
                     .find_map(|v| {
-                        let m = v.management.as_ref()?;
+                        let m = v.management()?;
                         if m.id == sb.id {
                             Some(m.role)
                         } else {

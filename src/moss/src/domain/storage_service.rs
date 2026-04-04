@@ -143,13 +143,13 @@ impl StorageRoute {
         let map = volumes.read().await;
         map.values()
             .filter_map(|vol| {
-                let mgmt = vol.management.as_ref()?;
+                let mgmt = vol.management()?;
                 Some(LocalStorage {
                     id: mgmt.id.clone(),
                     name: mgmt.name.clone(),
                     replica_set_id: mgmt.replica_set_id.clone(),
                     replica_set_name: mgmt.replica_set_name.clone(),
-                    mount_path: vol.mount_path.clone(),
+                    mount_path: vol.mount_path().clone(),
                     role: mgmt.role,
                     encrypted: mgmt.encrypted,
                     roles: mgmt.roles.clone(),
@@ -172,10 +172,10 @@ impl StorageRoute {
 async fn find_local(name: &str, volumes: &Volumes) -> Option<LocalStorage> {
     let map = volumes.read().await;
     map.values().find_map(|vol| {
-        if !vol.state.is_online() {
+        if !vol.state().is_online() {
             return None;
         }
-        let mgmt = vol.management.as_ref()?;
+        let mgmt = vol.management()?;
         if mgmt.display_name() != name {
             return None;
         }
@@ -184,7 +184,7 @@ async fn find_local(name: &str, volumes: &Volumes) -> Option<LocalStorage> {
             name: mgmt.name.clone(),
             replica_set_id: mgmt.replica_set_id.clone(),
             replica_set_name: mgmt.replica_set_name.clone(),
-            mount_path: vol.mount_path.clone(),
+            mount_path: vol.mount_path().clone(),
             role: mgmt.role,
             encrypted: mgmt.encrypted,
             roles: mgmt.roles.clone(),
@@ -196,7 +196,7 @@ async fn find_local(name: &str, volumes: &Volumes) -> Option<LocalStorage> {
 async fn find_local_by_id(id: &str, volumes: &Volumes) -> Option<LocalStorage> {
     let map = volumes.read().await;
     map.values().find_map(|vol| {
-        let mgmt = vol.management.as_ref()?;
+        let mgmt = vol.management()?;
         if mgmt.id != id {
             return None;
         }
@@ -205,7 +205,7 @@ async fn find_local_by_id(id: &str, volumes: &Volumes) -> Option<LocalStorage> {
             name: mgmt.name.clone(),
             replica_set_id: mgmt.replica_set_id.clone(),
             replica_set_name: mgmt.replica_set_name.clone(),
-            mount_path: vol.mount_path.clone(),
+            mount_path: vol.mount_path().clone(),
             role: mgmt.role,
             encrypted: mgmt.encrypted,
             roles: mgmt.roles.clone(),
@@ -251,12 +251,11 @@ pub async fn rename_replica_set(
     let mut mount_paths = Vec::new();
     for vol in map.values_mut() {
         let matches = vol
-            .management
-            .as_ref()
+            .management()
             .is_some_and(|m| m.display_name() == old_name);
         if matches {
-            mount_paths.push(vol.mount_path.to_string_lossy().to_string());
-            if let Some(ref mut mgmt) = vol.management {
+            mount_paths.push(vol.mount_path().to_string_lossy().to_string());
+            if let Some(mgmt) = vol.management_mut() {
                 mgmt.replica_set_name = new_name.to_string();
                 mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
             }
@@ -285,15 +284,15 @@ mod tests {
 
     /// Helper: build a test Volume with management configured.
     fn make_volume(id: &str, name: &str, role: StorageRole, mount: &str) -> Volume {
-        Volume {
-            path: "/dev/sda1".to_string(),
-            mount_path: PathBuf::from(mount),
-            label: None,
-            capacity_bytes: 100_000_000_000,
-            used_bytes: 10_000_000_000,
-            removable: true,
-            state: VolumeState::Online,
-            management: Some(Management {
+        Volume::for_test(
+            "/dev/sda1",
+            PathBuf::from(mount),
+            None,
+            100_000_000_000,
+            10_000_000_000,
+            true,
+            VolumeState::Online,
+            Some(Management {
                 id: id.to_string(),
                 short_id: id[..8.min(id.len())].to_string(),
                 name: name.to_string(),
@@ -309,7 +308,7 @@ mod tests {
                 role,
                 pin: None,
             }),
-        }
+        )
     }
 
     #[tokio::test]
@@ -449,7 +448,7 @@ mod tests {
         {
             let mut map = volumes.write().await;
             let mut vol = make_volume("id-1", "encrypted-bank", StorageRole::Primary, "/mnt/enc");
-            if let Some(ref mut mgmt) = vol.management {
+            if let Some(mgmt) = vol.management_mut() {
                 mgmt.encrypted = true;
                 mgmt.roles = vec!["seed-bank".into(), "archive".into()];
             }

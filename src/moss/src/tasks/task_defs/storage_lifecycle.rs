@@ -50,7 +50,7 @@ impl BackgroundTask for StorageLifecycleTask {
                         .await;
                 }
 
-                crate::domain::storage::health_tick_all(
+                crate::domain::storage::observe_all(
                     &ctx.state.current.storage.volumes,
                     &OsPlatform,
                 )

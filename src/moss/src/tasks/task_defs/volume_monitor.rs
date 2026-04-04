@@ -93,7 +93,7 @@ impl BackgroundTask for VolumeMonitorTask {
                         let candidate_count = {
                             let map = volumes.read().await;
                             map.values()
-                                .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+                                .filter(|v| !v.is_managed() && v.removable() && v.state().is_online())
                                 .count()
                         };
                         notifications.set_if(
@@ -113,12 +113,12 @@ impl BackgroundTask for VolumeMonitorTask {
                             Arc::new(ContentStore::new(path, None))
                         };
                         crate::domain::storage::reconcile(&volumes, &snaps, &make_store).await;
-                        crate::domain::storage::health_tick_all(&volumes, &OsPlatform).await;
+                        crate::domain::storage::observe_all(&volumes, &OsPlatform).await;
 
                         let candidate_count = {
                             let map = volumes.read().await;
                             map.values()
-                                .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+                                .filter(|v| !v.is_managed() && v.removable() && v.state().is_online())
                                 .count()
                         };
                         notifications.set_if(

@@ -203,11 +203,11 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     let seed_bank = {
         let map = state.current.storage.volumes.read().await;
         map.values().find_map(|v| {
-            let mgmt = v.management.as_ref()?;
+            let mgmt = v.management()?;
             Some(StoragePresence {
                 name: mgmt.name.clone(),
-                used_gb: v.used_bytes / 1_073_741_824,
-                total_gb: v.capacity_bytes / 1_073_741_824,
+                used_gb: v.used_bytes() / 1_073_741_824,
+                total_gb: v.capacity_bytes() / 1_073_741_824,
             })
         })
     };

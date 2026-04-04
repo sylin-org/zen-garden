@@ -1,24 +1,22 @@
-//! Volumes collection — the unified map of all local storage.
+//! Volumes collection — the unified map of all local storage (STORAGE-0017).
 //!
 //! Single source of truth for all local storage state. Operations:
-//! reconcile (tick), initial scan, health probing, and query helpers.
+//! reconcile (tick), initial scan, health observation, and query helpers.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use garden_common::storage::StorageRole;
+use garden_common::storage::{StorageChanged, StorageRole};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::domain::traits::{ManagementStoreOps, StoragePlatform};
 
 use super::platform_types::VolumeSnapshot;
-use super::volume::{Volume, VolumeState};
+use super::volume::{DiskMetrics, Volume, VolumeState};
 
 /// The unified volume collection — keyed by device path.
-///
-/// Single source of truth for all local storage state.
 pub type Volumes = Arc<RwLock<HashMap<String, Volume>>>;
 
 /// Create an empty `Volumes` map.
@@ -27,41 +25,37 @@ pub fn new_volumes() -> Volumes {
 }
 
 // ============================================================================
-// Domain operations on the Volumes collection
+// Domain operations
 // ============================================================================
 
 /// Reconcile the Volumes map against a fresh set of OS snapshots.
 ///
-/// This is the core domain tick:
 /// 1. New snapshots → classify and insert
-/// 2. Existing snapshots → update capacity/online
-/// 3. Missing snapshots → mark offline or remove
-///
-/// ## Manifest-based identity (STORAGE-0011)
-///
-/// When a device reappears at a different path (e.g., `/dev/sdb1` → `/dev/sdc1`),
-/// the old entry is removed and replaced by the new one, preserving the management
-/// state by matching on the manifest ID (GUIDv7) instead of the device path.
+/// 2. Existing snapshots → inform via `connect()` + `update_os_metadata()`
+/// 3. Missing snapshots → inform via `disconnect()`
 pub async fn reconcile<S: ManagementStoreOps + 'static>(
     volumes: &Volumes,
     snapshots: &[VolumeSnapshot],
     make_store: &(dyn Fn(PathBuf) -> Arc<S> + Send + Sync),
-) {
+) -> Vec<StorageChanged> {
     let current_paths: std::collections::HashSet<&str> =
         snapshots.iter().map(|s| s.path.as_str()).collect();
 
     let mut map = volumes.write().await;
+    let mut events = Vec::new();
 
     // Update existing and add new
     for snap in snapshots {
+        let metrics = DiskMetrics {
+            capacity_bytes: snap.capacity_bytes,
+            used_bytes: 0, // reconcile doesn't measure usage — health tick does
+        };
+
         if let Some(vol) = map.get_mut(&snap.path) {
-            // Update from latest snapshot
-            vol.capacity_bytes = snap.capacity_bytes;
-            vol.label = snap.label.clone();
-            vol.mount_path = PathBuf::from(&snap.mount_path);
-            vol.state = VolumeState::Online;
-            // Re-classify unmanaged volumes — they may have gained a manifest
-            // since last scan (e.g. `storage add` wrote one).
+            vol.update_os_metadata(PathBuf::from(&snap.mount_path), snap.label.clone());
+            events.extend(vol.connect(metrics));
+
+            // Re-classify unmanaged volumes — they may have gained a manifest.
             if !vol.is_managed() {
                 vol.classify(make_store).await;
                 if vol.is_managed() {
@@ -75,29 +69,20 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
 
             if vol.is_managed() {
                 let name = vol.display_name().to_string();
-                let manifest_id = vol.management.as_ref().map(|m| m.id.as_str()).unwrap_or("");
+                let manifest_id = vol.manifest_id().unwrap_or_default().to_string();
 
-                // Manifest-based dedup: check if a stale entry exists for this
-                // same physical device under a different device path.
+                // Manifest-based dedup: same device at different path.
                 let stale_key = map
                     .iter()
                     .find(|(k, v)| {
                         *k != &snap.path
-                            && v.management
-                                .as_ref()
-                                .map(|m| m.id.as_str() == manifest_id)
-                                .unwrap_or(false)
+                            && v.manifest_id().is_some_and(|id| id == manifest_id)
                     })
                     .map(|(k, _)| k.clone());
 
                 if let Some(old_key) = stale_key {
-                    info!(
-                        old_path = %old_key,
-                        new_path = %snap.path,
-                        name = %name,
-                        id = %manifest_id,
-                        "Volume re-keyed (device path changed)"
-                    );
+                    info!(old_path = %old_key, new_path = %snap.path, name = %name,
+                          "Volume re-keyed (device path changed)");
                     map.remove(&old_key);
                 } else {
                     info!(path = %snap.path, name = %name, "Managed volume registered");
@@ -118,20 +103,51 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
         .collect();
 
     for path in departed {
-        if let Some(vol) = map.get_mut(&path)
-            && vol.state != VolumeState::Offline {
+        if let Some(vol) = map.get_mut(&path) {
+            let vol_events = vol.disconnect();
+            if !vol_events.is_empty() {
                 info!(path = %path, name = %vol.display_name(), "Volume went offline");
-                vol.state = VolumeState::Offline;
             }
+            events.extend(vol_events);
+        }
     }
+
+    events
 }
 
-/// Probe health on all volumes. Offline volumes are skipped by [`Volume::probe_health`].
-pub async fn health_tick_all(volumes: &Volumes, platform: &(impl StoragePlatform + ?Sized)) {
+/// Observe health on all volumes. Returns events for any state changes.
+///
+/// Reads disk metrics via the platform adapter, then informs each Volume.
+/// Offline volumes are skipped by `observe_metrics()`.
+pub async fn observe_all(
+    volumes: &Volumes,
+    platform: &(impl StoragePlatform + ?Sized),
+) -> Vec<StorageChanged> {
     let mut map = volumes.write().await;
+    let mut events = Vec::new();
+
     for vol in map.values_mut() {
-        vol.probe_health(platform);
+        if !vol.is_online() {
+            continue;
+        }
+
+        let mount_str = vol.mount_path().to_string_lossy().to_string();
+        let metrics = platform.disk_usage(&mount_str).map(|usage| DiskMetrics {
+            capacity_bytes: usage.total(),
+            used_bytes: usage.used_bytes,
+        });
+        events.extend(vol.observe_metrics(metrics));
+
+        // Reconcile pin state from disk (detect external pin changes).
+        let pin_path = vol.mount_path().join(".zen-garden").join("pin.json");
+        let disk_pin = std::fs::read_to_string(&pin_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|v| v.get("pin_id")?.as_str().map(|s| s.to_string()));
+        vol.reconcile_pin(disk_pin);
     }
+
+    events
 }
 
 /// Initial scan: enumerate OS volumes, classify, populate the map.
@@ -158,20 +174,20 @@ pub async fn initial_scan<P: StoragePlatform + 'static, S: ManagementStoreOps + 
     reconcile(volumes, &snapshots, make_store).await;
 
     // Probe disk usage for all volumes
-    health_tick_all(volumes, platform.as_ref()).await;
+    observe_all(volumes, platform.as_ref()).await;
 
     let map = volumes.read().await;
     let managed = map.values().filter(|v| v.is_managed()).count();
     let unmanaged = map.values().filter(|v| !v.is_managed()).count();
-    let removable = map.values().filter(|v| v.removable).count();
+    let removable = map.values().filter(|v| v.removable()).count();
     info!(managed, unmanaged, removable, "Volume scan complete");
     for vol in map.values() {
         debug!(
-            path = %vol.path,
+            path = %vol.path(),
             name = %vol.display_name(),
-            removable = vol.removable,
+            removable = vol.removable(),
             managed = vol.is_managed(),
-            state = %vol.state,
+            state = %vol.state(),
             "  volume"
         );
     }
@@ -181,60 +197,51 @@ pub async fn initial_scan<P: StoragePlatform + 'static, S: ManagementStoreOps + 
 // Query helpers
 // ============================================================================
 
-/// List all managed volumes.
 pub async fn list_managed(volumes: &Volumes) -> Vec<Volume> {
     let map = volumes.read().await;
     map.values().filter(|v| v.is_managed()).cloned().collect()
 }
 
-/// List unmanaged removable volumes (candidates for `storage add`).
 pub async fn list_candidates(volumes: &Volumes) -> Vec<Volume> {
     let map = volumes.read().await;
     map.values()
-        .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+        .filter(|v| !v.is_managed() && v.removable() && v.is_online())
         .cloned()
         .collect()
 }
 
-/// Find a managed volume by logical name.
 pub async fn find_by_name(volumes: &Volumes, name: &str) -> Option<Volume> {
     let map = volumes.read().await;
     map.values()
         .find(|v| {
-            v.management
-                .as_ref()
-                .map(|m| m.name == name)
-                .unwrap_or(false)
+            v.management()
+                .is_some_and(|m| m.name == name)
         })
         .cloned()
 }
 
-/// Find a managed volume by storage ID (GUIDv7).
 pub async fn find_by_id(volumes: &Volumes, id: &str) -> Option<Volume> {
     let map = volumes.read().await;
     map.values()
-        .find(|v| v.management.as_ref().map(|m| m.id == id).unwrap_or(false))
+        .find(|v| v.management().is_some_and(|m| m.id == id))
         .cloned()
 }
 
-/// Snapshot of roles keyed by replica set display name — for beacon/broadcast callers.
 pub async fn roles_snapshot(volumes: &Volumes) -> HashMap<String, StorageRole> {
     let map = volumes.read().await;
     map.values()
         .filter_map(|v| {
-            v.management
-                .as_ref()
+            v.management()
                 .map(|m| (m.display_name().to_string(), m.role))
         })
         .collect()
 }
 
-/// Snapshot of pins keyed by replica set display name — for beacon/broadcast callers.
 pub async fn pins_snapshot(volumes: &Volumes) -> HashMap<String, String> {
     let map = volumes.read().await;
     map.values()
         .filter_map(|v| {
-            v.management.as_ref().and_then(|m| {
+            v.management().and_then(|m| {
                 m.pin
                     .as_ref()
                     .map(|p| (m.display_name().to_string(), p.pin_id.clone()))
@@ -243,13 +250,11 @@ pub async fn pins_snapshot(volumes: &Volumes) -> HashMap<String, String> {
         .collect()
 }
 
-/// Snapshot of (name, id) pairs for signpost generation.
 pub async fn name_id_pairs(volumes: &Volumes) -> Vec<(String, String)> {
     let map = volumes.read().await;
     map.values()
         .filter_map(|v| {
-            v.management
-                .as_ref()
+            v.management()
                 .map(|m| (m.name.clone(), m.id.clone()))
         })
         .collect()
@@ -283,11 +288,11 @@ mod tests {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let vol = Volume::from_snapshot(&snap);
 
-        assert_eq!(vol.path, "/dev/sdb1");
-        assert!(vol.removable);
-        assert_eq!(vol.state, VolumeState::Online);
+        assert_eq!(vol.path(), "/dev/sdb1");
+        assert!(vol.removable());
+        assert_eq!(*vol.state(), VolumeState::Online);
         assert!(!vol.is_managed());
-        assert_eq!(vol.display_name(), "TEST"); // label takes priority over path
+        assert_eq!(vol.display_name(), "TEST");
     }
 
     #[test]
@@ -313,30 +318,28 @@ mod tests {
     async fn test_reconcile_marks_departed_offline() {
         let volumes = new_volumes();
 
-        // Add a volume
         let snaps = vec![make_snapshot("/dev/sdb1", "/mnt/usb", true)];
         reconcile(&volumes, &snaps, &test_store_factory()).await;
 
-        // Reconcile with empty → should mark offline
         reconcile(&volumes, &[], &test_store_factory()).await;
 
         let map = volumes.read().await;
         let vol = map.get("/dev/sdb1").unwrap();
-        assert_eq!(vol.state, VolumeState::Offline);
+        assert_eq!(*vol.state(), VolumeState::Offline);
     }
 
     #[tokio::test]
     async fn test_list_candidates() {
         let volumes = new_volumes();
         let snaps = vec![
-            make_snapshot("/dev/sdb1", "/mnt/usb", true), // removable
-            make_snapshot("/dev/sda2", "/mnt/data", false), // fixed
+            make_snapshot("/dev/sdb1", "/mnt/usb", true),
+            make_snapshot("/dev/sda2", "/mnt/data", false),
         ];
         reconcile(&volumes, &snaps, &test_store_factory()).await;
 
         let candidates = list_candidates(&volumes).await;
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].path, "/dev/sdb1");
+        assert_eq!(candidates[0].path(), "/dev/sdb1");
     }
 
     #[tokio::test]
@@ -355,5 +358,109 @@ mod tests {
         ));
         assert!(!super::super::analysis::is_allowed_mount("/home/user/usb"));
         assert!(!super::super::analysis::is_allowed_mount("/var/lib/data"));
+    }
+
+    // ── State machine tests (STORAGE-0017) ──────────────────────────
+
+    #[test]
+    fn connect_from_offline_emits_connected() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+        // Force offline first
+        let _ = vol.disconnect();
+
+        let events = vol.connect(DiskMetrics {
+            capacity_bytes: 64_000_000_000,
+            used_bytes: 1_000_000,
+        });
+        // Unmanaged volume — no event even on Offline→Online
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn connect_when_already_online_no_event() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+
+        let events = vol.connect(DiskMetrics {
+            capacity_bytes: 100,
+            used_bytes: 50,
+        });
+        assert!(events.is_empty());
+        assert_eq!(vol.capacity_bytes(), 100);
+        assert_eq!(vol.used_bytes(), 50);
+    }
+
+    #[test]
+    fn disconnect_from_online_for_unmanaged() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+
+        let events = vol.disconnect();
+        // Unmanaged — no Released event
+        assert!(events.is_empty());
+        assert_eq!(*vol.state(), VolumeState::Offline);
+    }
+
+    #[test]
+    fn disconnect_from_offline_is_noop() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+        vol.disconnect();
+
+        let events = vol.disconnect();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn observe_metrics_offline_is_noop() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+        vol.disconnect();
+
+        let events = vol.observe_metrics(Some(DiskMetrics {
+            capacity_bytes: 100,
+            used_bytes: 50,
+        }));
+        assert!(events.is_empty());
+        assert_eq!(*vol.state(), VolumeState::Offline);
+    }
+
+    #[test]
+    fn observe_metrics_none_degrades() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+
+        let _events = vol.observe_metrics(None);
+        assert!(matches!(vol.state(), VolumeState::Degraded(_)));
+    }
+
+    #[test]
+    fn observe_metrics_zero_capacity_degrades() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+
+        let _events = vol.observe_metrics(Some(DiskMetrics {
+            capacity_bytes: 0,
+            used_bytes: 0,
+        }));
+        assert!(matches!(vol.state(), VolumeState::Degraded(_)));
+    }
+
+    #[test]
+    fn rename_same_name_no_event() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+        // Unmanaged — rename is a no-op
+        let events = vol.rename("anything".to_string());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn release_unmanaged_no_event() {
+        let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
+        let mut vol = Volume::from_snapshot(&snap);
+        let events = vol.release();
+        assert!(events.is_empty());
     }
 }

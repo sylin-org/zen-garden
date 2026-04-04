@@ -96,12 +96,12 @@ impl StorageWatcherSet {
             let map = self.volumes.read().await;
             map.values()
                 .filter_map(|v| {
-                    let mgmt = v.management.as_ref()?;
+                    let mgmt = v.management()?;
                     Some((
                         mgmt.id.clone(),
                         mgmt.name.clone(),
                         mgmt.replica_set_id.clone(),
-                        v.mount_path.clone(),
+                        v.mount_path().clone(),
                     ))
                 })
                 .collect()

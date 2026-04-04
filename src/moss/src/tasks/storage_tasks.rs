@@ -45,7 +45,7 @@ pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
             }
 
             // Health tick all volumes (~10s)
-            crate::domain::storage::health_tick_all(&state.current.storage.volumes, &OsPlatform)
+            crate::domain::storage::observe_all(&state.current.storage.volumes, &OsPlatform)
                 .await;
 
             // Periodic beacon heartbeat (tools projection + beacon).
@@ -117,7 +117,7 @@ pub fn start_s3_listener_lifecycle(state: AppState, token: CancellationToken) {
 pub(crate) async fn arm_s3_for_all_primaries(state: &AppState) {
     let volumes = state.current.storage.volumes.read().await;
     for vol in volumes.values() {
-        if let Some(mgmt) = &vol.management
+        if let Some(mgmt) = vol.management()
             && mgmt.role == garden_common::storage::StorageRole::Primary {
                 let name = mgmt.display_name().to_string();
                 let storage_id = mgmt.id.clone();
@@ -141,8 +141,7 @@ pub(crate) async fn reconcile_s3_listeners(state: &AppState) {
 
     for assignment in &assignments {
         let has_local_primary = volumes.values().any(|v| {
-            v.management
-                .as_ref()
+            v.management()
                 .map(|m| {
                     m.display_name() == assignment.replica_set_name
                         && m.role == garden_common::storage::StorageRole::Primary
@@ -152,8 +151,7 @@ pub(crate) async fn reconcile_s3_listeners(state: &AppState) {
 
         if !has_local_primary {
             if volumes.values().any(|v| {
-                v.management
-                    .as_ref()
+                v.management()
                     .map(|m| m.display_name() == assignment.replica_set_name)
                     .unwrap_or(false)
             }) {

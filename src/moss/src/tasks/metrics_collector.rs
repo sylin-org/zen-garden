@@ -77,7 +77,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
         let count = {
             let map = state.current.storage.volumes.read().await;
             map.values()
-                .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+                .filter(|v| !v.is_managed() && v.removable() && v.state().is_online())
                 .count()
         };
         state.presence.notifications.set_if(
@@ -103,7 +103,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                         let count = {
                             let map = state.current.storage.volumes.read().await;
                             map.values()
-                                .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+                                .filter(|v| !v.is_managed() && v.removable() && v.state().is_online())
                                 .count()
                         };
                         state.presence.notifications.set_if(
@@ -185,10 +185,12 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                 {
                     let mut map = state.current.storage.volumes.write().await;
                     for vol in map.values_mut() {
-                        let path_str = vol.mount_path.to_string_lossy();
+                        let path_str = vol.mount_path().to_string_lossy().to_string();
                         if let Some(usage) = crate::infra::storage::platform::disk_usage(&path_str) {
-                            vol.used_bytes = usage.used_bytes;
-                            vol.capacity_bytes = usage.used_bytes + usage.available_bytes;
+                            vol.observe_metrics(Some(crate::domain::storage::DiskMetrics {
+                                capacity_bytes: usage.used_bytes + usage.available_bytes,
+                                used_bytes: usage.used_bytes,
+                            }));
                         }
                     }
                 }
@@ -198,7 +200,7 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                     let count = {
                         let map = state.current.storage.volumes.read().await;
                         map.values()
-                            .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+                            .filter(|v| !v.is_managed() && v.removable() && v.state().is_online())
                             .count()
                     };
                     state.presence.notifications.set_if(

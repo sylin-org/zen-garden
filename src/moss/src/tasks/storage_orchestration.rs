@@ -129,7 +129,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         let mut roles = std::collections::HashMap::new();
         let mut pins = std::collections::HashMap::new();
         for vol in map.values() {
-            if let Some(ref mgmt) = vol.management {
+            if let Some(mgmt) = vol.management() {
                 names.push(mgmt.name.clone());
                 roles.insert(mgmt.name.clone(), mgmt.role);
                 if let Some(ref pin) = mgmt.pin {
@@ -218,9 +218,9 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         for name in &auto_unpin {
             if let Some(vol) = map
                 .values_mut()
-                .find(|v| v.management.as_ref().is_some_and(|m| m.name == *name))
+                .find(|v| v.management().is_some_and(|m| m.name == *name))
             {
-                let store = ContentStore::new(vol.mount_path.clone(), None);
+                let store = ContentStore::new(vol.mount_path().clone(), None);
                 if let Err(e) = vol.unpin(&store).await {
                     warn!(name = %name, error = %e, "Failed to auto-unpin volume");
                 }
@@ -233,8 +233,8 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         for (name, role) in &new_roles {
             if let Some(vol) = map
                 .values_mut()
-                .find(|v| v.management.as_ref().is_some_and(|m| m.name == *name))
-                && let Some(ref mut mgmt) = vol.management {
+                .find(|v| v.management().is_some_and(|m| m.name == *name))
+                && let Some(mgmt) = vol.management_mut() {
                     mgmt.role = *role;
                 }
         }
@@ -273,12 +273,12 @@ async fn compact_primary_changelogs(state: &AppState) {
 
     let map = state.current.storage.volumes.read().await;
     for vol in map.values() {
-        let mgmt = match vol.management.as_ref() {
+        let mgmt = match vol.management() {
             Some(m) if m.role == StorageRole::Primary => m,
             _ => continue,
         };
 
-        let store = ContentStore::new(vol.mount_path.clone(), None);
+        let store = ContentStore::new(vol.mount_path().clone(), None);
         match store.compact_changelog(&cutoff_cursor).await {
             Ok(0) => {}
             Ok(pruned) => {

@@ -618,8 +618,7 @@ async fn find_seed_bank(
     let map = volumes.read().await;
     map.values()
         .find(|v| {
-            v.management
-                .as_ref()
+            v.management()
                 .is_some_and(|m| m.name == name_or_id || m.id == name_or_id)
         })
         .and_then(|v| v.to_storage_info())

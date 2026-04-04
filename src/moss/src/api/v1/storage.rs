@@ -311,7 +311,7 @@ pub async fn get_bank_v1(
     let bank = {
         let map = state.current.storage.volumes.read().await;
         map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
             .ok_or_else(|| {
                 err(
@@ -343,7 +343,7 @@ pub async fn delete_bank_v1(
         let map = state.current.storage.volumes.read().await;
         if map
             .values()
-            .any(|v| v.management.as_ref().is_some_and(|m| m.name == name) && v.state.is_online())
+            .any(|v| v.management().is_some_and(|m| m.name == name) && v.state().is_online())
         {
             return Err(err(
                 StatusCode::CONFLICT,
@@ -411,7 +411,7 @@ pub async fn release_bank_v1(
         let map = state.current.storage.volumes.read().await;
         let vol = map
             .values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .ok_or_else(|| {
                 err(
                     StatusCode::NOT_FOUND,
@@ -419,7 +419,7 @@ pub async fn release_bank_v1(
                     &format!("Bank '{}' not found", name),
                 )
             })?;
-        vol.mount_path.to_string_lossy().to_string()
+        vol.mount_path().to_string_lossy().to_string()
     };
 
     #[cfg(target_os = "linux")]
@@ -433,28 +433,36 @@ pub async fn release_bank_v1(
             )
         })?;
 
-    // STORAGE-0011: Remove management from the released volume
+    // STORAGE-0011: Remove management from the released volume via domain method.
     // Capture identity before clearing management.
-    let (device_id, replica_set_id) = {
+    let (device_id, replica_set_id, events) = {
         let mut map = state.current.storage.volumes.write().await;
         let ids = map
             .values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .and_then(|v| {
-                let mgmt = v.management.as_ref()?;
+                let mgmt = v.management()?;
                 Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
             })
             .unwrap_or_default();
 
-        if let Some(vol) = map
+        let events = if let Some(vol) = map
             .values_mut()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
         {
-            vol.management = None;
+            let evts = vol.release();
             debug!(name = %name, "Cleared management from released volume");
-        }
-        ids
+            evts
+        } else {
+            vec![]
+        };
+        (ids.0, ids.1, events)
     };
+
+    // Forward domain events from release
+    for event in events {
+        state.emit_storage_changed(event).await;
+    }
 
     // Emit ribbon event before Removed (name still meaningful at this point)
     state
@@ -506,11 +514,10 @@ pub async fn rename_bank_v1(
         let map = state.current.storage.volumes.read().await;
         map.values()
             .filter(|v| {
-                v.management
-                    .as_ref()
+                v.management()
                     .is_some_and(|m| m.display_name() == name)
             })
-            .map(|v| v.mount_path.to_string_lossy().to_string())
+            .map(|v| v.mount_path().to_string_lossy().to_string())
             .collect()
     };
 
@@ -535,32 +542,37 @@ pub async fn rename_bank_v1(
             })?;
     }
 
-    // Sync replica_set_name to volume management and capture replica_set_id
-    let replica_set_id = {
+    // Sync replica_set_name to volume management via domain method and capture replica_set_id
+    let (replica_set_id, all_events) = {
         let mut map = state.current.storage.volumes.write().await;
         let mut rsid = String::new();
+        let mut all_events = Vec::new();
         for vol in map.values_mut() {
             let matches = vol
-                .management
-                .as_ref()
+                .management()
                 .is_some_and(|m| m.display_name() == name);
-            if matches
-                && let Some(ref mut mgmt) = vol.management {
+            if matches {
+                if let Some(mgmt) = vol.management() {
                     rsid = mgmt.replica_set_id.clone();
-                    mgmt.replica_set_name = request.new_name.clone();
-                    mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
                 }
+                let events = vol.rename(request.new_name.clone());
+                all_events.extend(events);
+            }
         }
-        rsid
+        (rsid, all_events)
     };
+
+    // Forward domain events from rename
+    for event in all_events {
+        state.emit_storage_changed(event).await;
+    }
 
     // Re-read updated info from volumes (return first matching volume's info)
     let updated = {
         let map = state.current.storage.volumes.read().await;
         map.values()
             .find(|v| {
-                v.management
-                    .as_ref()
+                v.management()
                     .is_some_and(|m| m.replica_set_name == request.new_name)
             })
             .and_then(|v| v.to_storage_info())
@@ -603,15 +615,15 @@ pub async fn list_candidates_v1(
         let volumes_map = state.current.storage.volumes.read().await;
         let spaces: Vec<StorageDetectedInfo> = volumes_map
             .values()
-            .filter(|v| !v.is_managed() && v.removable && v.state.is_online())
+            .filter(|v| !v.is_managed() && v.removable() && v.state().is_online())
             .map(|v| StorageDetectedInfo {
-                device: v.path.clone(),
-                mount_path: Some(v.mount_path.to_string_lossy().to_string()),
-                label: v.label.clone(),
-                capacity_bytes: v.capacity_bytes,
+                device: v.path().to_string(),
+                mount_path: Some(v.mount_path().to_string_lossy().to_string()),
+                label: v.label().map(|s| s.to_string()),
+                capacity_bytes: v.capacity_bytes(),
                 state: DeviceState::Empty,
                 eligible: true,
-                removable: v.removable,
+                removable: v.removable(),
                 ineligible_reason: None,
             })
             .collect();
@@ -761,7 +773,7 @@ pub async fn add_storage_v1(
             let map = state.current.storage.volumes.read().await;
             if map
                 .values()
-                .any(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+                .any(|v| v.management().is_some_and(|m| m.name == name))
             {
                 info!(name = %name, "Same-name storage exists — new device will be a replica");
             }
@@ -1280,7 +1292,7 @@ pub async fn set_visibility_v1(
         let map = state.current.storage.volumes.read().await;
         let vol = map
             .values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .ok_or_else(|| {
                 err(
                     StatusCode::NOT_FOUND,
@@ -1288,7 +1300,7 @@ pub async fn set_visibility_v1(
                     &format!("Seed bank '{}' not found", name),
                 )
             })?;
-        vol.mount_path.to_string_lossy().to_string()
+        vol.mount_path().to_string_lossy().to_string()
     };
 
     update_manifest_visibility(&mount_path, request.visibility)
@@ -1301,22 +1313,29 @@ pub async fn set_visibility_v1(
             )
         })?;
 
-    // Sync visibility to volume management
-    {
+    // Sync visibility to volume management via domain method
+    let events = {
         let mut map = state.current.storage.volumes.write().await;
         if let Some(vol) = map
             .values_mut()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            && let Some(ref mut mgmt) = vol.management {
-                mgmt.visibility = request.visibility;
-            }
+            .find(|v| v.management().is_some_and(|m| m.name == name))
+        {
+            vol.set_visibility(request.visibility)
+        } else {
+            vec![]
+        }
+    };
+
+    // Forward domain events
+    for event in events {
+        state.emit_storage_changed(event).await;
     }
 
     // Re-read updated info
     let updated = {
         let map = state.current.storage.volumes.read().await;
         map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
             .ok_or_else(|| {
                 err(
@@ -1423,7 +1442,7 @@ pub async fn set_roles_v1(
         let map = state.current.storage.volumes.read().await;
         let vol = map
             .values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .ok_or_else(|| {
                 err(
                     StatusCode::NOT_FOUND,
@@ -1431,7 +1450,7 @@ pub async fn set_roles_v1(
                     &format!("Bank '{}' not found", name),
                 )
             })?;
-        vol.mount_path.to_string_lossy().to_string()
+        vol.mount_path().to_string_lossy().to_string()
     };
 
     update_manifest_roles(&mount_path, &request.roles)
@@ -1444,22 +1463,29 @@ pub async fn set_roles_v1(
             )
         })?;
 
-    // Sync roles to volume management
-    {
+    // Sync roles to volume management via domain method
+    let events = {
         let mut map = state.current.storage.volumes.write().await;
         if let Some(vol) = map
             .values_mut()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            && let Some(ref mut mgmt) = vol.management {
-                mgmt.roles = request.roles.clone();
-            }
+            .find(|v| v.management().is_some_and(|m| m.name == name))
+        {
+            vol.set_roles(request.roles.clone())
+        } else {
+            vec![]
+        }
+    };
+
+    // Forward domain events
+    for event in events {
+        state.emit_storage_changed(event).await;
     }
 
     // Re-read updated info
     let updated = {
         let map = state.current.storage.volumes.read().await;
         map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .and_then(|v| v.to_storage_info())
             .ok_or_else(|| {
                 err(
@@ -1493,10 +1519,10 @@ pub async fn release_all_seed_banks_v1(
         let map = state.current.storage.volumes.read().await;
         map.values()
             .filter_map(|v| {
-                let mgmt = v.management.as_ref()?;
+                let mgmt = v.management()?;
                 Some((
                     mgmt.name.clone(),
-                    v.mount_path.to_string_lossy().to_string(),
+                    v.mount_path().to_string_lossy().to_string(),
                 ))
             })
             .collect()
@@ -1543,11 +1569,18 @@ pub async fn release_all_seed_banks_v1(
     let _ = state.pulse.send(PulseEvent::Domain(pulse));
 
     // STORAGE-0011: Clear management from all volumes (all banks released)
-    {
+    let release_events = {
         let mut map = state.current.storage.volumes.write().await;
+        let mut all_events = Vec::new();
         for vol in map.values_mut() {
-            vol.management = None;
+            if vol.is_managed() {
+                all_events.extend(vol.release());
+            }
         }
+        all_events
+    };
+    for event in release_events {
+        state.emit_storage_changed(event).await;
     }
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts
@@ -1602,11 +1635,11 @@ pub async fn pin_bank_v1(
     }
 
     // STORAGE-0011: Pin via Volume — writes pin.json, sets role to Primary.
-    let pin_id = {
+    let events = {
         let mut map = state.current.storage.volumes.write().await;
         let vol = map
             .values_mut()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .ok_or_else(|| {
                 err(
                     StatusCode::NOT_FOUND,
@@ -1615,7 +1648,7 @@ pub async fn pin_bank_v1(
                 )
             })?;
 
-        let store = ContentStore::new(vol.mount_path.clone(), None);
+        let store = ContentStore::new(vol.mount_path().clone(), None);
         vol.pin(&store).await.map_err(|e| {
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1625,32 +1658,16 @@ pub async fn pin_bank_v1(
         })?
     };
 
-    // STORAGE-0013: Emit pin change event. Capture identity from volumes.
-    let (device_id, replica_set_id) = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            .and_then(|v| {
-                let mgmt = v.management.as_ref()?;
-                Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
-            })
-            .unwrap_or_default()
-    };
-    state
-        .emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
-            device_id,
-            replica_set_id,
-        })
-        .await;
+    // STORAGE-0017: Volume returns events — forward them.
+    for event in &events {
+        state.emit_storage_changed(event.clone()).await;
+    }
     state.orchestration.storage.nudge.notify_one();
 
     crate::api::ok(PinSeedBankResponse {
         name: name.clone(),
         pinned: true,
-        message: format!(
-            "Primary role for '{}' pinned to this stone (pin_id: {})",
-            name, pin_id
-        ),
+        message: format!("Primary role for '{}' pinned to this stone", name),
     })
 }
 
@@ -1671,44 +1688,30 @@ pub async fn unpin_bank_v1(
         ));
     }
 
-    // STORAGE-0011: Unpin via Volume — clears pin + deletes disk file.
-    let _was_pinned = {
+    // STORAGE-0017: Unpin via Volume — returns events.
+    let events = {
         let mut map = state.current.storage.volumes.write().await;
         if let Some(vol) = map
             .values_mut()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
         {
-            let store = ContentStore::new(vol.mount_path.clone(), None);
+            let store = ContentStore::new(vol.mount_path().clone(), None);
             match vol.unpin(&store).await {
-                Ok(old_pin_id) => old_pin_id,
+                Ok(events) => events,
                 Err(e) => {
                     warn!(name = %name, error = %e, "Unpin encountered an error");
-                    None
+                    vec![]
                 }
             }
         } else {
             debug!(name = %name, "Volume not found for unpin — no-op");
-            None
+            vec![]
         }
     };
 
-    // STORAGE-0013: Emit pin change event
-    let (device_id, replica_set_id) = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
-            .and_then(|v| {
-                let mgmt = v.management.as_ref()?;
-                Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
-            })
-            .unwrap_or_default()
-    };
-    state
-        .emit_storage_changed(garden_common::storage::StorageChanged::PinChanged {
-            device_id,
-            replica_set_id,
-        })
-        .await;
+    for event in &events {
+        state.emit_storage_changed(event.clone()).await;
+    }
     state.orchestration.storage.nudge.notify_one();
 
     crate::api::ok(PinSeedBankResponse {
@@ -1737,7 +1740,7 @@ pub async fn bank_changes_v1(
         let map = state.current.storage.volumes.read().await;
         let vol = map
             .values()
-            .find(|v| v.management.as_ref().is_some_and(|m| m.name == name))
+            .find(|v| v.management().is_some_and(|m| m.name == name))
             .ok_or_else(|| {
                 err(
                     StatusCode::NOT_FOUND,
@@ -1745,7 +1748,7 @@ pub async fn bank_changes_v1(
                     &format!("Bank '{}' not found", name),
                 )
             })?;
-        vol.mount_path.to_string_lossy().to_string()
+        vol.mount_path().to_string_lossy().to_string()
     };
 
     if let Err(msg) = validate_seed_bank_layout(&mount_path) {

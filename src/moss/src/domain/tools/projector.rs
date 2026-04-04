@@ -45,10 +45,10 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
     };
 
     for vol in &managed_vols {
-        let Some(mgmt) = vol.management.as_ref() else {
+        let Some(mgmt) = vol.management() else {
             continue;
         };
-        let (status, ready) = volume_state_to_readiness(&vol.state);
+        let (status, ready) = volume_state_to_readiness(vol.state());
         let visibility_str = mgmt.visibility.to_string();
 
         let fqid = mgmt.display_name().to_string();
@@ -91,8 +91,8 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
                 replica_set_id: mgmt.replica_set_id.clone(),
                 replica_set_name: mgmt.replica_set_name.clone(),
                 role: Some(mgmt.role.to_string().to_ascii_lowercase()),
-                capacity_bytes: vol.capacity_bytes,
-                used_bytes: vol.used_bytes,
+                capacity_bytes: vol.capacity_bytes(),
+                used_bytes: vol.used_bytes(),
                 visibility: visibility_str,
                 encrypted: mgmt.encrypted,
                 pin_id: vol.pin_id().map(|s| s.to_string()),

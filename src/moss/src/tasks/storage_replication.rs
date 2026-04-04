@@ -126,11 +126,11 @@ async fn replication_tick(state: &AppState) -> Result<()> {
     let dormant_banks: Vec<(String, String, std::path::PathBuf)> = map
         .values()
         .filter_map(|vol| {
-            let mgmt = vol.management.as_ref()?;
+            let mgmt = vol.management()?;
             if mgmt.role != StorageRole::Dormant {
                 return None;
             }
-            Some((mgmt.name.clone(), mgmt.id.clone(), vol.mount_path.clone()))
+            Some((mgmt.name.clone(), mgmt.id.clone(), vol.mount_path().clone()))
         })
         .collect();
     drop(map);

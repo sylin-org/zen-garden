@@ -71,7 +71,7 @@ impl Medium {
             p.mount_path.as_ref().is_some_and(|mp| {
                 volumes
                     .values()
-                    .any(|v| v.is_managed() && v.mount_path.to_string_lossy() == mp.as_str())
+                    .any(|v| v.is_managed() && v.mount_path().to_string_lossy() == mp.as_str())
             })
         })
     }

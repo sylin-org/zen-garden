@@ -351,7 +351,7 @@ pub async fn discover_v1(
             let map = state.current.storage.volumes.read().await;
             map.values()
                 .find_map(|v| {
-                    let m = v.management.as_ref()?;
+                    let m = v.management()?;
                     if m.name == name {
                         Some((v.pin_id().map(|s| s.to_string()), m.roles.clone()))
                     } else {

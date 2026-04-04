@@ -25,12 +25,12 @@ pub mod volume;
 // ── Re-exports for backward compatibility ──────────────────────────────
 
 // Volume types
-pub use volume::{Management, PinState, Volume, VolumeState};
+pub use volume::{DiskMetrics, Management, PinState, Volume, VolumeState};
 
 // Collection types and operations
 pub use collection::{
-    find_by_id, find_by_name, health_tick_all, initial_scan, list_candidates, list_managed,
-    name_id_pairs, new_volumes, pins_snapshot, reconcile, roles_snapshot, Volumes,
+    find_by_id, find_by_name, initial_scan, list_candidates, list_managed, name_id_pairs,
+    new_volumes, observe_all, pins_snapshot, reconcile, roles_snapshot, Volumes,
 };
 
 // Medium types

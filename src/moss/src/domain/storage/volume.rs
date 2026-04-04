@@ -1,18 +1,34 @@
-//! Volume — the universal storage entity.
+//! Volume — the universal storage entity (STORAGE-0017).
 //!
-//! A `Volume` represents any accessible storage (USB drive, NAS mount, local
-//! directory). Whether Zen Garden manages it is determined by `management`.
+//! A `Volume` is the domain object for any accessible storage device
+//! (USB drive, NAS mount, local directory). It owns its state and
+//! decides what changed when informed of OS facts.
+//!
+//! ## State Machine
+//!
+//! ```text
+//!              connect(metrics)
+//!    Offline ──────────────────→ Online
+//!       ↑                         ↑ ↓
+//!       │ disconnect()            │ │ observe_metrics()
+//!       │                         │ ↓
+//!       ←──────────────────── Degraded
+//!              disconnect()
+//! ```
+//!
+//! OS facts flow in via methods. Domain events flow out as return values.
+//! Volume never touches channels, Arc, or async (except pin/unpin I/O).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use garden_common::storage::{
-    short_id_from_guid, StorageAccess, StorageAnnouncement, StorageInfo, StorageManifest,
-    StorageRole, StorageSummary, StorageVisibility, DEFAULT_REPLICA_SET_DISPLAY,
+    short_id_from_guid, StorageAccess, StorageAnnouncement, StorageChanged, StorageInfo,
+    StorageManifest, StorageRole, StorageSummary, StorageVisibility, DEFAULT_REPLICA_SET_DISPLAY,
 };
 use tracing::{debug, info, warn};
 
-use crate::domain::traits::{ManagementStoreOps, StoragePlatform};
+use crate::domain::traits::ManagementStoreOps;
 
 use super::platform_types::VolumeSnapshot;
 
@@ -21,17 +37,13 @@ use super::platform_types::VolumeSnapshot;
 // ============================================================================
 
 /// Lifecycle state of a volume.
-///
-/// The monitor (via [`super::StorageBank`]) is the sole authority for
-/// `Offline → Online` transitions. [`Volume::probe_health`] can only move
-/// between `Online` and `Degraded` — it never resurrects an offline volume.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VolumeState {
     /// Mounted, accessible, disk_usage valid.
     Online,
     /// Accessible but with issues (zero capacity, probe error).
     Degraded(String),
-    /// Device gone. Only the monitor (via StorageBank) can revive.
+    /// Device gone. Only `connect()` can resurrect.
     Offline,
 }
 
@@ -49,6 +61,18 @@ impl std::fmt::Display for VolumeState {
             Self::Offline => write!(f, "offline"),
         }
     }
+}
+
+// ============================================================================
+// Disk metrics — OS measurement passed into Volume methods
+// ============================================================================
+
+/// Measured disk usage from the OS. Passed into Volume state machine methods.
+/// Volume decides what to do with the information.
+#[derive(Debug, Clone, Copy)]
+pub struct DiskMetrics {
+    pub capacity_bytes: u64,
+    pub used_bytes: u64,
 }
 
 // ============================================================================
@@ -74,36 +98,19 @@ pub struct PinState {
 /// Two-level: device (`id`/`name`) + replica set (`replica_set_id`/`replica_set_name`).
 #[derive(Debug, Clone)]
 pub struct Management {
-    /// Unique GUIDv7 per physical device.
     pub id: String,
-    /// First 8 hex chars of `id`.
     pub short_id: String,
-    /// Device display name (sugar). User-renamable.
     pub name: String,
-
-    // --- Replica set identity (STORAGE-0013) ---
-    /// Replica set ID (GUIDv7). Groups devices that replicate the same content.
     pub replica_set_id: String,
-    /// Replica set display name (sugar). Empty = default set ("storage").
     pub replica_set_name: String,
-    /// Timestamp of last replica set rename. For catch-up on reconnect.
     pub replica_set_name_updated_at: Option<chrono::DateTime<chrono::Utc>>,
-
-    /// Whether content is encrypted.
     pub encrypted: bool,
-    /// Whether this device was not originally created on this stone.
     pub roaming: bool,
-    /// Stone that created this storage.
     pub origin_stone: String,
-    /// Creation timestamp.
     pub created_at: chrono::DateTime<chrono::Utc>,
-    /// Visibility setting.
     pub visibility: StorageVisibility,
-    /// Composable roles (e.g., `["seed-bank"]`).
     pub roles: Vec<String>,
-    /// Runtime role (Primary / Dormant).
     pub role: StorageRole,
-    /// Pin state — `Some` means Primary role is locked.
     pub pin: Option<PinState>,
 }
 
@@ -119,43 +126,76 @@ impl Management {
 }
 
 // ============================================================================
-// Volume — the universal entity
+// Volume — the domain object
 // ============================================================================
 
 /// A storage volume known to this stone.
 ///
-/// Represents any accessible storage: USB drive, NAS mount, local directory.
-/// Whether Zen Garden manages it is determined by `management`.
+/// All state changes go through domain methods that enforce valid transitions
+/// and return the events to emit. No direct field mutation from outside.
 #[derive(Debug, Clone)]
 pub struct Volume {
-    // --- From OS adapter ---
-    /// Device identifier: `/dev/sdb1` on Linux, `E:\` on Windows.
-    pub path: String,
-    /// Where the volume's content is accessible.
-    pub mount_path: PathBuf,
-    /// Filesystem label.
-    pub label: Option<String>,
-    /// Total capacity in bytes.
-    pub capacity_bytes: u64,
-    /// Used space in bytes.
-    pub used_bytes: u64,
-    /// Whether the OS considers this removable.
-    pub removable: bool,
-    /// Lifecycle state — Online, Degraded, or Offline.
-    pub state: VolumeState,
+    // --- OS identity ---
+    path: String,
+    mount_path: PathBuf,
+    label: Option<String>,
+    capacity_bytes: u64,
+    used_bytes: u64,
+    removable: bool,
+    state: VolumeState,
 
     // --- Domain enrichment ---
-    /// Management state. `Some` = Zen Garden manages this volume.
-    pub management: Option<Management>,
+    management: Option<Management>,
 }
 
+// ── Getters ─────────────────────────────────────────────────────────
+
 impl Volume {
-    /// Whether Zen Garden manages this volume.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn mount_path(&self) -> &PathBuf {
+        &self.mount_path
+    }
+
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+
+    pub fn capacity_bytes(&self) -> u64 {
+        self.capacity_bytes
+    }
+
+    pub fn used_bytes(&self) -> u64 {
+        self.used_bytes
+    }
+
+    pub fn removable(&self) -> bool {
+        self.removable
+    }
+
+    pub fn state(&self) -> &VolumeState {
+        &self.state
+    }
+
+    pub fn management(&self) -> Option<&Management> {
+        self.management.as_ref()
+    }
+
+    pub fn management_mut(&mut self) -> Option<&mut Management> {
+        self.management.as_mut()
+    }
+
     pub fn is_managed(&self) -> bool {
         self.management.is_some()
     }
 
-    /// Human-readable name: management name, or label, or path.
+    pub fn is_online(&self) -> bool {
+        self.state.is_online()
+    }
+
+    /// Human-readable name: management name → label → path.
     pub fn display_name(&self) -> &str {
         if let Some(ref m) = self.management {
             &m.name
@@ -166,6 +206,23 @@ impl Volume {
         }
     }
 
+    pub fn is_pinned(&self) -> bool {
+        self.management
+            .as_ref()
+            .is_some_and(|m| m.pin.is_some())
+    }
+
+    pub fn pin_id(&self) -> Option<&str> {
+        self.management
+            .as_ref()
+            .and_then(|m| m.pin.as_ref())
+            .map(|ps| ps.pin_id.as_str())
+    }
+}
+
+// ── Construction ────────────────────────────────────────────────────
+
+impl Volume {
     /// Construct from an OS snapshot. Management is set later by `classify()`.
     pub fn from_snapshot(snap: &VolumeSnapshot) -> Self {
         Self {
@@ -183,9 +240,6 @@ impl Volume {
     /// Classify this volume by checking for `.zen-garden/manifest.json`.
     ///
     /// If found and valid, sets `management`. Otherwise leaves it `None`.
-    ///
-    /// `make_store` constructs the management store for the given mount path.
-    /// This is provided by infra so domain code never depends on a concrete store type.
     pub async fn classify<S: ManagementStoreOps>(
         &mut self,
         make_store: &(dyn Fn(PathBuf) -> Arc<S> + Send + Sync),
@@ -194,17 +248,13 @@ impl Volume {
 
         let content = match tokio::fs::read_to_string(&manifest_path).await {
             Ok(c) => c,
-            Err(_) => return, // no manifest → unmanaged
+            Err(_) => return,
         };
 
         let manifest: StorageManifest = match serde_json::from_str(&content) {
             Ok(m) => m,
             Err(e) => {
-                warn!(
-                    path = %self.path,
-                    error = %e,
-                    "Found .zen-garden/manifest.json but failed to parse"
-                );
+                warn!(path = %self.path, error = %e, "Found manifest but failed to parse");
                 return;
             }
         };
@@ -214,7 +264,6 @@ impl Volume {
             .unwrap_or_else(|_| "unknown".to_string());
         let roaming = manifest.origin_stone != stone_name;
 
-        // Read persisted pin from disk via an ephemeral store
         let store = make_store(self.mount_path.clone());
         let pin = match store.read_pin().await {
             Some(pin_id) => {
@@ -244,72 +293,191 @@ impl Volume {
         });
     }
 
-    /// Probe capacity and update Online/Degraded state.
-    ///
-    /// No-op for Offline volumes — the monitor (via [`super::StorageBank`]) is the sole
-    /// authority for `Offline → Online` transitions. This prevents a statvfs
-    /// call on an unmounted directory from silently reviving a lost volume.
-    pub fn probe_health(&mut self, platform: &(impl StoragePlatform + ?Sized)) {
+    /// Manifest ID if this volume is managed (used for dedup in StorageBank).
+    pub fn manifest_id(&self) -> Option<&str> {
+        self.management.as_ref().map(|m| m.id.as_str())
+    }
+}
+
+// ── State machine — OS facts in, domain events out ──────────────────
+
+impl Volume {
+    /// Device appeared or reappeared. Transitions Offline → Online.
+    /// If already Online/Degraded, updates metrics silently (no event).
+    pub fn connect(&mut self, metrics: DiskMetrics) -> Vec<StorageChanged> {
+        let was_offline = self.state == VolumeState::Offline;
+
+        self.capacity_bytes = metrics.capacity_bytes;
+        self.used_bytes = metrics.used_bytes;
+        self.state = VolumeState::Online;
+
+        if was_offline && self.is_managed() {
+            let mgmt = self.management.as_ref().unwrap();
+            vec![StorageChanged::Connected {
+                name: mgmt.display_name().to_string(),
+                roles: mgmt.roles.clone(),
+                used_bytes: self.used_bytes,
+                capacity_bytes: self.capacity_bytes,
+            }]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Device disappeared. Transitions Online|Degraded → Offline.
+    /// No-op if already Offline.
+    pub fn disconnect(&mut self) -> Vec<StorageChanged> {
         if self.state == VolumeState::Offline {
-            return;
+            return vec![];
         }
 
-        let mount_str = self.mount_path.to_string_lossy().to_string();
+        let was_managed = self.is_managed();
+        let name = self.display_name().to_string();
+        self.state = VolumeState::Offline;
 
-        match platform.disk_usage(&mount_str) {
-            Some(usage) => {
-                if usage.total() == 0 {
-                    self.state = VolumeState::Degraded("zero capacity".into());
-                } else {
-                    self.capacity_bytes = usage.total();
-                    self.used_bytes = usage.used_bytes;
-                    self.state = VolumeState::Online;
-                }
+        if was_managed {
+            vec![
+                StorageChanged::Released { name },
+                StorageChanged::Reclassified,
+            ]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Periodic health observation. Accepts measured disk metrics (or None
+    /// if the measurement failed). May transition Online ↔ Degraded.
+    /// Never touches Offline volumes — only `connect()` can resurrect.
+    pub fn observe_metrics(&mut self, metrics: Option<DiskMetrics>) -> Vec<StorageChanged> {
+        if self.state == VolumeState::Offline {
+            return vec![];
+        }
+
+        let old_online = self.state.is_online();
+
+        match metrics {
+            Some(m) if m.capacity_bytes == 0 => {
+                self.state = VolumeState::Degraded("zero capacity".into());
+            }
+            Some(m) => {
+                self.capacity_bytes = m.capacity_bytes;
+                self.used_bytes = m.used_bytes;
+                self.state = VolumeState::Online;
             }
             None => {
                 self.state = VolumeState::Degraded("capacity probe failed".into());
             }
         }
 
-        // Reconcile pin state from disk (detect external changes)
-        if self.state.is_online()
-            && let Some(ref mut mgmt) = self.management {
-                // We can't do async here, so we do a blocking pin read.
-                // Pin files are tiny (<100 bytes), blocking is acceptable.
-                let pin_path = self.mount_path.join(".zen-garden").join("pin.json");
-                let disk_pin = std::fs::read_to_string(&pin_path)
-                    .ok()
-                    .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-                    .and_then(|v| v.get("pin_id")?.as_str().map(|s| s.to_string()));
-
-                match (&mgmt.pin, &disk_pin) {
-                    (Some(current), Some(on_disk)) if current.pin_id != *on_disk => {
-                        debug!(name = %mgmt.name, "Pin reconciliation: adopting disk version");
-                        mgmt.pin = Some(PinState {
-                            pin_id: on_disk.clone(),
-                        });
-                    }
-                    (None, Some(on_disk)) => {
-                        debug!(name = %mgmt.name, "Pin reconciliation: adopting disk pin");
-                        mgmt.pin = Some(PinState {
-                            pin_id: on_disk.clone(),
-                        });
-                    }
-                    (Some(_), None) => {
-                        debug!(name = %mgmt.name, "Pin reconciliation: clearing memory pin");
-                        mgmt.pin = None;
-                    }
-                    _ => {}
-                }
-            }
+        if old_online != self.state.is_online() {
+            vec![StorageChanged::Reclassified]
+        } else {
+            vec![]
+        }
     }
 
-    // ========================================================================
-    // Pin operations
-    // ========================================================================
+    /// Reconcile pin state from what's on disk. Called during health ticks
+    /// to detect external pin changes (e.g., another stone wrote pin.json).
+    pub fn reconcile_pin(&mut self, disk_pin: Option<String>) {
+        let Some(ref mut mgmt) = self.management else {
+            return;
+        };
+        if !self.state.is_online() {
+            return;
+        }
 
-    /// Pin this volume as Primary. Writes pin.json, updates role.
-    pub async fn pin(&mut self, store: &(impl ManagementStoreOps + ?Sized)) -> anyhow::Result<String> {
+        match (&mgmt.pin, &disk_pin) {
+            (Some(current), Some(on_disk)) if current.pin_id != *on_disk => {
+                debug!(name = %mgmt.name, "Pin reconciliation: adopting disk version");
+                mgmt.pin = Some(PinState {
+                    pin_id: on_disk.clone(),
+                });
+            }
+            (None, Some(on_disk)) => {
+                debug!(name = %mgmt.name, "Pin reconciliation: adopting disk pin");
+                mgmt.pin = Some(PinState {
+                    pin_id: on_disk.clone(),
+                });
+            }
+            (Some(_), None) => {
+                debug!(name = %mgmt.name, "Pin reconciliation: clearing memory pin");
+                mgmt.pin = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Update OS metadata (mount path, label) without changing state.
+    pub fn update_os_metadata(&mut self, mount_path: PathBuf, label: Option<String>) {
+        self.mount_path = mount_path;
+        self.label = label;
+    }
+}
+
+// ── Domain operations — called by API handlers ──────────────────────
+
+impl Volume {
+    /// Rename the replica set. Returns Renamed event if the name actually changed.
+    pub fn rename(&mut self, new_name: String) -> Vec<StorageChanged> {
+        let Some(ref mut mgmt) = self.management else {
+            return vec![];
+        };
+        if mgmt.replica_set_name == new_name {
+            return vec![];
+        }
+        mgmt.replica_set_name = new_name.clone();
+        mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
+        vec![StorageChanged::Renamed {
+            replica_set_id: mgmt.replica_set_id.clone(),
+            new_name,
+        }]
+    }
+
+    /// Set roles. Returns Reclassified event if roles actually changed.
+    pub fn set_roles(&mut self, roles: Vec<String>) -> Vec<StorageChanged> {
+        let Some(ref mut mgmt) = self.management else {
+            return vec![];
+        };
+        if mgmt.roles == roles {
+            return vec![];
+        }
+        mgmt.roles = roles;
+        vec![StorageChanged::Reclassified]
+    }
+
+    /// Set visibility. Returns Reclassified if changed.
+    pub fn set_visibility(&mut self, vis: StorageVisibility) -> Vec<StorageChanged> {
+        let Some(ref mut mgmt) = self.management else {
+            return vec![];
+        };
+        if mgmt.visibility == vis {
+            return vec![];
+        }
+        mgmt.visibility = vis;
+        vec![StorageChanged::Reclassified]
+    }
+
+    /// Release management (make this volume unmanaged).
+    pub fn release(&mut self) -> Vec<StorageChanged> {
+        let Some(mgmt) = self.management.take() else {
+            return vec![];
+        };
+        vec![
+            StorageChanged::Released {
+                name: mgmt.display_name().to_string(),
+            },
+            StorageChanged::Removed {
+                device_id: mgmt.id,
+                replica_set_id: mgmt.replica_set_id,
+            },
+        ]
+    }
+
+    /// Pin this volume as Primary. Returns PinChanged event.
+    pub async fn pin(
+        &mut self,
+        store: &(impl ManagementStoreOps + ?Sized),
+    ) -> anyhow::Result<Vec<StorageChanged>> {
         let mgmt = self
             .management
             .as_mut()
@@ -323,14 +491,17 @@ impl Volume {
         mgmt.role = StorageRole::Primary;
 
         info!(name = %mgmt.name, pin_id = %pin_id, "Volume pinned — claiming Primary");
-        Ok(pin_id)
+        Ok(vec![StorageChanged::PinChanged {
+            device_id: mgmt.id.clone(),
+            replica_set_id: mgmt.replica_set_id.clone(),
+        }])
     }
 
-    /// Unpin, returning to normal orchestration.
+    /// Unpin, returning to normal orchestration. Returns PinChanged event.
     pub async fn unpin(
         &mut self,
         store: &(impl ManagementStoreOps + ?Sized),
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Vec<StorageChanged>> {
         let mgmt = self
             .management
             .as_mut()
@@ -343,43 +514,29 @@ impl Volume {
             }
             info!(name = %mgmt.name, pin_id = %ps.pin_id, "Volume unpinned");
         }
-        Ok(old.map(|ps| ps.pin_id))
+        if old.is_some() {
+            Ok(vec![StorageChanged::PinChanged {
+                device_id: mgmt.id.clone(),
+                replica_set_id: mgmt.replica_set_id.clone(),
+            }])
+        } else {
+            Ok(vec![])
+        }
     }
-
-    /// Whether the Primary role is pinned.
-    pub fn is_pinned(&self) -> bool {
-        self.management
-            .as_ref()
-            .map(|m| m.pin.is_some())
-            .unwrap_or(false)
-    }
-
-    /// The pin_id if pinned.
-    pub fn pin_id(&self) -> Option<&str> {
-        self.management
-            .as_ref()
-            .and_then(|m| m.pin.as_ref())
-            .map(|ps| ps.pin_id.as_str())
-    }
-
-    // ========================================================================
-    // Snapshot last-known-good
-    // ========================================================================
 
     /// Snapshot critical files to `last-known-good/`.
     pub async fn snapshot_lkg(&self, store: &(impl ManagementStoreOps + ?Sized)) {
         if let Some(ref mgmt) = self.management
-            && let Err(e) = store.snapshot_lkg().await {
-                warn!(name = %mgmt.name, error = %e, "Failed to snapshot LKG");
-            }
+            && let Err(e) = store.snapshot_lkg().await
+        {
+            warn!(name = %mgmt.name, error = %e, "Failed to snapshot LKG");
+        }
     }
+}
 
-    // ========================================================================
-    // Projections (STORAGE-0013)
-    // ========================================================================
+// ── Projections — read-only views for API/wire formats ──────────────
 
-    /// Project to `StorageAnnouncement` — the canonical wire type for beacons,
-    /// registry storage, and API responses.
+impl Volume {
     pub fn to_announcement(&self) -> Option<StorageAnnouncement> {
         let mgmt = self.management.as_ref()?;
         if !self.state.is_online() {
@@ -411,7 +568,6 @@ impl Volume {
         })
     }
 
-    /// Project to `StorageInfo` for API responses.
     pub fn to_storage_info(&self) -> Option<StorageInfo> {
         let mgmt = self.management.as_ref()?;
         if !self.state.is_online() {
@@ -437,10 +593,39 @@ impl Volume {
         ))
     }
 
-    /// Build a `StorageSummary` for CLI display.
     pub fn to_summary(&self, stone_name: Option<&str>) -> Option<StorageSummary> {
         let ann = self.to_announcement()?;
-        let sn = stone_name.unwrap_or("local");
-        Some(StorageSummary::from_announcement(&ann, sn))
+        Some(StorageSummary::from_announcement(
+            &ann,
+            stone_name.unwrap_or("local"),
+        ))
+    }
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+impl Volume {
+    /// Build a Volume for tests with all fields specified directly.
+    pub fn for_test(
+        path: &str,
+        mount_path: PathBuf,
+        label: Option<String>,
+        capacity_bytes: u64,
+        used_bytes: u64,
+        removable: bool,
+        state: VolumeState,
+        management: Option<Management>,
+    ) -> Self {
+        Self {
+            path: path.to_string(),
+            mount_path,
+            label,
+            capacity_bytes,
+            used_bytes,
+            removable,
+            state,
+            management,
+        }
     }
 }

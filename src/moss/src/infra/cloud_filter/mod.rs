@@ -142,10 +142,10 @@ async fn snapshot_storage(
     {
         let map = volumes.read().await;
         for vol in map.values() {
-            if let Some(ref mgmt) = vol.management {
+            if let Some(mgmt) = vol.management() {
                 let fqid = mgmt.display_name().to_string();
                 all_set_names.insert(fqid.clone());
-                if vol.state.is_online() {
+                if vol.state().is_online() {
                     available_sets
                         .entry(fqid.clone())
                         .or_insert_with(|| StorageAvailability::online("this device", true));

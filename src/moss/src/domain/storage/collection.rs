@@ -93,6 +93,8 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
                 debug!(path = %snap.path, "Unmanaged volume registered");
             }
 
+            // Transition Offline → Online and capture Connected event
+            events.extend(vol.connect(metrics));
             map.insert(snap.path.clone(), vol);
         }
     }
@@ -292,7 +294,7 @@ mod tests {
 
         assert_eq!(vol.path(), "/dev/sdb1");
         assert!(vol.removable());
-        assert_eq!(*vol.state(), VolumeState::Online);
+        assert_eq!(*vol.state(), VolumeState::Offline); // starts Offline, connect() transitions
         assert!(!vol.is_managed());
         assert_eq!(vol.display_name(), "TEST");
     }
@@ -432,6 +434,7 @@ mod tests {
     fn observe_metrics_none_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
+        vol.connect(DiskMetrics { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
 
         let _events = vol.observe_metrics(None);
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));
@@ -441,6 +444,7 @@ mod tests {
     fn observe_metrics_zero_capacity_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
+        vol.connect(DiskMetrics { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
 
         let _events = vol.observe_metrics(Some(DiskMetrics {
             capacity_bytes: 0,

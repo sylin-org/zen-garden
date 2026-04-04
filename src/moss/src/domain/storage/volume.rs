@@ -223,7 +223,9 @@ impl Volume {
 // ── Construction ────────────────────────────────────────────────────
 
 impl Volume {
-    /// Construct from an OS snapshot. Management is set later by `classify()`.
+    /// Construct from an OS snapshot. Starts as Offline — caller must call
+    /// `connect()` to transition Online and produce the Connected event.
+    /// Management is set later by `classify()`.
     pub fn from_snapshot(snap: &VolumeSnapshot) -> Self {
         Self {
             path: snap.path.clone(),
@@ -232,7 +234,7 @@ impl Volume {
             capacity_bytes: snap.capacity_bytes,
             used_bytes: 0,
             removable: snap.removable,
-            state: VolumeState::Online,
+            state: VolumeState::Offline,
             management: None,
         }
     }

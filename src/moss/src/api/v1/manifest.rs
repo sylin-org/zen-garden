@@ -215,25 +215,25 @@ fn build_manifest(base_url: &str) -> ApiManifest {
     );
 
     endpoints.push(
-        EndpointSpec::new("GET", "/api/v1/garden/nourishment", "garden")
+        EndpointSpec::new("GET", "/api/v1/garden/updates", "garden")
             .description("Check garden-wide updates (software + firmware)")
             .response_type("NourishmentCheckResponse")
             .example(
                 "Check updates",
-                "curl http://stone-01:7185/api/v1/garden/nourishment",
+                "curl http://stone-01:7185/api/v1/garden/updates",
                 r#"{"data": {"offerings": {"available": 3}, "firmware": {"available": 1}}}"#,
             )
             .note("Orchestrated: tended Moss queries all stones and aggregates results"),
     );
 
     endpoints.push(
-        EndpointSpec::new("POST", "/api/v1/garden/nourishment/execute", "garden")
+        EndpointSpec::new("POST", "/api/v1/garden/updates/execute", "garden")
             .description("Execute garden-wide updates")
             .body_schema(r#"NourishmentExecuteRequest { scope: "all" | "offerings" | "firmware" }"#)
             .response_type("NourishmentExecuteResponse")
             .example(
                 "Update all offerings",
-                r#"curl -X POST http://stone-01:7185/api/v1/garden/nourishment/execute -H "Content-Type: application/json" -d '{"scope": "offerings"}'"#,
+                r#"curl -X POST http://stone-01:7185/api/v1/garden/updates/execute -H "Content-Type: application/json" -d '{"scope": "offerings"}'"#,
                 r#"{"data": {"stones": [{"stone_name": "stone-01", "job_id": "job_..."}]}}"#
             )
             .note("Orchestrated: tended Moss dispatches to each affected stone")
@@ -328,7 +328,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
                 description: "Cross-stone topology and orchestration".into(),
                 endpoints: vec![
                     "/api/v1/garden/topology".into(),
-                    "/api/v1/garden/nourishment".into(),
+                    "/api/v1/garden/updates".into(),
                 ],
             },
             garden_common::api_manifest::ApiCategory {

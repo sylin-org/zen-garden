@@ -144,7 +144,7 @@ async fn query_stone_nourishment(
     stone_name: &str,
 ) -> Option<NourishmentCheckResponse> {
     let url = format!(
-        "{}/api/v1/stone/nourishment",
+        "{}/api/v1/stone/updates",
         endpoint.trim_end_matches('/')
     );
 

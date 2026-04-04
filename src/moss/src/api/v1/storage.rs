@@ -433,20 +433,10 @@ pub async fn release_bank_v1(
             )
         })?;
 
-    // STORAGE-0011: Remove management from the released volume via domain method.
-    // Capture identity before clearing management.
-    let (device_id, replica_set_id, events) = {
+    // STORAGE-0017: Release via domain method — events returned by Volume.
+    let events = {
         let mut map = state.current.storage.volumes.write().await;
-        let ids = map
-            .values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .and_then(|v| {
-                let mgmt = v.management()?;
-                Some((mgmt.id.clone(), mgmt.replica_set_id.clone()))
-            })
-            .unwrap_or_default();
-
-        let events = if let Some(vol) = map
+        if let Some(vol) = map
             .values_mut()
             .find(|v| v.management().is_some_and(|m| m.name == name))
         {
@@ -455,29 +445,13 @@ pub async fn release_bank_v1(
             evts
         } else {
             vec![]
-        };
-        (ids.0, ids.1, events)
+        }
     };
 
-    // Forward domain events from release
+    // Forward domain events from release (Released + Removed already included)
     for event in events {
         state.emit_storage_changed(event).await;
     }
-
-    // Emit ribbon event before Removed (name still meaningful at this point)
-    state
-        .emit_storage_changed(garden_common::storage::StorageChanged::Released {
-            name: name.clone(),
-        })
-        .await;
-
-    // STORAGE-0013: Emit domain event — beacon subscriber reacts automatically
-    state
-        .emit_storage_changed(garden_common::storage::StorageChanged::Removed {
-            device_id,
-            replica_set_id,
-        })
-        .await;
 
     info!(name = %name, "Bank released");
     crate::api::ok(ReleaseResponse {

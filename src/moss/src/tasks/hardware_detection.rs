@@ -427,10 +427,10 @@ pub async fn detect_capabilities_background(
             let mut sets: std::collections::BTreeMap<String, Vec<BankSummary>> =
                 std::collections::BTreeMap::new();
             for volume in volumes.values() {
-                if volume.state != crate::domain::storage::VolumeState::Online {
+                if *volume.state() != crate::domain::storage::VolumeState::Online {
                     continue;
                 }
-                if let Some(mgmt) = &volume.management {
+                if let Some(mgmt) = volume.management() {
                     let set_name = if mgmt.replica_set_name.is_empty() {
                         DEFAULT_REPLICA_SET_DISPLAY.to_string()
                     } else {
@@ -438,8 +438,8 @@ pub async fn detect_capabilities_background(
                     };
                     sets.entry(set_name).or_default().push(BankSummary {
                         name: mgmt.name.clone(),
-                        used_bytes: volume.used_bytes,
-                        capacity_bytes: volume.capacity_bytes,
+                        used_bytes: volume.used_bytes(),
+                        capacity_bytes: volume.capacity_bytes(),
                     });
                 }
             }

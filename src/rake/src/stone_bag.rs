@@ -27,9 +27,9 @@
 //! let identity = extract_stone_identity(response.headers());
 //! ```
 
+use garden_common::client::StoneApi;
 use garden_common::constants::headers::{HEADER_STONE_ID, HEADER_STONE_NAME};
-use garden_common::{GardenApiResponse, HardwareCapabilities};
-use std::time::Duration;
+use garden_common::HardwareCapabilities;
 use tokio::sync::OnceCell;
 
 /// Lazily-fetched stone metadata, scoped to a single command invocation.
@@ -87,23 +87,9 @@ impl StoneBag {
     pub async fn capabilities(&self) -> Option<&HardwareCapabilities> {
         self.capabilities
             .get_or_init(|| async {
-                let url = format!(
-                    "{}/api/v1/stone/capabilities",
-                    self.endpoint.trim_end_matches('/')
-                );
-                tracing::debug!(url = %url, "StoneBag: fetching capabilities");
-                let resp = self
-                    .client
-                    .get(&url)
-                    .timeout(Duration::from_secs(3))
-                    .send()
-                    .await
-                    .ok()?;
-                let response = resp
-                    .json::<GardenApiResponse<HardwareCapabilities>>()
-                    .await
-                    .ok()?;
-                Some(response.data)
+                let api = StoneApi::new(self.client.clone(), self.endpoint.clone());
+                tracing::debug!(endpoint = %self.endpoint, "StoneBag: fetching capabilities");
+                api.stone().capabilities_core().await.ok()
             })
             .await
             .as_ref()

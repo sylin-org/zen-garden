@@ -80,8 +80,6 @@ async fn resolve_stone_name_to_endpoint(
     stone_name: &str,
     cache: Option<&dyn CachedStoneOps>,
 ) -> anyhow::Result<String> {
-    use garden_common::{GardenApiResponse, HardwareCapabilities};
-
     // Normalize the requested identifier (remove .local suffix if present)
     // This could be a stone_name OR a stone_id
     let requested = stone_name.trim_end_matches(".local");
@@ -136,31 +134,24 @@ async fn resolve_stone_name_to_endpoint(
     for response in discovered_responses {
         let endpoint = response.address.http_base();
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        let caps_url = format!("{}/api/v1/stone/capabilities", endpoint);
-        if let Ok(resp) = client
-            .get(&caps_url)
-            .timeout(Duration::from_secs(2))
-            .send()
-            .await
-            && let Ok(api_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await {
-                let caps = &api_response.data;
+        let api = garden_common::client::StoneApi::new(client.clone(), endpoint.clone());
+        if let Ok(caps) = api.stone().capabilities_core().await {
+            // Cache this stone for future lookups
+            if let Some(cache) = cache {
+                cache.insert(endpoint.clone(), caps.clone());
+            }
 
-                // Cache this stone for future lookups
-                if let Some(cache) = cache {
-                    cache.insert(endpoint.clone(), caps.clone());
-                }
+            // Match by name (case-insensitive)
+            if caps.stone_name.eq_ignore_ascii_case(requested) {
+                return Ok(endpoint);
+            }
 
-                // Match by name (case-insensitive)
-                if caps.stone_name.eq_ignore_ascii_case(requested) {
+            // Match by stone_id (case-insensitive)
+            if let Some(ref stone_id) = caps.stone_id
+                && stone_id.eq_ignore_ascii_case(requested) {
                     return Ok(endpoint);
                 }
-
-                // Match by stone_id (case-insensitive)
-                if let Some(ref stone_id) = caps.stone_id
-                    && stone_id.eq_ignore_ascii_case(requested) {
-                        return Ok(endpoint);
-                    }
-            }
+        }
     }
 
     // 4) Lantern fallback (cross-subnet / Windows-friendly)

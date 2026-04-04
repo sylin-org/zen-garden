@@ -184,11 +184,6 @@ struct OfferingInfo {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct CapabilityListEnvelope {
-    data: CapabilityListPayload,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 struct CapabilityListPayload {
     #[serde(default)]
     capabilities: Vec<CapabilityTypeInfo>,
@@ -207,8 +202,14 @@ impl FindCommand {
         query: &str,
         fresh: bool,
     ) -> anyhow::Result<ServiceDiscoveryResponse> {
-        let mut url = ctx.api_v1_url("garden/services")?;
-        url = format!("{}?q={}", url, urlencoding::encode(query));
+        let api = ctx.stone_api()?;
+
+        // Build query URL with fresh parameter via raw HTTP (garden endpoint with custom params)
+        let mut url = format!(
+            "{}/api/v1/garden/services?q={}",
+            api.endpoint(),
+            urlencoding::encode(query)
+        );
         if fresh {
             url = format!("{}&fresh=true", url);
         }
@@ -220,8 +221,8 @@ impl FindCommand {
             "FindCommand: sending request to services?q="
         );
 
-        let response = ctx
-            .client
+        let response = api
+            .http()
             .get(&url)
             .send()
             .await
@@ -258,20 +259,8 @@ impl FindCommand {
 
     /// Check if the query matches a known offering
     async fn check_offering_exists_for(&self, ctx: &Runtime, query: &str) -> Option<OfferingInfo> {
-        let endpoint = ctx.endpoint.as_ref()?;
-        let url = format!(
-            "{}/api/v1/stone/offerings/{}",
-            endpoint.trim_end_matches('/'),
-            urlencoding::encode(query)
-        );
-
-        let response = ctx.client.get(&url).send().await.ok()?;
-        if !response.status().is_success() {
-            return None;
-        }
-
-        let body: serde_json::Value = response.json().await.ok()?;
-        let data = body.get("data")?;
+        let api = ctx.stone_api().ok()?;
+        let data: serde_json::Value = api.offerings().get(query).await.ok()?;
 
         Some(OfferingInfo {
             name: data.get("name")?.as_str()?.to_string(),
@@ -290,12 +279,7 @@ impl FindCommand {
 
     /// Install an offering and wait for completion
     async fn install_offering(&self, ctx: &Runtime, offering: &str) -> anyhow::Result<()> {
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No endpoint available"))?;
-
-        let url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+        let api = ctx.stone_api()?;
         let payload = serde_json::json!({
             "offering": offering,
             "ports": [],
@@ -309,7 +293,9 @@ impl FindCommand {
             offering
         );
 
-        let response = ctx.client.post(&url).json(&payload).send().await?;
+        // Plant uses the services endpoint for creating services from offerings
+        let url = format!("{}/api/v1/stone/services", api.endpoint());
+        let response = api.http().post(&url).json(&payload).send().await?;
         let status = response.status();
 
         if !status.is_success() && status != reqwest::StatusCode::ACCEPTED {
@@ -505,44 +491,28 @@ impl FindCommand {
         ctx: &Runtime,
         offering_fqn: &str,
     ) -> anyhow::Result<Vec<String>> {
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No endpoint available"))?;
-        let url = format!(
-            "{}/api/v1/stone/offerings/{}/capabilities",
-            endpoint.trim_end_matches('/'),
-            urlencoding::encode(offering_fqn)
-        );
+        use garden_common::client::stone_api::StoneApiError;
 
-        let response = ctx.client.get(&url).send().await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body: serde_json::Value = response.json().await.unwrap_or_default();
-            let code = body
-                .get("error")
-                .and_then(|v| v.get("code"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let message = body
-                .get("error")
-                .and_then(|v| v.get("message"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Failed to query capability metadata");
-
-            if matches!(
-                code,
-                "NO_CAPABILITY_MANIFEST" | "UNKNOWN_CAPABILITY_TYPE" | "ADD_NOT_SUPPORTED"
-            ) {
-                anyhow::bail!("Capability ensure is not supported for this offering");
+        let api = ctx.stone_api()?;
+        let caps_value: serde_json::Value = match api.offerings().capabilities(offering_fqn).await {
+            Ok(v) => v,
+            Err(StoneApiError::Http { code, message, .. }) => {
+                if matches!(
+                    code.as_str(),
+                    "NO_CAPABILITY_MANIFEST" | "UNKNOWN_CAPABILITY_TYPE" | "ADD_NOT_SUPPORTED"
+                ) {
+                    anyhow::bail!("Capability ensure is not supported for this offering");
+                }
+                anyhow::bail!("{}", message);
             }
+            Err(e) => return Err(e.into()),
+        };
 
-            anyhow::bail!("API error ({}): {}", status, message);
-        }
+        let payload: CapabilityListPayload = serde_json::from_value(caps_value)
+            .unwrap_or(CapabilityListPayload { capabilities: vec![] });
 
-        let body: CapabilityListEnvelope = response.json().await?;
         let mut cap_types = Vec::new();
-        for cap in body.data.capabilities {
+        for cap in payload.capabilities {
             let cap_type = cap.cap_type.trim().to_ascii_lowercase();
             if !cap_type.is_empty() && !cap_types.iter().any(|t| t == &cap_type) {
                 cap_types.push(cap_type);
@@ -556,15 +526,9 @@ impl FindCommand {
         ctx: &Runtime,
         wish: &garden_common::tools::CapabilityWish,
     ) -> anyhow::Result<()> {
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No endpoint available"))?;
-        let url = format!(
-            "{}/api/v1/stone/offerings/{}/capabilities",
-            endpoint.trim_end_matches('/'),
-            urlencoding::encode(&wish.offering_fqn)
-        );
+        use garden_common::client::stone_api::StoneApiError;
+
+        let api = ctx.stone_api()?;
 
         for selector in &wish.selectors {
             let payload = serde_json::json!({
@@ -573,36 +537,26 @@ impl FindCommand {
                 "dry_run": false,
             });
 
-            let response = ctx.client.post(&url).json(&payload).send().await?;
-            if !response.status().is_success() {
-                let status = response.status();
-                let body: serde_json::Value = response.json().await.unwrap_or_default();
-                let code = body
-                    .get("error")
-                    .and_then(|v| v.get("code"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-
-                if matches!(
-                    code.as_str(),
-                    "NO_CAPABILITY_MANIFEST" | "UNKNOWN_CAPABILITY_TYPE" | "ADD_NOT_SUPPORTED"
-                ) {
-                    anyhow::bail!("Capability ensure is not supported for this offering");
+            let body: serde_json::Value = match api
+                .offerings()
+                .add_capability(&wish.offering_fqn, &payload)
+                .await
+            {
+                Ok(v) => v,
+                Err(StoneApiError::Http { code, message, .. }) => {
+                    if matches!(
+                        code.as_str(),
+                        "NO_CAPABILITY_MANIFEST" | "UNKNOWN_CAPABILITY_TYPE" | "ADD_NOT_SUPPORTED"
+                    ) {
+                        anyhow::bail!("Capability ensure is not supported for this offering");
+                    }
+                    anyhow::bail!("{}", message);
                 }
+                Err(e) => return Err(e.into()),
+            };
 
-                let message = body
-                    .get("error")
-                    .and_then(|v| v.get("message"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Capability ensure failed");
-                anyhow::bail!("API error ({}): {}", status, message);
-            }
-
-            let body: serde_json::Value = response.json().await?;
             let status = body
-                .get("data")
-                .and_then(|v| v.get("status"))
+                .get("status")
                 .and_then(|v| v.as_str())
                 .unwrap_or("started");
 
@@ -639,13 +593,10 @@ impl FindCommand {
         requirements: &[CapabilitySelector],
         timeout: Duration,
     ) -> anyhow::Result<()> {
-        let endpoint = ctx
-            .endpoint
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No endpoint available"))?;
+        let api = ctx.stone_api()?;
         let mut url = format!(
             "{}/api/v1/garden/tools/stream?fqid={}",
-            endpoint.trim_end_matches('/'),
+            api.endpoint(),
             urlencoding::encode(fqid)
         );
         if !requirements.is_empty() {
@@ -657,8 +608,8 @@ impl FindCommand {
             url = format!("{}&capability={}", url, urlencoding::encode(&selector));
         }
 
-        let response = ctx
-            .client
+        let response = api
+            .http()
             .get(&url)
             .header("accept", "text/event-stream")
             .send()

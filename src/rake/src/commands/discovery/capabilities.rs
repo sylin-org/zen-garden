@@ -37,35 +37,21 @@ impl Command for CapabilitiesCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let api = ctx.stone_api()?;
-            let offering_path = urlencoding::encode(&self.offering);
-            let url = format!("{}/api/v1/stone/offerings/{}/capabilities", api.endpoint(), offering_path);
-            let response = api.http().get(&url).send().await?;
 
-            // Check for error status
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-
-                if let Ok(error) =
-                    serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
-                {
+            let caps_value: serde_json::Value = match api.offerings().capabilities(&self.offering).await {
+                Ok(v) => v,
+                Err(e) => {
                     eprintln!(
                         "{} {}",
                         ui::status_indicator("error", ctx.term.supports_color),
-                        error.error.message
+                        e.display_message()
                     );
                     return Ok(());
                 }
+            };
 
-                anyhow::bail!("Request failed with status {}: {}", status, body);
-            }
-
-            let api_response: garden_common::api_utils::ApiResponse<CapabilitiesResponse> = response
-                .json()
-                .await
+            let data: CapabilitiesResponse = serde_json::from_value(caps_value)
                 .map_err(|e| anyhow::anyhow!("Failed to parse capabilities response: {e}"))?;
-
-            let data = api_response.data;
 
             // Header
             let mode_str = match data.mode {
@@ -245,38 +231,28 @@ impl Command for AddCapabilityCommand {
             );
 
             let api = ctx.stone_api()?;
-            let offering_path = urlencoding::encode(&self.offering);
-            let url = format!("{}/api/v1/stone/offerings/{}/capabilities", api.endpoint(), offering_path);
             let request_body = AddCapabilityRequest {
                 name: self.name.clone(),
                 cap_type: self.cap_type.clone(),
                 dry_run: self.dry_run,
             };
 
-            let response = api.http().post(&url).json(&request_body).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-
-                if let Ok(error) =
-                    serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
-                {
+            let add_value: serde_json::Value = match api.offerings().add_capability(&self.offering, &request_body).await {
+                Ok(v) => v,
+                Err(e) => {
                     eprintln!(
                         "{} {}",
                         ui::status_indicator("error", ctx.term.supports_color),
-                        error.error.message
+                        e.display_message()
                     );
                     return Ok(());
                 }
+            };
 
-                anyhow::bail!("Request failed with status {}: {}", status, body);
-            }
+            let add_response: AddCapabilityResponse = serde_json::from_value(add_value)
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {e}"))?;
 
-            let api_response: garden_common::api_utils::ApiResponse<AddCapabilityResponse> =
-                response.json().await.map_err(|e| anyhow::anyhow!("Failed to parse response: {e}"))?;
-
-            match api_response.data {
+            match add_response {
                 AddCapabilityResponse::AlreadyExists {
                     offering,
                     capability,
@@ -397,42 +373,26 @@ impl Command for RemoveCapabilityCommand {
             );
 
             let api = ctx.stone_api()?;
-            let offering_path = urlencoding::encode(&self.offering);
-            let mut url = format!(
-                "{}/api/v1/stone/offerings/{}/capabilities/{}",
-                api.endpoint(),
-                offering_path,
-                urlencoding::encode(&self.name)
-            );
 
-            // Add type query parameter if specified
-            if let Some(ref cap_type) = self.cap_type {
-                url = format!("{}?type={}", url, urlencoding::encode(cap_type));
-            }
-
-            let response = api.http().delete(&url).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-
-                if let Ok(error) =
-                    serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
-                {
+            let response = match api.offerings().remove_capability(
+                &self.offering,
+                &self.name,
+                self.cap_type.as_deref(),
+            ).await {
+                Ok(r) => r,
+                Err(e) => {
                     eprintln!(
                         "{} {}",
                         ui::status_indicator("error", ctx.term.supports_color),
-                        error.error.message
+                        e.display_message()
                     );
                     return Ok(());
                 }
-
-                anyhow::bail!("Request failed with status {}: {}", status, body);
-            }
+            };
 
             let api_response: garden_common::api_utils::ApiResponse<CapabilityMutationResponse> =
-                response.json().await.map_err(|e| anyhow::anyhow!("Failed to parse response: {e}"))?;
-
+                response.json().await
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {e}"))?;
             let data = api_response.data;
 
             if data.success {
@@ -611,41 +571,27 @@ impl Command for RefreshCapabilitiesCommand {
             );
 
             let api = ctx.stone_api()?;
-            let offering_path = urlencoding::encode(&self.offering);
-            let url = format!(
-                "{}/api/v1/stone/offerings/{}/capabilities/refresh",
-                api.endpoint(),
-                offering_path
-            );
             let request_body = RefreshCapabilitiesRequest {
                 cap_type: self.cap_type.clone(),
                 dry_run: self.dry_run,
             };
 
-            let response = api.http().post(&url).json(&request_body).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-
-                if let Ok(error) =
-                    serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
-                {
+            let refresh_value: serde_json::Value = match api.offerings().refresh_capabilities(&self.offering, &request_body).await {
+                Ok(v) => v,
+                Err(e) => {
                     eprintln!(
                         "{} {}",
                         ui::status_indicator("error", ctx.term.supports_color),
-                        error.error.message
+                        e.display_message()
                     );
                     return Ok(());
                 }
+            };
 
-                anyhow::bail!("Request failed with status {}: {}", status, body);
-            }
+            let refresh_response: RefreshCapabilitiesResponse = serde_json::from_value(refresh_value)
+                .map_err(|e| anyhow::anyhow!("Failed to parse response: {e}"))?;
 
-            let api_response: garden_common::api_utils::ApiResponse<RefreshCapabilitiesResponse> =
-                response.json().await.map_err(|e| anyhow::anyhow!("Failed to parse response: {e}"))?;
-
-            match api_response.data {
+            match refresh_response {
                 RefreshCapabilitiesResponse::NoUpdates {
                     offering,
                     cap_type,
@@ -801,44 +747,26 @@ impl Command for MirrorCapabilitiesCommand {
             );
 
             let api = ctx.stone_api()?;
-            let offering_path = urlencoding::encode(&self.offering);
-            let url = format!(
-                "{}/api/v1/stone/offerings/{}/capabilities/mirror",
-                api.endpoint(),
-                offering_path
-            );
             let request_body = MirrorCapabilitiesRequest {
                 from: from.clone(),
                 to: to.clone(),
                 dry_run: false,
             };
 
-            let response = api.http().post(&url).json(&request_body).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-
-                if let Ok(error) =
-                    serde_json::from_str::<garden_common::api_utils::ApiErrorResponse>(&body)
-                {
+            let mirror_value: serde_json::Value = match api.offerings().mirror_capabilities(&self.offering, &request_body).await {
+                Ok(v) => v,
+                Err(e) => {
                     eprintln!(
                         "{} {}",
                         ui::status_indicator("error", ctx.term.supports_color),
-                        error.error.message
+                        e.display_message()
                     );
                     return Ok(());
                 }
+            };
 
-                anyhow::bail!("Request failed with status {}: {}", status, body);
-            }
-
-            let api_response: garden_common::api_utils::ApiResponse<MirrorCapabilitiesResponse> = response
-                .json()
-                .await
+            let data: MirrorCapabilitiesResponse = serde_json::from_value(mirror_value)
                 .map_err(|e| anyhow::anyhow!("Failed to parse mirror response: {e}"))?;
-
-            let data = api_response.data;
 
             if let Some(message) = &data.message {
                 println!("  {}", message);

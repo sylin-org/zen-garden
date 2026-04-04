@@ -7,7 +7,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use garden_common::{DetectionStatus, GardenApiResponse, HardwareCapabilities};
+use garden_common::DetectionStatus;
 
 /// Display stone system status
 pub struct StatusCommand {
@@ -32,21 +32,25 @@ impl Command for StatusCommand {
                 eprintln!();
             }
 
+            let api = ctx.stone_api()?;
             let endpoint = ctx.endpoint()?;
 
-            let caps_url = format!(
-                "{}/api/v1/stone/capabilities",
-                endpoint.trim_end_matches('/')
-            );
-            let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
-            let response: GardenApiResponse<HardwareCapabilities> =
-                ctx.client.get(&caps_url).send().await?.json().await?;
-            let caps = response.data;
-            let health_resp: String = ctx.client.get(&health_url).send().await?.text().await?;
+            let caps = api
+                .stone()
+                .capabilities_core()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get capabilities: {}", e.display_message()))?;
+
+            let health_resp = api
+                .stone()
+                .health()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get health: {}", e.display_message()))?;
+            let health_text = health_resp.text().await.unwrap_or_default();
 
             // Parse health response
             let health_json: serde_json::Value =
-                serde_json::from_str(&health_resp).unwrap_or_else(|_| serde_json::json!({}));
+                serde_json::from_str(&health_text).unwrap_or_else(|_| serde_json::json!({}));
 
             // Show detection status if not complete
             if caps.detection_status != DetectionStatus::Complete {
@@ -138,7 +142,6 @@ impl Command for StatusCommand {
 
             // OS and Kernel (from RuntimeInfo)
             if let Some(ref runtime) = caps.runtime {
-                // Parse runtime.os (format: "windows/Windows 11 Pro" or just "windows")
                 let os_display = if runtime.os.contains('/') {
                     let parts: Vec<&str> = runtime.os.split('/').collect();
                     parts.get(1).unwrap_or(&runtime.os.as_str()).to_string()
@@ -157,8 +160,7 @@ impl Command for StatusCommand {
                 }
             }
 
-            // === AI SECTION === (replaces GPU section)
-            // Only show devices that have AI runtime or AI-relevant capabilities
+            // === AI SECTION ===
             let ai_devices: Vec<&garden_common::GpuInfo> = caps
                 .hardware
                 .gpus
@@ -177,8 +179,6 @@ impl Command for StatusCommand {
                     ui::section_header_v2("AI", false, ctx.term.supports_color)
                 );
                 for gpu in ai_devices {
-                    // Device name without vendor (vendor implied by runtime)
-                    // Strip common vendor prefixes (case-insensitive)
                     let mut device_name = gpu.model.clone();
                     let prefixes = [
                         "AMD ", "NVIDIA ", "Intel ", "RADEON ", "Radeon ", "GeForce ", "GTX ", "RTX ",
@@ -190,14 +190,12 @@ impl Command for StatusCommand {
                     }
                     let device_name = device_name.trim().to_string();
 
-                    // VRAM
                     let vram_str = if let Some(vram_mb) = gpu.vram_mb {
                         format!("{} GB", vram_mb / 1024)
                     } else {
                         "Unknown".to_string()
                     };
 
-                    // Runtime details — read directly from capabilities
                     let runtime_str = {
                         let formatted: Vec<String> = gpu
                             .capabilities
@@ -215,7 +213,6 @@ impl Command for StatusCommand {
                         formatted.join(", ")
                     };
 
-                    // Format: device_name | vram - runtime
                     let value = format!("{} - {}", vram_str, runtime_str);
                     println!("{}{}", indent, ui::place_value(&device_name, &value));
                 }
@@ -237,7 +234,6 @@ impl Command for StatusCommand {
                         .get("status")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
-                    // Convert to proper case (first letter uppercase)
                     let proper_case = if !check_name.is_empty() {
                         let mut chars = check_name.chars();
                         chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str()

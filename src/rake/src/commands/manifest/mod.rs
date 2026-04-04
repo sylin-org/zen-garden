@@ -161,10 +161,7 @@ async fn execute_init(
     name: Option<&str>,
     category: Option<&str>,
 ) -> Result<()> {
-    let endpoint = ctx
-        .endpoint
-        .as_ref()
-        .context("endpoint required for init")?;
+    let api = ctx.stone_api().context("endpoint required for init")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
     if !ctx.quiet {
@@ -172,23 +169,8 @@ async fn execute_init(
         println!("{}Inspecting image '{}'...", indent, image_ref);
     }
 
-    // Call inspect endpoint
-    let url = format!(
-        "{}/api/v1/stone/offerings/inspect?image={}",
-        endpoint.trim_end_matches('/'),
-        urlencoding::encode(image_ref)
-    );
-    let response = ctx.client.get(&url).send().await?;
-    let status = response.status();
-    let body: serde_json::Value = response.json().await?;
-
-    if !status.is_success() {
-        let msg = body
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("Image inspection failed");
-        anyhow::bail!("{}", msg);
-    }
+    let body: serde_json::Value = api.offerings().inspect(image_ref).await
+        .map_err(|e| anyhow::anyhow!("{}", e.display_message()))?;
 
     // Generate manifest files
     let generated =
@@ -377,10 +359,7 @@ async fn execute_validate(path: &str) -> Result<()> {
 // ============================================================================
 
 async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
-    let endpoint = ctx
-        .endpoint
-        .as_ref()
-        .context("endpoint required for test")?;
+    let api = ctx.stone_api().context("endpoint required for test")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
     let p = std::path::Path::new(path);
@@ -440,11 +419,7 @@ async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
     println!("{}Deploying test manifest '{}'...", indent, name);
 
     // POST to test endpoint
-    let url = format!(
-        "{}/api/v1/stone/manifests/test",
-        endpoint.trim_end_matches('/')
-    );
-
+    let url = format!("{}/api/v1/stone/manifests/test", api.endpoint());
     let body = serde_json::json!({
         "name": name,
         "snippet_yaml": snippet,
@@ -452,7 +427,7 @@ async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
         "compatibility_yaml": compatibility_yaml,
     });
 
-    let response = ctx.client.post(&url).json(&body).send().await?;
+    let response = api.http().post(&url).json(&body).send().await?;
     let status = response.status();
     let resp_body: serde_json::Value = response.json().await?;
 
@@ -486,10 +461,7 @@ async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
 // ============================================================================
 
 async fn execute_export(ctx: &Runtime, offering: &str, output_dir: Option<&str>) -> Result<()> {
-    let endpoint = ctx
-        .endpoint
-        .as_ref()
-        .context("endpoint required for export")?;
+    let api = ctx.stone_api().context("endpoint required for export")?;
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
 
@@ -498,12 +470,13 @@ async fn execute_export(ctx: &Runtime, offering: &str, output_dir: Option<&str>)
         println!("{}Exporting manifest for '{}'...", indent, offering);
     }
 
+    // Export endpoint is not in StoneApi yet, use raw HTTP through the api client
     let url = format!(
         "{}/api/v1/stone/offerings/{}/export",
-        endpoint.trim_end_matches('/'),
+        api.endpoint(),
         urlencoding::encode(offering)
     );
-    let response = ctx.client.get(&url).send().await?;
+    let response = api.http().get(&url).send().await?;
     let status = response.status();
     let body: serde_json::Value = response.json().await?;
 

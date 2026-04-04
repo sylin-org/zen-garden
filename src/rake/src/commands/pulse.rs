@@ -22,7 +22,8 @@ use garden_common::presence::{
     event_types, OfferingState, PresenceSnapshot, StoneLoadUpdatedPayload, StoneState,
 };
 use garden_common::utils::strings::shorten_stone_name;
-use garden_common::{GardenApiResponse, TopologyEntry};
+use garden_common::client::StoneApi;
+use garden_common::TopologyEntry;
 use std::collections::VecDeque;
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -303,13 +304,14 @@ async fn run_pulse_monitor(
     let mut state = MonitorState::new();
     let mut backoff_ms = RECONNECT_MIN_MS;
 
+    let api = StoneApi::new(client.clone(), endpoint.to_string());
+
     // Pulse stream URL (v2: full firehose — domain + transport events)
     let pulse_url = format!(
         "{}{}",
         endpoint.trim_end_matches('/'),
         event_types::PULSE_STREAM_PATH,
     );
-    let topology_url = format!("{}/api/v1/garden/topology", endpoint.trim_end_matches('/'));
 
     // Clear screen once before first frame; subsequent frames overwrite in-place
     print!("\x1b[2J");
@@ -333,7 +335,7 @@ async fn run_pulse_monitor(
                 state.connected_since = Some(Instant::now());
 
                 // Run the streaming loop
-                let reason = stream_loop(&mut state, response, client, &topology_url, term).await;
+                let reason = stream_loop(&mut state, response, &api, term).await;
 
                 match reason {
                     DisconnectReason::ServerShutdown => {
@@ -392,8 +394,7 @@ async fn run_pulse_monitor(
 async fn stream_loop(
     state: &mut MonitorState,
     response: reqwest::Response,
-    client: &reqwest::Client,
-    topology_url: &str,
+    api: &StoneApi,
     term: &TerminalInfo,
 ) -> DisconnectReason {
     let mut stream = response.bytes_stream();
@@ -434,7 +435,7 @@ async fn stream_loop(
 
             _ = topology_interval.tick() => {
                 // Poll topology in background
-                if let Ok(entries) = fetch_topology(client, topology_url).await {
+                if let Ok(entries) = fetch_topology(api).await {
                     state.topology = entries;
                     dirty = true;
                 }
@@ -1738,20 +1739,9 @@ fn garden_summary(topology: &[TopologyEntry], cols: usize) -> String {
 }
 
 /// Fetch topology from stone.
-async fn fetch_topology(client: &reqwest::Client, url: &str) -> anyhow::Result<Vec<TopologyEntry>> {
-    let response = client
-        .get(url)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Topology fetch failed: {}", response.status());
-    }
-
-    let api_response = response
-        .json::<GardenApiResponse<Vec<TopologyEntry>>>()
-        .await?;
-
-    Ok(api_response.data)
+async fn fetch_topology(api: &StoneApi) -> anyhow::Result<Vec<TopologyEntry>> {
+    api.garden()
+        .observe()
+        .await
+        .map_err(|e| anyhow::anyhow!("Topology fetch failed: {}", e.display_message()))
 }

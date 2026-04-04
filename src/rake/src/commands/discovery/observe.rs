@@ -15,7 +15,8 @@ use crate::ui::colors::CliFormatter;
 use crate::ui::layout::{IndentLevel, Layout};
 use crate::ui::rendering as ui;
 use colored::Colorize;
-use garden_common::{GardenApiResponse, TopologyEntry};
+use garden_common::client::StoneApi;
+use garden_common::TopologyEntry;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -165,10 +166,9 @@ async fn observe_garden(
                     .print();
                 layout.blank();
 
-                let topology_url =
-                    format!("{}/api/v1/garden/topology", endpoint.trim_end_matches('/'));
-
                 if verbose > 0 {
+                    let topology_url =
+                        format!("{}/api/v1/garden/topology", endpoint.trim_end_matches('/'));
                     layout
                         .field("GET")
                         .value(&topology_url)
@@ -177,63 +177,75 @@ async fn observe_garden(
                         .print();
                 }
 
-                let response = client
-                    .get(&topology_url)
-                    .timeout(Duration::from_secs(5))
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        if verbose > 0 {
-                            layout
-                                .field("Connection error")
-                                .value(e.to_string())
-                                .level(IndentLevel::Card)
-                                .tag("verbose")
-                                .print();
-                        }
-                        StoneError::ConnectionFailed(format!("Failed to reach stone: {}", e))
-                    })?;
+                let api = StoneApi::new(client, endpoint);
 
-                let status = response.status();
-                if !status.is_success() {
-                    if verbose > 0 {
-                        layout
-                            .field("Response status")
-                            .value(status.to_string())
-                            .level(IndentLevel::Card)
-                            .tag("verbose")
-                            .print();
+                let stones = api.garden().observe().await.map_err(|e| {
+                    match e {
+                        garden_common::client::StoneApiError::Connection(ce) => {
+                            if verbose > 0 {
+                                layout
+                                    .field("Connection error")
+                                    .value(ce.to_string())
+                                    .level(IndentLevel::Card)
+                                    .tag("verbose")
+                                    .print();
+                            }
+                            StoneError::ConnectionFailed(format!("Failed to reach stone: {}", ce))
+                        }
+                        garden_common::client::StoneApiError::Http { status, .. } => {
+                            if verbose > 0 {
+                                layout
+                                    .field("Response status")
+                                    .value(status.to_string())
+                                    .level(IndentLevel::Card)
+                                    .tag("verbose")
+                                    .print();
+                            }
+                            StoneError::ResponseError(
+                                status.as_u16(),
+                                format!("Stone returned {}", status),
+                            )
+                        }
+                        garden_common::client::StoneApiError::HttpRaw { status, .. } => {
+                            if verbose > 0 {
+                                layout
+                                    .field("Response status")
+                                    .value(status.to_string())
+                                    .level(IndentLevel::Card)
+                                    .tag("verbose")
+                                    .print();
+                            }
+                            StoneError::ResponseError(
+                                status.as_u16(),
+                                format!("Stone returned {}", status),
+                            )
+                        }
+                        garden_common::client::StoneApiError::Parse(pe) => {
+                            tracing::warn!(error = ?pe, "Failed to parse topology JSON");
+                            if verbose > 0 {
+                                layout
+                                    .field("JSON parse error")
+                                    .value(pe.to_string())
+                                    .level(IndentLevel::Card)
+                                    .tag("verbose")
+                                    .print();
+                            }
+                            StoneError::ProcessingError(format!("JSON parse failed: {}", pe))
+                        }
+                        other => {
+                            StoneError::ProcessingError(format!("Failed: {}", other))
+                        }
                     }
-                    return Err(StoneError::ResponseError(
-                        status.as_u16(),
-                        format!("Stone returned {}", status),
-                    ));
-                }
-
-                let api_response = response
-                    .json::<GardenApiResponse<Vec<TopologyEntry>>>()
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(error = ?e, "Failed to parse topology JSON");
-                        if verbose > 0 {
-                            layout
-                                .field("JSON parse error")
-                                .value(e.to_string())
-                                .level(IndentLevel::Card)
-                                .tag("verbose")
-                                .print();
-                        }
-                        StoneError::ProcessingError(format!("JSON parse failed: {}", e))
-                    })?;
+                })?;
 
                 if verbose > 0 {
                     layout
                         .field("Response")
-                        .value(format!("{} stones in topology", api_response.data.len()))
+                        .value(format!("{} stones in topology", stones.len()))
                         .level(IndentLevel::Card)
                         .tag("verbose")
                         .print();
-                    for stone in &api_response.data {
+                    for stone in &stones {
                         layout
                             .line(&format!(
                                 "- {} (id: {}, endpoint: {}, health: {})",
@@ -245,7 +257,7 @@ async fn observe_garden(
                     }
                     layout.blank();
                 }
-                Ok(api_response.data)
+                Ok(stones)
             }
         },
     )

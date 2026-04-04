@@ -10,6 +10,7 @@
 
 use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
+use garden_common::client::StoneApi;
 use garden_common::command_manifest::{CommandManifest, CommandResponse, CompanionCommandRequest};
 
 /// Parsed hey command
@@ -41,7 +42,7 @@ pub enum HeyCommand {
 /// Syntax:
 ///   hey?                              ? Help
 ///   hey tell?                         ? Help for tell
-///   hey tell                          ? List Companions  
+///   hey tell                          ? List Companions
 ///   hey tell {Companion}?               ? Companion help
 ///   hey tell {Companion} on             ? Enable
 ///   hey tell {Companion} off            ? Disable
@@ -149,7 +150,8 @@ impl Command for HeyTellCommand {
                 ctx.endpoint()?.to_string()
             };
 
-            execute_hey_command(cmd, &endpoint, ctx).await
+            let api = StoneApi::new(ctx.client.clone(), endpoint);
+            execute_hey_command(cmd, &api, ctx).await
         })
     }
 }
@@ -170,7 +172,7 @@ async fn resolve_stone_endpoint(stone: &str) -> anyhow::Result<String> {
 }
 
 /// Execute parsed hey command
-async fn execute_hey_command(cmd: HeyCommand, endpoint: &str, ctx: &Runtime) -> CommandResult {
+async fn execute_hey_command(cmd: HeyCommand, api: &StoneApi, ctx: &Runtime) -> CommandResult {
     match cmd {
         HeyCommand::Help => {
             print_hey_help();
@@ -180,29 +182,29 @@ async fn execute_hey_command(cmd: HeyCommand, endpoint: &str, ctx: &Runtime) -> 
         HeyCommand::HelpFor(token) => {
             match token.as_str() {
                 "tell" => print_tell_help(),
-                companion => show_companion_commands(endpoint, companion, ctx).await?,
+                companion => show_companion_commands(api, companion).await?,
             }
             Ok(())
         }
 
-        HeyCommand::ListCompanions => list_companions(endpoint, ctx).await,
+        HeyCommand::ListCompanions => list_companions(api).await,
 
         HeyCommand::CompanionHelp(companion) => {
-            show_companion_commands(endpoint, &companion, ctx).await
+            show_companion_commands(api, &companion).await
         }
 
         HeyCommand::EnableCompanion(companion) => {
-            companion_lifecycle(endpoint, &companion, "enable", ctx).await
+            companion_lifecycle(api, &companion, "enable").await
         }
 
         HeyCommand::DisableCompanion(companion) => {
-            companion_lifecycle(endpoint, &companion, "disable", ctx).await
+            companion_lifecycle(api, &companion, "disable").await
         }
 
         HeyCommand::SendCommand {
             companion,
             raw_args,
-        } => send_companion_command(endpoint, &companion, &raw_args, ctx).await,
+        } => send_companion_command(api, &companion, &raw_args, ctx).await,
 
         HeyCommand::Unknown(token) => {
             eprintln!("Unknown subcommand: {}", token);
@@ -247,24 +249,20 @@ fn print_tell_help() {
 }
 
 // =============================================================================
-// API functions - thin pass-through
+// API functions - thin pass-through via StoneApi
 // =============================================================================
 
 /// List all registered Companions
-async fn list_companions(endpoint: &str, ctx: &Runtime) -> CommandResult {
-    let url = format!("{}/api/v1/stone/companions", endpoint);
-    let response = ctx.client.get(&url).send().await?;
+async fn list_companions(api: &StoneApi) -> CommandResult {
+    let data: serde_json::Value = api
+        .companions()
+        .list()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to list Companions: {}", e.display_message()))?;
 
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to list Companions: {}", response.status());
-    }
-
-    // ApiResponse wraps data in { "data": { "companions": [...] } }
-    let body: serde_json::Value = response.json().await?;
-
-    let companions = body
-        .get("data")
-        .and_then(|d| d.get("companions"))
+    // StoneApi unwraps ApiResponse, so `data` is the inner payload
+    let companions = data
+        .get("companions")
         .and_then(|a| a.as_array())
         .map(|a| a.to_vec())
         .unwrap_or_default();
@@ -325,23 +323,19 @@ async fn list_companions(endpoint: &str, ctx: &Runtime) -> CommandResult {
 }
 
 /// Show companion's command manifest (fetched from Moss)
-async fn show_companion_commands(endpoint: &str, companion: &str, ctx: &Runtime) -> CommandResult {
-    let url = format!("{}/api/v1/stone/companions/{}", endpoint, companion);
-    let response = ctx.client.get(&url).send().await?;
-
-    if !response.status().is_success() {
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+async fn show_companion_commands(api: &StoneApi, companion: &str) -> CommandResult {
+    let data: serde_json::Value = match api.companions().get(companion).await {
+        Ok(d) => d,
+        Err(e) if e.is_not_found() => {
             anyhow::bail!("Companion '{}' not found", companion);
         }
-        anyhow::bail!("Failed to get companion info: {}", response.status());
-    }
+        Err(e) => {
+            anyhow::bail!("Failed to get companion info: {}", e.display_message());
+        }
+    };
 
-    // ApiResponse wraps in { "data": { ...manifest fields... } }
-    let body: serde_json::Value = response.json().await?;
-    let data = body
-        .get("data")
-        .ok_or_else(|| anyhow::anyhow!("Invalid response format"))?;
-    let manifest: CommandManifest = serde_json::from_value(data.clone())?;
+    // StoneApi unwraps ApiResponse, so `data` is the inner payload directly
+    let manifest: CommandManifest = serde_json::from_value(data)?;
 
     println!("{} - {}", manifest.name, manifest.description);
     println!("Version: {}", manifest.version);
@@ -381,119 +375,94 @@ async fn show_companion_commands(endpoint: &str, companion: &str, ctx: &Runtime)
 
 /// Start or stop Companion
 async fn companion_lifecycle(
-    endpoint: &str,
+    api: &StoneApi,
     companion: &str,
     action: &str,
-    _ctx: &Runtime,
 ) -> CommandResult {
-    // Map enable/disable to up/down
-    let api_action = match action {
-        "enable" => "up",
-        "disable" => "down",
-        _ => action,
+    let result = match action {
+        "enable" => api.companions().up(companion).await,
+        "disable" => api.companions().down(companion).await,
+        _ => unreachable!(),
     };
 
-    let url = format!(
-        "{}/api/v1/stone/companions/{}/{}",
-        endpoint, companion, api_action
-    );
-    let client = reqwest::Client::new();
-    let response = client.post(&url).send().await?;
+    match result {
+        Ok(body) => {
+            let running = body
+                .get("running")
+                .and_then(|r| r.as_bool())
+                .unwrap_or(false);
+            let pid = body.get("pid").and_then(|p| p.as_u64());
+            let message = body.get("message").and_then(|m| m.as_str()).unwrap_or("");
 
-    if response.status().is_success() {
-        let body: serde_json::Value = response.json().await.unwrap_or_default();
-        let running = body
-            .get("running")
-            .and_then(|r| r.as_bool())
-            .unwrap_or(false);
-        let pid = body.get("pid").and_then(|p| p.as_u64());
-        let message = body.get("message").and_then(|m| m.as_str()).unwrap_or("");
-
-        if running {
-            if let Some(p) = pid {
-                println!("Companion '{}' started (PID {})", companion, p);
+            if running {
+                if let Some(p) = pid {
+                    println!("Companion '{}' started (PID {})", companion, p);
+                } else {
+                    println!("Companion '{}' started", companion);
+                }
             } else {
-                println!("Companion '{}' started", companion);
+                println!("Companion '{}' stopped", companion);
             }
-        } else {
-            println!("Companion '{}' stopped", companion);
-        }
 
-        if !message.is_empty() && !message.contains(&companion.to_string()) {
-            println!("  {}", message);
-        }
+            if !message.is_empty() && !message.contains(&companion.to_string()) {
+                println!("  {}", message);
+            }
 
-        Ok(())
-    } else {
-        let status = response.status();
-        let body: serde_json::Value = response.json().await.unwrap_or_default();
-        let msg = body
-            .get("message")
-            .and_then(|e| e.as_str())
-            .unwrap_or("Unknown error");
-        anyhow::bail!("{}: {}", status, msg)
+            Ok(())
+        }
+        Err(e) => {
+            anyhow::bail!("{}", e.display_message())
+        }
     }
 }
 
 /// Send command to companion - raw pass-through
 async fn send_companion_command(
-    endpoint: &str,
+    api: &StoneApi,
     companion: &str,
     raw_args: &[String],
-    ctx: &Runtime,
+    _ctx: &Runtime,
 ) -> CommandResult {
-    let url = format!("{}/api/v1/stone/companions/{}/command", endpoint, companion);
-
     let request = CompanionCommandRequest::new(companion, raw_args.to_vec());
 
-    let response = ctx.client.post(&url).json(&request).send().await?;
+    // companions().command() returns serde_json::Value (unwrapped from ApiResponse)
+    // But we need CommandResponse. Try to deserialize directly.
+    // The command endpoint may return the CommandResponse as the data payload.
+    match api.companions().command(companion, &request).await {
+        Ok(data) => {
+            // Try to parse as CommandResponse
+            let body: CommandResponse = serde_json::from_value(data)
+                .unwrap_or_else(|_| CommandResponse::error("Unexpected response format"));
 
-    let status = response.status();
-
-    if status.is_success() {
-        let body: CommandResponse = response.json().await?;
-
-        // Display based on status
-        match body.status {
-            garden_common::command_manifest::ResponseStatus::Success => {
-                println!("? {}", body.message);
+            match body.status {
+                garden_common::command_manifest::ResponseStatus::Success => {
+                    println!("? {}", body.message);
+                }
+                garden_common::command_manifest::ResponseStatus::Warning => {
+                    println!("? {}", body.message);
+                }
+                garden_common::command_manifest::ResponseStatus::Error => {
+                    eprintln!("? {}", body.message);
+                }
             }
-            garden_common::command_manifest::ResponseStatus::Warning => {
-                println!("? {}", body.message);
+
+            if let Some(ref output) = body.output {
+                println!("{}", output);
             }
-            garden_common::command_manifest::ResponseStatus::Error => {
-                eprintln!("? {}", body.message);
+
+            for suggestion in &body.suggestions {
+                println!("  ? {}", suggestion);
             }
+
+            if body.is_error() {
+                anyhow::bail!("{}", body.message);
+            }
+
+            Ok(())
         }
-
-        // Show output if present
-        if let Some(ref output) = body.output {
-            println!("{}", output);
+        Err(e) => {
+            anyhow::bail!("{}", e.display_message())
         }
-
-        // Show suggestions
-        for suggestion in &body.suggestions {
-            println!("  ? {}", suggestion);
-        }
-
-        if body.is_error() {
-            anyhow::bail!("{}", body.message);
-        }
-
-        Ok(())
-    } else {
-        // Parse CommandResponse structure (status, message, suggestions)
-        let body: CommandResponse = response
-            .json()
-            .await
-            .unwrap_or_else(|_| CommandResponse::error("Unknown error"));
-
-        // Show suggestions if available
-        for suggestion in &body.suggestions {
-            eprintln!("  ? {}", suggestion);
-        }
-
-        anyhow::bail!("{}: {}", status, body.message)
     }
 }
 

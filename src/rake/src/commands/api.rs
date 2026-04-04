@@ -4,24 +4,23 @@
 
 use anyhow::Result;
 use garden_common::api_manifest::ApiManifest;
+use garden_common::client::StoneApi;
 
 /// Execute API command - display API reference
 pub async fn execute_api_command(
-    endpoint: &str,
+    api: &StoneApi,
     category_filter: Option<String>,
     endpoint_filter: Option<String>,
     examples: bool,
 ) -> Result<()> {
-    // Fetch manifest
-    let url = format!("{}/api/v1/manifest", endpoint.trim_end_matches('/'));
-    let client = reqwest::Client::new();
-    let manifest: ApiManifest = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await?
-        .json()
-        .await?;
+    // Fetch manifest — StoneApi returns serde_json::Value (data field unwrapped)
+    let value: serde_json::Value = api
+        .stone()
+        .api_manifest()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch API manifest: {}", e.display_message()))?;
+
+    let manifest: ApiManifest = serde_json::from_value(value)?;
 
     // Filter and display
     if let Some(endpoint_path) = endpoint_filter {

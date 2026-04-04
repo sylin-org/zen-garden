@@ -211,7 +211,6 @@ impl StoneApi {
     }
 
     /// POST with JSON body, returning raw `reqwest::Response`.
-    #[expect(dead_code, reason = "used by endpoint families as they are migrated")]
     async fn post_raw_with_body<B: Serialize>(
         &self,
         path: &str,
@@ -237,6 +236,17 @@ impl StoneApi {
     ) -> Result<T, StoneApiError> {
         let url = self.url(path);
         let response = self.client.patch(&url).json(body).send().await?;
+        self.parse_api_response(response, &url).await
+    }
+
+    /// PUT with JSON body, returning `T` unwrapped from `ApiResponse<T>`.
+    async fn put<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, StoneApiError> {
+        let url = self.url(path);
+        let response = self.client.put(&url).json(body).send().await?;
         self.parse_api_response(response, &url).await
     }
 
@@ -513,6 +523,81 @@ impl OfferingsApi<'_> {
     pub async fn heal(&self) -> Result<serde_json::Value, StoneApiError> {
         self.api.post_empty("/api/v1/stone/offerings/heal").await
     }
+
+    /// Get capabilities for an offering (models, extensions, modules).
+    pub async fn capabilities(
+        &self,
+        name: &str,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!(
+            "/api/v1/stone/offerings/{}/capabilities",
+            urlencoding::encode(name)
+        );
+        self.api.get(&path).await
+    }
+
+    /// Add a capability to an offering.
+    pub async fn add_capability<B: Serialize>(
+        &self,
+        name: &str,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!(
+            "/api/v1/stone/offerings/{}/capabilities",
+            urlencoding::encode(name)
+        );
+        self.api.post(&path, body).await
+    }
+
+    /// Remove a capability from an offering.
+    pub async fn remove_capability(
+        &self,
+        name: &str,
+        cap: &str,
+        cap_type: Option<&str>,
+    ) -> Result<reqwest::Response, StoneApiError> {
+        let encoded_name = urlencoding::encode(name);
+        let encoded_cap = urlencoding::encode(cap);
+        let path = match cap_type {
+            Some(t) => format!(
+                "/api/v1/stone/offerings/{}/capabilities/{}?type={}",
+                encoded_name,
+                encoded_cap,
+                urlencoding::encode(t)
+            ),
+            None => format!(
+                "/api/v1/stone/offerings/{}/capabilities/{}",
+                encoded_name, encoded_cap
+            ),
+        };
+        self.api.delete_raw(&path).await
+    }
+
+    /// Refresh capabilities for an offering.
+    pub async fn refresh_capabilities<B: Serialize>(
+        &self,
+        name: &str,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!(
+            "/api/v1/stone/offerings/{}/capabilities/refresh",
+            urlencoding::encode(name)
+        );
+        self.api.post(&path, body).await
+    }
+
+    /// Mirror capabilities from another stone.
+    pub async fn mirror_capabilities<B: Serialize>(
+        &self,
+        name: &str,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!(
+            "/api/v1/stone/offerings/{}/capabilities/mirror",
+            urlencoding::encode(name)
+        );
+        self.api.post(&path, body).await
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -649,6 +734,32 @@ impl StorageApi<'_> {
     pub async fn stream(&self) -> Result<reqwest::Response, StoneApiError> {
         self.api.get_raw("/api/v1/stone/storage/stream").await
     }
+
+    /// List offerings that have snapshots on a bank.
+    pub async fn snapshots(
+        &self,
+        bank: &str,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!(
+            "/api/v1/stone/storage/banks/{}/snapshots",
+            urlencoding::encode(bank)
+        );
+        self.api.get(&path).await
+    }
+
+    /// List snapshots for a specific offering on a bank.
+    pub async fn offering_snapshots(
+        &self,
+        bank: &str,
+        offering: &str,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!(
+            "/api/v1/stone/storage/banks/{}/snapshots/{}",
+            urlencoding::encode(bank),
+            urlencoding::encode(offering)
+        );
+        self.api.get(&path).await
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -719,7 +830,7 @@ impl PondApi<'_> {
         &self,
         body: &B,
     ) -> Result<serde_json::Value, StoneApiError> {
-        self.api.post("/api/v1/pond/name", body).await
+        self.api.put("/api/v1/pond/name", body).await
     }
 
     /// Download CA public certificate. Returns raw response.
@@ -745,6 +856,19 @@ impl PondApi<'_> {
         let url = self.api.url("/api/v1/pond/invite");
         let response = self.api.client.post(&url).json(body).send().await?;
         Ok(response)
+    }
+
+    /// Run a pond ceremony (guided workflow).
+    pub async fn ceremony<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post("/api/v1/pond/ceremony", body).await
+    }
+
+    /// Get ceremony status.
+    pub async fn ceremony_status(&self) -> Result<serde_json::Value, StoneApiError> {
+        self.api.get("/api/v1/pond/ceremony").await
     }
 }
 
@@ -910,6 +1034,72 @@ impl StoneInfoApi<'_> {
             .post_empty("/api/v1/stone/maintenance/sweep")
             .await
     }
+
+    /// SSE event stream. Returns raw response for streaming consumption.
+    pub async fn events(&self) -> Result<reqwest::Response, StoneApiError> {
+        self.api.get_raw("/api/v1/events").await
+    }
+
+    /// Set console output mode (sing/quiet/silent/minimal).
+    pub async fn set_console_mode<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post("/api/v1/console/mode", body).await
+    }
+
+    /// Force registry reconciliation with running containers.
+    pub async fn reconcile<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post("/api/v1/stone/services/reconcile", body).await
+    }
+
+    /// Start a distributed election.
+    pub async fn election_start<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post("/api/v1/election/start", body).await
+    }
+
+    /// Shutdown the stone (power off).
+    pub async fn shutdown(&self) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post_empty("/api/v1/admin/stone/shutdown").await
+    }
+
+    /// Reboot the stone.
+    pub async fn reboot(&self) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post_empty("/api/v1/admin/stone/reboot").await
+    }
+
+    /// Wake a stone via Wake-on-LAN.
+    pub async fn wake(&self, name: &str) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!("/api/v1/admin/stone/{}/wake", urlencoding::encode(name));
+        self.api.post_empty(&path).await
+    }
+
+    /// Upload a binary for refresh (dev tool).
+    pub async fn refresh_binary<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<serde_json::Value, StoneApiError> {
+        self.api.post("/api/v1/system/refresh", body).await
+    }
+
+    /// Get the API manifest (endpoint documentation).
+    pub async fn api_manifest(&self) -> Result<serde_json::Value, StoneApiError> {
+        self.api.get("/api/v1/manifest").await
+    }
+
+    /// Notify stone of tending (visual feedback for companions).
+    pub async fn notify_tending<B: Serialize>(
+        &self,
+        body: &B,
+    ) -> Result<reqwest::Response, StoneApiError> {
+        self.api.post_raw_with_body("/api/v1/stone/presence/notify", body).await
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -962,6 +1152,11 @@ impl GardenApi<'_> {
     /// Garden-wide storage.
     pub async fn storage(&self) -> Result<serde_json::Value, StoneApiError> {
         self.api.get("/api/v1/garden/storage").await
+    }
+
+    /// Raw topology (all stones with full detail).
+    pub async fn topology(&self) -> Result<serde_json::Value, StoneApiError> {
+        self.api.get("/api/v1/garden/topology").await
     }
 }
 

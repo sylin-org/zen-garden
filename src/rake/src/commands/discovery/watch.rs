@@ -12,7 +12,7 @@ use crate::discovery;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use futures_util::StreamExt;
-use garden_common::{GardenApiResponse, HardwareCapabilities};
+use garden_common::client::StoneApi;
 use std::time::Duration;
 
 /// Watch target type
@@ -57,12 +57,12 @@ impl Command for WatchCommand {
         Box::pin(async move {
             match &self.target {
                 WatchTargetType::Events { until } => {
-                    let endpoint = ctx.endpoint()?;
-                    watch_events(&ctx.client, endpoint, until.clone()).await?;
+                    let api = ctx.stone_api()?;
+                    watch_events(api, until.clone()).await?;
                 }
                 WatchTargetType::OfferingLogs { name, timestamps } => {
-                    let endpoint = ctx.endpoint()?;
-                    watch_offering_logs(&ctx.client, endpoint, name, *timestamps).await?;
+                    let api = ctx.stone_api()?;
+                    watch_offering_logs(api, name, *timestamps).await?;
                 }
                 WatchTargetType::StoneLogs { name, timestamps } => {
                     // Stone logs need special resolution by stone name
@@ -106,12 +106,11 @@ async fn resolve_stone_endpoint(
 
     for response in endpoints {
         let ep = response.address.http_base();
-        let caps_url = format!("{}/api/v1/stone/capabilities", ep.trim_end_matches('/'));
-        if let Ok(resp) = client.get(&caps_url).send().await
-            && let Ok(caps_response) = resp.json::<GardenApiResponse<HardwareCapabilities>>().await
-                && caps_response.data.stone_name.to_lowercase() == stone_name.to_lowercase() {
-                    return Ok(ep.clone());
-                }
+        let stone_api = StoneApi::new(client.clone(), ep.clone());
+        if let Ok(caps) = stone_api.stone().capabilities_core().await
+            && caps.stone_name.to_lowercase() == stone_name.to_lowercase() {
+                return Ok(ep.clone());
+            }
     }
 
     eprintln!(
@@ -125,21 +124,22 @@ async fn resolve_stone_endpoint(
 
 /// Stream logs from an offering
 async fn watch_offering_logs(
-    client: &reqwest::Client,
-    endpoint: &str,
+    api: &StoneApi,
     offering: &str,
     timestamps: bool,
 ) -> anyhow::Result<()> {
+    println!("Streaming logs from offering: {}\n", offering);
+
+    // Use the logs endpoint; add timestamps query param via raw HTTP for now
     let offering_path = urlencoding::encode(offering);
     let url = format!(
         "{}/api/v1/stone/services/{}/logs{}",
-        endpoint.trim_end_matches('/'),
+        api.endpoint(),
         offering_path,
         if timestamps { "?timestamps=true" } else { "" }
     );
-
-    println!("Streaming logs from offering: {}\n", offering);
-    let response = client
+    let response = api
+        .http()
         .get(&url)
         .header("Accept", "text/event-stream")
         .send()
@@ -214,26 +214,16 @@ async fn watch_stone_logs(
 
 /// Stream events from stone
 async fn watch_events(
-    client: &reqwest::Client,
-    endpoint: &str,
+    api: &StoneApi,
     until_pattern: Option<String>,
 ) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/events", endpoint.trim_end_matches('/'));
-    println!("Watching events from {}\n", endpoint);
+    println!("Watching events from {}\n", api.endpoint());
 
     if let Some(ref pattern) = until_pattern {
         println!("Will exit when '{}' appears\n", pattern);
     }
 
-    let response = client
-        .get(&url)
-        .header("Accept", "text/event-stream")
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to connect to event stream: {}", response.status());
-    }
+    let response = api.stone().events().await?;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();

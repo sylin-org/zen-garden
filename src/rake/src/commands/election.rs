@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use garden_common::client::StoneApi;
 use garden_common::election::ElectionType;
 use serde_json::Value;
 
@@ -90,38 +91,33 @@ async fn handle_start(start: StartElection, client: &reqwest::Client) -> Result<
             async move {
                 use crate::tending::StoneError;
 
-                let url = format!("{}/api/v1/election/start", endpoint.trim_end_matches('/'));
+                let api = StoneApi::new(client, endpoint);
+
                 let payload = serde_json::json!({
                     "election_type": election_type,
                     "criteria": criteria,
                     "timeout": timeout
                 });
 
-                // Make HTTP request
-                let response = client
-                    .post(&url)
-                    .json(&payload)
-                    .timeout(Duration::from_secs(timeout + 5))
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        StoneError::ConnectionFailed(format!("HTTP request failed: {}", e))
-                    })?;
-
-                let status = response.status();
-
-                // Check response status
-                if !status.is_success() {
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(StoneError::ResponseError(
-                        status.as_u16(),
-                        format!("Endpoint returned {} - {}", status, body),
-                    ));
-                }
-
-                // Parse JSON
-                response.json::<Value>().await.map_err(|e| {
-                    StoneError::ProcessingError(format!("Failed to parse response: {}", e))
+                api.stone().election_start(&payload).await.map_err(|e| {
+                    match e {
+                        garden_common::client::StoneApiError::Connection(ce) => {
+                            StoneError::ConnectionFailed(format!("HTTP request failed: {}", ce))
+                        }
+                        garden_common::client::StoneApiError::Http { status, message, .. } => {
+                            StoneError::ResponseError(
+                                status.as_u16(),
+                                format!("Endpoint returned {} - {}", status, message),
+                            )
+                        }
+                        garden_common::client::StoneApiError::HttpRaw { status, body } => {
+                            StoneError::ResponseError(
+                                status.as_u16(),
+                                format!("Endpoint returned {} - {}", status, body),
+                            )
+                        }
+                        other => StoneError::ProcessingError(format!("Failed: {}", other)),
+                    }
                 })
             }
         },

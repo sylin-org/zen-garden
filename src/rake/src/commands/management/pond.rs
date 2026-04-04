@@ -19,6 +19,7 @@ use crate::enrollment;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use anyhow::Context;
+use garden_common::client::StoneApi;
 
 /// Pond action to perform
 pub enum PondActionType {
@@ -89,42 +90,44 @@ impl Command for PondCommand {
                 _ => {}
             }
 
-            let endpoint = ctx.endpoint()?;
+            let api = ctx.stone_api()?;
 
             match &self.action {
                 PondActionType::Init {
                     passphrase,
                     profile,
                 } => {
+                    // Init uses ceremony render loop (raw HTTP protocol)
+                    let endpoint = ctx.endpoint()?;
                     execute_pond_init(ctx, endpoint, passphrase.clone(), profile.clone()).await?;
                 }
                 PondActionType::Status => {
-                    execute_pond_status(ctx, endpoint).await?;
+                    execute_pond_status(ctx, api).await?;
                 }
                 PondActionType::Invite { passphrase } => {
-                    execute_pond_invite(ctx, endpoint, passphrase.clone()).await?;
+                    execute_pond_invite(ctx, api, passphrase.clone()).await?;
                 }
                 PondActionType::Join { code } => {
-                    execute_pond_join(ctx, endpoint, code).await?;
+                    execute_pond_join(ctx, api, code).await?;
                 }
                 PondActionType::Enroll | PondActionType::Trust => {
                     // Already handled above (no endpoint needed)
                     unreachable!();
                 }
                 PondActionType::Unlock { passphrase, totp } => {
-                    execute_pond_unlock(ctx, endpoint, passphrase.clone(), totp.clone()).await?;
+                    execute_pond_unlock(ctx, api, passphrase.clone(), totp.clone()).await?;
                 }
                 PondActionType::Remove => {
-                    execute_pond_remove(ctx, endpoint).await?;
+                    execute_pond_remove(ctx, api).await?;
                 }
                 PondActionType::Untrust { stone_name } => {
-                    execute_pond_untrust(ctx, endpoint, stone_name).await?;
+                    execute_pond_untrust(ctx, api, stone_name).await?;
                 }
                 PondActionType::Promote { passphrase } => {
-                    execute_pond_promote(ctx, endpoint, passphrase.clone()).await?;
+                    execute_pond_promote(ctx, api, passphrase.clone()).await?;
                 }
                 PondActionType::Rename { name } => {
-                    execute_pond_rename(ctx, endpoint, name.clone()).await?;
+                    execute_pond_rename(ctx, api, name.clone()).await?;
                 }
             }
 
@@ -213,104 +216,91 @@ async fn execute_pond_init(
     Ok(())
 }
 
-async fn execute_pond_status(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/pond/status", endpoint.trim_end_matches('/'));
+async fn execute_pond_status(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()> {
+    match api.pond().status().await {
+        Ok(data) => {
+            // JSON output mode — emit raw API response
+            if ctx.wants_json() {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&data).unwrap_or_default()
+                );
+                return Ok(());
+            }
 
-    match ctx.client.get(&url).send().await {
-        Ok(response) if response.status().is_success() => {
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                // JSON output mode — emit raw API response
-                if ctx.wants_json() {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&body).unwrap_or_default()
-                    );
-                    return Ok(());
-                }
+            // StoneApi unwraps ApiResponse, so `data` is the inner payload
+            let active = data
+                .get("active")
+                .and_then(|a| a.as_bool())
+                .unwrap_or(false);
+            let locked = data
+                .get("locked")
+                .and_then(|l| l.as_bool())
+                .unwrap_or(false);
+            let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let profile = data
+                .get("profile")
+                .and_then(|p| p.as_str())
+                .unwrap_or("unknown");
+            let enrollment = data
+                .get("enrollment_state")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown");
 
-                if let Some(data) = body.get("data") {
-                    let active = data
-                        .get("active")
-                        .and_then(|a| a.as_bool())
-                        .unwrap_or(false);
-                    let locked = data
-                        .get("locked")
-                        .and_then(|l| l.as_bool())
-                        .unwrap_or(false);
-                    let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    let profile = data
-                        .get("profile")
-                        .and_then(|p| p.as_str())
-                        .unwrap_or("unknown");
-                    let enrollment = data
-                        .get("enrollment_state")
-                        .and_then(|e| e.as_str())
-                        .unwrap_or("unknown");
+            if active {
+                println!(
+                    "{}{} Pond active",
+                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    ui::status_indicator("ok", ctx.term.supports_color)
+                );
+            } else if locked {
+                println!(
+                    "{}{} Pond locked (run 'garden-rake pond unlock')",
+                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    ui::status_indicator("warning", ctx.term.supports_color)
+                );
+            } else {
+                println!(
+                    "{}o Pond not initialized",
+                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                );
+            }
 
-                    if active {
-                        println!(
-                            "{}{} Pond active",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("ok", ctx.term.supports_color)
-                        );
-                    } else if locked {
-                        println!(
-                            "{}{} Pond locked (run 'garden-rake pond unlock')",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                            ui::status_indicator("warning", ctx.term.supports_color)
-                        );
-                    } else {
-                        println!(
-                            "{}o Pond not initialized",
-                            " ".repeat(ui::constants::DEFAULT_INDENT),
-                        );
-                    }
+            if !name.is_empty() {
+                println!("   Name: {}", name);
+            }
+            if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
+                println!("   Cornerstone: {}", cornerstone);
+            }
+            if let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
+                println!("   CA fingerprint: {}", fp);
+            }
+            println!("   Profile: {}", profile);
+            println!("   Enrollment: {}", enrollment);
 
-                    if !name.is_empty() {
-                        println!("   Name: {}", name);
-                    }
-                    if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
-                        println!("   Cornerstone: {}", cornerstone);
-                    }
-                    if let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
-                        println!("   CA fingerprint: {}", fp);
-                    }
-                    println!("   Profile: {}", profile);
-                    println!("   Enrollment: {}", enrollment);
-
-                    if let Some(stones) = data.get("stones").and_then(|s| s.as_array()) {
-                        println!("   Stones: {}", stones.len());
-                        for stone in stones {
-                            if let Some(name) = stone.get("name").and_then(|n| n.as_str()) {
-                                let role = stone
-                                    .get("role")
-                                    .and_then(|r| r.as_str())
-                                    .unwrap_or("member");
-                                let status = stone
-                                    .get("status")
-                                    .and_then(|s| s.as_str())
-                                    .unwrap_or("unknown");
-                                println!("     * {} [{}] ({})", name, role, status);
-                            }
-                        }
+            if let Some(stones) = data.get("stones").and_then(|s| s.as_array()) {
+                println!("   Stones: {}", stones.len());
+                for stone in stones {
+                    if let Some(name) = stone.get("name").and_then(|n| n.as_str()) {
+                        let role = stone
+                            .get("role")
+                            .and_then(|r| r.as_str())
+                            .unwrap_or("member");
+                        let status = stone
+                            .get("status")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("unknown");
+                        println!("     * {} [{}] ({})", name, role, status);
                     }
                 }
             }
         }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to get pond status: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -320,7 +310,7 @@ async fn execute_pond_status(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()
 
 async fn execute_pond_invite(
     ctx: &Runtime,
-    endpoint: &str,
+    api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
     let pass = passphrase.unwrap_or_else(|| {
@@ -332,47 +322,35 @@ async fn execute_pond_invite(
         "changeme".to_string()
     });
 
-    let url = format!("{}/api/v1/pond/invite", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "passphrase": pass });
 
-    match ctx.client.post(&url).json(&payload).send().await {
-        Ok(response) if response.status().is_success() => {
-            if let Ok(body) = response.json::<serde_json::Value>().await
-                && let Some(data) = body.get("data") {
-                    println!(
-                        "{}{} Enrollment invitation generated",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color)
-                    );
-                    if let Some(totp_uri) = data.get("totp_uri").and_then(|t| t.as_str()) {
-                        println!("   TOTP URI: {}", totp_uri);
-                        println!("   Add to authenticator app and share code with joining stone.");
-                    }
-                    if let Some(ttl) = data.get("ttl_seconds").and_then(|t| t.as_u64()) {
-                        println!("   Valid for: {} seconds", ttl);
-                    }
-                    if let Some(expires) = data.get("expires_at").and_then(|e| e.as_str()) {
-                        println!("   Expires at: {}", expires);
-                    }
-                    if let Some(inviter) = data.get("inviter_stone").and_then(|i| i.as_str()) {
-                        println!("   From: {}", inviter);
-                    }
-                }
+    match api.pond().invite(&payload).await {
+        Ok(data) => {
+            println!(
+                "{}{} Enrollment invitation generated",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("ok", ctx.term.supports_color)
+            );
+            if let Some(totp_uri) = data.get("totp_uri").and_then(|t| t.as_str()) {
+                println!("   TOTP URI: {}", totp_uri);
+                println!("   Add to authenticator app and share code with joining stone.");
+            }
+            if let Some(ttl) = data.get("ttl_seconds").and_then(|t| t.as_u64()) {
+                println!("   Valid for: {} seconds", ttl);
+            }
+            if let Some(expires) = data.get("expires_at").and_then(|e| e.as_str()) {
+                println!("   Expires at: {}", expires);
+            }
+            if let Some(inviter) = data.get("inviter_stone").and_then(|i| i.as_str()) {
+                println!("   From: {}", inviter);
+            }
         }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to generate invitation: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -380,44 +358,32 @@ async fn execute_pond_invite(
     Ok(())
 }
 
-async fn execute_pond_join(ctx: &Runtime, endpoint: &str, code: &str) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/pond/join", endpoint.trim_end_matches('/'));
+async fn execute_pond_join(ctx: &Runtime, api: &StoneApi, code: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({ "code": code });
 
-    match ctx.client.post(&url).json(&payload).send().await {
-        Ok(response) if response.status().is_success() => {
+    match api.pond().join(&payload).await {
+        Ok(data) => {
             println!(
                 "{}{} Joined pond successfully",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("ok", ctx.term.supports_color)
             );
-            if let Ok(body) = response.json::<serde_json::Value>().await
-                && let Some(data) = body.get("data") {
-                    if let Some(stone_name) = data.get("stone_name").and_then(|s| s.as_str()) {
-                        println!("   Stone: {}", stone_name);
-                    }
-                    if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
-                        println!("   Cornerstone: {}", cornerstone);
-                    }
-                    if let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
-                        println!("   CA fingerprint: {}", fp);
-                    }
-                }
+            if let Some(stone_name) = data.get("stone_name").and_then(|s| s.as_str()) {
+                println!("   Stone: {}", stone_name);
+            }
+            if let Some(cornerstone) = data.get("cornerstone").and_then(|c| c.as_str()) {
+                println!("   Cornerstone: {}", cornerstone);
+            }
+            if let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
+                println!("   CA fingerprint: {}", fp);
+            }
         }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to join pond: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -792,31 +758,21 @@ async fn execute_pond_trust(ctx: &Runtime) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn execute_pond_remove(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/pond", endpoint.trim_end_matches('/'));
-
-    match ctx.client.delete(&url).send().await {
-        Ok(response) if response.status().is_success() => {
+async fn execute_pond_remove(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()> {
+    match api.pond().drain().await {
+        Ok(_) => {
             println!(
                 "{}{} Pond drained — CA destroyed, all certificates invalidated",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("ok", ctx.term.supports_color)
             );
         }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to remove pond: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -826,17 +782,11 @@ async fn execute_pond_remove(ctx: &Runtime, endpoint: &str) -> anyhow::Result<()
 
 async fn execute_pond_untrust(
     ctx: &Runtime,
-    endpoint: &str,
+    api: &StoneApi,
     stone_name: &str,
 ) -> anyhow::Result<()> {
-    let url = format!(
-        "{}/api/v1/pond/stones/{}",
-        endpoint.trim_end_matches('/'),
-        stone_name
-    );
-
-    match ctx.client.delete(&url).send().await {
-        Ok(response) if response.status().is_success() => {
+    match api.pond().revoke(stone_name).await {
+        Ok(_) => {
             println!(
                 "{}{} Revoked {} from pond",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
@@ -844,20 +794,12 @@ async fn execute_pond_untrust(
                 stone_name
             );
         }
-        Ok(response) => {
+        Err(e) => {
             eprintln!(
                 "{}{} Failed to untrust stone: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                response.status()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -867,12 +809,10 @@ async fn execute_pond_untrust(
 
 async fn execute_pond_unlock(
     ctx: &Runtime,
-    endpoint: &str,
+    api: &StoneApi,
     passphrase: Option<String>,
     totp: Option<String>,
 ) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/pond/unlock", endpoint.trim_end_matches('/'));
-
     let payload = if let Some(code) = totp {
         serde_json::json!({ "totp_code": code })
     } else {
@@ -887,11 +827,10 @@ async fn execute_pond_unlock(
         serde_json::json!({ "passphrase": pass })
     };
 
-    match ctx.client.post(&url).json(&payload).send().await {
-        Ok(response) if response.status().is_success() => {
-            let body: serde_json::Value = response.json().await.unwrap_or_default();
-            let msg = body
-                .pointer("/data/message")
+    match api.pond().unlock(&payload).await {
+        Ok(data) => {
+            let msg = data
+                .get("message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Pond unlocked \u{2014} CA key decrypted");
             println!(
@@ -901,24 +840,12 @@ async fn execute_pond_unlock(
                 msg
             );
         }
-        Ok(response) => {
-            let status = response.status();
-            let body: serde_json::Value = response.json().await.unwrap_or_default();
-            let msg = crate::api::responses::extract_error_message(&body)
-                .unwrap_or_else(|| format!("Unexpected error (HTTP {status})"));
+        Err(e) => {
             eprintln!(
                 "{}{} {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                msg
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -928,7 +855,7 @@ async fn execute_pond_unlock(
 
 async fn execute_pond_promote(
     ctx: &Runtime,
-    endpoint: &str,
+    api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
     let pass = passphrase.unwrap_or_else(|| {
@@ -940,39 +867,25 @@ async fn execute_pond_promote(
         "changeme".to_string()
     });
 
-    let url = format!("{}/api/v1/pond/promote", endpoint.trim_end_matches('/'));
     let payload = serde_json::json!({ "passphrase": pass });
 
-    match ctx.client.post(&url).json(&payload).send().await {
-        Ok(response) if response.status().is_success() => {
+    match api.pond().promote(&payload).await {
+        Ok(data) => {
             println!(
                 "{}{} Stone promoted — received CA key material",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("ok", ctx.term.supports_color)
             );
-            if let Ok(body) = response.json::<serde_json::Value>().await
-                && let Some(data) = body.get("data")
-                    && let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
-                        println!("   CA fingerprint: {}", fp);
-                    }
-        }
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            eprintln!(
-                "{}{} Failed to promote stone: {} {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                status,
-                body
-            );
+            if let Some(fp) = data.get("ca_fingerprint").and_then(|f| f.as_str()) {
+                println!("   CA fingerprint: {}", fp);
+            }
         }
         Err(e) => {
             eprintln!(
-                "{}{} Request failed: {}",
+                "{}{} Failed to promote stone: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }
@@ -982,48 +895,33 @@ async fn execute_pond_promote(
 
 async fn execute_pond_rename(
     ctx: &Runtime,
-    endpoint: &str,
+    api: &StoneApi,
     name: Option<String>,
 ) -> anyhow::Result<()> {
-    let url = format!("{}/api/v1/pond/name", endpoint.trim_end_matches('/'));
     let payload = match name {
         Some(ref n) => serde_json::json!({ "name": n }),
         None => serde_json::json!({}),
     };
 
-    match ctx.client.put(&url).json(&payload).send().await {
-        Ok(response) if response.status().is_success() => {
-            if let Ok(body) = response.json::<serde_json::Value>().await
-                && let Some(data) = body.get("data") {
-                    let new_name = data
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("unknown");
-                    println!(
-                        "{}{} Pond renamed to '{}'",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", ctx.term.supports_color),
-                        new_name
-                    );
-                }
-        }
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            eprintln!(
-                "{}{} Failed to rename pond: {} {}",
+    match api.pond().rename(&payload).await {
+        Ok(data) => {
+            let new_name = data
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            println!(
+                "{}{} Pond renamed to '{}'",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                status,
-                body
+                ui::status_indicator("ok", ctx.term.supports_color),
+                new_name
             );
         }
         Err(e) => {
             eprintln!(
-                "{}{} Request failed: {}",
+                "{}{} Failed to rename pond: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                e
+                e.display_message()
             );
         }
     }

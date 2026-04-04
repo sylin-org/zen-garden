@@ -7,7 +7,6 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use std::time::Duration;
 
 /// Reconcile offerings with actual container state
 pub struct ReconcileCommand {
@@ -27,7 +26,14 @@ impl ReconcileCommand {
 impl Command for ReconcileCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let body = reconcile_system(&ctx.client, ctx.endpoint()?, self.drop_invalid).await?;
+            let api = ctx.stone_api()?;
+            let payload = serde_json::json!({ "drop_invalid": self.drop_invalid });
+
+            let body: serde_json::Value = api
+                .stone()
+                .reconcile(&payload)
+                .await
+                .map_err(|e| anyhow::anyhow!("Reconcile failed: {}", e.display_message()))?;
 
             let adopted = body
                 .get("adopted")
@@ -72,31 +78,4 @@ impl Command for ReconcileCommand {
     fn name(&self) -> &'static str {
         cmd::RECONCILE
     }
-}
-
-/// Execute system reconcile via API
-async fn reconcile_system(
-    client: &reqwest::Client,
-    endpoint: &str,
-    drop_invalid: bool,
-) -> anyhow::Result<serde_json::Value> {
-    use anyhow::Context;
-
-    let url = format!("{}/api/v1/system/reconcile", endpoint.trim_end_matches('/'));
-    let payload = serde_json::json!({ "drop_invalid": drop_invalid });
-    let response = client
-        .post(&url)
-        .json(&payload)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .context("Failed to send reconcile request")?;
-
-    if response.status().is_success() {
-        return Ok(response.json::<serde_json::Value>().await?);
-    }
-
-    let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-    anyhow::bail!("Reconcile failed with status {}: {}", status, text);
 }

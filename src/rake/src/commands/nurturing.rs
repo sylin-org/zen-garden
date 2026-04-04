@@ -71,19 +71,16 @@ impl Command for RestoreLocalCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for restore command"))?;
+            let api = ctx.stone_api()?;
             let offering_path = urlencoding::encode(&self.offering);
 
             // First, show what would be restored (dry-run info)
             let slots_url = format!(
                 "{}/api/v1/stone/snapshots/{}",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 offering_path
             );
-            let slots_response = ctx.client.get(&slots_url).send().await?;
+            let slots_response = api.http().get(&slots_url).send().await?;
 
             if !slots_response.status().is_success() {
                 let status = slots_response.status();
@@ -168,7 +165,7 @@ impl Command for RestoreLocalCommand {
 
             let restore_url = format!(
                 "{}/api/v1/stone/snapshots/{}/restore",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 offering_path
             );
 
@@ -176,7 +173,7 @@ impl Command for RestoreLocalCommand {
                 "slot": snapshot.slot
             });
 
-            let response = ctx.client.post(&restore_url).json(&body).send().await?;
+            let response = api.http().post(&restore_url).json(&body).send().await?;
 
             if !response.status().is_success() {
                 let status = response.status();
@@ -246,19 +243,16 @@ impl Command for RestoreRemoteCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for restore command"))?;
+            let api = ctx.stone_api()?;
 
             // Get list of remote snapshots from seed bank
             let seed_bank_path = urlencoding::encode(&self.storage);
             let remote_url = format!(
                 "{}/api/v1/stone/snapshots/remote/{}",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 seed_bank_path
             );
-            let remote_response = ctx.client.get(&remote_url).send().await?;
+            let remote_response = api.http().get(&remote_url).send().await?;
 
             if !remote_response.status().is_success() {
                 let status = remote_response.status();
@@ -270,8 +264,8 @@ impl Command for RestoreRemoteCommand {
 
             // Find matching snapshots for this offering
             // We need to look up offering_id from the offering name first
-            let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
-            let services_response = ctx.client.get(&services_url).send().await?;
+            let services_url = format!("{}/api/v1/stone/services", api.endpoint());
+            let services_response = api.http().get(&services_url).send().await?;
 
             let offering_id = if services_response.status().is_success() {
                 let services: serde_json::Value = services_response.json().await?;
@@ -364,7 +358,7 @@ impl Command for RestoreRemoteCommand {
             let offering_path = urlencoding::encode(&self.offering);
             let restore_url = format!(
                 "{}/api/v1/stone/snapshots/{}/restore-remote",
-                endpoint.trim_end_matches('/'),
+                api.endpoint(),
                 offering_path
             );
 
@@ -373,7 +367,7 @@ impl Command for RestoreRemoteCommand {
                 "harvest_id": snapshot.harvest_id
             });
 
-            let response = ctx.client.post(&restore_url).json(&body).send().await?;
+            let response = api.http().post(&restore_url).json(&body).send().await?;
 
             if !response.status().is_success() {
                 let status = response.status();
@@ -429,19 +423,16 @@ impl Command for NurturingStatusCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for status command"))?;
+            let api = ctx.stone_api()?;
 
             if let Some(ref offering) = self.offering {
                 // Detailed view for single offering
-                return self.show_offering_detail(ctx, endpoint, offering).await;
+                return self.show_offering_detail(ctx, api, offering).await;
             }
 
             // Overview of all offerings
-            let url = format!("{}/api/v1/stone/snapshots", endpoint.trim_end_matches('/'));
-            let response = ctx.client.get(&url).send().await?;
+            let url = format!("{}/api/v1/stone/snapshots", api.endpoint());
+            let response = api.http().get(&url).send().await?;
 
             if !response.status().is_success() {
                 let status = response.status();
@@ -464,9 +455,9 @@ impl Command for NurturingStatusCommand {
             // Get seed banks for remote status
             let banks_url = format!(
                 "{}/api/v1/stone/storage/bank",
-                endpoint.trim_end_matches('/')
+                api.endpoint()
             );
-            let banks: Vec<serde_json::Value> = match ctx.client.get(&banks_url).send().await {
+            let banks: Vec<serde_json::Value> = match api.http().get(&banks_url).send().await {
                 Ok(resp) => match resp.json::<ApiResponse<Vec<serde_json::Value>>>().await {
                     Ok(r) => r.data,
                     Err(_) => Vec::new(),
@@ -543,7 +534,7 @@ impl NurturingStatusCommand {
     async fn show_offering_detail(
         &self,
         ctx: &Runtime,
-        endpoint: &str,
+        api: &garden_common::client::StoneApi,
         offering: &str,
     ) -> CommandResult {
         use crate::ui::rendering as ui;
@@ -552,10 +543,10 @@ impl NurturingStatusCommand {
         let offering_path = urlencoding::encode(offering);
         let slots_url = format!(
             "{}/api/v1/stone/snapshots/{}",
-            endpoint.trim_end_matches('/'),
+            api.endpoint(),
             offering_path
         );
-        let slots_response = ctx.client.get(&slots_url).send().await?;
+        let slots_response = api.http().get(&slots_url).send().await?;
 
         if !slots_response.status().is_success() {
             let status = slots_response.status();
@@ -599,9 +590,9 @@ impl NurturingStatusCommand {
                 // Get remote snapshots from each seed bank
                 let banks_url = format!(
                     "{}/api/v1/stone/storage/bank",
-                    endpoint.trim_end_matches('/')
+                    api.endpoint()
                 );
-                if let Ok(banks_resp) = ctx.client.get(&banks_url).send().await
+                if let Ok(banks_resp) = api.http().get(&banks_url).send().await
                     && let Ok(banks) = banks_resp
                         .json::<ApiResponse<Vec<serde_json::Value>>>()
                         .await
@@ -624,11 +615,11 @@ impl NurturingStatusCommand {
 
                                 let remote_url = format!(
                                     "{}/api/v1/stone/snapshots/remote/{}",
-                                    endpoint.trim_end_matches('/'),
+                                    api.endpoint(),
                                     urlencoding::encode(bank_name)
                                 );
 
-                                if let Ok(remote_resp) = ctx.client.get(&remote_url).send().await
+                                if let Ok(remote_resp) = api.http().get(&remote_url).send().await
                                     && let Ok(remote) = remote_resp
                                         .json::<ApiResponse<RemoteNurturingIndex>>()
                                         .await
@@ -704,10 +695,7 @@ impl Command for NurturingListCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for list command"))?;
+            let api = ctx.stone_api()?;
 
             println!(
                 "\n{} {}",
@@ -722,11 +710,11 @@ impl Command for NurturingListCommand {
             if !self.remote_only {
                 let slots_url = format!(
                     "{}/api/v1/stone/snapshots/{}",
-                    endpoint.trim_end_matches('/'),
+                    api.endpoint(),
                     offering_path
                 );
 
-                if let Ok(resp) = ctx.client.get(&slots_url).send().await
+                if let Ok(resp) = api.http().get(&slots_url).send().await
                     && let Ok(slots) = resp.json::<ApiResponse<Option<OfferingSlots>>>().await {
                         if let Some(slots_data) = slots.data {
                             println!("\n  Local (A/B Slots):");
@@ -767,9 +755,9 @@ impl Command for NurturingListCommand {
             // Remote backups
             if !self.local_only {
                 // Get offering_id first
-                let services_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
+                let services_url = format!("{}/api/v1/stone/services", api.endpoint());
 
-                let offering_id: Option<String> = match ctx.client.get(&services_url).send().await {
+                let offering_id: Option<String> = match api.http().get(&services_url).send().await {
                     Ok(resp) => match resp.json::<serde_json::Value>().await {
                         Ok(v) => v
                             .get("data")
@@ -795,10 +783,10 @@ impl Command for NurturingListCommand {
                 // Get seed banks
                 let banks_url = format!(
                     "{}/api/v1/stone/storage/bank",
-                    endpoint.trim_end_matches('/')
+                    api.endpoint()
                 );
 
-                if let Ok(banks_resp) = ctx.client.get(&banks_url).send().await
+                if let Ok(banks_resp) = api.http().get(&banks_url).send().await
                     && let Ok(banks) = banks_resp
                         .json::<ApiResponse<Vec<serde_json::Value>>>()
                         .await
@@ -819,11 +807,11 @@ impl Command for NurturingListCommand {
 
                             let remote_url = format!(
                                 "{}/api/v1/stone/snapshots/remote/{}",
-                                endpoint.trim_end_matches('/'),
+                                api.endpoint(),
                                 urlencoding::encode(bank_name)
                             );
 
-                            if let Ok(remote_resp) = ctx.client.get(&remote_url).send().await
+                            if let Ok(remote_resp) = api.http().get(&remote_url).send().await
                                 && let Ok(remote) = remote_resp
                                     .json::<ApiResponse<RemoteNurturingIndex>>()
                                     .await
@@ -901,10 +889,7 @@ impl Command for NurturingTriggerCommand {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let endpoint = ctx
-                .endpoint
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Endpoint required for trigger command"))?;
+            let api = ctx.stone_api()?;
 
             if let Some(ref offering) = self.offering {
                 // Single offering
@@ -917,7 +902,7 @@ impl Command for NurturingTriggerCommand {
                 let offering_path = urlencoding::encode(offering);
                 let url = format!(
                     "{}/api/v1/snapshots/{}/trigger",
-                    endpoint.trim_end_matches('/'),
+                    api.endpoint(),
                     offering_path
                 );
 
@@ -958,7 +943,7 @@ impl Command for NurturingTriggerCommand {
 
                 let url = format!(
                     "{}/api/v1/snapshots/trigger-all",
-                    endpoint.trim_end_matches('/')
+                    api.endpoint()
                 );
 
                 let response = ctx

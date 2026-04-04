@@ -27,47 +27,40 @@ impl UpgradeCommand {
 impl Command for UpgradeCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?;
+            let api = ctx.stone_api()?;
 
             if self.all || self.service.is_none() {
-                // Batch upgrade all services (iterate v1 nourish endpoints)
-                // First, get list of all services
-                let list_url = format!("{}/api/v1/stone/services", endpoint.trim_end_matches('/'));
-                let list_response = ctx.client.get(&list_url).send().await?;
+                // Batch upgrade all services
+                let service_list = match api.services().list().await {
+                    Ok(list) => list,
+                    Err(e) => {
+                        eprintln!(
+                            "{}{} Failed to retrieve service list: {}",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::status_indicator("error", ctx.term.supports_color),
+                            e.display_message()
+                        );
+                        return Ok(());
+                    }
+                };
 
-                if !list_response.status().is_success() {
+                if service_list.is_empty() {
                     eprintln!(
-                        "{}{} Failed to retrieve service list: {}",
+                        "{}{} No services found",
                         " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", ctx.term.supports_color),
-                        list_response.status()
+                        ui::status_indicator("error", ctx.term.supports_color)
                     );
-                    return Ok(());
-                }
-
-                let services_body: serde_json::Value = list_response.json().await?;
-                let services = services_body
-                    .as_array()
-                    .or_else(|| services_body.get("data").and_then(|d| d.as_array()));
-
-                if let Some(service_list) = services {
+                } else {
                     let mut upgraded = Vec::new();
                     let mut failed = Vec::new();
 
-                    for svc in service_list {
-                        if let Some(name) = svc.get("name").and_then(|n| n.as_str()) {
-                            let name_path = urlencoding::encode(name);
-                            let nourish_url = format!(
-                                "{}/api/v1/stone/services/{}/upgrade",
-                                endpoint.trim_end_matches('/'),
-                                name_path
-                            );
-                            let response = ctx.client.post(&nourish_url).send().await?;
-
-                            if response.status().is_success() {
-                                upgraded.push(name.to_string());
-                            } else {
-                                failed.push(name.to_string());
+                    for svc in &service_list {
+                        match api.services().upgrade(&svc.name).await {
+                            Ok(resp) if resp.status().is_success() => {
+                                upgraded.push(svc.name.clone());
+                            }
+                            _ => {
+                                failed.push(svc.name.clone());
                             }
                         }
                     }
@@ -95,22 +88,9 @@ impl Command for UpgradeCommand {
                             eprintln!("{}  - {}", " ".repeat(ui::constants::DEFAULT_INDENT), name);
                         }
                     }
-                } else {
-                    eprintln!(
-                        "{}{} No services found",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("error", ctx.term.supports_color)
-                    );
                 }
             } else if let Some(svc_name) = &self.service {
-                // v1 API: POST /api/v1/stone/services/:service/upgrade
-                let name_path = urlencoding::encode(svc_name);
-                let url = format!(
-                    "{}/api/v1/stone/services/{}/upgrade",
-                    endpoint.trim_end_matches('/'),
-                    name_path
-                );
-                let response = ctx.client.post(url).send().await?;
+                let response = api.services().upgrade(svc_name).await?;
                 let status = response.status();
 
                 match status {

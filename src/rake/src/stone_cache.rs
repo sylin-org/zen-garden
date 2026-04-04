@@ -1,8 +1,8 @@
 use crate::client::{CachedStoneInfo, CachedStoneOps};
 use anyhow::Result;
 use garden_common::client::discovery::{Discovery, KnownStone};
-use garden_common::{GardenApiResponse, HardwareCapabilities};
-use std::time::Duration;
+use garden_common::client::StoneApi;
+use garden_common::HardwareCapabilities;
 
 pub use garden_common::client::discovery::STONE;
 
@@ -57,18 +57,8 @@ pub async fn fetch_and_cache_stone(
     endpoint: &str,
     discovery: &Discovery,
 ) -> Result<DiscoveredStone> {
-    let caps_url = format!(
-        "{}/api/v1/stone/capabilities",
-        endpoint.trim_end_matches('/')
-    );
-    let response: GardenApiResponse<HardwareCapabilities> = client
-        .get(&caps_url)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await?
-        .json()
-        .await?;
-    let capabilities = response.data;
+    let api = StoneApi::new(client.clone(), endpoint.to_string());
+    let capabilities = api.stone().capabilities_core().await?;
 
     // Cache using the simplified interface (endpoint, stone_id, stone_name)
     let stone_id = capabilities.stone_id.clone();

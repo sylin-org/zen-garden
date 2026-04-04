@@ -247,13 +247,8 @@ pub async fn resolve_endpoint(
         );
 
         // Notify stone of tending for visual feedback (glow/pulse)
-        let notify_ctx = CommandCtx::without_endpoint(
-            client.clone(),
-            false, // quiet
-            false, // fresh
-            0,     // verbose
-        );
-        let _ = tend::notify_tending(&notify_ctx, &endpoint).await;
+        let api = garden_common::client::StoneApi::new(client.clone(), endpoint.clone());
+        let _ = tend::notify_tending(&api).await;
     }
 
     Ok(endpoint)

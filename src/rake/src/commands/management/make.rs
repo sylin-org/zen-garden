@@ -11,6 +11,7 @@ use crate::commands::{Command, CommandResult};
 use crate::context::Runtime;
 use crate::suggestions;
 use crate::ui::rendering as ui;
+use garden_common::client::StoneApiError;
 
 /// Console mode action
 pub enum MakeActionType {
@@ -39,21 +40,20 @@ impl MakeCommand {
 impl Command for MakeCommand {
     fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?;
-            let url = format!("{}/api/v1/console/mode", endpoint.trim_end_matches('/'));
+            let api = ctx.stone_api()?;
 
             match &self.action {
                 MakeActionType::Sing { forever } => {
-                    execute_make_sing(ctx, &url, *forever).await?;
+                    execute_make_mode(api, ctx, "verbose", *forever).await?;
                 }
                 MakeActionType::Quiet => {
-                    execute_make_quiet(ctx, &url).await?;
+                    execute_make_mode(api, ctx, "informative", true).await?;
                 }
                 MakeActionType::Silent => {
-                    execute_make_silent(ctx, &url).await?;
+                    execute_make_mode(api, ctx, "silent", true).await?;
                 }
                 MakeActionType::Minimal => {
-                    execute_make_minimal(ctx, &url).await?;
+                    execute_make_mode(api, ctx, "minimal", true).await?;
                 }
             }
 
@@ -69,63 +69,48 @@ impl Command for MakeCommand {
     }
 }
 
-async fn execute_make_sing(ctx: &Runtime, url: &str, forever: bool) -> anyhow::Result<()> {
-    let timeout_minutes = if forever { 0 } else { 30 };
-    let persist = forever;
+async fn execute_make_mode(
+    api: &garden_common::client::StoneApi,
+    ctx: &Runtime,
+    mode: &str,
+    persist: bool,
+) -> anyhow::Result<()> {
+    let timeout_minutes = if persist { 0 } else { 30 };
 
     let payload = serde_json::json!({
-        "mode": "verbose",
+        "mode": mode,
         "persist": persist,
         "timeout_minutes": timeout_minutes
     });
 
-    match ctx
-        .client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-    {
-        Ok(response) if response.status().is_success() => {
-            if forever {
-                println!(
-                    "{}{} Stone singing (verbose mode, permanent)",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("ok", ctx.term.supports_color)
-                );
-            } else {
-                println!(
-                    "{}{} Stone singing (verbose mode, 30min timeout)",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("ok", ctx.term.supports_color)
-                );
-            }
-        }
-        Ok(response) => {
-            let status = response.status();
-            if let Ok(body) = response.text().await {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    body
-                );
-            } else {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
+    match api.stone().set_console_mode(&payload).await {
+        Ok(_) => {
+            let desc = match mode {
+                "verbose" => {
+                    if persist {
+                        "Stone singing (verbose mode, permanent)"
+                    } else {
+                        "Stone singing (verbose mode, 30min timeout)"
+                    }
+                }
+                "informative" => "Stone quieted (informative mode, permanent)",
+                "silent" => "Stone silenced (silent mode, permanent)",
+                "minimal" => "Stone set to minimal mode (critical only, permanent)",
+                _ => "Console mode updated",
+            };
+            println!(
+                "{}{} {}",
+                " ".repeat(ui::constants::DEFAULT_INDENT),
+                ui::status_indicator("ok", ctx.term.supports_color),
+                desc
+            );
         }
         Err(e) => {
             eprintln!(
-                "{}{} Request failed: {}",
+                "{}{} Failed to set mode: {}",
                 " ".repeat(ui::constants::DEFAULT_INDENT),
                 ui::status_indicator("error", ctx.term.supports_color),
-                e
+                display_api_error(&e)
             );
         }
     }
@@ -133,161 +118,6 @@ async fn execute_make_sing(ctx: &Runtime, url: &str, forever: bool) -> anyhow::R
     Ok(())
 }
 
-async fn execute_make_quiet(ctx: &Runtime, url: &str) -> anyhow::Result<()> {
-    let payload = serde_json::json!({
-        "mode": "informative",
-        "persist": true,
-        "timeout_minutes": 0
-    });
-
-    match ctx
-        .client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-    {
-        Ok(response) if response.status().is_success() => {
-            println!(
-                "{}{} Stone quieted (informative mode, permanent)",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color)
-            );
-        }
-        Ok(response) => {
-            let status = response.status();
-            if let Ok(body) = response.text().await {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    body
-                );
-            } else {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
-            );
-        }
-    }
-
-    Ok(())
-}
-
-async fn execute_make_silent(ctx: &Runtime, url: &str) -> anyhow::Result<()> {
-    let payload = serde_json::json!({
-        "mode": "silent",
-        "persist": true,
-        "timeout_minutes": 0
-    });
-
-    match ctx
-        .client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-    {
-        Ok(response) if response.status().is_success() => {
-            println!(
-                "{}{} Stone silenced (silent mode, permanent)",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color)
-            );
-        }
-        Ok(response) => {
-            let status = response.status();
-            if let Ok(body) = response.text().await {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    body
-                );
-            } else {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
-            );
-        }
-    }
-
-    Ok(())
-}
-
-async fn execute_make_minimal(ctx: &Runtime, url: &str) -> anyhow::Result<()> {
-    let payload = serde_json::json!({
-        "mode": "minimal",
-        "persist": true,
-        "timeout_minutes": 0
-    });
-
-    match ctx
-        .client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-    {
-        Ok(response) if response.status().is_success() => {
-            println!(
-                "{}{} Stone set to minimal mode (critical only, permanent)",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("ok", ctx.term.supports_color)
-            );
-        }
-        Ok(response) => {
-            let status = response.status();
-            if let Ok(body) = response.text().await {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    body
-                );
-            } else {
-                eprintln!(
-                    "{}{} Failed to set mode: {}",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::status_indicator("error", ctx.term.supports_color),
-                    status
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "{}{} Request failed: {}",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("error", ctx.term.supports_color),
-                e
-            );
-        }
-    }
-
-    Ok(())
+fn display_api_error(e: &StoneApiError) -> String {
+    e.display_message()
 }

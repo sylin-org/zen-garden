@@ -608,8 +608,9 @@ pub async fn route(
             let at = opt(m, "at");
             let resolved =
                 dispatch::resolve_endpoint(&rt.client, at, Some(&*STONE)).await?;
+            let api = garden_common::client::StoneApi::new(rt.client.clone(), resolved);
             commands::api::execute_api_command(
-                &resolved,
+                &api,
                 opt(m, "category"),
                 opt(m, "endpoint"),
                 m.get_flag("examples"),

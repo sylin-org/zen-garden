@@ -250,6 +250,24 @@ garden-rake upgrade --garden                 # Cross-stone upgrade for all stone
 | `--garden` | No | Garden-wide upgrade across all stones |
 | `--at <ENDPOINT>` | No | Target stone |
 
+### `nourish`
+
+Check and apply updates across the garden — offerings, Moss, and firmware/BIOS.
+
+```bash
+garden-rake nourish                          # Interactive: check all, choose what to apply
+garden-rake nourish --updates-only           # Check without applying
+garden-rake nourish --yes                    # Auto-confirm all updates
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<stone>` | No | Target specific stone (omit for garden-wide) |
+| `--updates-only` | No | Check for updates without applying |
+| `--yes` / `-y` | No | Auto-confirm all updates |
+
+Interactive menu options: **[A]** All updates, **[O]** Offering updates only, **[F]** Firmware updates only.
+
 ### `remove`
 
 Soft-delete a service. The container is preserved as a stray (can be re-adopted).

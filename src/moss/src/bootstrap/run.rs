@@ -20,7 +20,6 @@ use crate::{
     mdns,
     router,
     run_server,
-    start_discovery_listener,
     version_string,
     AppState,
     DockerConfig,
@@ -34,6 +33,7 @@ use crate::{
     NetworkConfig,
     ServerConfig,
 };
+use crate::tasks::discovery::start_discovery_listener;
 use garden_common::console;
 use garden_common::offerings::OfferingFqn;
 use std::collections::HashMap;
@@ -147,6 +147,12 @@ pub async fn run(
         crate::tasks::coordinator::start_background_tasks(state.clone(), artifacts, file_config)
             .await;
 
+    // Extract supervisor handle for the /tasks API before run() consumes it
+    {
+        let mut guard = state.task_supervisor.write().await;
+        *guard = Some(supervisor.handle());
+    }
+
     // Run the task supervisor in the background — it monitors all spawned tasks
     // for panics and handles clean shutdown when the cancellation token fires.
     let shutdown_token = state.shutdown_token.clone();
@@ -214,6 +220,16 @@ async fn build_state(
     // This must happen early as many components need it
     let stone_id = infra::load_or_generate_stone_id().await;
     tracing::info!(stone_id = %stone_id, stone_name = %stone_name, "Stone identity loaded");
+
+    // Phase 0.1: Self-heal systemd unit file if stale (legacy migration).
+    // On stones that still have the old `moss-update-helper.sh` as ExecStartPre,
+    // `garden-moss pre-start` never runs. This bootstrap check regenerates the
+    // unit file so the NEXT restart uses the modern pre-start binary.
+    // Fast no-op once the unit file is current.
+    #[cfg(target_os = "linux")]
+    {
+        ensure_modern_unit_file();
+    }
 
     // Phase 0.5: Source-of-truth fields for this stone's mutable state.
     //
@@ -845,6 +861,7 @@ async fn build_state(
                 dirty: topology_dirty.clone(),
             },
             capabilities: capabilities.clone(),
+            hardware_topology: Arc::new(RwLock::new(None)),
             address: current_address.clone(),
             health: current_health.clone(),
             mac: current_mac.clone(),
@@ -923,6 +940,9 @@ async fn build_state(
                 jobs: nourishment_map.clone(),
             },
         }),
+
+        // ARCH-0015: supervisor handle set after supervisor is built
+        task_supervisor: Arc::new(RwLock::new(None)),
     };
 
     // Phase 11.post: Update election service with proper state provider now that AppState exists
@@ -1578,6 +1598,62 @@ pub(crate) async fn activate_pond_security(
                 port = garden_common::constants::MOSS_HTTPS,
                 "HTTPS listener started (pond security)"
             );
+        }
+    }
+}
+
+// ── Legacy self-healing ─────────────────────────────────────────────
+
+/// Regenerate the systemd unit file if it contains stale directives.
+///
+/// This bootstraps the transition from the old `moss-update-helper.sh`
+/// to `garden-moss pre-start`. The daemon runs even with the old unit
+/// file, so this check ensures the NEXT restart uses the modern pre-start.
+/// Also removes legacy shell scripts that the pre-start would remove,
+/// since pre-start may not have run yet under the old unit file.
+#[cfg(target_os = "linux")]
+fn ensure_modern_unit_file() {
+    use crate::infra::installer::{linux, pre_start};
+    use std::path::Path;
+
+    let unit_path = Path::new(linux::UNIT_FILE_PATH);
+    if !unit_path.exists() {
+        return;
+    }
+
+    let current = match std::fs::read_to_string(unit_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "Could not read unit file for migration check");
+            return;
+        }
+    };
+
+    if !pre_start::unit_file_needs_regeneration(&current) {
+        return;
+    }
+
+    let new_contents = linux::generate_unit_file();
+    if let Err(e) = std::fs::write(unit_path, &new_contents) {
+        tracing::error!(error = %e, "Failed to regenerate systemd unit file");
+        return;
+    }
+
+    tracing::info!("Regenerated systemd unit file (legacy migration)");
+
+    // daemon-reload so the new unit takes effect on next restart
+    let _ = std::process::Command::new("systemctl")
+        .args(["daemon-reload"])
+        .output();
+
+    // Also remove legacy scripts (pre-start may not have run yet)
+    for path_str in linux::LEGACY_SCRIPTS {
+        let path = Path::new(path_str);
+        if path.exists() {
+            match std::fs::remove_file(path) {
+                Ok(()) => tracing::info!(path = path_str, "Removed legacy script"),
+                Err(e) => tracing::warn!(path = path_str, error = %e, "Could not remove legacy script"),
+            }
         }
     }
 }

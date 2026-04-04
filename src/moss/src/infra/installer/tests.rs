@@ -318,3 +318,55 @@ mod deployment_tests {
         assert!(!options.dry_run);
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod legacy_migration_tests {
+    use crate::infra::installer::pre_start::unit_file_needs_regeneration;
+
+    #[test]
+    fn old_shell_script_exec_start_pre_needs_regen() {
+        let old = "[Service]\nType=simple\nExecStartPre=/usr/local/bin/moss-update-helper.sh\n";
+        assert!(unit_file_needs_regeneration(old));
+    }
+
+    #[test]
+    fn even_older_upgrade_script_needs_regen() {
+        let old = "[Service]\nType=notify\nExecStartPre=/usr/local/bin/garden-upgrade.sh\n";
+        assert!(unit_file_needs_regeneration(old));
+    }
+
+    #[test]
+    fn sandbox_directives_need_regen() {
+        let old = "[Service]\nType=notify\nProtectSystem=strict\nExecStartPre=/usr/local/bin/garden-moss pre-start\n";
+        assert!(unit_file_needs_regeneration(old));
+    }
+
+    #[test]
+    fn type_simple_needs_regen() {
+        let old = "[Service]\nType=simple\nWatchdogSec=60\nNotifyAccess=main\n";
+        assert!(unit_file_needs_regeneration(old));
+    }
+
+    #[test]
+    fn missing_watchdog_needs_regen() {
+        // Has NotifyAccess but no WatchdogSec
+        let partial = "[Service]\nType=notify\nNotifyAccess=main\nExecStartPre=/usr/local/bin/garden-moss pre-start\n";
+        assert!(unit_file_needs_regeneration(partial));
+    }
+
+    #[test]
+    fn missing_notify_access_needs_regen() {
+        // Has WatchdogSec but no NotifyAccess
+        let partial = "[Service]\nType=notify\nWatchdogSec=60\nExecStartPre=/usr/local/bin/garden-moss pre-start\n";
+        assert!(unit_file_needs_regeneration(partial));
+    }
+
+    #[test]
+    fn modern_generated_unit_does_not_need_regen() {
+        let modern = crate::infra::installer::linux::generate_unit_file();
+        assert!(
+            !unit_file_needs_regeneration(&modern),
+            "The generated unit file itself must pass the staleness check"
+        );
+    }
+}

@@ -140,6 +140,8 @@ pub fn display_all_commands(_zen_only: bool, _normative_only: bool) {
         (command_manifest::CommandCategory::Discovery, "DISCOVERY"),
         (command_manifest::CommandCategory::Lifecycle, "SERVICES"),
         (command_manifest::CommandCategory::Adoption, "ADOPTION"),
+        (command_manifest::CommandCategory::Storage, "STORAGE"),
+        (command_manifest::CommandCategory::Companion, "COMPANIONS"),
         (command_manifest::CommandCategory::Management, "MANAGEMENT"),
         (command_manifest::CommandCategory::System, "SYSTEM"),
         (

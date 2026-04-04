@@ -144,6 +144,13 @@ impl<S: ManagementStoreOps + 'static> StorageBank<S> {
     pub async fn on_vanished(&self, path: String) {
         let mut map = self.volumes.write().await;
         if let Some(vol) = map.get_mut(&path) {
+            // Guard: only emit Released on the first transition to Offline.
+            // The platform monitor may fire repeated Disconnected events for
+            // the same device; without this guard each one produces a ribbon.
+            if vol.state == VolumeState::Offline {
+                debug!(path = %path, "Volume already offline, ignoring duplicate vanish");
+                return;
+            }
             info!(path = %path, name = %vol.display_name(), "Volume disappeared");
             let was_managed = vol.is_managed();
             let name = vol.display_name().to_string();

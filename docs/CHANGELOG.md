@@ -2,6 +2,13 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-04-04
+
+- **Pre-start ETXTBSY fix**: `ExecStartPre` self-upgrade replaced silent `remove_file` + `copy` with rename-then-copy pattern (`rename(2)` atomically detaches the directory entry while the kernel keeps the old inode alive for any running process). Same pattern applied to `linux.rs` installer. Prevents permanent crash loops when pre-start cannot replace its own running binary. Also fixed in `deploy_scripts` for scripts landing in `/usr/local/bin/`.
+- **Rake command directory**: Fixed 8 commands invisible in `garden-rake` output — `Companion` and `Storage` categories were missing from the display loop in `help.rs`. Commands `hey`, `storage`, `store`, and `backup` are now visible under their respective headings.
+- **Nourish command restored**: `garden-rake nourish` (garden-wide software + firmware/BIOS update check and apply) was orphaned after the ARCH-0006 interface unification — command module existed but was not wired in the router or manifest. Now fully registered with manifest entry, CLI args, and routing. `capabilities` command similarly restored to the manifest with full subcommand definitions (add/remove/refresh/mirror).
+- **Self-healing legacy migration**: Two-phase migration from old `moss-update-helper.sh` shell-script updater. Phase 1: daemon startup (`bootstrap/run.rs`) detects stale systemd unit files (old `ExecStartPre`, `Type=simple`, `ProtectSystem` sandbox, missing `WatchdogSec`/`NotifyAccess`) and regenerates them with `daemon-reload`. Phase 2: `garden-moss pre-start` removes legacy scripts (`moss-update-helper.sh`, `garden-upgrade.sh`) on first boot. Both phases are fast no-ops once the stone is clean. Pre-start now always prints version status: `[pre-start] v0.2.0.xxx — no staged upgrade.`
+
 ## 2026-03-22
 
 - **ARCH-0007**: Rust 1.92 / edition 2024 modernization. Removed `async-trait` — 13 domain traits monomorphized with concrete types. `TaskSupervisor` (JoinSet-based) replaces ad-hoc `tokio::spawn` for 30 background tasks; tasks named via `tracing::Instrument`. `FromRef` infrastructure: 12 handler dependency-injection impls so handlers declare only what they use. Added 5 integration test crates, 4 property-based test suites (proptest). `[workspace.lints]` enforces `undocumented_unsafe_blocks` and `unwrap_used` — zero suppressions merged. `cargo-deny` configured for license and advisory scanning. Removed dependencies: `async-trait`, `once_cell`, `serde_yaml`, `local-ip-address`, `network-interface`. See [ARCH-0007](decisions/ARCH-0007-monomorphic-domain-traits.md).

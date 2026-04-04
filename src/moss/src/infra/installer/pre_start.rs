@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use anyhow::Context;
 use garden_common::utils::validation::validate_safe_path;
 
 use super::version::{InstallMethod, InstalledVersion};
@@ -16,24 +17,29 @@ use super::version::{InstallMethod, InstalledVersion};
 /// Process any staged packages and exit.
 ///
 /// Called as `ExecStartPre=/usr/local/bin/garden-moss pre-start`.
-/// If no staged packages exist, returns immediately.
+/// Always prints a version status line. When no staged packages exist,
+/// prints the current version and exits quickly.
 pub fn run(dry_run: bool) -> anyhow::Result<()> {
+    // ── Legacy migration (runs every boot, fast no-op when clean) ───
+    if !dry_run {
+        migrate_legacy()?;
+    }
+
     let staging_dir = validated_staging_dir();
+    let version = current_version();
 
     if !staging_dir.join("bin").exists() {
+        println!("[pre-start] {version} \u{2014} no staged upgrade.");
         if dry_run {
-            println!("[pre-start] No staged packages found (dry-run).");
+            println!("[pre-start] (dry-run)");
         }
         return Ok(());
     }
 
-    println!(
-        "[pre-start] Found staged upgrade in: {}",
-        staging_dir.display()
-    );
+    println!("[pre-start] {version} \u{2014} found staged upgrade.");
 
     if dry_run {
-        println!("[pre-start] DRY RUN — listing actions without executing:");
+        println!("[pre-start] DRY RUN \u{2014} listing actions without executing:");
         dry_run_report(&staging_dir)?;
         return Ok(());
     }
@@ -42,8 +48,8 @@ pub fn run(dry_run: bool) -> anyhow::Result<()> {
     deploy_scripts(&staging_dir)?;
 
     // Write version breadcrumb
-    let version = read_staged_version(&staging_dir);
-    let breadcrumb = InstalledVersion::new(&version, InstallMethod::PreStart);
+    let staged_version = read_staged_version(&staging_dir);
+    let breadcrumb = InstalledVersion::new(&staged_version, InstallMethod::PreStart);
     if let Err(e) = super::version::write_installed_version(&breadcrumb) {
         eprintln!("[pre-start] Warning: could not write version breadcrumb: {e}");
     }
@@ -54,8 +60,84 @@ pub fn run(dry_run: bool) -> anyhow::Result<()> {
         eprintln!("[pre-start] Warning: could not clean staging: {e}");
     }
 
-    println!("[pre-start] Upgrade complete.");
+    println!("[pre-start] Upgrade complete: {version} -> v{staged_version}");
     Ok(())
+}
+
+// ── Legacy migration ────────────────────────────────────────────────
+
+/// One-time self-healing migration from the old shell-script updater.
+///
+/// 1. Removes legacy shell scripts replaced by `garden-moss pre-start`.
+/// 2. Regenerates the systemd unit file if it contains stale directives
+///    (old ExecStartPre, Type=simple, ProtectSystem, missing WatchdogSec).
+///
+/// Each check is a file-exists or string-contains test — fast on every boot.
+/// Once the artifacts are gone and the unit file is current, this is a no-op.
+fn migrate_legacy() -> anyhow::Result<()> {
+    let mut changed = false;
+
+    // ── Remove legacy scripts ──────────────────────────────────────
+    #[cfg(target_os = "linux")]
+    for path_str in super::linux::LEGACY_SCRIPTS {
+        let path = Path::new(path_str);
+        if path.exists() {
+            match std::fs::remove_file(path) {
+                Ok(()) => {
+                    println!("[pre-start] Removed legacy script: {path_str}");
+                    changed = true;
+                }
+                Err(e) => {
+                    eprintln!("[pre-start] Warning: could not remove {path_str}: {e}");
+                }
+            }
+        }
+    }
+
+    // ── Regenerate unit file if stale ──────────────────────────────
+    #[cfg(target_os = "linux")]
+    {
+        let unit_path = Path::new(super::linux::UNIT_FILE_PATH);
+        if unit_path.exists() {
+            if let Ok(current) = std::fs::read_to_string(unit_path) {
+                if unit_file_needs_regeneration(&current) {
+                    let new_contents = super::linux::generate_unit_file();
+                    std::fs::write(unit_path, &new_contents).with_context(|| {
+                        format!(
+                            "failed to regenerate unit file at {}",
+                            unit_path.display()
+                        )
+                    })?;
+                    println!("[pre-start] Regenerated systemd unit file (legacy migration).");
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // ── daemon-reload if anything changed ──────────────────────────
+    if changed {
+        println!("[pre-start] Running systemctl daemon-reload...");
+        let _ = Command::new("systemctl").args(["daemon-reload"]).output();
+    }
+
+    Ok(())
+}
+
+/// Returns true if the unit file contains legacy directives that indicate
+/// it was generated before BUILD-0003 / ARCH-0008.
+pub(crate) fn unit_file_needs_regeneration(contents: &str) -> bool {
+    contents.contains("moss-update-helper.sh")
+        || contents.contains("garden-upgrade.sh")
+        || contents.contains("Type=simple")
+        || contents.contains("ProtectSystem")
+        || !contents.contains("WatchdogSec")
+        || !contents.contains("NotifyAccess")
+}
+
+/// Current running binary version for display.
+fn current_version() -> String {
+    format!("v{}", crate::cli::VERSION)
 }
 
 // ── Binary deployment ───────────────────────────────────────────────
@@ -106,10 +188,17 @@ fn deploy_scripts(staging_dir: &Path) -> anyhow::Result<()> {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(&file, &target)?;
+
+        // Scripts landing in /usr/local/bin/ may be running executables —
+        // use rename-then-copy to avoid ETXTBSY.
+        let target_str = target.to_string_lossy();
+        if target_str.starts_with("/usr/local/bin/") {
+            replace_file(&file, &target)?;
+        } else {
+            std::fs::copy(&file, &target)?;
+        }
 
         // Post-install hooks
-        let target_str = target.to_string_lossy();
         if target_str.starts_with("/etc/systemd/system/") {
             needs_daemon_reload = true;
             set_mode(&target, 0o644)?;
@@ -216,12 +305,41 @@ fn copy_dir_contents(src: &Path, dest: &Path) -> anyhow::Result<()> {
         if src_path.is_dir() {
             copy_dir_contents(&src_path, &dest_path)?;
         } else {
-            // Unlink the target first to avoid ETXTBSY (errno 26) when
-            // overwriting a running executable — Linux allows unlinking a
-            // mapped binary; the inode stays alive until the process exits.
-            let _ = std::fs::remove_file(&dest_path);
-            std::fs::copy(&src_path, &dest_path)?;
+            replace_file(&src_path, &dest_path)?;
         }
+    }
+    Ok(())
+}
+
+/// Replace a file at `dest` with `src`, handling running executables.
+///
+/// Uses rename-then-copy: atomically renames the existing file to `.old`,
+/// copies the new file to the original path (fresh inode), then cleans up.
+/// This avoids ETXTBSY (errno 26) because `rename(2)` detaches the directory
+/// entry while the kernel keeps the old inode alive for any running process.
+fn replace_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    if dest.exists() {
+        let backup = dest.with_extension("old");
+        // Atomic rename: running process keeps the old inode via page mapping.
+        // The path is now free for a fresh file.
+        std::fs::rename(dest, &backup).with_context(|| {
+            format!(
+                "failed to rename {} -> {} before copy",
+                dest.display(),
+                backup.display()
+            )
+        })?;
+        // Copy new file to original path (new inode — no ETXTBSY).
+        let result = std::fs::copy(src, dest).with_context(|| {
+            format!("failed to copy {} -> {}", src.display(), dest.display())
+        });
+        // Best-effort cleanup — old inode stays alive until the process exits.
+        let _ = std::fs::remove_file(&backup);
+        result?;
+    } else {
+        std::fs::copy(src, dest).with_context(|| {
+            format!("failed to copy {} -> {}", src.display(), dest.display())
+        })?;
     }
     Ok(())
 }

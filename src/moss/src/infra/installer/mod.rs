@@ -9,10 +9,10 @@
 //! - `garden-moss pre-start [--dry-run]`
 
 #[cfg(target_os = "linux")]
-mod linux;
+pub(crate) mod linux;
 mod package;
 #[cfg(target_os = "linux")]
-pub mod pre_start;
+pub(crate) mod pre_start;
 mod provision;
 #[cfg(test)]
 mod tests;

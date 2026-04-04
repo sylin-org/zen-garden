@@ -29,6 +29,7 @@ pub mod cmd {
     pub const LIST: &str = "list";
     pub const STATUS: &str = "status";
     pub const CAPABILITIES: &str = "capabilities";
+    pub const INSPECT: &str = "inspect";
 
     // Lifecycle
     pub const OFFER: &str = "offer";
@@ -866,6 +867,45 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
             },
         ],
         see_also: vec!["list", "observe"],
+        hidden: false,
+        subcommand_negates_reqs: false,
+    });
+
+    manifest.add(CommandDef {
+        name: "inspect",
+        aliases: &["hw"],
+        category: CommandCategory::Discovery,
+        description: "Deep hardware topology inspection",
+        long_description: "Display full hardware capabilities for a stone (ARCH-0014).\n\n\
+            Shows Tier 1 (CPU, GPU, memory) and Tier 2 (PCIe topology, M.2 slots,\n\
+            USB, network interfaces, firmware versions). Use --save to export\n\
+            raw JSON for fleet comparison.",
+        remote_capable: true,
+        args: vec![
+            ArgSpec::option("save", "Save raw JSON to file path").short('s'),
+            ArgSpec::flag("json", "Output raw JSON instead of formatted text"),
+            at_arg(),
+        ],
+        subcommands: vec![],
+        examples: vec![
+            CommandExample {
+                description: "Inspect tended stone",
+                syntax: "garden-rake inspect",
+            },
+            CommandExample {
+                description: "Inspect specific stone",
+                syntax: "garden-rake inspect on stone-golden-summit",
+            },
+            CommandExample {
+                description: "Save raw JSON for later analysis",
+                syntax: "garden-rake inspect --save topology.json",
+            },
+            CommandExample {
+                description: "Pipe JSON output",
+                syntax: "garden-rake inspect --json | jq '.topology.expansion.pcie'",
+            },
+        ],
+        see_also: vec!["status", "observe"],
         hidden: false,
         subcommand_negates_reqs: false,
     });
@@ -1754,6 +1794,132 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
         subcommand_negates_reqs: false,
     });
 
+    // === NOURISH (Garden-wide Updates) ===
+
+    manifest.add(CommandDef {
+        name: "nourish",
+        aliases: &[],
+        category: CommandCategory::Lifecycle,
+        description: "Check and apply software and firmware updates",
+        long_description: "Check and apply updates across the garden — offerings, Moss, and firmware/BIOS.\n\n\
+            Queries all stones for available updates, then presents an interactive menu:\n\
+            [A] All updates (offerings + firmware)\n\
+            [O] Offering updates only\n\
+            [F] Firmware updates only\n\n\
+            Use --updates-only to check without applying.\n\
+            Use --yes to auto-confirm all updates (non-interactive).",
+        remote_capable: false,
+        args: vec![
+            ArgSpec::positional("stone", "Target specific stone (omit for garden-wide)"),
+            ArgSpec::flag("updates-only", "Check for updates without applying"),
+            ArgSpec::flag("yes", "Auto-confirm all updates").short('y'),
+        ],
+        subcommands: vec![],
+        examples: vec![
+            CommandExample {
+                description: "Check and apply all updates across the garden",
+                syntax: "garden-rake nourish",
+            },
+            CommandExample {
+                description: "Check for updates without applying",
+                syntax: "garden-rake nourish --updates-only",
+            },
+            CommandExample {
+                description: "Auto-confirm all updates",
+                syntax: "garden-rake nourish --yes",
+            },
+        ],
+        see_also: vec!["upgrade", "observe"],
+        hidden: false,
+        subcommand_negates_reqs: false,
+    });
+
+    // === CAPABILITIES (Offering Capability Management) ===
+
+    manifest.add(CommandDef {
+        name: cmd::CAPABILITIES,
+        aliases: &["cap"],
+        category: CommandCategory::Lifecycle,
+        description: "Manage offering capabilities (models, extensions, modules)",
+        long_description: "Discover and manage capabilities for an offering.\n\n\
+            Capabilities are models, extensions, modules, or plugins managed by an offering.\n\
+            For example, Ollama models, PostgreSQL extensions, or Redis modules.\n\n\
+            Subcommands:\n\
+            - (bare): List all capabilities for an offering\n\
+            - add: Add a capability (e.g., pull a model)\n\
+            - remove: Remove a capability\n\
+            - refresh: Re-scan and update the capability list\n\
+            - mirror: Copy capabilities from another stone",
+        remote_capable: true,
+        args: vec![
+            ArgSpec::positional("offering", "Offering name").required(),
+            at_arg(),
+        ],
+        subcommands: vec![
+            SubDef {
+                name: "add",
+                description: "Add a capability (e.g., pull a model)",
+                args: vec![
+                    ArgSpec::positional("name", "Capability name to add").required(),
+                    ArgSpec::option("type", "Capability type (if offering supports multiple)"),
+                    ArgSpec::flag("dry-run", "Validate without executing"),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "remove",
+                description: "Remove a capability",
+                args: vec![
+                    ArgSpec::positional("name", "Capability name to remove").required(),
+                    ArgSpec::option("type", "Capability type"),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "refresh",
+                description: "Re-scan and update capability list",
+                args: vec![
+                    ArgSpec::option("type", "Capability type to refresh"),
+                    ArgSpec::flag("dry-run", "Show what would change without applying"),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "mirror",
+                description: "Copy capabilities from another stone",
+                args: vec![
+                    ArgSpec::trailing("args", "Source specification"),
+                ],
+                subcommands: vec![],
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "List Ollama models",
+                syntax: "garden-rake capabilities ollama",
+            },
+            CommandExample {
+                description: "Pull a model",
+                syntax: "garden-rake capabilities ollama add llama3.2",
+            },
+            CommandExample {
+                description: "Remove a model",
+                syntax: "garden-rake capabilities ollama remove llama3.2",
+            },
+            CommandExample {
+                description: "Refresh capabilities after manual changes",
+                syntax: "garden-rake capabilities ollama refresh",
+            },
+            CommandExample {
+                description: "Mirror capabilities from another stone",
+                syntax: "garden-rake cap ollama mirror from stone-golden-summit",
+            },
+        ],
+        see_also: vec!["offer", "upgrade", "inspect"],
+        hidden: false,
+        subcommand_negates_reqs: true,
+    });
+
     manifest
 });
 
@@ -1771,6 +1937,7 @@ pub fn validate_manifest() {
         "status",
         "find",
         "config",
+        "inspect",
         // Lifecycle
         "offer",
         "rest",
@@ -1778,6 +1945,7 @@ pub fn validate_manifest() {
         "remove",
         "uproot",
         "upgrade",
+        "nourish",
         "capabilities",
         // Adoption
         "adopt",

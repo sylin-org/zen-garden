@@ -59,6 +59,15 @@ pub async fn route(
 
         "status" => Inv::remote(commands::discovery::StatusCommand::new(g.quiet), m),
 
+        "inspect" => {
+            let save_path = opt(m, "save");
+            let json = m.get_flag("json");
+            Inv::remote(
+                commands::discovery::InspectCommand::new(save_path, json, g.quiet),
+                m,
+            )
+        }
+
         "list" => Inv::remote(commands::discovery::ListCommand::new(g.quiet), m),
 
         "find" => {
@@ -225,6 +234,12 @@ pub async fn route(
             commands::lifecycle::UpgradeCommand::new(opt(m, "service"), m.get_flag("all"), g.quiet),
             m,
         ),
+
+        "nourish" => Inv::local(commands::nourish::NourishCommand::new(
+            opt(m, "stone"),
+            m.get_flag("updates-only"),
+            m.get_flag("yes"),
+        )),
 
         "rest" => Inv::remote(
             commands::lifecycle::RestCommand::new(req(m, "service")?, g.quiet),

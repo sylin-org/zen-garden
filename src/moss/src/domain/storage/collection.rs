@@ -14,7 +14,9 @@ use tracing::{debug, info};
 use crate::domain::traits::{ManagementStoreOps, StoragePlatform};
 
 use super::platform_types::VolumeSnapshot;
-use super::volume::{DiskMetrics, Volume, VolumeState};
+#[cfg(test)]
+use super::volume::VolumeState;
+use super::volume::{DiskMetrics, Volume};
 
 /// The unified volume collection — keyed by device path.
 pub type Volumes = Arc<RwLock<HashMap<String, Volume>>>;

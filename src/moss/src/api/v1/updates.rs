@@ -650,72 +650,17 @@ async fn execute_offering_update(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to remove service '{}': {}", name, e))?;
 
-    // Step 3: Get compiled manifest for service configuration
-    let compiled = crate::domain::get_compiled_offering(
-        state,
-        name,
-        &crate::infra::persistence::OsOfferingsCache,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to get offering config for '{}': {}", name, e))?
-    .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found in catalog", name))?;
-
-    // Step 4: Recreate the service with the new image, composing any config patches
+    // Step 3: Recreate the service with the new image, composing any config patches
     let _ = tx.send(format!(
         "    Creating new container with image: {}",
         target_image
     ));
 
-    // Get config patches from the offering registry
-    let patches = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == name && o.is_managed())
-            .and_then(|o| o.managed_data())
-            .map(|d| d.config_patches.clone())
-            .unwrap_or_default()
-    };
-
-    // Parse FQN for volume isolation (comfyui::prod → comfyui--prod/)
-    let fqn = garden_common::offerings::OfferingFqn::parse(name)
-        .map_err(|e| anyhow::anyhow!("Invalid offering FQN '{}': {}", name, e))?;
-
-    let spec = if !patches.is_empty() {
-        // Compose manifest template + patches, override image with target
-        let manifest = state
-            .manifest_registry
-            .get_offering(&fqn.offering)
-            .ok_or_else(|| anyhow::anyhow!("No manifest for '{}'", name))?;
-        let template = manifest
-            .parse_template_for_fqn(&fqn)
-            .map_err(|e| anyhow::anyhow!("Failed to parse template for '{}': {}", name, e))?;
-        let effective = crate::domain::config_compose::compose(&template, &patches)
-            .map_err(|e| anyhow::anyhow!("Failed to compose config for '{}': {}", name, e))?;
-
-        crate::docker::ContainerSpec {
-            image: target_image.clone(),
-            command: effective.command,
-            ports: effective.ports,
-            environment: effective.environment,
-            volumes: effective.volumes,
-            config_files: effective.config_files,
-            device_requests: template.device_requests,
-        }
-    } else {
-        let fqn_volumes = compiled.volumes_for_fqn(&fqn);
-        let compiled_ports = compiled.ports_vec();
-        let compiled_device_requests = compiled.device_requests;
-        crate::docker::ContainerSpec {
-            image: target_image.clone(),
-            command: None,
-            ports: compiled_ports,
-            environment: compiled.environment,
-            volumes: fqn_volumes,
-            config_files: vec![],
-            device_requests: compiled_device_requests,
-        }
-    };
+    // Build spec via CompiledOffering (hardware-resolved) + config patches,
+    // then override the image with the target upgrade image.
+    let mut spec =
+        crate::domain::services_internal::build_spec_from_manifest(state, name).await?;
+    spec.image = target_image.clone();
 
     state
         .platform

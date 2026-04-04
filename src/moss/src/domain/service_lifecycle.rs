@@ -620,41 +620,26 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
         })
         .await;
 
-    // Load template for upgrade
-    let entry = state
-        .manifest_registry
-        .sw
-        .get(&offering)
-        .ok_or_else(|| anyhow::anyhow!("Template for '{}' not found", offering))?;
-
-    // Parse FQN for volume isolation (comfyui::prod → comfyui--prod/)
-    let fqn = garden_common::offerings::OfferingFqn::parse(service_name)
-        .unwrap_or_else(|_| garden_common::offerings::OfferingFqn::parse(&offering).unwrap());
-
-    let template = match entry.parse_template_for_fqn(&fqn) {
-        Ok(t) => t,
+    // Build container spec via CompiledOffering (hardware-resolved image,
+    // device_requests, etc.) + config patches. Falls back to raw template
+    // only if the compiled index is unavailable.
+    let spec = match crate::domain::services_internal::build_spec_from_manifest(
+        state,
+        service_name,
+    )
+    .await
+    {
+        Ok(s) => s,
         Err(e) => {
-            // Restore status on template load failure
+            // Restore status on spec build failure
             state
                 .update_offering(&offering_id, true, |o| {
                     o.status = OfferingStatus::Running;
                     true
                 })
                 .await;
-            return Err(anyhow::anyhow!("Failed to load template: {}", e));
+            return Err(anyhow::anyhow!("Failed to build upgrade spec: {}", e));
         }
-    };
-
-    // Build container spec from template
-    let ports = template.ports_vec();
-    let spec = crate::docker::ContainerSpec {
-        image: template.image.clone(),
-        command: template.command,
-        ports,
-        environment: template.environment,
-        volumes: template.volumes,
-        config_files: template.config_files,
-        device_requests: template.device_requests,
     };
 
     // Perform Docker upgrade
@@ -675,13 +660,13 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
         return Err(anyhow::anyhow!("Failed to upgrade: {}", e));
     }
 
-    let new_version = template
+    let new_version = spec
         .image
         .split(':')
         .next_back()
         .unwrap_or("latest")
         .to_string();
-    let new_image = template.image.clone();
+    let new_image = spec.image.clone();
 
     // Update status and version via gateway (syncs self_entry + persists)
     let nv = new_version.clone();
@@ -696,7 +681,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
     // Emit offering lifecycle event (old_image reconstructed from old_version)
     let old_image = format!(
         "{}:{}",
-        template.image.split(':').next().unwrap_or(&offering),
+        spec.image.split(':').next().unwrap_or(&offering),
         old_version
     );
     state.event_bus.emit(OfferingEvent::updated(

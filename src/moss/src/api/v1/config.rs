@@ -460,38 +460,22 @@ async fn maybe_cycle_container(
 
     if needs_recreate {
         // Container spec changed (env, volumes, command) — must recreate.
-        // Resolve image via compiled offerings index for hardware capability
-        // resolution (e.g., AVX fallback: mongo:7 → mongo:4.4).
-        let mut resolved_spec = desired_spec;
-        let offering_type = OfferingFqn::parse(service_name)
-            .map(|fqn| fqn.offering.clone())
-            .unwrap_or_else(|_| service_name.to_string());
-
-        match crate::get_compiled_offering(
-            state,
-            &offering_type,
-            &crate::infra::persistence::OsOfferingsCache,
-        )
-        .await
-        {
-            Ok(Some(compiled)) if compiled.image != resolved_spec.image => {
-                tracing::info!(
-                    service = %service_name,
-                    manifest_image = %resolved_spec.image,
-                    resolved_image = %compiled.image,
-                    "Using hardware-resolved image for container recreation"
-                );
-                resolved_spec.image = compiled.image;
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(
-                    service = %service_name,
-                    error = ?e,
-                    "Failed to read compiled offerings index, using manifest image for recreation"
-                );
-            }
-        }
+        // Use build_spec_from_manifest to get the full hardware-resolved spec
+        // (image, device_requests, etc.) with config patches applied.
+        let resolved_spec =
+            match crate::domain::services_internal::build_spec_from_manifest(state, service_name)
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(
+                        service = %service_name,
+                        error = ?e,
+                        "Failed to build resolved spec for recreation, using effective config"
+                    );
+                    desired_spec
+                }
+            };
 
         tracing::info!(service = %service_name, "Config change requires container recreation");
         if let Err(e) = state

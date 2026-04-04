@@ -65,73 +65,17 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
 
 /// Build the container spec for a nourish operation.
 ///
-/// Parses the manifest template, overrides the image with `new_image`,
-/// and composes any existing config patches into the effective spec.
+/// Uses `build_spec_from_manifest` (CompiledOffering + config patches) to get
+/// the hardware-resolved spec, then overrides the image with `new_image`.
 async fn build_nourish_spec(
     state: &AppState,
     offering: &str,
     new_image: &str,
 ) -> Result<crate::docker::ContainerSpec> {
-    // Get existing config patches from the offering registry
-    let patches = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering && o.is_managed())
-            .and_then(|o| o.managed_data())
-            .map(|d| d.config_patches.clone())
-            .unwrap_or_default()
-    };
-
-    // Parse the manifest template with FQN-specific volume isolation
-    let fqn = garden_common::offerings::OfferingFqn::parse(offering)
-        .context("Invalid offering FQN")?;
-    let manifest = state.manifest_registry.get_offering(&fqn.offering);
-
-    if let Some(manifest) = manifest {
-        let template = manifest
-            .parse_template_for_fqn(&fqn)
-            .context("Failed to parse template")?;
-
-        if !patches.is_empty() {
-            // Compose manifest + patches, then override image with new_image
-            let effective = crate::domain::config_compose::compose(&template, &patches)
-                .context("Failed to compose config patches")?;
-
-            Ok(crate::docker::ContainerSpec {
-                image: new_image.to_string(),
-                command: effective.command,
-                ports: effective.ports,
-                environment: effective.environment,
-                volumes: effective.volumes,
-                config_files: effective.config_files,
-                device_requests: template.device_requests.clone(),
-            })
-        } else {
-            // No patches — use template directly
-            let ports = template.ports_vec();
-            Ok(crate::docker::ContainerSpec {
-                image: new_image.to_string(),
-                command: template.command,
-                ports,
-                environment: template.environment,
-                volumes: template.volumes,
-                config_files: template.config_files,
-                device_requests: template.device_requests.clone(),
-            })
-        }
-    } else {
-        // No manifest — best effort with empty config
-        Ok(crate::docker::ContainerSpec {
-            image: new_image.to_string(),
-            command: None,
-            ports: Vec::new(),
-            environment: Vec::new(),
-            volumes: Vec::new(),
-            config_files: vec![],
-            device_requests: vec![],
-        })
-    }
+    let mut spec =
+        crate::domain::services_internal::build_spec_from_manifest(state, offering).await?;
+    spec.image = new_image.to_string();
+    Ok(spec)
 }
 
 #[cfg(test)]

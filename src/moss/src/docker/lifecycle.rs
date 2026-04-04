@@ -570,7 +570,21 @@ impl Client {
                     tokio::time::sleep(POLL_INTERVAL).await;
                 }
                 // 404 Not Found — container is gone (expected path)
-                Err(_) => return Ok(()),
+                Err(bollard::errors::Error::DockerResponseServerError {
+                    status_code: 404,
+                    ..
+                }) => return Ok(()),
+                // Transient error (network, socket) — retry rather than
+                // assuming the container is gone (OFFER-0008).
+                Err(e) => {
+                    tracing::debug!(
+                        container = %container_name,
+                        attempt,
+                        error = %e,
+                        "Transient error checking container removal, retrying"
+                    );
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
             }
         }
 

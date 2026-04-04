@@ -204,6 +204,7 @@ mod tests {
             compatibility: None,
             tasks: std::collections::HashMap::new(),
             network: Default::default(),
+            device_requests: vec![],
         }
     }
 

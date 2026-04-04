@@ -52,6 +52,7 @@ pub mod shell_integration;
 pub mod stone_client;
 pub mod storage;
 pub mod task_store;
+pub mod topology;
 pub mod tools;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;

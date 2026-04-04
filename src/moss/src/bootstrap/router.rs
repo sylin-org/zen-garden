@@ -86,7 +86,20 @@ pub fn configure_public(state: AppState) -> Router {
             "/api/v1/stone/capabilities",
             get(api::v1::capabilities::get_capabilities),
         )
+        .route(
+            "/api/v1/stone/capabilities/core",
+            get(api::v1::capabilities::get_capabilities_core),
+        )
+        .route(
+            "/api/v1/stone/capabilities/topology",
+            get(api::v1::capabilities::get_capabilities_topology),
+        )
+        .route(
+            "/api/v1/stone/capabilities/refresh",
+            post(api::v1::capabilities::refresh_capabilities),
+        )
         .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
+        .route("/api/v1/stone/tasks", get(get_task_status))
         // ══════════════════════════════════════════════════════════════════
         // Read-only stone endpoints
         // ══════════════════════════════════════════════════════════════════
@@ -173,6 +186,10 @@ pub fn configure_public(state: AppState) -> Router {
         .route(
             "/api/v1/garden/topology",
             get(api::v1::garden::get_topology_v1),
+        )
+        .route(
+            "/api/v1/garden/capabilities",
+            get(api::v1::garden::get_garden_capabilities_v1),
         )
         .route(
             "/api/v1/garden/stones/{stone_name}",
@@ -302,7 +319,20 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/capabilities",
             get(api::v1::capabilities::get_capabilities),
         )
+        .route(
+            "/api/v1/stone/capabilities/core",
+            get(api::v1::capabilities::get_capabilities_core),
+        )
+        .route(
+            "/api/v1/stone/capabilities/topology",
+            get(api::v1::capabilities::get_capabilities_topology),
+        )
+        .route(
+            "/api/v1/stone/capabilities/refresh",
+            post(api::v1::capabilities::refresh_capabilities),
+        )
         .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
+        .route("/api/v1/stone/tasks", get(get_task_status))
         .route(
             "/api/v1/stone/upgrade",
             post(api::v1::stone::upgrade_stone_v1),
@@ -772,6 +802,10 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::garden::get_topology_v1),
         )
         .route(
+            "/api/v1/garden/capabilities",
+            get(api::v1::garden::get_garden_capabilities_v1),
+        )
+        .route(
             "/api/v1/garden/stones/{stone_name}",
             get(api::v1::garden::get_stone_v1),
         )
@@ -928,6 +962,25 @@ pub fn configure(state: AppState) -> Router {
             inject_stone_identity,
         ))
         .with_state(state)
+}
+
+// ── Task supervisor status (ARCH-0015) ──────────────────────────────────
+
+/// GET /api/v1/stone/tasks — Background task status.
+async fn get_task_status(
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let guard = state.task_supervisor.read().await;
+    match guard.as_ref() {
+        Some(handle) => {
+            let status = handle.status().await;
+            axum::Json(crate::api::responses::ApiResponse::new(status)).into_response()
+        }
+        None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
 }
 
 // ============================================================================

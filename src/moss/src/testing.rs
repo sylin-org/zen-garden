@@ -170,6 +170,7 @@ pub async fn build_test_state() -> AppState {
                 dirty: topology_dirty,
             },
             capabilities: Arc::new(RwLock::new(None)),
+            hardware_topology: Arc::new(RwLock::new(None)),
             address: current_address,
             health: Arc::new(RwLock::new("thriving".to_string())),
             mac: Arc::new(RwLock::new(None)),
@@ -248,6 +249,7 @@ pub async fn build_test_state() -> AppState {
                 jobs: Arc::new(RwLock::new(HashMap::new())),
             },
         }),
+        task_supervisor: Arc::new(RwLock::new(None)),
     }
 }
 

@@ -1,0 +1,72 @@
+//! Task struct implementations (ARCH-0015).
+//!
+//! Each file contains one or more `BackgroundTask` implementations.
+//! All tasks are registered in `task_registry::build_task_registry()`.
+
+pub mod auto_adoption;
+pub mod catalog_builder;
+pub mod companion_scan;
+pub mod discovery_handler;
+pub mod docker_events;
+pub mod election_listener;
+pub mod fs_watcher;
+pub mod hardware_detection;
+pub mod health_monitor;
+pub mod initial_service_sync;
+pub mod ip_change_handler;
+pub mod maintenance_sweep;
+pub mod mdns_health_listener;
+pub mod mdns_lurk_listener;
+pub mod media_watcher;
+pub mod metrics_collector;
+pub mod offering_orchestration;
+pub mod periodic_announcer;
+pub mod pond_enrollment_listener;
+pub mod presence_monitor;
+pub mod registry_loader;
+pub mod registry_maintenance;
+pub mod s3_listener_lifecycle;
+pub mod storage_beacon_subscriber;
+pub mod storage_console;
+pub mod storage_lifecycle;
+pub mod storage_orchestration;
+pub mod storage_replication;
+pub mod storage_tick_aggregator;
+pub mod task_scheduler;
+pub mod topology_maintenance;
+pub mod topology_probe;
+pub mod volume_monitor;
+
+pub use auto_adoption::AutoAdoptionTask;
+pub use catalog_builder::CatalogBuilderTask;
+pub use companion_scan::CompanionScanTask;
+pub use discovery_handler::DiscoveryHandlerTask;
+pub use docker_events::DockerEventsTask;
+pub use election_listener::ElectionListenerTask;
+pub use fs_watcher::FsWatcherTask;
+pub use hardware_detection::HardwareDetectionTask;
+pub use health_monitor::HealthMonitorTask;
+pub use initial_service_sync::InitialServiceSyncTask;
+pub use ip_change_handler::IpChangeHandlerTask;
+pub use maintenance_sweep::MaintenanceSweepTask;
+pub use mdns_health_listener::MdnsHealthListenerTask;
+pub use mdns_lurk_listener::MdnsLurkListenerTask;
+pub use media_watcher::MediaWatcherTask;
+pub use metrics_collector::MetricsCollectorTask;
+pub use offering_orchestration::OfferingOrchestrationTask;
+pub use periodic_announcer::PeriodicAnnouncerTask;
+pub use pond_enrollment_listener::PondEnrollmentListenerTask;
+pub use presence_monitor::{PresenceHealthMonitorTask, PresenceLoadMonitorTask};
+pub use registry_loader::RegistryLoaderTask;
+pub use registry_maintenance::RegistryMaintenanceTask;
+pub use s3_listener_lifecycle::S3ListenerLifecycleTask;
+pub use storage_beacon_subscriber::StorageBeaconSubscriberTask;
+pub use storage_console::StorageConsoleTask;
+pub use storage_lifecycle::StorageLifecycleTask;
+pub use storage_orchestration::StorageOrchestrationTask;
+pub use storage_replication::StorageReplicationTask;
+pub use storage_tick_aggregator::StorageTickAggregatorTask;
+pub use task_scheduler::TaskSchedulerTask;
+pub use topology_maintenance::TopologyMaintenanceTask;
+pub use topology_probe::TopologyProbeTask;
+pub use volume_monitor::VolumeMonitorTask;

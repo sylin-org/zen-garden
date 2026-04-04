@@ -78,6 +78,11 @@ walkdir.workspace = true
 dashmap = "6"
 cron = "0.15"
 
+# Hardware topology (ARCH-0014 Tier 2)
+smbios-lib = "0.9"
+nusb = "0.2"
+pci-ids = "0.2"
+
 # WebDAV server (STORAGE-0009 Phase 3)
 dav-server = "0.11"
 
@@ -105,9 +110,13 @@ windows = { version = "0.52", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Storage_CloudFilters",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
+    "Win32_System_SystemInformation",
     "UI_Notifications",
     "Data_Xml_Dom",
 ] }
+wmi = "0.14"
 winreg = "0.52"
 
 # Cloud Filter — native Windows Explorer sync (STORAGE-0009 Phase 4)

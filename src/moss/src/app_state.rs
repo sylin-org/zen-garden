@@ -148,6 +148,9 @@ pub struct AppState {
     /// Orchestration coordination plane — tick signals, nudge, rescan,
     /// nurturing stores, nourishment job channels (ARCH-0004).
     pub orchestration: Arc<Orchestration>,
+
+    /// Task supervisor status handle (ARCH-0015). Set after supervisor is built.
+    pub task_supervisor: Arc<RwLock<Option<crate::tasks::supervisor::SupervisorHandle>>>,
 }
 
 // ============================================================================

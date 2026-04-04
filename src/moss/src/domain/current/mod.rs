@@ -55,8 +55,11 @@ pub struct Current {
     /// Topology state: peer cache and dirty flag for persistence.
     pub topology: Topology,
 
-    /// Hardware capabilities cache (detected at startup, persisted).
+    /// Hardware capabilities cache — Tier 1 (detected at startup, persisted).
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
+
+    /// Hardware topology cache — Tier 2 (background probe, delta-cached, ARCH-0014).
+    pub hardware_topology: Arc<RwLock<Option<garden_common::types::hardware_topology::HardwareTopology>>>,
 
     /// This stone's network address (updated on IP change).
     pub address: Arc<RwLock<PeerAddress>>,

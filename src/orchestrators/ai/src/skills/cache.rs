@@ -185,6 +185,14 @@ pub async fn stream_download(
         drop(file);
         hasher = Sha256::new();
         file = fs::File::create(dest).await?;
+    } else if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
+        // Strip query params (may contain tokens) from the URL for logging
+        let safe_url = url.split('?').next().unwrap_or(url);
+        anyhow::bail!(
+            "download requires authentication (HTTP {}). \
+             Set the API key in Dashboard → Secrets for this provider. URL: {safe_url}",
+            resp.status()
+        );
     } else if !resp.status().is_success() {
         anyhow::bail!("download failed HTTP {}: {url}", resp.status());
     }

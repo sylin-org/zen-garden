@@ -67,6 +67,15 @@ pub async fn ensure_cached(
             continue;
         }
 
+        // Check if auth is needed but not configured — fail fast with clear message
+        if let Some(missing_key) = requires_auth_key(raw_url, secrets).await {
+            anyhow::bail!(
+                "model '{}' requires a {} API key to download. \
+                 Set it in Dashboard → Secrets before provisioning.",
+                model.filename, missing_key
+            );
+        }
+
         // Append auth token for known services
         let url = inject_auth_token(raw_url, secrets).await;
 
@@ -281,6 +290,28 @@ pub struct CachedModel {
 }
 
 /// Append auth tokens to download URLs for known services.
+/// Check if a download URL requires authentication that isn't configured.
+/// Returns the provider name if auth is needed but missing.
+async fn requires_auth_key(
+    url: &str,
+    secrets: Option<&crate::infra::secrets::SecretsStore>,
+) -> Option<&'static str> {
+    let secrets = secrets?;
+
+    // CivitAI download URLs always need a token
+    if url.contains("civitai.com/api/download") {
+        if secrets.get(crate::infra::secrets::KEY_CIVITAI).await.is_none() {
+            return Some("CivitAI");
+        }
+    }
+
+    // HuggingFace gated models need a token
+    // (non-gated models work without auth, so we can't check statically —
+    // the 401 error handling in cache.rs catches these at download time)
+
+    None
+}
+
 async fn inject_auth_token(
     url: &str,
     secrets: Option<&crate::infra::secrets::SecretsStore>,

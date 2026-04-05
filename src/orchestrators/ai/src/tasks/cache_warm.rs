@@ -71,82 +71,146 @@ async fn warm_cache(state: &AppState) -> anyhow::Result<()> {
     }
 
     let model_types = ["checkpoints", "loras", "vae", "upscale_models", "clip", "text_encoders", "diffusion_models"];
-    let mut pulled = 0u32;
+
+    // ── Phase 1: Inventory — collect all models across all instances ──
+    struct ModelEntry {
+        filename: String,
+        model_type: String,
+        endpoint: String,
+        moss_endpoint: String,
+    }
+
+    let mut to_pull: Vec<ModelEntry> = Vec::new();
+    let mut already_cached = 0u32;
 
     for instance in &comfyui_instances {
         let endpoint = &instance.endpoint;
-        let moss_endpoint = derive_moss_endpoint(endpoint);
-        let offering_fqn = "comfyui";
 
         for model_type in &model_types {
-            // List models on this instance via ComfyUI API
             let models = match list_instance_models(&state.http, endpoint, model_type).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
 
-            for filename in &models {
-                // Skip if already in local cache
-                let resolved = manifest.resolve(filename);
+            for filename in models {
+                let resolved = manifest.resolve(&filename);
                 if manifest.files.contains_key(&resolved) {
+                    already_cached += 1;
                     continue;
                 }
-
-                // Pull from instance to local cache
-                let local_path = cache_paths.provider_dir.join(filename);
-
-                tracing::info!(
-                    model = %filename,
-                    model_type,
-                    source = %endpoint,
-                    "cache warm: pulling model from instance"
-                );
-
-                match crate::skills::persistence::pull_model_from_instance(
-                    &state.http,
-                    &moss_endpoint,
-                    offering_fqn,
-                    model_type,
-                    filename,
-                    &local_path,
-                ).await {
-                    Ok(()) => {
-                        // Compute checksum and register in manifest
-                        let checksum = match crate::skills::cache::checksum_file(&local_path).await {
-                            Ok(cs) => cs,
-                            Err(e) => {
-                                tracing::warn!(model = %filename, error = %e, "cache warm: checksum failed");
-                                continue;
-                            }
-                        };
-
-                        manifest.files.insert(filename.clone(), checksum);
-                        pulled += 1;
-
-                        tracing::info!(
-                            model = %filename,
-                            model_type,
-                            "cache warm: model cached locally"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            model = %filename,
-                            error = %e,
-                            "cache warm: could not pull model from instance"
-                        );
-                        // Clean up partial file
-                        let _ = tokio::fs::remove_file(&local_path).await;
-                    }
+                // Dedup: skip if we're already pulling this filename from another instance
+                if to_pull.iter().any(|e| e.filename == filename) {
+                    continue;
                 }
+                to_pull.push(ModelEntry {
+                    filename,
+                    model_type: model_type.to_string(),
+                    endpoint: endpoint.clone(),
+                    moss_endpoint: derive_moss_endpoint(endpoint),
+                });
             }
         }
     }
 
+    if to_pull.is_empty() {
+        if already_cached > 0 {
+            tracing::info!(
+                cached = already_cached,
+                instances = comfyui_instances.len(),
+                "cache warm: all instance models already cached"
+            );
+        }
+        return Ok(());
+    }
+
+    tracing::info!(
+        to_pull = to_pull.len(),
+        already_cached,
+        instances = comfyui_instances.len(),
+        "cache warm: starting — pulling models from instances"
+    );
+
+    // ── Phase 2: Pull — download each missing model with progress ──
+    let total = to_pull.len();
+    let mut pulled = 0u32;
+    let mut failed = 0u32;
+    let start = std::time::Instant::now();
+
+    for (i, entry) in to_pull.iter().enumerate() {
+        let local_path = cache_paths.provider_dir.join(&entry.filename);
+
+        tracing::info!(
+            progress = format!("[{}/{}]", i + 1, total),
+            model = %entry.filename,
+            model_type = %entry.model_type,
+            source = %entry.endpoint,
+            "cache warm: pulling"
+        );
+
+        match crate::skills::persistence::pull_model_from_instance(
+            &state.http,
+            &entry.moss_endpoint,
+            "comfyui",
+            &entry.model_type,
+            &entry.filename,
+            &local_path,
+        ).await {
+            Ok(()) => {
+                // Compute checksum and register
+                match crate::skills::cache::checksum_file(&local_path).await {
+                    Ok(checksum) => {
+                        manifest.files.insert(entry.filename.clone(), checksum);
+                        pulled += 1;
+
+                        let elapsed = start.elapsed().as_secs();
+                        let rate = if pulled > 0 { elapsed / pulled as u64 } else { 0 };
+                        let remaining = (total - i - 1) as u64 * rate;
+
+                        tracing::info!(
+                            progress = format!("[{}/{}]", i + 1, total),
+                            model = %entry.filename,
+                            elapsed_secs = elapsed,
+                            eta_secs = remaining,
+                            "cache warm: cached"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(model = %entry.filename, error = %e, "cache warm: checksum failed");
+                        let _ = tokio::fs::remove_file(&local_path).await;
+                        failed += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    model = %entry.filename,
+                    error = %e,
+                    "cache warm: pull failed"
+                );
+                let _ = tokio::fs::remove_file(&local_path).await;
+                failed += 1;
+            }
+        }
+
+        // Save manifest periodically (every 5 successful pulls)
+        if pulled > 0 && pulled % 5 == 0 {
+            manifest.save(&cache_paths.manifest_path).await?;
+        }
+    }
+
+    // Final save
     if pulled > 0 {
         manifest.save(&cache_paths.manifest_path).await?;
-        tracing::info!(pulled, "cache warm: complete");
     }
+
+    let elapsed = start.elapsed();
+    tracing::info!(
+        pulled,
+        failed,
+        total,
+        elapsed_secs = elapsed.as_secs(),
+        "cache warm: complete"
+    );
 
     Ok(())
 }

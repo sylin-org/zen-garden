@@ -198,6 +198,11 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     ));
 
+    let _cache_warm_handle = tokio::spawn(tasks::cache_warm::run(
+        state.clone(),
+        shutdown.clone(),
+    ));
+
     let metrics_flush_handle = tokio::spawn(tasks::metrics_flush::run(
         state.clone(),
         shutdown.clone(),

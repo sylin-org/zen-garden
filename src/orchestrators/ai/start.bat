@@ -12,7 +12,8 @@ set WORKSPACE=%CD%
 popd
 
 :: Data directory on host — survives Docker wipes (ORCH-0025 Tier 1)
-set DATA_DIR=%LOCALAPPDATA%\zen-garden\ai-orchestrator
+:: Follows project convention: .zen-garden under workspace root
+set DATA_DIR=%WORKSPACE%\.zen-garden\ai-orchestrator
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 
 echo.

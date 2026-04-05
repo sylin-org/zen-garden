@@ -331,12 +331,28 @@ async fn profile_instance(state: &AppState, endpoint: &str, kind: OfferingKind) 
                 .await;
         }
         Err(e) => {
-            tracing::warn!(
-                endpoint = %endpoint,
-                kind = %kind,
-                error = %e,
-                "probe failed during profiling"
-            );
+            // Only log WARN on the first failure; subsequent failures are debug
+            // to avoid flooding the console with dead endpoint spam.
+            let already_unhealthy = {
+                let snap = state.registry.snapshot().clone();
+                snap.instances.get(endpoint)
+                    .map(|i| !i.is_routable())
+                    .unwrap_or(false)
+            };
+            if already_unhealthy {
+                tracing::debug!(
+                    endpoint = %endpoint,
+                    kind = %kind,
+                    "probe still failing (already marked unhealthy)"
+                );
+            } else {
+                tracing::warn!(
+                    endpoint = %endpoint,
+                    kind = %kind,
+                    error = %e,
+                    "probe failed during profiling"
+                );
+            }
             state
                 .registry
                 .set_instance_health(

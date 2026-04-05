@@ -125,11 +125,40 @@ async fn main() -> Result<()> {
 
     // ── Load Skills from Disk ───────────────────────────────────────
     // 1. Seed embedded skills to {data_dir}/skills/ (version-gated)
-    // 2. Scan disk, parse skill.json, resolve workflows
-    // 3. Register in SkillRegistry — disk is the sole source of truth
+    // 2. Check if recovery is needed (ORCH-0025: empty = try instance recovery)
+    // 3. Scan disk, parse skill.json, resolve workflows
+    // 4. Register in SkillRegistry — disk is the sole source of truth
     {
         let skills_dir = std::path::PathBuf::from(&cli.data_dir).join("skills");
         zen_garden_ai_orchestrator::skills::loader::seed_embedded_skills(&skills_dir).await;
+
+        // ORCH-0025: Recovery cascade — if no user skills, try ComfyUI instances
+        if zen_garden_ai_orchestrator::skills::recovery::needs_recovery(&skills_dir, "comfyui").await {
+            tracing::info!("no user skills found — attempting recovery from ComfyUI instances");
+
+            // Try local Moss first (most common deployment)
+            let moss_port = garden_common::constants::MOSS_HTTP;
+            let local_endpoints = [
+                format!("http://host.docker.internal:{moss_port}"),
+                format!("http://localhost:{moss_port}"),
+            ];
+
+            for endpoint in &local_endpoints {
+                if let Ok(recovered) = zen_garden_ai_orchestrator::skills::recovery::recover_from_instances(
+                    &state.http,
+                    &skills_dir,
+                    endpoint,
+                    "comfyui",
+                    "comfyui",
+                ).await {
+                    if recovered > 0 {
+                        tracing::info!(recovered, endpoint = %endpoint, "recovered skills from instance");
+                        break;
+                    }
+                }
+            }
+        }
+
         let skills = zen_garden_ai_orchestrator::skills::loader::load_skills(&skills_dir).await;
         let count = skills.len();
         for skill in skills {

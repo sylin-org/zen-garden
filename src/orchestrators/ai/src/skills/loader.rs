@@ -282,6 +282,11 @@ pub async fn seed_embedded_skills(skills_dir: &Path) {
 }
 
 /// Returns embedded skill definitions compiled into the binary.
+/// Names of embedded skill monikers (for distinguishing from user-imported skills).
+pub fn embedded_monikers() -> Vec<&'static str> {
+    embedded_skills().iter().map(|(_, moniker, _)| *moniker).collect()
+}
+
 fn embedded_skills() -> Vec<(&'static str, &'static str, Vec<(&'static str, &'static str)>)> {
     vec![
         ("comfyui", "upscale", vec![

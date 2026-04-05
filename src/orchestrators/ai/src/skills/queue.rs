@@ -172,6 +172,26 @@ async fn do_provision(
         http, &cached_models, &moss_endpoint, &offering_fqn, "comfyui-models",
     ).await?;
 
+    // 3. Push skill definition to instance (ORCH-0025 Tier 3)
+    // Skill files are stored alongside models so the instance is self-describing.
+    let skill_dir = std::path::Path::new(&state.data_dir)
+        .join("skills")
+        .join(&job.provider)
+        .join(job.target.skill.rsplit('.').next().unwrap_or(&job.target.skill));
+
+    if skill_dir.exists() {
+        if let Err(e) = crate::skills::persistence::push_skill_to_instance(
+            http, &moss_endpoint, &offering_fqn, &skill_dir, &job.target.skill,
+        ).await {
+            // Non-fatal — provisioning succeeded, skill push is best-effort
+            tracing::debug!(
+                skill = %job.target.skill,
+                error = %e,
+                "failed to push skill definition to instance (non-fatal)"
+            );
+        }
+    }
+
     Ok(())
 }
 

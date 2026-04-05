@@ -11,11 +11,16 @@ pushd "%SCRIPT_DIR%..\..\..\"
 set WORKSPACE=%CD%
 popd
 
+:: Data directory on host — survives Docker wipes (ORCH-0025 Tier 1)
+set DATA_DIR=%LOCALAPPDATA%\zen-garden\ai-orchestrator
+if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
+
 echo.
 echo  Zen Garden AI Orchestrator
 echo  ============================
 echo  Image:     %IMAGE%:%TAG%
 echo  Workspace: %WORKSPACE%
+echo  Data:      %DATA_DIR%
 echo.
 
 :: Build the image (context = workspace root, dockerfile = this folder)
@@ -40,7 +45,7 @@ docker run -d ^
     -p 21437:21437 ^
     -p 21438:21438 ^
     -p 21439:21439 ^
-    -v zen-garden-ai-data:/data ^
+    -v "%DATA_DIR%":/data ^
     --restart unless-stopped ^
     %IMAGE%:%TAG%
 

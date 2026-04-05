@@ -136,6 +136,34 @@ impl RegistryDomain {
         self.publish(&state);
     }
 
+    /// Remove instances whose endpoints are not in the given set.
+    /// Returns the number of evicted instances.
+    pub async fn evict_stale(&self, live_endpoints: &std::collections::HashSet<String>) -> usize {
+        let mut state = self.state.lock().await;
+        let stale: Vec<String> = state.instances.keys()
+            .filter(|ep| !live_endpoints.contains(*ep))
+            .cloned()
+            .collect();
+
+        let count = stale.len();
+        for ep in &stale {
+            if let Some(inst) = state.instances.remove(ep) {
+                state.queue_counters.remove(ep);
+                tracing::info!(
+                    endpoint = %ep,
+                    stone = %inst.stone.name,
+                    kind = %inst.kind,
+                    "evicted stale instance — no longer in topology"
+                );
+            }
+        }
+
+        if count > 0 {
+            self.publish(&state);
+        }
+        count
+    }
+
     pub async fn set_instance_health(&self, endpoint: &str, health: InstanceHealth) -> bool {
         let mut state = self.state.lock().await;
         if let Some(inst) = state.instances.get_mut(endpoint) {

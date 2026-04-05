@@ -172,7 +172,10 @@ fn handle_tool_event(state: &AppState, event: ToolStreamEvent) {
 }
 
 /// Query topology for all AI offering instances and register them.
+/// Evicts instances that are no longer present in the topology.
 async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
+    let mut live_endpoints = std::collections::HashSet::new();
+
     for offering_name in OfferingKind::LOCAL_OFFERING_NAMES {
         match topology::query_topology_for_offering(stone_endpoint, offering_name).await {
             Ok(stones) => {
@@ -202,6 +205,8 @@ async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
                         topo_stone.ip, service_port
                     );
 
+                    live_endpoints.insert(endpoint.clone());
+
                     tracing::debug!(
                         stone = %topo_stone.stone_name,
                         kind = %kind,
@@ -229,6 +234,13 @@ async fn discover_from_topology(stone_endpoint: &str, state: &AppState) {
                 );
             }
         }
+    }
+
+    // Evict instances no longer present in the topology.
+    // Only evict if we got at least one live endpoint (avoid wiping everything
+    // if the topology query itself failed).
+    if !live_endpoints.is_empty() {
+        state.registry.evict_stale(&live_endpoints).await;
     }
 }
 

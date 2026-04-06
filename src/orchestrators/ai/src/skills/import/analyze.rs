@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use reqwest::Client;
 
-use super::{civitai, gen_data_parse, input_detect, model_resolve, namer, param_extract, png_extract, ui_to_api, workflow_synth};
+use super::{civitai, gen_data_parse, input_detect, model_resolve, param_extract, png_extract, ui_to_api, workflow_synth};
 use crate::skills::cache::{CachePaths, DependencyManifest};
 
 // ── Result Types ──────────────────────────────────────────────
@@ -270,49 +270,10 @@ pub async fn run(
         });
 
     let moniker = generate_moniker(&source, &parsed, &models, &generation);
-    let mut display_name = humanize_moniker(&moniker);
-    let mut description = generation.as_ref()
+    let display_name = humanize_moniker(&moniker);
+    let description = generation.as_ref()
         .map(|g| if !g.prompt.is_empty() { g.prompt.clone() } else { format!("Imported: {display_name}") })
         .unwrap_or_else(|| format!("Imported: {display_name}"));
-
-    // ── Step 7: AI-assisted naming (ORCH-0026) ──────────────────
-    // Use the garden's own chat model to generate a meaningful name
-    // and description from the generation context. Best-effort — falls
-    // back to heuristic naming on failure or timeout.
-    {
-        let model_names: Vec<String> = models.iter().map(|m| {
-            let kind = match m {
-                model_resolve::ModelResolution::Resolved { model_type, .. } => model_type.as_str(),
-                _ => "model",
-            };
-            format!("{} ({})", m.filename(), kind)
-        }).collect();
-
-        let naming_ctx = namer::NamingContext {
-            prompt: generation.as_ref().map(|g| g.prompt.clone()).unwrap_or_default(),
-            negative_prompt: generation.as_ref().map(|g| g.negative_prompt.clone()).unwrap_or_default(),
-            model_names,
-            steps: generation.as_ref().and_then(|g| g.steps),
-            cfg_scale: generation.as_ref().and_then(|g| g.cfg_scale),
-            sampler: generation.as_ref().and_then(|g| g.sampler.clone()),
-            width: content_slots.iter()
-                .find(|s| s.role == "width")
-                .and_then(|s| s.default.as_ref()?.parse().ok()),
-            height: content_slots.iter()
-                .find(|s| s.role == "height")
-                .and_then(|s| s.default.as_ref()?.parse().ok()),
-        };
-
-        match namer::generate_name(http, &naming_ctx).await {
-            Some(naming) => {
-                display_name = naming.name;
-                description = naming.description;
-            }
-            None => {
-                tracing::debug!("namer: AI naming unavailable, using heuristic");
-            }
-        }
-    }
 
     Ok(AnalyzeResult {
         moniker,

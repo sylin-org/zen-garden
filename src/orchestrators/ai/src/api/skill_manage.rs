@@ -60,6 +60,15 @@ pub async fn analyze_skill(
                 );
             }
 
+            // Spawn AI naming in the background (ORCH-0026).
+            // Updates skill.json + emits SSE event when done.
+            spawn_background_naming(
+                state.clone(),
+                provider.clone(),
+                analysis.moniker.clone(),
+                &analysis,
+            );
+
             (StatusCode::OK, Json(&analysis)).into_response()
         }
         Err(e) => error_response(
@@ -294,6 +303,90 @@ pub async fn put_workflow(
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "status": "saved", "name": wf_name }))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "write_error", &e.to_string()),
     }
+}
+
+// ── Background Naming (ORCH-0026) ────────────────────────────
+
+/// Spawn AI-assisted naming in the background.
+///
+/// Calls the garden's chat model to generate a proper name/description,
+/// then updates skill.json on disk and emits an SSE event so the
+/// dashboard can update the UI live.
+fn spawn_background_naming(
+    state: AppState,
+    provider: String,
+    moniker: String,
+    analysis: &analyze::AnalyzeResult,
+) {
+    use crate::skills::import::namer;
+
+    // Build naming context from the analysis
+    let naming_ctx = namer::NamingContext {
+        prompt: analysis.generation.as_ref().map(|g| g.prompt.clone()).unwrap_or_default(),
+        negative_prompt: analysis.generation.as_ref().map(|g| g.negative_prompt.clone()).unwrap_or_default(),
+        model_names: analysis.models.iter().map(|m| {
+            let kind = match m {
+                crate::skills::import::model_resolve::ModelResolution::Resolved { model_type, .. } => model_type.as_str(),
+                _ => "model",
+            };
+            format!("{} ({})", m.filename(), kind)
+        }).collect(),
+        steps: analysis.generation.as_ref().and_then(|g| g.steps),
+        cfg_scale: analysis.generation.as_ref().and_then(|g| g.cfg_scale),
+        sampler: analysis.generation.as_ref().and_then(|g| g.sampler.clone()),
+        width: None,
+        height: None,
+    };
+
+    // Skip if no meaningful context to name from
+    if naming_ctx.prompt.is_empty() && naming_ctx.model_names.is_empty() {
+        return;
+    }
+
+    let skill_name = format!("{}.{}", analysis.capability, moniker);
+
+    tokio::spawn(async move {
+        let naming = match namer::generate_name(&state.http, &naming_ctx).await {
+            Some(n) => n,
+            None => return, // AI naming unavailable — heuristic stands
+        };
+
+        // Update skill.json on disk
+        let skill_path = std::path::Path::new(&state.data_dir)
+            .join("skills")
+            .join(&provider)
+            .join(&moniker)
+            .join("skill.json");
+
+        if let Ok(json_str) = tokio::fs::read_to_string(&skill_path).await {
+            if let Ok(mut skill) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                skill["display_name"] = serde_json::Value::String(naming.name.clone());
+                skill["description"] = serde_json::Value::String(naming.description.clone());
+
+                if let Ok(updated) = serde_json::to_string_pretty(&skill) {
+                    let _ = tokio::fs::write(&skill_path, updated).await;
+                }
+            }
+        }
+
+        // Emit SSE event so the dashboard updates live
+        let _ = state.dashboard_tx.send(crate::app_state::DashboardEvent {
+            event_type: "skill.named".to_string(),
+            data: serde_json::json!({
+                "skill": skill_name,
+                "moniker": moniker,
+                "provider": provider,
+                "display_name": naming.name,
+                "description": naming.description,
+            }).to_string(),
+        });
+
+        tracing::info!(
+            skill = %skill_name,
+            name = %naming.name,
+            "background naming complete"
+        );
+    });
 }
 
 // ── Helpers ───────────────────────────────────────────────────

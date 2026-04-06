@@ -39,13 +39,37 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
 
     // Track what we've seen to avoid duplicates and assign roles
     let mut image_count = 0;
-    let mut text_count = 0;
+    let mut has_prompt = false;
     let mut has_negative = false;
 
     let obj = match workflow.as_object() {
         Some(o) => o.clone(),
         None => return ExtractionResult { workflow, mappings, content_slots },
     };
+
+    // ── Pre-pass: Build a map of CLIPTextEncode roles from KSampler connections ──
+    // Walk backwards from KSampler → positive/negative → CLIPTextEncode node IDs.
+    // This is authoritative — no heuristics needed.
+    let mut clip_roles: std::collections::HashMap<String, &'static str> = std::collections::HashMap::new();
+    for (_nid, node) in &obj {
+        let ct = node.get("class_type").and_then(|v| v.as_str()).unwrap_or("");
+        if ct == "KSampler" || ct == "KSamplerAdvanced" {
+            if let Some(inputs) = node.get("inputs") {
+                // Follow "positive" → the linked node is the positive prompt
+                if let Some(pos_link) = inputs.get("positive").and_then(|v| v.as_array()) {
+                    if let Some(pos_id) = pos_link.first().and_then(|v| v.as_str()) {
+                        clip_roles.insert(pos_id.to_string(), "prompt");
+                    }
+                }
+                // Follow "negative" → the linked node is the negative prompt
+                if let Some(neg_link) = inputs.get("negative").and_then(|v| v.as_array()) {
+                    if let Some(neg_id) = neg_link.first().and_then(|v| v.as_str()) {
+                        clip_roles.insert(neg_id.to_string(), "negative");
+                    }
+                }
+            }
+        }
+    }
 
     // Sort node IDs for deterministic output
     let mut node_ids: Vec<String> = obj.keys().cloned().collect();
@@ -193,55 +217,58 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
 
             // ── Text encoders ─────────────────────────────────
             "CLIPTextEncode" => {
-                // Text may be a direct string or a link to another node (e.g., Text Multiline).
-                // Follow links to resolve the actual text value.
+                // Determine role from KSampler connections (authoritative, no heuristics)
+                let role = clip_roles.get(node_id).copied();
+
+                // Text may be a direct string or a link to another node (Text Multiline, etc.)
                 let current_text = get_input_str(&workflow, node_id, "text")
                     .or_else(|| resolve_linked_text(&workflow, node_id, "text"));
 
-                // Heuristic: if the node feeds into a "negative" input of KSampler,
-                // or if we already have a prompt, this is the negative.
-                let is_negative = is_negative_encoder(&obj, node_id) || text_count > 0;
+                match role {
+                    Some("prompt") if !has_prompt => {
+                        let placeholder = "PLACEHOLDER_PROMPT";
+                        set_input_str(&mut workflow, node_id, "text", placeholder);
 
-                if is_negative && !has_negative {
-                    let placeholder = "PLACEHOLDER_NEGATIVE";
-                    set_input_str(&mut workflow, node_id, "text", placeholder);
+                        mappings.push(SkillMapping::Content {
+                            role: "prompt".into(),
+                            content_type: crate::domain::skill::ContentType::Text,
+                            placeholder: placeholder.into(),
+                        });
 
-                    // Negative prompt is a Content slot (user-provided text) with a default
-                    mappings.push(SkillMapping::Content {
-                        role: "negative".into(),
-                        content_type: crate::domain::skill::ContentType::Text,
-                        placeholder: placeholder.into(),
-                    });
+                        content_slots.push(ContentSlotDetection {
+                            role: "prompt".into(),
+                            content_type: "text".into(),
+                            required: true,
+                            overlay: None,
+                            default: current_text,
+                        });
 
-                    content_slots.push(ContentSlotDetection {
-                        role: "negative".into(),
-                        content_type: "text".into(),
-                        required: false,
-                        overlay: None,
-                        default: current_text,
-                    });
+                        has_prompt = true;
+                    }
+                    Some("negative") if !has_negative => {
+                        let placeholder = "PLACEHOLDER_NEGATIVE";
+                        set_input_str(&mut workflow, node_id, "text", placeholder);
 
-                    has_negative = true;
-                } else if !is_negative && text_count == 0 {
-                    let placeholder = "PLACEHOLDER_PROMPT";
-                    set_input_str(&mut workflow, node_id, "text", placeholder);
+                        mappings.push(SkillMapping::Content {
+                            role: "negative".into(),
+                            content_type: crate::domain::skill::ContentType::Text,
+                            placeholder: placeholder.into(),
+                        });
 
-                    mappings.push(SkillMapping::Content {
-                        role: "prompt".into(),
-                        content_type: crate::domain::skill::ContentType::Text,
-                        placeholder: placeholder.into(),
-                    });
+                        content_slots.push(ContentSlotDetection {
+                            role: "negative".into(),
+                            content_type: "text".into(),
+                            required: false,
+                            overlay: None,
+                            default: current_text,
+                        });
 
-                    content_slots.push(ContentSlotDetection {
-                        role: "prompt".into(),
-                        content_type: "text".into(),
-                        required: true,
-                        overlay: None,
-                        default: current_text, // preserve original prompt as default
-                    });
+                        has_negative = true;
+                    }
+                    _ => {
+                        // Not connected to a KSampler, or duplicate — skip
+                    }
                 }
-
-                text_count += 1;
             }
 
             // ── KSampler ──────────────────────────────────────
@@ -432,6 +459,8 @@ fn set_input_str(workflow: &mut serde_json::Value, node_id: &str, field: &str, v
 }
 
 /// Check if a CLIPTextEncode node feeds into the "negative" input of a KSampler.
+/// Kept for test coverage; the main extraction uses the pre-pass clip_roles map instead.
+#[cfg(test)]
 fn is_negative_encoder(nodes: &serde_json::Map<String, serde_json::Value>, encoder_node_id: &str) -> bool {
     for node in nodes.values() {
         let class_type = node.get("class_type").and_then(|v| v.as_str()).unwrap_or("");

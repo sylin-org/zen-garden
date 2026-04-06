@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 
 interface SkillEntry {
@@ -29,7 +29,28 @@ export function SkillsList() {
     setLoading(false);
   }, [provider]);
 
-  useEffect(() => { fetchSkills(); }, [fetchSkills]);
+  useEffect(() => {
+    fetchSkills();
+
+    // Subscribe to SSE for live updates (skill.named, etc.)
+    const es = new EventSource("/api/events");
+    es.addEventListener("skill.named", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        setSkills((prev) =>
+          prev.map((s) => {
+            const moniker = s.name.split(".").slice(1).join(".") || s.name;
+            if (moniker === data.moniker || s.name === data.skill) {
+              return { ...s, display_name: data.display_name, description: data.description };
+            }
+            return s;
+          })
+        );
+      } catch { /* ignore parse errors */ }
+    });
+
+    return () => es.close();
+  }, [fetchSkills]);
 
   const handleImport = useCallback(async () => {
     if (!importInput.trim()) return;
@@ -164,32 +185,62 @@ function SkillRow({
   isDraft?: boolean;
 }) {
   const moniker = skill.name.split(".").slice(1).join(".") || skill.name;
+  const [renaming, setRenaming] = useState(false);
+  const nameRef = useRef(skill.display_name);
+
+  // Update displayed name when SSE pushes a new one
+  const displayName = skill.display_name || moniker;
+  if (nameRef.current !== skill.display_name) {
+    nameRef.current = skill.display_name;
+  }
+
+  const handleRename = useCallback(async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setRenaming(true);
+    try {
+      await fetch(`/v1/services/${provider}/skills/${moniker}/rename`, { method: "POST" });
+      // SSE event will update the name — no need to handle response
+    } catch { /* ignore */ }
+    // Keep the spinner for a moment so the user sees feedback
+    setTimeout(() => setRenaming(false), 2000);
+  }, [provider, moniker]);
 
   return (
-    <Link
-      to={isDraft
-        ? `/infra/services/${provider}/skills/${moniker}/edit`
-        : `/infra/services/${provider}/skills/${moniker}`
-      }
-      className="block bg-[#1a1b23] border border-[#2e303a] rounded-lg px-4 py-3 hover:bg-[#1e1f28] transition-colors"
-    >
+    <div className="bg-[#1a1b23] border border-[#2e303a] rounded-lg px-4 py-3 hover:bg-[#1e1f28] transition-colors">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <Link
+          to={isDraft
+            ? `/infra/services/${provider}/skills/${moniker}/edit`
+            : `/infra/services/${provider}/skills/${moniker}`
+          }
+          className="flex items-center gap-3 flex-1 min-w-0"
+        >
           <span
-            className={`w-2.5 h-2.5 rounded-full ${
+            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
               isDraft ? "bg-gray-500" : "bg-emerald-400"
             }`}
           />
-          <div>
+          <div className="min-w-0">
             <span className="text-sm font-medium text-gray-100">
-              {skill.display_name || moniker}
+              {displayName}
             </span>
-            <span className="ml-2 text-[11px] text-gray-500">
-              {skill.description}
+            <span className="ml-2 text-[11px] text-gray-500 truncate">
+              {skill.description?.length > 80
+                ? `${skill.description.slice(0, 80)}...`
+                : skill.description}
             </span>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
+        </Link>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={handleRename}
+            disabled={renaming}
+            className="text-[10px] px-2 py-0.5 rounded border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 transition-colors disabled:opacity-50"
+            title="Rename with AI"
+          >
+            {renaming ? "Naming..." : "AI Name"}
+          </button>
           {isDraft && (
             <span className="text-[10px] px-2 py-0.5 rounded border bg-gray-600/10 text-gray-500 border-gray-600/30">
               Draft
@@ -203,6 +254,6 @@ function SkillRow({
           </span>
         </div>
       </div>
-    </Link>
+    </div>
   );
 }

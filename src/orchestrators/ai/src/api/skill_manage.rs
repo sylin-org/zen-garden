@@ -305,6 +305,119 @@ pub async fn put_workflow(
     }
 }
 
+// ── POST /v1/services/{provider}/skills/{moniker}/rename ─────
+
+/// Trigger AI-assisted renaming for an existing skill.
+pub async fn rename_skill(
+    State(state): State<AppState>,
+    Path((provider, moniker)): Path<(String, String)>,
+) -> Response {
+    let skill_path = std::path::Path::new(&state.data_dir)
+        .join("skills")
+        .join(&provider)
+        .join(&moniker)
+        .join("skill.json");
+
+    let skill_json = match tokio::fs::read_to_string(&skill_path).await {
+        Ok(s) => s,
+        Err(_) => return error_response(StatusCode::NOT_FOUND, "not_found", "Skill not found"),
+    };
+
+    let skill: serde_json::Value = match serde_json::from_str(&skill_json) {
+        Ok(v) => v,
+        Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "parse_error", "Invalid skill.json"),
+    };
+
+    // Build a minimal AnalyzeResult-like context for the namer
+    use crate::skills::import::namer;
+
+    let prompt = extract_content_default(&skill, "prompt");
+    let negative = extract_content_default(&skill, "negative");
+
+    let model_names: Vec<String> = skill.get("required_models")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|m| {
+            let name = m.get("filename")?.as_str()?;
+            let mt = m.get("model_type").and_then(|v| v.as_str()).unwrap_or("model");
+            Some(format!("{name} ({mt})"))
+        }).collect())
+        .unwrap_or_default();
+
+    let naming_ctx = namer::NamingContext {
+        prompt,
+        negative_prompt: negative,
+        model_names,
+        steps: None,
+        cfg_scale: None,
+        sampler: None,
+        width: None,
+        height: None,
+    };
+
+    if naming_ctx.prompt.is_empty() && naming_ctx.model_names.is_empty() {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "no_context",
+            "Skill has no prompt or model information for AI naming",
+        );
+    }
+
+    let skill_name = skill.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let state_clone = state.clone();
+    let provider_clone = provider.clone();
+    let moniker_clone = moniker.clone();
+
+    tokio::spawn(async move {
+        let naming = match namer::generate_name(&state_clone.http, &naming_ctx).await {
+            Some(n) => n,
+            None => return,
+        };
+
+        // Update skill.json on disk
+        let skill_path = std::path::Path::new(&state_clone.data_dir)
+            .join("skills")
+            .join(&provider_clone)
+            .join(&moniker_clone)
+            .join("skill.json");
+
+        if let Ok(json_str) = tokio::fs::read_to_string(&skill_path).await {
+            if let Ok(mut skill) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                skill["display_name"] = serde_json::Value::String(naming.name.clone());
+                skill["description"] = serde_json::Value::String(naming.description.clone());
+                if let Ok(updated) = serde_json::to_string_pretty(&skill) {
+                    let _ = tokio::fs::write(&skill_path, updated).await;
+                }
+            }
+        }
+
+        let _ = state_clone.dashboard_tx.send(crate::app_state::DashboardEvent {
+            event_type: "skill.named".to_string(),
+            data: serde_json::json!({
+                "skill": skill_name,
+                "moniker": moniker_clone,
+                "provider": provider_clone,
+                "display_name": naming.name,
+                "description": naming.description,
+            }).to_string(),
+        });
+
+        tracing::info!(skill = %skill_name, name = %naming.name, "rename complete");
+    });
+
+    (StatusCode::ACCEPTED, Json(serde_json::json!({"status": "naming_started"}))).into_response()
+}
+
+/// Extract a content slot default from skill.json.
+fn extract_content_default(skill: &serde_json::Value, role: &str) -> String {
+    skill.get("content_slots")
+        .and_then(|v| v.as_array())
+        .and_then(|slots| slots.iter().find(|s| s.get("role").and_then(|r| r.as_str()) == Some(role)))
+        .and_then(|s| s.get("default"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 // ── Background Naming (ORCH-0026) ────────────────────────────
 
 /// Spawn AI-assisted naming in the background.

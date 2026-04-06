@@ -286,6 +286,7 @@ async fn main() -> Result<()> {
         .route("/v1/services/{provider}/skills/{moniker}", axum::routing::get(api::skill_manage::get_skill))
         .route("/v1/services/{provider}/skills/{moniker}", axum::routing::post(api::skill_manage::upsert_skill))
         .route("/v1/services/{provider}/skills/{moniker}", axum::routing::delete(api::skill_manage::delete_skill))
+        .route("/v1/services/{provider}/skills/{moniker}/rename", axum::routing::post(api::skill_manage::rename_skill))
         .route("/v1/services/{provider}/skills/{moniker}/workflows", axum::routing::get(api::skill_manage::list_workflows))
         .route("/v1/services/{provider}/skills/{moniker}/workflows/{name}", axum::routing::get(api::skill_manage::get_workflow))
         .route("/v1/services/{provider}/skills/{moniker}/workflows/{name}", axum::routing::put(api::skill_manage::put_workflow))

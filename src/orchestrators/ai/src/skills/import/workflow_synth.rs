@@ -159,10 +159,19 @@ pub struct ResolvedResource {
     pub weight: Option<f64>,
 }
 
-/// Build a txt2img workflow from resolved CivitAI resources (no generation params).
+/// Build a txt2img workflow from resolved CivitAI resources.
 ///
-/// Uses placeholder prompts. Wires checkpoint, LoRAs, and upscaler if present.
+/// If `params` is provided, uses prompt/negative/steps/cfg from it.
+/// Otherwise uses placeholders.
 pub fn synthesize_from_resources(resources: &[ResolvedResource]) -> serde_json::Value {
+    synthesize_from_resources_with_params(resources, None)
+}
+
+/// Build a txt2img workflow from resources + optional generation params.
+pub fn synthesize_from_resources_with_params(
+    resources: &[ResolvedResource],
+    params: Option<&GenerationParams>,
+) -> serde_json::Value {
     let checkpoint = resources.iter().find(|r| r.model_type == "Checkpoint");
     let loras: Vec<&ResolvedResource> = resources.iter().filter(|r| r.model_type == "LORA").collect();
     let upscaler = resources.iter().find(|r| r.model_type == "Upscaler");
@@ -212,13 +221,23 @@ pub fn synthesize_from_resources(resources: &[ResolvedResource]) -> serde_json::
     let final_model = &prev_model;
     let final_clip = &prev_clip;
 
+    let prompt = params.map(|p| p.prompt.as_str()).filter(|s| !s.is_empty()).unwrap_or("PLACEHOLDER_PROMPT");
+    let negative = params.map(|p| p.negative_prompt.as_str()).filter(|s| !s.is_empty()).unwrap_or("PLACEHOLDER_NEGATIVE");
+    let steps = params.and_then(|p| p.steps).unwrap_or(20) as u64;
+    let cfg = params.and_then(|p| p.cfg_scale).unwrap_or(7.0);
+    let sampler = params.and_then(|p| p.sampler.as_deref()).map(|s| map_sampler(s)).unwrap_or("euler");
+    let scheduler = params.and_then(|p| p.sampler.as_deref()).map(|s| map_scheduler(s)).unwrap_or("normal");
+    let seed = params.and_then(|p| p.seed).unwrap_or(0);
+    let width = params.and_then(|p| p.width).unwrap_or(512) as u64;
+    let height = params.and_then(|p| p.height).unwrap_or(512) as u64;
+
     wf["2"] = serde_json::json!({
         "class_type": "CLIPTextEncode",
-        "inputs": { "text": "PLACEHOLDER_PROMPT", "clip": [final_clip.0, final_clip.1] }
+        "inputs": { "text": prompt, "clip": [final_clip.0, final_clip.1] }
     });
     wf["3"] = serde_json::json!({
         "class_type": "CLIPTextEncode",
-        "inputs": { "text": "PLACEHOLDER_NEGATIVE", "clip": [final_clip.0, final_clip.1] }
+        "inputs": { "text": negative, "clip": [final_clip.0, final_clip.1] }
     });
     wf["4"] = serde_json::json!({
         "class_type": "KSampler",
@@ -227,17 +246,17 @@ pub fn synthesize_from_resources(resources: &[ResolvedResource]) -> serde_json::
             "positive": ["2", 0],
             "negative": ["3", 0],
             "latent_image": ["5", 0],
-            "seed": 0,
-            "steps": 20,
-            "cfg": 7.0,
-            "sampler_name": "euler",
-            "scheduler": "normal",
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
             "denoise": 1.0
         }
     });
     wf["5"] = serde_json::json!({
         "class_type": "EmptyLatentImage",
-        "inputs": { "width": 512, "height": 512, "batch_size": 1 }
+        "inputs": { "width": width, "height": height, "batch_size": 1 }
     });
     wf["6"] = serde_json::json!({
         "class_type": "VAEDecode",

@@ -98,6 +98,7 @@ pub struct GenerationMeta {
 pub struct CivitaiResource {
     pub resource_type: String,
     pub model_version_id: u64,
+    pub weight: Option<f64>,
 }
 
 /// Fetch image metadata from the CivitAI API.
@@ -199,6 +200,7 @@ fn parse_generation_meta(meta_outer: Option<&serde_json::Value>) -> Option<Gener
                     Some(CivitaiResource {
                         resource_type: r.get("type")?.as_str()?.to_string(),
                         model_version_id: r.get("modelVersionId")?.as_u64()?,
+                        weight: r.get("weight").and_then(|v| v.as_f64()),
                     })
                 })
                 .collect()

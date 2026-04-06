@@ -432,9 +432,33 @@ async fn extract_from_civitai(
         }
     }
 
-    // No workflow from PNG — synthesize from CivitAI generation metadata
+    // No workflow from PNG — synthesize from CivitAI generation metadata.
+    // Use civitaiResources for model identification when meta.Model is missing.
     if let Some(ref gen_meta) = civitai_bundle.generation {
-        if !gen_meta.prompt.is_empty() || gen_meta.model_name.is_some() {
+        // Resolve civitaiResources to get checkpoint/LoRA filenames + weights
+        let mut resolved_resources = Vec::new();
+        for res in &gen_meta.civitai_resources {
+            if let Some(resolved) = civitai::resolve_model_version(civitai, res.model_version_id).await {
+                resolved_resources.push(workflow_synth::ResolvedResource {
+                    filename: resolved.filename,
+                    model_type: resolved.model_type,
+                    weight: res.weight,
+                });
+            }
+        }
+
+        // Determine model name: prefer meta.Model, fall back to resolved checkpoint
+        let model_name = gen_meta.model_name.clone().or_else(|| {
+            resolved_resources.iter()
+                .find(|r| r.model_type == "Checkpoint")
+                .map(|r| r.filename.clone())
+        });
+
+        let has_prompt = !gen_meta.prompt.is_empty();
+        let has_model = model_name.is_some();
+        let has_resources = !resolved_resources.is_empty();
+
+        if has_prompt || has_model || has_resources {
             let params = gen_data_parse::GenerationParams {
                 prompt: gen_meta.prompt.clone(),
                 negative_prompt: gen_meta.negative_prompt.clone(),
@@ -442,18 +466,38 @@ async fn extract_from_civitai(
                 cfg_scale: gen_meta.cfg_scale,
                 sampler: gen_meta.sampler.clone(),
                 seed: gen_meta.seed,
-                model: gen_meta.model_name.clone(),
+                model: model_name.clone(),
                 width: gen_meta.width,
                 height: gen_meta.height,
                 clip_skip: gen_meta.clip_skip,
                 extra: std::collections::HashMap::new(),
             };
+
             tracing::info!(
                 image_id,
-                model_name = ?params.model,
+                model_name = ?model_name,
+                resources = resolved_resources.len(),
                 "civitai: synthesizing workflow from generation metadata"
             );
-            let workflow = workflow_synth::synthesize_txt2img(&params);
+
+            // Use resource-based synthesis if we have LoRAs with weights
+            let loras: Vec<_> = resolved_resources.iter()
+                .filter(|r| r.model_type == "LORA")
+                .collect();
+
+            let workflow = if !loras.is_empty() && model_name.is_some() {
+                // Build workflow with all LoRAs wired in + generation params
+                workflow_synth::synthesize_from_resources_with_params(&resolved_resources, Some(&params))
+            } else if loras.len() == 1 {
+                workflow_synth::synthesize_txt2img_with_lora(
+                    &params,
+                    &loras[0].filename,
+                    loras[0].weight.unwrap_or(1.0),
+                )
+            } else {
+                workflow_synth::synthesize_txt2img(&params)
+            };
+
             warnings.push(Warning {
                 warning_type: "synthesized".into(),
                 message: "No embedded workflow found. Synthesized from CivitAI generation metadata.".into(),
@@ -462,16 +506,15 @@ async fn extract_from_civitai(
         }
     }
 
-    // No workflow, no generation data — but we may have model version IDs.
-    // Resolve the version IDs and synthesize a workflow from the resources.
+    // No generation data at all — but we may have model version IDs.
     if !civitai_bundle.model_version_ids.is_empty() {
         let mut resources = Vec::new();
         for vid in &civitai_bundle.model_version_ids {
             if let Some(resolved) = civitai::resolve_model_version(civitai, *vid).await {
                 resources.push(workflow_synth::ResolvedResource {
                     filename: resolved.filename,
-                    model_type: resolved.model_type, // CivitAI types: "Checkpoint", "LORA", etc.
-                    weight: None, // no weight info without generation data
+                    model_type: resolved.model_type,
+                    weight: None,
                 });
             }
         }
@@ -485,7 +528,7 @@ async fn extract_from_civitai(
             let workflow = workflow_synth::synthesize_from_resources(&resources);
             warnings.push(Warning {
                 warning_type: "synthesized".into(),
-                message: "No generation parameters found. Synthesized a template workflow from identified resources. Add your prompt and adjust parameters.".into(),
+                message: "No generation parameters found. Synthesized a template workflow from identified resources.".into(),
             });
             return Ok((workflow, Some(source), preview_url, Some(civitai_bundle)));
         }

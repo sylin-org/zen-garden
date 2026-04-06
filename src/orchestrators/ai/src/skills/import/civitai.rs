@@ -102,7 +102,8 @@ pub struct CivitaiResource {
 
 /// Fetch image metadata from the CivitAI API.
 pub async fn fetch_image(client: &CivitaiClient, image_id: u64) -> Result<ImageMetadata> {
-    let url = format!("{API_BASE}/images?imageId={image_id}&limit=1");
+    // browsingLevel=31 includes all NSFW levels (CivitAI filters NSFW by default even with auth)
+    let url = format!("{API_BASE}/images?imageId={image_id}&limit=1&browsingLevel=31");
 
     let resp = client.get(&url)
         .timeout(TIMEOUT)

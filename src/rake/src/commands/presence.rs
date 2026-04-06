@@ -24,10 +24,10 @@ pub async fn presence_command(
     // Resolve endpoint using dispatch resolution logic
     let endpoint = if let Some(explicit_at) = at {
         // Explicit --at flag takes priority
-        crate::client::resolve_target_endpoint(
+        crate::connection::resolution::resolve_target(
             client,
             &explicit_at,
-            cache.map(|c| c as &dyn crate::client::CachedStoneOps),
+            cache.map(|c| c as &dyn crate::connection::resolution::CachedStoneOps),
         )
         .await?
     } else if let Ok(env_endpoint) = std::env::var("GARDEN_STONE") {

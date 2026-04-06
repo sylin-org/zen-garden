@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use std::time::Duration;
@@ -42,9 +42,9 @@ impl InstallServiceCommand {
 }
 
 impl Command for InstallServiceCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?;
+            let endpoint = ctx.endpoint();
             let url = format!("{}/admin/take-root", endpoint.trim_end_matches('/'));
 
             // Show initial message based on style
@@ -140,7 +140,7 @@ impl Command for InstallServiceCommand {
     }
 }
 
-fn print_success_message(ctx: &Runtime, style: &InstallStyle) {
+fn print_success_message(ctx: &Context, style: &InstallStyle) {
     let message = match style {
         InstallStyle::TakeRoot => "Stone has taken root as a system service",
         InstallStyle::InstallService => "Service installed successfully",

@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering::{self as ui};
 use anyhow::bail;
@@ -34,9 +34,9 @@ impl CapabilitiesCommand {
 }
 
 impl Command for CapabilitiesCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let caps_value: serde_json::Value = match api.offerings().capabilities(&self.offering).await {
                 Ok(v) => v,
@@ -219,7 +219,7 @@ impl AddCapabilityCommand {
 }
 
 impl Command for AddCapabilityCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let action = if self.dry_run { "Validating" } else { "Adding" };
             println!(
@@ -230,7 +230,7 @@ impl Command for AddCapabilityCommand {
                 self.offering
             );
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
             let request_body = AddCapabilityRequest {
                 name: self.name.clone(),
                 cap_type: self.cap_type.clone(),
@@ -363,7 +363,7 @@ impl RemoveCapabilityCommand {
 }
 
 impl Command for RemoveCapabilityCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             println!(
                 "{} Removing {} from {}...",
@@ -372,7 +372,7 @@ impl Command for RemoveCapabilityCommand {
                 self.offering
             );
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let response = match api.offerings().remove_capability(
                 &self.offering,
@@ -556,7 +556,7 @@ impl RefreshCapabilitiesCommand {
 }
 
 impl Command for RefreshCapabilitiesCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let action = if self.dry_run {
                 "Checking"
@@ -570,7 +570,7 @@ impl Command for RefreshCapabilitiesCommand {
                 self.offering
             );
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
             let request_body = RefreshCapabilitiesRequest {
                 cap_type: self.cap_type.clone(),
                 dry_run: self.dry_run,
@@ -711,10 +711,10 @@ impl Command for RefreshCapabilitiesCommand {
 }
 
 impl Command for MirrorCapabilitiesCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let (from_arg, to_arg) = parse_mirror_targets(&self.args)?;
-            let local_stone = ctx.stone.clone();
+            let local_stone = ctx.stone_name().map(|s| s.to_string());
 
             let from = match from_arg {
                 Some(value) => value,
@@ -746,7 +746,7 @@ impl Command for MirrorCapabilitiesCommand {
                 to
             );
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
             let request_body = MirrorCapabilitiesRequest {
                 from: from.clone(),
                 to: to.clone(),

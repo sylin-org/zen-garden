@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 
@@ -26,9 +26,9 @@ impl BorrowCommand {
 }
 
 impl Command for BorrowCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let url = ctx.api_v1_url("stone/offerings/borrow")?;
+            let url = ctx.api_v1_url("stone/offerings/borrow");
             let response = ctx
                 .client
                 .post(&url)

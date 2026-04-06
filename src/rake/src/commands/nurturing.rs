@@ -10,7 +10,7 @@
 //! - `nurturing trigger-all` - Trigger all offerings
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use garden_common::api_utils::ApiResponse;
 use garden_common::nurturing::{NurturingIndex, OfferingSlots, RemoteNurturingIndex};
 use serde::Deserialize;
@@ -67,11 +67,11 @@ impl RestoreLocalCommand {
 }
 
 impl Command for RestoreLocalCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
             let offering_path = urlencoding::encode(&self.offering);
 
             // First, show what would be restored (dry-run info)
@@ -239,11 +239,11 @@ impl RestoreRemoteCommand {
 }
 
 impl Command for RestoreRemoteCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             // Get list of remote snapshots from seed bank
             let seed_bank_path = urlencoding::encode(&self.storage);
@@ -405,11 +405,11 @@ impl NurturingStatusCommand {
 }
 
 impl Command for NurturingStatusCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             if let Some(ref offering) = self.offering {
                 // Detailed view for single offering
@@ -512,7 +512,7 @@ impl Command for NurturingStatusCommand {
 impl NurturingStatusCommand {
     async fn show_offering_detail(
         &self,
-        ctx: &Runtime,
+        ctx: &Context,
         api: &garden_common::client::StoneApi,
         offering: &str,
     ) -> CommandResult {
@@ -670,11 +670,11 @@ impl NurturingListCommand {
 }
 
 impl Command for NurturingListCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             println!(
                 "\n{} {}",
@@ -850,11 +850,11 @@ impl NurturingTriggerCommand {
 }
 
 impl Command for NurturingTriggerCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             if let Some(ref offering) = self.offering {
                 // Single offering

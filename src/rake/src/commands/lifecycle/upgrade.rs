@@ -3,7 +3,7 @@
 //! Pulls latest images and restarts services with new versions.
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 
@@ -25,9 +25,9 @@ impl UpgradeCommand {
 }
 
 impl Command for UpgradeCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             if self.all || self.service.is_none() {
                 // Batch upgrade all services

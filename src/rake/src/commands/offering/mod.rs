@@ -8,7 +8,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::Command;
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::discovery;
 use crate::ui::colors::CliFormatter;
 use crate::ui::rendering as ui;
@@ -1242,13 +1242,20 @@ async fn install_on_stone(
     quiet: bool,
 ) -> Result<()> {
     // Delegate to existing install logic by creating a context
-    let ctx = crate::context::Runtime::with_endpoint(
-        client.clone(),
-        endpoint.to_string(),
+    let resolved = crate::connection::resolution::Resolved {
+        endpoint: endpoint.to_string(),
+        origin: crate::connection::resolution::Origin::Flag,
+    };
+    let stone = crate::connection::stone::Stone::bind(client.clone(), resolved);
+    let ctx = crate::context::Context::from_stone(
+        &stone,
         None,
+        client.clone(),
         quiet,
         false,
-        0, // verbose
+        0,
+        crate::context::OutputFormat::Human,
+        None,
     );
 
     let install_cmd = OfferCommand::install(offering.to_string(), vec![], false, quiet);
@@ -1375,25 +1382,25 @@ impl Command for OfferCommand {
         cmd::OFFER
     }
 
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             let term = ui::TerminalInfo::detect();
 
             match &self.action {
                 OfferAction::List => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
                     print_offerings_index(api).await?;
                 }
                 OfferAction::Refresh => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
                     refresh_offerings_index(api).await?;
                 }
                 OfferAction::Info { name } => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
                     print_offering_info(api, name).await?;
                 }
                 OfferAction::Query { query } => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
                     print_offer_query_recommendations(api, query, &self.prefer)
                         .await?;
                 }
@@ -1404,7 +1411,7 @@ impl Command for OfferCommand {
                     handle_placement_recommendation(&ctx.client, name, *quiet).await?;
                 }
                 OfferAction::Install { name } => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
                     let offering_fqn = OfferingFqn::parse(name)
                         .map_err(|e| anyhow::anyhow!("Invalid offering name '{}': {}", name, e))?;
                     let service_name = offering_fqn.fqn();
@@ -1676,7 +1683,7 @@ impl Command for OfferCommand {
                     instance,
                     info_only,
                 } => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
 
                     if *info_only {
                         // Info-only: inspect the image without deploying

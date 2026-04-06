@@ -6,7 +6,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use garden_common::api_utils::ApiResponse;
@@ -43,9 +43,9 @@ impl TemplateCommand {
 }
 
 impl Command for TemplateCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?;
+            let endpoint = ctx.endpoint();
 
             match &self.action {
                 TemplateAction::List => {

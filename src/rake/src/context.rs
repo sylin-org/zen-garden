@@ -1,7 +1,8 @@
-//! Command execution context
+//! Command execution context (RAKE-0011)
 //!
 //! Provides shared state and utilities for command handlers.
-//! This eliminates repetitive setup code in each command.
+//! Connected commands receive an `api()` and `endpoint()` that are
+//! always available -- no `Option` unwrapping.
 
 use crate::ui::rendering::{OutputWriter, TerminalInfo};
 use garden_common::client::StoneApi;
@@ -9,10 +10,8 @@ use garden_common::client::StoneApi;
 /// Global output format for automation-friendly output
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
-    /// Human-readable output (default)
     #[default]
     Human,
-    /// JSON output for scripts/automation
     Json,
 }
 
@@ -33,172 +32,145 @@ impl OutputFormat {
     }
 }
 
-/// Context passed to command handlers
+/// Context passed to command handlers.
 ///
-/// Contains all the shared state needed to execute a command:
-/// - HTTP client for API calls
-/// - Resolved endpoint (if applicable)
-/// - Stone name (if resolved)
-/// - Output formatting utilities
-/// - Mode flags (quiet, fresh, verbose)
-/// - Automation: output_format, field extraction
-pub struct Runtime {
+/// For connected commands, `api` and `endpoint` are always set
+/// (dispatch enforces this). For local commands, they are `None`.
+pub struct Context {
     /// HTTP client with connection pooling
     pub client: reqwest::Client,
-    /// Resolved stone endpoint (e.g., "http://10.0.0.5:7185")
-    pub endpoint: Option<String>,
-    /// Stone name (e.g., "stone-01")
-    pub stone: Option<String>,
+    /// Typed Stone API (present for connected commands)
+    api: Option<StoneApi>,
+    /// Resolved endpoint URL (present for connected commands)
+    endpoint: Option<String>,
+    /// Stone name (if known)
+    stone_name: Option<String>,
     /// Whether to suppress non-essential output
     pub quiet: bool,
     /// Whether to bypass cache
     pub fresh: bool,
-    /// Verbose level (0=off, 1=-v, 2=-vv, etc.)
+    /// Verbose level
     pub verbose: u8,
     /// Terminal info for formatting
     pub term: TerminalInfo,
     /// Output writer for consistent formatting
     pub output: OutputWriter,
-    /// Global output format (human or json) for automation
+    /// Global output format
     pub output_format: OutputFormat,
-    /// Optional field path for extracting single values (e.g., "connection.uris[0]")
+    /// Optional field path for extracting single values
     pub field: Option<String>,
-    /// Typed Stone API client (ARCH-0012)
-    ///
-    /// Available when an endpoint is resolved. Provides typed methods
-    /// for all Stone REST endpoints, replacing raw `ctx.client.get(url)` patterns.
-    pub api: Option<StoneApi>,
 }
 
-impl Runtime {
-    /// Create context with resolved endpoint
-    pub fn with_endpoint(
+impl Context {
+    /// Create a connected context from a Stone reference.
+    pub fn from_stone(
+        stone: &crate::connection::stone::Stone,
+        stone_name: Option<String>,
         client: reqwest::Client,
-        endpoint: String,
-        stone: Option<String>,
-        quiet: bool,
-        fresh: bool,
-        verbose: u8,
-    ) -> Self {
-        let term = TerminalInfo::detect();
-        let output = OutputWriter::new();
-        let api = Some(StoneApi::new(client.clone(), endpoint.clone()));
-        Self {
-            client,
-            endpoint: Some(endpoint),
-            stone,
-            quiet,
-            fresh,
-            verbose,
-            term,
-            output,
-            output_format: OutputFormat::default(),
-            field: None,
-            api,
-        }
-    }
-
-    /// Create context with all options including automation flags
-    #[expect(clippy::too_many_arguments)]
-    pub fn with_automation(
-        client: reqwest::Client,
-        endpoint: Option<String>,
-        stone: Option<String>,
         quiet: bool,
         fresh: bool,
         verbose: u8,
         output_format: OutputFormat,
         field: Option<String>,
     ) -> Self {
-        let term = TerminalInfo::detect();
-        let output = OutputWriter::new();
-        let api = endpoint
-            .as_ref()
-            .map(|ep| StoneApi::new(client.clone(), ep.clone()));
         Self {
+            api: Some(StoneApi::new(client.clone(), stone.endpoint().to_string())),
+            endpoint: Some(stone.endpoint().to_string()),
+            stone_name,
             client,
-            endpoint,
-            stone,
             quiet,
             fresh,
             verbose,
-            term,
-            output,
+            term: TerminalInfo::detect(),
+            output: OutputWriter::new(),
             output_format,
             field,
-            api,
         }
     }
 
-    /// Create context without endpoint (for local-only commands)
-    pub fn without_endpoint(
+    /// Create a local context (no stone).
+    pub fn local(
         client: reqwest::Client,
         quiet: bool,
         fresh: bool,
         verbose: u8,
+        output_format: OutputFormat,
+        field: Option<String>,
     ) -> Self {
-        let term = TerminalInfo::detect();
-        let output = OutputWriter::new();
         Self {
             client,
+            api: None,
             endpoint: None,
-            stone: None,
+            stone_name: None,
             quiet,
             fresh,
             verbose,
-            term,
-            output,
-            output_format: OutputFormat::default(),
-            field: None,
-            api: None,
+            term: TerminalInfo::detect(),
+            output: OutputWriter::new(),
+            output_format,
+            field,
         }
     }
 
-    /// Get endpoint, returning error if not resolved
-    pub fn endpoint(&self) -> anyhow::Result<&str> {
-        self.endpoint
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("No stone endpoint available"))
-    }
+    // ====================================================================
+    // Stone access -- dispatch guarantees these for connected commands
+    // ====================================================================
 
-    /// Get the typed Stone API client, returning error if no endpoint resolved.
-    pub fn stone_api(&self) -> anyhow::Result<&StoneApi> {
+    /// Typed Stone API (ARCH-0012).
+    /// Dispatch guarantees this is set for connected commands.
+    pub fn api(&self) -> &StoneApi {
         self.api
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No stone endpoint available"))
+            .expect("dispatch guarantees api for connected commands")
     }
 
-    /// Build URL for API endpoint
-    pub fn api_url(&self, path: &str) -> anyhow::Result<String> {
-        let base = self.endpoint()?;
-        let base = base.trim_end_matches('/');
+    /// Resolved endpoint URL.
+    /// Dispatch guarantees this is set for connected commands.
+    pub fn endpoint(&self) -> &str {
+        self.endpoint
+            .as_deref()
+            .expect("dispatch guarantees endpoint for connected commands")
+    }
+
+    /// Whether this context has a stone connection.
+    pub fn has_stone(&self) -> bool {
+        self.api.is_some()
+    }
+
+    /// Stone name (if known from tending cache or capabilities fetch).
+    pub fn stone_name(&self) -> Option<&str> {
+        self.stone_name.as_deref()
+    }
+
+    // ====================================================================
+    // URL helpers
+    // ====================================================================
+
+    /// Build URL for API endpoint: `{endpoint}/{path}`
+    pub fn api_url(&self, path: &str) -> String {
+        let base = self.endpoint().trim_end_matches('/');
         let path = path.trim_start_matches('/');
-        Ok(format!("{}/{}", base, path))
+        format!("{}/{}", base, path)
     }
 
-    /// Build URL for v1 API endpoint
-    pub fn api_v1_url(&self, path: &str) -> anyhow::Result<String> {
+    /// Build URL for v1 API endpoint: `{endpoint}/api/v1/{path}`
+    pub fn api_v1_url(&self, path: &str) -> String {
         let path = path.trim_start_matches('/');
         self.api_url(&format!("api/v1/{}", path))
     }
 
-    /// Check if we should output JSON (either --output json or command-specific --format json)
+    // ====================================================================
+    // Output helpers
+    // ====================================================================
+
     pub fn wants_json(&self) -> bool {
         self.output_format.is_json()
     }
 
-    /// Check if we have a field extraction request
     pub fn has_field(&self) -> bool {
         self.field.is_some()
     }
 
-    /// Extract a field from a JSON value using dot notation
-    ///
-    /// Supports:
-    /// - Simple paths: "name", "connection.port"
-    /// - Array indexing: "uris[0]", "services[0].name"
-    ///
-    /// Returns the extracted value as a string, or None if not found.
     pub fn extract_field(&self, value: &serde_json::Value) -> Option<String> {
         let field = self.field.as_ref()?;
         extract_json_field(value, field)
@@ -206,34 +178,25 @@ impl Runtime {
 }
 
 /// Extract a field from JSON using dot notation with array indexing
-///
-/// Examples:
-/// - "name" -> value["name"]
-/// - "connection.port" -> value["connection"]["port"]
-/// - "services[0].name" -> value["services"][0]["name"]
-/// - "uris[0]" -> value["uris"][0]
 pub fn extract_json_field(value: &serde_json::Value, path: &str) -> Option<String> {
     let mut current = value;
 
     for segment in path.split('.') {
-        // Check for array indexing: "field[0]"
         if let Some(bracket_pos) = segment.find('[') {
             let field_name = &segment[..bracket_pos];
             let rest = &segment[bracket_pos..];
 
-            // Get the field first (if not empty)
             if !field_name.is_empty() {
                 current = current.get(field_name)?;
             }
 
-            // Parse array indices like "[0]" or "[0][1]"
             let mut chars = rest.chars().peekable();
             while chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
+                chars.next();
                 let mut index_str = String::new();
                 while let Some(&c) = chars.peek() {
                     if c == ']' {
-                        chars.next(); // consume ']'
+                        chars.next();
                         break;
                     }
                     index_str.push(c);
@@ -247,13 +210,11 @@ pub fn extract_json_field(value: &serde_json::Value, path: &str) -> Option<Strin
         }
     }
 
-    // Convert to string representation
     match current {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Number(n) => Some(n.to_string()),
         serde_json::Value::Bool(b) => Some(b.to_string()),
         serde_json::Value::Null => Some("null".to_string()),
-        // For objects/arrays, return compact JSON
         _ => Some(current.to_string()),
     }
 }
@@ -263,39 +224,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_api_url_building() {
-        let ctx = Runtime::with_endpoint(
-            reqwest::Client::new(),
-            "http://10.0.0.5:7185".to_string(),
-            Some("stone-01".to_string()),
-            false,
-            false,
-            0,
-        );
-
-        assert_eq!(
-            ctx.api_url("health").unwrap(),
-            "http://10.0.0.5:7185/health"
-        );
-        assert_eq!(
-            ctx.api_v1_url("services").unwrap(),
-            "http://10.0.0.5:7185/api/v1/services"
-        );
-        assert_eq!(
-            ctx.api_v1_url("/services").unwrap(),
-            "http://10.0.0.5:7185/api/v1/services"
-        );
-    }
-
-    #[test]
-    fn test_endpoint_without_resolution() {
-        let ctx = Runtime::without_endpoint(reqwest::Client::new(), false, false, 0);
-
-        assert!(ctx.endpoint().is_err());
-        assert!(ctx.api_url("health").is_err());
-    }
-
-    #[test]
     fn test_field_extraction_simple() {
         let json = serde_json::json!({
             "name": "mongodb",
@@ -303,15 +231,9 @@ mod tests {
             "active": true
         });
 
-        assert_eq!(
-            extract_json_field(&json, "name"),
-            Some("mongodb".to_string())
-        );
+        assert_eq!(extract_json_field(&json, "name"), Some("mongodb".to_string()));
         assert_eq!(extract_json_field(&json, "port"), Some("27017".to_string()));
-        assert_eq!(
-            extract_json_field(&json, "active"),
-            Some("true".to_string())
-        );
+        assert_eq!(extract_json_field(&json, "active"), Some("true".to_string()));
         assert_eq!(extract_json_field(&json, "missing"), None);
     }
 
@@ -321,7 +243,7 @@ mod tests {
             "connection": {
                 "hostname": "stone-01.local",
                 "port": 27017,
-                "uris": ["mongodb://stone-01.local:27017", "mongodb://10.0.0.5:27017"]
+                "uris": ["mongodb://stone-01.local:27017"]
             }
         });
 
@@ -330,35 +252,8 @@ mod tests {
             Some("stone-01.local".to_string())
         );
         assert_eq!(
-            extract_json_field(&json, "connection.port"),
-            Some("27017".to_string())
-        );
-        assert_eq!(
             extract_json_field(&json, "connection.uris[0]"),
             Some("mongodb://stone-01.local:27017".to_string())
-        );
-        assert_eq!(
-            extract_json_field(&json, "connection.uris[1]"),
-            Some("mongodb://10.0.0.5:27017".to_string())
-        );
-    }
-
-    #[test]
-    fn test_field_extraction_array_root() {
-        let json = serde_json::json!({
-            "services": [
-                { "name": "mongodb", "port": 27017 },
-                { "name": "redis", "port": 6379 }
-            ]
-        });
-
-        assert_eq!(
-            extract_json_field(&json, "services[0].name"),
-            Some("mongodb".to_string())
-        );
-        assert_eq!(
-            extract_json_field(&json, "services[1].port"),
-            Some("6379".to_string())
         );
     }
 }

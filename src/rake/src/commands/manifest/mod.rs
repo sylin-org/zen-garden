@@ -9,9 +9,9 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::Command;
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::ui::rendering as ui;
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 
 // ============================================================================
 // Types
@@ -120,7 +120,7 @@ impl Command for ManifestCommand {
         false
     }
 
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             match &self.action {
                 ManifestAction::Init {
@@ -155,13 +155,13 @@ impl Command for ManifestCommand {
 // ============================================================================
 
 async fn execute_init(
-    ctx: &Runtime,
+    ctx: &Context,
     image_ref: &str,
     output_dir: Option<&str>,
     name: Option<&str>,
     category: Option<&str>,
 ) -> Result<()> {
-    let api = ctx.stone_api().context("endpoint required for init")?;
+    let api = ctx.api();
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
     if !ctx.quiet {
@@ -358,8 +358,8 @@ async fn execute_validate(path: &str) -> Result<()> {
 // Test — deploy manifest on a stone
 // ============================================================================
 
-async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
-    let api = ctx.stone_api().context("endpoint required for test")?;
+async fn execute_test(ctx: &Context, path: &str) -> Result<()> {
+    let api = ctx.api();
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
     let p = std::path::Path::new(path);
@@ -460,8 +460,8 @@ async fn execute_test(ctx: &Runtime, path: &str) -> Result<()> {
 // Export — export running offering's manifest
 // ============================================================================
 
-async fn execute_export(ctx: &Runtime, offering: &str, output_dir: Option<&str>) -> Result<()> {
-    let api = ctx.stone_api().context("endpoint required for export")?;
+async fn execute_export(ctx: &Context, offering: &str, output_dir: Option<&str>) -> Result<()> {
+    let api = ctx.api();
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let term = ui::TerminalInfo::detect();
 

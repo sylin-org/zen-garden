@@ -5,7 +5,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use std::io::Write;
@@ -28,11 +28,11 @@ impl RemoveCommand {
 }
 
 impl Command for RemoveCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let service_path = urlencoding::encode(&self.service);
             // First check if the service exists before prompting
-            let check_url = ctx.api_v1_url(&format!("stone/services/{}", service_path))?;
+            let check_url = ctx.api_v1_url(&format!("stone/services/{}", service_path));
             let check_response = ctx.client.get(&check_url).send().await?;
 
             if check_response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -77,7 +77,7 @@ impl Command for RemoveCommand {
                 println!();
             }
 
-            let url = ctx.api_v1_url(&format!("stone/services/{}", service_path))?;
+            let url = ctx.api_v1_url(&format!("stone/services/{}", service_path));
             let response = ctx.client.delete(&url).send().await?;
             let status = response.status();
 

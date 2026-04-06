@@ -5,7 +5,7 @@
 //! - place stone --code <code>: Join pond with invitation code (equivalent to pond join)
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use garden_common::client::StoneApi;
@@ -54,9 +54,9 @@ impl PlaceCommand {
 }
 
 impl Command for PlaceCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             match &self.target {
                 PlaceTarget::Keystone { passphrase } => {
@@ -80,7 +80,7 @@ impl Command for PlaceCommand {
 }
 
 async fn execute_place_keystone(
-    ctx: &Runtime,
+    ctx: &Context,
     api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
@@ -131,7 +131,7 @@ async fn execute_place_keystone(
     Ok(())
 }
 
-async fn execute_place_stone(ctx: &Runtime, api: &StoneApi, code: &str) -> anyhow::Result<()> {
+async fn execute_place_stone(ctx: &Context, api: &StoneApi, code: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({ "code": code });
 
     match api.pond().join(&payload).await {

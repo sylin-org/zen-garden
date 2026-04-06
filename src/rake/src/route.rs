@@ -17,11 +17,12 @@
 //! New route.rs: ~550 lines. `CommandInvocation::remote(cmd, m)` auto-extracts
 //! `--at`; the `Runtime` encapsulates global flags.
 
-use crate::dispatch::{self, CommandInvocation, Runtime};
+use crate::dispatch::{CommandInvocation, Runtime};
 
 use garden_rake::cli_build::GlobalFlags;
 use garden_rake::commands;
 use garden_rake::commands::Command;
+use garden_rake::connection::resolution::{self, CachedStoneOps};
 use garden_rake::stone_cache::STONE;
 
 use base64::Engine;
@@ -437,8 +438,7 @@ pub async fn route(
                 let component = req(sub, "component")?;
                 let from = req(sub, "from")?;
                 let endpoint =
-                    dispatch::resolve_endpoint(&rt.client, opt(m, "at"), Some(&*STONE))
-                        .await?;
+                    resolution::resolve(&rt.client, opt(m, "at").as_deref(), Some(&*STONE as &dyn CachedStoneOps), None).await?.endpoint;
                 println!("Refreshing {}...", component);
                 let api = garden_common::client::StoneApi::new(rt.client.clone(), endpoint);
                 refresh_component(&api, &component, std::path::Path::new(&from))
@@ -599,7 +599,7 @@ pub async fn route(
         "launch" => {
             let at = opt(m, "at");
             let endpoint =
-                dispatch::resolve_endpoint(&rt.client, at, Some(&*STONE)).await?;
+                resolution::resolve(&rt.client, at.as_deref(), Some(&*STONE as &dyn CachedStoneOps), None).await?.endpoint;
             return Ok(Some(Inv::local(
                 commands::local::LaunchCommand::new(Some(endpoint)),
             )));
@@ -608,7 +608,7 @@ pub async fn route(
         "api" => {
             let at = opt(m, "at");
             let resolved =
-                dispatch::resolve_endpoint(&rt.client, at, Some(&*STONE)).await?;
+                resolution::resolve(&rt.client, at.as_deref(), Some(&*STONE as &dyn CachedStoneOps), None).await?.endpoint;
             let api = garden_common::client::StoneApi::new(rt.client.clone(), resolved);
             commands::api::execute_api_command(
                 &api,
@@ -705,7 +705,7 @@ async fn route_offer(
         (Some(name), false) => {
             // Is it a known offering? Need pre-resolved endpoint to check.
             let endpoint =
-                dispatch::resolve_endpoint(&rt.client, at.clone(), Some(&*STONE)).await?;
+                resolution::resolve(&rt.client, at.clone().as_deref(), Some(&*STONE as &dyn CachedStoneOps), None).await?.endpoint;
             let is_known =
                 commands::offering::OfferCommand::is_known_offering(&rt.client, &endpoint, name)
                     .await;
@@ -717,13 +717,20 @@ async fn route_offer(
                     prefer.clone(),
                     g.quiet,
                 );
-                let ctx = garden_rake::Runtime::with_endpoint(
-                    rt.client.clone(),
-                    endpoint,
+                let resolved = garden_rake::connection::resolution::Resolved {
+                    endpoint: endpoint.clone(),
+                    origin: garden_rake::connection::resolution::Origin::Flag,
+                };
+                let stone = garden_rake::connection::stone::Stone::bind(rt.client.clone(), resolved);
+                let ctx = garden_rake::context::Context::from_stone(
+                    &stone,
                     None,
+                    rt.client.clone(),
                     g.quiet,
                     false,
                     g.verbose,
+                    garden_rake::context::OutputFormat::Human,
+                    None,
                 );
                 cmd.execute(&ctx).await?;
                 return Ok(None);

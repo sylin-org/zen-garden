@@ -17,7 +17,7 @@
 //! - `store head <bucket> <key>` — Get object metadata
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use garden_common::api_utils::ApiResponse;
 use garden_common::storage::{
     AddStorageRequest, CandidatesResponse, MediumAction, StorageInfo, StorageRole,
@@ -128,11 +128,11 @@ impl AddStorageCommand {
 }
 
 impl Command for AddStorageCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             // Resolve target — if not provided, list candidates and let user pick
             let target = match &self.target {
@@ -210,10 +210,10 @@ impl Command for AddStorageCommand {
 
 impl AddStorageCommand {
     /// Interactive device selection when no target provided.
-    async fn pick_target(&self, ctx: &Runtime, _base: &str) -> anyhow::Result<String> {
+    async fn pick_target(&self, ctx: &Context, _base: &str) -> anyhow::Result<String> {
         use crate::ui::rendering as ui;
 
-        let api = ctx.stone_api()?;
+        let api = ctx.api();
         let resp = api.storage().candidates().await
             .map_err(|e| anyhow::anyhow!("Failed to fetch candidates: {}", e.display_message()))?;
 
@@ -325,11 +325,11 @@ impl ReleaseStorageCommand {
 }
 
 impl Command for ReleaseStorageCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             // "all" → bulk release
             if self.name == "all" {
@@ -413,11 +413,11 @@ impl ListStorageCommand {
 }
 
 impl Command for ListStorageCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             // Fetch local storages
             let storages: Vec<StorageInfo> = api.storage().banks().await
@@ -607,11 +607,11 @@ impl PinStorageCommand {
 }
 
 impl Command for PinStorageCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let url = format!(
                 "{}/api/v1/stone/storage/banks/{}/pin",
@@ -665,11 +665,11 @@ impl UnpinStorageCommand {
 }
 
 impl Command for UnpinStorageCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let url = format!(
                 "{}/api/v1/stone/storage/banks/{}/unpin",
@@ -777,11 +777,11 @@ impl StorePutCommand {
 }
 
 impl Command for StorePutCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             // Read file content
             let data = tokio::fs::read(&self.file)
@@ -873,11 +873,11 @@ impl StoreGetCommand {
 }
 
 impl Command for StoreGetCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
@@ -1021,11 +1021,11 @@ struct CommonPrefix {
 }
 
 impl Command for StoreListCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, prefix) = apply_app_prefix_for_list(&self.bucket, self.prefix.clone(), app);
@@ -1219,11 +1219,11 @@ impl StoreDeleteCommand {
 }
 
 impl Command for StoreDeleteCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
@@ -1286,11 +1286,11 @@ impl StoreHeadCommand {
 }
 
 impl Command for StoreHeadCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             let app = self.app.as_deref().unwrap_or(DEFAULT_APP_NAME);
             let (bucket, key) = apply_app_prefix(&self.bucket, &self.key, app);
@@ -1380,11 +1380,11 @@ impl Default for StorageStatusCommand {
 }
 
 impl Command for StorageStatusCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use crate::ui::rendering as ui;
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             // Fetch local banks
             let banks: Vec<StorageInfo> = api.storage().banks().await

@@ -1,10 +1,17 @@
-use crate::client::{CachedStoneInfo, CachedStoneOps};
+use crate::connection::resolution::{CachedStoneInfo, CachedStoneOps};
 use anyhow::Result;
 use garden_common::client::discovery::{Discovery, KnownStone};
 use garden_common::client::StoneApi;
 use garden_common::HardwareCapabilities;
+use std::sync::{Arc, LazyLock};
 
 pub use garden_common::client::discovery::STONE;
+
+/// Shared `Arc` wrapper around a `Discovery` instance for use with `Resilient`.
+///
+/// This is a separate instance from `STONE` (the process singleton), but
+/// functionally equivalent for recovery caching in resilient connections.
+pub static STONE_ARC: LazyLock<Arc<Discovery>> = LazyLock::new(|| Arc::new(Discovery::new()));
 
 /// Rake-specific discovered stone wrapper
 ///

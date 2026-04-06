@@ -4,10 +4,10 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering::{self as ui, TerminalInfo};
-use anyhow::Context;
+use anyhow::Context as _;
 use colored::Colorize;
 use garden_common::constants::CATEGORY_ORCHESTRATOR;
 use garden_common::SubCapability;
@@ -30,9 +30,9 @@ impl ListCommand {
 }
 
 impl Command for ListCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let url = ctx.api_v1_url("stone/services")?;
+            let url = ctx.api_v1_url("stone/services");
             let response = ctx.client.get(&url).send().await?;
 
             let api_response: ApiResponse<ServiceDiscoveryResponse> = response

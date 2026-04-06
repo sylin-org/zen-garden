@@ -4,7 +4,7 @@
 //! - invite: Generate a time-limited TOTP invitation code (equivalent to pond invite)
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 
@@ -20,9 +20,9 @@ impl InviteCommand {
 }
 
 impl Command for InviteCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
             let payload = serde_json::json!({});
 
             match api.pond().invite_raw(&payload).await {

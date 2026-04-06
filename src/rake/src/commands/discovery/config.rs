@@ -10,9 +10,9 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::{extract_json_field, Runtime};
+use crate::context::{extract_json_field, Context};
 use crate::ui::rendering as ui;
-use anyhow::Context;
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 /// Service configuration response
@@ -97,7 +97,7 @@ impl ConfigCommand {
 use super::find::{FoundService, ServiceDiscoveryResponse};
 
 impl Command for ConfigCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use garden_common::api_utils::{is_suspicious, sanitize_fqn_input, ApiResponse};
 
@@ -111,7 +111,7 @@ impl Command for ConfigCommand {
             // Use the find endpoint with exact name match
             let url = format!(
                 "{}?q={}",
-                ctx.api_v1_url("garden/services")?,
+                ctx.api_v1_url("garden/services"),
                 urlencoding::encode(&sanitized)
             );
 
@@ -191,7 +191,7 @@ impl Command for ConfigCommand {
 
 impl ConfigCommand {
     /// Build config response from found service
-    fn build_config(&self, svc: &FoundService, _ctx: &Runtime) -> ServiceConfigResponse {
+    fn build_config(&self, svc: &FoundService, _ctx: &Context) -> ServiceConfigResponse {
         ServiceConfigResponse {
             name: svc.name.clone(),
             offering: svc.offering.clone(),
@@ -218,7 +218,7 @@ impl ConfigCommand {
     }
 
     /// Render human-readable output
-    fn render_human(&self, config: &ServiceConfigResponse, _ctx: &Runtime) {
+    fn render_human(&self, config: &ServiceConfigResponse, _ctx: &Context) {
         println!();
         println!(
             "{}Configuration for {}",

@@ -8,7 +8,7 @@
 //!   --json          Output raw JSON instead of formatted text
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::ui::rendering as ui;
 use garden_common::types::hardware_topology::{FullCapabilities, HardwareTopology, PcieDevice};
 
@@ -34,10 +34,10 @@ impl InspectCommand {
 impl Command for InspectCommand {
     fn execute<'a>(
         &'a self,
-        ctx: &'a Runtime,
+        ctx: &'a Context,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
             let full: FullCapabilities = api.stone().capabilities().await?;
 
             // Save raw JSON if requested
@@ -186,7 +186,7 @@ impl Command for InspectCommand {
     }
 }
 
-fn render_pcie(topo: &HardwareTopology, ctx: &Runtime) {
+fn render_pcie(topo: &HardwareTopology, ctx: &Context) {
     let active: Vec<&PcieDevice> = topo
         .expansion
         .pcie
@@ -247,7 +247,7 @@ fn render_pcie(topo: &HardwareTopology, ctx: &Runtime) {
     println!();
 }
 
-fn render_network(topo: &HardwareTopology, ctx: &Runtime) {
+fn render_network(topo: &HardwareTopology, ctx: &Context) {
     if topo.network.is_empty() {
         return;
     }
@@ -282,7 +282,7 @@ fn render_network(topo: &HardwareTopology, ctx: &Runtime) {
     println!();
 }
 
-fn render_usb(topo: &HardwareTopology, ctx: &Runtime) {
+fn render_usb(topo: &HardwareTopology, ctx: &Context) {
     let usb = &topo.expansion.usb;
     if usb.ports.is_empty() && usb.connected_devices.is_empty() {
         return;
@@ -303,7 +303,7 @@ fn render_usb(topo: &HardwareTopology, ctx: &Runtime) {
     println!();
 }
 
-fn render_firmware(topo: &HardwareTopology, ctx: &Runtime) {
+fn render_firmware(topo: &HardwareTopology, ctx: &Context) {
     if topo.firmware.is_empty() {
         return;
     }

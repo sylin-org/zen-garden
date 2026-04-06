@@ -7,7 +7,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::discovery;
 use crate::suggestions;
 use crate::tending;
@@ -51,7 +51,7 @@ impl ObserveCommand {
 }
 
 impl Command for ObserveCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             observe_garden(ctx, self.stone_filter.clone(), self.offering_filter.clone()).await?;
 
@@ -73,7 +73,7 @@ impl Command for ObserveCommand {
 
 /// Main observe implementation
 async fn observe_garden(
-    ctx: &Runtime,
+    ctx: &Context,
     stone_filter: Option<String>,
     offering_filter: Option<String>,
 ) -> anyhow::Result<()> {

@@ -13,7 +13,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::ui::gauge;
 use crate::ui::rendering::{self, TerminalInfo};
 use colored::Colorize;
@@ -59,9 +59,9 @@ impl PulseCommand {
 }
 
 impl Command for PulseCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let endpoint = ctx.endpoint()?.to_string();
+            let endpoint = ctx.endpoint().to_string();
             run_pulse_monitor(&ctx.client, &endpoint, &ctx.term).await
         })
     }
@@ -368,6 +368,14 @@ async fn run_pulse_monitor(
                 });
             }
             Err(e) => {
+                // Never connected? Propagate so Runtime::execute can
+                // re-resolve (flush stale tending, discover a live stone).
+                if state.connected_since.is_none()
+                    && (e.is_connect() || e.is_timeout())
+                {
+                    return Err(e.into());
+                }
+
                 state.push_event(EventLine {
                     time: rendering::format_wall_clock(),
                     entity: "connection".to_string(),

@@ -5,7 +5,7 @@
 //! - lift stone <name>: Remove a stone from the pond
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use garden_common::client::StoneApi;
@@ -52,9 +52,9 @@ impl LiftCommand {
 }
 
 impl Command for LiftCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             match &self.target {
                 LiftTarget::Keystone => {
@@ -77,7 +77,7 @@ impl Command for LiftCommand {
     }
 }
 
-async fn execute_lift_keystone(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()> {
+async fn execute_lift_keystone(ctx: &Context, api: &StoneApi) -> anyhow::Result<()> {
     match api.pond().drain().await {
         Ok(_) => {
             println!(
@@ -113,7 +113,7 @@ async fn execute_lift_keystone(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<
     Ok(())
 }
 
-async fn execute_lift_stone(ctx: &Runtime, api: &StoneApi, stone_name: &str) -> anyhow::Result<()> {
+async fn execute_lift_stone(ctx: &Context, api: &StoneApi, stone_name: &str) -> anyhow::Result<()> {
     match api.pond().revoke(stone_name).await {
         Ok(_) => {
             println!(

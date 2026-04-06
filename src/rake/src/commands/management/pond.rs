@@ -14,11 +14,11 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::enrollment;
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use anyhow::Context;
+use anyhow::Context as _;
 use garden_common::client::StoneApi;
 
 /// Pond action to perform
@@ -68,7 +68,7 @@ impl PondCommand {
 }
 
 impl Command for PondCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             // Enroll and Trust are local operations — they don't require
             // a tended stone endpoint.
@@ -90,7 +90,7 @@ impl Command for PondCommand {
                 _ => {}
             }
 
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             match &self.action {
                 PondActionType::Init {
@@ -149,7 +149,7 @@ impl Command for PondCommand {
 }
 
 async fn execute_pond_init(
-    ctx: &Runtime,
+    ctx: &Context,
     endpoint: &str,
     passphrase: Option<String>,
     profile: Option<String>,
@@ -219,7 +219,7 @@ async fn execute_pond_init(
     Ok(())
 }
 
-async fn execute_pond_status(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()> {
+async fn execute_pond_status(ctx: &Context, api: &StoneApi) -> anyhow::Result<()> {
     match api.pond().status().await {
         Ok(data) => {
             // JSON output mode — emit raw API response
@@ -312,7 +312,7 @@ async fn execute_pond_status(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()
 }
 
 async fn execute_pond_invite(
-    ctx: &Runtime,
+    ctx: &Context,
     api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
@@ -361,7 +361,7 @@ async fn execute_pond_invite(
     Ok(())
 }
 
-async fn execute_pond_join(ctx: &Runtime, api: &StoneApi, code: &str) -> anyhow::Result<()> {
+async fn execute_pond_join(ctx: &Context, api: &StoneApi, code: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({ "code": code });
 
     match api.pond().join(&payload).await {
@@ -399,7 +399,7 @@ async fn execute_pond_join(ctx: &Runtime, api: &StoneApi, code: &str) -> anyhow:
 /// Unlike `pond join` (which delegates to the tended Moss stone), `pond enroll`
 /// contacts the cornerstone directly via mDNS and installs certificates on this
 /// machine for mTLS access to the pond.
-async fn execute_pond_enroll(ctx: &Runtime) -> anyhow::Result<()> {
+async fn execute_pond_enroll(ctx: &Context) -> anyhow::Result<()> {
     use std::time::Duration;
 
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
@@ -690,7 +690,7 @@ fn is_elevated() -> bool {
 }
 
 /// Install CA from existing enrollment certs into the OS trust store.
-async fn execute_pond_trust(ctx: &Runtime) -> anyhow::Result<()> {
+async fn execute_pond_trust(ctx: &Context) -> anyhow::Result<()> {
     let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
     let hostname = hostname::get()
         .ok()
@@ -761,7 +761,7 @@ async fn execute_pond_trust(ctx: &Runtime) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn execute_pond_remove(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()> {
+async fn execute_pond_remove(ctx: &Context, api: &StoneApi) -> anyhow::Result<()> {
     match api.pond().drain().await {
         Ok(_) => {
             println!(
@@ -784,7 +784,7 @@ async fn execute_pond_remove(ctx: &Runtime, api: &StoneApi) -> anyhow::Result<()
 }
 
 async fn execute_pond_untrust(
-    ctx: &Runtime,
+    ctx: &Context,
     api: &StoneApi,
     stone_name: &str,
 ) -> anyhow::Result<()> {
@@ -811,7 +811,7 @@ async fn execute_pond_untrust(
 }
 
 async fn execute_pond_unlock(
-    ctx: &Runtime,
+    ctx: &Context,
     api: &StoneApi,
     passphrase: Option<String>,
     totp: Option<String>,
@@ -857,7 +857,7 @@ async fn execute_pond_unlock(
 }
 
 async fn execute_pond_promote(
-    ctx: &Runtime,
+    ctx: &Context,
     api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
@@ -897,7 +897,7 @@ async fn execute_pond_promote(
 }
 
 async fn execute_pond_rename(
-    ctx: &Runtime,
+    ctx: &Context,
     api: &StoneApi,
     name: Option<String>,
 ) -> anyhow::Result<()> {

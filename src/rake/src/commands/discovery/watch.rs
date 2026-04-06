@@ -7,7 +7,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::discovery;
 use crate::suggestions;
 use crate::ui::rendering as ui;
@@ -53,15 +53,15 @@ impl WatchCommand {
 }
 
 impl Command for WatchCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             match &self.target {
                 WatchTargetType::Events { until } => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
                     watch_events(api, until.clone()).await?;
                 }
                 WatchTargetType::OfferingLogs { name, timestamps } => {
-                    let api = ctx.stone_api()?;
+                    let api = ctx.api();
                     watch_offering_logs(api, name, *timestamps).await?;
                 }
                 WatchTargetType::StoneLogs { name, timestamps } => {

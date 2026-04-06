@@ -3,7 +3,7 @@
 //! Lists containers that are not managed by Zen Garden (strays).
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 
@@ -19,9 +19,9 @@ impl LocateStraysCommand {
 }
 
 impl Command for LocateStraysCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let url = ctx.api_v1_url("stone/offerings/adoptable")?;
+            let url = ctx.api_v1_url("stone/offerings/adoptable");
             let response = ctx.client.get(&url).send().await?;
 
             if response.status().is_success() {

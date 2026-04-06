@@ -1,34 +1,15 @@
 //! Command implementations for garden-rake
 //!
-//! This module contains the command handlers extracted from main.rs
-//! for better separation of concerns and testability.
-//!
-//! ## Architecture
-//!
 //! Commands implement the `Command` trait which provides:
 //! - `execute()` - The command's business logic
 //! - `requires_endpoint()` - Whether stone resolution is needed
 //! - `show_stone_header()` - Whether to show stone banner
-//!
-//! The dispatcher handles common pre/post logic:
-//! - Endpoint resolution (if required)
-//! - Stone header display
-//! - Suggestion printing
-//!
-//! ## Module Structure
-//! - `help` - Command catalog and help display
-//! - `admin/` - take-root, install-service
-//! - `discovery/` - observe, watch, list, status
-//! - `lifecycle/` - offer, rest, wake, remove, upgrade
-//! - `adoption/` - adopt, release, borrow, return, find
-//! - `management/` - tend, reconcile, refresh, pond, place, invite, lift, make
 
 pub mod api;
 pub mod ceremony_render;
 pub mod help;
 pub mod hey;
 
-// Command categories (to be extracted incrementally)
 pub mod admin;
 pub mod adoption;
 pub mod discovery;
@@ -44,18 +25,22 @@ pub mod presence;
 pub mod pulse;
 pub mod storage;
 
-use crate::context::Runtime;
+use crate::context::Context;
 
 /// Command execution result
 pub type CommandResult = anyhow::Result<()>;
 
-/// Trait for command handlers
+/// Trait for command handlers.
 ///
-/// Commands implement this trait to be dispatched by the CLI.
-/// The trait provides hooks for common behavior like endpoint resolution.
+/// Connected commands receive a `Context` with a bound `Stone` --
+/// `ctx.api()` and `ctx.endpoint()` are always available.
+/// Local commands receive a `Context` without a stone.
 pub trait Command: Send + Sync {
     /// Execute the command with the given context
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>>;
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>>;
 
     /// Whether this command requires a resolved stone endpoint
     ///
@@ -75,8 +60,4 @@ pub trait Command: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-/// Marker trait for commands that don't need endpoint
-pub trait LocalCommand: Command {}
-
-// Re-export commonly used items
 pub use help::{display_all_commands, display_command_detail};

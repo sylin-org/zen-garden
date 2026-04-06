@@ -3,10 +3,10 @@
 //! The tend command manages the tending state, which determines
 //! which stone commands target by default.
 
-use crate::client::resolve_target_endpoint;
+use crate::connection::resolution::resolve_target;
 use crate::command_manifest::cmd::{self, tend_target};
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::discovery;
 use crate::tending;
 use garden_common::client::StoneApi;
@@ -30,7 +30,7 @@ impl TendCommand {
 }
 
 impl Command for TendCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             if self.clear {
                 tending::clear_tending()?;
@@ -182,7 +182,7 @@ impl Command for TendCommand {
                         // Resolve stone name (or simple host) to an endpoint
                         // Note: We don't use cache here since tend is a setup operation
                         let endpoint: String =
-                            resolve_target_endpoint(&ctx.client, stone_name, None).await?;
+                            resolve_target(&ctx.client, stone_name, None).await?;
 
                         let api = StoneApi::new(ctx.client.clone(), endpoint.clone());
                         match api.stone().capabilities_core().await {

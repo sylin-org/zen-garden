@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 
@@ -21,10 +21,10 @@ impl AdoptCommand {
 }
 
 impl Command for AdoptCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let container_path = urlencoding::encode(&self.container);
-            let url = ctx.api_v1_url(&format!("stone/offerings/{}/adopt", container_path))?;
+            let url = ctx.api_v1_url(&format!("stone/offerings/{}/adopt", container_path));
             let response = ctx
                 .client
                 .post(&url)

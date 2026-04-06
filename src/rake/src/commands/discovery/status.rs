@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use garden_common::DetectionStatus;
@@ -21,7 +21,7 @@ impl StatusCommand {
 }
 
 impl Command for StatusCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             // Info notice (unless quiet mode)
             if !self.quiet {
@@ -32,8 +32,8 @@ impl Command for StatusCommand {
                 eprintln!();
             }
 
-            let api = ctx.stone_api()?;
-            let endpoint = ctx.endpoint()?;
+            let api = ctx.api();
+            let endpoint = ctx.endpoint();
 
             let caps = api
                 .stone()

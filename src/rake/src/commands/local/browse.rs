@@ -7,7 +7,7 @@ use crate::commands::help::{
     display_all_commands, display_command_category, display_command_detail,
 };
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::ui::rendering as ui;
 
 /// Browse commands in the manifest
@@ -30,7 +30,7 @@ impl BrowseCommand {
 }
 
 impl Command for BrowseCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             if let Some(cmd_name) = &self.name {
                 // Show detailed info for specific command

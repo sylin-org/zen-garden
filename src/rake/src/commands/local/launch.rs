@@ -5,7 +5,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 
 /// Launch stone UI in browser
 pub struct LaunchCommand {
@@ -20,13 +20,13 @@ impl LaunchCommand {
 }
 
 impl Command for LaunchCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             // Determine the endpoint to use
             let endpoint = if let Some(ref ep) = self.endpoint {
                 ep.clone()
-            } else if let Some(ref ep) = ctx.endpoint {
-                ep.clone()
+            } else if ctx.has_stone() {
+                ctx.endpoint().to_string()
             } else {
                 // No endpoint available - we need discovery
                 anyhow::bail!(

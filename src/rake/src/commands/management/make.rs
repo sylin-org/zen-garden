@@ -8,7 +8,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 use garden_common::client::StoneApiError;
@@ -38,9 +38,9 @@ impl MakeCommand {
 }
 
 impl Command for MakeCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
-            let api = ctx.stone_api()?;
+            let api = ctx.api();
 
             match &self.action {
                 MakeActionType::Sing { forever } => {
@@ -71,7 +71,7 @@ impl Command for MakeCommand {
 
 async fn execute_make_mode(
     api: &garden_common::client::StoneApi,
-    ctx: &Runtime,
+    ctx: &Context,
     mode: &str,
     persist: bool,
 ) -> anyhow::Result<()> {

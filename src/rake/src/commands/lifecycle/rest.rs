@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 use crate::ui::rendering as ui;
 
@@ -21,10 +21,10 @@ impl RestCommand {
 }
 
 impl Command for RestCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let service_path = urlencoding::encode(&self.service);
-            let url = ctx.api_v1_url(&format!("stone/services/{}/rest", service_path))?;
+            let url = ctx.api_v1_url(&format!("stone/services/{}/rest", service_path));
             let response = ctx.client.post(&url).send().await?;
             let status = response.status();
 

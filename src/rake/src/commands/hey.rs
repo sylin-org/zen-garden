@@ -9,7 +9,7 @@
 
 
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use garden_common::client::StoneApi;
 use garden_common::command_manifest::{CommandManifest, CommandResponse, CompanionCommandRequest};
 
@@ -138,7 +138,7 @@ impl Command for HeyTellCommand {
         false
     }
 
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let (cmd, target_stone) = parse_hey_command(&self.args);
 
@@ -147,7 +147,7 @@ impl Command for HeyTellCommand {
                 // Resolve stone name to endpoint via discovery or direct
                 resolve_stone_endpoint(stone).await?
             } else {
-                ctx.endpoint()?.to_string()
+                ctx.endpoint().to_string()
             };
 
             let api = StoneApi::new(ctx.client.clone(), endpoint);
@@ -172,7 +172,7 @@ async fn resolve_stone_endpoint(stone: &str) -> anyhow::Result<String> {
 }
 
 /// Execute parsed hey command
-async fn execute_hey_command(cmd: HeyCommand, api: &StoneApi, ctx: &Runtime) -> CommandResult {
+async fn execute_hey_command(cmd: HeyCommand, api: &StoneApi, ctx: &Context) -> CommandResult {
     match cmd {
         HeyCommand::Help => {
             print_hey_help();
@@ -421,7 +421,7 @@ async fn send_companion_command(
     api: &StoneApi,
     companion: &str,
     raw_args: &[String],
-    _ctx: &Runtime,
+    _ctx: &Context,
 ) -> CommandResult {
     let request = CompanionCommandRequest::new(companion, raw_args.to_vec());
 

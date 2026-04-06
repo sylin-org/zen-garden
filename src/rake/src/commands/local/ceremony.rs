@@ -4,7 +4,7 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::Runtime;
+use crate::context::Context;
 use crate::suggestions;
 
 /// Ceremony command - guided workflows (placeholder)
@@ -20,7 +20,7 @@ impl CeremonyCommand {
 }
 
 impl Command for CeremonyCommand {
-    fn execute<'a>(&'a self, _ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, _ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             println!();
             println!("  ⏳ Ceremony workflows are not yet implemented.");

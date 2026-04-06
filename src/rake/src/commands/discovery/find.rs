@@ -7,10 +7,10 @@
 
 use crate::command_manifest::cmd;
 use crate::commands::{Command, CommandResult};
-use crate::context::{extract_json_field, Runtime};
+use crate::context::{extract_json_field, Context};
 use crate::suggestions;
 use crate::ui::rendering as ui;
-use anyhow::Context;
+use anyhow::Context as _;
 use futures_util::StreamExt;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{
@@ -119,7 +119,7 @@ struct ToolsSnapshotEvent {
 use garden_common::api_utils::ApiResponse;
 
 impl Command for FindCommand {
-    fn execute<'a>(&'a self, ctx: &'a Runtime) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+    fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             use garden_common::api_utils::{is_suspicious, sanitize_query};
 
@@ -198,11 +198,11 @@ struct CapabilityTypeInfo {
 impl FindCommand {
     async fn query_services(
         &self,
-        ctx: &Runtime,
+        ctx: &Context,
         query: &str,
         fresh: bool,
     ) -> anyhow::Result<ServiceDiscoveryResponse> {
-        let api = ctx.stone_api()?;
+        let api = ctx.api();
 
         // Build query URL with fresh parameter via raw HTTP (garden endpoint with custom params)
         let mut url = format!(
@@ -217,7 +217,7 @@ impl FindCommand {
         tracing::debug!(
             query = %query,
             url = %url,
-            endpoint = ?ctx.endpoint,
+            endpoint = ?ctx.endpoint(),
             "FindCommand: sending request to services?q="
         );
 
@@ -258,8 +258,11 @@ impl FindCommand {
     }
 
     /// Check if the query matches a known offering
-    async fn check_offering_exists_for(&self, ctx: &Runtime, query: &str) -> Option<OfferingInfo> {
-        let api = ctx.stone_api().ok()?;
+    async fn check_offering_exists_for(&self, ctx: &Context, query: &str) -> Option<OfferingInfo> {
+        if !ctx.has_stone() {
+            return None;
+        }
+        let api = ctx.api();
         let data: serde_json::Value = api.offerings().get(query).await.ok()?;
 
         Some(OfferingInfo {
@@ -278,8 +281,8 @@ impl FindCommand {
     }
 
     /// Install an offering and wait for completion
-    async fn install_offering(&self, ctx: &Runtime, offering: &str) -> anyhow::Result<()> {
-        let api = ctx.stone_api()?;
+    async fn install_offering(&self, ctx: &Context, offering: &str) -> anyhow::Result<()> {
+        let api = ctx.api();
         let payload = serde_json::json!({
             "offering": offering,
             "ports": [],
@@ -356,13 +359,13 @@ impl FindCommand {
     }
 
     /// Re-run find query after provisioning
-    async fn retry_find(&self, ctx: &Runtime) -> anyhow::Result<ServiceDiscoveryResponse> {
+    async fn retry_find(&self, ctx: &Context) -> anyhow::Result<ServiceDiscoveryResponse> {
         self.retry_find_with_query(ctx, &self.query).await
     }
 
     async fn retry_find_with_query(
         &self,
-        ctx: &Runtime,
+        ctx: &Context,
         query: &str,
     ) -> anyhow::Result<ServiceDiscoveryResponse> {
         use garden_common::api_utils::sanitize_query;
@@ -372,7 +375,7 @@ impl FindCommand {
         self.query_services(ctx, &sanitized_query, true).await
     }
 
-    async fn handle_capability_ensure(&self, ctx: &Runtime) -> anyhow::Result<bool> {
+    async fn handle_capability_ensure(&self, ctx: &Context) -> anyhow::Result<bool> {
         let query = self.query.trim();
         if !query.contains(':') && !query.contains('[') {
             return Ok(false);
@@ -487,12 +490,12 @@ impl FindCommand {
 
     async fn fetch_capability_types(
         &self,
-        ctx: &Runtime,
+        ctx: &Context,
         offering_fqn: &str,
     ) -> anyhow::Result<Vec<String>> {
         use garden_common::client::stone_api::StoneApiError;
 
-        let api = ctx.stone_api()?;
+        let api = ctx.api();
         let caps_value: serde_json::Value = match api.offerings().capabilities(offering_fqn).await {
             Ok(v) => v,
             Err(StoneApiError::Http { code, message, .. }) => {
@@ -522,12 +525,12 @@ impl FindCommand {
 
     async fn ensure_capabilities(
         &self,
-        ctx: &Runtime,
+        ctx: &Context,
         wish: &garden_common::tools::CapabilityWish,
     ) -> anyhow::Result<()> {
         use garden_common::client::stone_api::StoneApiError;
 
-        let api = ctx.stone_api()?;
+        let api = ctx.api();
 
         for selector in &wish.selectors {
             let payload = serde_json::json!({
@@ -587,12 +590,12 @@ impl FindCommand {
 
     async fn wait_for_tool_ready(
         &self,
-        ctx: &Runtime,
+        ctx: &Context,
         fqid: &str,
         requirements: &[CapabilitySelector],
         timeout: Duration,
     ) -> anyhow::Result<()> {
-        let api = ctx.stone_api()?;
+        let api = ctx.api();
         let mut url = format!(
             "{}/api/v1/garden/tools/stream?fqid={}",
             api.endpoint(),
@@ -684,7 +687,7 @@ impl FindCommand {
     }
 
     /// Handle not found case
-    async fn handle_not_found(&self, ctx: &Runtime) -> CommandResult {
+    async fn handle_not_found(&self, ctx: &Context) -> CommandResult {
         if self.ensure && self.is_name_search() {
             if self.query.contains(':') || self.query.contains('[') {
                 match self.handle_capability_ensure(ctx).await {
@@ -853,7 +856,7 @@ impl FindCommand {
     }
 
     /// Render human-readable output
-    fn render_human(&self, discovery: &ServiceDiscoveryResponse, _ctx: &Runtime) {
+    fn render_human(&self, discovery: &ServiceDiscoveryResponse, _ctx: &Context) {
         let services = &discovery.services;
 
         for svc in services {

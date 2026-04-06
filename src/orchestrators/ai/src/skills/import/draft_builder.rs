@@ -83,26 +83,13 @@ pub async fn create_draft(
         })
         .collect();
 
-    // Build a meaningful description from the generation prompt
-    let description = if let Some(ref gen_summary) = result.generation {
-        if !gen_summary.prompt.is_empty() {
-            gen_summary.prompt.clone()
-        } else if let Some(ref model) = gen_summary.model {
-            format!("Generated with {model}")
-        } else {
-            format!("Imported: {}", result.display_name)
-        }
-    } else {
-        format!("Imported: {}", result.display_name)
-    };
-
     let skill_json = serde_json::json!({
         "version": 1,
         "draft": true,
         "name": format!("{}.{}", result.capability, result.moniker),
         "display_name": result.display_name,
         "capability": result.capability,
-        "description": description,
+        "description": result.description,
         "provider_kind": "comfy_ui",
         "vram_mb": 4096,
         "default_workflow": "workflow",

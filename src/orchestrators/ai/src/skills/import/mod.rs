@@ -29,6 +29,7 @@ pub mod workflow_synth;
 pub mod model_resolve;
 pub mod param_extract;
 pub mod known_models;
+pub mod namer;
 pub mod ui_to_api;
 pub mod analyze;
 pub mod draft_builder;

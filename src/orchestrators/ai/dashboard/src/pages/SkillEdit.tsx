@@ -40,6 +40,23 @@ export function SkillEdit() {
       .then((r) => r.json())
       .then((data) => { setSkill(data); setLoading(false); })
       .catch(() => setLoading(false));
+
+    // Listen for AI naming updates (ORCH-0026)
+    const es = new EventSource("/api/events");
+    es.addEventListener("skill.named", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.moniker === moniker) {
+          setSkill((prev) => prev ? {
+            ...prev,
+            display_name: data.display_name,
+            description: data.description,
+          } : prev);
+        }
+      } catch { /* ignore */ }
+    });
+
+    return () => es.close();
   }, [provider, moniker, isNew]);
 
   const updateField = useCallback((field: string, value: unknown) => {

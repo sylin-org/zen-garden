@@ -193,7 +193,10 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
 
             // ── Text encoders ─────────────────────────────────
             "CLIPTextEncode" => {
-                let current_text = get_input_str(&workflow, node_id, "text");
+                // Text may be a direct string or a link to another node (e.g., Text Multiline).
+                // Follow links to resolve the actual text value.
+                let current_text = get_input_str(&workflow, node_id, "text")
+                    .or_else(|| resolve_linked_text(&workflow, node_id, "text"));
 
                 // Heuristic: if the node feeds into a "negative" input of KSampler,
                 // or if we already have a prompt, this is the negative.
@@ -343,6 +346,58 @@ pub fn extract(workflow: &serde_json::Value) -> ExtractionResult {
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+
+/// Follow a link reference to resolve the text value from the source node.
+///
+/// In complex workflows, CLIPTextEncode's "text" input may be connected to a
+/// Text Multiline, PrimitiveNode, or String node. The link is `["source_id", slot]`.
+/// We follow it and look for common text-holding fields in the source node.
+fn resolve_linked_text(workflow: &serde_json::Value, node_id: &str, field: &str) -> Option<String> {
+    let link = workflow.get(node_id)?.get("inputs")?.get(field)?;
+    let arr = link.as_array()?;
+    if arr.len() < 2 {
+        return None;
+    }
+    let source_id = arr[0].as_str()?;
+
+    let source_node = workflow.get(source_id)?;
+    let source_inputs = source_node.get("inputs")?;
+
+    // Common text-holding input names across various string/text nodes
+    for text_field in &["text", "string", "value", "Text", "STRING"] {
+        if let Some(s) = source_inputs.get(*text_field).and_then(|v| v.as_str()) {
+            if !s.is_empty() && !s.starts_with("PLACEHOLDER") {
+                return Some(s.to_string());
+            }
+        }
+    }
+
+    // The source might itself be a link — follow one more level (max depth 2)
+    for text_field in &["text", "string", "value"] {
+        if let Some(inner) = resolve_linked_text_inner(workflow, source_id, text_field) {
+            return Some(inner);
+        }
+    }
+
+    None
+}
+
+/// One-level link resolution (prevents infinite recursion).
+fn resolve_linked_text_inner(workflow: &serde_json::Value, node_id: &str, field: &str) -> Option<String> {
+    let link = workflow.get(node_id)?.get("inputs")?.get(field)?;
+    let arr = link.as_array()?;
+    let source_id = arr.first()?.as_str()?;
+    let source_inputs = workflow.get(source_id)?.get("inputs")?;
+
+    for text_field in &["text", "string", "value"] {
+        if let Some(s) = source_inputs.get(*text_field).and_then(|v| v.as_str()) {
+            if !s.is_empty() && !s.starts_with("PLACEHOLDER") {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
 
 fn get_input_str(workflow: &serde_json::Value, node_id: &str, field: &str) -> Option<String> {
     workflow.get(node_id)?

@@ -1,1118 +1,865 @@
-//! Ollama provider — unified lifecycle + inference for Ollama instances.
+//! Ollama provider — `text.chat`, `text.embed`, `image.analyze`.
 //!
-//! Implements the `Provider` trait, encapsulating all knowledge of
-//! Ollama's HTTP API, NDJSON streaming, model management, and inference
-//! protocol translation.
+//! Wire API:
 //!
-//! Key translations (verified against live Ollama 0.7+):
-//! - `max_tokens` -> `options.num_predict`
-//! - `temperature` -> `options.temperature`
-//! - `top_p` -> `options.top_p`
-//! - Vision: OpenAI `image_url` content parts -> Ollama `images: ["base64"]`
-//! - Tool args: Ollama returns object -> canonical expects JSON string
-//! - Timing: `eval_count`/`prompt_eval_count` -> `usage` tokens
-//! - Stream: NDJSON (one JSON per `\n`) -> `InferenceChunk` (SSE shape)
+//! ```text
+//! POST /api/chat      { "model": "...", "messages": [...], "options": {...} }
+//! POST /api/embed     { "model": "...", "input": [...] }
+//! GET  /api/tags      -> {"models": [...]} used for model discovery
+//! ```
+//!
+//! Vision support: images are sent as `messages[].images: ["<base64>"]`.
+//! The orchestrator's media resolver inlines base64 blobs before dispatch
+//! (see [`crate::services::media_resolver`]). Provider narrowings declare
+//! `image.source` as `Base64` delivery.
 
-use anyhow::{Context, Result};
-use bytes::BytesMut;
-use futures_util::stream::Stream;
-use futures_util::StreamExt;
-use serde_json::Value;
-use std::pin::Pin;
-use std::task::Poll;
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::catalog::inference::*;
-use crate::catalog::traits::{
-    BenchmarkSample, BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider,
-    ProviderContext, Sample, ServiceModel, SyncProgress,
+use async_trait::async_trait;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tokio::sync::watch;
+
+use crate::domain::ids::{ModelFqn, ProviderName, RegistrationId};
+use crate::domain::keys;
+use crate::domain::media::MediaDelivery;
+use crate::domain::output::Output;
+use crate::domain::primitive::Primitive;
+use crate::domain::provider::{
+    HonoredField, MediaInputSpec, Model, Provider, ProviderError, ProviderHealth,
+    ProviderOutcome, ProviderState, ProviderStatePublisher, Registration, RegistrationStrategy,
 };
-use crate::domain::types::{Capability, OfferingKind, ServiceInstance};
-use crate::offerings::ollama::client::OllamaClient;
-use crate::offerings::ollama::types::OllamaPullProgress;
+use crate::domain::request::OrchestratorRequest;
 
-// ── Provider ───────────────────────────────────────────────────
+use crate::services::garden_discovery::GardenDiscovery;
+use tokio_util::sync::CancellationToken;
 
-/// Ollama provider.
-///
-/// Delegates protocol operations to `OllamaClient` for lifecycle
-/// (probe, enumerate, benchmark, sync) and implements inference
-/// translation inline (infer, infer_stream, embed).
+use super::common::{
+    build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
+};
+
+/// Ollama base name. Discovery's base-name match automatically
+/// picks up `ollama` as well as any `ollama::adopted`,
+/// `ollama::dev`, `ollama::cpu`, etc. variants the garden recognizes
+/// — no code changes needed for new qualifiers.
+const FQNS: &[&'static str] = &["ollama"];
+
+#[derive(Debug, Clone, Default)]
+pub struct OllamaConfig;
+
 pub struct OllamaProvider {
-    client: OllamaClient,
+    name: ProviderName,
+    instances: Arc<InstancePool>,
+    http: Client,
+    publisher: ProviderStatePublisher,
+}
+
+fn build_registrations(name: &ProviderName) -> Vec<Registration> {
+    vec![
+        build_chat_registration(name),
+        build_embed_registration(name),
+        build_analyze_registration(name),
+    ]
 }
 
 impl OllamaProvider {
-    pub fn new() -> Self {
-        Self {
-            client: OllamaClient::new(),
-        }
+    pub fn new(
+        _config: OllamaConfig,
+        discovery: Arc<GardenDiscovery>,
+        shutdown: CancellationToken,
+    ) -> Arc<Self> {
+        let name = ProviderName::new(keys::providers::OLLAMA);
+        let initial = ProviderState {
+            health: ProviderHealth::Offline {
+                reason: "no garden instances discovered yet".to_string(),
+            },
+            registrations: build_registrations(&name),
+            models: Vec::new(),
+            performance_hints: Vec::new(),
+        };
+        let provider = Arc::new(Self {
+            name,
+            instances: Arc::new(InstancePool::new()),
+            http: build_http_client(),
+            publisher: ProviderStatePublisher::new(initial),
+        });
+        spawn_subscriber(provider.clone(), discovery, shutdown);
+        provider
     }
 
-    /// Expose the client for tasks that need direct access (profiling, sync).
-    pub fn client(&self) -> &OllamaClient {
-        &self.client
-    }
-}
-
-impl Default for OllamaProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Capabilities that Ollama instances can provide.
-const OLLAMA_CAPABILITIES: &[Capability] = &[
-    Capability::Chat,
-    Capability::Embed,
-    Capability::Vision,
-    Capability::Tools,
-    Capability::Think,
-];
-
-impl Provider for OllamaProvider {
-    fn kind(&self) -> OfferingKind {
-        OfferingKind::Ollama
+    fn pick(&self) -> Result<String, ProviderError> {
+        self.instances.pick().ok_or_else(|| {
+            ProviderError::Unreachable("no ollama instances in the garden".to_string())
+        })
     }
 
-    fn capabilities(&self) -> &[Capability] {
-        OLLAMA_CAPABILITIES
-    }
+    /// Refresh the model catalog by enumerating every reachable
+    /// Ollama instance, then enriching each unique model with
+    /// `/api/show` metadata so the recommendation engine can rank
+    /// it under the right capability profile.
+    ///
+    /// Pipeline:
+    /// 1. `/api/tags` per instance → union of `(name, size)` rows.
+    /// 2. For each unique model, fan out a single `/api/show` call
+    ///    against the first reachable instance that hosts it.
+    ///    `/api/show` returns Ollama-native `capabilities`
+    ///    (`completion`, `embedding`, `vision`, `tools`, `thinking`),
+    ///    `parameter_count`, and the architecture-specific
+    ///    `<arch>.context_length` field. These are the inputs the
+    ///    capability-aware recommender needs.
+    /// 3. Translate Ollama capability tags into the orchestrator's
+    ///    primitive set: `completion → TextChat`,
+    ///    `embedding → TextEmbed`, `vision → ImageAnalyze`. Models
+    ///    without any recognised capability are skipped — they
+    ///    aren't usable through this orchestrator.
+    /// 4. Publish the enriched model list. Discovery's per-provider
+    ///    forwarder picks it up; the directory rebuilds; the
+    ///    recommendation engine reranks under every capability
+    ///    profile.
+    async fn refresh_models_from_pool(&self) {
+        let urls = self.instances.snapshot();
+        let mut tag_rows: Vec<(String, u64, String)> = Vec::new();
+        let mut any_reachable = false;
 
-    fn discovery(&self) -> DiscoveryConfig {
-        DiscoveryConfig::TopologyFilter {
-            offering_name: "ollama".into(),
-        }
-    }
-
-    // ── Lifecycle ───────────────────────────────────────────────
-
-    fn probe(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<ProbeResult>> {
-        let endpoint = ctx.endpoint.clone();
-        Box::pin(async move {
-            // Health check: GET / should return "Ollama is running"
-            let health_url = format!("{endpoint}/");
+        // Step 1: enumerate models from /api/tags on every instance.
+        for base in &urls {
+            let endpoint = format!("{}/api/tags", base.trim_end_matches('/'));
             let resp = self
-                .client
-                .forward_request(
-                    &endpoint,
-                    "/",
-                    reqwest::Method::GET,
-                    bytes::Bytes::new(),
-                    reqwest::header::HeaderMap::new(),
-                )
-                .await
-                .context("probe health check")?;
-
-            if !resp.status().is_success() {
-                anyhow::bail!(
-                    "probe failed: {} returned HTTP {}",
-                    health_url,
-                    resp.status()
-                );
-            }
-
-            // Version query
-            let version = self
-                .client
-                .get_version(&endpoint)
-                .await
-                .ok()
-                .map(|v| v.version);
-
-            Ok(ProbeResult {
-                version,
-                capabilities: OLLAMA_CAPABILITIES.to_vec(),
-                vram_free_bytes: None,
-                metadata: serde_json::json!({}),
-            })
-        })
-    }
-
-    fn enumerate(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<Vec<ServiceModel>>> {
-        let endpoint = ctx.endpoint.clone();
-        Box::pin(async move {
-            let (_, _, model_infos, _) = self
-                .client
-                .full_profile(&endpoint)
-                .await
-                .context("enumerate models")?;
-
-            let models = model_infos
-                .into_iter()
-                .map(|info| {
-                    let mut capabilities = ollama_capabilities_from_strings(&info.capabilities);
-                    let specializations = infer_specializations(&info.name, &info.family);
-
-                    // Add Ocr capability for OCR-specialized models
-                    if specializations.contains(&"ocr".to_string())
-                        && !capabilities.contains(&Capability::Ocr)
-                    {
-                        capabilities.push(Capability::Ocr);
-                    }
-                    ServiceModel {
-                        name: info.name,
-                        capabilities,
-                        specializations,
-                        vram_bytes: info.vram_bytes,
-                        metadata: serde_json::json!({
-                            "parameter_count": info.parameter_count,
-                            "parameter_size": info.parameter_size,
-                            "quantization_level": info.quantization_level,
-                            "family": info.family,
-                            "families": info.families,
-                            "format": info.format,
-                            "size_disk": info.size_disk,
-                            "context_length": info.context_length,
-                        }),
-                    }
-                })
-                .collect();
-
-            Ok(models)
-        })
-    }
-
-    // ── Inference ───────────────────────────────────────────────
-
-    fn infer(
-        &self,
-        ctx: &ProviderContext,
-        req: InferenceRequest,
-    ) -> BoxFuture<'_, Result<InferenceResponse>> {
-        let endpoint = ctx.endpoint.clone();
-        let model = ctx
-            .model
-            .clone()
-            .unwrap_or_else(|| req.model.clone());
-        let body = build_ollama_request(&model, &req, false);
-
-        Box::pin(async move {
-            let http = reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .pool_max_idle_per_host(4)
-                .build()
-                .context("build inference HTTP client")?;
-
-            let resp = http
-                .post(format!("{endpoint}/api/chat"))
-                .json(&body)
-                .timeout(Duration::from_secs(300))
+                .http
+                .get(&endpoint)
+                .timeout(Duration::from_secs(5))
                 .send()
-                .await
-                .context("POST /api/chat")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("Ollama /api/chat HTTP {status}: {text}");
-            }
-
-            let ollama: Value = resp.json().await.context("parse Ollama response")?;
-            Ok(ollama_response_to_canonical(&model, &ollama))
-        })
-    }
-
-    fn infer_stream(
-        &self,
-        ctx: &ProviderContext,
-        req: InferenceRequest,
-    ) -> BoxFuture<'_, Result<BoxStream<'static, Result<InferenceChunk>>>> {
-        let endpoint = ctx.endpoint.clone();
-        let model = ctx
-            .model
-            .clone()
-            .unwrap_or_else(|| req.model.clone());
-        let body = build_ollama_request(&model, &req, true);
-
-        Box::pin(async move {
-            // Build a dedicated client for streaming (no global timeout).
-            let http = reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .pool_max_idle_per_host(4)
-                .build()
-                .context("build streaming HTTP client")?;
-
-            let resp = http
-                .post(format!("{endpoint}/api/chat"))
-                .json(&body)
-                .send()
-                .await
-                .context("POST /api/chat stream")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("Ollama /api/chat stream HTTP {status}: {text}");
-            }
-
-            let stream = resp.bytes_stream();
-            Ok(Box::pin(OllamaNdjsonStream::new(stream, model))
-                as BoxStream<'static, Result<InferenceChunk>>)
-        })
-    }
-
-    fn embed(
-        &self,
-        ctx: &ProviderContext,
-        req: EmbedRequest,
-    ) -> BoxFuture<'_, Result<EmbedResponse>> {
-        let endpoint = ctx.endpoint.clone();
-        let model = ctx
-            .model
-            .clone()
-            .unwrap_or_else(|| req.model.clone());
-
-        Box::pin(async move {
-            let http = reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .pool_max_idle_per_host(4)
-                .build()
-                .context("build embed HTTP client")?;
-
-            let body = serde_json::json!({
-                "model": model,
-                "input": req.input,
-            });
-
-            let resp = http
-                .post(format!("{endpoint}/api/embed"))
-                .json(&body)
-                .timeout(Duration::from_secs(60))
-                .send()
-                .await
-                .context("POST /api/embed")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("Ollama /api/embed HTTP {status}: {text}");
-            }
-
-            let ollama: Value = resp.json().await.context("parse embed response")?;
-
-            // Ollama returns {embeddings: [[f64...], ...], prompt_eval_count, total_duration}
-            let embeddings = ollama
-                .get("embeddings")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-
-            let prompt_tokens = ollama
-                .get("prompt_eval_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-
-            let data: Vec<EmbeddingData> = embeddings
-                .iter()
-                .enumerate()
-                .map(|(i, emb)| EmbeddingData {
-                    object: "embedding".to_string(),
-                    index: i as u32,
-                    embedding: emb
-                        .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
-                        .unwrap_or_default(),
-                })
-                .collect();
-
-            Ok(EmbedResponse {
-                object: "list".to_string(),
-                data,
-                model,
-                usage: Usage {
-                    prompt_tokens,
-                    completion_tokens: 0,
-                    total_tokens: prompt_tokens,
-                },
-            })
-        })
-    }
-
-    // ── Optional ────────────────────────────────────────────────
-
-    fn vram_estimate(&self, model: &ServiceModel) -> Option<u64> {
-        // If we have authoritative VRAM from /api/ps, use it
-        if let Some(vram) = model.vram_bytes {
-            return Some(vram);
-        }
-
-        // Fallback: estimate from disk size (GGUF models are roughly
-        // 1.1x disk size when loaded into VRAM due to KV cache overhead)
-        let size_disk = model.metadata.get("size_disk")?.as_u64()?;
-        if size_disk > 0 {
-            Some((size_disk as f64 * 1.1) as u64)
-        } else {
-            None
-        }
-    }
-
-    fn benchmark(
-        &self,
-        ctx: &ProviderContext,
-        model: &str,
-        capability: Capability,
-    ) -> BoxFuture<'_, Result<BenchmarkSample>> {
-        let endpoint = ctx.endpoint.clone();
-        let model = model.to_string();
-
-        Box::pin(async move {
-            let sample = match capability {
-                Capability::Chat => {
-                    let result = self
-                        .client
-                        .benchmark_generate(&endpoint, &model, "Why is the sky blue?", 80)
-                        .await
-                        .context("benchmark generate")?;
-
-                    let tps = if result.eval_duration > 0 {
-                        (result.eval_count as f64 / result.eval_duration as f64) * 1_000_000_000.0
-                    } else {
-                        0.0
-                    };
-
-                    Sample {
-                        cold_start_ms: result.load_duration / 1_000_000,
-                        tokens_per_second: tps,
-                        total_duration_ms: result.total_duration / 1_000_000,
-                    }
-                }
-                Capability::Embed => {
-                    let result = self
-                        .client
-                        .benchmark_embed(
-                            &endpoint,
-                            &model,
-                            "The quick brown fox jumps over the lazy dog.",
-                        )
-                        .await
-                        .context("benchmark embed")?;
-
-                    Sample {
-                        cold_start_ms: result.load_duration / 1_000_000,
-                        tokens_per_second: 0.0,
-                        total_duration_ms: result.total_duration / 1_000_000,
-                    }
-                }
-                _ => {
-                    // Capabilities without specific benchmark prompts
-                    return Ok(BenchmarkSample {
-                        samples: vec![],
-                        capability,
-                    });
-                }
-            };
-
-            Ok(BenchmarkSample {
-                samples: vec![sample],
-                capability,
-            })
-        })
-    }
-
-    fn sync_resource(
-        &self,
-        resource: &str,
-        _from: &ServiceInstance,
-        to: &ServiceInstance,
-    ) -> BoxFuture<'_, Result<SyncProgress>> {
-        let model = resource.to_string();
-        let target_endpoint = to.endpoint.clone();
-        Box::pin(async move {
-            // Pull the model on the target instance
-            let mut stream = self
-                .client
-                .pull_model(&target_endpoint, &model)
-                .await
-                .context("initiate model pull")?;
-
-            let mut bytes_transferred: u64 = 0;
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.context("pull stream chunk")?;
-                // Parse NDJSON progress lines
-                if let Ok(progress) = serde_json::from_slice::<OllamaPullProgress>(&chunk)
-                    && let Some(completed) = progress.completed
-                {
-                    bytes_transferred = completed;
-                }
-            }
-
-            Ok(SyncProgress::Completed { bytes_transferred })
-        })
-    }
-
-    // ── Form Schema (ORCH-0017) ──────────────────────────────────
-
-    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
-        match capability {
-            Capability::Chat | Capability::Think | Capability::Tools | Capability::Vision => {
-                FormSchema {
-                    schema: serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "message": {"type": "string", "title": "Message", "minLength": 1},
-                            "temperature": {"type": "number", "title": "Temperature", "minimum": 0, "maximum": 2, "default": 0.7},
-                            "max_tokens": {"type": "integer", "title": "Max Tokens", "minimum": 1, "maximum": 128000, "default": 4096},
-                            "system": {"type": "string", "title": "System Prompt"}
-                        },
-                        "required": ["message"]
-                    }),
-                    ui_schema: serde_json::json!({
-                        "message": {"ui:widget": "textarea", "ui:options": {"rows": 3}},
-                        "system": {"ui:widget": "textarea", "ui:options": {"rows": 2}},
-                        "temperature": {"ui:widget": "range"},
-                        "ui:order": ["message", "system", "temperature", "max_tokens"]
-                    }),
-                }
-            }
-            Capability::Embed => FormSchema {
-                schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "input": {"type": "string", "title": "Text to embed", "minLength": 1}
-                    },
-                    "required": ["input"]
-                }),
-                ui_schema: serde_json::json!({
-                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 2}}
-                }),
-            },
-            _ => FormSchema::default(),
-        }
-    }
-}
-
-// ── Request Translation ─────────────────────────────────────────
-
-/// Build Ollama `/api/chat` request body from canonical `InferenceRequest`.
-fn build_ollama_request(model: &str, req: &InferenceRequest, stream: bool) -> Value {
-    let mut messages = Vec::new();
-
-    for msg in &req.messages {
-        let mut ollama_msg = serde_json::json!({
-            "role": msg.role,
-        });
-
-        // Extract vision images from OpenAI content parts -> Ollama `images` array
-        let (text_content, images) = extract_content_and_images(msg);
-
-        if let Some(text) = text_content {
-            ollama_msg["content"] = Value::String(text);
-        }
-        if !images.is_empty() {
-            ollama_msg["images"] = Value::Array(images);
-        }
-
-        // Pass through tool_calls and tool_call_id
-        if let Some(ref tool_calls) = msg.tool_calls {
-            // Canonical tool_calls have function.arguments as JSON string.
-            // Ollama expects arguments as object -- parse them.
-            let ollama_calls: Vec<Value> = tool_calls
-                .iter()
-                .map(|tc| {
-                    let mut call = tc.clone();
-                    if let Some(func) = call.get_mut("function") {
-                        if let Some(args_str) = func.get("arguments").and_then(|v| v.as_str()) {
-                            if let Ok(parsed) = serde_json::from_str::<Value>(args_str) {
-                                func["arguments"] = parsed;
-                            }
-                        }
-                    }
-                    call
-                })
-                .collect();
-            ollama_msg["tool_calls"] = Value::Array(ollama_calls);
-        }
-
-        messages.push(ollama_msg);
-    }
-
-    let mut body = serde_json::json!({
-        "model": model,
-        "messages": messages,
-        "stream": stream,
-    });
-
-    // Build options from canonical parameters
-    let mut options = serde_json::Map::new();
-    if let Some(temp) = req.temperature {
-        options.insert("temperature".into(), serde_json::json!(temp));
-    }
-    if let Some(max_tokens) = req.max_tokens {
-        options.insert("num_predict".into(), serde_json::json!(max_tokens));
-    }
-    if let Some(top_p) = req.top_p {
-        options.insert("top_p".into(), serde_json::json!(top_p));
-    }
-    if !options.is_empty() {
-        body["options"] = Value::Object(options);
-    }
-
-    // Stop sequences
-    if let Some(ref stop) = req.stop {
-        body["stop"] = stop.clone();
-    }
-
-    // Tools pass through (Ollama 0.7+ supports OpenAI tool format)
-    if let Some(ref tools) = req.tools {
-        body["tools"] = Value::Array(tools.clone());
-    }
-
-    body
-}
-
-/// Extract text content and base64 images from a ChatMessage.
-///
-/// OpenAI format: `content: [{type:"text", text:"..."}, {type:"image_url", image_url:{url:"data:image/jpeg;base64,..."}}]`
-/// Ollama format: `content: "text", images: ["base64..."]`
-fn extract_content_and_images(msg: &ChatMessage) -> (Option<String>, Vec<Value>) {
-    let Some(ref content) = msg.content else {
-        return (None, vec![]);
-    };
-
-    // Simple string content
-    if let Some(text) = content.as_str() {
-        return (Some(text.to_string()), vec![]);
-    }
-
-    // Array of content parts
-    let Some(parts) = content.as_array() else {
-        return (Some(content.to_string()), vec![]);
-    };
-
-    let mut text_parts = Vec::new();
-    let mut images = Vec::new();
-
-    for part in parts {
-        match part.get("type").and_then(|v| v.as_str()) {
-            Some("text") => {
-                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                    text_parts.push(text.to_string());
-                }
-            }
-            Some("image_url") => {
-                if let Some(url) = part
-                    .get("image_url")
-                    .and_then(|v| v.get("url"))
-                    .and_then(|v| v.as_str())
-                {
-                    // Strip data URI prefix: "data:image/jpeg;base64,..." -> "..."
-                    let base64 = if let Some((_prefix, data)) = url.split_once(",") {
-                        data
-                    } else {
-                        url
-                    };
-                    images.push(Value::String(base64.to_string()));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let text = if text_parts.is_empty() {
-        None
-    } else {
-        Some(text_parts.join("\n"))
-    };
-
-    (text, images)
-}
-
-// ── Response Translation ────────────────────────────────────────
-
-/// Convert a non-streaming Ollama response to canonical `InferenceResponse`.
-fn ollama_response_to_canonical(model: &str, ollama: &Value) -> InferenceResponse {
-    let message = ollama.get("message").cloned().unwrap_or(Value::Null);
-    let done_reason = ollama
-        .get("done_reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("stop");
-
-    let finish_reason = match done_reason {
-        "stop" => "stop",
-        "length" => "length",
-        other => other,
-    };
-
-    // Build canonical message
-    let role = message
-        .get("role")
-        .and_then(|v| v.as_str())
-        .unwrap_or("assistant");
-    let content = message.get("content").cloned();
-
-    // Translate tool_calls: Ollama returns arguments as object -> canonical needs JSON string
-    let tool_calls = message
-        .get("tool_calls")
-        .and_then(|v| v.as_array())
-        .map(|calls| {
-            calls
-                .iter()
-                .map(|call| {
-                    let mut canonical = call.clone();
-                    if let Some(func) = canonical.get_mut("function") {
-                        if let Some(args) = func.get("arguments") {
-                            if !args.is_string() {
-                                func["arguments"] =
-                                    Value::String(serde_json::to_string(args).unwrap_or_default());
-                            }
-                        }
-                    }
-                    canonical
-                })
-                .collect()
-        });
-
-    let prompt_tokens = ollama
-        .get("prompt_eval_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let completion_tokens = ollama
-        .get("eval_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    InferenceResponse {
-        id: format!("ollama-{}", chrono::Utc::now().timestamp_millis()),
-        object: "chat.completion".to_string(),
-        model: model.to_string(),
-        choices: vec![InferenceChoice {
-            index: 0,
-            message: ChatMessage {
-                role: role.to_string(),
-                content,
-                tool_calls,
-                tool_call_id: None,
-                extra: serde_json::Map::new(),
-            },
-            finish_reason: Some(finish_reason.to_string()),
-        }],
-        usage: Usage {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens: prompt_tokens + completion_tokens,
-        },
-    }
-}
-
-// ── NDJSON Stream Adapter ───────────────────────────────────────
-
-/// Adapter that converts an Ollama NDJSON byte stream into `InferenceChunk`s.
-///
-/// Ollama sends one JSON object per `\n`-delimited line. TCP chunks may
-/// contain partial lines -- this adapter buffers until a complete line is
-/// available, then parses and translates to canonical format.
-struct OllamaNdjsonStream<S> {
-    inner: S,
-    buffer: BytesMut,
-    model: String,
-    chunk_id: String,
-    done: bool,
-}
-
-impl<S> OllamaNdjsonStream<S> {
-    fn new(inner: S, model: String) -> Self {
-        let chunk_id = format!("ollama-{}", chrono::Utc::now().timestamp_millis());
-        Self {
-            inner,
-            buffer: BytesMut::with_capacity(4096),
-            model,
-            chunk_id,
-            done: false,
-        }
-    }
-}
-
-impl<S> Stream for OllamaNdjsonStream<S>
-where
-    S: Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
-{
-    type Item = Result<InferenceChunk>;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-
-        if this.done {
-            return Poll::Ready(None);
-        }
-
-        loop {
-            // Check buffer for a complete line
-            if let Some(newline_pos) = this.buffer.iter().position(|&b| b == b'\n') {
-                let line = this.buffer.split_to(newline_pos + 1);
-                let line = line.trim_ascii();
-
-                if line.is_empty() {
+                .await;
+            let Ok(resp) = resp else { continue };
+            let Ok(resp) = resp.error_for_status() else { continue };
+            let Ok(tags) = resp.json::<TagsResponse>().await else { continue };
+            any_reachable = true;
+            for m in tags.models {
+                if tag_rows.iter().any(|(n, _, _)| n == &m.name) {
                     continue;
                 }
+                tag_rows.push((m.name, m.size, base.trim_end_matches('/').to_string()));
+            }
+        }
 
-                match serde_json::from_slice::<Value>(line) {
-                    Ok(obj) => {
-                        let chunk = ollama_ndjson_to_chunk(&this.chunk_id, &this.model, &obj);
-                        if obj.get("done").and_then(|v| v.as_bool()) == Some(true) {
-                            this.done = true;
+        // Step 2 + 3: enrich every unique model in parallel via
+        // /api/show, translate capabilities, build the canonical
+        // Model records.
+        let enrich_futs = tag_rows.into_iter().map(|(name, size, endpoint)| {
+            let http = self.http.clone();
+            let provider_name = self.name.clone();
+            async move {
+                match show_model(&http, &endpoint, &name).await {
+                    Some(detail) => Some(model_from_show(&provider_name, name, size, detail)),
+                    None => None,
+                }
+            }
+        });
+        let mut models: Vec<Model> = futures_util::future::join_all(enrich_futs)
+            .await
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect();
+        models.sort_by(|a, b| a.short_name.cmp(&b.short_name));
+
+        let name = self.name.clone();
+        let count = urls.len();
+        self.publisher.modify(move |mut state| {
+            state.models = models;
+            state.registrations = build_registrations(&name);
+            state.health = if count == 0 {
+                ProviderHealth::Offline {
+                    reason: "no garden instances discovered".to_string(),
+                }
+            } else if !any_reachable {
+                ProviderHealth::Degraded {
+                    reason: "instances discovered but none reachable".to_string(),
+                }
+            } else {
+                ProviderHealth::Healthy
+            };
+            state
+        });
+    }
+}
+
+/// Call `/api/show` for one model on one instance and return the
+/// raw JSON response. Returns `None` on any failure — the model
+/// will simply not be enriched and the recommender will skip it.
+async fn show_model(http: &Client, endpoint: &str, model: &str) -> Option<ShowResponse> {
+    let url = format!("{}/api/show", endpoint);
+    let resp = http
+        .post(&url)
+        .json(&serde_json::json!({ "model": model }))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+    let resp = resp.error_for_status().ok()?;
+    resp.json::<ShowResponse>().await.ok()
+}
+
+/// Translate the Ollama `/api/show` response into the orchestrator's
+/// canonical [`Model`] shape. Returns `Option<Model>` so callers can
+/// drop models that declare no recognised capability — they aren't
+/// reachable through any orchestrator primitive.
+fn model_from_show(
+    provider: &ProviderName,
+    name: String,
+    size_disk: u64,
+    detail: ShowResponse,
+) -> Option<Model> {
+    let capabilities = detail.capabilities.unwrap_or_default();
+
+    // Map Ollama tags onto orchestrator primitives.
+    let mut primitives = Vec::new();
+    if capabilities.iter().any(|c| c == "completion") {
+        primitives.push(Primitive::TextChat);
+        // Image analyze is also "completion" plus "vision".
+        if capabilities.iter().any(|c| c == "vision") {
+            primitives.push(Primitive::ImageAnalyze);
+        }
+    }
+    if capabilities.iter().any(|c| c == "embedding") {
+        primitives.push(Primitive::TextEmbed);
+    }
+    if primitives.is_empty() {
+        // Unknown capability set — skip rather than guess.
+        tracing::debug!(
+            model = %name,
+            tags = ?capabilities,
+            "ollama: model has no recognised capability, skipping"
+        );
+        return None;
+    }
+
+    // Pull parameter_count from model_info or fall back to parsing
+    // the parameter_size string ("7B" → 7_000_000_000).
+    let parameter_count = detail
+        .model_info
+        .as_ref()
+        .and_then(|m| m.get("general.parameter_count"))
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            detail
+                .details
+                .as_ref()
+                .and_then(|d| d.parameter_size.as_deref())
+                .and_then(parse_parameter_size)
+        });
+
+    // Pull context_length from the architecture-specific
+    // `<arch>.context_length` key in model_info. The architecture
+    // name is in `details.family`.
+    let context_length = detail
+        .model_info
+        .as_ref()
+        .and_then(|m| {
+            // Look for any *.context_length key.
+            m.iter()
+                .find(|(k, _)| k.ends_with(".context_length"))
+                .and_then(|(_, v)| v.as_u64())
+        });
+
+    Some(Model {
+        fqn: ModelFqn::new(provider, &name),
+        short_name: name,
+        primitives,
+        capability_tags: capabilities,
+        size_bytes: Some(size_disk),
+        context_length,
+        parameter_count,
+    })
+}
+
+/// Parse Ollama's human-readable parameter-size string into a raw
+/// count (e.g. `"7B"` → `7_000_000_000`, `"1.5B"` → `1_500_000_000`,
+/// `"137M"` → `137_000_000`).
+fn parse_parameter_size(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (num_str, mul): (&str, u64) = if let Some(rest) = s.strip_suffix('B') {
+        (rest, 1_000_000_000)
+    } else if let Some(rest) = s.strip_suffix('M') {
+        (rest, 1_000_000)
+    } else if let Some(rest) = s.strip_suffix('K') {
+        (rest, 1_000)
+    } else {
+        return s.parse::<u64>().ok();
+    };
+    let n: f64 = num_str.trim().parse().ok()?;
+    Some((n * mul as f64) as u64)
+}
+
+impl OllamaProvider {
+    /// Apply a fresh merged URL list from the garden discovery
+    /// subscriber and refresh the model catalog from `/api/tags`.
+    async fn apply_merged(&self, urls: Vec<String>) {
+        if !self.instances.set(urls) {
+            return;
+        }
+        self.refresh_models_from_pool().await;
+    }
+}
+
+fn spawn_subscriber(
+    provider: Arc<OllamaProvider>,
+    discovery: Arc<GardenDiscovery>,
+    shutdown: CancellationToken,
+) {
+    tokio::spawn(async move {
+        let pool = PerFqnInstances::new();
+        let mut rx = discovery.subscribe(FQNS).await;
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                event = rx.recv() => {
+                    let Some(event) = event else { break };
+                    let urls: Vec<String> = event.instances.into_iter().map(|i| i.url).collect();
+                    pool.set(&event.fqn, urls);
+                    provider.apply_merged(pool.flatten()).await;
+                }
+            }
+        }
+    });
+}
+
+#[async_trait]
+impl Provider for OllamaProvider {
+    fn name(&self) -> ProviderName {
+        self.name.clone()
+    }
+
+    fn state(&self) -> Arc<ProviderState> {
+        self.publisher.snapshot()
+    }
+
+    fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
+        self.publisher.subscribe()
+    }
+
+    async fn onboard(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        match request.action.primitive {
+            Primitive::TextChat => self.do_chat(request).await,
+            Primitive::TextEmbed => self.do_embed(request).await,
+            Primitive::ImageAnalyze => self.do_analyze(request).await,
+            other => Err(ProviderError::Unsupported(format!(
+                "ollama does not serve {}",
+                other.dotted()
+            ))),
+        }
+    }
+}
+
+impl OllamaProvider {
+    async fn do_chat(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let model = request
+            .resolved_model
+            .as_ref()
+            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
+            .short_name
+            .clone();
+
+        let stream_requested = request
+            .payload
+            .pointer("/text/stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let messages = build_chat_messages(&request.payload, false)?;
+        let options = build_options(&request.payload);
+        let body = json!({
+            "model": model,
+            "messages": messages,
+            "options": options,
+            "stream": stream_requested,
+        });
+        let base = self.pick()?;
+        let endpoint = format!("{}/api/chat", base.trim_end_matches('/'));
+
+        if stream_requested {
+            return self.do_chat_streaming(&endpoint, body).await;
+        }
+
+        let resp = self
+            .http
+            .post(&endpoint)
+            .json(&body)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "ollama chat").await?;
+        let wire: ChatResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
+
+        let mut out = Output::new();
+        out.set(&keys::text::RESPONSE, wire.message.content);
+        out.set(
+            &keys::text::FINISH_REASON,
+            wire.done_reason
+                .unwrap_or_else(|| keys::text::values::FINISH_REASON_STOP.to_string()),
+        );
+        if let Some(eval) = wire.prompt_eval_count {
+            out.set(&keys::usage::TOKENS_INPUT, eval);
+        }
+        if let Some(eval) = wire.eval_count {
+            out.set(&keys::usage::TOKENS_OUTPUT, eval);
+        }
+        if let Some(total) = wire.total_duration {
+            out.set(&keys::timing::TOTAL_MS, total / 1_000_000);
+        }
+        Ok(ProviderOutcome::Sync(out))
+    }
+
+    /// Ollama's streaming chat emits newline-delimited JSON: each
+    /// line is a ChatResponse with `done: false` until the terminal
+    /// line with `done: true` and aggregate counters. This method
+    /// converts that byte stream into a
+    /// `BoxStream<Result<Output, ProviderError>>` of canonical
+    /// deltas.
+    async fn do_chat_streaming(
+        &self,
+        endpoint: &str,
+        body: serde_json::Value,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        use futures_util::StreamExt;
+
+        let resp = self
+            .http
+            .post(endpoint)
+            .json(&body)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "ollama chat stream").await?;
+
+        let byte_stream = resp.bytes_stream();
+
+        // Parse NDJSON into canonical Output deltas on the fly.
+        let deltas = async_stream::stream! {
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut byte_stream = byte_stream;
+            while let Some(chunk) = byte_stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        buffer.extend_from_slice(&bytes);
+                        loop {
+                            let Some(nl) = buffer.iter().position(|b| *b == b'\n') else {
+                                break;
+                            };
+                            let line: Vec<u8> = buffer.drain(..=nl).collect();
+                            let trimmed = &line[..line.len() - 1];
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            match serde_json::from_slice::<ChatStreamChunk>(trimmed) {
+                                Ok(chunk) => {
+                                    let mut out = Output::new();
+                                    if let Some(msg) = chunk.message {
+                                        if !msg.content.is_empty() {
+                                            out.set(&keys::text::RESPONSE, msg.content);
+                                        }
+                                    }
+                                    if chunk.done {
+                                        if let Some(reason) = chunk.done_reason {
+                                            out.set(&keys::text::FINISH_REASON, reason);
+                                        } else {
+                                            out.set(
+                                                &keys::text::FINISH_REASON,
+                                                keys::text::values::FINISH_REASON_STOP,
+                                            );
+                                        }
+                                        if let Some(c) = chunk.prompt_eval_count {
+                                            out.set(&keys::usage::TOKENS_INPUT, c);
+                                        }
+                                        if let Some(c) = chunk.eval_count {
+                                            out.set(&keys::usage::TOKENS_OUTPUT, c);
+                                        }
+                                        if let Some(t) = chunk.total_duration {
+                                            out.set(&keys::timing::TOTAL_MS, t / 1_000_000);
+                                        }
+                                    }
+                                    if !out.is_empty() {
+                                        yield Ok(out);
+                                    }
+                                }
+                                Err(e) => {
+                                    yield Err(ProviderError::Upstream(format!(
+                                        "ollama stream parse: {e}"
+                                    )));
+                                    return;
+                                }
+                            }
                         }
-                        return Poll::Ready(Some(Ok(chunk)));
                     }
                     Err(e) => {
-                        return Poll::Ready(Some(Err(anyhow::anyhow!(
-                            "parse NDJSON line: {e}"
-                        ))));
+                        yield Err(ProviderError::Upstream(format!(
+                            "ollama stream read: {e}"
+                        )));
+                        return;
                     }
                 }
             }
+        };
 
-            // Need more data from the inner stream
-            match Pin::new(&mut this.inner).poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => {
-                    this.buffer.extend_from_slice(&bytes);
-                    // Loop back to check for complete lines
-                }
-                Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(anyhow::anyhow!("stream error: {e}"))));
-                }
-                Poll::Ready(None) => {
-                    this.done = true;
-                    // Process any remaining data in buffer
-                    if !this.buffer.is_empty() {
-                        let remaining = std::mem::take(&mut this.buffer);
-                        let trimmed = remaining.trim_ascii();
-                        if !trimmed.is_empty() {
-                            if let Ok(obj) = serde_json::from_slice::<Value>(trimmed) {
-                                let chunk =
-                                    ollama_ndjson_to_chunk(&this.chunk_id, &this.model, &obj);
-                                return Poll::Ready(Some(Ok(chunk)));
-                            }
-                        }
-                    }
-                    return Poll::Ready(None);
-                }
-                Poll::Pending => return Poll::Pending,
-            }
-        }
-    }
-}
-
-/// Convert a single Ollama NDJSON line to an `InferenceChunk`.
-fn ollama_ndjson_to_chunk(id: &str, model: &str, obj: &Value) -> InferenceChunk {
-    let is_done = obj.get("done").and_then(|v| v.as_bool()) == Some(true);
-    let message = obj.get("message").cloned().unwrap_or(Value::Null);
-
-    let content = message.get("content").cloned();
-    let role = message
-        .get("role")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    // Translate tool_calls (object args -> JSON string)
-    let tool_calls = message
-        .get("tool_calls")
-        .and_then(|v| v.as_array())
-        .map(|calls| {
-            calls
-                .iter()
-                .map(|call| {
-                    let mut canonical = call.clone();
-                    if let Some(func) = canonical.get_mut("function") {
-                        if let Some(args) = func.get("arguments") {
-                            if !args.is_string() {
-                                func["arguments"] =
-                                    Value::String(serde_json::to_string(args).unwrap_or_default());
-                            }
-                        }
-                    }
-                    canonical
-                })
-                .collect()
-        });
-
-    let finish_reason = if is_done {
-        let reason = obj
-            .get("done_reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("stop");
-        Some(
-            match reason {
-                "stop" => "stop",
-                "length" => "length",
-                other => other,
-            }
-            .to_string(),
-        )
-    } else {
-        None
-    };
-
-    let usage = if is_done {
-        let prompt_tokens = obj
-            .get("prompt_eval_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let completion_tokens = obj.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        Some(Usage {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens: prompt_tokens + completion_tokens,
+        let initial = Output::new();
+        Ok(ProviderOutcome::Streaming {
+            initial,
+            stream: Box::pin(deltas),
         })
-    } else {
-        None
-    };
+    }
 
-    InferenceChunk {
-        id: id.to_string(),
-        object: "chat.completion.chunk".to_string(),
-        model: model.to_string(),
-        choices: vec![ChunkChoice {
-            index: 0,
-            delta: ChatMessage {
-                role: if role.is_empty() {
-                    String::new()
-                } else {
-                    role
-                },
-                content,
-                tool_calls,
-                tool_call_id: None,
-                extra: serde_json::Map::new(),
-            },
-            finish_reason,
-        }],
-        usage,
+    async fn do_embed(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let model = request
+            .resolved_model
+            .as_ref()
+            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
+            .short_name
+            .clone();
+        let input = request
+            .payload
+            .pointer("/text/input")
+            .cloned()
+            .ok_or_else(|| ProviderError::Unsupported("missing text.input".to_string()))?;
+        let inputs: Vec<String> = match input {
+            Value::String(s) => vec![s],
+            Value::Array(a) => a
+                .into_iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+            _ => {
+                return Err(ProviderError::Unsupported(
+                    "text.input must be a string or array".to_string(),
+                ));
+            }
+        };
+
+        let body = json!({
+            "model": model,
+            "input": inputs,
+        });
+        let base = self.pick()?;
+        let endpoint = format!("{}/api/embed", base.trim_end_matches('/'));
+        let resp = self
+            .http
+            .post(&endpoint)
+            .json(&body)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "ollama embed").await?;
+        let wire: EmbedResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
+
+        let mut out = Output::new();
+        out.set(
+            &keys::text::EMBEDDINGS,
+            serde_json::to_value(&wire.embeddings).unwrap_or(Value::Null),
+        );
+        if let Some(count) = wire.prompt_eval_count {
+            out.set(&keys::usage::TOKENS_INPUT, count);
+        }
+        Ok(ProviderOutcome::Sync(out))
+    }
+
+    async fn do_analyze(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        // image.analyze uses Ollama's chat API with a vision model.
+        // The media resolver has already inlined base64 for image.source.
+        let model = request
+            .resolved_model
+            .as_ref()
+            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
+            .short_name
+            .clone();
+
+        let image_base64 = request
+            .payload
+            .pointer("/image/source/base64")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ProviderError::Unsupported(
+                    "image.source.base64 missing — media resolver should have inlined it"
+                        .to_string(),
+                )
+            })?
+            .to_string();
+
+        let prompt = request
+            .payload
+            .pointer("/text/prompt/user")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Describe this image.")
+            .to_string();
+
+        let body = json!({
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [image_base64],
+                }
+            ],
+            "stream": false,
+        });
+        let base = self.pick()?;
+        let endpoint = format!("{}/api/chat", base.trim_end_matches('/'));
+        let resp = self
+            .http
+            .post(&endpoint)
+            .json(&body)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "ollama analyze").await?;
+        let wire: ChatResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
+
+        let mut out = Output::new();
+        out.set(&keys::text::RESPONSE, wire.message.content);
+        if let Some(count) = wire.prompt_eval_count {
+            out.set(&keys::usage::TOKENS_INPUT, count);
+        }
+        if let Some(count) = wire.eval_count {
+            out.set(&keys::usage::TOKENS_OUTPUT, count);
+        }
+        Ok(ProviderOutcome::Sync(out))
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────
+// ── Registration builders ─────────────────────────────────────
 
-/// Map Ollama capability strings (from `/api/show`) to domain `Capability` variants.
-fn ollama_capabilities_from_strings(ollama_caps: &[String]) -> Vec<Capability> {
-    let mut caps = Vec::new();
+fn honored_text_chat_fields() -> Vec<HonoredField> {
+    vec![
+        HonoredField::new(keys::text::PROMPT_USER).required(),
+        HonoredField::new(keys::text::PROMPT_SYSTEM),
+        HonoredField::new(keys::text::PROMPT_PREVIOUS),
+        HonoredField::new(keys::text::TOKENS_MAX),
+        HonoredField::new(keys::text::SAMPLING_TEMPERATURE),
+        HonoredField::new(keys::text::SAMPLING_TOP_P),
+        HonoredField::new(keys::text::SAMPLING_TOP_K),
+        HonoredField::new(keys::text::SAMPLING_SEED),
+        HonoredField::new(keys::text::STOP_SEQUENCES),
+        HonoredField::new(keys::text::STREAM),
+    ]
+}
 
-    for cap_str in ollama_caps {
-        match cap_str.as_str() {
-            "completion" | "chat" => {
-                if !caps.contains(&Capability::Chat) {
-                    caps.push(Capability::Chat);
-                }
-            }
-            "embedding" | "embed" => {
-                if !caps.contains(&Capability::Embed) {
-                    caps.push(Capability::Embed);
-                }
-            }
-            "vision" => caps.push(Capability::Vision),
-            "tools" => caps.push(Capability::Tools),
-            "thinking" | "think" => caps.push(Capability::Think),
-            _ => {
-                tracing::trace!(capability = %cap_str, "unknown Ollama capability, ignoring");
+fn build_chat_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::TextChat,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: honored_text_chat_fields(),
+        media_inputs: Vec::new(),
+        media_outputs: Vec::new(),
+    }
+}
+
+fn build_embed_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::TextEmbed,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![HonoredField::new(keys::text::INPUT).required()],
+        media_inputs: Vec::new(),
+        media_outputs: Vec::new(),
+    }
+}
+
+fn build_analyze_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::ImageAnalyze,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            HonoredField::new(keys::image::SOURCE).required(),
+            HonoredField::new(keys::text::PROMPT_USER),
+        ],
+        media_inputs: vec![MediaInputSpec {
+            field: keys::image::SOURCE,
+            delivery: MediaDelivery::Base64,
+            accepted_types: vec![
+                "image/png".to_string(),
+                "image/jpeg".to_string(),
+                "image/webp".to_string(),
+                "image/gif".to_string(),
+            ],
+            overlay: None,
+        }],
+        media_outputs: Vec::new(),
+    }
+}
+
+// ── Payload helpers ───────────────────────────────────────────
+
+fn build_chat_messages(payload: &Value, _vision: bool) -> Result<Vec<Value>, ProviderError> {
+    let mut messages: Vec<Value> = Vec::new();
+
+    if let Some(system) = payload.pointer("/text/prompt/system").and_then(|v| v.as_str()) {
+        messages.push(json!({"role": "system", "content": system}));
+    }
+
+    if let Some(previous) = payload
+        .pointer("/text/prompt/previous")
+        .and_then(|v| v.as_array())
+    {
+        for turn in previous {
+            if let (Some(user), Some(assistant)) = (
+                turn.get("user").and_then(|v| v.as_str()),
+                turn.get("assistant").and_then(|v| v.as_str()),
+            ) {
+                messages.push(json!({"role": "user", "content": user}));
+                messages.push(json!({"role": "assistant", "content": assistant}));
             }
         }
     }
 
-    // If no capabilities were reported but the model exists, assume at least Chat
-    if caps.is_empty() {
-        caps.push(Capability::Chat);
-    }
+    let user = payload
+        .pointer("/text/prompt/user")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ProviderError::Unsupported("text.prompt.user missing".to_string()))?;
+    messages.push(json!({"role": "user", "content": user}));
 
-    caps
+    Ok(messages)
 }
 
-/// Infer specialization tags from model name and family.
-fn infer_specializations(name: &str, family: &Option<String>) -> Vec<String> {
-    let lower = name.to_lowercase();
-    let family_lower = family.as_deref().unwrap_or("").to_lowercase();
-    let mut tags = Vec::new();
-
-    if lower.contains("ocr") {
-        tags.push("ocr".to_string());
+fn build_options(payload: &Value) -> Value {
+    let mut options = serde_json::Map::new();
+    if let Some(t) = payload
+        .pointer("/text/sampling/temperature")
+        .and_then(|v| v.as_f64())
+    {
+        options.insert("temperature".to_string(), json!(t));
     }
-    if lower.contains("embed") || lower.contains("minilm") || lower.contains("bge") {
-        tags.push("embedding".to_string());
+    if let Some(p) = payload.pointer("/text/sampling/top_p").and_then(|v| v.as_f64()) {
+        options.insert("top_p".to_string(), json!(p));
     }
-    if lower.contains("deepseek-r1") || lower.contains("reasoning") {
-        tags.push("reasoning".to_string());
+    if let Some(k) = payload.pointer("/text/sampling/top_k").and_then(|v| v.as_i64()) {
+        options.insert("top_k".to_string(), json!(k));
     }
-    if lower.contains("code") || lower.contains("starcoder") || lower.contains("codellama") {
-        tags.push("coding".to_string());
+    if let Some(seed) = payload.pointer("/text/sampling/seed").and_then(|v| v.as_i64()) {
+        options.insert("seed".to_string(), json!(seed));
     }
-    if lower.contains("aya") || lower.contains("translate") || lower.contains("multilingual") {
-        tags.push("multilingual".to_string());
+    if let Some(max) = payload.pointer("/text/tokens/max").and_then(|v| v.as_i64()) {
+        options.insert("num_predict".to_string(), json!(max));
     }
-    if lower.contains("tiny") || lower.contains("mini") || lower.contains("small") {
-        tags.push("compact".to_string());
+    if let Some(stops) = payload
+        .pointer("/text/stop/sequences")
+        .and_then(|v| v.as_array())
+    {
+        options.insert("stop".to_string(), Value::Array(stops.clone()));
     }
-    if lower.contains("vision") || lower.contains("vl") || family_lower.contains("clip") {
-        tags.push("vision".to_string());
-    }
-
-    tags
+    Value::Object(options)
 }
 
-// ── Tests ───────────────────────────────────────────────────────
+// ── Wire types ────────────────────────────────────────────────
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_request_basic() {
-        let req = InferenceRequest {
-            model: "test".into(),
-            messages: vec![ChatMessage {
-                role: "user".into(),
-                content: Some(Value::String("Hello".into())),
-                tool_calls: None,
-                tool_call_id: None,
-                extra: serde_json::Map::new(),
-            }],
-            temperature: Some(0.7),
-            max_tokens: Some(100),
-            top_p: None,
-            stop: None,
-            tools: None,
-            tool_choice: None,
-            stream: false,
-            extra: serde_json::Map::new(),
-        };
-
-        let body = build_ollama_request("test", &req, false);
-        assert_eq!(body["model"], "test");
-        assert_eq!(body["stream"], false);
-        assert_eq!(body["options"]["temperature"], 0.7);
-        assert_eq!(body["options"]["num_predict"], 100);
-        assert_eq!(body["messages"][0]["content"], "Hello");
-    }
-
-    #[test]
-    fn extract_images_from_openai_content() {
-        let msg = ChatMessage {
-            role: "user".into(),
-            content: Some(serde_json::json!([
-                {"type": "text", "text": "What is this?"},
-                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,abc123"}}
-            ])),
-            tool_calls: None,
-            tool_call_id: None,
-            extra: serde_json::Map::new(),
-        };
-
-        let (text, images) = extract_content_and_images(&msg);
-        assert_eq!(text.unwrap(), "What is this?");
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0], "abc123");
-    }
-
-    #[test]
-    fn response_translates_tool_args_to_string() {
-        let ollama = serde_json::json!({
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{
-                    "function": {
-                        "name": "get_weather",
-                        "arguments": {"city": "Tokyo"}
-                    }
-                }]
-            },
-            "done": true,
-            "done_reason": "stop",
-            "prompt_eval_count": 10,
-            "eval_count": 5
-        });
-
-        let resp = ollama_response_to_canonical("test", &ollama);
-        let tool_calls = resp.choices[0].message.tool_calls.as_ref().unwrap();
-        let args = tool_calls[0]["function"]["arguments"].as_str().unwrap();
-        // Should be a JSON string, not an object
-        assert!(args.contains("Tokyo"));
-        let parsed: Value = serde_json::from_str(args).unwrap();
-        assert_eq!(parsed["city"], "Tokyo");
-    }
-
-    #[test]
-    fn ndjson_chunk_mid_stream() {
-        let obj = serde_json::json!({
-            "message": {"role": "assistant", "content": "Hello"},
-            "done": false
-        });
-        let chunk = ollama_ndjson_to_chunk("test-id", "model", &obj);
-        assert_eq!(
-            chunk.choices[0].delta.content,
-            Some(Value::String("Hello".into()))
-        );
-        assert_eq!(chunk.choices[0].finish_reason, None);
-        assert!(chunk.usage.is_none());
-    }
-
-    #[test]
-    fn ndjson_chunk_final() {
-        let obj = serde_json::json!({
-            "message": {"role": "assistant", "content": ""},
-            "done": true,
-            "done_reason": "stop",
-            "prompt_eval_count": 42,
-            "eval_count": 10
-        });
-        let chunk = ollama_ndjson_to_chunk("test-id", "model", &obj);
-        assert_eq!(chunk.choices[0].finish_reason.as_deref(), Some("stop"));
-        let usage = chunk.usage.unwrap();
-        assert_eq!(usage.prompt_tokens, 42);
-        assert_eq!(usage.completion_tokens, 10);
-    }
-
-    #[test]
-    fn capabilities_from_strings_defaults_to_chat() {
-        let caps = ollama_capabilities_from_strings(&[]);
-        assert_eq!(caps, vec![Capability::Chat]);
-    }
-
-    #[test]
-    fn capabilities_from_strings_deduplicates() {
-        let caps = ollama_capabilities_from_strings(&[
-            "chat".into(),
-            "completion".into(),
-            "embedding".into(),
-        ]);
-        assert_eq!(caps.len(), 2);
-        assert!(caps.contains(&Capability::Chat));
-        assert!(caps.contains(&Capability::Embed));
-    }
-
-    #[test]
-    fn specializations_detect_tags() {
-        let tags = infer_specializations("deepseek-r1:32b", &Some("deepseek".into()));
-        assert!(tags.contains(&"reasoning".to_string()));
-    }
-
-    #[test]
-    fn vram_estimate_uses_authoritative_first() {
-        let provider = OllamaProvider::new();
-        let model = ServiceModel {
-            name: "test".into(),
-            capabilities: vec![],
-            specializations: vec![],
-            vram_bytes: Some(4_000_000_000),
-            metadata: serde_json::json!({"size_disk": 2_000_000_000_u64}),
-        };
-        assert_eq!(provider.vram_estimate(&model), Some(4_000_000_000));
-    }
-
-    #[test]
-    fn vram_estimate_falls_back_to_disk_size() {
-        let provider = OllamaProvider::new();
-        let model = ServiceModel {
-            name: "test".into(),
-            capabilities: vec![],
-            specializations: vec![],
-            vram_bytes: None,
-            metadata: serde_json::json!({"size_disk": 2_000_000_000_u64}),
-        };
-        let estimate = provider.vram_estimate(&model).unwrap();
-        assert_eq!(estimate, (2_000_000_000_f64 * 1.1) as u64);
-    }
+#[derive(Debug, Deserialize)]
+struct TagsResponse {
+    models: Vec<TagsModel>,
 }
+
+#[derive(Debug, Deserialize)]
+struct TagsModel {
+    name: String,
+    #[serde(default)]
+    size: u64,
+}
+
+/// Subset of the `/api/show` response that the orchestrator
+/// consumes. Ollama's full response is much larger; we only deser
+/// the fields the recommendation engine cares about.
+#[derive(Debug, Deserialize)]
+struct ShowResponse {
+    /// Vendor-native capability tags: `"completion"`, `"embedding"`,
+    /// `"vision"`, `"tools"`, `"thinking"`. Maps to the
+    /// orchestrator's primitives and capability profile filters.
+    #[serde(default)]
+    capabilities: Option<Vec<String>>,
+    /// Model metadata key-value bag. Contains
+    /// `"general.parameter_count"` and architecture-specific keys
+    /// like `"qwen2.context_length"`.
+    #[serde(default)]
+    model_info: Option<std::collections::HashMap<String, serde_json::Value>>,
+    /// Display details. Includes `parameter_size` ("7B"), `family`,
+    /// `quantization_level`.
+    #[serde(default)]
+    details: Option<ShowDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShowDetails {
+    #[serde(default)]
+    parameter_size: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatResponse {
+    message: ChatMessage,
+    #[serde(default)]
+    done_reason: Option<String>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    total_duration: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessage {
+    #[serde(default)]
+    content: String,
+}
+
+/// One NDJSON line from Ollama's streaming chat endpoint. Non-final
+/// chunks carry a partial `message.content`; the final chunk has
+/// `done: true` plus aggregate counters.
+#[derive(Debug, Deserialize)]
+struct ChatStreamChunk {
+    #[serde(default)]
+    message: Option<ChatMessage>,
+    #[serde(default)]
+    done: bool,
+    #[serde(default)]
+    done_reason: Option<String>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    total_duration: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbedResponse {
+    embeddings: Vec<Vec<f32>>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct _PhantomSerialize;

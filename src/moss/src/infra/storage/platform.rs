@@ -13,8 +13,8 @@ use tracing::{debug, warn};
 // Value types live in domain; re-exported here for backward compatibility
 // with infra consumers and external callers.
 pub use crate::domain::storage::platform_types::{
-    BusType, DiskUsage, MediumCondition, MediumSnapshot, PartitionSnapshot, UnmountedDevice,
-    VolumeSnapshot,
+    BusType, DeviceHealth, DiskUsage, MediumCondition, MediumSnapshot, PartitionSnapshot,
+    UnmountedDevice, VolumeSnapshot,
 };
 
 // ============================================================================
@@ -277,6 +277,42 @@ pub fn list_unmounted_removable() -> Vec<UnmountedDevice> {
     }
 }
 
+/// Probe device health from OS-level signals (STORAGE-0018).
+///
+/// Linux: reads sysfs device state and I/O error counters, checks /proc/mounts
+/// for read-only flag. Windows: checks volume responsiveness.
+pub fn probe_device_health(device_path: &str, mount_path: &str) -> DeviceHealth {
+    #[cfg(target_os = "linux")]
+    {
+        linux::probe_device_health(device_path, mount_path)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows::probe_device_health(device_path, mount_path)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (device_path, mount_path);
+        DeviceHealth::healthy()
+    }
+}
+
+/// Remove a stale block device reference from the kernel (STORAGE-0018).
+///
+/// Linux: writes 1 to /sys/block/{dev}/device/delete.
+/// Other platforms: no-op (device lifecycle managed by OS).
+pub fn remove_stale_device(device_path: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::remove_stale_device(device_path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device_path;
+        Ok(())
+    }
+}
+
 /// Check whether a path is on a removable device.
 pub fn is_removable(path: &str) -> bool {
     #[cfg(target_os = "linux")]
@@ -302,6 +338,7 @@ pub fn is_removable(path: &str) -> bool {
 mod linux {
     use super::*;
     use std::path::Path;
+    use tracing::info;
 
     /// Scan all mounted volumes via /proc/mounts + sysfs.
     pub fn scan_volumes() -> Vec<VolumeSnapshot> {
@@ -1034,6 +1071,119 @@ mod linux {
         debug!(count = results.len(), "Linux media scan complete");
         results
     }
+
+    // ====================================================================
+    // Device health probing (STORAGE-0018)
+    // ====================================================================
+
+    /// Probe device health from sysfs and procfs.
+    ///
+    /// All reads are single sysfs/procfs files — no subprocesses, no blocking I/O.
+    pub fn probe_device_health(device_path: &str, mount_path: &str) -> DeviceHealth {
+        let base = base_device_name(device_path);
+
+        let responsive = disk_usage(mount_path).is_some();
+        let read_only = is_mount_read_only(mount_path);
+        let stale_reference = is_device_stale(&base);
+        let io_errors = read_io_error_count(&base);
+
+        DeviceHealth {
+            responsive,
+            read_only,
+            stale_reference,
+            io_errors,
+        }
+    }
+
+    /// Check if a SCSI/USB device is in a stale state.
+    ///
+    /// Reads `/sys/block/{dev}/device/state`. Values "offline" and
+    /// "transport-offline" indicate the physical device is gone but
+    /// the kernel retains the block device reference.
+    fn is_device_stale(base_name: &str) -> bool {
+        let state_path = format!("/sys/block/{}/device/state", base_name);
+        match std::fs::read_to_string(&state_path) {
+            Ok(content) => {
+                let state = content.trim();
+                state == "offline" || state == "transport-offline"
+            }
+            // No sysfs entry → not a SCSI device, or already cleaned up.
+            Err(_) => false,
+        }
+    }
+
+    /// Read cumulative I/O error count from the device driver.
+    ///
+    /// Reads `/sys/block/{dev}/device/ioerr_cnt`. Returns 0 if the
+    /// counter is not available (not all drivers expose it).
+    fn read_io_error_count(base_name: &str) -> u64 {
+        let path = format!("/sys/block/{}/device/ioerr_cnt", base_name);
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    }
+
+    /// Check if a mount is read-only by reading `/proc/mounts`.
+    ///
+    /// Returns `true` if the mount options include `ro`. Returns `false`
+    /// if the mount is read-write or if mount info is unavailable.
+    fn is_mount_read_only(mount_path: &str) -> bool {
+        let Ok(mounts) = std::fs::read_to_string("/proc/mounts") else {
+            return false;
+        };
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 && parts[1] == mount_path {
+                return parts[3].split(',').any(|o| o == "ro");
+            }
+        }
+        false
+    }
+
+    /// Remove a stale block device reference from the kernel.
+    ///
+    /// Writes `1` to `/sys/block/{dev}/device/delete`, which tells the
+    /// SCSI subsystem to remove the device. This stops the kernel from
+    /// retrying I/O on a physically-absent device.
+    ///
+    /// Only call for devices confirmed stale via `is_device_stale()`.
+    /// Writing to a live device's delete file will remove it from the OS.
+    pub fn remove_stale_device(device_path: &str) -> anyhow::Result<()> {
+        let base = base_device_name(device_path);
+        let delete_path = format!("/sys/block/{}/device/delete", base);
+
+        if !Path::new(&delete_path).exists() {
+            anyhow::bail!("sysfs delete path not found: {}", delete_path);
+        }
+
+        // garden-moss runs as root via systemd — direct write should work.
+        // Fall back to sudo sh -c if direct write fails (dev environments).
+        if std::fs::write(&delete_path, "1").is_ok() {
+            info!(device = %device_path, "Removed stale block device reference");
+            return Ok(());
+        }
+
+        let output = super::super::subprocess::run_command_timed_sync(
+            "sudo",
+            &["sh", "-c", &format!("echo 1 > {}", delete_path)],
+            std::time::Duration::from_secs(5),
+        );
+
+        match output {
+            Ok(ref o) if o.status.success() => {
+                info!(device = %device_path, "Removed stale block device reference (via sudo)");
+                Ok(())
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                anyhow::bail!("Failed to delete stale device {}: {}", device_path, stderr.trim());
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to run device delete for {}: {}", device_path, e);
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1505,6 +1655,25 @@ $disks | ConvertTo-Json -Depth 3 -Compress
 
         debug!(count = results.len(), "Windows media scan complete");
         results
+    }
+
+    // ====================================================================
+    // Device health probing (STORAGE-0018)
+    // ====================================================================
+
+    /// Probe device health on Windows.
+    ///
+    /// Checks volume responsiveness via `disk_usage()`. Windows manages
+    /// device lifecycle automatically, so `stale_reference` is always false.
+    pub fn probe_device_health(_device_path: &str, mount_path: &str) -> DeviceHealth {
+        let responsive = disk_usage(mount_path).is_some();
+
+        DeviceHealth {
+            responsive,
+            read_only: false, // TODO: GetVolumeInformationW FILE_READ_ONLY_VOLUME check
+            stale_reference: false, // Windows cleans up device references
+            io_errors: 0, // TODO: WMI Win32_DiskDrive.Status
+        }
     }
 }
 

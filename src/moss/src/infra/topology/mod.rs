@@ -33,11 +33,13 @@ pub async fn probe_full_topology(fingerprint: String) -> Result<HardwareTopology
         Ok(result) => {
             topo.system = result.identity;
             topo.expansion.m2 = result.m2_slots;
+            topo.memory = result.memory;
             topo.status = TopologyStatus::Partial;
             tracing::info!(
                 manufacturer = %topo.system.manufacturer,
                 product = %topo.system.product,
                 m2_slots = topo.expansion.m2.len(),
+                memory_slots = topo.memory.slots.len(),
                 "probe_full_topology: [1/5] SMBIOS complete"
             );
         }

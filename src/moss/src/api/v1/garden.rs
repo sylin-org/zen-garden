@@ -297,6 +297,127 @@ pub async fn get_topology_v1(
     crate::api::ok_maybe(stones, suggestions)
 }
 
+/// GET /api/v1/garden/inspect — Garden-wide hardware inspection with fan-out.
+///
+/// Queries every peer's `/api/v1/stone/capabilities` in parallel, collects
+/// `FullCapabilities` for each reachable stone (including self), and returns
+/// a `GardenInspection` summary.
+pub async fn inspect_garden_v1(
+    State(state): State<AppState>,
+) -> crate::api::ApiResult<garden_common::types::hardware_topology::GardenInspection> {
+    use garden_common::api_utils::responses::ApiResponse as CommonApiResponse;
+    use garden_common::constants::timeouts::garden_inspect_timeout;
+    use garden_common::types::hardware_topology::{
+        FullCapabilities, GardenInspection, InspectionSummary, StoneInspection, UnreachableStone,
+    };
+
+    let mut stones: Vec<StoneInspection> = Vec::new();
+    let mut unreachable: Vec<UnreachableStone> = Vec::new();
+
+    // ── Self (local stone) ──────────────────────────────────────────
+    let self_core = {
+        let guard = state.current.capabilities.read().await;
+        guard.clone().unwrap_or_else(|| {
+            crate::infra::hardware::create_skeleton(state.current.stone.name.to_string())
+        })
+    };
+    let self_topology = state.current.hardware_topology.read().await.clone();
+    let self_address = state.current.address.read().await.http_base();
+
+    stones.push(StoneInspection {
+        name: state.current.stone.name.clone(),
+        id: state.current.stone.id.clone(),
+        endpoint: self_address,
+        capabilities: FullCapabilities {
+            core: self_core,
+            topology: self_topology,
+        },
+    });
+
+    // ── Peers (parallel fan-out) ────────────────────────────────────
+    let peers = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
+    let timeout = garden_inspect_timeout();
+
+    let tasks: Vec<_> = peers
+        .into_iter()
+        .filter(|e| e.stone_id != state.current.stone.id)
+        .map(|entry| {
+            let endpoint = entry.address.http_base();
+            let stone_name = entry.stone_name.clone();
+            let stone_id = entry.stone_id.clone();
+            let client = crate::http::HTTP.clone();
+
+            tokio::spawn(async move {
+                let url = format!(
+                    "{}/api/v1/stone/capabilities",
+                    endpoint.trim_end_matches('/')
+                );
+                let result = tokio::time::timeout(timeout, client.get(&url).send()).await;
+
+                match result {
+                    Ok(Ok(resp)) if resp.status().is_success() => {
+                        match resp
+                            .json::<CommonApiResponse<FullCapabilities>>()
+                            .await
+                        {
+                            Ok(api_resp) => Ok(StoneInspection {
+                                name: stone_name,
+                                id: stone_id,
+                                endpoint,
+                                capabilities: api_resp.data,
+                            }),
+                            Err(e) => Err(UnreachableStone {
+                                name: stone_name,
+                                endpoint,
+                                reason: format!("parse error: {e}"),
+                            }),
+                        }
+                    }
+                    Ok(Ok(resp)) => Err(UnreachableStone {
+                        name: stone_name,
+                        endpoint,
+                        reason: format!("HTTP {}", resp.status()),
+                    }),
+                    Ok(Err(e)) => Err(UnreachableStone {
+                        name: stone_name,
+                        endpoint,
+                        reason: format!("connection error: {e}"),
+                    }),
+                    Err(_) => Err(UnreachableStone {
+                        name: stone_name,
+                        endpoint,
+                        reason: "timeout".to_string(),
+                    }),
+                }
+            })
+        })
+        .collect();
+
+    for task in tasks {
+        match task.await {
+            Ok(Ok(inspection)) => stones.push(inspection),
+            Ok(Err(unreachable_stone)) => unreachable.push(unreachable_stone),
+            Err(e) => {
+                tracing::warn!(error = ?e, "Inspect task panicked");
+            }
+        }
+    }
+
+    let total = stones.len() + unreachable.len();
+    let inspection = GardenInspection {
+        inspected_at: chrono::Utc::now().to_rfc3339(),
+        summary: InspectionSummary {
+            total,
+            inspected: stones.len(),
+            unreachable: unreachable.len(),
+        },
+        stones,
+        unreachable,
+    };
+
+    crate::api::ok(inspection)
+}
+
 /// GET /api/v1/garden/capabilities — Aggregate capabilities across all stones.
 ///
 /// Returns `FullCapabilities` for each stone in the garden:

@@ -1181,6 +1181,13 @@ impl GardenApi<'_> {
     ) -> Result<serde_json::Value, StoneApiError> {
         self.api.post("/api/v1/garden/recommend", body).await
     }
+
+    /// Garden-wide hardware inspection (fan-out to all stones).
+    pub async fn inspect(
+        &self,
+    ) -> Result<crate::types::hardware_topology::GardenInspection, StoneApiError> {
+        self.api.get("/api/v1/garden/inspect").await
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

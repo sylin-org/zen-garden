@@ -173,6 +173,56 @@ pub struct MediumSnapshot {
     pub partitions: Vec<PartitionSnapshot>,
 }
 
+// ============================================================================
+// Device health
+// ============================================================================
+
+/// Platform-agnostic device health snapshot (STORAGE-0018).
+///
+/// Produced by `StoragePlatform::probe_device_health()`, consumed by
+/// `Volume::observe_metrics()`. All fields are OS facts — the domain
+/// decides what they mean.
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceHealth {
+    /// Basic I/O probe succeeded (statvfs or equivalent).
+    pub responsive: bool,
+
+    /// Filesystem mounted read-only (ext4 error recovery, hardware
+    /// write-protect, etc.).
+    pub read_only: bool,
+
+    /// sysfs entry exists but physical device is gone (kernel ghost).
+    /// Linux: `/sys/block/{dev}/device/state` is "offline" or
+    /// "transport-offline".
+    pub stale_reference: bool,
+
+    /// Cumulative I/O error count from the device driver (if available).
+    /// Linux: `/sys/block/{dev}/device/ioerr_cnt`. Zero when unavailable.
+    pub io_errors: u64,
+}
+
+impl Default for DeviceHealth {
+    fn default() -> Self {
+        Self {
+            responsive: true,
+            read_only: false,
+            stale_reference: false,
+            io_errors: 0,
+        }
+    }
+}
+
+impl DeviceHealth {
+    /// A healthy device: responsive, read-write, no errors.
+    pub fn healthy() -> Self {
+        Self::default()
+    }
+}
+
+// ============================================================================
+// Unmounted devices
+// ============================================================================
+
 /// An unmounted removable device that could potentially be a managed storage.
 #[derive(Debug, Clone)]
 pub struct UnmountedDevice {

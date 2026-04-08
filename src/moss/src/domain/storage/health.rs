@@ -30,6 +30,8 @@ pub struct SeedBankHealth {
     pub mount_path: String,
     pub canonical: bool,
     pub writable: bool,
+    pub responsive: bool,
+    pub io_errors: u64,
     pub ready: bool,
     pub issues: Vec<String>,
 }
@@ -130,6 +132,8 @@ pub async fn assess_storage_health(managed: Vec<StorageInfo>) -> StorageHealth {
             mount_path: bank.mount_path.clone(),
             canonical,
             writable,
+            responsive: true, // assessed at query time — volume is mounted
+            io_errors: 0,     // real-time monitoring via observe cycle (STORAGE-0018)
             ready,
             issues,
         });

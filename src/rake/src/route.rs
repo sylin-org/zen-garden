@@ -60,13 +60,25 @@ pub async fn route(
 
         "status" => Inv::remote(commands::discovery::StatusCommand::new(g.quiet), m),
 
-        "inspect" => {
-            let save_path = opt(m, "save");
-            let json = m.get_flag("json");
-            Inv::remote(
-                commands::discovery::InspectCommand::new(save_path, json, g.quiet),
-                m,
-            )
+        "inspect" => match m.subcommand() {
+            Some(("all", sub)) => {
+                let output_path = opt(sub, "file")
+                    .unwrap_or_else(|| "garden-inspect.json".to_string());
+                let json = sub.get_flag("json");
+                let expanded = sub.get_flag("expanded");
+                Inv::remote(
+                    commands::discovery::InspectAllCommand::new(output_path, json, expanded, g.quiet),
+                    m,
+                )
+            }
+            _ => {
+                let save_path = opt(m, "save");
+                let json = m.get_flag("json");
+                Inv::remote(
+                    commands::discovery::InspectCommand::new(save_path, json, g.quiet),
+                    m,
+                )
+            }
         }
 
         "list" => Inv::remote(commands::discovery::ListCommand::new(g.quiet), m),

@@ -463,7 +463,15 @@ impl GardenRegistryInner {
 
         // Snapshot reconciliation: remove announced entries from this stone
         // that were not present in the snapshot.
-        if beacon.snapshot {
+        //
+        // Guard: skip reconciliation when the snapshot is empty. An empty
+        // snapshot almost always means the sender is still starting up
+        // (storage not yet projected into the registry). Purging valid
+        // entries cached from a previous beacon would create an unnecessary
+        // gap in garden visibility until the next non-empty snapshot arrives.
+        // Genuine removal is handled by explicit Remove deltas, not by the
+        // absence of entries in an empty snapshot.
+        if beacon.snapshot && !seen_keys.is_empty() {
             let stale: Vec<String> = self
                 .entries
                 .iter()

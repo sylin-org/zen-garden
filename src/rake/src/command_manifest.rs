@@ -886,7 +886,16 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
             ArgSpec::flag("json", "Output raw JSON instead of formatted text"),
             at_arg(),
         ],
-        subcommands: vec![],
+        subcommands: vec![SubDef {
+            name: "all",
+            description: "Inspect all stones in the garden",
+            args: vec![
+                ArgSpec::positional("file", "Output file path (default: garden-inspect.json)"),
+                ArgSpec::flag("json", "Output raw JSON to stdout"),
+                ArgSpec::flag("expanded", "Show every stone individually, no grouping"),
+            ],
+            subcommands: vec![],
+        }],
         examples: vec![
             CommandExample {
                 description: "Inspect tended stone",
@@ -904,10 +913,22 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
                 description: "Pipe JSON output",
                 syntax: "garden-rake inspect --json | jq '.topology.expansion.pcie'",
             },
+            CommandExample {
+                description: "Inspect all stones in garden",
+                syntax: "garden-rake inspect all",
+            },
+            CommandExample {
+                description: "Inspect all stones, custom output path",
+                syntax: "garden-rake inspect all fleet.json",
+            },
+            CommandExample {
+                description: "Full inventory, every stone listed",
+                syntax: "garden-rake inspect all --expanded",
+            },
         ],
         see_also: vec!["status", "observe"],
         hidden: false,
-        subcommand_negates_reqs: false,
+        subcommand_negates_reqs: true,
     });
 
     // === MANAGEMENT COMMANDS ===

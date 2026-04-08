@@ -121,14 +121,16 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
 
 /// Observe health on all volumes. Returns events for any state changes.
 ///
-/// Reads disk metrics via the platform adapter, then informs each Volume.
-/// Offline volumes are skipped by `observe_metrics()`.
+/// Reads disk metrics and device health via the platform adapter, then
+/// informs each Volume. Offline volumes are skipped by `observe_metrics()`.
+/// Stale removable devices are cleaned up automatically (STORAGE-0018).
 pub async fn observe_all(
     volumes: &Volumes,
     platform: &(impl StoragePlatform + ?Sized),
 ) -> Vec<StorageChanged> {
     let mut map = volumes.write().await;
     let mut events = Vec::new();
+    let mut stale_removable: Vec<String> = Vec::new();
 
     for vol in map.values_mut() {
         if !vol.is_online() {
@@ -136,19 +138,44 @@ pub async fn observe_all(
         }
 
         let mount_str = vol.mount_path().to_string_lossy().to_string();
+        let device_path = vol.path().to_string();
+
+        // Probe device health (STORAGE-0018).
+        let health = platform.probe_device_health(&device_path, &mount_str);
+
         let metrics = platform.disk_usage(&mount_str).map(|usage| DiskMetrics {
             capacity_bytes: usage.total(),
             used_bytes: usage.used_bytes,
         });
-        events.extend(vol.observe_metrics(metrics));
+        events.extend(vol.observe_metrics(metrics, health));
+
+        // Track stale removable devices for cleanup after releasing the lock.
+        if health.stale_reference && vol.removable() {
+            stale_removable.push(device_path);
+        }
 
         // Reconcile pin state from disk (detect external pin changes).
-        let pin_path = vol.mount_path().join(".zen-garden").join("pin.json");
-        let disk_pin = std::fs::read_to_string(&pin_path)
-            .ok()
-            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-            .and_then(|v| v.get("pin_id")?.as_str().map(|s| s.to_string()));
-        vol.reconcile_pin(disk_pin);
+        if vol.is_online() {
+            let pin_path = vol.mount_path().join(".zen-garden").join("pin.json");
+            let disk_pin = std::fs::read_to_string(&pin_path)
+                .ok()
+                .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                .and_then(|v| v.get("pin_id")?.as_str().map(|s| s.to_string()));
+            vol.reconcile_pin(disk_pin);
+        }
+    }
+
+    drop(map);
+
+    // Remediate stale removable devices outside the lock (STORAGE-0018).
+    for device_path in stale_removable {
+        if let Err(e) = platform.remove_stale_device(&device_path) {
+            tracing::warn!(
+                device = %device_path,
+                error = %e,
+                "Failed to clean up stale device reference"
+            );
+        }
     }
 
     events
@@ -422,10 +449,10 @@ mod tests {
         let mut vol = Volume::from_snapshot(&snap);
         vol.disconnect();
 
-        let events = vol.observe_metrics(Some(DiskMetrics {
-            capacity_bytes: 100,
-            used_bytes: 50,
-        }));
+        let events = vol.observe_metrics(
+            Some(DiskMetrics { capacity_bytes: 100, used_bytes: 50 }),
+            super::super::platform_types::DeviceHealth::healthy(),
+        );
         assert!(events.is_empty());
         assert_eq!(*vol.state(), VolumeState::Offline);
     }
@@ -436,7 +463,10 @@ mod tests {
         let mut vol = Volume::from_snapshot(&snap);
         vol.connect(DiskMetrics { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
 
-        let _events = vol.observe_metrics(None);
+        let _events = vol.observe_metrics(
+            None,
+            super::super::platform_types::DeviceHealth::healthy(),
+        );
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));
     }
 
@@ -446,10 +476,10 @@ mod tests {
         let mut vol = Volume::from_snapshot(&snap);
         vol.connect(DiskMetrics { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
 
-        let _events = vol.observe_metrics(Some(DiskMetrics {
-            capacity_bytes: 0,
-            used_bytes: 0,
-        }));
+        let _events = vol.observe_metrics(
+            Some(DiskMetrics { capacity_bytes: 0, used_bytes: 0 }),
+            super::super::platform_types::DeviceHealth::healthy(),
+        );
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));
     }
 

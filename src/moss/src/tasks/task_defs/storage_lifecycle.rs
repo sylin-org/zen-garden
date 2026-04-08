@@ -1,7 +1,14 @@
-//! BackgroundTask: storage-lifecycle (ARCH-0015, STORAGE-0011)
+//! BackgroundTask: storage-lifecycle (ARCH-0015, STORAGE-0011, STORAGE-0018)
 //!
-//! Long-running 10s interval task that handles auto-mount, health ticks,
-//! tools projection refresh, and storage beacon broadcast.
+//! Long-running 10s interval task that handles auto-mount and health ticks.
+//!
+//! Storage announcements are event-driven, not periodic:
+//! - Connect/disconnect → `emit_storage_changed()` → tools projection + nudge
+//! - New stone discovery → snapshot response (announcer / discovery handler)
+//! - 60s tools snapshot beacon (periodic-announcer) as catch-up
+//!
+//! This task does NOT broadcast storage beacons or refresh tools projection.
+//! Those happen reactively via `emit_storage_changed()`.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -40,31 +47,20 @@ impl BackgroundTask for StorageLifecycleTask {
                     }
                 }
 
-                let mounted =
-                    crate::domain::storage::auto_mount_unmounted(&OsPlatform).await;
-                if mounted > 0 {
-                    ctx.state
-                        .emit_storage_changed(
-                            garden_common::storage::StorageChanged::Reclassified,
-                        )
-                        .await;
-                }
+                // Auto-mount unmounted managed devices. No event emitted —
+                // VolumeMonitor detects the mount and calls on_appeared(),
+                // which emits Connected with the correct state.
+                crate::domain::storage::auto_mount_unmounted(&OsPlatform).await;
 
+                // Health tick: probe disk usage + device health (STORAGE-0018).
+                // State transitions (degrade, disconnect) emit StorageChanged
+                // events which flow through emit_storage_changed() → tools
+                // projection + orchestration nudge.
                 crate::domain::storage::observe_all(
                     &ctx.state.current.storage.volumes,
                     &OsPlatform,
                 )
                 .await;
-
-                ctx.state.refresh_local_tools_projection().await;
-
-                let has_managed = {
-                    let map = ctx.state.current.storage.volumes.read().await;
-                    map.values().any(|v| v.is_managed())
-                };
-                if has_managed {
-                    ctx.state.broadcast_storage_beacon().await;
-                }
             }
 
             TaskOutcome::Cancelled

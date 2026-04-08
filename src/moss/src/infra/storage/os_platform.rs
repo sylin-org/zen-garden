@@ -4,7 +4,9 @@
 use anyhow::Result;
 use garden_common::storage::{DeviceState, StorageManifest};
 
-use crate::domain::storage::{DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot};
+use crate::domain::storage::{
+    DeviceHealth, DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot,
+};
 use crate::domain::traits::StoragePlatform;
 
 use super::platform;
@@ -51,6 +53,14 @@ impl StoragePlatform for OsPlatform {
 
     fn mount_point_for_device(&self, device: &str) -> Option<String> {
         platform::mount_point_for_device(device)
+    }
+
+    fn probe_device_health(&self, device_path: &str, mount_path: &str) -> DeviceHealth {
+        platform::probe_device_health(device_path, mount_path)
+    }
+
+    fn remove_stale_device(&self, device_path: &str) -> Result<()> {
+        platform::remove_stale_device(device_path)
     }
 
     fn probe_device_state(

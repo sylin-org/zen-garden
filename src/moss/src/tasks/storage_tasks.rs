@@ -1,67 +1,15 @@
 //! Storage background tasks
 //!
-//! - Storage lifecycle: auto-mount, health tick, beacon heartbeat
 //! - S3 listener lifecycle: arm/disarm per-storage S3 ports
 //! - Storage console: render connected/released ribbons to physical console
+//!
+//! Storage lifecycle (auto-mount, health ticks) is handled by
+//! `StorageLifecycleTask` (BackgroundTask, ARCH-0015).
+//! Storage announcements are event-driven via `emit_storage_changed()`.
 
-use crate::infra::storage::OsPlatform;
 use crate::AppState;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-
-/// Start resilient seed bank mount system
-///
-/// This is a comprehensive, self-healing mount system with two background tasks:
-///
-/// 1. **Mount Persistence Task** (every 5 seconds):
-///    - Auto-mounts unmounted managed devices (manifest-based discovery)
-///    - Health-ticks all volumes (capacity, liveness)
-///    - Broadcasts storage beacon for garden-wide awareness
-///
-/// Unified across all platforms (STORAGE-0011). No separate MountTracker.
-pub fn start_storage_lifecycle(state: AppState, token: CancellationToken) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
-        interval.tick().await; // Skip first immediate tick
-
-        tracing::info!("Storage lifecycle task started (10s interval)");
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = token.cancelled() => {
-                    tracing::debug!("Storage lifecycle shutting down");
-                    break;
-                }
-            }
-
-            // Auto-mount any unmounted managed devices.
-            // Connected ribbons come from the VolumeMonitor — no events emitted here.
-            let mounted = crate::domain::storage::auto_mount_unmounted(&OsPlatform).await;
-            if mounted > 0 {
-                state
-                    .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
-                    .await;
-            }
-
-            // Health tick all volumes (~10s)
-            crate::domain::storage::observe_all(&state.current.storage.volumes, &OsPlatform)
-                .await;
-
-            // Periodic beacon heartbeat (tools projection + beacon).
-            // Only broadcast if this stone has managed storage — stones
-            // without storage can still QUERY the garden for remote banks.
-            state.refresh_local_tools_projection().await;
-            let has_managed = {
-                let map = state.current.storage.volumes.read().await;
-                map.values().any(|v| v.is_managed())
-            };
-            if has_managed {
-                state.broadcast_storage_beacon().await;
-            }
-        }
-    });
-}
 
 /// S3 listener lifecycle (STORAGE-0016): react to storage events.
 ///

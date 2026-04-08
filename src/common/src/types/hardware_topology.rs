@@ -47,6 +47,9 @@ pub struct HardwareTopology {
     /// Firmware inventory across all components.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub firmware: Vec<FirmwareComponent>,
+    /// Memory slot topology from SMBIOS Type 17 (Memory Device).
+    #[serde(default)]
+    pub memory: MemoryTopology,
 }
 
 /// Topology probe progress.
@@ -90,6 +93,12 @@ pub struct SystemIdentity {
     /// Values: "desktop", "mini-pc", "thin-client", "laptop", "server", "unknown".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chassis_type: Option<String>,
+    /// Baseboard manufacturer (SMBIOS Type 2). e.g., "ASUSTeK COMPUTER INC."
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub board_manufacturer: Option<String>,
+    /// Baseboard product name (SMBIOS Type 2). e.g., "PRIME Z690-P WIFI"
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub board_product: Option<String>,
 }
 
 // ── Expansion ───────────────────────────────────────────────────────────
@@ -259,6 +268,75 @@ pub struct FirmwareComponent {
     pub device_name: Option<String>,
 }
 
+// ── Memory ─────────────────────────────────────────────────────────────
+
+/// Memory topology from SMBIOS Type 17 (Memory Device).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MemoryTopology {
+    /// Individual memory slots (populated and empty).
+    pub slots: Vec<MemorySlot>,
+}
+
+/// A single memory slot (DIMM/SODIMM).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySlot {
+    /// Slot locator label. e.g., "DIMM_A1", "ChannelA-DIMM0".
+    pub locator: String,
+    /// Whether this slot has a module installed.
+    pub populated: bool,
+    /// Module size in MB. `None` if slot is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_mb: Option<u64>,
+    /// Memory type. e.g., "DDR4", "DDR5", "DDR3", "LPDDR4".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    /// Physical form factor. e.g., "DIMM", "SODIMM", "RowOfChips".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form_factor: Option<String>,
+    /// Configured speed in MT/s. e.g., 3200, 2400.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_mts: Option<u32>,
+    /// Module manufacturer. e.g., "Samsung", "Micron".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+}
+
+// ── Garden Inspection ───────────────────────────────────────────────
+
+/// Result of a garden-wide hardware inspection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GardenInspection {
+    pub inspected_at: String,
+    pub summary: InspectionSummary,
+    pub stones: Vec<StoneInspection>,
+    pub unreachable: Vec<UnreachableStone>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionSummary {
+    pub total: usize,
+    pub inspected: usize,
+    pub unreachable: usize,
+}
+
+/// Full capabilities for a single stone in a garden inspection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoneInspection {
+    pub name: String,
+    pub id: String,
+    pub endpoint: String,
+    #[serde(flatten)]
+    pub capabilities: FullCapabilities,
+}
+
+/// A stone that could not be reached during inspection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnreachableStone {
+    pub name: String,
+    pub endpoint: String,
+    pub reason: String,
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 impl PcieDevice {
@@ -299,6 +377,8 @@ impl HardwareTopology {
                 bios_version: None,
                 bios_date: None,
                 chassis_type: None,
+                board_manufacturer: None,
+                board_product: None,
             },
             expansion: Expansion {
                 pcie: Vec::new(),
@@ -308,6 +388,7 @@ impl HardwareTopology {
             },
             network: Vec::new(),
             firmware: Vec::new(),
+            memory: MemoryTopology::default(),
         }
     }
 }

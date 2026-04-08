@@ -192,6 +192,10 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::garden::get_garden_capabilities_v1),
         )
         .route(
+            "/api/v1/garden/inspect",
+            get(api::v1::garden::inspect_garden_v1),
+        )
+        .route(
             "/api/v1/garden/stones/{stone_name}",
             get(api::v1::garden::get_stone_v1),
         )
@@ -804,6 +808,10 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/garden/capabilities",
             get(api::v1::garden::get_garden_capabilities_v1),
+        )
+        .route(
+            "/api/v1/garden/inspect",
+            get(api::v1::garden::inspect_garden_v1),
         )
         .route(
             "/api/v1/garden/stones/{stone_name}",

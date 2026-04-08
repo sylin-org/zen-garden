@@ -7,7 +7,9 @@ use anyhow::Result;
 use garden_common::storage::{DeviceState, StorageManifest};
 use std::future::Future;
 
-use crate::domain::storage::{DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot};
+use crate::domain::storage::{
+    DeviceHealth, DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot,
+};
 
 /// OS-level storage operations.
 ///
@@ -45,6 +47,20 @@ pub trait StoragePlatform: Send + Sync {
 
     /// Get the mount point for a device, if mounted.
     fn mount_point_for_device(&self, device: &str) -> Option<String>;
+
+    /// Probe device health from OS-level signals (STORAGE-0018).
+    ///
+    /// Returns a platform-agnostic health snapshot: responsive, read-only,
+    /// stale reference, I/O error count. The domain decides what the signals
+    /// mean. Called on every observe tick for online volumes.
+    fn probe_device_health(&self, device_path: &str, mount_path: &str) -> DeviceHealth;
+
+    /// Remove a stale block device reference from the kernel (STORAGE-0018).
+    ///
+    /// Linux: writes `1` to `/sys/block/{dev}/device/delete`.
+    /// Only called for removable devices with `stale_reference = true`.
+    /// No-op on platforms that clean up device references automatically.
+    fn remove_stale_device(&self, device_path: &str) -> Result<()>;
 
     /// Probe a block device to determine its state.
     fn probe_device_state(

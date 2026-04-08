@@ -221,6 +221,11 @@ pub fn companion_startup_wait() -> Duration {
 // Docker Timeouts
 // ============================================================================
 
+/// Garden-wide hardware inspection per-peer timeout (default 10s)
+pub fn garden_inspect_timeout() -> Duration {
+    env_duration_secs("GARDEN_INSPECT_TIMEOUT_SECS", 10)
+}
+
 /// Stall detection timeout for Docker image pulls (default 5 minutes).
 ///
 /// This is a **TTL-with-no-activity** timeout — not a wall-clock cap.

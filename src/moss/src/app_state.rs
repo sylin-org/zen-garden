@@ -861,12 +861,18 @@ impl AppState {
         let storage_event = crate::domain::events::StorageEvent::from(&event);
         self.event_bus.emit(storage_event);
 
-        // Dedicated broadcast channel for infra subscribers (beacon, cloud filter, etc.)
+        // Dedicated broadcast channel for infra subscribers (console, cloud filter, S3, etc.)
         let _ = self.current.storage.changed.send(event);
 
         // Storage mutations affect the tools projection (seed-bank entries).
         // Refresh immediately so registry consumers see the change without polling.
+        // This also triggers an incremental tools beacon broadcast via
+        // `publish_tool_deltas`, so the garden learns about the change.
         self.refresh_local_tools_projection().await;
+
+        // Nudge orchestration so role resolution (Primary/Dormant) reacts
+        // immediately to connect/disconnect/role changes (STORAGE-0018).
+        self.orchestration.storage.nudge.notify_one();
     }
 
     /// Subscribe to storage domain events.
@@ -880,26 +886,4 @@ impl AppState {
         self.current.storage.changed.subscribe()
     }
 
-    /// Broadcast a storage beacon to the garden.
-    ///
-    /// Reads current volumes, roles, and pins from the AppState boundary,
-    /// then sends a UDP STORAGE_BEACON announcement. This is the single
-    /// codepath for beacon broadcasting — callers should not inline this logic.
-    pub async fn broadcast_storage_beacon(&self) {
-        let endpoint = self.current.address.read().await.http_base();
-        let roles = crate::domain::storage::roles_snapshot(&self.current.storage.volumes).await;
-        let pins = crate::domain::storage::pins_snapshot(&self.current.storage.volumes).await;
-        if let Err(e) = crate::infra::storage::broadcast_beacon(
-            &self.current.stone.id,
-            &self.current.stone.name,
-            &endpoint,
-            &self.current.storage.volumes,
-            Some(&roles),
-            Some(&pins),
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "Failed to broadcast storage beacon");
-        }
-    }
 }

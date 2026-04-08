@@ -187,10 +187,13 @@ pub async fn run_metrics_collector(state: AppState, token: tokio_util::sync::Can
                     for vol in map.values_mut() {
                         let path_str = vol.mount_path().to_string_lossy().to_string();
                         if let Some(usage) = crate::infra::storage::platform::disk_usage(&path_str) {
-                            vol.observe_metrics(Some(crate::domain::storage::DiskMetrics {
-                                capacity_bytes: usage.used_bytes + usage.available_bytes,
-                                used_bytes: usage.used_bytes,
-                            }));
+                            vol.observe_metrics(
+                                Some(crate::domain::storage::DiskMetrics {
+                                    capacity_bytes: usage.used_bytes + usage.available_bytes,
+                                    used_bytes: usage.used_bytes,
+                                }),
+                                crate::domain::storage::DeviceHealth::healthy(),
+                            );
                         }
                     }
                 }

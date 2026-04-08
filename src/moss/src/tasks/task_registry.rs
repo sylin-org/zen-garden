@@ -60,7 +60,6 @@ pub fn build_task_registry(config: TaskConfig, channels: TaskChannels) -> Vec<Bo
         Box::new(StorageConsoleTask),
         Box::new(OfferingOrchestrationTask),
         Box::new(StorageOrchestrationTask),
-        Box::new(StorageBeaconSubscriberTask),
         Box::new(StorageTickAggregatorTask),
         Box::new(StorageReplicationTask),
         Box::new(MaintenanceSweepTask),

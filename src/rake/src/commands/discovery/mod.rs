@@ -29,7 +29,7 @@ pub use capabilities::{
     RefreshCapabilitiesCommand, RemoveCapabilityCommand,
 };
 pub use config::ConfigCommand;
-pub use inspect::InspectCommand;
+pub use inspect::{InspectAllCommand, InspectCommand};
 pub use find::{FindCommand, FindOutputFormat};
 pub use list::ListCommand;
 pub use observe::ObserveCommand;

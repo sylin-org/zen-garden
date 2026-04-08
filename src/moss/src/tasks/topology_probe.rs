@@ -30,10 +30,11 @@ const TOPOLOGY_CACHE_FILE: &str = "hardware-topology.json";
 ///
 /// The cache is invalidated when this doesn't match the stored value,
 /// even if hardware hasn't changed.
-const PROBE_VERSION: u32 = 3;
+const PROBE_VERSION: u32 = 4;
 // v1: initial implementation
 // v2: physical-only NIC filter, Windows BDF addresses, multi-instance PCIe enum
 // v3: Windows NIC detection rewritten from MSFT_NetAdapter to Win32_NetworkAdapter
+// v4: SMBIOS Type 2 (baseboard) + Type 17 (memory slots: DDR type, speed, form factor)
 
 /// Startup path: restore cached topology or probe if stale.
 ///

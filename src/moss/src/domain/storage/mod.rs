@@ -53,8 +53,8 @@ pub use automount::auto_mount_unmounted;
 
 // Platform value types
 pub use platform_types::{
-    BusType, DiskUsage, MediumCondition, MediumSnapshot, PartitionSnapshot, UnmountedDevice,
-    VolumeSnapshot,
+    BusType, DeviceHealth, DiskUsage, MediumCondition, MediumSnapshot, PartitionSnapshot,
+    UnmountedDevice, VolumeSnapshot,
 };
 
 // ── Storage domain context (ARCH-0004) ─────────────────────────────────

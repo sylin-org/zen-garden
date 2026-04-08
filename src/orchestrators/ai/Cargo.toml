@@ -16,9 +16,14 @@ orchestrator-common = { path = "../common" }
 
 # Core
 anyhow = "1.0"
+thiserror = "2.0"
 tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "signal", "fs", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# Async traits
+async-trait = "0.1"
 
 # HTTP server
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
@@ -36,6 +41,7 @@ toml = "0.8"
 base64 = "0.22"
 
 # Streaming
+async-stream = "0.3"
 bytes = "1"
 futures-util = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
@@ -46,9 +52,6 @@ chrono = "0.4"
 # CLI
 clap = { version = "4.4", features = ["derive", "env"] }
 
-# Shutdown coordination
-tokio-util = { version = "0.7", features = ["rt", "io"] }
-
 # Pin/BoxFuture for object-safe async trait
 pin-project-lite = "0.2"
 
@@ -58,6 +61,10 @@ mime_guess = "2"
 
 # Dependency cache checksums
 sha2 = "0.10"
+hex = "0.4"
+
+# Image dimension probing (v2 media metadata extraction)
+imagesize = "0.13"
 
 # PNG metadata extraction (skill import)
 png = "0.17"
@@ -65,8 +72,12 @@ png = "0.17"
 # Zip extraction (CivitAI workflow downloads)
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
+# Image resizing (skill import thumbnails for vision naming)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
 
 [profile.fast-release]
 inherits = "release"

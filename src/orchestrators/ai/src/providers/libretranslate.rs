@@ -1,211 +1,269 @@
-//! LibreTranslate provider — lifecycle only (probe, enumerate).
+//! LibreTranslate provider — `text.translate`.
 //!
-//! LibreTranslate serves language translation capabilities. No inference
-//! methods are implemented -- all use the Provider trait defaults which
-//! return "not supported". Translation is handled via the native proxy.
+//! Wire API:
+//!
+//! ```text
+//! POST /translate
+//! { "q": "...", "source": "auto", "target": "en", "format": "text" }
+//! ```
+//!
+//! Response:
+//!
+//! ```text
+//! { "translatedText": "...", "detectedLanguage": {"language": "fr", "confidence": 0.99} }
+//! ```
 
-use anyhow::{Context, Result};
+use std::sync::Arc;
 
-use crate::catalog::traits::{
-    BoxFuture, DiscoveryConfig, ProbeResult, Provider, ProviderContext, ServiceModel,
+use async_trait::async_trait;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
+
+use crate::domain::ids::{ProviderName, RegistrationId};
+use crate::domain::keys;
+use crate::domain::output::Output;
+use crate::domain::primitive::Primitive;
+use crate::domain::provider::{
+    Provider, ProviderError, ProviderHealth, ProviderOutcome, ProviderState,
+    ProviderStatePublisher, Registration, RegistrationStrategy,
 };
-use crate::domain::types::{Capability, OfferingKind};
-use crate::offerings::libretranslate::client::LibreTranslateClient;
+use crate::domain::request::OrchestratorRequest;
+use crate::services::garden_discovery::GardenDiscovery;
 
-// ── Provider ───────────────────────────────────────────────────
+use super::common::{
+    build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
+};
 
-/// LibreTranslate provider.
-///
-/// Delegates protocol operations to `LibreTranslateClient` for lifecycle.
-/// No inference methods -- translation flows through the native proxy.
+/// Garden offering FQNs this adapter claims. LibreTranslate has a
+/// single canonical offering name; variants would be added here.
+const FQNS: &[&'static str] = &["libretranslate"];
+
+/// Static configuration for a LibreTranslate provider. The instance
+/// list is supplied by the garden discovery service at runtime —
+/// the only piece needed up front is an optional API key
+/// (LibreTranslate public instances may require one).
+#[derive(Debug, Clone, Default)]
+pub struct LibreTranslateConfig {
+    pub api_key: Option<String>,
+}
+
 pub struct LibreTranslateProvider {
-    client: LibreTranslateClient,
+    name: ProviderName,
+    config: LibreTranslateConfig,
+    instances: Arc<InstancePool>,
+    http: Client,
+    publisher: ProviderStatePublisher,
+}
+
+fn build_registration(name: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: name.clone(),
+        primitive: Primitive::TextTranslate,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            crate::domain::provider::HonoredField::new(keys::text::BODY).required(),
+            crate::domain::provider::HonoredField::new(keys::text::LANGUAGE_TARGET).required(),
+            crate::domain::provider::HonoredField::new(keys::text::LANGUAGE_SOURCE),
+        ],
+        media_inputs: Vec::new(),
+        media_outputs: Vec::new(),
+    }
 }
 
 impl LibreTranslateProvider {
-    pub fn new() -> Self {
-        Self {
-            client: LibreTranslateClient::new(),
+    /// Construct the adapter and immediately spawn its garden
+    /// discovery subscriber. The provider starts in `Offline` and
+    /// flips to `Healthy` when discovery delivers its first
+    /// non-empty event.
+    pub fn new(
+        config: LibreTranslateConfig,
+        discovery: Arc<GardenDiscovery>,
+        shutdown: CancellationToken,
+    ) -> Arc<Self> {
+        let name = ProviderName::new(keys::providers::LIBRETRANSLATE);
+        let initial = ProviderState {
+            health: ProviderHealth::Offline {
+                reason: "no garden instances discovered yet".to_string(),
+            },
+            registrations: vec![build_registration(&name)],
+            models: Vec::new(),
+            performance_hints: Vec::new(),
+        };
+        let provider = Arc::new(Self {
+            name,
+            config,
+            instances: Arc::new(InstancePool::new()),
+            http: build_http_client(),
+            publisher: ProviderStatePublisher::new(initial),
+        });
+        spawn_subscriber(provider.clone(), discovery, shutdown);
+        provider
+    }
+
+    async fn call_translate(
+        &self,
+        endpoint: &str,
+        payload: &WirePayload<'_>,
+    ) -> Result<WireResponse, ProviderError> {
+        let url = format!("{}/translate", endpoint.trim_end_matches('/'));
+        let resp = self
+            .http
+            .post(&url)
+            .json(payload)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "libretranslate translate").await?;
+        resp.json::<WireResponse>()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))
+    }
+}
+
+impl LibreTranslateProvider {
+    /// Apply a fresh merged URL list (called by the subscriber task
+    /// whenever the garden discovery service emits an event for any
+    /// of the FQNs this adapter claims).
+    fn apply_merged(&self, urls: Vec<String>) {
+        if !self.instances.set(urls) {
+            return;
         }
+        let count = self.instances.len();
+        let name = self.name.clone();
+        self.publisher.modify(move |mut state| {
+            state.health = if count == 0 {
+                ProviderHealth::Offline {
+                    reason: "no garden instances discovered".to_string(),
+                }
+            } else {
+                ProviderHealth::Healthy
+            };
+            state.registrations = vec![build_registration(&name)];
+            state
+        });
     }
 }
 
-impl Default for LibreTranslateProvider {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Subscribe this adapter to its declared FQNs and update the pool
+/// on every event.
+fn spawn_subscriber(
+    provider: Arc<LibreTranslateProvider>,
+    discovery: Arc<GardenDiscovery>,
+    shutdown: CancellationToken,
+) {
+    tokio::spawn(async move {
+        let pool = PerFqnInstances::new();
+        let mut rx = discovery.subscribe(FQNS).await;
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                event = rx.recv() => {
+                    let Some(event) = event else { break };
+                    let urls: Vec<String> = event
+                        .instances
+                        .into_iter()
+                        .map(|i| i.url)
+                        .collect();
+                    pool.set(&event.fqn, urls);
+                    provider.apply_merged(pool.flatten());
+                }
+            }
+        }
+    });
 }
 
-const LIBRETRANSLATE_CAPABILITIES: &[Capability] = &[Capability::Translate];
-
+#[async_trait]
 impl Provider for LibreTranslateProvider {
-    fn kind(&self) -> OfferingKind {
-        OfferingKind::LibreTranslate
+    fn name(&self) -> ProviderName {
+        self.name.clone()
     }
 
-    fn capabilities(&self) -> &[Capability] {
-        LIBRETRANSLATE_CAPABILITIES
+    fn state(&self) -> Arc<ProviderState> {
+        self.publisher.snapshot()
     }
 
-    fn discovery(&self) -> DiscoveryConfig {
-        DiscoveryConfig::TopologyFilter {
-            offering_name: "libretranslate".into(),
-        }
+    fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
+        self.publisher.subscribe()
     }
 
-    // ── Lifecycle ───────────────────────────────────────────────
+    async fn onboard(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let endpoint = self.instances.pick().ok_or_else(|| {
+            ProviderError::Unreachable(
+                "no libretranslate instances are running in the garden".to_string(),
+            )
+        })?;
+        let body = request
+            .payload
+            .pointer("/text/body")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ProviderError::Unsupported("missing text.body".to_string()))?;
+        let target = request
+            .payload
+            .pointer("/text/language/target")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ProviderError::Unsupported("missing text.language.target".to_string())
+            })?;
+        let source = request
+            .payload
+            .pointer("/text/language/source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto");
 
-    fn probe(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<ProbeResult>> {
-        let endpoint = ctx.endpoint.clone();
-        Box::pin(async move {
-            let health = self
-                .client
-                .health(&endpoint)
-                .await
-                .context("probe health check")?;
+        let payload = WirePayload {
+            q: body,
+            source,
+            target,
+            format: "text",
+            api_key: self.config.api_key.as_deref(),
+        };
+        let response = self.call_translate(&endpoint, &payload).await?;
 
-            if health.status != "ok" {
-                anyhow::bail!(
-                    "probe failed: {endpoint}/health returned status '{}'",
-                    health.status
-                );
+        let mut out = Output::new();
+        out.set(&keys::text::TRANSLATED, response.translated_text);
+        if source == "auto" {
+            if let Some(detected) = response.detected_language {
+                out.set(&keys::text::DETECTED_LANGUAGE, detected.language);
             }
-
-            Ok(ProbeResult {
-                version: None,
-                capabilities: LIBRETRANSLATE_CAPABILITIES.to_vec(),
-                vram_free_bytes: None,
-                metadata: serde_json::json!({}),
-            })
-        })
+        }
+        out.set(
+            &keys::usage::CHARACTERS,
+            body.chars().count() as u64,
+        );
+        Ok(ProviderOutcome::Sync(out))
     }
-
-    fn enumerate(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<Vec<ServiceModel>>> {
-        let endpoint = ctx.endpoint.clone();
-        Box::pin(async move {
-            let languages = self
-                .client
-                .languages(&endpoint)
-                .await
-                .context("enumerate languages")?;
-
-            // One ServiceModel per source language, listing its available targets.
-            let models = languages
-                .into_iter()
-                .map(|lang| ServiceModel {
-                    name: lang.code.clone(),
-                    capabilities: vec![Capability::Translate],
-                    specializations: vec![],
-                    vram_bytes: None,
-                    metadata: serde_json::json!({
-                        "language_name": lang.name,
-                        "targets": lang.targets,
-                    }),
-                })
-                .collect();
-
-            Ok(models)
-        })
-    }
-
-    // No inference methods -- all use trait defaults ("not supported").
-    // Translation flows through the native proxy path.
 }
 
-// ── Tests ───────────────────────────────────────────────────────
+// ── Wire types ────────────────────────────────────────────────
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, Serialize)]
+struct WirePayload<'a> {
+    q: &'a str,
+    source: &'a str,
+    target: &'a str,
+    format: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "api_key")]
+    api_key: Option<&'a str>,
+}
 
-    #[test]
-    fn provider_returns_correct_kind() {
-        let provider = LibreTranslateProvider::new();
-        assert_eq!(provider.kind(), OfferingKind::LibreTranslate);
-    }
+#[derive(Debug, Deserialize)]
+struct WireResponse {
+    #[serde(rename = "translatedText")]
+    translated_text: String,
+    #[serde(default, rename = "detectedLanguage")]
+    detected_language: Option<DetectedLanguage>,
+}
 
-    #[test]
-    fn provider_capabilities_include_translate() {
-        let provider = LibreTranslateProvider::new();
-        let caps = provider.capabilities();
-        assert_eq!(caps, &[Capability::Translate]);
-    }
-
-    #[test]
-    fn discovery_returns_topology_filter() {
-        let provider = LibreTranslateProvider::new();
-        match provider.discovery() {
-            DiscoveryConfig::TopologyFilter { offering_name } => {
-                assert_eq!(offering_name, "libretranslate");
-            }
-            _ => panic!("expected TopologyFilter"),
-        }
-    }
-
-    #[test]
-    fn unsupported_methods_return_errors() {
-        let provider = LibreTranslateProvider::new();
-        let ctx = ProviderContext {
-            endpoint: "http://localhost:5000".into(),
-            model: None,
-            api_key: None,
-        };
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        // infer
-        let req = crate::catalog::inference::InferenceRequest {
-            model: "en".into(),
-            messages: vec![],
-            temperature: None,
-            max_tokens: None,
-            top_p: None,
-            stop: None,
-            tools: None,
-            tool_choice: None,
-            stream: false,
-            extra: serde_json::Map::new(),
-        };
-        let result = rt.block_on(provider.infer(&ctx, req));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not supported"));
-
-        // embed
-        let embed_req = crate::catalog::inference::EmbedRequest {
-            model: "en".into(),
-            input: serde_json::json!("hello"),
-            extra: serde_json::Map::new(),
-        };
-        let result = rt.block_on(provider.embed(&ctx, embed_req));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not supported"));
-
-        // speak
-        let speech_req = crate::catalog::inference::SpeechRequest {
-            model: "en".into(),
-            input: "hello".into(),
-            voice: "default".into(),
-            response_format: None,
-            speed: None,
-        };
-        let result = rt.block_on(provider.speak(&ctx, speech_req));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not supported"));
-    }
-
-    #[test]
-    fn vram_estimate_returns_none() {
-        let provider = LibreTranslateProvider::new();
-        let model = ServiceModel {
-            name: "en".into(),
-            capabilities: vec![Capability::Translate],
-            specializations: vec![],
-            vram_bytes: None,
-            metadata: serde_json::json!({}),
-        };
-        assert_eq!(provider.vram_estimate(&model), None);
-    }
+#[derive(Debug, Deserialize)]
+struct DetectedLanguage {
+    language: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    confidence: f64,
 }

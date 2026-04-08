@@ -30,7 +30,7 @@ use tracing::{debug, info, warn};
 
 use crate::domain::traits::ManagementStoreOps;
 
-use super::platform_types::VolumeSnapshot;
+use super::platform_types::{DeviceHealth, VolumeSnapshot};
 
 // ============================================================================
 // Volume state
@@ -348,26 +348,47 @@ impl Volume {
     }
 
     /// Periodic health observation. Accepts measured disk metrics (or None
-    /// if the measurement failed). May transition Online ↔ Degraded.
+    /// if the measurement failed) and device health signals. May transition
+    /// Online ↔ Degraded, or force-disconnect stale/unresponsive devices.
     /// Never touches Offline volumes — only `connect()` can resurrect.
-    pub fn observe_metrics(&mut self, metrics: Option<DiskMetrics>) -> Vec<StorageChanged> {
+    pub fn observe_metrics(
+        &mut self,
+        metrics: Option<DiskMetrics>,
+        health: DeviceHealth,
+    ) -> Vec<StorageChanged> {
         if self.state == VolumeState::Offline {
             return vec![];
         }
 
+        // Stale or unresponsive device → force disconnect (STORAGE-0018).
+        // This catches ghost devices the VolumeMonitor missed.
+        if health.stale_reference {
+            warn!(path = %self.path, "Device has stale kernel reference — forcing offline");
+            return self.disconnect();
+        }
+        if !health.responsive {
+            warn!(path = %self.path, "Device unresponsive — forcing offline");
+            return self.disconnect();
+        }
+
         let old_online = self.state.is_online();
 
-        match metrics {
-            Some(m) if m.capacity_bytes == 0 => {
-                self.state = VolumeState::Degraded("zero capacity".into());
-            }
-            Some(m) => {
-                self.capacity_bytes = m.capacity_bytes;
-                self.used_bytes = m.used_bytes;
-                self.state = VolumeState::Online;
-            }
-            None => {
-                self.state = VolumeState::Degraded("capacity probe failed".into());
+        // Read-only transition (ext4 error recovery, hardware write-protect).
+        if health.read_only {
+            self.state = VolumeState::Degraded("filesystem read-only".into());
+        } else {
+            match metrics {
+                Some(m) if m.capacity_bytes == 0 => {
+                    self.state = VolumeState::Degraded("zero capacity".into());
+                }
+                Some(m) => {
+                    self.capacity_bytes = m.capacity_bytes;
+                    self.used_bytes = m.used_bytes;
+                    self.state = VolumeState::Online;
+                }
+                None => {
+                    self.state = VolumeState::Degraded("capacity probe failed".into());
+                }
             }
         }
 
@@ -629,5 +650,131 @@ impl Volume {
             state,
             management,
         }
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn online_volume() -> Volume {
+        let snap = VolumeSnapshot {
+            path: "/dev/sdb1".to_string(),
+            mount_path: "/mnt/usb".to_string(),
+            label: Some("TEST".to_string()),
+            capacity_bytes: 64_000_000_000,
+            removable: true,
+        };
+        let mut vol = Volume::from_snapshot(&snap);
+        vol.connect(DiskMetrics {
+            capacity_bytes: 64_000_000_000,
+            used_bytes: 1_000_000,
+        });
+        vol
+    }
+
+    // ── STORAGE-0018: Device health transitions ──────────────────────
+
+    #[test]
+    fn stale_device_forces_disconnect() {
+        let mut vol = online_volume();
+        assert!(vol.is_online());
+
+        let health = DeviceHealth {
+            stale_reference: true,
+            ..DeviceHealth::healthy()
+        };
+        let events = vol.observe_metrics(
+            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+            health,
+        );
+
+        assert_eq!(*vol.state(), VolumeState::Offline);
+        // Unmanaged volume — no Released event, but state changed
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn unresponsive_device_forces_disconnect() {
+        let mut vol = online_volume();
+
+        let health = DeviceHealth {
+            responsive: false,
+            ..DeviceHealth::healthy()
+        };
+        let events = vol.observe_metrics(None, health);
+
+        assert_eq!(*vol.state(), VolumeState::Offline);
+        assert!(events.is_empty()); // unmanaged
+    }
+
+    #[test]
+    fn read_only_mount_degrades() {
+        let mut vol = online_volume();
+
+        let health = DeviceHealth {
+            read_only: true,
+            ..DeviceHealth::healthy()
+        };
+        let events = vol.observe_metrics(
+            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+            health,
+        );
+
+        assert!(matches!(vol.state(), VolumeState::Degraded(reason) if reason == "filesystem read-only"));
+        // Online → Degraded is still "online" per is_online(), so no Reclassified event
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn healthy_device_stays_online() {
+        let mut vol = online_volume();
+
+        let events = vol.observe_metrics(
+            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 2_000_000 }),
+            DeviceHealth::healthy(),
+        );
+
+        assert_eq!(*vol.state(), VolumeState::Online);
+        assert!(events.is_empty());
+        assert_eq!(vol.used_bytes(), 2_000_000);
+    }
+
+    #[test]
+    fn stale_on_offline_is_noop() {
+        let mut vol = online_volume();
+        vol.disconnect();
+
+        let health = DeviceHealth {
+            stale_reference: true,
+            ..DeviceHealth::healthy()
+        };
+        let events = vol.observe_metrics(None, health);
+
+        assert_eq!(*vol.state(), VolumeState::Offline);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn read_only_recovery_returns_online() {
+        let mut vol = online_volume();
+
+        // Degrade with read-only
+        vol.observe_metrics(
+            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+            DeviceHealth { read_only: true, ..DeviceHealth::healthy() },
+        );
+        assert!(matches!(vol.state(), VolumeState::Degraded(_)));
+
+        // Recover — filesystem is now read-write again
+        let events = vol.observe_metrics(
+            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+            DeviceHealth::healthy(),
+        );
+        assert_eq!(*vol.state(), VolumeState::Online);
+        // Degraded → Online: is_online() was true both times, so no event
+        assert!(events.is_empty());
     }
 }

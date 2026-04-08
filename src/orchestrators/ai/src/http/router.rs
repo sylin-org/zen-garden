@@ -1,0 +1,57 @@
+//! Axum router assembly.
+
+use axum::routing::{get, post};
+use axum::Router;
+
+use crate::app_state::AppState;
+
+use super::{
+    actions_index, catalog, flush, health, ingress, jobs, media, metrics, recommendations, sitemap,
+    skills,
+};
+
+/// Build the full `/v1/*` router plus `/health`.
+pub fn build(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health::get_health))
+        .route("/metrics", get(metrics::get_metrics))
+        // Sitemap
+        .route("/v1/", get(sitemap::get_sitemap))
+        .route("/v1", get(sitemap::get_sitemap))
+        // Action dispatcher
+        .route("/v1/do", post(ingress::post_do).get(actions_index::get_actions).options(ingress::options_do))
+        // Hierarchical sugar
+        .route("/v1/{modality}/{leaf}", post(ingress::post_primitive))
+        .route("/v1/{modality}/{leaf}/{skill}", post(ingress::post_skill))
+        // Catalog
+        .route("/v1/catalog", get(catalog::get_catalog))
+        .route("/v1/catalog/events", get(catalog::get_catalog_events))
+        // Media
+        .route("/v1/media", post(media::post_upload).get(media::list_media))
+        .route(
+            "/v1/media/{id}",
+            get(media::get_download)
+                .head(media::head_media)
+                .delete(media::delete_media),
+        )
+        .route("/v1/media/{id}/metadata", get(media::get_metadata))
+        .route("/v1/media/flush", post(flush::flush_media))
+        // Jobs
+        .route("/v1/jobs", get(jobs::list_jobs))
+        .route("/v1/jobs/{id}", get(jobs::get_job).delete(jobs::cancel_job))
+        .route("/v1/jobs/{id}/result", get(jobs::get_job_result))
+        // Recommendations
+        .route("/v1/recommendations", get(recommendations::list_recommendations))
+        .route(
+            "/v1/recommendations/{primitive}",
+            get(recommendations::get_recommendation)
+                .put(recommendations::put_recommendation)
+                .delete(recommendations::delete_recommendation),
+        )
+        // Provider flush
+        .route("/v1/providers/flush", post(flush::flush_all_providers))
+        .route("/v1/providers/{name}/flush", post(flush::flush_one_provider))
+        // Skills — import pipeline (ORCH-0029 Phase 3)
+        .route("/v1/skills/{provider}/import", post(skills::post_import))
+        .with_state(state)
+}

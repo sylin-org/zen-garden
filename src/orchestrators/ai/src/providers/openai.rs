@@ -1,693 +1,928 @@
-//! OpenAI provider — unified lifecycle + inference for OpenAI-compatible APIs.
+//! OpenAI provider — the widest vendor surface.
 //!
-//! Near pass-through — our canonical types ARE OpenAI-shaped.
-//! Works for OpenAI, Groq, Together, and any provider that implements
-//! the OpenAI `/v1/models` and `/v1/chat/completions` API format.
+//! Primitives:
+//! - `text.chat`             → POST /v1/chat/completions
+//! - `text.embed`            → POST /v1/embeddings
+//! - `image.analyze`         → POST /v1/chat/completions with an
+//!                             `image_url` content part (base64 data URL).
+//! - `image.generate`        → POST /v1/images/generations
+//! - `audio.generate`        → POST /v1/audio/speech (bytes)
+//! - `audio.transcribe`      → POST /v1/audio/transcriptions
+//!                             (multipart upload — Transfer mode)
 //!
-//! Auth: `Authorization: Bearer {api_key}` header on all requests.
+//! Auth: `Authorization: Bearer <api_key>`.
 
-use anyhow::{Context, Result};
-use bytes::BytesMut;
-use futures_util::stream::Stream;
-use futures_util::StreamExt;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use reqwest::Client;
 use serde::Deserialize;
-use std::pin::Pin;
-use std::task::Poll;
-use std::time::Duration;
+use serde_json::{json, Value};
+use tokio::sync::watch;
 
-use crate::catalog::inference::*;
-use crate::catalog::traits::{
-    BoxFuture, DiscoveryConfig, FormSchema, ProbeResult, Provider, ProviderContext, ServiceModel,
+use crate::domain::ids::{ModelFqn, ProviderName, RegistrationId};
+use crate::domain::keys;
+use crate::domain::media::{MediaDelivery, MediaSource};
+use crate::domain::output::Output;
+use crate::domain::primitive::Primitive;
+use crate::domain::provider::{
+    HonoredField, MediaInputSpec, Model, ModelDescriptor, Provider, ProviderError,
+    ProviderHealth, ProviderOutcome, ProviderState, ProviderStatePublisher, Registration,
+    RegistrationStrategy,
 };
-use crate::domain::types::{Capability, OfferingKind};
+use crate::domain::request::OrchestratorRequest;
 
-/// Timeout for cloud API probe/enumerate calls.
-const CLOUD_TIMEOUT: Duration = Duration::from_secs(15);
+use super::common::{build_http_client, check_status, map_reqwest_error};
 
-/// Timeout for non-streaming inference calls.
-const INFER_TIMEOUT: Duration = Duration::from_secs(300);
+#[derive(Debug, Clone)]
+pub struct OpenAiConfig {
+    pub base_url: String,
+    pub api_key: String,
+    /// Optional organization header, mirrored from the environment.
+    pub organization: Option<String>,
+}
 
-/// Timeout for embedding calls.
-const EMBED_TIMEOUT: Duration = Duration::from_secs(60);
+impl Default for OpenAiConfig {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.openai.com".to_string(),
+            api_key: String::new(),
+            organization: None,
+        }
+    }
+}
 
-/// Timeout for audio calls (speech, transcription).
-const AUDIO_TIMEOUT: Duration = Duration::from_secs(120);
-
-const OPENAI_CAPABILITIES: &[Capability] = &[
-    Capability::Chat,
-    Capability::Embed,
-    Capability::Vision,
-    Capability::Tools,
-    Capability::Think,
-    Capability::Image,
-    Capability::Speech,
-    Capability::Transcribe,
+/// Curated model list. OpenAI's /v1/models endpoint returns every
+/// model including deprecated ones — using a curated list keeps the
+/// directory focused on what actually serves each primitive. The
+/// list is updated via code review when OpenAI publishes new models.
+const TEXT_CHAT_MODELS: &[&str] = &[
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
+    "gpt-4",
+    "gpt-3.5-turbo",
 ];
+const TEXT_EMBED_MODELS: &[&str] = &[
+    "text-embedding-3-large",
+    "text-embedding-3-small",
+    "text-embedding-ada-002",
+];
+const IMAGE_GEN_MODELS: &[&str] = &["dall-e-3", "dall-e-2", "gpt-image-1"];
+const AUDIO_TTS_MODELS: &[&str] = &["tts-1", "tts-1-hd"];
+const AUDIO_STT_MODELS: &[&str] = &["whisper-1"];
 
-/// OpenAI provider — stateless, receives all per-request state via `ProviderContext`.
 pub struct OpenAiProvider {
+    name: ProviderName,
+    config: OpenAiConfig,
     http: Client,
+    publisher: ProviderStatePublisher,
 }
 
 impl OpenAiProvider {
-    pub fn new() -> Self {
-        let http = Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .pool_max_idle_per_host(4)
-            .build()
-            .expect("HTTP client build");
-        Self { http }
+    pub fn new(config: OpenAiConfig) -> Arc<Self> {
+        let name = ProviderName::new(keys::providers::OPENAI);
+
+        let registrations = vec![
+            build_chat_registration(&name),
+            build_embed_registration(&name),
+            build_analyze_registration(&name),
+            build_image_generate_registration(&name),
+            build_audio_generate_registration(&name),
+            build_audio_transcribe_registration(&name),
+        ];
+
+        let mut models: Vec<Model> = Vec::new();
+        for m in TEXT_CHAT_MODELS {
+            models.push(Model {
+                fqn: ModelFqn::new(&name, *m),
+                short_name: m.to_string(),
+                primitives: vec![Primitive::TextChat, Primitive::ImageAnalyze],
+                capability_tags: vec!["chat".to_string(), "vision".to_string()],
+                size_bytes: None,
+                context_length: Some(128_000),
+                parameter_count: None,
+            });
+        }
+        for m in TEXT_EMBED_MODELS {
+            models.push(Model {
+                fqn: ModelFqn::new(&name, *m),
+                short_name: m.to_string(),
+                primitives: vec![Primitive::TextEmbed],
+                capability_tags: vec!["embed".to_string()],
+                size_bytes: None,
+                context_length: None,
+                parameter_count: None,
+            });
+        }
+        for m in IMAGE_GEN_MODELS {
+            models.push(Model {
+                fqn: ModelFqn::new(&name, *m),
+                short_name: m.to_string(),
+                primitives: vec![Primitive::ImageGenerate],
+                capability_tags: vec!["generate".to_string()],
+                size_bytes: None,
+                context_length: None,
+                parameter_count: None,
+            });
+        }
+        for m in AUDIO_TTS_MODELS {
+            models.push(Model {
+                fqn: ModelFqn::new(&name, *m),
+                short_name: m.to_string(),
+                primitives: vec![Primitive::AudioGenerate],
+                capability_tags: vec!["tts".to_string()],
+                size_bytes: None,
+                context_length: None,
+                parameter_count: None,
+            });
+        }
+        for m in AUDIO_STT_MODELS {
+            models.push(Model {
+                fqn: ModelFqn::new(&name, *m),
+                short_name: m.to_string(),
+                primitives: vec![Primitive::AudioTranscribe],
+                capability_tags: vec!["stt".to_string(), "whisper".to_string()],
+                size_bytes: None,
+                context_length: None,
+                parameter_count: None,
+            });
+        }
+
+        let _ = (&MODEL_DESCRIPTORS_UNUSED_HINT, &models);
+        let initial = ProviderState {
+            health: if config.api_key.is_empty() {
+                ProviderHealth::Degraded {
+                    reason: "missing OPENAI_API_KEY".to_string(),
+                }
+            } else {
+                ProviderHealth::Healthy
+            },
+            registrations,
+            models,
+            performance_hints: Vec::new(),
+        };
+
+        Arc::new(Self {
+            name,
+            config,
+            http: build_http_client(),
+            publisher: ProviderStatePublisher::new(initial),
+        })
+    }
+
+    fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let mut rb = rb.bearer_auth(&self.config.api_key);
+        if let Some(org) = &self.config.organization {
+            rb = rb.header("OpenAI-Organization", org);
+        }
+        rb
     }
 }
 
-impl Default for OpenAiProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Placeholder to silence unused-import diagnostics on
+/// `ModelDescriptor` (we build `Model` instances directly rather
+/// than using the descriptor path because the OpenAI primitives
+/// span multiple per-primitive model lists).
+#[allow(dead_code)]
+const MODEL_DESCRIPTORS_UNUSED_HINT: Option<ModelDescriptor> = None;
 
-/// OpenAI `/v1/models` response shape.
-#[derive(Debug, Deserialize)]
-struct ModelsResponse {
-    data: Vec<ModelEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelEntry {
-    id: String,
-    #[serde(default)]
-    owned_by: Option<String>,
-}
-
-/// Require an API key from the context, or bail.
-fn require_api_key(ctx: &ProviderContext) -> Result<String> {
-    ctx.api_key
-        .as_ref()
-        .filter(|k| !k.is_empty())
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no API key configured for OpenAI provider"))
-}
-
+#[async_trait]
 impl Provider for OpenAiProvider {
-    fn kind(&self) -> OfferingKind {
-        OfferingKind::OpenAi
+    fn name(&self) -> ProviderName {
+        self.name.clone()
     }
 
-    fn capabilities(&self) -> &[Capability] {
-        OPENAI_CAPABILITIES
+    fn state(&self) -> Arc<ProviderState> {
+        self.publisher.snapshot()
     }
 
-    fn discovery(&self) -> DiscoveryConfig {
-        DiscoveryConfig::Configured
+    fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
+        self.publisher.subscribe()
     }
 
-    // ── Lifecycle ───────────────────────────────────────────────
-
-    fn probe(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<ProbeResult>> {
-        let url = format!("{}/v1/models", ctx.endpoint);
-        let api_key_result = require_api_key(ctx);
-
-        Box::pin(async move {
-            let api_key = api_key_result?;
-
-            let resp = self
-                .http
-                .get(&url)
-                .bearer_auth(&api_key)
-                .timeout(CLOUD_TIMEOUT)
-                .send()
-                .await
-                .context("probe OpenAI /v1/models")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                let summary = if body.len() > 256 {
-                    format!("{}...", &body[..256])
-                } else {
-                    body
-                };
-                anyhow::bail!("OpenAI probe failed: HTTP {status}: {summary}");
-            }
-
-            Ok(ProbeResult {
-                version: None,
-                capabilities: OPENAI_CAPABILITIES.to_vec(),
-                vram_free_bytes: None,
-                metadata: serde_json::json!({
-                    "provider": "openai",
-                    "base_url": url,
-                }),
-            })
-        })
+    async fn onboard(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        if self.config.api_key.is_empty() {
+            return Err(ProviderError::AuthFailed(
+                "openai api key is not configured".to_string(),
+            ));
+        }
+        match request.action.primitive {
+            Primitive::TextChat => self.do_chat(request, false).await,
+            Primitive::ImageAnalyze => self.do_chat(request, true).await,
+            Primitive::TextEmbed => self.do_embed(request).await,
+            Primitive::ImageGenerate => self.do_image_generate(request).await,
+            Primitive::AudioGenerate => self.do_audio_generate(request).await,
+            Primitive::AudioTranscribe => self.do_audio_transcribe(request).await,
+            other => Err(ProviderError::Unsupported(format!(
+                "openai does not serve {}",
+                other.dotted()
+            ))),
+        }
     }
+}
 
-    fn enumerate(&self, ctx: &ProviderContext) -> BoxFuture<'_, Result<Vec<ServiceModel>>> {
-        let url = format!("{}/v1/models", ctx.endpoint);
-        let api_key = ctx
-            .api_key
+impl OpenAiProvider {
+    async fn do_chat(
+        &self,
+        request: OrchestratorRequest,
+        with_image: bool,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let model = request
+            .resolved_model
             .as_ref()
-            .cloned()
-            .unwrap_or_default();
+            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
+            .short_name
+            .clone();
 
-        Box::pin(async move {
-            if api_key.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            let resp = self
-                .http
-                .get(&url)
-                .bearer_auth(&api_key)
-                .timeout(CLOUD_TIMEOUT)
-                .send()
-                .await
-                .context("enumerate OpenAI /v1/models")?;
-
-            if !resp.status().is_success() {
-                anyhow::bail!("enumerate failed: HTTP {}", resp.status());
-            }
-
-            let models_resp: ModelsResponse =
-                resp.json().await.context("parse /v1/models response")?;
-
-            let models = models_resp
-                .data
-                .into_iter()
-                .map(|m| ServiceModel {
-                    name: m.id.clone(),
-                    capabilities: vec![Capability::Chat],
-                    specializations: vec![],
-                    vram_bytes: None,
-                    metadata: serde_json::json!({
-                        "owned_by": m.owned_by,
-                        "cloud": true,
-                    }),
-                })
-                .collect();
-
-            Ok(models)
-        })
-    }
-
-    // ── Inference ───────────────────────────────────────────────
-
-    fn infer(
-        &self,
-        ctx: &ProviderContext,
-        req: InferenceRequest,
-    ) -> BoxFuture<'_, Result<InferenceResponse>> {
-        let url = format!("{}/v1/chat/completions", ctx.endpoint);
-        let api_key = ctx.api_key.clone();
-
-        Box::pin(async move {
-            let mut builder = self
-                .http
-                .post(&url)
-                .json(&req)
-                .timeout(INFER_TIMEOUT);
-
-            if let Some(ref key) = api_key {
-                builder = builder.bearer_auth(key);
-            }
-
-            let resp = builder.send().await.context("POST /v1/chat/completions")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("OpenAI /v1/chat/completions HTTP {status}: {text}");
-            }
-
-            let response: InferenceResponse = resp
-                .json()
-                .await
-                .context("parse OpenAI chat response")?;
-            Ok(response)
-        })
-    }
-
-    fn infer_stream(
-        &self,
-        ctx: &ProviderContext,
-        req: InferenceRequest,
-    ) -> BoxFuture<'_, Result<BoxStream<'static, Result<InferenceChunk>>>> {
-        let url = format!("{}/v1/chat/completions", ctx.endpoint);
-        let api_key = ctx.api_key.clone();
-        let http = self.http.clone();
-
-        // Force stream: true in the request body.
-        let mut body = serde_json::to_value(&req).unwrap_or_default();
-        body["stream"] = serde_json::Value::Bool(true);
-
-        Box::pin(async move {
-            let mut builder = http.post(&url).json(&body);
-
-            if let Some(ref key) = api_key {
-                builder = builder.bearer_auth(key);
-            }
-
-            let resp = builder
-                .send()
-                .await
-                .context("POST /v1/chat/completions stream")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("OpenAI /v1/chat/completions stream HTTP {status}: {text}");
-            }
-
-            let stream = resp.bytes_stream();
-            Ok(
-                Box::pin(OpenAiSseStream::new(stream))
-                    as BoxStream<'static, Result<InferenceChunk>>,
-            )
-        })
-    }
-
-    fn embed(
-        &self,
-        ctx: &ProviderContext,
-        req: EmbedRequest,
-    ) -> BoxFuture<'_, Result<EmbedResponse>> {
-        let url = format!("{}/v1/embeddings", ctx.endpoint);
-        let api_key = ctx.api_key.clone();
-
-        Box::pin(async move {
-            let mut builder = self
-                .http
-                .post(&url)
-                .json(&req)
-                .timeout(EMBED_TIMEOUT);
-
-            if let Some(ref key) = api_key {
-                builder = builder.bearer_auth(key);
-            }
-
-            let resp = builder.send().await.context("POST /v1/embeddings")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("OpenAI /v1/embeddings HTTP {status}: {text}");
-            }
-
-            let response: EmbedResponse = resp
-                .json()
-                .await
-                .context("parse OpenAI embed response")?;
-            Ok(response)
-        })
-    }
-
-    fn speak(
-        &self,
-        ctx: &ProviderContext,
-        req: SpeechRequest,
-    ) -> BoxFuture<'_, Result<SpeechResponse>> {
-        let url = format!("{}/v1/audio/speech", ctx.endpoint);
-        let api_key = ctx.api_key.clone();
-
-        Box::pin(async move {
-            let mut builder = self
-                .http
-                .post(&url)
-                .json(&req)
-                .timeout(AUDIO_TIMEOUT);
-
-            if let Some(ref key) = api_key {
-                builder = builder.bearer_auth(key);
-            }
-
-            let resp = builder.send().await.context("POST /v1/audio/speech")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("OpenAI /v1/audio/speech HTTP {status}: {text}");
-            }
-
-            let content_type = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("audio/mpeg")
-                .to_string();
-
-            let stream = resp
-                .bytes_stream()
-                .map(|r| r.map_err(|e| anyhow::anyhow!("stream error: {e}")));
-
-            Ok(SpeechResponse {
-                content_type,
-                audio: SpeechAudio::Stream(Box::pin(stream)),
-            })
-        })
-    }
-
-    // ── Form Schema (ORCH-0017) ──────────────────────────────────
-
-    fn form_schema(&self, _model: &str, capability: Capability) -> FormSchema {
-        match capability {
-            Capability::Chat | Capability::Think | Capability::Tools | Capability::Vision => {
-                FormSchema {
-                    schema: serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "message": {"type": "string", "title": "Message", "minLength": 1},
-                            "temperature": {"type": "number", "title": "Temperature", "minimum": 0, "maximum": 2, "default": 0.7},
-                            "max_tokens": {"type": "integer", "title": "Max Tokens", "minimum": 1, "maximum": 128000, "default": 4096},
-                            "system": {"type": "string", "title": "System Prompt"}
-                        },
-                        "required": ["message"]
-                    }),
-                    ui_schema: serde_json::json!({
-                        "message": {"ui:widget": "textarea", "ui:options": {"rows": 3}},
-                        "system": {"ui:widget": "textarea", "ui:options": {"rows": 2}},
-                        "temperature": {"ui:widget": "range"},
-                        "ui:order": ["message", "system", "temperature", "max_tokens"]
-                    }),
-                }
-            }
-            Capability::Embed => FormSchema {
-                schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "input": {"type": "string", "title": "Text to embed", "minLength": 1}
-                    },
-                    "required": ["input"]
-                }),
-                ui_schema: serde_json::json!({
-                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 2}}
-                }),
-            },
-            Capability::Speech => FormSchema {
-                schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "input": {"type": "string", "title": "Text", "minLength": 1},
-                        "voice": {"type": "string", "title": "Voice", "enum": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"], "default": "alloy"},
-                        "speed": {"type": "number", "title": "Speed", "minimum": 0.25, "maximum": 4.0, "default": 1.0},
-                        "response_format": {"type": "string", "title": "Format", "enum": ["mp3", "opus", "aac", "flac", "wav"], "default": "mp3"}
-                    },
-                    "required": ["input"]
-                }),
-                ui_schema: serde_json::json!({
-                    "input": {"ui:widget": "textarea", "ui:options": {"rows": 3}},
-                    "speed": {"ui:widget": "range"}
-                }),
-            },
-            Capability::Transcribe => FormSchema {
-                schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "language": {"type": "string", "title": "Language (optional)", "description": "ISO-639-1 code, e.g. en, es, ja"},
-                        "response_format": {"type": "string", "title": "Format", "enum": ["json", "text", "srt", "verbose_json", "vtt"], "default": "json"}
-                    }
-                }),
-                ui_schema: serde_json::json!({}),
-            },
-            _ => FormSchema::default(),
-        }
-    }
-
-    fn transcribe(
-        &self,
-        ctx: &ProviderContext,
-        req: TranscribeRequest,
-    ) -> BoxFuture<'_, Result<TranscribeResponse>> {
-        let url = format!("{}/v1/audio/transcriptions", ctx.endpoint);
-        let api_key = ctx.api_key.clone();
-
-        Box::pin(async move {
-            let file_part = reqwest::multipart::Part::bytes(req.audio)
-                .file_name(req.filename)
-                .mime_str("application/octet-stream")
-                .context("build multipart file part")?;
-
-            let mut form = reqwest::multipart::Form::new()
-                .part("file", file_part)
-                .text("model", req.model);
-
-            if let Some(lang) = req.language {
-                form = form.text("language", lang);
-            }
-            if let Some(fmt) = req.response_format {
-                form = form.text("response_format", fmt);
-            }
-
-            let mut builder = self
-                .http
-                .post(&url)
-                .multipart(form)
-                .timeout(AUDIO_TIMEOUT);
-
-            if let Some(ref key) = api_key {
-                builder = builder.bearer_auth(key);
-            }
-
-            let resp = builder
-                .send()
-                .await
-                .context("POST /v1/audio/transcriptions")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("OpenAI /v1/audio/transcriptions HTTP {status}: {text}");
-            }
-
-            let response: TranscribeResponse = resp
-                .json()
-                .await
-                .context("parse transcription response")?;
-            Ok(response)
-        })
-    }
-}
-
-// ── SSE Stream Adapter ─────────────────────────────────────────
-
-/// Adapter that converts an OpenAI SSE byte stream into `InferenceChunk`s.
-///
-/// OpenAI sends `data: {...}\n\n` lines, terminated by `data: [DONE]\n\n`.
-/// TCP chunks may split across SSE boundaries — this adapter buffers until
-/// a complete `\n\n`-delimited segment is available, then parses.
-struct OpenAiSseStream<S> {
-    inner: S,
-    buffer: BytesMut,
-    done: bool,
-}
-
-impl<S> OpenAiSseStream<S> {
-    fn new(inner: S) -> Self {
-        Self {
-            inner,
-            buffer: BytesMut::with_capacity(4096),
-            done: false,
-        }
-    }
-}
-
-impl<S> Stream for OpenAiSseStream<S>
-where
-    S: Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
-{
-    type Item = Result<InferenceChunk>;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-
-        if this.done {
-            return Poll::Ready(None);
-        }
-
-        loop {
-            // Check buffer for a complete SSE segment (delimited by \n\n).
-            if let Some(chunk) = try_parse_sse_segment(&mut this.buffer) {
-                match chunk {
-                    SseSegment::Done => {
-                        this.done = true;
-                        return Poll::Ready(None);
-                    }
-                    SseSegment::Chunk(c) => {
-                        return Poll::Ready(Some(Ok(c)));
-                    }
-                    SseSegment::Skip => continue,
-                    SseSegment::Error(e) => {
-                        return Poll::Ready(Some(Err(e)));
-                    }
-                }
-            }
-
-            // Need more data from the inner stream.
-            match Pin::new(&mut this.inner).poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => {
-                    this.buffer.extend_from_slice(&bytes);
-                }
-                Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(anyhow::anyhow!("stream error: {e}"))));
-                }
-                Poll::Ready(None) => {
-                    this.done = true;
-                    return Poll::Ready(None);
-                }
-                Poll::Pending => return Poll::Pending,
-            }
-        }
-    }
-}
-
-enum SseSegment {
-    Chunk(InferenceChunk),
-    Done,
-    Skip,
-    Error(anyhow::Error),
-}
-
-/// Try to extract a complete SSE segment from the buffer.
-///
-/// Returns `Some(...)` if a `\n\n`-delimited segment was found and consumed,
-/// `None` if we need more data.
-fn try_parse_sse_segment(buffer: &mut BytesMut) -> Option<SseSegment> {
-    let delimiter_pos = find_double_newline(buffer)?;
-
-    let delim_len = if buffer[delimiter_pos..].starts_with(b"\r\n\r\n") {
-        4
-    } else {
-        2
-    };
-
-    let segment = buffer.split_to(delimiter_pos);
-    // Consume the delimiter itself.
-    let _ = buffer.split_to(delim_len);
-
-    let segment_str = match std::str::from_utf8(&segment) {
-        Ok(s) => s.trim(),
-        Err(_) => return Some(SseSegment::Skip),
-    };
-
-    if segment_str.is_empty() {
-        return Some(SseSegment::Skip);
-    }
-
-    // Extract the JSON payload after `data: ` prefix.
-    let data = extract_data_field(segment_str)?;
-
-    if data == "[DONE]" {
-        return Some(SseSegment::Done);
-    }
-
-    match serde_json::from_str::<InferenceChunk>(data) {
-        Ok(chunk) => Some(SseSegment::Chunk(chunk)),
-        Err(e) => Some(SseSegment::Error(anyhow::anyhow!("parse SSE chunk: {e}"))),
-    }
-}
-
-/// Find the position of the first `\n\n` or `\r\n\r\n` in the buffer.
-fn find_double_newline(buf: &[u8]) -> Option<usize> {
-    for i in 0..buf.len().saturating_sub(1) {
-        if buf[i] == b'\n' && buf[i + 1] == b'\n' {
-            return Some(i);
-        }
-        if i + 3 < buf.len()
-            && buf[i] == b'\r'
-            && buf[i + 1] == b'\n'
-            && buf[i + 2] == b'\r'
-            && buf[i + 3] == b'\n'
+        // Build messages array.
+        let mut messages: Vec<Value> = Vec::new();
+        if let Some(system) = request
+            .payload
+            .pointer("/text/prompt/system")
+            .and_then(|v| v.as_str())
         {
-            return Some(i);
+            messages.push(json!({"role": "system", "content": system}));
         }
-    }
-    None
-}
-
-/// Extract the value after `data: ` from an SSE segment.
-fn extract_data_field(segment: &str) -> Option<&str> {
-    for line in segment.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("data:") {
-            return Some(rest.trim());
+        if let Some(previous) = request
+            .payload
+            .pointer("/text/prompt/previous")
+            .and_then(|v| v.as_array())
+        {
+            for turn in previous {
+                if let (Some(u), Some(a)) = (
+                    turn.get("user").and_then(|v| v.as_str()),
+                    turn.get("assistant").and_then(|v| v.as_str()),
+                ) {
+                    messages.push(json!({"role": "user", "content": u}));
+                    messages.push(json!({"role": "assistant", "content": a}));
+                }
+            }
         }
-    }
-    None
-}
+        let user_text = request
+            .payload
+            .pointer("/text/prompt/user")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if with_image {
+            let b64 = request
+                .payload
+                .pointer("/image/source/base64")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ProviderError::Unsupported(
+                        "image.source.base64 missing — media resolver should have inlined it"
+                            .to_string(),
+                    )
+                })?
+                .to_string();
+            let ct = request
+                .payload
+                .pointer("/image/source/content_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("image/png")
+                .to_string();
+            let data_url = format!("data:{ct};base64,{b64}");
+            messages.push(json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": if user_text.is_empty() { "Describe this image.".to_string() } else { user_text }},
+                    {"type": "image_url", "image_url": {"url": data_url}}
+                ]
+            }));
+        } else {
+            messages.push(json!({"role": "user", "content": user_text}));
+        }
 
-// ── Tests ───────────────────────────────────────────────────────
+        let mut body = json!({
+            "model": model,
+            "messages": messages,
+        });
+        if let Some(v) = request
+            .payload
+            .pointer("/text/tokens/max")
+            .and_then(|v| v.as_u64())
+        {
+            body["max_tokens"] = json!(v);
+        }
+        if let Some(v) = request
+            .payload
+            .pointer("/text/sampling/temperature")
+            .and_then(|v| v.as_f64())
+        {
+            body["temperature"] = json!(v);
+        }
+        if let Some(v) = request
+            .payload
+            .pointer("/text/sampling/top_p")
+            .and_then(|v| v.as_f64())
+        {
+            body["top_p"] = json!(v);
+        }
+        if let Some(v) = request
+            .payload
+            .pointer("/text/sampling/seed")
+            .and_then(|v| v.as_i64())
+        {
+            body["seed"] = json!(v);
+        }
+        if let Some(v) = request
+            .payload
+            .pointer("/text/stop/sequences")
+            .and_then(|v| v.as_array())
+        {
+            body["stop"] = Value::Array(v.clone());
+        }
+        if let Some(tools) = request
+            .payload
+            .pointer("/text/tools/definitions")
+            .and_then(|v| v.as_array())
+        {
+            body["tools"] = Value::Array(tools.clone());
+        }
+        if let Some(c) = request
+            .payload
+            .pointer("/text/tools/choice")
+            .and_then(|v| v.as_str())
+        {
+            body["tool_choice"] = Value::String(c.to_string());
+        }
+        if request
+            .payload
+            .pointer("/text/format/response")
+            .and_then(|v| v.as_str())
+            == Some("json")
+        {
+            body["response_format"] = json!({"type": "json_object"});
+        }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_sse_segment_chunk() {
-        let raw = concat!(
-            "data: {\"id\":\"chatcmpl-abc\",\"object\":\"chat.completion.chunk\",",
-            "\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":",
-            "{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+        let endpoint = format!(
+            "{}/v1/chat/completions",
+            self.config.base_url.trim_end_matches('/')
         );
+        let resp = self
+            .auth(self.http.post(&endpoint).json(&body))
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "openai chat").await?;
+        let wire: ChatResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
 
-        let mut buf = BytesMut::from(raw);
-        let seg = try_parse_sse_segment(&mut buf);
+        let choice = wire
+            .choices
+            .into_iter()
+            .next()
+            .ok_or_else(|| ProviderError::Upstream("no choice in response".to_string()))?;
 
-        match seg {
-            Some(SseSegment::Chunk(chunk)) => {
-                assert_eq!(chunk.id, "chatcmpl-abc");
-                assert_eq!(chunk.model, "gpt-4");
-                assert_eq!(chunk.choices.len(), 1);
-                let content = chunk.choices[0].delta.content.as_ref().unwrap();
-                assert_eq!(content.as_str().unwrap(), "Hello");
-            }
-            other => panic!("expected Chunk, got {other:?}"),
+        let mut out = Output::new();
+        if let Some(content) = choice.message.content {
+            out.set(&keys::text::RESPONSE, content);
         }
-    }
-
-    #[test]
-    fn parse_sse_segment_done() {
-        let raw = "data: [DONE]\n\n";
-        let mut buf = BytesMut::from(raw);
-        let seg = try_parse_sse_segment(&mut buf);
-
-        assert!(matches!(seg, Some(SseSegment::Done)));
-    }
-
-    #[test]
-    fn parse_sse_handles_incomplete_buffer() {
-        let raw = "data: {\"id\":\"partial\"";
-        let mut buf = BytesMut::from(raw);
-        let seg = try_parse_sse_segment(&mut buf);
-
-        // No double-newline yet — should return None.
-        assert!(seg.is_none());
-    }
-
-    #[test]
-    fn parse_sse_handles_crlf_delimiter() {
-        let raw = "data: {\"id\":\"crlf\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"finish_reason\":null}]}\r\n\r\n";
-        let mut buf = BytesMut::from(raw);
-        let seg = try_parse_sse_segment(&mut buf);
-
-        match seg {
-            Some(SseSegment::Chunk(chunk)) => {
-                assert_eq!(chunk.id, "crlf");
+        let finish = match choice.finish_reason.as_deref() {
+            Some("stop") => keys::text::values::FINISH_REASON_STOP,
+            Some("length") => keys::text::values::FINISH_REASON_LENGTH,
+            Some("tool_calls") | Some("function_call") => {
+                keys::text::values::FINISH_REASON_TOOL_CALLS
             }
-            other => panic!("expected Chunk, got {other:?}"),
+            Some("content_filter") => keys::text::values::FINISH_REASON_CONTENT_FILTER,
+            _ => keys::text::values::FINISH_REASON_STOP,
+        };
+        out.set(&keys::text::FINISH_REASON, finish);
+        if let Some(tc) = choice.message.tool_calls {
+            out.set(
+                &keys::text::TOOL_CALLS,
+                serde_json::to_value(tc).unwrap_or(Value::Null),
+            );
         }
+        if let Some(u) = wire.usage {
+            out.set(&keys::usage::TOKENS_INPUT, u.prompt_tokens);
+            out.set(&keys::usage::TOKENS_OUTPUT, u.completion_tokens);
+            out.set(&keys::usage::TOKENS_TOTAL, u.total_tokens);
+        }
+        Ok(ProviderOutcome::Sync(out))
     }
 
-    impl std::fmt::Debug for SseSegment {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            match self {
-                SseSegment::Chunk(c) => write!(f, "Chunk({:?})", c.id),
-                SseSegment::Done => write!(f, "Done"),
-                SseSegment::Skip => write!(f, "Skip"),
-                SseSegment::Error(e) => write!(f, "Error({e})"),
+    async fn do_embed(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let model = request
+            .resolved_model
+            .as_ref()
+            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
+            .short_name
+            .clone();
+        let input = request
+            .payload
+            .pointer("/text/input")
+            .cloned()
+            .ok_or_else(|| ProviderError::Unsupported("missing text.input".to_string()))?;
+        let inputs: Vec<String> = match input {
+            Value::String(s) => vec![s],
+            Value::Array(a) => a
+                .into_iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+            _ => {
+                return Err(ProviderError::Unsupported(
+                    "text.input must be string or array".to_string(),
+                ));
             }
+        };
+
+        let mut body = json!({"model": model, "input": inputs});
+        if let Some(dims) = request
+            .payload
+            .pointer("/text/dimensions")
+            .and_then(|v| v.as_u64())
+        {
+            body["dimensions"] = json!(dims);
         }
+
+        let endpoint = format!(
+            "{}/v1/embeddings",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let resp = self
+            .auth(self.http.post(&endpoint).json(&body))
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "openai embeddings").await?;
+        let wire: EmbeddingsResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
+
+        let mut out = Output::new();
+        let vectors: Vec<Vec<f32>> = wire.data.into_iter().map(|e| e.embedding).collect();
+        out.set(
+            &keys::text::EMBEDDINGS,
+            serde_json::to_value(vectors).unwrap_or(Value::Null),
+        );
+        if let Some(u) = wire.usage {
+            out.set(&keys::usage::TOKENS_INPUT, u.prompt_tokens);
+            out.set(&keys::usage::TOKENS_TOTAL, u.total_tokens);
+        }
+        Ok(ProviderOutcome::Sync(out))
     }
+
+    async fn do_image_generate(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let model = request
+            .resolved_model
+            .as_ref()
+            .map(|m| m.short_name.clone())
+            .unwrap_or_else(|| "dall-e-3".to_string());
+        let prompt = request
+            .payload
+            .pointer("/image/prompt/positive")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ProviderError::Unsupported("missing image.prompt.positive".to_string()))?
+            .to_string();
+
+        let mut body = json!({
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "response_format": "b64_json",
+        });
+        let width = request
+            .payload
+            .pointer("/image/dimensions/width")
+            .and_then(|v| v.as_u64());
+        let height = request
+            .payload
+            .pointer("/image/dimensions/height")
+            .and_then(|v| v.as_u64());
+        if let (Some(w), Some(h)) = (width, height) {
+            body["size"] = Value::String(format!("{w}x{h}"));
+        }
+        if let Some(q) = request
+            .payload
+            .pointer("/image/style/quality")
+            .and_then(|v| v.as_str())
+        {
+            body["quality"] = Value::String(q.to_string());
+        }
+
+        let endpoint = format!(
+            "{}/v1/images/generations",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let resp = self
+            .auth(self.http.post(&endpoint).json(&body))
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "openai images").await?;
+        let wire: ImagesResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
+
+        let first = wire
+            .data
+            .into_iter()
+            .next()
+            .ok_or_else(|| ProviderError::Upstream("no image in response".to_string()))?;
+        let bytes_raw = first
+            .b64_json
+            .ok_or_else(|| ProviderError::Upstream("no b64_json in image response".to_string()))?;
+        let bytes = BASE64
+            .decode(bytes_raw.as_bytes())
+            .map_err(|e| ProviderError::Upstream(format!("base64 decode: {e}")))?;
+
+        // Store in the media store so the response carries a media_id.
+        let entry = request
+            .context
+            .media_store
+            .put(
+                bytes::Bytes::from(bytes),
+                "image/png".to_string(),
+                MediaSource::generated(
+                    self.name.clone(),
+                    request.action.dotted(),
+                    request.id.clone(),
+                ),
+            )
+            .await
+            .map_err(|e| ProviderError::Internal(format!("media store: {e}")))?;
+
+        let mut out = Output::new();
+        out.set(&keys::image::MEDIA_ID, entry.id.as_str());
+        if let Some(w) = width {
+            out.set(&keys::image::WIDTH, w);
+        }
+        if let Some(h) = height {
+            out.set(&keys::image::HEIGHT, h);
+        }
+        out.set(&keys::image::MODEL, model);
+        Ok(ProviderOutcome::Sync(out))
+    }
+
+    async fn do_audio_generate(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let model = request
+            .resolved_model
+            .as_ref()
+            .map(|m| m.short_name.clone())
+            .unwrap_or_else(|| "tts-1".to_string());
+        let input = request
+            .payload
+            .pointer("/audio/text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ProviderError::Unsupported("missing audio.text".to_string()))?
+            .to_string();
+        let voice = request
+            .payload
+            .pointer("/audio/voice/id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("alloy")
+            .to_string();
+        let format = request
+            .payload
+            .pointer("/audio/format/codec")
+            .and_then(|v| v.as_str())
+            .unwrap_or("mp3")
+            .to_string();
+
+        let body = json!({
+            "model": model,
+            "input": input,
+            "voice": voice,
+            "response_format": format,
+        });
+        let endpoint = format!(
+            "{}/v1/audio/speech",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let resp = self
+            .auth(self.http.post(&endpoint).json(&body))
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "openai audio speech").await?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
+
+        let content_type = match format.as_str() {
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/wav",
+            "opus" => "audio/ogg",
+            "flac" => "audio/flac",
+            "aac" => "audio/aac",
+            _ => "application/octet-stream",
+        };
+        let entry = request
+            .context
+            .media_store
+            .put(
+                bytes,
+                content_type.to_string(),
+                MediaSource::generated(
+                    self.name.clone(),
+                    request.action.dotted(),
+                    request.id.clone(),
+                ),
+            )
+            .await
+            .map_err(|e| ProviderError::Internal(format!("media store: {e}")))?;
+
+        let mut out = Output::new();
+        out.set(&keys::audio::MEDIA_ID, entry.id.as_str());
+        out.set(&keys::audio::FORMAT, format);
+        Ok(ProviderOutcome::Sync(out))
+    }
+
+    async fn do_audio_transcribe(
+        &self,
+        request: OrchestratorRequest,
+    ) -> Result<ProviderOutcome, ProviderError> {
+        let model = request
+            .resolved_model
+            .as_ref()
+            .map(|m| m.short_name.clone())
+            .unwrap_or_else(|| "whisper-1".to_string());
+
+        // Transfer mode: grab the referenced audio via the media store,
+        // construct a multipart body ourselves, and post.
+        let media_ref = request
+            .media
+            .find_at_field(&keys::audio::SOURCE)
+            .ok_or_else(|| {
+                ProviderError::Unsupported("audio.source media reference missing".to_string())
+            })?;
+        let bytes = request
+            .context
+            .media_store
+            .get_bytes(&media_ref.id)
+            .await
+            .map_err(|e| ProviderError::Internal(format!("media fetch: {e}")))?;
+        let meta = request
+            .context
+            .media_store
+            .get_metadata(&media_ref.id)
+            .await
+            .map_err(|e| ProviderError::Internal(format!("media meta: {e}")))?;
+
+        let filename = format!(
+            "{}{}",
+            media_ref.id,
+            match meta.content_type.as_str() {
+                "audio/mpeg" | "audio/mp3" => ".mp3",
+                "audio/wav" | "audio/wave" => ".wav",
+                "audio/ogg" => ".ogg",
+                "audio/flac" => ".flac",
+                "audio/webm" => ".webm",
+                _ => ".bin",
+            }
+        );
+        let file_part = reqwest::multipart::Part::bytes(bytes.to_vec())
+            .file_name(filename)
+            .mime_str(&meta.content_type)
+            .map_err(|e| ProviderError::Internal(format!("mime: {e}")))?;
+        let mut form = reqwest::multipart::Form::new()
+            .text("model", model)
+            .part("file", file_part);
+        if let Some(lang) = request
+            .payload
+            .pointer("/audio/language/source")
+            .and_then(|v| v.as_str())
+        {
+            form = form.text("language", lang.to_string());
+        }
+
+        let endpoint = format!(
+            "{}/v1/audio/transcriptions",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let resp = self
+            .auth(self.http.post(&endpoint).multipart(form))
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let resp = check_status(resp, "openai transcription").await?;
+        let wire: TranscriptionResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Upstream(e.to_string()))?;
+
+        let mut out = Output::new();
+        out.set(&keys::text::RESPONSE, wire.text);
+        Ok(ProviderOutcome::Sync(out))
+    }
+}
+
+// ── Registration builders ─────────────────────────────────────
+
+fn build_chat_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::TextChat,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            HonoredField::new(keys::text::PROMPT_USER).required(),
+            HonoredField::new(keys::text::PROMPT_SYSTEM),
+            HonoredField::new(keys::text::PROMPT_PREVIOUS),
+            HonoredField::new(keys::text::TOKENS_MAX),
+            HonoredField::new(keys::text::SAMPLING_TEMPERATURE),
+            HonoredField::new(keys::text::SAMPLING_TOP_P),
+            HonoredField::new(keys::text::SAMPLING_SEED),
+            HonoredField::new(keys::text::STOP_SEQUENCES),
+            HonoredField::new(keys::text::TOOLS_DEFINITIONS),
+            HonoredField::new(keys::text::TOOLS_CHOICE),
+            HonoredField::new(keys::text::FORMAT_RESPONSE),
+        ],
+        media_inputs: Vec::new(),
+        media_outputs: Vec::new(),
+    }
+}
+
+fn build_embed_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::TextEmbed,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            HonoredField::new(keys::text::INPUT).required(),
+            HonoredField::new(keys::text::DIMENSIONS),
+        ],
+        media_inputs: Vec::new(),
+        media_outputs: Vec::new(),
+    }
+}
+
+fn build_analyze_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::ImageAnalyze,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            HonoredField::new(keys::image::SOURCE).required(),
+            HonoredField::new(keys::text::PROMPT_USER),
+            HonoredField::new(keys::text::TOKENS_MAX),
+        ],
+        media_inputs: vec![MediaInputSpec {
+            field: keys::image::SOURCE,
+            delivery: MediaDelivery::Base64,
+            accepted_types: vec![
+                "image/png".to_string(),
+                "image/jpeg".to_string(),
+                "image/webp".to_string(),
+                "image/gif".to_string(),
+            ],
+            overlay: None,
+        }],
+        media_outputs: Vec::new(),
+    }
+}
+
+fn build_image_generate_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::ImageGenerate,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            HonoredField::new(keys::image::PROMPT_POSITIVE).required(),
+            HonoredField::new(keys::image::DIMENSIONS_WIDTH),
+            HonoredField::new(keys::image::DIMENSIONS_HEIGHT),
+            HonoredField::new(keys::image::STYLE_QUALITY),
+        ],
+        media_inputs: Vec::new(),
+        media_outputs: vec![crate::domain::provider::MediaOutputSpec {
+            field: keys::image::MEDIA_ID,
+            content_type: "image/png".to_string(),
+        }],
+    }
+}
+
+fn build_audio_generate_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::AudioGenerate,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            HonoredField::new(keys::audio::TEXT).required(),
+            HonoredField::new(keys::audio::VOICE_ID),
+            HonoredField::new(keys::audio::FORMAT_CODEC),
+        ],
+        media_inputs: Vec::new(),
+        media_outputs: vec![crate::domain::provider::MediaOutputSpec {
+            field: keys::audio::MEDIA_ID,
+            content_type: "audio/mpeg".to_string(),
+        }],
+    }
+}
+
+fn build_audio_transcribe_registration(provider: &ProviderName) -> Registration {
+    Registration {
+        id: RegistrationId::generate(),
+        provider: provider.clone(),
+        primitive: Primitive::AudioTranscribe,
+        strategy: RegistrationStrategy::Bare,
+        honored_fields: vec![
+            HonoredField::new(keys::audio::SOURCE).required(),
+            HonoredField::new(keys::audio::LANGUAGE_SOURCE),
+        ],
+        media_inputs: vec![MediaInputSpec {
+            field: keys::audio::SOURCE,
+            delivery: MediaDelivery::Transfer,
+            accepted_types: vec![
+                "audio/mpeg".to_string(),
+                "audio/wav".to_string(),
+                "audio/ogg".to_string(),
+                "audio/flac".to_string(),
+                "audio/webm".to_string(),
+                "audio/mp4".to_string(),
+            ],
+            overlay: None,
+        }],
+        media_outputs: Vec::new(),
+    }
+}
+
+// ── Wire types ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+    #[serde(default)]
+    usage: Option<ChatUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatChoice {
+    message: ChatMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessage {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatUsage {
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingsResponse {
+    data: Vec<EmbeddingEntry>,
+    #[serde(default)]
+    usage: Option<EmbeddingsUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingEntry {
+    embedding: Vec<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingsUsage {
+    prompt_tokens: u64,
+    total_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImagesResponse {
+    data: Vec<ImageEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageEntry {
+    #[serde(default)]
+    b64_json: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptionResponse {
+    text: String,
 }

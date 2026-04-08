@@ -240,7 +240,8 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         }
     }
 
-    // If any role changed, emit domain event — beacon subscriber reacts.
+    // If any role changed, emit domain event — triggers tools projection
+    // refresh and orchestration nudge via emit_storage_changed().
     if any_changed {
         state
             .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
@@ -402,71 +403,6 @@ fn find_remote_primary_with_pin(
 }
 
 // ============================================================================
-// Beacon subscriber (STORAGE-0013)
-// ============================================================================
-
-/// Background task that broadcasts storage beacons in reaction to
-/// `StorageChanged` domain events.
-///
-/// Replaces the old pattern of manually spawning beacon broadcasts from
-/// each API handler / task. The task subscribes to the `storage_changed`
-/// channel and calls `state.broadcast_storage_beacon()` on every event.
-///
-/// Debounces: coalesces rapid events (e.g. release-all emitting per-volume
-/// Removed + a final Reclassified) by waiting 200ms of quiet before
-/// broadcasting.
-pub async fn storage_beacon_subscriber(state: AppState, token: CancellationToken) {
-    let mut rx = state.subscribe_storage_changed();
-    let debounce = std::time::Duration::from_millis(200);
-
-    info!("Storage beacon subscriber started (STORAGE-0013)");
-
-    loop {
-        // Wait for the first event
-        let got_event = tokio::select! {
-            result = rx.recv() => {
-                match result {
-                    Ok(_) => true,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        debug!(missed = n, "Beacon subscriber lagged — broadcasting");
-                        true
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        debug!("Beacon subscriber: channel closed");
-                        return;
-                    }
-                }
-            }
-            _ = token.cancelled() => {
-                info!("Storage beacon subscriber shutting down");
-                return;
-            }
-        };
-
-        if !got_event {
-            continue;
-        }
-
-        // Debounce: drain any additional events within the window
-        loop {
-            tokio::select! {
-                result = rx.recv() => {
-                    match result {
-                        Ok(_) => continue, // more events, keep draining
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                    }
-                }
-                _ = tokio::time::sleep(debounce) => break, // quiet period expired
-                _ = token.cancelled() => return,
-            }
-        }
-
-        // Broadcast the beacon
-        state.broadcast_storage_beacon().await;
-    }
-}
-
 // ============================================================================
 // Tests
 // ============================================================================

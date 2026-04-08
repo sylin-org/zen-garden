@@ -50,6 +50,9 @@ use serde_json::{json, Value};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use crate::domain::capability_announcement::{
+    SkillDeclaration, SkillDisplay, SkillParameter,
+};
 use crate::domain::ids::{ProviderName, RegistrationId};
 use crate::domain::keys;
 use crate::domain::media::MediaSource;
@@ -277,6 +280,26 @@ impl ComfyUiProvider {
             state.registrations = registrations;
             state
         });
+    }
+
+    /// Snapshot the adapter's currently-loaded skills as a list of
+    /// `SkillDeclaration`s in the shape the post-M3 `CapabilityDirectory`
+    /// will accept.
+    ///
+    /// **Status (ORCH-0030 R2 M2):** This method is additive and
+    /// currently unused outside its own unit tests. It exists so the
+    /// M3 trait switch can wire ComfyUI's capability publication
+    /// path with no new conversion code or risk. Once M3 lands, the
+    /// adapter will publish a `CapabilityAnnouncement` event whose
+    /// `skills` field is exactly this vector, and delete the legacy
+    /// `Skills` aggregate path.
+    ///
+    /// The conversion lives in the free function
+    /// [`compute_skill_declarations`] so the unit tests can exercise
+    /// it without constructing a full provider.
+    pub async fn skill_declarations(&self) -> Vec<SkillDeclaration> {
+        let map = self.skills.read().await;
+        compute_skill_declarations(&map)
     }
 
     /// Readiness fast path: for every loaded skill × every freshly-
@@ -1065,6 +1088,95 @@ fn urlencode(s: &str) -> String {
     out
 }
 
+// ── SkillDeclaration conversion (ORCH-0030 R2 M2) ─────────────
+//
+// These free functions translate the adapter's private
+// `LoadedSkill` map into the public `SkillDeclaration` shape that
+// the M3 trait switch will publish over the bus. They live here
+// (rather than as `impl LoadedSkill` methods) so the unit tests can
+// build synthetic `LoadedSkill`s and exercise the conversion
+// without constructing a full `ComfyUiProvider`.
+
+/// Walk a `LoadedSkill` map and produce one `SkillDeclaration` per
+/// entry. The output ordering follows the underlying `HashMap`
+/// iteration order — callers that care must sort by `id`.
+fn compute_skill_declarations(
+    skills: &HashMap<Moniker, LoadedSkill>,
+) -> Vec<SkillDeclaration> {
+    skills.values().map(loaded_to_skill_declaration).collect()
+}
+
+/// Convert a single `LoadedSkill` to a `SkillDeclaration`.
+///
+/// Field mapping:
+/// - `id` ← `loaded.moniker.as_str()`
+/// - `primitive` ← `loaded.primitive`
+/// - `display.name` ← `loaded.display_name`
+/// - `display.description` ← `loaded.description` (omitted when empty)
+/// - `parameters` ← one entry per `Binding` (canonical or media);
+///   plus a `selectors.model` entry when the skill has a model
+///   selector; plus a `selectors.variant` entry when the skill
+///   declares variants.
+///
+/// Media bindings become non-pinnable parameters (the caller must
+/// supply the media reference; they cannot pin a literal value).
+/// Non-media bindings are pinnable. The `auto` field is always
+/// `None` for skills — auto-resolution is a primitive-level
+/// concern, not a skill-level one.
+fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
+    let mut parameters: Vec<SkillParameter> = Vec::with_capacity(loaded.bindings.len() + 2);
+
+    for binding in &loaded.bindings {
+        let is_media = is_media_binding(binding);
+        parameters.push(SkillParameter {
+            field: binding.field.as_str().to_string(),
+            required: binding.required || is_media,
+            description: binding.label.clone(),
+            default: binding.default.clone(),
+            auto: None,
+            pinnable: !is_media,
+        });
+    }
+
+    if let Some(selector) = &loaded.model_selector {
+        parameters.push(SkillParameter {
+            field: "selectors.model".to_string(),
+            required: false,
+            description: Some("Model used by this skill.".to_string()),
+            default: Some(serde_json::Value::String(selector.default.clone())),
+            auto: None,
+            pinnable: true,
+        });
+    }
+
+    if let Some(variants) = &loaded.variants {
+        if !variants.is_empty() {
+            parameters.push(SkillParameter {
+                field: "selectors.variant".to_string(),
+                required: false,
+                description: Some("Workflow variant.".to_string()),
+                default: variants
+                    .first()
+                    .map(|v| serde_json::Value::String(v.value.clone())),
+                auto: None,
+                pinnable: true,
+            });
+        }
+    }
+
+    let mut display = SkillDisplay::new(loaded.display_name.clone());
+    if !loaded.description.is_empty() {
+        display = display.with_description(loaded.description.clone());
+    }
+
+    SkillDeclaration {
+        id: loaded.moniker.as_str().to_string(),
+        primitive: loaded.primitive,
+        display,
+        parameters,
+    }
+}
+
 // ── Wire types ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -1075,4 +1187,202 @@ struct UploadResponse {
 #[derive(Debug, Deserialize)]
 struct PromptResponse {
     prompt_id: String,
+}
+
+// ── Tests ─────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::field_path::FieldPath;
+    use crate::domain::media::MediaDelivery;
+    use crate::services::skills::types::{ModelSelector, ParamOption, Variant};
+
+    fn moniker(s: &str) -> Moniker {
+        Moniker::new(s).expect("valid moniker")
+    }
+
+    fn field(s: &str) -> FieldPath {
+        FieldPath::parse(s).expect("valid field path")
+    }
+
+    fn param_binding(field_str: &str, label: &str, required: bool) -> Binding {
+        Binding {
+            field: field(field_str),
+            target: BindingTarget::Placeholder("PH".to_string()),
+            default: None,
+            narrow: None,
+            label: Some(label.to_string()),
+            required,
+            delivery: None,
+            accepted_types: Vec::new(),
+            overlay: None,
+            self_described_type: None,
+        }
+    }
+
+    fn media_binding(field_str: &str, accepted: &[&str]) -> Binding {
+        Binding {
+            field: field(field_str),
+            target: BindingTarget::Placeholder("PH".to_string()),
+            default: None,
+            narrow: None,
+            label: None,
+            required: false,
+            delivery: Some(MediaDelivery::Transfer),
+            accepted_types: accepted.iter().map(|s| s.to_string()).collect(),
+            overlay: None,
+            self_described_type: None,
+        }
+    }
+
+    fn synthetic_skill(
+        id: &str,
+        primitive: Primitive,
+        bindings: Vec<Binding>,
+        model_selector: Option<ModelSelector>,
+        variants: Option<Vec<Variant>>,
+    ) -> (Moniker, LoadedSkill) {
+        let m = moniker(id);
+        let loaded = LoadedSkill {
+            moniker: m.clone(),
+            primitive,
+            display_name: format!("Synthetic {id}"),
+            description: format!("A test skill named {id}."),
+            vram_mb: 0,
+            workflows: HashMap::new(),
+            default_workflow: "default".to_string(),
+            bindings,
+            model_selector,
+            output_node: None,
+            variants,
+            required_models: Vec::new(),
+        };
+        (m, loaded)
+    }
+
+    #[test]
+    fn empty_skill_map_yields_empty_declarations() {
+        let map: HashMap<Moniker, LoadedSkill> = HashMap::new();
+        let result = compute_skill_declarations(&map);
+        assert!(result.is_empty(), "expected zero declarations, got {result:?}");
+    }
+
+    #[test]
+    fn two_synthetic_skills_become_two_declarations_with_correct_fields() {
+        let (m_a, loaded_a) = synthetic_skill(
+            "skill-a",
+            Primitive::ImageGenerate,
+            vec![
+                param_binding("image.prompt.positive", "Positive prompt", true),
+                media_binding("image.source", &["image/png"]),
+            ],
+            Some(ModelSelector {
+                placeholder: "MODEL".to_string(),
+                default: "sdxl_base.safetensors".to_string(),
+                options: vec![ParamOption {
+                    value: serde_json::Value::String("sdxl_base.safetensors".to_string()),
+                    label: Some("SDXL Base".to_string()),
+                }],
+            }),
+            None,
+        );
+        let (m_b, loaded_b) = synthetic_skill(
+            "skill-b",
+            Primitive::ImageUpscale,
+            vec![param_binding("image.upscale.factor", "Upscale factor", false)],
+            None,
+            Some(vec![
+                Variant {
+                    value: "fast".to_string(),
+                    label: Some("Fast".to_string()),
+                },
+                Variant {
+                    value: "high".to_string(),
+                    label: Some("High Quality".to_string()),
+                },
+            ]),
+        );
+
+        let mut map: HashMap<Moniker, LoadedSkill> = HashMap::new();
+        map.insert(m_a, loaded_a);
+        map.insert(m_b, loaded_b);
+
+        let mut result = compute_skill_declarations(&map);
+        assert_eq!(result.len(), 2);
+        result.sort_by(|x, y| x.id.cmp(&y.id));
+
+        // ── skill-a (image.generate, model selector, two bindings)
+        let a = &result[0];
+        assert_eq!(a.id, "skill-a");
+        assert_eq!(a.primitive, Primitive::ImageGenerate);
+        assert_eq!(a.display.name, "Synthetic skill-a");
+        assert_eq!(
+            a.display.description.as_deref(),
+            Some("A test skill named skill-a.")
+        );
+        // Two bindings + one selectors.model parameter.
+        assert_eq!(a.parameters.len(), 3);
+
+        // The canonical text param is required + pinnable.
+        let positive = a
+            .parameters
+            .iter()
+            .find(|p| p.field == "image.prompt.positive")
+            .expect("positive prompt parameter missing");
+        assert!(positive.required);
+        assert!(positive.pinnable);
+        assert_eq!(positive.description.as_deref(), Some("Positive prompt"));
+
+        // The media binding is required (callers must always supply
+        // media inputs) but NOT pinnable (no literal value pinning).
+        let source = a
+            .parameters
+            .iter()
+            .find(|p| p.field == "image.source")
+            .expect("image.source parameter missing");
+        assert!(source.required);
+        assert!(!source.pinnable);
+
+        // The synthesized selectors.model parameter carries the
+        // selector's default value.
+        let model_param = a
+            .parameters
+            .iter()
+            .find(|p| p.field == "selectors.model")
+            .expect("selectors.model parameter missing");
+        assert!(!model_param.required);
+        assert!(model_param.pinnable);
+        assert_eq!(
+            model_param.default.as_ref().and_then(|v| v.as_str()),
+            Some("sdxl_base.safetensors")
+        );
+
+        // ── skill-b (image.upscale, variants, one binding)
+        let b = &result[1];
+        assert_eq!(b.id, "skill-b");
+        assert_eq!(b.primitive, Primitive::ImageUpscale);
+        // One binding + one selectors.variant parameter (no model selector).
+        assert_eq!(b.parameters.len(), 2);
+
+        let factor = b
+            .parameters
+            .iter()
+            .find(|p| p.field == "image.upscale.factor")
+            .expect("upscale.factor parameter missing");
+        assert!(!factor.required);
+        assert!(factor.pinnable);
+
+        // The synthesized selectors.variant parameter defaults to the
+        // first variant's value.
+        let variant_param = b
+            .parameters
+            .iter()
+            .find(|p| p.field == "selectors.variant")
+            .expect("selectors.variant parameter missing");
+        assert_eq!(
+            variant_param.default.as_ref().and_then(|v| v.as_str()),
+            Some("fast")
+        );
+    }
 }

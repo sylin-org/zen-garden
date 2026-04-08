@@ -537,5 +537,29 @@ Anything not listed above. Specifically:
 
 ## Addenda
 
-*(Empty. Append `## Addendum N — date — title` blocks here when
-plan deviations are approved.)*
+### Addendum 1 — 2026-04-08 — M3 sub-checkpoint #1: relocate skill-schema types
+
+The M3 plan's sub-checkpoint #1 lists `FieldConstraint`, `AutoKind`,
+and `ParamOption` among the types to delete from `domain/provider.rs`.
+On inspection these three types are not pure provider-trait types —
+they are skill-schema types used by `services::skills::types`
+(`Binding::narrow: Option<FieldConstraint>`, `RawModelSelectorV3::options:
+Vec<ParamOption>`, `AutoKind` referenced by skill bindings) that
+happen to live in `domain/provider.rs` for historical reasons.
+
+The skills disk schema (v3) is a stable contract; we cannot delete
+these types without breaking it.
+
+**Decision (user-approved):** Move `FieldConstraint`, `AutoKind`,
+and `ParamOption` to `services::skills::types` (where they
+semantically belong) as part of M3 sub-checkpoint #1, before
+deleting them from `domain/provider.rs`. The disk schema is
+preserved unchanged. The pre-existing re-exports from
+`services::skills::types` (`pub use crate::domain::provider::{...}`)
+become canonical definitions.
+
+The other types listed in sub-checkpoint #1 (`ProviderState`,
+`Registration`, `HonoredField`, `MediaInputSpec`, `MediaOutputSpec`,
+`Model`, `ModelDescriptor`, `ProviderHealth`, `PerformanceHint`,
+`PerformanceVerdict`, `FieldRange`, `RegistrationStrategy`,
+`ProviderStatePublisher`) are still deleted as planned.

@@ -450,6 +450,13 @@ pub enum ProviderError {
     Unsupported(String),
     #[error("internal: {0}")]
     Internal(String),
+    /// Caller pinned a model (via `selectors.model`) that no healthy
+    /// instance of this provider is currently serving. Distinct from
+    /// `Unsupported` because the model may be a valid choice later
+    /// when the instance comes back — this is not a caller error, it
+    /// is a transient availability error.
+    #[error("pinned model `{model}` not servable: {reason}")]
+    PinNotServable { model: String, reason: String },
 }
 
 impl ProviderError {
@@ -465,6 +472,7 @@ impl ProviderError {
             ProviderError::Upstream(_) => ErrorCode::UpstreamError,
             ProviderError::Unsupported(_) => ErrorCode::ValidationFailed,
             ProviderError::Internal(_) => ErrorCode::InternalError,
+            ProviderError::PinNotServable { .. } => ErrorCode::NotFound,
         }
     }
 

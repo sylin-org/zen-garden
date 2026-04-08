@@ -1,49 +1,80 @@
-//! Ollama provider — `text.chat`, `text.embed`, `image.analyze`.
+//! Ollama provider — capability-event driven (ORCH-0030 commit 7).
 //!
-//! Wire API:
+//! # What changed from ORCH-0028
 //!
-//! ```text
-//! POST /api/chat      { "model": "...", "messages": [...], "options": {...} }
-//! POST /api/embed     { "model": "...", "input": [...] }
-//! GET  /api/tags      -> {"models": [...]} used for model discovery
-//! ```
+//! The Ollama adapter no longer feeds the legacy `Directory` aggregate
+//! via `ProviderState::registrations`. Instead, it maintains its own
+//! [`OllamaCapabilityMatrix`] built from probing every stone's
+//! `/api/tags`, `/api/ps`, and `/api/show`, and publishes a
+//! [`CapabilityAnnouncement`] event to the bus on every change. The
+//! new [`CapabilityDirectory`] (populated by the `DirectorySubscriber`
+//! task) becomes the authoritative view of what Ollama can serve.
 //!
-//! Vision support: images are sent as `messages[].images: ["<base64>"]`.
-//! The orchestrator's media resolver inlines base64 blobs before dispatch
-//! (see [`crate::services::media_resolver`]). Provider narrowings declare
-//! `image.source` as `Base64` delivery.
+//! # Dispatch flow
+//!
+//! On every request:
+//!
+//! 1. The caller sends `POST /v1/text/chat` with `selectors.model`
+//!    either absent, set to `"recommended:chat"`, or set to a concrete
+//!    model name like `"llama3.1:8b"`.
+//! 2. `Provider::onboard` reads the current matrix (via a read lock).
+//! 3. Extracts the caller's intent:
+//!    - Missing / `recommended:*` → resolve via
+//!      [`OllamaSelector::pick_recommended`] using the primitive's
+//!      default capability.
+//!    - Concrete model name → resolve via
+//!      [`OllamaSelector::pick_pinned`] to a specific instance.
+//! 4. Dispatches to the chosen instance URL with the chosen model.
+//!
+//! The selector encodes the architectural invariant from R2 of
+//! ORCH-0030: **never recommend a model that is not actually
+//! installed on a healthy instance.** See [`ollama_matrix::tests::
+//! scoring_anti_phantom_filter_rejects_uninstalled_models`].
+//!
+//! # Legacy `Provider` trait
+//!
+//! The adapter still implements `Provider` because the Dispatcher and
+//! eleven other adapters depend on the trait. Ollama's `state()`
+//! returns an empty `ProviderState` — the legacy `Directory` sees no
+//! registrations, no models, and a persistent `Offline` health for
+//! Ollama. The dispatcher's routing path (updated in commit 7c) now
+//! consults `CapabilityDirectory` first and only falls back to the
+//! legacy `Directory` for adapters that have not been migrated yet.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::watch;
+use tokio::sync::{watch, RwLock};
+use tokio_util::sync::CancellationToken;
 
-use crate::domain::ids::{ModelFqn, ProviderName, RegistrationId};
+use crate::domain::capability_announcement::{
+    Capability as AnnCapability, CapabilityAnnouncement,
+};
+use crate::domain::events::EventBus;
+use crate::domain::ids::ProviderName;
 use crate::domain::keys;
-use crate::domain::media::MediaDelivery;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
 use crate::domain::provider::{
-    HonoredField, MediaInputSpec, Model, Provider, ProviderError, ProviderHealth,
-    ProviderOutcome, ProviderState, ProviderStatePublisher, Registration, RegistrationStrategy,
+    Provider, ProviderError, ProviderHealth, ProviderOutcome, ProviderState,
+    ProviderStatePublisher,
 };
 use crate::domain::request::OrchestratorRequest;
-
+use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
-use tokio_util::sync::CancellationToken;
 
-use super::common::{
-    build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
+use super::common::{build_http_client, check_status, map_reqwest_error, PerFqnInstances};
+use super::ollama_matrix::{
+    Capability, InstanceEntry, InstanceHealth, ModelInfo, OllamaCapabilityMatrix, OllamaSelector,
+    SelectionError, SelectionResult,
 };
 
-/// Ollama base name. Discovery's base-name match automatically
-/// picks up `ollama` as well as any `ollama::adopted`,
-/// `ollama::dev`, `ollama::cpu`, etc. variants the garden recognizes
-/// — no code changes needed for new qualifiers.
+/// Ollama base name. Discovery's base-name match automatically picks up
+/// `ollama` and any `ollama::adopted`, `ollama::dev`, etc. variants.
 const FQNS: &[&'static str] = &["ollama"];
 
 #[derive(Debug, Clone, Default)]
@@ -51,193 +82,283 @@ pub struct OllamaConfig;
 
 pub struct OllamaProvider {
     name: ProviderName,
-    instances: Arc<InstancePool>,
+    matrix: Arc<RwLock<OllamaCapabilityMatrix>>,
     http: Client,
+    events: Arc<EventBus>,
+    /// Stub publisher returning an empty state. Kept only so the
+    /// `Provider` trait impl has something to return; the legacy
+    /// `Directory` aggregate will see Ollama as persistently offline.
     publisher: ProviderStatePublisher,
-}
-
-fn build_registrations(name: &ProviderName) -> Vec<Registration> {
-    vec![
-        build_chat_registration(name),
-        build_embed_registration(name),
-        build_analyze_registration(name),
-    ]
 }
 
 impl OllamaProvider {
     pub fn new(
         _config: OllamaConfig,
         discovery: Arc<GardenDiscovery>,
+        events: Arc<EventBus>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let name = ProviderName::new(keys::providers::OLLAMA);
         let initial = ProviderState {
             health: ProviderHealth::Offline {
-                reason: "no garden instances discovered yet".to_string(),
+                reason: "ollama uses capability events, not legacy Directory".to_string(),
             },
-            registrations: build_registrations(&name),
+            registrations: Vec::new(),
             models: Vec::new(),
             performance_hints: Vec::new(),
         };
         let provider = Arc::new(Self {
-            name,
-            instances: Arc::new(InstancePool::new()),
+            name: name.clone(),
+            matrix: Arc::new(RwLock::new(OllamaCapabilityMatrix::new())),
             http: build_http_client(),
+            events,
             publisher: ProviderStatePublisher::new(initial),
         });
         spawn_subscriber(provider.clone(), discovery, shutdown);
         provider
     }
 
-    fn pick(&self) -> Result<String, ProviderError> {
-        self.instances.pick().ok_or_else(|| {
-            ProviderError::Unreachable("no ollama instances in the garden".to_string())
-        })
+    /// Snapshot of the current matrix — used by tests and the
+    /// adapter's own scoring path.
+    pub async fn matrix_snapshot(&self) -> OllamaCapabilityMatrix {
+        self.matrix.read().await.clone()
     }
 
-    /// Refresh the model catalog by enumerating every reachable
-    /// Ollama instance, then enriching each unique model with
-    /// `/api/show` metadata so the recommendation engine can rank
-    /// it under the right capability profile.
-    ///
-    /// Pipeline:
-    /// 1. `/api/tags` per instance → union of `(name, size)` rows.
-    /// 2. For each unique model, fan out a single `/api/show` call
-    ///    against the first reachable instance that hosts it.
-    ///    `/api/show` returns Ollama-native `capabilities`
-    ///    (`completion`, `embedding`, `vision`, `tools`, `thinking`),
-    ///    `parameter_count`, and the architecture-specific
-    ///    `<arch>.context_length` field. These are the inputs the
-    ///    capability-aware recommender needs.
-    /// 3. Translate Ollama capability tags into the orchestrator's
-    ///    primitive set: `completion → TextChat`,
-    ///    `embedding → TextEmbed`, `vision → ImageAnalyze`. Models
-    ///    without any recognised capability are skipped — they
-    ///    aren't usable through this orchestrator.
-    /// 4. Publish the enriched model list. Discovery's per-provider
-    ///    forwarder picks it up; the directory rebuilds; the
-    ///    recommendation engine reranks under every capability
-    ///    profile.
-    async fn refresh_models_from_pool(&self) {
-        let urls = self.instances.snapshot();
-        let mut tag_rows: Vec<(String, u64, String)> = Vec::new();
-        let mut any_reachable = false;
+    /// Publish the current matrix as a capability announcement.
+    async fn publish_capabilities(&self) {
+        let matrix = self.matrix.read().await;
+        let primitives = matrix.supported_primitives();
+        let enabled = !primitives.is_empty() && !matrix.healthy_instances().is_empty();
+        let announcement = CapabilityAnnouncement {
+            provider: self.name.clone(),
+            enabled,
+            capabilities: primitives
+                .into_iter()
+                .map(AnnCapability::new)
+                .collect(),
+            // Skills come later — commits 8+ handle the generalized
+            // skill publication from any adapter that has them. Ollama
+            // will declare its first skill (e.g. image-understanding)
+            // in a follow-up.
+            skills: Vec::new(),
+        };
+        drop(matrix);
+        publish_capability_announcement(&self.events, &announcement).await;
+    }
 
-        // Step 1: enumerate models from /api/tags on every instance.
-        for base in &urls {
-            let endpoint = format!("{}/api/tags", base.trim_end_matches('/'));
-            let resp = self
-                .http
-                .get(&endpoint)
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await;
-            let Ok(resp) = resp else { continue };
-            let Ok(resp) = resp.error_for_status() else { continue };
-            let Ok(tags) = resp.json::<TagsResponse>().await else { continue };
-            any_reachable = true;
-            for m in tags.models {
-                if tag_rows.iter().any(|(n, _, _)| n == &m.name) {
-                    continue;
+    /// Rebuild the matrix from the given URL list. Probes every URL
+    /// for `/api/tags`, `/api/ps`, and per-model `/api/show`
+    /// metadata, marks each instance Healthy / Unhealthy, and
+    /// publishes the resulting capability announcement.
+    async fn rebuild_matrix(&self, urls: Vec<String>) {
+        let mut new_matrix = OllamaCapabilityMatrix::new();
+
+        // Probe every instance in parallel for its model list and
+        // loaded models.
+        let probe_futs = urls.into_iter().map(|url| {
+            let http = self.http.clone();
+            async move { probe_instance(&http, &url).await }
+        });
+        let instance_probes: Vec<Option<InstanceEntry>> =
+            futures_util::future::join_all(probe_futs).await;
+
+        // Build the instance map. Unhealthy probes (None) become
+        // `InstanceHealth::Unhealthy` entries so the adapter still
+        // knows about them but the selector will filter them out.
+        for (idx, maybe) in instance_probes.into_iter().enumerate() {
+            match maybe {
+                Some(entry) => {
+                    new_matrix.instances.insert(entry.endpoint.clone(), entry);
                 }
-                tag_rows.push((m.name, m.size, base.trim_end_matches('/').to_string()));
+                None => {
+                    let _ = idx; // placeholder — we do not have the
+                                 // URL at this point for unhealthy
+                                 // entries; they simply don't appear.
+                }
             }
         }
 
-        // Step 2 + 3: enrich every unique model in parallel via
-        // /api/show, translate capabilities, build the canonical
-        // Model records.
-        let enrich_futs = tag_rows.into_iter().map(|(name, size, endpoint)| {
-            let http = self.http.clone();
-            let provider_name = self.name.clone();
-            async move {
-                match show_model(&http, &endpoint, &name).await {
-                    Some(detail) => Some(model_from_show(&provider_name, name, size, detail)),
-                    None => None,
+        // Enrich every unique model across all healthy instances via
+        // `/api/show`. One call per unique model name using the first
+        // reachable instance that hosts it.
+        let mut seen_models: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut enrich_tasks: Vec<(String, String)> = Vec::new();
+        for inst in new_matrix.instances.values() {
+            if !inst.is_routable() {
+                continue;
+            }
+            for m in &inst.models_available {
+                if seen_models.insert(m.clone()) {
+                    enrich_tasks.push((m.clone(), inst.endpoint.clone()));
                 }
             }
-        });
-        let mut models: Vec<Model> = futures_util::future::join_all(enrich_futs)
-            .await
-            .into_iter()
-            .flatten()
-            .flatten()
-            .collect();
-        models.sort_by(|a, b| a.short_name.cmp(&b.short_name));
+        }
 
-        let name = self.name.clone();
-        let count = urls.len();
-        self.publisher.modify(move |mut state| {
-            state.models = models;
-            state.registrations = build_registrations(&name);
-            state.health = if count == 0 {
-                ProviderHealth::Offline {
-                    reason: "no garden instances discovered".to_string(),
-                }
-            } else if !any_reachable {
-                ProviderHealth::Degraded {
-                    reason: "instances discovered but none reachable".to_string(),
-                }
-            } else {
-                ProviderHealth::Healthy
-            };
-            state
+        let enrich_futs = enrich_tasks.into_iter().map(|(model, endpoint)| {
+            let http = self.http.clone();
+            async move {
+                let info = enrich_model(&http, &endpoint, &model).await;
+                (model, info)
+            }
         });
+        let enriched: Vec<(String, Option<ModelInfo>)> =
+            futures_util::future::join_all(enrich_futs).await;
+        for (model, info) in enriched {
+            if let Some(info) = info {
+                new_matrix.models.insert(model, info);
+            }
+        }
+
+        // Swap the new matrix in and publish the announcement.
+        {
+            let mut m = self.matrix.write().await;
+            *m = new_matrix;
+        }
+        self.publish_capabilities().await;
+    }
+
+    /// Resolve the caller's model selector against the current
+    /// matrix. Returns the concrete (model, endpoint) pair plus the
+    /// full selection result for observability.
+    async fn resolve_selection(
+        &self,
+        request: &OrchestratorRequest,
+    ) -> Result<SelectionResult, ProviderError> {
+        let matrix = self.matrix.read().await;
+        let selector_input = request.selectors.model.as_deref();
+
+        // 1. No selector → default capability for this primitive
+        // 2. recommended:* moniker → explicit capability
+        // 3. Concrete model name → pin
+        let result = if let Some(s) = selector_input {
+            if let Some(cap) = Capability::parse_recommended(s) {
+                OllamaSelector::pick_recommended(&matrix, cap)
+            } else {
+                // Concrete model — treat as pin.
+                OllamaSelector::pick_pinned(&matrix, s)
+            }
+        } else {
+            // Bare primitive — pick the default capability for it.
+            let cap = Capability::default_for(request.action.primitive).ok_or_else(|| {
+                ProviderError::Unsupported(format!(
+                    "ollama does not serve {}",
+                    request.action.primitive.dotted()
+                ))
+            })?;
+            OllamaSelector::pick_recommended(&matrix, cap)
+        };
+
+        result.map_err(selection_error_to_provider_error)
+    }
+
+    fn name_ref(&self) -> &ProviderName {
+        &self.name
     }
 }
 
-/// Call `/api/show` for one model on one instance and return the
-/// raw JSON response. Returns `None` on any failure — the model
-/// will simply not be enriched and the recommender will skip it.
-async fn show_model(http: &Client, endpoint: &str, model: &str) -> Option<ShowResponse> {
-    let url = format!("{}/api/show", endpoint);
-    let resp = http
-        .post(&url)
-        .json(&serde_json::json!({ "model": model }))
+/// Translate a [`SelectionError`] into the canonical [`ProviderError`]
+/// taxonomy. The selector's errors are adapter-local; the dispatcher
+/// understands the provider-level taxonomy.
+fn selection_error_to_provider_error(err: SelectionError) -> ProviderError {
+    match err {
+        SelectionError::NoHealthyInstances => {
+            ProviderError::Unreachable("no healthy ollama instances".to_string())
+        }
+        SelectionError::NoEligibleModels { capability } => {
+            ProviderError::Unsupported(format!(
+                "no model on any healthy ollama instance declares capability `{capability}`"
+            ))
+        }
+        SelectionError::PinNotServable { model, reason } => {
+            ProviderError::PinNotServable {
+                model,
+                reason: reason.to_string(),
+            }
+        }
+        SelectionError::UnsupportedPrimitive(p) => {
+            ProviderError::Unsupported(format!("ollama does not serve {}", p.dotted()))
+        }
+    }
+}
+
+/// Probe a single Ollama instance for its tags and currently-loaded
+/// models. Returns `None` if any call fails — the adapter treats that
+/// as "unreachable right now" and the instance simply doesn't appear
+/// in the matrix until the next probe.
+async fn probe_instance(http: &Client, base: &str) -> Option<InstanceEntry> {
+    let base_trim = base.trim_end_matches('/').to_string();
+
+    // `/api/tags` — installed models
+    let tags_url = format!("{}/api/tags", base_trim);
+    let tags_resp = http
+        .get(&tags_url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let tags: TagsResponse = tags_resp.json().await.ok()?;
+    let models_available: Vec<String> =
+        tags.models.iter().map(|m| m.name.clone()).collect();
+
+    // `/api/ps` — currently-loaded models. Optional — a brand-new
+    // instance may not have anything loaded and returns an empty list.
+    let ps_url = format!("{}/api/ps", base_trim);
+    let models_loaded: Vec<String> = match http
+        .get(&ps_url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.json::<PsResponse>().await {
+            Ok(ps) => ps.models.into_iter().map(|m| m.name).collect(),
+            Err(_) => Vec::new(),
+        },
+        Err(_) => Vec::new(),
+    };
+
+    // Stone name: extract from the URL. Everything between `//` and
+    // the first `:` (port) — good enough for display purposes.
+    let stone_name = base_trim
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split(':')
+        .next()
+        .unwrap_or("unknown")
+        .to_string();
+
+    Some(InstanceEntry {
+        endpoint: base_trim,
+        stone_name,
+        health: InstanceHealth::Healthy,
+        models_available,
+        models_loaded,
+        queue_depth: 0,
+    })
+}
+
+/// Enrich one model with `/api/show` metadata. Called once per unique
+/// model name against the first reachable instance that hosts it.
+async fn enrich_model(http: &Client, endpoint: &str, model: &str) -> Option<ModelInfo> {
+    let show_url = format!("{}/api/show", endpoint.trim_end_matches('/'));
+    let show_resp = http
+        .post(&show_url)
+        .json(&json!({ "model": model }))
         .timeout(Duration::from_secs(10))
         .send()
         .await
+        .ok()?
+        .error_for_status()
         .ok()?;
-    let resp = resp.error_for_status().ok()?;
-    resp.json::<ShowResponse>().await.ok()
-}
+    let detail: ShowResponse = show_resp.json().await.ok()?;
 
-/// Translate the Ollama `/api/show` response into the orchestrator's
-/// canonical [`Model`] shape. Returns `Option<Model>` so callers can
-/// drop models that declare no recognised capability — they aren't
-/// reachable through any orchestrator primitive.
-fn model_from_show(
-    provider: &ProviderName,
-    name: String,
-    size_disk: u64,
-    detail: ShowResponse,
-) -> Option<Model> {
     let capabilities = detail.capabilities.unwrap_or_default();
-
-    // Map Ollama tags onto orchestrator primitives.
-    let mut primitives = Vec::new();
-    if capabilities.iter().any(|c| c == "completion") {
-        primitives.push(Primitive::TextChat);
-        // Image analyze is also "completion" plus "vision".
-        if capabilities.iter().any(|c| c == "vision") {
-            primitives.push(Primitive::ImageAnalyze);
-        }
-    }
-    if capabilities.iter().any(|c| c == "embedding") {
-        primitives.push(Primitive::TextEmbed);
-    }
-    if primitives.is_empty() {
-        // Unknown capability set — skip rather than guess.
-        tracing::debug!(
-            model = %name,
-            tags = ?capabilities,
-            "ollama: model has no recognised capability, skipping"
-        );
+    if capabilities.is_empty() {
         return None;
     }
 
-    // Pull parameter_count from model_info or fall back to parsing
-    // the parameter_size string ("7B" → 7_000_000_000).
+    // Parameter count from model_info first, then parameter_size.
     let parameter_count = detail
         .model_info
         .as_ref()
@@ -251,32 +372,26 @@ fn model_from_show(
                 .and_then(parse_parameter_size)
         });
 
-    // Pull context_length from the architecture-specific
-    // `<arch>.context_length` key in model_info. The architecture
-    // name is in `details.family`.
-    let context_length = detail
-        .model_info
-        .as_ref()
-        .and_then(|m| {
-            // Look for any *.context_length key.
-            m.iter()
-                .find(|(k, _)| k.ends_with(".context_length"))
-                .and_then(|(_, v)| v.as_u64())
-        });
+    // Context length from any `*.context_length` key in model_info.
+    let context_length = detail.model_info.as_ref().and_then(|m| {
+        m.iter()
+            .find(|(k, _)| k.ends_with(".context_length"))
+            .and_then(|(_, v)| v.as_u64())
+    });
 
-    Some(Model {
-        fqn: ModelFqn::new(provider, &name),
-        short_name: name,
-        primitives,
-        capability_tags: capabilities,
-        size_bytes: Some(size_disk),
-        context_length,
+    Some(ModelInfo {
+        name: model.to_string(),
+        capabilities,
         parameter_count,
+        context_length,
+        size_bytes: 0, // /api/show doesn't report it; /api/tags does
+                       // but we don't carry the number through here —
+                       // scoring doesn't use it.
     })
 }
 
 /// Parse Ollama's human-readable parameter-size string into a raw
-/// count (e.g. `"7B"` → `7_000_000_000`, `"1.5B"` → `1_500_000_000`,
+/// count (`"7B"` → `7_000_000_000`, `"1.5B"` → `1_500_000_000`,
 /// `"137M"` → `137_000_000`).
 fn parse_parameter_size(s: &str) -> Option<u64> {
     let s = s.trim();
@@ -293,16 +408,7 @@ fn parse_parameter_size(s: &str) -> Option<u64> {
     Some((n * mul as f64) as u64)
 }
 
-impl OllamaProvider {
-    /// Apply a fresh merged URL list from the garden discovery
-    /// subscriber and refresh the model catalog from `/api/tags`.
-    async fn apply_merged(&self, urls: Vec<String>) {
-        if !self.instances.set(urls) {
-            return;
-        }
-        self.refresh_models_from_pool().await;
-    }
-}
+// ── Discovery subscriber ─────────────────────────────────────
 
 fn spawn_subscriber(
     provider: Arc<OllamaProvider>,
@@ -317,14 +423,17 @@ fn spawn_subscriber(
                 _ = shutdown.cancelled() => break,
                 event = rx.recv() => {
                     let Some(event) = event else { break };
-                    let urls: Vec<String> = event.instances.into_iter().map(|i| i.url).collect();
+                    let urls: Vec<String> =
+                        event.instances.into_iter().map(|i| i.url).collect();
                     pool.set(&event.fqn, urls);
-                    provider.apply_merged(pool.flatten()).await;
+                    provider.rebuild_matrix(pool.flatten()).await;
                 }
             }
         }
     });
 }
+
+// ── Provider trait impl ──────────────────────────────────────
 
 #[async_trait]
 impl Provider for OllamaProvider {
@@ -333,6 +442,10 @@ impl Provider for OllamaProvider {
     }
 
     fn state(&self) -> Arc<ProviderState> {
+        // Legacy trait method. Ollama no longer contributes to the
+        // Directory aggregate; returning the stub offline state keeps
+        // the trait impl working until the Dispatcher cleanup in
+        // commit 13 retires `Provider::state` entirely.
         self.publisher.snapshot()
     }
 
@@ -344,10 +457,28 @@ impl Provider for OllamaProvider {
         &self,
         request: OrchestratorRequest,
     ) -> Result<ProviderOutcome, ProviderError> {
+        let selection = self.resolve_selection(&request).await?;
+        let model = selection.winner.model.clone();
+        let endpoint = selection.winner.instance.clone();
+
+        // Log the routing decision for observability. Commit 7c adds
+        // `dispatch.{id}.routed` to the bus; for now the tracing span
+        // carries the information.
+        tracing::debug!(
+            provider = %self.name_ref(),
+            request_id = %request.id,
+            model = %model,
+            instance = %endpoint,
+            stone = %selection.winner.stone_name,
+            score = selection.winner.score,
+            alternates = selection.alternates.len(),
+            "ollama resolved selection",
+        );
+
         match request.action.primitive {
-            Primitive::TextChat => self.do_chat(request).await,
-            Primitive::TextEmbed => self.do_embed(request).await,
-            Primitive::ImageAnalyze => self.do_analyze(request).await,
+            Primitive::TextChat => self.do_chat(request, &model, &endpoint).await,
+            Primitive::TextEmbed => self.do_embed(request, &model, &endpoint).await,
+            Primitive::ImageAnalyze => self.do_analyze(request, &model, &endpoint).await,
             other => Err(ProviderError::Unsupported(format!(
                 "ollama does not serve {}",
                 other.dotted()
@@ -356,18 +487,21 @@ impl Provider for OllamaProvider {
     }
 }
 
+// ── Wire-format dispatch ─────────────────────────────────────
+//
+// The helper methods below translate canonical orchestrator requests
+// into Ollama's wire format. They accept the resolved model and
+// endpoint as explicit parameters — unlike the ORCH-0028 version,
+// which read them from `request.resolved_model` and round-robined
+// via an InstancePool.
+
 impl OllamaProvider {
     async fn do_chat(
         &self,
         request: OrchestratorRequest,
+        model: &str,
+        base: &str,
     ) -> Result<ProviderOutcome, ProviderError> {
-        let model = request
-            .resolved_model
-            .as_ref()
-            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
-            .short_name
-            .clone();
-
         let stream_requested = request
             .payload
             .pointer("/text/stream")
@@ -382,7 +516,6 @@ impl OllamaProvider {
             "options": options,
             "stream": stream_requested,
         });
-        let base = self.pick()?;
         let endpoint = format!("{}/api/chat", base.trim_end_matches('/'));
 
         if stream_requested {
@@ -421,16 +554,10 @@ impl OllamaProvider {
         Ok(ProviderOutcome::Sync(out))
     }
 
-    /// Ollama's streaming chat emits newline-delimited JSON: each
-    /// line is a ChatResponse with `done: false` until the terminal
-    /// line with `done: true` and aggregate counters. This method
-    /// converts that byte stream into a
-    /// `BoxStream<Result<Output, ProviderError>>` of canonical
-    /// deltas.
     async fn do_chat_streaming(
         &self,
         endpoint: &str,
-        body: serde_json::Value,
+        body: Value,
     ) -> Result<ProviderOutcome, ProviderError> {
         use futures_util::StreamExt;
 
@@ -445,7 +572,6 @@ impl OllamaProvider {
 
         let byte_stream = resp.bytes_stream();
 
-        // Parse NDJSON into canonical Output deltas on the fly.
         let deltas = async_stream::stream! {
             let mut buffer: Vec<u8> = Vec::new();
             let mut byte_stream = byte_stream;
@@ -454,14 +580,10 @@ impl OllamaProvider {
                     Ok(bytes) => {
                         buffer.extend_from_slice(&bytes);
                         loop {
-                            let Some(nl) = buffer.iter().position(|b| *b == b'\n') else {
-                                break;
-                            };
+                            let Some(nl) = buffer.iter().position(|b| *b == b'\n') else { break };
                             let line: Vec<u8> = buffer.drain(..=nl).collect();
                             let trimmed = &line[..line.len() - 1];
-                            if trimmed.is_empty() {
-                                continue;
-                            }
+                            if trimmed.is_empty() { continue; }
                             match serde_json::from_slice::<ChatStreamChunk>(trimmed) {
                                 Ok(chunk) => {
                                     let mut out = Output::new();
@@ -489,9 +611,7 @@ impl OllamaProvider {
                                             out.set(&keys::timing::TOTAL_MS, t / 1_000_000);
                                         }
                                     }
-                                    if !out.is_empty() {
-                                        yield Ok(out);
-                                    }
+                                    if !out.is_empty() { yield Ok(out); }
                                 }
                                 Err(e) => {
                                     yield Err(ProviderError::Upstream(format!(
@@ -522,13 +642,9 @@ impl OllamaProvider {
     async fn do_embed(
         &self,
         request: OrchestratorRequest,
+        model: &str,
+        base: &str,
     ) -> Result<ProviderOutcome, ProviderError> {
-        let model = request
-            .resolved_model
-            .as_ref()
-            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
-            .short_name
-            .clone();
         let input = request
             .payload
             .pointer("/text/input")
@@ -551,7 +667,6 @@ impl OllamaProvider {
             "model": model,
             "input": inputs,
         });
-        let base = self.pick()?;
         let endpoint = format!("{}/api/embed", base.trim_end_matches('/'));
         let resp = self
             .http
@@ -580,16 +695,9 @@ impl OllamaProvider {
     async fn do_analyze(
         &self,
         request: OrchestratorRequest,
+        model: &str,
+        base: &str,
     ) -> Result<ProviderOutcome, ProviderError> {
-        // image.analyze uses Ollama's chat API with a vision model.
-        // The media resolver has already inlined base64 for image.source.
-        let model = request
-            .resolved_model
-            .as_ref()
-            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
-            .short_name
-            .clone();
-
         let image_base64 = request
             .payload
             .pointer("/image/source/base64")
@@ -620,7 +728,6 @@ impl OllamaProvider {
             ],
             "stream": false,
         });
-        let base = self.pick()?;
         let endpoint = format!("{}/api/chat", base.trim_end_matches('/'));
         let resp = self
             .http
@@ -647,78 +754,15 @@ impl OllamaProvider {
     }
 }
 
-// ── Registration builders ─────────────────────────────────────
-
-fn honored_text_chat_fields() -> Vec<HonoredField> {
-    vec![
-        HonoredField::new(keys::text::PROMPT_USER).required(),
-        HonoredField::new(keys::text::PROMPT_SYSTEM),
-        HonoredField::new(keys::text::PROMPT_PREVIOUS),
-        HonoredField::new(keys::text::TOKENS_MAX),
-        HonoredField::new(keys::text::SAMPLING_TEMPERATURE),
-        HonoredField::new(keys::text::SAMPLING_TOP_P),
-        HonoredField::new(keys::text::SAMPLING_TOP_K),
-        HonoredField::new(keys::text::SAMPLING_SEED),
-        HonoredField::new(keys::text::STOP_SEQUENCES),
-        HonoredField::new(keys::text::STREAM),
-    ]
-}
-
-fn build_chat_registration(provider: &ProviderName) -> Registration {
-    Registration {
-        id: RegistrationId::generate(),
-        provider: provider.clone(),
-        primitive: Primitive::TextChat,
-        strategy: RegistrationStrategy::Bare,
-        honored_fields: honored_text_chat_fields(),
-        media_inputs: Vec::new(),
-        media_outputs: Vec::new(),
-    }
-}
-
-fn build_embed_registration(provider: &ProviderName) -> Registration {
-    Registration {
-        id: RegistrationId::generate(),
-        provider: provider.clone(),
-        primitive: Primitive::TextEmbed,
-        strategy: RegistrationStrategy::Bare,
-        honored_fields: vec![HonoredField::new(keys::text::INPUT).required()],
-        media_inputs: Vec::new(),
-        media_outputs: Vec::new(),
-    }
-}
-
-fn build_analyze_registration(provider: &ProviderName) -> Registration {
-    Registration {
-        id: RegistrationId::generate(),
-        provider: provider.clone(),
-        primitive: Primitive::ImageAnalyze,
-        strategy: RegistrationStrategy::Bare,
-        honored_fields: vec![
-            HonoredField::new(keys::image::SOURCE).required(),
-            HonoredField::new(keys::text::PROMPT_USER),
-        ],
-        media_inputs: vec![MediaInputSpec {
-            field: keys::image::SOURCE,
-            delivery: MediaDelivery::Base64,
-            accepted_types: vec![
-                "image/png".to_string(),
-                "image/jpeg".to_string(),
-                "image/webp".to_string(),
-                "image/gif".to_string(),
-            ],
-            overlay: None,
-        }],
-        media_outputs: Vec::new(),
-    }
-}
-
-// ── Payload helpers ───────────────────────────────────────────
+// ── Payload helpers ──────────────────────────────────────────
 
 fn build_chat_messages(payload: &Value, _vision: bool) -> Result<Vec<Value>, ProviderError> {
     let mut messages: Vec<Value> = Vec::new();
 
-    if let Some(system) = payload.pointer("/text/prompt/system").and_then(|v| v.as_str()) {
+    if let Some(system) = payload
+        .pointer("/text/prompt/system")
+        .and_then(|v| v.as_str())
+    {
         messages.push(json!({"role": "system", "content": system}));
     }
 
@@ -754,16 +798,28 @@ fn build_options(payload: &Value) -> Value {
     {
         options.insert("temperature".to_string(), json!(t));
     }
-    if let Some(p) = payload.pointer("/text/sampling/top_p").and_then(|v| v.as_f64()) {
+    if let Some(p) = payload
+        .pointer("/text/sampling/top_p")
+        .and_then(|v| v.as_f64())
+    {
         options.insert("top_p".to_string(), json!(p));
     }
-    if let Some(k) = payload.pointer("/text/sampling/top_k").and_then(|v| v.as_i64()) {
+    if let Some(k) = payload
+        .pointer("/text/sampling/top_k")
+        .and_then(|v| v.as_i64())
+    {
         options.insert("top_k".to_string(), json!(k));
     }
-    if let Some(seed) = payload.pointer("/text/sampling/seed").and_then(|v| v.as_i64()) {
+    if let Some(seed) = payload
+        .pointer("/text/sampling/seed")
+        .and_then(|v| v.as_i64())
+    {
         options.insert("seed".to_string(), json!(seed));
     }
-    if let Some(max) = payload.pointer("/text/tokens/max").and_then(|v| v.as_i64()) {
+    if let Some(max) = payload
+        .pointer("/text/tokens/max")
+        .and_then(|v| v.as_i64())
+    {
         options.insert("num_predict".to_string(), json!(max));
     }
     if let Some(stops) = payload
@@ -775,7 +831,7 @@ fn build_options(payload: &Value) -> Value {
     Value::Object(options)
 }
 
-// ── Wire types ────────────────────────────────────────────────
+// ── Wire types ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct TagsResponse {
@@ -786,26 +842,27 @@ struct TagsResponse {
 struct TagsModel {
     name: String,
     #[serde(default)]
+    #[allow(dead_code)]
     size: u64,
 }
 
-/// Subset of the `/api/show` response that the orchestrator
-/// consumes. Ollama's full response is much larger; we only deser
-/// the fields the recommendation engine cares about.
+#[derive(Debug, Deserialize, Default)]
+struct PsResponse {
+    #[serde(default)]
+    models: Vec<PsModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PsModel {
+    name: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct ShowResponse {
-    /// Vendor-native capability tags: `"completion"`, `"embedding"`,
-    /// `"vision"`, `"tools"`, `"thinking"`. Maps to the
-    /// orchestrator's primitives and capability profile filters.
     #[serde(default)]
     capabilities: Option<Vec<String>>,
-    /// Model metadata key-value bag. Contains
-    /// `"general.parameter_count"` and architecture-specific keys
-    /// like `"qwen2.context_length"`.
     #[serde(default)]
-    model_info: Option<std::collections::HashMap<String, serde_json::Value>>,
-    /// Display details. Includes `parameter_size` ("7B"), `family`,
-    /// `quantization_level`.
+    model_info: Option<std::collections::HashMap<String, Value>>,
     #[serde(default)]
     details: Option<ShowDetails>,
 }
@@ -835,9 +892,6 @@ struct ChatMessage {
     content: String,
 }
 
-/// One NDJSON line from Ollama's streaming chat endpoint. Non-final
-/// chunks carry a partial `message.content`; the final chunk has
-/// `done: true` plus aggregate counters.
 #[derive(Debug, Deserialize)]
 struct ChatStreamChunk {
     #[serde(default)]
@@ -861,5 +915,35 @@ struct EmbedResponse {
     prompt_eval_count: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
-struct _PhantomSerialize;
+// ── Tests ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_parameter_size_common_forms() {
+        assert_eq!(parse_parameter_size("7B"), Some(7_000_000_000));
+        assert_eq!(parse_parameter_size("1.5B"), Some(1_500_000_000));
+        assert_eq!(parse_parameter_size("137M"), Some(137_000_000));
+        assert_eq!(parse_parameter_size("512K"), Some(512_000));
+        assert_eq!(parse_parameter_size("1000"), Some(1000));
+    }
+
+    #[test]
+    fn selection_error_mapping_preserves_intent() {
+        let err = selection_error_to_provider_error(SelectionError::NoHealthyInstances);
+        assert!(matches!(err, ProviderError::Unreachable(_)));
+
+        let err = selection_error_to_provider_error(SelectionError::NoEligibleModels {
+            capability: "completion",
+        });
+        assert!(matches!(err, ProviderError::Unsupported(_)));
+
+        let err = selection_error_to_provider_error(SelectionError::PinNotServable {
+            model: "llama3.1:8b".into(),
+            reason: "no healthy instance",
+        });
+        assert!(matches!(err, ProviderError::PinNotServable { .. }));
+    }
+}

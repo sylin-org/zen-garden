@@ -225,6 +225,7 @@ async fn main() -> Result<()> {
     let ollama = OllamaProvider::new(
         OllamaConfig::default(),
         discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     );
     let libretranslate = LibreTranslateProvider::new(

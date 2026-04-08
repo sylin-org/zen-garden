@@ -1,44 +1,50 @@
-//! Instance Manager — shared component for adapters with local
-//! instance pools (ORCH-0030 §4).
+//! Instance pool primitives — shared toolkit for adapters with
+//! local instance pools (ORCH-0030 §4, revised).
 //!
-//! This is the "airline" half of the airport/airline split: each
-//! adapter that has multiple instances (ComfyUI, Ollama, Whisper,
-//! Infinity, etc.) wraps an `InstanceManager<I>` to handle selection,
-//! health gating, queue depth, and resource claim coordination.
+//! **Scope: primitives only.** This module provides the mechanical
+//! pieces every adapter needs: a health-aware registry, per-instance
+//! concurrency limits (semaphores), atomic queue-depth counters, and
+//! an RAII `Selection` bundle that releases every resource atomically
+//! on drop.
 //!
-//! The dispatcher picks the *provider* (the airport); the adapter's
-//! Instance Manager picks the *instance* (which plane). This is the
-//! load-bearing layering that makes shared-GPU coordination work.
+//! **Out of scope: selection policy.** Scoring and ranking are
+//! adapter-owned, because every adapter has a different definition of
+//! "best instance":
 //!
-//! ## Default scheduling policy
+//! - Ollama ranks (model, instance) pairs using its capability matrix,
+//!   per-model benchmark verdicts, warmth (model loaded in VRAM),
+//!   parameter size for quality, and demand-based reservation.
+//! - ComfyUI ranks instances by which ones have the requested skill's
+//!   checkpoint + LoRAs already cached, plus VRAM headroom.
+//! - Cloud adapters have no instance pools at all and never use this
+//!   module.
 //!
-//! Least-loaded with pressure penalty: instances are ranked by
+//! The shared library therefore exposes a **toolkit** of primitives
+//! (not a `select()` method). Adapters compose:
 //!
-//! ```text
-//! score = queue_depth * QUEUE_WEIGHT + stone_pressure * PRESSURE_WEIGHT
-//! ```
+//! 1. `InstancePool::<I>` to hold their instances keyed by id
+//! 2. `ManagedInstance<I>` for per-instance permits + depth counters
+//! 3. `HealthFilter` to eliminate unhealthy instances from candidacy
+//! 4. `Selection<I>` RAII bundle combining (instance, claim guard,
+//!    semaphore permit, depth guard)
 //!
-//! where `stone_pressure` is read from [`Resources::pressure`]. The
-//! lowest-scoring instance wins; ties are broken by instance id
-//! (deterministic).
-//!
-//! Pluggable [`SchedulingPolicy`] is the extension point for priority,
-//! deadline, or affinity scheduling in future commits.
+//! Adapters write their own `select()` on top, making whatever
+//! decisions make sense for their domain. The pool primitives ensure
+//! the mechanical bits (release-on-drop, no double-counting) are
+//! correct by construction.
 
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
 use thiserror::Error;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore, TryAcquireError};
 
-use crate::domain::resources::{
-    ClaimError, ClaimGuard, ClaimHolder, ClaimKind, ComputeStack, Resources, ResourceRequest,
-    StoneName,
-};
+use crate::domain::resources::{ClaimGuard, ComputeStack, StoneName};
 
 // ── Identity ──────────────────────────────────────────────────
 
@@ -62,34 +68,54 @@ impl std::fmt::Display for InstanceId {
 
 // ── Health ────────────────────────────────────────────────────
 
+/// Health as observed by the adapter. Values correspond directly to
+/// the standalone Ollama orchestrator's `InstanceHealth`:
+/// - `Profiling`: discovery probe in progress; not routable yet.
+/// - `Healthy`: responding normally; routable.
+/// - `Unhealthy`: unreachable or erroring; **removed** from
+///   candidacy (not deprioritized).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Health {
+    Profiling,
     Healthy,
-    Degraded,
-    Offline,
+    Unhealthy,
+}
+
+impl Health {
+    pub fn is_routable(self) -> bool {
+        matches!(self, Self::Healthy)
+    }
 }
 
 // ── Capacity ──────────────────────────────────────────────────
 
+/// Per-instance capacity hints the adapter knows about.
+///
+/// This is a *shape* adapters can reuse for common fields; adapters
+/// with richer state (Ollama's model matrix, ComfyUI's skill cache)
+/// wrap this in their own struct.
 #[derive(Debug, Clone, Serialize)]
 pub struct Capacity {
-    /// Maximum concurrent in-flight requests this instance can handle.
+    /// Maximum concurrent in-flight requests for this instance.
     pub max_concurrent: u32,
-    /// Estimated VRAM footprint when running a typical workload.
-    /// `None` → adapter doesn't know; selection falls back to
-    /// unsized claims (which degrade to exclusive).
+    /// Typical VRAM footprint in MB. `None` → adapter can't estimate;
+    /// claims against this instance's stone will be unsized
+    /// (exclusive). Adapters that know their workload should always
+    /// provide an estimate (even a conservative one like
+    /// `total_vram_mb`).
     pub typical_vram_mb: Option<u64>,
-    /// The compute stack this instance requires (CUDA for ComfyUI,
-    /// CUDA/ROCm/Metal for Ollama, etc.).
+    /// Compute stack this instance requires. Used by the Resources
+    /// domain to filter claims against device capabilities.
     pub required_stack: ComputeStack,
 }
 
-// ── Instance trait ────────────────────────────────────────────
+// ── Instance runtime trait ────────────────────────────────────
 
-/// Adapter-specific runtime handle. Adapters implement this for
-/// their concrete instance type; the Instance Manager owns the
-/// selection logic on top of the trait.
+/// Adapter-specific runtime handle. Adapters implement this on their
+/// concrete instance type; the pool holds trait objects (via
+/// `Arc<I: InstanceRuntime>`) and exposes them back to the adapter's
+/// selector via `snapshot()`.
 #[async_trait]
 pub trait InstanceRuntime: Send + Sync + 'static {
     fn id(&self) -> &InstanceId;
@@ -100,29 +126,52 @@ pub trait InstanceRuntime: Send + Sync + 'static {
 
 // ── Managed instance ──────────────────────────────────────────
 
+/// An instance tracked by the pool. Wraps the adapter's runtime
+/// handle with a concurrency semaphore and an atomic queue-depth
+/// counter that the RAII `Selection` bundle decrements on drop.
 pub struct ManagedInstance<I: InstanceRuntime> {
     pub runtime: Arc<I>,
     pub semaphore: Arc<Semaphore>,
-    pub queue_depth: Arc<std::sync::atomic::AtomicU32>,
+    pub queue_depth: Arc<AtomicU32>,
 }
 
 impl<I: InstanceRuntime> ManagedInstance<I> {
-    pub fn current_queue_depth(&self) -> u32 {
-        self.queue_depth.load(std::sync::atomic::Ordering::Relaxed)
+    /// Current number of in-flight + queued permits not yet released.
+    /// This is the sum of live `Selection` bundles for this instance.
+    pub fn current_depth(&self) -> u32 {
+        self.queue_depth.load(Ordering::Relaxed)
+    }
+
+    /// How many permits are *immediately available* (i.e., could be
+    /// acquired without blocking). Adapters use this to pick idle
+    /// instances before busy ones in their ranking functions.
+    pub fn available_permits(&self) -> usize {
+        self.semaphore.available_permits()
     }
 }
 
-// ── Selection result ──────────────────────────────────────────
+// ── RAII selection bundle ─────────────────────────────────────
 
+/// The canonical result of a selection: the chosen instance plus
+/// every resource that must be released when the work completes.
+///
+/// `Selection` holds four things:
+/// 1. The adapter's runtime handle (`Arc<I>`) — for the caller to
+///    dispatch against.
+/// 2. A `ClaimGuard` against the Resources domain — released on
+///    drop via the Resources domain's claim lifecycle.
+/// 3. An `OwnedSemaphorePermit` — returns one concurrency slot to
+///    the instance on drop.
+/// 4. A `DepthGuard` — decrements the queue-depth counter on drop.
+///
+/// Dropping the `Selection` releases all four. Adapters that want
+/// synchronous release semantics can call `ClaimGuard::release_now`
+/// on `sel.claim` before drop, but the default drop path handles
+/// the normal case.
 pub struct Selection<I: InstanceRuntime> {
     pub instance: Arc<I>,
-    /// The resource claim placed on the instance's stone. Must be
-    /// held for the duration of the work; dropping releases it.
     pub claim: ClaimGuard,
-    /// Permit held against the instance's concurrency semaphore.
-    /// Dropped on completion.
-    pub _permit: tokio::sync::OwnedSemaphorePermit,
-    /// Queue depth tracker decrement guard. Dropped on completion.
+    pub _permit: OwnedSemaphorePermit,
     pub _depth_guard: DepthGuard,
 }
 
@@ -135,87 +184,69 @@ impl<I: InstanceRuntime> std::fmt::Debug for Selection<I> {
     }
 }
 
-/// RAII helper that decrements an instance's queue depth on drop.
+/// Decrements an instance's queue depth counter on drop. Paired
+/// with the increment that happens when a `Selection` is built.
 pub struct DepthGuard {
-    counter: Arc<std::sync::atomic::AtomicU32>,
+    counter: Arc<AtomicU32>,
+}
+
+impl DepthGuard {
+    pub(crate) fn new(counter: Arc<AtomicU32>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self { counter }
+    }
 }
 
 impl Drop for DepthGuard {
     fn drop(&mut self) {
-        self.counter
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.counter.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
-// ── Errors ────────────────────────────────────────────────────
+// ── Acquisition errors ────────────────────────────────────────
 
 #[derive(Debug, Error)]
-pub enum SelectError {
-    #[error("no healthy instances available")]
-    NoHealthyInstances,
-    #[error("all instances are saturated")]
-    AllInstancesSaturated,
-    #[error("resource claim failed: {0}")]
-    ResourceClaimFailed(#[from] ClaimError),
-    #[error("no instance can satisfy compute stack requirement")]
-    NoMatchingComputeStack,
+pub enum AcquireError {
+    #[error("instance `{0}` not found in pool")]
+    NotFound(String),
+    #[error("instance `{0}` is not healthy")]
+    NotHealthy(String),
+    #[error("instance `{0}` is saturated (no permits available)")]
+    Saturated(String),
 }
 
-// ── Scheduling policy ─────────────────────────────────────────
+// ── The pool ──────────────────────────────────────────────────
 
-const QUEUE_WEIGHT: f64 = 100.0;
-const PRESSURE_WEIGHT: f64 = 0.001; // pressure is in MB; needs scaling
-
-/// Score one instance against current load + pressure. Lower score
-/// is better. The default implementation is least-loaded with a
-/// VRAM-pressure penalty.
-pub trait SchedulingPolicy: Send + Sync + 'static {
-    fn score(&self, queue_depth: u32, stone_pressure_mb: u64) -> f64 {
-        (queue_depth as f64) * QUEUE_WEIGHT + (stone_pressure_mb as f64) * PRESSURE_WEIGHT
-    }
-}
-
-pub struct LeastLoadedWithPressure;
-impl SchedulingPolicy for LeastLoadedWithPressure {}
-
-// ── Instance Manager ──────────────────────────────────────────
-
-pub struct InstanceManager<I: InstanceRuntime> {
+/// A pool of managed instances. Pure registry + primitives; **no
+/// scoring or selection policy**. Adapters iterate over `snapshot()`
+/// to build their candidate set, rank it with their own logic, and
+/// call `try_acquire()` on the winner.
+pub struct InstancePool<I: InstanceRuntime> {
     instances: RwLock<HashMap<InstanceId, ManagedInstance<I>>>,
-    resources: Arc<Resources>,
-    policy: Box<dyn SchedulingPolicy>,
     adapter_name: String,
 }
 
-impl<I: InstanceRuntime> InstanceManager<I> {
-    pub fn new(adapter_name: impl Into<String>, resources: Arc<Resources>) -> Arc<Self> {
+impl<I: InstanceRuntime> InstancePool<I> {
+    pub fn new(adapter_name: impl Into<String>) -> Arc<Self> {
         Arc::new(Self {
             instances: RwLock::new(HashMap::new()),
-            resources,
-            policy: Box::new(LeastLoadedWithPressure),
             adapter_name: adapter_name.into(),
         })
     }
 
-    pub fn with_policy(
-        adapter_name: impl Into<String>,
-        resources: Arc<Resources>,
-        policy: Box<dyn SchedulingPolicy>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            instances: RwLock::new(HashMap::new()),
-            resources,
-            policy,
-            adapter_name: adapter_name.into(),
-        })
+    pub fn adapter_name(&self) -> &str {
+        &self.adapter_name
     }
 
-    /// Add a new instance to the pool.
+    /// Register a new instance. If one with the same id already
+    /// exists, it is replaced (including its permit count and
+    /// depth counter — the caller should ensure no live `Selection`
+    /// bundles reference the old instance).
     pub async fn register(&self, runtime: Arc<I>) {
         let id = runtime.id().clone();
-        let max = runtime.capacity().max_concurrent.max(1);
-        let semaphore = Arc::new(Semaphore::new(max as usize));
-        let queue_depth = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let max = runtime.capacity().max_concurrent.max(1) as usize;
+        let semaphore = Arc::new(Semaphore::new(max));
+        let queue_depth = Arc::new(AtomicU32::new(0));
         let mut state = self.instances.write().await;
         state.insert(
             id,
@@ -227,152 +258,136 @@ impl<I: InstanceRuntime> InstanceManager<I> {
         );
     }
 
-    /// Remove an instance from the pool.
+    /// Remove an instance from the pool. In-flight `Selection`s that
+    /// reference it are unaffected — they still hold their own
+    /// permit and depth counter clones — but no new acquisitions
+    /// will land on it.
     pub async fn unregister(&self, id: &InstanceId) {
         let mut state = self.instances.write().await;
         state.remove(id);
     }
 
-    /// Total number of registered instances (including unhealthy).
     pub async fn len(&self) -> usize {
-        let state = self.instances.read().await;
-        state.len()
+        self.instances.read().await.len()
     }
 
     pub async fn is_empty(&self) -> bool {
-        self.len().await == 0
+        self.instances.read().await.is_empty()
     }
 
-    /// Select the best instance for a request and place a resource
-    /// claim against the chosen instance's stone.
+    /// Snapshot the pool's current instances for ranking.
     ///
-    /// Returns a [`Selection`] holding:
-    /// - the chosen instance
-    /// - a [`ClaimGuard`] that releases the resource on drop
-    /// - a semaphore permit that returns capacity on drop
-    /// - a [`DepthGuard`] that decrements queue depth on drop
+    /// Returns cloned `Arc<I>` handles plus the semaphore and depth
+    /// counter needed to acquire a permit. Adapters walk this list,
+    /// filter by health (or any other criteria), score the survivors,
+    /// and call `try_acquire_instance()` on their chosen winner.
+    pub async fn snapshot(&self) -> Vec<PoolEntry<I>> {
+        let state = self.instances.read().await;
+        state
+            .iter()
+            .map(|(id, m)| PoolEntry {
+                id: id.clone(),
+                runtime: m.runtime.clone(),
+                semaphore: m.semaphore.clone(),
+                queue_depth: m.queue_depth.clone(),
+            })
+            .collect()
+    }
+
+    /// Snapshot filtered to healthy instances only. Common case for
+    /// most adapters.
+    pub async fn healthy_snapshot(&self) -> Vec<PoolEntry<I>> {
+        self.snapshot()
+            .await
+            .into_iter()
+            .filter(|e| e.runtime.health().is_routable())
+            .collect()
+    }
+}
+
+/// A snapshot of one pool entry returned from
+/// [`InstancePool::snapshot`]. Adapters hold these while ranking
+/// and then call [`PoolEntry::try_acquire`] on the winner to
+/// produce a [`Selection`].
+pub struct PoolEntry<I: InstanceRuntime> {
+    pub id: InstanceId,
+    pub runtime: Arc<I>,
+    pub semaphore: Arc<Semaphore>,
+    pub queue_depth: Arc<AtomicU32>,
+}
+
+impl<I: InstanceRuntime> PoolEntry<I> {
+    /// Try to acquire a concurrency permit on this instance. Does
+    /// not block. Returns `AcquireError::Saturated` if no permits
+    /// are available.
     ///
-    /// The caller dispatches against the selection's instance and
-    /// drops the selection on completion (success or failure).
-    pub async fn select(&self, _action: Option<&str>) -> Result<Selection<I>, SelectError> {
-        // 1. Filter to healthy instances
-        let candidates: Vec<(InstanceId, Arc<I>, Arc<Semaphore>, Arc<std::sync::atomic::AtomicU32>)> = {
-            let state = self.instances.read().await;
-            if state.is_empty() {
-                return Err(SelectError::NoHealthyInstances);
+    /// The caller is responsible for placing a `ClaimGuard` against
+    /// the Resources domain and assembling the full `Selection`
+    /// bundle. The pool only handles the semaphore + depth guard
+    /// halves because those are mechanical; the claim half requires
+    /// adapter-specific knowledge (which device, which VRAM size,
+    /// which compute stack).
+    pub fn try_acquire(&self) -> Result<AcquiredSlot<I>, AcquireError> {
+        if !self.runtime.health().is_routable() {
+            return Err(AcquireError::NotHealthy(self.id.as_str().to_string()));
+        }
+        let permit = match self.semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(TryAcquireError::NoPermits) => {
+                return Err(AcquireError::Saturated(self.id.as_str().to_string()))
             }
-            state
-                .iter()
-                .filter(|(_, m)| matches!(m.runtime.health(), Health::Healthy))
-                .map(|(id, m)| {
-                    (
-                        id.clone(),
-                        m.runtime.clone(),
-                        m.semaphore.clone(),
-                        m.queue_depth.clone(),
-                    )
-                })
-                .collect()
+            Err(TryAcquireError::Closed) => {
+                return Err(AcquireError::NotHealthy(self.id.as_str().to_string()))
+            }
         };
+        let depth_guard = DepthGuard::new(self.queue_depth.clone());
+        Ok(AcquiredSlot {
+            runtime: self.runtime.clone(),
+            permit,
+            depth_guard,
+        })
+    }
 
-        if candidates.is_empty() {
-            return Err(SelectError::NoHealthyInstances);
+    /// Current in-flight count for this instance.
+    pub fn current_depth(&self) -> u32 {
+        self.queue_depth.load(Ordering::Relaxed)
+    }
+
+    /// Permits currently available for immediate acquisition.
+    pub fn available_permits(&self) -> usize {
+        self.semaphore.available_permits()
+    }
+}
+
+/// Intermediate result of [`PoolEntry::try_acquire`]: the permit and
+/// depth guard are held, but no resource claim has been placed yet.
+/// The adapter completes the `Selection` by attaching its own
+/// `ClaimGuard` via [`AcquiredSlot::into_selection`].
+pub struct AcquiredSlot<I: InstanceRuntime> {
+    pub runtime: Arc<I>,
+    permit: OwnedSemaphorePermit,
+    depth_guard: DepthGuard,
+}
+
+impl<I: InstanceRuntime> std::fmt::Debug for AcquiredSlot<I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AcquiredSlot")
+            .field("instance", self.runtime.id())
+            .finish()
+    }
+}
+
+impl<I: InstanceRuntime> AcquiredSlot<I> {
+    /// Combine the pool-side slot with a resource `ClaimGuard`
+    /// produced by the adapter's call to `Resources::claim` to
+    /// yield the full `Selection` RAII bundle.
+    pub fn into_selection(self, claim: ClaimGuard) -> Selection<I> {
+        Selection {
+            instance: self.runtime,
+            claim,
+            _permit: self.permit,
+            _depth_guard: self.depth_guard,
         }
-
-        // 2. Score each candidate using the scheduling policy
-        let mut scored: Vec<(f64, InstanceId, Arc<I>, Arc<Semaphore>, Arc<std::sync::atomic::AtomicU32>)> =
-            Vec::with_capacity(candidates.len());
-        for (id, runtime, sem, depth_ctr) in candidates {
-            let depth = depth_ctr.load(std::sync::atomic::Ordering::Relaxed);
-            let pressure = self
-                .resources
-                .pressure(runtime.stone())
-                .await
-                .map(|p| {
-                    p.gpus
-                        .iter()
-                        .map(|g| g.committed_mb)
-                        .max()
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0);
-            let score = self.policy.score(depth, pressure);
-            scored.push((score, id, runtime, sem, depth_ctr));
-        }
-        scored.sort_by(|a, b| {
-            a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.1.as_str().cmp(b.1.as_str()))
-        });
-
-        // 3. Try to acquire a semaphore permit + place a claim, in
-        //    score order. The first instance that successfully
-        //    claims wins.
-        for (_score, id, runtime, sem, depth_ctr) in scored {
-            // Try to acquire a permit without blocking
-            let permit = match sem.clone().try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => continue, // saturated, try next
-            };
-
-            // Increment queue depth
-            depth_ctr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let depth_guard = DepthGuard {
-                counter: depth_ctr.clone(),
-            };
-
-            // Place a resource claim
-            let stone = runtime.stone().clone();
-            let cap = runtime.capacity();
-            let request = ResourceRequest::Gpu {
-                stone: stone.clone(),
-                device: 0, // first device; future commit picks the best device
-                vram_mb: cap.typical_vram_mb,
-                required_stack: cap.required_stack,
-            };
-            let claim = match self
-                .resources
-                .claim(
-                    ClaimHolder::new(self.adapter_name.clone(), id.as_str()),
-                    request,
-                    ClaimKind::Hard,
-                )
-                .await
-            {
-                Ok(g) => g,
-                Err(ClaimError::UnknownStone(_)) | Err(ClaimError::UnknownDevice { .. }) => {
-                    // Stone topology not yet hydrated for this
-                    // instance; the claim is best-effort. Proceed
-                    // without a guard so the instance still gets
-                    // dispatched. The Resources domain will track
-                    // it once topology lands.
-                    drop(permit);
-                    drop(depth_guard);
-                    continue;
-                }
-                Err(e) => {
-                    // Real conflict (capacity exhausted, exclusive
-                    // hold, wrong compute stack). Try the next
-                    // instance.
-                    drop(permit);
-                    drop(depth_guard);
-                    tracing::debug!(
-                        instance = %id,
-                        error = %e,
-                        "instance manager: claim rejected, trying next"
-                    );
-                    continue;
-                }
-            };
-
-            return Ok(Selection {
-                instance: runtime,
-                claim,
-                _permit: permit,
-                _depth_guard: depth_guard,
-            });
-        }
-
-        Err(SelectError::AllInstancesSaturated)
     }
 }
 
@@ -381,14 +396,15 @@ impl<I: InstanceRuntime> InstanceManager<I> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::events::EventBus;
-    use crate::domain::resources::{StoneTopology, TopologyGpu, GpuVendor};
+    use std::sync::atomic::AtomicBool;
 
+    // Synthetic runtime for exercising the primitives in isolation.
+    // No network, no adapters, no real hardware.
     struct TestRuntime {
         id: InstanceId,
         stone: StoneName,
         capacity: Capacity,
-        health: Health,
+        health: AtomicBool, // true=healthy, false=unhealthy
     }
 
     #[async_trait]
@@ -403,138 +419,192 @@ mod tests {
             &self.capacity
         }
         fn health(&self) -> Health {
-            self.health
+            if self.health.load(Ordering::Relaxed) {
+                Health::Healthy
+            } else {
+                Health::Unhealthy
+            }
         }
     }
 
-    fn instance(id: &str, stone: &str, vram: u64, health: Health) -> Arc<TestRuntime> {
+    fn runtime(id: &str, stone: &str, max: u32) -> Arc<TestRuntime> {
         Arc::new(TestRuntime {
             id: InstanceId::new(id),
             stone: StoneName::new(stone),
             capacity: Capacity {
-                max_concurrent: 4,
-                typical_vram_mb: Some(vram),
+                max_concurrent: max,
+                typical_vram_mb: Some(1024),
                 required_stack: ComputeStack::Cuda,
             },
-            health,
+            health: AtomicBool::new(true),
         })
     }
 
-    async fn setup_with_stones(
-        stones: &[(&str, GpuVendor, Vec<ComputeStack>, u64)],
-    ) -> (Arc<Resources>, Arc<InstanceManager<TestRuntime>>) {
-        let bus = EventBus::new();
-        let resources = Resources::new(bus);
-        for (name, vendor, stack, vram) in stones {
-            resources
-                .update_topology(
-                    StoneName::new(*name),
-                    StoneTopology {
-                        gpus: vec![TopologyGpu {
-                            index: 0,
-                            name: format!("{:?}", vendor),
-                            vendor: *vendor,
-                            compute_stack: stack.clone(),
-                            total_vram_mb: Some(*vram),
-                        }],
-                        memory_total_mb: Some(32768),
-                    },
-                )
-                .await;
-        }
-        let mgr = InstanceManager::new("test", resources.clone());
-        (resources, mgr)
+    #[tokio::test]
+    async fn empty_pool_is_empty() {
+        let pool: Arc<InstancePool<TestRuntime>> = InstancePool::new("test");
+        assert!(pool.is_empty().await);
+        assert_eq!(pool.len().await, 0);
+        assert!(pool.snapshot().await.is_empty());
+        assert!(pool.healthy_snapshot().await.is_empty());
     }
 
     #[tokio::test]
-    async fn empty_pool_returns_no_healthy() {
-        let (_, mgr) = setup_with_stones(&[]).await;
-        let err = mgr.select(None).await.unwrap_err();
-        assert!(matches!(err, SelectError::NoHealthyInstances));
+    async fn register_adds_instance_to_snapshot() {
+        let pool: Arc<InstancePool<TestRuntime>> = InstancePool::new("test");
+        pool.register(runtime("inst-a", "stone-a", 4)).await;
+        pool.register(runtime("inst-b", "stone-b", 4)).await;
+        assert_eq!(pool.len().await, 2);
+        let snap = pool.snapshot().await;
+        assert_eq!(snap.len(), 2);
+        let ids: Vec<&str> = snap.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"inst-a"));
+        assert!(ids.contains(&"inst-b"));
     }
 
     #[tokio::test]
-    async fn picks_only_healthy_instance() {
-        let (_, mgr) = setup_with_stones(&[
-            ("stone-a", GpuVendor::Nvidia, vec![ComputeStack::Cuda], 24576),
-            ("stone-b", GpuVendor::Nvidia, vec![ComputeStack::Cuda], 24576),
-        ])
-        .await;
-        mgr.register(instance("inst-a", "stone-a", 6144, Health::Offline)).await;
-        mgr.register(instance("inst-b", "stone-b", 6144, Health::Healthy)).await;
-        let sel = mgr.select(None).await.unwrap();
-        assert_eq!(sel.instance.id().as_str(), "inst-b");
+    async fn healthy_snapshot_filters_unhealthy() {
+        let pool: Arc<InstancePool<TestRuntime>> = InstancePool::new("test");
+        let good = runtime("inst-good", "stone-a", 4);
+        let bad = runtime("inst-bad", "stone-b", 4);
+        bad.health.store(false, Ordering::Relaxed);
+        pool.register(good).await;
+        pool.register(bad).await;
+        let all = pool.snapshot().await;
+        assert_eq!(all.len(), 2);
+        let healthy = pool.healthy_snapshot().await;
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0].id.as_str(), "inst-good");
     }
 
     #[tokio::test]
-    async fn picks_least_loaded_when_pressure_equal() {
-        let (_, mgr) = setup_with_stones(&[
-            ("stone-a", GpuVendor::Nvidia, vec![ComputeStack::Cuda], 24576),
-            ("stone-b", GpuVendor::Nvidia, vec![ComputeStack::Cuda], 24576),
-        ])
-        .await;
-        let inst_a = instance("inst-a", "stone-a", 6144, Health::Healthy);
-        let inst_b = instance("inst-b", "stone-b", 6144, Health::Healthy);
-        mgr.register(inst_a).await;
-        mgr.register(inst_b).await;
+    async fn try_acquire_respects_max_concurrent() {
+        let pool: Arc<InstancePool<TestRuntime>> = InstancePool::new("test");
+        pool.register(runtime("inst", "stone", 2)).await;
+        let snap = pool.snapshot().await;
+        let entry = &snap[0];
 
-        // First selection — both are tied at depth=0, ties broken
-        // by id alphabetically → picks inst-a
-        let sel1 = mgr.select(None).await.unwrap();
-        assert_eq!(sel1.instance.id().as_str(), "inst-a");
+        let s1 = entry.try_acquire().expect("first permit");
+        let s2 = entry.try_acquire().expect("second permit");
+        let err = entry.try_acquire().unwrap_err();
+        assert!(matches!(err, AcquireError::Saturated(_)));
+        assert_eq!(entry.current_depth(), 2);
+        assert_eq!(entry.available_permits(), 0);
 
-        // Second selection — inst-a now has depth=1, inst-b has 0
-        let sel2 = mgr.select(None).await.unwrap();
-        assert_eq!(sel2.instance.id().as_str(), "inst-b");
-    }
-
-    #[tokio::test]
-    async fn cuda_request_skips_amd_only_stone() {
-        let (_, mgr) = setup_with_stones(&[
-            ("stone-cuda", GpuVendor::Nvidia, vec![ComputeStack::Cuda], 24576),
-            ("stone-rocm", GpuVendor::Amd, vec![ComputeStack::Rocm], 16384),
-        ])
-        .await;
-        // Both healthy
-        mgr.register(instance("inst-cuda", "stone-cuda", 6144, Health::Healthy)).await;
-        mgr.register(instance("inst-rocm", "stone-rocm", 6144, Health::Healthy)).await;
-
-        // Selection requires CUDA. The AMD instance's claim will be
-        // rejected by Resources, so the manager picks the CUDA one.
-        let sel = mgr.select(None).await.unwrap();
-        assert_eq!(sel.instance.id().as_str(), "inst-cuda");
-    }
-
-    #[tokio::test]
-    async fn saturation_returns_all_saturated() {
-        let (_, mgr) = setup_with_stones(&[
-            ("stone-a", GpuVendor::Nvidia, vec![ComputeStack::Cuda], 24576),
-        ])
-        .await;
-        // One instance, max_concurrent=4
-        mgr.register(instance("inst-a", "stone-a", 1024, Health::Healthy)).await;
-
-        // Drain all 4 permits
-        let s1 = mgr.select(None).await.unwrap();
-        let s2 = mgr.select(None).await.unwrap();
-        let s3 = mgr.select(None).await.unwrap();
-        let s4 = mgr.select(None).await.unwrap();
-
-        // The 5th attempt should fail
-        let err = mgr.select(None).await.unwrap_err();
-        assert!(matches!(err, SelectError::AllInstancesSaturated));
-
-        // Drop one and verify recovery
+        // Release one and re-check
         drop(s1);
-        // Selection requires the resource claim release to land,
-        // which happens via tokio::spawn on Drop. Yield to give it
-        // a tick.
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        let _s5 = mgr.select(None).await.unwrap();
+        // Depth guard drop is synchronous (no tokio::spawn)
+        assert_eq!(entry.current_depth(), 1);
+        assert_eq!(entry.available_permits(), 1);
+        let _s3 = entry.try_acquire().expect("recovered permit");
 
         drop(s2);
-        drop(s3);
-        drop(s4);
+    }
+
+    #[tokio::test]
+    async fn try_acquire_rejects_unhealthy() {
+        let pool: Arc<InstancePool<TestRuntime>> = InstancePool::new("test");
+        let bad = runtime("inst-bad", "stone-b", 4);
+        bad.health.store(false, Ordering::Relaxed);
+        pool.register(bad).await;
+        let snap = pool.snapshot().await;
+        let err = snap[0].try_acquire().unwrap_err();
+        assert!(matches!(err, AcquireError::NotHealthy(_)));
+    }
+
+    #[tokio::test]
+    async fn depth_guard_decrements_on_drop() {
+        let counter = Arc::new(AtomicU32::new(0));
+        {
+            let _g1 = DepthGuard::new(counter.clone());
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+            {
+                let _g2 = DepthGuard::new(counter.clone());
+                assert_eq!(counter.load(Ordering::Relaxed), 2);
+            }
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    /// Two synthetic adapters (distinct pools) run concurrently
+    /// against overlapping stones — prove that independent pools
+    /// don't share state and both can acquire in parallel.
+    #[tokio::test]
+    async fn two_pools_operate_independently() {
+        let pool_a: Arc<InstancePool<TestRuntime>> = InstancePool::new("adapter-a");
+        let pool_b: Arc<InstancePool<TestRuntime>> = InstancePool::new("adapter-b");
+
+        pool_a.register(runtime("a-1", "stone-1", 2)).await;
+        pool_b.register(runtime("b-1", "stone-1", 2)).await;
+        pool_b.register(runtime("b-2", "stone-2", 2)).await;
+
+        // Saturate pool A's one instance
+        let snap_a = pool_a.snapshot().await;
+        let _a1 = snap_a[0].try_acquire().unwrap();
+        let _a2 = snap_a[0].try_acquire().unwrap();
+        assert!(matches!(
+            snap_a[0].try_acquire(),
+            Err(AcquireError::Saturated(_))
+        ));
+
+        // Pool B is unaffected — different pool, different semaphores
+        let snap_b = pool_b.snapshot().await;
+        assert_eq!(snap_b.len(), 2);
+        for entry in &snap_b {
+            let _ = entry.try_acquire().expect("pool B unaffected by pool A");
+        }
+    }
+
+    /// Parallel fanout: two adapters each processing two different
+    /// requests concurrently. Proves the pool primitives don't
+    /// introduce cross-adapter contention.
+    #[tokio::test]
+    async fn parallel_fanout_across_two_adapters() {
+        let pool_a: Arc<InstancePool<TestRuntime>> = InstancePool::new("adapter-a");
+        let pool_b: Arc<InstancePool<TestRuntime>> = InstancePool::new("adapter-b");
+
+        pool_a.register(runtime("a-1", "stone-1", 4)).await;
+        pool_b.register(runtime("b-1", "stone-1", 4)).await;
+
+        // Four concurrent acquisitions — two per pool
+        let pa = pool_a.clone();
+        let pb = pool_b.clone();
+        let h1 = tokio::spawn(async move {
+            let snap = pa.snapshot().await;
+            let slot = snap[0].try_acquire().unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            drop(slot);
+            "adapter-a request 1"
+        });
+        let pa = pool_a.clone();
+        let h2 = tokio::spawn(async move {
+            let snap = pa.snapshot().await;
+            let slot = snap[0].try_acquire().unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            drop(slot);
+            "adapter-a request 2"
+        });
+        let pb2 = pb.clone();
+        let h3 = tokio::spawn(async move {
+            let snap = pb2.snapshot().await;
+            let slot = snap[0].try_acquire().unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            drop(slot);
+            "adapter-b request 1"
+        });
+        let h4 = tokio::spawn(async move {
+            let snap = pb.snapshot().await;
+            let slot = snap[0].try_acquire().unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            drop(slot);
+            "adapter-b request 2"
+        });
+
+        let results = tokio::try_join!(h1, h2, h3, h4).expect("all tasks succeed");
+        assert_eq!(results.0, "adapter-a request 1");
+        assert_eq!(results.1, "adapter-a request 2");
+        assert_eq!(results.2, "adapter-b request 1");
+        assert_eq!(results.3, "adapter-b request 2");
     }
 }

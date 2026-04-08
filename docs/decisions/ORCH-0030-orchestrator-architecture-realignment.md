@@ -1094,6 +1094,215 @@ The suite produces human-readable failure output: when `expect_event_matching` f
 
 ---
 
+## Revision 2 — Capability Events and Adapter-Owned Resolution
+
+**Date**: 2026-04-08 (same day as initial ADR, after commits 0-5 landed)
+
+This revision records design changes discovered during implementation. Commits 0-4 landed under the original plan; commit 5 was landed then partially reverted after a live integration test exposed an architectural mistake in how the Instance Manager was scoped. The sections below supersede the corresponding parts of §3-§6 and §11 of the original ADR, and restate the implementation plan.
+
+### R2.1 — Discoveries during implementation
+
+**The parallel_smoke integration test revealed a recommendation bug.** Firing ten concurrent `recommended:chat` requests at the live Docker image resulted in eight 502s with the payload `model 'qwen3.5:35b-a3b' not found`. The central recommendation engine was ranking models by static metadata (size, benchmark scores) without consulting which models the Ollama instances actually had loaded. A phantom-model recommendation is an artifact of the two-layer split being wrong: the *central* engine should not be making model-level decisions because only the adapter knows what each of its instances currently serves.
+
+This is not a bug fix, it is an **architectural correction**. The central recommendation engine must only rank *providers*. Model-level selection is strictly adapter-local, resolved against live state at dispatch time.
+
+**The Instance Manager as originally scoped encoded a scoring policy.** The first pass shipped `InstanceManager<I>` with a built-in `LeastLoadedWithPressure` policy and a `select()` method that made ranking decisions inside a generic library. This conflates primitives with policy. Every adapter has a different definition of "best instance" — Ollama wants warmth-aware ranking with demand-based reservation; ComfyUI wants checkpoint-cache presence; cloud adapters have no instances at all. The shared library must only provide **mechanical primitives**; scoring is adapter-owned.
+
+**Test layering was confused.** The parallel_smoke integration test was trying to assert provider-correctness (an 80% success rate against real providers) when its only honest job is to prove orchestrator concurrency. Parallel dispatch should be proven by **unit tests with synthetic adapters**, in-process, no network. Integration tests against a live garden should log provider success rates as observability, not assert them.
+
+**Patterns harvested from the standalone Ollama orchestrator (`src/orchestrators/ollama/`).** The existing mature codebase encodes ideas that our new adapter should adopt:
+
+- The **capability matrix is the cross-product of instance state × model metadata × benchmark fitness**. The adapter holds all three and rebuilds incrementally as discovery events land.
+- **Recommendation is layered scoring with explicit reasoning**: Layer 0 availability (floor), Layer 1 fitness (best-stone verdict + TPS bonus + cold-start penalty), Layer 2 context window bonus (per-capability cap), Layer 3 quality bonus by parameter count (per-capability cap), Layer 4 name affinity bonus (purpose-built model detection).
+- **Routing is performance-first with demand-based reservation**: sort candidates by fitness/VRAM/queue-depth for throughput; activate a reservation mode when recent traffic exclusively needs high-tier stones, keeping them free for the work that only they can serve.
+- **Blocked is a hard filter, not a deprioritization**: a model that errors on a stone is removed from candidacy on that stone, never "maybe routed as a last resort."
+- **Health is binary routable/not**: unhealthy instances are *removed* from the candidate set, not scored low.
+- **Availability bonuses favor loaded models**: a cold pull is more expensive than a warm model at the same quality tier, so warmth deserves a non-trivial score bonus.
+
+Five improvements over the standalone pattern:
+1. **Pin-but-not-eligible returns an error**, not silent drop. A caller who pinned a specific model deserves to know their pin was dropped.
+2. **Capability taxonomy lives in the canonical vocabulary**, not in adapter hardcode. Adapters translate from canonical to vendor tags at the boundary.
+3. **Benchmark data feeds through the bus** as `benchmark.updated` events, so dashboards and other observers don't couple to adapter internals.
+4. **Reasoning traces live on `dispatch.{id}.routed` events**, so "why did this request land where it did?" is answerable without a database query.
+5. **Compute-stack filtering** (§2.8 of this ADR) is in the Resources domain, not per-adapter — the AMD/NVIDIA distinction is a single authority.
+
+### R2.2 — Corrected architecture: capability events
+
+The fundamental correction: **adapters announce their capabilities via events on the bus, and the Directory is a subscriber to those events.** The Directory never infers capabilities from static configuration.
+
+#### R2.2.1 — Bottom-up startup
+
+1. **Adapter construction** — each adapter is instantiated with the list of stones it manages (from garden discovery) and its own configuration.
+2. **Instance probing** — the adapter opens connections to its instances and queries their state (models installed, models loaded, hardware details).
+3. **Capability matrix construction** — the adapter builds an *internal* matrix of what it can serve. This matrix is adapter-private: it may contain instance-level detail (which stone has which model warm), benchmark results, pressure readings, warmth tracking, etc.
+4. **Capability announcement** — the adapter publishes a single event to the bus:
+   ```
+   topic:   directory.provider.{name}.capabilities
+   payload: {
+     "provider": "ollama",
+     "enabled":  true,
+     "capabilities": [
+       { "primitive": "text.chat",  "variant": "llama3.1:8b" },
+       { "primitive": "text.chat",  "variant": "qwen2.5:7b" },
+       { "primitive": "text.embed", "variant": "nomic-embed-text" }
+     ]
+   }
+   ```
+   The payload is a **full snapshot**, not a delta. The adapter publishes whenever its internal capability set changes, for any reason (instance probe result, health flap, operator toggle, model pulled, model evicted). Upstream only ever sees `(provider, primitive, variant)` tuples — **no stones, no VRAM numbers, no ready flags**. Instance-level detail is adapter-private.
+5. **Directory subscribes** — a `DirectorySubscriber` task reads `directory.provider.*.capabilities` events and rebuilds the Directory's view of the provider wholesale on each announcement. The Directory is a pure downstream consumer; it holds no authoritative state of its own about what providers can do.
+6. **Eventually consistent ready state** — requests arriving before any adapter announces get `503 no_providers_for_primitive`. The orchestrator's `/health` returns `ok` from boot; the living garden fills in capabilities as adapters probe.
+
+#### R2.2.2 — Dispatch flow under capability events
+
+1. **Caller sends** `POST /v1/text/chat` with `model: "recommended:chat"` (or omitted, in which case the Contextualizer injects the default).
+2. **Dispatcher queries Directory**: "which providers declare capability `(text.chat, *)`?" Returns `[ollama, anthropic]`.
+3. **Dispatcher ranks providers** by locality (local=0, cloud=-10 default) and preferences. Ollama wins in the default configuration.
+4. **Dispatcher hands off to Ollama adapter** with the original `ProviderRequest` unchanged — `selectors.model = "recommended:chat"` stays intact.
+5. **Ollama adapter resolves `recommended:chat` locally**:
+   - Consults its capability matrix for chat-capable models.
+   - For each candidate model, checks instance availability and warmth.
+   - Reads stone pressure from the Resources domain.
+   - Ranks `(model, instance)` pairs using layered scoring (availability → fitness → context → quality → affinity).
+   - Picks the top pair. Acquires a concurrency permit from its `InstancePool`. Places a resource claim. Assembles a `Selection`.
+   - Dispatches.
+6. **Dispatcher emits** `dispatch.{id}.routed` with the full reasoning trace (which provider, which instance, which model, why).
+7. **Result returns** through the dispatcher to the caller.
+
+#### R2.2.3 — Pinning semantics
+
+When the caller sends `model: "llama3.1:8b"` (a concrete variant, not `recommended:*`):
+
+1. **Dispatcher queries Directory**: "which providers declare `(text.chat, llama3.1:8b)`?" Only Ollama (the variant is registered as part of its capability set).
+2. **Dispatcher hands off to Ollama adapter** with the pin intact.
+3. **Ollama adapter honors the pin**: looks up which of its instances actually serve `llama3.1:8b`. If one is available, dispatches. If all are busy, queues. If none serve the model (a race with a hot capability change), returns `PinNotServable { model, reason }`.
+4. **Other instances are not considered**, even if they have compatible hardware. The operator's pin is first-class: if they explicitly want `llama3.1:8b`, they did not want a substitute. If the same model is loaded on stone-02, the adapter's capability matrix reflects that and stone-02 becomes eligible automatically — no configuration, no policy change.
+
+This preserves operator intent as a hard contract.
+
+#### R2.2.4 — Hot changes
+
+Every internal event in the adapter (instance health change, model pulled, model evicted, operator toggle) triggers a recompute of the capability matrix. When the matrix changes in any observable way, the adapter republishes its full capability snapshot. The Directory subscriber replaces its view of the provider wholesale.
+
+There is **no scheduled republish path**. Event-driven is the only path. Scheduled republication would be a safety net for a class of bugs that shouldn't exist — if the adapter's internal model is wrong, scheduled republish won't fix it.
+
+#### R2.2.5 — Skills aggregate retirement
+
+The `Skills` aggregate becomes redundant under capability events. ComfyUI's adapter does the same thing Ollama's does: loads skills at startup, probes instances for readiness, publishes capability events with each skill as a variant (`image.generate/flux`, `image.generate/tron`). A skill is architecturally indistinguishable from an Ollama model — both are `(provider, primitive, variant)` tuples.
+
+The `Skills` aggregate, its `watch::channel`, and its parallel wiring through `AppState` are deleted as part of the ComfyUI adapter rewrite. `GET /v1/skills` (the noun surface from commit 2) stays on the wire but is rewired to read from the Directory with a `provider=comfyui` filter. The skill import flow (commit 3) continues to return `202 + Location`; what changes is that the post-import registration publishes a capability event instead of directly mutating the Skills aggregate.
+
+### R2.3 — Instance Manager correction
+
+**`InstanceManager<I>` is renamed `InstancePool<I>` and demoted to pure primitives.** The generic library provides:
+
+- **Registry** — per-adapter `HashMap<InstanceId, ManagedInstance<I>>` behind `RwLock`.
+- **Per-instance primitives** — one `Arc<Semaphore>` + one `AtomicU32` queue-depth counter per instance.
+- **Health filter** — `healthy_snapshot()` returns only routable instances.
+- **`PoolEntry::try_acquire()`** — non-blocking permit acquisition with a `DepthGuard` auto-increment.
+- **`AcquiredSlot::into_selection()`** — completes the RAII bundle by attaching an adapter-placed `ClaimGuard`.
+- **`Selection<I>` RAII bundle** — `(runtime, claim, permit, depth_guard)` all released atomically on drop.
+
+**Out of scope for the library:**
+- Scoring. Every adapter writes its own ranking function.
+- Candidate ordering. Adapters iterate over `snapshot()` and decide the order.
+- Claim placement. The adapter knows which device, which VRAM size, which compute stack — the library cannot guess.
+
+The split makes the library smaller, the adapter code more explicit, and unit testability crystal clear: the pool primitives are tested with synthetic runtimes in isolation; the adapter's scoring is tested independently with fake capability matrices.
+
+### R2.4 — Test layering
+
+Three distinct layers, each with a distinct job:
+
+**Unit tests (in-process, no network, no live providers).**
+- Prove the **orchestrator's internal logic** handles concurrent work correctly.
+- Synthetic adapters, synthetic instances, synthetic capability matrices.
+- Examples landed: `two_pools_operate_independently` (two synthetic adapter pools, no cross-contention); `parallel_fanout_across_two_adapters` (four concurrent acquisitions across two pools completing in parallel); the 14 Resources domain tests exercising the hybrid claim model; the 14 event bus tests exercising glob matching and replay.
+- Every test runs under `cargo test --lib` in <100ms total.
+
+**Integration tests (live orchestrator, HTTP boundary, real stones).**
+- Prove **module-to-module communication** works against a running system.
+- Speak HTTP; never reach into `AppState` directly.
+- Skip gracefully when the orchestrator is unreachable (`GardenHandle::probe_or_skip`).
+- Assertions about *orchestrator* behavior (routes exist, envelopes have the right shape, events reach subscribers, SSE resume works). Provider-success assertions are **observability** — logged, not asserted.
+- Examples landed: `events_stream.rs`, `skills_nouns.rs`, `skill_events.rs`, `resources_endpoint.rs`, `parallel_smoke.rs` (with corrected soft assertions).
+
+**Live acceptance tests (the reference garden).**
+- Cover the scenarios from §11 of this ADR: the AMD/NVIDIA coverage matrix, the shared-GPU composition test, the spillover test.
+- Require the reference garden to be running with real hardware.
+- Document the *intent* of the architecture; they fail hard when architecture breaks.
+
+The reference garden test suite structure from §11 stands; its *authoring* is gated on commits 6-10 landing (the Ollama adapter rewrite is a prerequisite for most of it).
+
+### R2.5 — Revised commit plan (supersedes §Implementation Plan)
+
+The ten-commit plan in §Implementation Plan is revised to thirteen commits, reflecting the capability-events-first architecture. Commits 0-4 stand as landed. Commit 5 (Instance Manager) is demoted and rewritten. Commits 6-13 are new/renumbered.
+
+| # | Status | Summary |
+|---|--------|---------|
+| 0 | landed 5effb237 | Docker harness, compose.test.yaml, garden_probe, parallel_smoke scaffolding |
+| 1 | landed 5effb237 | Event bus + `/v1/events` + retired `/v1/catalog/events` |
+| 2 | landed a320c656 | Skill noun surface (GET/GET/DELETE) |
+| 3 | landed 2f9f4836 | Skill events on bus + 202+Location import + post-import aggregate registration |
+| 4 | landed 539d0b46 | Resources domain (hybrid sized/unsized claims, compute-stack filter) |
+| 5 | landed a2e34d21 then partially reverted | **Instance Pool primitives only**. Scoring/ranking stripped; `InstancePool<I>` is pure mechanical primitives. 8 unit tests exercise the pool in isolation. |
+| 6 | next | **Capability event contract + DirectorySubscriber**. Typed payload, publish helper, subscriber task that rebuilds Directory provider view on each announcement. In-process tests with fake announcements. Dispatcher queries Directory by primitive only. |
+| 7 | pending | **Ollama adapter rewrite**. Instance probing, capability matrix, layered-scoring local resolver (`OllamaSelector`), capability event publishing. Ollama becomes the reference implementation of the new adapter pattern. |
+| 8 | pending | **ComfyUI adapter rewrite + Skills aggregate retirement**. ComfyUI adapter publishes capability events with skills as variants. `Skills` aggregate deleted from `AppState`. `GET /v1/skills` rewired to Directory query. Post-import flow emits capability event. |
+| 9 | pending | **Remaining local adapters** (WhisperCpp, Kokoro, OpenedaiSpeech, Speaches, Infinity, Docling, LibreTranslate) ported to capability-event pattern. These are smaller — typically one model per instance. |
+| 10 | pending | **Cloud adapters** (Anthropic, OpenAI, Google) publish capability events representing their advertised model catalogs. No `InstancePool`; capability events are authored from static configuration + health checks. |
+| 11 | pending | **`/v1/do` flow composition**. DAG parser, placeholder resolver, step-level event emission on the bus. |
+| 12 | pending | **Preferences as globals**. `GET/PUT /v1/preferences`, layered at catalog render and dispatcher contextualization, `preferences.changed` events. |
+| 13 | pending | **Dispatcher cleanup**. Dispatcher becomes a thin provider-level router. The old central recommendation engine is either deleted or reshaped into a provider-level advisor (inputs: preferences + provider health; output: ordered provider list). Never touches models or instances. |
+
+**Each commit stands on its own** — the system runs end-to-end after each. Where a commit changes the behavior of a previous commit (e.g., commit 8 rewires the skill noun surface), integration tests are updated in the same commit so the suite stays green.
+
+**Deliverable discipline (carried forward):**
+- No TODOs in committed code. If a piece of functionality is not ready, it is not on the wire.
+- No shims or fake implementations. The Resources domain `ComputeStack` filter is real; the pool primitives are real; the capability event subscriber is real. Stubs that "look right" but don't work are forbidden.
+- Every commit has unit tests for its domain logic AND integration tests for its HTTP surface (where applicable).
+- DDD: each commit extends exactly one bounded context (events bus, Resources, InstancePool, adapter internals, Directory, etc.). SoC: when a commit touches code across contexts, the dependency direction is one-way (inner depends on outer is forbidden).
+
+### R2.6 — DDD and Separation of Concerns (load-bearing design invariants)
+
+The corrections above clarify boundaries that were soft in the original ADR. Restating them as hard invariants:
+
+**1. The Directory is a subscriber, not an authority.**
+It holds a *view* of what providers announce. It never infers, caches, or retains capabilities beyond what the most recent capability event declared. Rebuilding on each announcement is cheap because the data is small.
+
+**2. Instance-level state is adapter-private.**
+No event on the bus carries stone names, VRAM numbers, or loaded-model lists. If a dashboard wants to show instance-level detail, it queries the adapter via an adapter-specific REST endpoint that the adapter chooses to expose. The default answer is "no" — the dispatcher layer doesn't need to know.
+
+**3. The Resources domain is the single authority for physical contention.**
+Compute-stack capability filtering lives there, not in adapters. Adapters pass `required_stack` in their `ResourceRequest`; the domain decides whether the claim lands. If the adapter cheated (claimed CUDA on an AMD stone), the domain catches it.
+
+**4. The InstancePool is a toolkit, not a framework.**
+It provides primitives (semaphore, depth counter, RAII bundle). Adapters compose. Scoring, ranking, pinning, warmth-tracking, demand-reservation — all adapter-owned.
+
+**5. Event topics mirror URL paths.**
+`directory.provider.ollama.capabilities` mirrors `/v1/directory/provider/ollama/capabilities` (even though the latter URL doesn't exist — it could, and the topic grammar reserves the namespace). A client that knows how to ask for state knows how to subscribe to its transitions.
+
+**6. The bus carries transitions, REST carries state.**
+One documented exception: `resources.stone.{name}.snapshot` (the on-subscribe synthetic event for dashboard gauges). No other topic family gets a snapshot exception.
+
+**7. Error classes are first-class.**
+`ClaimError::UnsupportedComputeStack` carries what the adapter *tried* and what the device *has*. `PinNotServable` carries the model name and the reason. Every error payload tells the caller what the orchestrator tried to do and why it couldn't — never a bare 500 or a stringly-typed "error".
+
+**8. No silent drops.**
+A request that cannot be served fails loudly with a typed error. A pinned model that isn't eligible returns `PinNotServable`, not silent ignore. A capability event with an unknown primitive is rejected, not absorbed. A claim that would exceed VRAM is rejected with `available_mb` so the caller knows what would fit.
+
+These invariants are enforced by code, not convention: typed error enums, typed events, typed capability payloads. Tests verify each invariant with an explicit fail-loud expectation.
+
+### R2.7 — What this revision does NOT change
+
+- **§1 Event bus** — unchanged. The design is sound; commits 0-1 landed cleanly.
+- **§2 Resources domain** — unchanged. The hybrid sized/unsized model is correct as originally specified. Commit 4 landed the full implementation including compute-stack filtering.
+- **§7 `/v1/do` flows** — unchanged. The composition point stays `/v1/do`; the flow DAG parser lands in commit 11.
+- **§8 Preferences as globals** — unchanged. Commit 12.
+- **§9 Trace IDs** — unchanged. The `X-Zen-Trace-Id` header + `dispatch.{id}.completed` event land as part of commit 7 (Ollama rewrite).
+- **§11 Reference garden test suite** — unchanged in intent. Authoring gated on commits 6-10.
+
+---
+
 ## Related ADRs
 
 - **ORCH-0011** — recommended model monikers. Elevated from opt-in to default interpretation of unfilled selectors.

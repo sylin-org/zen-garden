@@ -27,6 +27,7 @@ pub mod directory_maintenance;
 pub mod dispatcher;
 pub mod garden_discovery;
 pub mod idempotency_store;
+pub mod instance_manager;
 pub mod job_store;
 pub mod media_resolver;
 pub mod media_store;

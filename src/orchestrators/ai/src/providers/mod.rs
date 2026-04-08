@@ -17,6 +17,7 @@ pub mod infinity;
 pub mod kokoro;
 pub mod libretranslate;
 pub mod ollama;
+pub mod ollama_matrix;
 pub mod openai;
 pub mod openai_compat_stt;
 pub mod openai_compat_tts;

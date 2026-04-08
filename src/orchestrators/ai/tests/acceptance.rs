@@ -329,6 +329,10 @@ fn clone_provider_error(err: &ProviderError) -> ProviderError {
         ProviderError::Upstream(s) => ProviderError::Upstream(s.clone()),
         ProviderError::Unsupported(s) => ProviderError::Unsupported(s.clone()),
         ProviderError::Internal(s) => ProviderError::Internal(s.clone()),
+        ProviderError::PinNotServable { model, reason } => ProviderError::PinNotServable {
+            model: model.clone(),
+            reason: reason.clone(),
+        },
     }
 }
 

@@ -14,6 +14,7 @@ use crate::domain::vocabulary::VocabularyRegistry;
 use crate::services::catalog_builder::CatalogBuilder;
 use crate::services::directory_subscriber::CapabilityDirectory;
 use crate::services::dispatcher::Dispatcher;
+use crate::services::provider_registry::ProviderRegistry;
 use crate::services::recommendation::RecommendationEngine;
 use crate::services::skills::{ProvisioningQueue, Skills};
 
@@ -53,4 +54,11 @@ pub struct AppState {
     /// Empty until adapters start publishing capability events
     /// (commits 7+).
     pub capability_directory: Arc<CapabilityDirectory>,
+    /// Provider registry (ORCH-0030 R2 M1) — process-internal
+    /// `name → Arc<dyn Provider>` lookup. Populated at startup with
+    /// every constructed adapter handle. **Nothing reads from this
+    /// in M1**; the dispatcher continues to look up providers via
+    /// the legacy `Directory` aggregate. The atomic switchover
+    /// happens in M3 (the trait switch milestone).
+    pub provider_registry: Arc<ProviderRegistry>,
 }

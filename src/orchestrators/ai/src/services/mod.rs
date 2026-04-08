@@ -32,6 +32,7 @@ pub mod instance_manager;
 pub mod job_store;
 pub mod media_resolver;
 pub mod media_store;
+pub mod provider_registry;
 pub mod recommendation;
 pub mod skills;
 pub mod vocab_drift;

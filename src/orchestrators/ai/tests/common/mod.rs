@@ -303,6 +303,9 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
     let directory_subscriber =
         DirectorySubscriber::new(capability_directory.clone(), events.clone());
 
+    let provider_registry =
+        zen_garden_ai_orchestrator::services::provider_registry::ProviderRegistry::new();
+
     let state = AppState {
         directory: directory.clone(),
         vocabularies,
@@ -318,6 +321,7 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
         events,
         resources,
         capability_directory: capability_directory.clone(),
+        provider_registry,
     };
 
     Fixture {

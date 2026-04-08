@@ -64,6 +64,7 @@ use zen_garden_ai_orchestrator::{
         job_store::DiskJobStore,
         media_resolver::MediaResolver,
         media_store::DiskMediaStore,
+        provider_registry::ProviderRegistry,
         recommendation::{DemandLedger, PinRegistry, RecommendationEngine},
     },
 };
@@ -324,6 +325,12 @@ async fn main() -> Result<()> {
         events.clone(),
     );
 
+    // ── Provider registry (ORCH-0030 R2 M1, additive) ───────────
+    // Constructed empty here. Adapters will be registered into it
+    // alongside their legacy `Directory::register` call once the
+    // M3 trait switch happens; for M1 nothing reads from it.
+    let provider_registry = ProviderRegistry::new();
+
     // ── Shared AppState ─────────────────────────────────────────
     let state = AppState {
         directory: directory.clone(),
@@ -340,6 +347,7 @@ async fn main() -> Result<()> {
         events: events.clone(),
         resources: resources.clone(),
         capability_directory: capability_directory.clone(),
+        provider_registry: provider_registry.clone(),
     };
 
     // ── Background tasks ────────────────────────────────────────

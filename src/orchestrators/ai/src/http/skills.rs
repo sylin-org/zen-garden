@@ -1,6 +1,6 @@
-//! HTTP endpoints for the skill subsystem (ORCH-0029 Phase 3).
+//! HTTP endpoints for the skill subsystem (ORCH-0029 + ORCH-0030 §3).
 //!
-//! Currently exposes the import endpoint:
+//! Endpoints:
 //!
 //! - `POST /v1/skills/{provider}/import` — accept either a JSON body
 //!   with `{ "input": "<text>" }` or raw bytes (PNG upload with
@@ -9,11 +9,19 @@
 //!   models → write draft), then fires AI naming asynchronously if
 //!   a chat provider is available. Returns the full `AnalyzeResult`.
 //!
-//! Later phases add: skill CRUD (list/get/upsert/delete), workflow
-//! file editing, manual AI rename.
+//! - `GET /v1/skills` — list every loaded skill, optionally filtered
+//!   by provider or primitive query parameter.
+//!
+//! - `GET /v1/skills/{moniker}` — inspect a single skill by moniker.
+//!
+//! - `DELETE /v1/skills/{moniker}` — remove a loaded skill (drops
+//!   it from the aggregate; on-disk removal is left to a future
+//!   commit because the disk path includes the provider segment).
+
+use std::collections::HashMap;
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -21,9 +29,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::app_state::AppState;
+use crate::domain::ids::ProviderName;
+use crate::domain::moniker::Moniker;
+use crate::domain::primitive::Primitive;
 use crate::services::skills::import::{
     analyze, draft_builder, model_resolve, namer,
 };
+use crate::services::skills::registry::SkillKey;
 
 /// Request body for the JSON variant of `POST /v1/skills/{provider}/import`.
 #[derive(Debug, Deserialize)]
@@ -229,4 +241,219 @@ fn bail(status: StatusCode, code: &str, message: String) -> Response {
         }
     });
     (status, Json(body)).into_response()
+}
+
+// ── Skill noun surface (ORCH-0030 §3) ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ListSkillsQuery {
+    pub provider: Option<String>,
+    pub primitive: Option<String>,
+}
+
+/// `GET /v1/skills` — list loaded skills.
+///
+/// Optional query parameters:
+/// - `provider` — exact provider name match (e.g. `comfyui`)
+/// - `primitive` — dotted primitive id (e.g. `image.generate`)
+pub async fn list_skills(
+    State(state): State<AppState>,
+    Query(q): Query<ListSkillsQuery>,
+) -> Response {
+    let snapshot = state.skills.snapshot();
+
+    let primitive_filter = match q.primitive.as_deref() {
+        None => None,
+        Some(s) => match Primitive::parse_dotted(s) {
+            Ok(p) => Some(p),
+            Err(_) => {
+                return bail(
+                    StatusCode::BAD_REQUEST,
+                    "validation_failed",
+                    format!("unknown primitive `{s}`"),
+                );
+            }
+        },
+    };
+
+    let provider_filter = q.provider.as_deref().map(ProviderName::new);
+
+    let mut entries: Vec<Value> = Vec::new();
+    for entry in snapshot.skills.values() {
+        if let Some(p) = &provider_filter {
+            if &entry.meta.provider != p {
+                continue;
+            }
+        }
+        if let Some(p) = primitive_filter {
+            if entry.meta.primitive != p {
+                continue;
+            }
+        }
+        entries.push(serde_json::to_value(entry).unwrap_or_else(|_| json!({})));
+    }
+
+    // Stable order: provider asc, then moniker asc.
+    entries.sort_by(|a, b| {
+        let aa = a
+            .get("meta")
+            .and_then(|m| m.get("provider"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let bb = b
+            .get("meta")
+            .and_then(|m| m.get("provider"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let primary = aa.cmp(bb);
+        if primary != std::cmp::Ordering::Equal {
+            return primary;
+        }
+        let am = a
+            .get("meta")
+            .and_then(|m| m.get("moniker"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let bm = b
+            .get("meta")
+            .and_then(|m| m.get("moniker"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        am.cmp(bm)
+    });
+
+    let body = json!({
+        "version": snapshot.version,
+        "count": entries.len(),
+        "skills": entries,
+    });
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// `GET /v1/skills/{moniker}` — inspect a single skill.
+///
+/// Skills are uniquely keyed by `(provider, moniker)`. When the same
+/// moniker is registered under multiple providers (rare in practice
+/// today; ComfyUI is the only loader) the response includes every
+/// matching entry, with the consumer expected to disambiguate via
+/// the `meta.provider` field. The most common case (one match)
+/// returns a single entry.
+pub async fn get_skill(
+    State(state): State<AppState>,
+    Path(moniker_str): Path<String>,
+) -> Response {
+    let moniker = match Moniker::new(&moniker_str) {
+        Ok(m) => m,
+        Err(e) => {
+            return bail(
+                StatusCode::BAD_REQUEST,
+                "validation_failed",
+                format!("invalid moniker `{moniker_str}`: {e}"),
+            );
+        }
+    };
+
+    let snapshot = state.skills.snapshot();
+    let mut matches: Vec<Value> = Vec::new();
+    for (key, entry) in snapshot.skills.iter() {
+        if key.moniker == moniker {
+            matches.push(serde_json::to_value(entry).unwrap_or_else(|_| json!({})));
+        }
+    }
+
+    if matches.is_empty() {
+        return bail(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("no skill registered with moniker `{moniker_str}`"),
+        );
+    }
+
+    if matches.len() == 1 {
+        return (StatusCode::OK, Json(matches.into_iter().next().unwrap()))
+            .into_response();
+    }
+
+    // Multi-match (different providers): return both as a list.
+    let body = json!({
+        "moniker": moniker_str,
+        "matches": matches,
+    });
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// `DELETE /v1/skills/{moniker}` — remove a loaded skill from every
+/// provider that has registered it.
+///
+/// Returns the list of `(provider, moniker)` tuples that were removed.
+/// On-disk removal of `{data_dir}/skills/{provider}/{moniker}/` is
+/// best-effort and only happens for ComfyUI (the only provider with a
+/// disk-backed skill loader today).
+pub async fn delete_skill(
+    State(state): State<AppState>,
+    Path(moniker_str): Path<String>,
+) -> Response {
+    let moniker = match Moniker::new(&moniker_str) {
+        Ok(m) => m,
+        Err(e) => {
+            return bail(
+                StatusCode::BAD_REQUEST,
+                "validation_failed",
+                format!("invalid moniker `{moniker_str}`: {e}"),
+            );
+        }
+    };
+
+    // Collect every key matching this moniker (across providers).
+    let snapshot = state.skills.snapshot();
+    let keys_to_remove: Vec<SkillKey> = snapshot
+        .skills
+        .keys()
+        .filter(|k| k.moniker == moniker)
+        .cloned()
+        .collect();
+
+    if keys_to_remove.is_empty() {
+        return bail(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("no skill registered with moniker `{moniker_str}`"),
+        );
+    }
+
+    let mut removed: Vec<HashMap<&'static str, String>> = Vec::new();
+    for key in &keys_to_remove {
+        // Remove from in-memory aggregate
+        state.skills.unregister(key).await;
+
+        // Best-effort on-disk removal: scan for the directory under
+        // `{data_dir}/skills/{provider}/{moniker}` and remove if
+        // present. We log failures but don't fail the request — the
+        // in-memory removal is the source of truth.
+        let disk_dir = state
+            .data_dir
+            .join("skills")
+            .join(key.provider.as_str())
+            .join(key.moniker.as_str());
+        if disk_dir.exists() {
+            if let Err(e) = tokio::fs::remove_dir_all(&disk_dir).await {
+                tracing::warn!(
+                    error = %e,
+                    path = %disk_dir.display(),
+                    "skills delete: on-disk removal failed (in-memory removal succeeded)"
+                );
+            }
+        }
+
+        let mut h = HashMap::new();
+        h.insert("provider", key.provider.as_str().to_string());
+        h.insert("moniker", key.moniker.as_str().to_string());
+        removed.push(h);
+    }
+
+    let body = json!({
+        "moniker": moniker_str,
+        "removed": removed,
+    });
+    (StatusCode::OK, Json(body)).into_response()
 }

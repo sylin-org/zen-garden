@@ -11,6 +11,7 @@ pub async fn get_sitemap() -> impl IntoResponse {
         "events":  "/v1/events",
         "media":   "/v1/media",
         "jobs":    "/v1/jobs",
+        "skills":  "/v1/skills",
         "recommendations": "/v1/recommendations",
         "health":  "/health",
     }))

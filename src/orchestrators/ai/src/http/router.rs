@@ -56,5 +56,11 @@ pub fn build(state: AppState) -> Router {
         .route("/v1/providers/{name}/flush", post(flush::flush_one_provider))
         // Skills — import pipeline (ORCH-0029 Phase 3)
         .route("/v1/skills/{provider}/import", post(skills::post_import))
+        // Skill noun surface (ORCH-0030 §3 commit 2)
+        .route("/v1/skills", get(skills::list_skills))
+        .route(
+            "/v1/skills/{moniker}",
+            get(skills::get_skill).delete(skills::delete_skill),
+        )
         .with_state(state)
 }

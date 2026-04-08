@@ -186,10 +186,10 @@ impl Capability {
 }
 
 /// Serializable wire shape of a media input declaration attached to
-/// a capability. Mirrors the fields of the legacy
-/// [`crate::domain::provider::MediaInputSpec`] but lives in the
-/// capability announcement schema so it can travel on the bus and
-/// round-trip through JSON.
+/// a capability. Lives in the capability announcement schema so it
+/// can travel on the bus and round-trip through JSON. Replaces the
+/// legacy `MediaInputSpec` (deleted with the rest of the legacy
+/// `Registration` machinery in ORCH-0030 R2 M3).
 ///
 /// The caller sends a media reference (`{media_id: "..."}`) at
 /// `field`; the `MediaResolver` resolves it according to `delivery`

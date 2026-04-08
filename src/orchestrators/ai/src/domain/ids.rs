@@ -94,11 +94,6 @@ guid_id!(
 );
 
 guid_id!(
-    /// Registration GUIDv7.
-    pub RegistrationId
-);
-
-guid_id!(
     /// Pipeline instance GUIDv7. Reserved for future pipelines.
     pub PipelineRunId
 );
@@ -200,60 +195,11 @@ impl From<String> for ProviderName {
     }
 }
 
-/// Fully-qualified model name: `"provider|short-name"`. Used by the
-/// [`crate::domain::directory::Directory`] to prevent collisions when
-/// two providers publish the same short name.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ModelFqn(String);
-
-impl ModelFqn {
-    /// Build a FQN from a provider and a short model name.
-    pub fn new(provider: &ProviderName, short_name: impl Into<String>) -> Self {
-        let short: String = short_name.into();
-        Self(format!("{}|{}", provider.as_str(), short))
-    }
-
-    /// Parse a FQN string; rejects inputs that don't contain exactly one `|`.
-    pub fn parse(raw: &str) -> Result<Self, ModelFqnError> {
-        let mut parts = raw.splitn(2, '|');
-        let provider = parts.next().ok_or(ModelFqnError::MissingProvider)?;
-        let short = parts.next().ok_or(ModelFqnError::MissingShortName)?;
-        if provider.is_empty() {
-            return Err(ModelFqnError::MissingProvider);
-        }
-        if short.is_empty() {
-            return Err(ModelFqnError::MissingShortName);
-        }
-        Ok(Self(raw.to_string()))
-    }
-
-    pub fn provider(&self) -> &str {
-        self.0.split('|').next().unwrap_or("")
-    }
-
-    pub fn short_name(&self) -> &str {
-        self.0.splitn(2, '|').nth(1).unwrap_or("")
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for ModelFqn {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ModelFqnError {
-    #[error("model FQN is missing the provider segment before `|`")]
-    MissingProvider,
-    #[error("model FQN is missing the short-name segment after `|`")]
-    MissingShortName,
-}
+// `ModelFqn` and `RegistrationId` previously lived here. They were
+// removed in ORCH-0030 R2 M3 along with the legacy `Directory`
+// aggregate and the `Registration` provider type — model resolution
+// is now adapter-local and there is no need for cross-provider
+// fully-qualified model names.
 
 #[cfg(test)]
 mod tests {
@@ -270,31 +216,5 @@ mod tests {
     fn correlation_id_preserves_external_value() {
         let cid = CorrelationId::from_string("req-abc-123");
         assert_eq!(cid.as_str(), "req-abc-123");
-    }
-
-    #[test]
-    fn model_fqn_roundtrip() {
-        let fqn = ModelFqn::new(&ProviderName::new("ollama"), "deepseek-r1:8b");
-        assert_eq!(fqn.as_str(), "ollama|deepseek-r1:8b");
-        assert_eq!(fqn.provider(), "ollama");
-        assert_eq!(fqn.short_name(), "deepseek-r1:8b");
-    }
-
-    #[test]
-    fn model_fqn_parse_roundtrip() {
-        let fqn = ModelFqn::parse("ollama|deepseek-r1:8b").unwrap();
-        assert_eq!(fqn.provider(), "ollama");
-        assert_eq!(fqn.short_name(), "deepseek-r1:8b");
-    }
-
-    #[test]
-    fn model_fqn_parse_rejects_missing_pipe() {
-        assert!(ModelFqn::parse("deepseek-r1:8b").is_err());
-    }
-
-    #[test]
-    fn model_fqn_parse_rejects_empty_parts() {
-        assert!(ModelFqn::parse("|deepseek").is_err());
-        assert!(ModelFqn::parse("ollama|").is_err());
     }
 }

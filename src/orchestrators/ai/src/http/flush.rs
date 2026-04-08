@@ -1,4 +1,12 @@
 //! Flush endpoints for providers and the media store.
+//!
+//! # ORCH-0030 R2 M3 changes
+//!
+//! These endpoints used to look up providers via the deleted
+//! `Directory` aggregate. They now use the
+//! [`crate::services::provider_registry::ProviderRegistry`] —
+//! `state.provider_registry.get(name)` and
+//! `state.provider_registry.all()`.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -15,7 +23,7 @@ pub async fn flush_one_provider(
     Path(name): Path<String>,
 ) -> Response {
     let provider_name = ProviderName::new(name);
-    let Some(provider) = state.directory.provider(&provider_name).await else {
+    let Some(provider) = state.provider_registry.get(&provider_name).await else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": {"code": "not_found", "message": "provider not registered"}})),
@@ -35,20 +43,22 @@ pub async fn flush_one_provider(
 }
 
 pub async fn flush_all_providers(State(state): State<AppState>) -> Response {
-    let snapshot = state.directory.snapshot();
+    let providers = state.provider_registry.all().await;
     let mut reports = serde_json::Map::new();
-    for (name, _) in snapshot.providers.iter() {
-        if let Some(provider) = state.directory.provider(name).await {
-            match provider.flush_caches().await {
-                Ok(r) => {
-                    reports.insert(name.as_str().to_string(), serde_json::to_value(r).unwrap_or(json!({})));
-                }
-                Err(e) => {
-                    reports.insert(
-                        name.as_str().to_string(),
-                        json!({"error": e.to_string()}),
-                    );
-                }
+    for provider in providers {
+        let name = provider.name();
+        match provider.flush_caches().await {
+            Ok(r) => {
+                reports.insert(
+                    name.as_str().to_string(),
+                    serde_json::to_value(r).unwrap_or(json!({})),
+                );
+            }
+            Err(e) => {
+                reports.insert(
+                    name.as_str().to_string(),
+                    json!({"error": e.to_string()}),
+                );
             }
         }
     }

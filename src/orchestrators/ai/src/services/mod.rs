@@ -23,7 +23,6 @@
 pub mod catalog_builder;
 pub mod cloud_secrets;
 pub mod contextualizer;
-pub mod directory_maintenance;
 pub mod directory_subscriber;
 pub mod dispatcher;
 pub mod garden_discovery;
@@ -33,6 +32,5 @@ pub mod job_store;
 pub mod media_resolver;
 pub mod media_store;
 pub mod provider_registry;
-pub mod recommendation;
 pub mod skills;
 pub mod vocab_drift;

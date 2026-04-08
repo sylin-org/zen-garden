@@ -1,46 +1,51 @@
-//! Media resolver — applies the provider's declared `MediaDelivery`
-//! mode to each referenced media entry.
+//! Media resolver — applies the chosen capability's declared
+//! `MediaDelivery` mode to each referenced media entry.
+//!
+//! # ORCH-0030 R2 M3 changes
+//!
+//! The resolver now reads `CapabilityMediaInput` from
+//! [`crate::services::directory_subscriber::CapabilityDirectory`]
+//! instead of the legacy `Registration.media_inputs` list. The
+//! delivery semantics (`ById` / `Base64` / `Transfer`) are
+//! unchanged.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use serde_json::{Map, Value};
 
-use crate::domain::directory::DirectorySnapshot;
+use crate::domain::capability_announcement::CapabilityMediaInput;
 use crate::domain::errors::{ErrorCode, OrchestratorError};
 use crate::domain::field_path::FieldPath;
 use crate::domain::ids::MediaId;
 use crate::domain::media::{MediaDelivery, ResolvedMedia};
-use crate::domain::provider::MediaInputSpec;
 use crate::domain::request::OrchestratorRequest;
+use crate::services::directory_subscriber::CapabilityDirectory;
 
-/// Resolve every media reference according to the chosen provider's
-/// `MediaInputSpec`s for this primitive.
+/// Resolve every media reference according to the chosen
+/// capability's media-input declarations.
 pub struct MediaResolver;
 
 impl MediaResolver {
     pub async fn resolve(
         &self,
         mut request: OrchestratorRequest,
-        snapshot: &DirectorySnapshot,
+        directory: &Arc<CapabilityDirectory>,
     ) -> Result<OrchestratorRequest, OrchestratorError> {
         let Some(provider_name) = request.resolved_provider.as_ref().cloned() else {
             return Ok(request);
         };
-        let Some(registration) = snapshot
-            .find_registration(
-                &provider_name,
-                request.action.primitive,
-                request.action.skill.as_ref(),
-            )
-            .cloned()
+        let Some(capability) = directory
+            .capability(&provider_name, request.action.primitive)
+            .await
         else {
             return Ok(request);
         };
 
         // Nothing to do when neither side references media.
-        if registration.media_inputs.is_empty() && request.media.referenced.is_empty() {
+        if capability.media_inputs.is_empty() && request.media.referenced.is_empty() {
             return Ok(request);
         }
 
@@ -48,10 +53,10 @@ impl MediaResolver {
         let mut fetched: HashMap<String, bytes::Bytes> = HashMap::new();
 
         // Map field paths → media input specs.
-        let spec_for_field: HashMap<String, &MediaInputSpec> = registration
+        let spec_for_field: HashMap<String, &CapabilityMediaInput> = capability
             .media_inputs
             .iter()
-            .map(|spec| (spec.field.as_str().to_string(), spec))
+            .map(|spec| (spec.field.clone(), spec))
             .collect();
 
         for reference in request.media.referenced.clone() {
@@ -72,7 +77,7 @@ impl MediaResolver {
                 }
             };
 
-            // Validate content type against provider's accepted list.
+            // Validate content type against the capability's accepted list.
             let entry = request
                 .context
                 .media_store

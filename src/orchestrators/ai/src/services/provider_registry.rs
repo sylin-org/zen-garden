@@ -89,26 +89,21 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
     use crate::domain::output::Output;
-    use crate::domain::provider::{
-        ProviderError, ProviderOutcome, ProviderState, ProviderStatePublisher,
-    };
+    use crate::domain::provider::{ProviderError, ProviderOutcome};
     use crate::domain::request::OrchestratorRequest;
     use async_trait::async_trait;
-    use tokio::sync::watch;
 
     /// Minimal stub provider used by the registry's own unit tests.
-    /// Implements the legacy `Provider` trait (the M1-era trait
-    /// shape; M3 replaces this with the lean trait).
+    /// Implements the lean ORCH-0030 R2 M3 `Provider` trait
+    /// (just `name` + `onboard`).
     struct StubProvider {
         name: ProviderName,
-        publisher: ProviderStatePublisher,
     }
 
     impl StubProvider {
         fn new(name: &str) -> Arc<Self> {
             Arc::new(Self {
                 name: ProviderName::new(name),
-                publisher: ProviderStatePublisher::new(ProviderState::default()),
             })
         }
     }
@@ -117,12 +112,6 @@ mod tests {
     impl Provider for StubProvider {
         fn name(&self) -> ProviderName {
             self.name.clone()
-        }
-        fn state(&self) -> Arc<ProviderState> {
-            self.publisher.snapshot()
-        }
-        fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
-            self.publisher.subscribe()
         }
         async fn onboard(
             &self,

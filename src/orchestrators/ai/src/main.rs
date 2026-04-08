@@ -1,22 +1,21 @@
-//! Zen Garden AI Orchestrator — bootstrap binary (ORCH-0028).
+//! Zen Garden AI Orchestrator — bootstrap binary (ORCH-0030 R2 M3).
 //!
 //! Responsibilities of this file:
-//! - Parse CLI arguments (just the orchestrator's own knobs — no
-//!   per-provider configuration).
+//! - Parse CLI arguments (just the orchestrator's own knobs).
 //! - Initialize logging.
 //! - Construct the data-directory-backed stores.
-//! - Construct the Directory aggregate, vocabularies, dispatcher.
+//! - Construct the unified `EventBus`, `Resources`,
+//!   `CapabilityDirectory`, `DirectorySubscriber`, and
+//!   `ProviderRegistry`.
 //! - Resolve the tended stone (explicit `--stone` overrides Koi
 //!   discovery).
-//! - Construct every local provider with an empty instance pool.
-//! - Spawn the garden discovery task that populates each provider's
-//!   pool from the tended stone's topology endpoint.
+//! - Construct every M1 adapter, register each into the
+//!   `ProviderRegistry`. Each adapter publishes a
+//!   `CapabilityAnnouncement` to the bus as it discovers instances.
 //! - Load cloud-provider secrets from `{data_dir}/cloud_providers.json`
-//!   and register cloud providers when keys are present.
+//!   and register cloud providers when keys are present (M1 has
+//!   only Google/Gemini; Anthropic and OpenAI return in M2).
 //! - Mount the HTTP router and serve until shutdown.
-//!
-//! Everything else lives in [`domain`], [`services`], [`providers`],
-//! and [`http`].
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +28,6 @@ use tracing_subscriber::EnvFilter;
 use zen_garden_ai_orchestrator::{
     app_state::AppState,
     domain::{
-        directory::Directory,
         events::EventBus,
         idempotency::IdempotencyStore,
         jobs::JobStore,
@@ -39,15 +37,12 @@ use zen_garden_ai_orchestrator::{
     },
     http::router,
     providers::{
-        anthropic::{AnthropicConfig, AnthropicProvider},
         comfyui::{ComfyUiConfig, ComfyUiProvider},
         docling::{DoclingConfig, DoclingProvider},
         google::{GoogleConfig, GoogleProvider},
-        infinity::{InfinityConfig, InfinityProvider},
         kokoro::{KokoroConfig, KokoroProvider},
         libretranslate::{LibreTranslateConfig, LibreTranslateProvider},
         ollama::{OllamaConfig, OllamaProvider},
-        openai::{OpenAiConfig, OpenAiProvider},
         openedai_speech::{OpenedaiSpeechConfig, OpenedaiSpeechProvider},
         speaches::{SpeachesConfig, SpeachesProvider},
         whispercpp::{WhisperCppConfig, WhisperCppProvider},
@@ -56,7 +51,6 @@ use zen_garden_ai_orchestrator::{
         catalog_builder::CatalogBuilder,
         cloud_secrets::CloudSecrets,
         contextualizer::Contextualizer,
-        directory_maintenance,
         directory_subscriber::{CapabilityDirectory, DirectorySubscriber},
         dispatcher::Dispatcher,
         garden_discovery::GardenDiscovery,
@@ -65,21 +59,19 @@ use zen_garden_ai_orchestrator::{
         media_resolver::MediaResolver,
         media_store::DiskMediaStore,
         provider_registry::ProviderRegistry,
-        recommendation::{DemandLedger, PinRegistry, RecommendationEngine},
     },
 };
 
 #[derive(Parser)]
 #[command(name = "zen-garden-ai-orchestrator")]
-#[command(about = "AI Orchestrator (ORCH-0028)")]
+#[command(about = "AI Orchestrator (ORCH-0030 R2)")]
 #[command(version)]
 struct Cli {
     /// Listen port for the `/v1/*` surface, `/health`, and `/metrics`.
     #[arg(long, env = "AI_ORCH_PORT", default_value = "7190")]
     port: u16,
 
-    /// Data directory for media, jobs, recommendation pins, and
-    /// `cloud_providers.json`.
+    /// Data directory for media, jobs, and `cloud_providers.json`.
     #[arg(long, env = "AI_ORCH_DATA_DIR", default_value = "/data")]
     data_dir: String,
 
@@ -116,7 +108,7 @@ async fn main() -> Result<()> {
         data_dir = %cli.data_dir,
         koi = %cli.koi_endpoint,
         stone_override = ?cli.stone,
-        "starting Zen Garden AI Orchestrator (ORCH-0028)"
+        "starting Zen Garden AI Orchestrator (ORCH-0030 R2)"
     );
 
     let data_dir = std::path::PathBuf::from(&cli.data_dir);
@@ -129,7 +121,8 @@ async fn main() -> Result<()> {
     let job_store = DiskJobStore::load(&data_dir)
         .await
         .map_err(|e| anyhow::anyhow!("job store: {e}"))?;
-    let idempotency_store = Arc::new(InMemoryIdempotencyStore::new());
+    let idempotency_store: Arc<dyn IdempotencyStore> =
+        Arc::new(InMemoryIdempotencyStore::new());
 
     // ── Event bus (ORCH-0030 §1) ────────────────────────────────
     //
@@ -146,56 +139,35 @@ async fn main() -> Result<()> {
     // resources before dispatching work and release on completion.
     let resources = Resources::new(events.clone());
 
-    // ── Vocabulary & Directory ──────────────────────────────────
+    // ── Vocabulary ──────────────────────────────────────────────
     let vocabularies = VocabularyRegistry::build();
-    let directory = Directory::new();
-
-    // ── Skills aggregate (ORCH-0029) ────────────────────────────
-    //
-    // Parallel to the Directory: holds dynamic per-skill state
-    // (registration metadata, per-instance readiness, AI naming
-    // updates) that skill-aware adapters push at load and
-    // provisioning-progress time.
-    let skills = zen_garden_ai_orchestrator::services::skills::Skills::new();
 
     // ── Provisioning queue (ORCH-0029 Phase 2) ──────────────────
     //
     // Bounded-concurrency worker that downloads missing models
     // into the local dependency cache and pushes them to
-    // discovered ComfyUI instances. Skill-aware adapters submit
-    // jobs at discovery time.
-    let provisioning = zen_garden_ai_orchestrator::services::skills::ProvisioningQueue::with_default_concurrency();
+    // discovered ComfyUI instances. ComfyUI submits jobs at
+    // discovery time.
+    let provisioning =
+        zen_garden_ai_orchestrator::services::skills::ProvisioningQueue::with_default_concurrency();
 
-    // ── Recommendation engine ───────────────────────────────────
-    let pins = Arc::new(PinRegistry::load(&data_dir).await);
-    let demand = Arc::new(DemandLedger::new());
-    let recommendation =
-        RecommendationEngine::new(directory.clone(), pins.clone(), demand.clone());
+    // ── Capability directory + subscriber (ORCH-0030 §R2.2) ────
+    //
+    // The CapabilityDirectory is the authoritative routing view.
+    // The DirectorySubscriber consumes
+    // `directory.provider.{name}.capabilities` events from the bus
+    // and rebuilds the directory wholesale on each accepted
+    // announcement.
+    let capability_directory = CapabilityDirectory::new();
+    let directory_subscriber =
+        DirectorySubscriber::new(capability_directory.clone(), events.clone());
 
-    // ── Pipeline services ───────────────────────────────────────
-    let resolver_adapter: Arc<
-        dyn zen_garden_ai_orchestrator::services::contextualizer::RecommendationResolver,
-    > = recommendation.clone();
-    let contextualizer = Arc::new(Contextualizer::new(
-        vocabularies.clone(),
-        Some(resolver_adapter),
-    ));
-    let media_resolver = Arc::new(MediaResolver);
-    let dispatcher = Arc::new(Dispatcher::new(
-        directory.clone(),
-        contextualizer.clone(),
-        media_resolver.clone(),
-        idempotency_store.clone(),
-        demand.clone(),
-        job_store.clone(),
-        media_store.clone(),
-    ));
-    let catalog = CatalogBuilder::new(
-        directory.clone(),
-        vocabularies.clone(),
-        skills.clone(),
-        events.clone(),
-    );
+    // ── Provider registry (ORCH-0030 R2 M3) ─────────────────────
+    //
+    // Process-internal `name → Arc<dyn Provider>` lookup. The
+    // dispatcher reads from this to invoke `provider.onboard()`
+    // on the provider chosen by the contextualizer.
+    let provider_registry = ProviderRegistry::new();
 
     let shutdown = CancellationToken::new();
 
@@ -218,11 +190,14 @@ async fn main() -> Result<()> {
 
     // ── Local providers ─────────────────────────────────────────
     //
-    // Each provider takes the discovery handle and immediately
-    // spawns its own subscriber task for the FQNs it claims. There
-    // is no static offering map and no per-provider env var —
-    // adapters self-declare which garden offerings they manage,
-    // and discovery emits events as the topology changes.
+    // Each adapter takes the discovery handle and the event bus,
+    // then immediately spawns its own subscriber task for the FQNs
+    // it claims. Adapters publish `CapabilityAnnouncement` events
+    // to the bus on every state change; the DirectorySubscriber
+    // builds the routing view from those events.
+    //
+    // ComfyUI also takes the provisioning queue (it submits jobs
+    // when discovery surfaces an instance missing required models).
     let ollama = OllamaProvider::new(
         OllamaConfig::default(),
         discovery.clone(),
@@ -232,36 +207,37 @@ async fn main() -> Result<()> {
     let libretranslate = LibreTranslateProvider::new(
         LibreTranslateConfig::default(),
         discovery.clone(),
-        shutdown.clone(),
-    );
-    let infinity = InfinityProvider::new(
-        InfinityConfig::default(),
-        discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     );
     let kokoro = KokoroProvider::new(
         KokoroConfig::default(),
         discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     );
     let openedai_speech = OpenedaiSpeechProvider::new(
         OpenedaiSpeechConfig::default(),
         discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     );
     let whispercpp = WhisperCppProvider::new(
         WhisperCppConfig::default(),
         discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     );
     let speaches = SpeachesProvider::new(
         SpeachesConfig::default(),
         discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     );
     let docling = DoclingProvider::new(
         DoclingConfig::default(),
         discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     );
     let comfyui = ComfyUiProvider::new(
@@ -269,79 +245,67 @@ async fn main() -> Result<()> {
             skills_dir: data_dir.join("skills").join("comfyui"),
             data_dir: data_dir.clone(),
         },
-        skills.clone(),
         provisioning.clone(),
         discovery.clone(),
+        events.clone(),
         shutdown.clone(),
     )
     .await;
 
-    // Register them in the directory immediately. Each starts in
-    // ProviderHealth::Offline; once discovery delivers events, the
-    // provider publishes Healthy and the directory rebuilds.
-    directory.register(ollama.clone()).await.ok();
-    directory.register(libretranslate.clone()).await.ok();
-    directory.register(infinity.clone()).await.ok();
-    directory.register(kokoro.clone()).await.ok();
-    directory.register(openedai_speech.clone()).await.ok();
-    directory.register(whispercpp.clone()).await.ok();
-    directory.register(speaches.clone()).await.ok();
-    directory.register(docling.clone()).await.ok();
-    directory.register(comfyui.clone()).await.ok();
-    tracing::info!("9 local providers registered (instance pools start empty)");
+    // Register every local adapter into the provider registry.
+    provider_registry.register(ollama.clone()).await;
+    provider_registry.register(libretranslate.clone()).await;
+    provider_registry.register(kokoro.clone()).await;
+    provider_registry.register(openedai_speech.clone()).await;
+    provider_registry.register(whispercpp.clone()).await;
+    provider_registry.register(speaches.clone()).await;
+    provider_registry.register(docling.clone()).await;
+    provider_registry.register(comfyui.clone()).await;
+    tracing::info!("8 local adapters registered");
 
     // ── Cloud providers (loaded from {data_dir}/cloud_providers.json) ──
+    //
+    // M1 ships only Google/Gemini. Anthropic and OpenAI return in
+    // M2 — see `MILESTONE-1-PLAN.md` §M7.
     let cloud = CloudSecrets::load(&data_dir).await;
-    if let Some(s) = cloud.anthropic {
-        let provider = AnthropicProvider::new(AnthropicConfig {
-            base_url: s.base_url,
-            api_key: s.api_key,
-        });
-        directory.register(provider).await.ok();
-        tracing::info!("registered Anthropic provider from cloud_providers.json");
-    }
-    if let Some(s) = cloud.openai {
-        let provider = OpenAiProvider::new(OpenAiConfig {
-            base_url: s.base_url,
-            api_key: s.api_key,
-            organization: s.organization,
-        });
-        directory.register(provider).await.ok();
-        tracing::info!("registered OpenAI provider from cloud_providers.json");
-    }
     if let Some(s) = cloud.google {
-        let provider = GoogleProvider::new(GoogleConfig {
-            base_url: s.base_url,
-            api_key: s.api_key,
-        });
-        directory.register(provider).await.ok();
+        let google = GoogleProvider::new(
+            GoogleConfig {
+                base_url: s.base_url,
+                api_key: s.api_key,
+            },
+            events.clone(),
+        );
+        provider_registry.register(google).await;
         tracing::info!("registered Google provider from cloud_providers.json");
     }
 
-    // ── Capability directory + subscriber (ORCH-0030 §R2.2) ─────
-    let capability_directory = CapabilityDirectory::new();
-    let directory_subscriber = DirectorySubscriber::new(
+    // ── Pipeline services ───────────────────────────────────────
+    let contextualizer = Arc::new(Contextualizer::new(vocabularies.clone()));
+    let media_resolver = Arc::new(MediaResolver);
+    let dispatcher = Arc::new(Dispatcher::new(
         capability_directory.clone(),
+        provider_registry.clone(),
+        contextualizer.clone(),
+        media_resolver.clone(),
+        idempotency_store.clone(),
+        job_store.clone(),
+        media_store.clone(),
+    ));
+    let catalog = CatalogBuilder::new(
+        capability_directory.clone(),
+        vocabularies.clone(),
         events.clone(),
     );
 
-    // ── Provider registry (ORCH-0030 R2 M1, additive) ───────────
-    // Constructed empty here. Adapters will be registered into it
-    // alongside their legacy `Directory::register` call once the
-    // M3 trait switch happens; for M1 nothing reads from it.
-    let provider_registry = ProviderRegistry::new();
-
     // ── Shared AppState ─────────────────────────────────────────
     let state = AppState {
-        directory: directory.clone(),
         vocabularies: vocabularies.clone(),
         media_store: media_store.clone(),
         job_store: job_store.clone(),
         idempotency_store: idempotency_store.clone(),
         dispatcher,
-        recommendation: recommendation.clone(),
         catalog: catalog.clone(),
-        skills: skills.clone(),
         provisioning: provisioning.clone(),
         data_dir: data_dir.clone(),
         events: events.clone(),
@@ -351,15 +315,9 @@ async fn main() -> Result<()> {
     };
 
     // ── Background tasks ────────────────────────────────────────
-    let directory_maintenance_handle = tokio::spawn(directory_maintenance::run(
-        directory.clone(),
-        shutdown.clone(),
-    ));
     let catalog_handle = tokio::spawn(catalog.clone().run(shutdown.clone()));
-    let recommendation_handle = tokio::spawn(recommendation.clone().run(shutdown.clone()));
-    let directory_subscriber_handle = tokio::spawn(
-        directory_subscriber.clone().run(shutdown.clone()),
-    );
+    let directory_subscriber_handle =
+        tokio::spawn(directory_subscriber.clone().run(shutdown.clone()));
 
     // Garden discovery is already running — `GardenDiscovery::spawn`
     // launched its own SSE consumer above. Adapters subscribed at
@@ -466,10 +424,8 @@ async fn main() -> Result<()> {
     let timeout = Duration::from_secs(5);
     let _ = tokio::time::timeout(timeout, async {
         let _ = tokio::join!(
-            directory_maintenance_handle,
             directory_subscriber_handle,
             catalog_handle,
-            recommendation_handle,
             terminal_reaper_handle,
             job_sweep_handle,
             idem_sweep_handle,

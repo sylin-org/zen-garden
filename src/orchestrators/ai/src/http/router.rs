@@ -7,7 +7,7 @@ use crate::app_state::AppState;
 
 use super::{
     actions_index, catalog, events, flush, health, ingress, introspect, jobs, media, metrics,
-    recommendations, resources, sitemap, skills,
+    resources, sitemap, skills,
 };
 
 /// Build the full `/v1/*` router plus `/health`.
@@ -49,14 +49,11 @@ pub fn build(state: AppState) -> Router {
         .route("/v1/jobs", get(jobs::list_jobs))
         .route("/v1/jobs/{id}", get(jobs::get_job).delete(jobs::cancel_job))
         .route("/v1/jobs/{id}/result", get(jobs::get_job_result))
-        // Recommendations
-        .route("/v1/recommendations", get(recommendations::list_recommendations))
-        .route(
-            "/v1/recommendations/{primitive}",
-            get(recommendations::get_recommendation)
-                .put(recommendations::put_recommendation)
-                .delete(recommendations::delete_recommendation),
-        )
+        // Recommendations endpoints removed in ORCH-0030 R2 M3 — the
+        // recommendation engine is gone. Adapters that need scoring
+        // (Ollama) own their own selector matrix and resolve `selectors.model`
+        // inside `onboard`. The `recommended:*` moniker still works at
+        // call sites; cloud adapters fall back to their default model.
         // Provider flush
         .route("/v1/providers/flush", post(flush::flush_all_providers))
         .route("/v1/providers/{name}/flush", post(flush::flush_one_provider))

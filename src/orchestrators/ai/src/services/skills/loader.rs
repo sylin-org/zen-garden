@@ -31,11 +31,11 @@ use crate::domain::field_path::FieldPath;
 use crate::domain::media::MediaDelivery;
 use crate::domain::moniker::Moniker;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{FieldConstraint, ParamOption};
 
 use super::types::{
-    Binding, BindingTarget, ModelSelector, RawBindingV3, RawModelSelectorV3, RawSkillLegacy,
-    RawSkillV3, SelfDescribedKind, SelfDescribedType, SkillDefinition, Variant,
+    AutoKind, Binding, BindingTarget, FieldConstraint, ModelSelector, ParamOption, RawBindingV3,
+    RawModelSelectorV3, RawSkillLegacy, RawSkillV3, SelfDescribedKind, SelfDescribedType,
+    SkillDefinition, Variant,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -930,8 +930,8 @@ pub(crate) mod legacy {
             },
             "auto" => {
                 let k = match kind.unwrap_or("random_int") {
-                    "random_int" => crate::domain::provider::AutoKind::RandomInt,
-                    _ => crate::domain::provider::AutoKind::RandomInt,
+                    "random_int" => AutoKind::RandomInt,
+                    _ => AutoKind::RandomInt,
                 };
                 Some(FieldConstraint::Auto { kind_inner: k })
             }

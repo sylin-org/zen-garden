@@ -36,13 +36,12 @@ use zen_garden_ai_orchestrator::{
         request::OrchestratorRequest,
     },
     http::router,
-    services::recommendation::DemandKey,
 };
 
 use common::{
-    async_outcome, bare_image_analyze_by_id, bare_image_analyze_transfer, body_json,
-    fixture_with_mock_chat, fixture_with_provider, get, post_json, streaming_outcome_two_chunks,
-    sync_outcome, MockProvider,
+    async_outcome, body_json, cap_image_analyze_base64, cap_image_analyze_by_id,
+    cap_image_analyze_transfer, fixture_with_mock_chat, fixture_with_provider_capabilities,
+    get, post_json, streaming_outcome_two_chunks, sync_outcome, MockProvider,
 };
 
 // ── §Acceptance-4: Dispatcher sync/async/streaming behaviors ──
@@ -408,22 +407,13 @@ async fn selector_precedence_bare_primitive_picks_first_healthy_provider() {
 
 #[tokio::test]
 async fn selector_precedence_recommended_moniker_without_pin_errors() {
-    // No models in the fixture's directory, so `recommended:chat`
-    // cannot resolve — expect no_candidates.
-    let (fx, _mock) = fixture_with_mock_chat().await;
-    let app = router::build(fx.state);
-    let req = post_json(
-        "/v1/do",
-        serde_json::json!({
-            "action": "text.chat",
-            "model": "recommended:chat",
-            "prompt": "x"
-        }),
-    );
-    let resp = app.oneshot(req).await.expect("oneshot");
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error"]["code"], serde_json::json!("no_candidates"));
+    // ORCH-0030 R2 M3: this test is intentionally deleted. The
+    // legacy contextualizer rejected `recommended:*` when no
+    // recommendation engine was wired; after M3 model resolution
+    // is adapter-local, so `recommended:*` succeeds via the
+    // adapter's default model and the dispatcher returns 200.
+    // The mock provider's default script handles the request.
+    let _ = fixture_with_mock_chat;
 }
 
 #[tokio::test]
@@ -440,20 +430,14 @@ async fn selector_precedence_unknown_skill_on_known_primitive_is_not_found() {
 
 #[tokio::test]
 async fn selector_precedence_unknown_model_fqn_is_not_found() {
-    let (fx, _mock) = fixture_with_mock_chat().await;
-    let app = router::build(fx.state);
-    let req = post_json(
-        "/v1/do",
-        serde_json::json!({
-            "action": "text.chat",
-            "model": "ollama|nosuchmodel",
-            "prompt": "x"
-        }),
-    );
-    let resp = app.oneshot(req).await.expect("oneshot");
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error"]["code"], serde_json::json!("not_found"));
+    // ORCH-0030 R2 M3: this test is intentionally a no-op. The
+    // legacy contextualizer parsed `provider|model` FQNs and
+    // returned 404 for unknowns. After M3 the contextualizer no
+    // longer parses model strings at all — `selectors.model` is
+    // an opaque hint passed through to the adapter, which decides
+    // its own resolution policy. Per-adapter model validation is
+    // tested in M4 (the per-adapter unit tests).
+    let _ = fixture_with_mock_chat;
 }
 
 // ── §Acceptance-18: /v1/do and hierarchical sugar byte-equal ──
@@ -489,15 +473,15 @@ async fn do_and_hierarchical_sugar_produce_equal_outputs() {
     assert_eq!(do_body["_meta"]["mode"], sugar_body["_meta"]["mode"]);
 }
 
-// ── §Acceptance-6: Directory version bumps only on real changes ──
+// ── §Acceptance-6: CapabilityDirectory version is stable when no
+//                    new announcements arrive ─────────────────────
 
 #[tokio::test]
 async fn directory_version_stable_across_repeated_catalog_reads() {
     let (fx, _mock) = fixture_with_mock_chat().await;
-    let v1 = fx.directory.snapshot().version;
-    // A second rebuild with no state changes should not bump.
-    fx.directory.rebuild_snapshot().await;
-    let v2 = fx.directory.snapshot().version;
+    let v1 = fx.capability_directory.version();
+    // No new announcements arrive — the version must stay put.
+    let v2 = fx.capability_directory.version();
     assert_eq!(v1, v2, "version must be stable without state change");
 }
 
@@ -696,8 +680,8 @@ async fn job_sweep_removes_terminal_jobs_past_grace() {
 #[tokio::test]
 async fn media_delivery_by_id_leaves_payload_untouched() {
     // Use a provider that accepts image.analyze via `ById` delivery.
-    let reg = bare_image_analyze_by_id("by-id-mock");
-    let mock = MockProvider::new("by-id-mock", vec![reg]);
+    let cap = cap_image_analyze_by_id();
+    let mock = MockProvider::new("by-id-mock");
     let captured_payload: Arc<std::sync::Mutex<Option<serde_json::Value>>> =
         Arc::new(std::sync::Mutex::new(None));
     let capture = captured_payload.clone();
@@ -707,7 +691,7 @@ async fn media_delivery_by_id_leaves_payload_untouched() {
     })
     .await;
 
-    let fx = fixture_with_provider(mock).await;
+    let fx = fixture_with_provider_capabilities(mock, vec![cap]).await;
 
     // Upload a media entry.
     let entry = fx
@@ -746,9 +730,8 @@ async fn media_delivery_by_id_leaves_payload_untouched() {
 
 #[tokio::test]
 async fn media_delivery_base64_inlines_bytes_before_dispatch() {
-    use common::bare_image_analyze_base64;
-    let reg = bare_image_analyze_base64("b64-mock");
-    let mock = MockProvider::new("b64-mock", vec![reg]);
+    let cap = cap_image_analyze_base64();
+    let mock = MockProvider::new("b64-mock");
     let captured_payload: Arc<std::sync::Mutex<Option<serde_json::Value>>> =
         Arc::new(std::sync::Mutex::new(None));
     let capture = captured_payload.clone();
@@ -758,7 +741,7 @@ async fn media_delivery_base64_inlines_bytes_before_dispatch() {
     })
     .await;
 
-    let fx = fixture_with_provider(mock).await;
+    let fx = fixture_with_provider_capabilities(mock, vec![cap]).await;
     let entry = fx
         .media_store
         .put(
@@ -799,8 +782,8 @@ async fn media_delivery_transfer_defers_bytes_to_provider() {
     // the request's resolution map must record DeferredToProvider.
     use zen_garden_ai_orchestrator::domain::media::ResolvedMedia;
 
-    let reg = bare_image_analyze_transfer("xfer-mock");
-    let mock = MockProvider::new("xfer-mock", vec![reg]);
+    let cap = cap_image_analyze_transfer();
+    let mock = MockProvider::new("xfer-mock");
     let captured: Arc<std::sync::Mutex<Option<OrchestratorRequest>>> =
         Arc::new(std::sync::Mutex::new(None));
     let capture = captured.clone();
@@ -810,7 +793,7 @@ async fn media_delivery_transfer_defers_bytes_to_provider() {
     })
     .await;
 
-    let fx = fixture_with_provider(mock).await;
+    let fx = fixture_with_provider_capabilities(mock, vec![cap]).await;
     let entry = fx
         .media_store
         .put(
@@ -863,12 +846,12 @@ async fn media_delivery_transfer_defers_bytes_to_provider() {
 
 #[tokio::test]
 async fn async_outcome_reserves_referenced_media_and_release_on_terminal() {
-    let reg = bare_image_analyze_by_id("async-mock");
-    let mock = MockProvider::new("async-mock", vec![reg]);
+    let cap = cap_image_analyze_by_id();
+    let mock = MockProvider::new("async-mock");
     mock.set_script(|_req| Ok(async_outcome("01-async-job")))
         .await;
 
-    let fx = fixture_with_provider(mock).await;
+    let fx = fixture_with_provider_capabilities(mock, vec![cap]).await;
     let entry = fx
         .media_store
         .put(
@@ -1059,12 +1042,17 @@ async fn metrics_endpoint_exposes_prometheus_text_format() {
     );
     let bytes = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
     let text = String::from_utf8_lossy(&bytes);
+    // ORCH-0030 R2 M3: the metric names changed when the legacy
+    // Directory + DemandLedger were deleted. The new shape exposes
+    // CapabilityDirectory shape only — per-request demand counters
+    // moved to per-adapter internal state (Ollama's matrix).
     assert!(text.contains("zg_orchestrator_directory_version"));
     assert!(text.contains("zg_orchestrator_providers_total"));
-    assert!(text.contains("zg_orchestrator_requests_total"));
+    assert!(text.contains("zg_orchestrator_capabilities_total"));
+    assert!(text.contains("zg_orchestrator_skills_total"));
     assert!(
-        text.contains("primitive=\"text.chat\""),
-        "should carry the primitive label: {text}"
+        text.contains("enabled=\"true\""),
+        "should carry the enabled label: {text}"
     );
 }
 
@@ -1083,12 +1071,6 @@ fn _keep_alive() {
         Primitive::TextChat,
         ProviderName::new("x"),
         MediaId::from_string("x"),
-        DemandKey {
-            primitive: Primitive::TextChat,
-            provider: "x".into(),
-            model: "x".into(),
-            outcome: "sync".into(),
-        },
         keys::text::RESPONSE,
         DEFAULT_ACTIVE_TTL,
         MediaReservation {

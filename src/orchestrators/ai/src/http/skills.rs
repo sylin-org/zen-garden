@@ -6,19 +6,32 @@
 //!   with `{ "input": "<text>" }` or raw bytes (PNG upload with
 //!   `Content-Type: image/png`). Runs the full import pipeline
 //!   (input classify → extract → parse → param extract → resolve
-//!   models → write draft), then fires AI naming asynchronously if
-//!   a chat provider is available. Returns the full `AnalyzeResult`.
+//!   models → write draft), then fires AI naming asynchronously.
+//!   Returns 202 with the moniker. The skill becomes visible to
+//!   `GET /v1/skills` after the next ComfyUI hot-reload picks up
+//!   the new file from disk.
 //!
-//! - `GET /v1/skills` — list every loaded skill, optionally filtered
-//!   by provider or primitive query parameter.
+//! - `GET /v1/skills` — list every skill currently published by an
+//!   enabled provider, optionally filtered by provider or primitive.
 //!
-//! - `GET /v1/skills/{moniker}` — inspect a single skill by moniker.
+//! - `GET /v1/skills/{skill_id}` — inspect a single skill by id.
+//!   Returns every (provider, skill) match — typically one entry.
 //!
-//! - `DELETE /v1/skills/{moniker}` — remove a loaded skill (drops
-//!   it from the aggregate; on-disk removal is left to a future
-//!   commit because the disk path includes the provider segment).
-
-use std::collections::HashMap;
+//! - `DELETE /v1/skills/{skill_id}` — best-effort on-disk removal
+//!   for the ComfyUI provider. Skills disappear from
+//!   `GET /v1/skills` after the next ComfyUI hot-reload picks up
+//!   the file deletion.
+//!
+//! # ORCH-0030 R2 M3 changes
+//!
+//! The legacy `Skills` aggregate has been deleted; ComfyUI owns its
+//! loaded-skill state internally and publishes it via
+//! `CapabilityAnnouncement.skills`. The HTTP surface reads from
+//! [`crate::services::directory_subscriber::CapabilityDirectory`]
+//! instead of the deleted aggregate. The import endpoint still
+//! writes the draft to disk and runs the AI namer; immediate
+//! in-memory registration is gone (a future commit will wire a
+//! hot-reload signal from the import endpoint into ComfyUI).
 
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -30,13 +43,8 @@ use serde_json::{json, Value};
 
 use crate::app_state::AppState;
 use crate::domain::ids::ProviderName;
-use crate::domain::moniker::Moniker;
 use crate::domain::primitive::Primitive;
-use crate::services::skills::import::{
-    analyze, draft_builder, model_resolve, namer,
-};
-use crate::services::skills::registry::{SkillKey, SkillMeta};
-use crate::services::skills::types::{ImportSource, ModelRef};
+use crate::services::skills::import::{analyze, draft_builder, model_resolve, namer};
 
 /// Request body for the JSON variant of `POST /v1/skills/{provider}/import`.
 #[derive(Debug, Deserialize)]
@@ -140,8 +148,7 @@ pub async fn post_import(
     let topic_state = format!("skills.{moniker_str}.state");
 
     // Publish: analyzing → confirmed (the analysis stage succeeded;
-    // the next stages — draft write, registration, naming — flow
-    // from here)
+    // the next stages — draft write, naming — flow from here)
     state
         .events
         .publish(
@@ -181,131 +188,35 @@ pub async fn post_import(
         }
     };
 
-    // ── Step 3: register the skill in the aggregate ─────────
-    //
-    // The on-disk loader skips drafts, but our import flow needs
-    // the skill to be visible to `GET /v1/skills` immediately.
-    // Build a SkillMeta directly from the analysis result and
-    // publish it to the in-memory aggregate. The skill will also
-    // pick up auto-naming via the async namer, which calls
-    // `Skills::rename` and emits a `skill.named` lifecycle event.
-    let provider_name = ProviderName::new("comfyui");
-    if let Ok(moniker_typed) = Moniker::new(&moniker_str) {
-        let model_refs: Vec<ModelRef> = result
-            .models
-            .iter()
-            .map(|m| match m {
-                model_resolve::ModelResolution::Resolved {
-                    filename,
-                    url,
-                    sha256,
-                    size_bytes,
-                    model_type,
-                    license,
-                    ..
-                } => ModelRef {
-                    filename: filename.clone(),
-                    model_type: model_type.clone(),
-                    url: Some(url.clone()),
-                    size_bytes: *size_bytes,
-                    sha256: sha256.clone(),
-                    license: license.clone(),
-                    description: None,
-                },
-                model_resolve::ModelResolution::Cached {
-                    filename,
-                    model_type,
-                } => ModelRef {
-                    filename: filename.clone(),
-                    model_type: model_type.clone(),
-                    url: None,
-                    size_bytes: None,
-                    sha256: None,
-                    license: None,
-                    description: None,
-                },
-                model_resolve::ModelResolution::AuthRequired {
-                    filename,
-                    url,
-                    model_type,
-                    ..
-                } => ModelRef {
-                    filename: filename.clone(),
-                    model_type: model_type.clone(),
-                    url: Some(url.clone()),
-                    size_bytes: None,
-                    sha256: None,
-                    license: None,
-                    description: None,
-                },
-                model_resolve::ModelResolution::Unresolved {
-                    filename,
-                    model_type,
-                    ..
-                } => ModelRef {
-                    filename: filename.clone(),
-                    model_type: model_type.clone(),
-                    url: None,
-                    size_bytes: None,
-                    sha256: None,
-                    license: None,
-                    description: None,
-                },
-            })
-            .collect();
+    // Publish: ready (the draft is on disk; ComfyUI hot-reload
+    // will pick it up on the next sweep, or operator restart will
+    // catch it. Naming may still finish in the background.)
+    state
+        .events
+        .publish(
+            &topic_state,
+            &json!({
+                "moniker": moniker_str,
+                "state": "ready",
+                "primitive": result.primitive.dotted(),
+                "models": result.models.len(),
+                "draft_dir": draft_dir.display().to_string(),
+            }),
+        )
+        .await;
 
-        let import_source = result.source.as_ref().map(|s| ImportSource {
-            kind: s.source_type.clone(),
-            url: s.url.clone(),
-            image_id: s.image_id,
-            username: s.username.clone(),
-        });
-
-        let meta = SkillMeta {
-            provider: provider_name.clone(),
-            moniker: moniker_typed.clone(),
-            primitive: result.primitive,
-            display_name: result.display_name.clone(),
-            description: result.description.clone(),
-            vram_mb: 0,
-            variants: result.variants.clone(),
-            model_selector: result.model_selector.clone(),
-            required_models: model_refs,
-            source: import_source,
-            preview_url: result.preview_url.clone(),
-        };
-        state.skills.register(meta).await;
-
-        // Publish: ready (the skill is fully registered, models
-        // resolved, draft on disk; only naming may still be pending)
-        state
-            .events
-            .publish(
-                &topic_state,
-                &json!({
-                    "moniker": moniker_str,
-                    "state": "ready",
-                    "primitive": result.primitive.dotted(),
-                    "models": result.models.len(),
-                }),
-            )
-            .await;
-    } else {
-        tracing::warn!(moniker = %moniker_str, "skills import: generated moniker is invalid");
-    }
-
-    // ── Step 4: fire AI naming in the background ─────────────
+    // ── Step 3: fire AI naming in the background ─────────────
     //
     // Best-effort. The import response has already returned the
-    // moniker; the namer updates the Skills aggregate (and emits
-    // a `skill.named` event on the bus) when it finishes.
+    // moniker; the namer rewrites the draft on disk and emits a
+    // `skills.{moniker}.named` event when it finishes.
     spawn_async_namer(
         state.clone(),
         moniker_str.clone(),
         namer_context_from_result(&result),
     );
 
-    // ── Step 5: return 202 + Location + thin body ───────────
+    // ── Step 4: return 202 + Location + thin body ───────────
     //
     // The body is intentionally minimal: clients fetch the full
     // metadata via `GET /v1/skills/{moniker}` and watch for
@@ -395,22 +306,14 @@ fn spawn_async_namer(
                 .await;
             return;
         };
-        // Locate the skill in the aggregate and update its metadata.
-        let Ok(moniker_typed) = crate::domain::moniker::Moniker::new(&moniker) else {
-            tracing::warn!(moniker, "skills import: generated moniker is invalid");
-            return;
-        };
-        let key = crate::services::skills::registry::SkillKey::new(
-            crate::domain::ids::ProviderName::new("comfyui"),
-            moniker_typed,
-        );
-        state
-            .skills
-            .rename(&key, naming.name.clone(), naming.description.clone())
-            .await;
 
         // Publish the lifecycle event. Subscribers focused on
         // `skills.{moniker}.named` get a real-time push.
+        //
+        // ORCH-0030 R2 M3: the legacy `Skills::rename` call is gone.
+        // The naming is recorded in the event payload; future hot-
+        // reload work will rewrite the on-disk draft to make the new
+        // name persistent.
         state
             .events
             .publish(
@@ -443,7 +346,8 @@ pub struct ListSkillsQuery {
     pub primitive: Option<String>,
 }
 
-/// `GET /v1/skills` — list loaded skills.
+/// `GET /v1/skills` — list skills currently published by an enabled
+/// provider via the `CapabilityDirectory`.
 ///
 /// Optional query parameters:
 /// - `provider` — exact provider name match (e.g. `comfyui`)
@@ -452,8 +356,6 @@ pub async fn list_skills(
     State(state): State<AppState>,
     Query(q): Query<ListSkillsQuery>,
 ) -> Response {
-    let snapshot = state.skills.snapshot();
-
     let primitive_filter = match q.primitive.as_deref() {
         None => None,
         Some(s) => match Primitive::parse_dotted(s) {
@@ -470,86 +372,83 @@ pub async fn list_skills(
 
     let provider_filter = q.provider.as_deref().map(ProviderName::new);
 
+    let all = state.capability_directory.all_skills().await;
     let mut entries: Vec<Value> = Vec::new();
-    for entry in snapshot.skills.values() {
+    for (provider, skill) in all {
         if let Some(p) = &provider_filter {
-            if &entry.meta.provider != p {
+            if &provider != p {
                 continue;
             }
         }
         if let Some(p) = primitive_filter {
-            if entry.meta.primitive != p {
+            if skill.primitive != p {
                 continue;
             }
         }
-        entries.push(serde_json::to_value(entry).unwrap_or_else(|_| json!({})));
+        let entry = json!({
+            "provider": provider.as_str(),
+            "id": skill.id,
+            "primitive": skill.primitive.dotted(),
+            "display": {
+                "name": skill.display.name,
+                "description": skill.display.description,
+                "tags": skill.display.tags,
+                "preview_image": skill.display.preview_image,
+            },
+            "parameters": skill.parameters,
+        });
+        entries.push(entry);
     }
 
-    // Stable order: provider asc, then moniker asc.
+    // Stable order: provider asc, then id asc.
     entries.sort_by(|a, b| {
-        let aa = a
-            .get("meta")
-            .and_then(|m| m.get("provider"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let bb = b
-            .get("meta")
-            .and_then(|m| m.get("provider"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let primary = aa.cmp(bb);
+        let ap = a.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+        let bp = b.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+        let primary = ap.cmp(bp);
         if primary != std::cmp::Ordering::Equal {
             return primary;
         }
-        let am = a
-            .get("meta")
-            .and_then(|m| m.get("moniker"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let bm = b
-            .get("meta")
-            .and_then(|m| m.get("moniker"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        am.cmp(bm)
+        let ai = a.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let bi = b.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        ai.cmp(bi)
     });
 
     let body = json!({
-        "version": snapshot.version,
+        "version": state.capability_directory.version(),
         "count": entries.len(),
         "skills": entries,
     });
     (StatusCode::OK, Json(body)).into_response()
 }
 
-/// `GET /v1/skills/{moniker}` — inspect a single skill.
+/// `GET /v1/skills/{skill_id}` — inspect a single skill.
 ///
-/// Skills are uniquely keyed by `(provider, moniker)`. When the same
-/// moniker is registered under multiple providers (rare in practice
+/// Skills are uniquely keyed by `(provider, skill_id)`. When the
+/// same id is published under multiple providers (rare in practice
 /// today; ComfyUI is the only loader) the response includes every
 /// matching entry, with the consumer expected to disambiguate via
-/// the `meta.provider` field. The most common case (one match)
-/// returns a single entry.
+/// the `provider` field. The most common case (one match) returns
+/// a single entry.
 pub async fn get_skill(
     State(state): State<AppState>,
-    Path(moniker_str): Path<String>,
+    Path(skill_id): Path<String>,
 ) -> Response {
-    let moniker = match Moniker::new(&moniker_str) {
-        Ok(m) => m,
-        Err(e) => {
-            return bail(
-                StatusCode::BAD_REQUEST,
-                "validation_failed",
-                format!("invalid moniker `{moniker_str}`: {e}"),
-            );
-        }
-    };
-
-    let snapshot = state.skills.snapshot();
+    let all = state.capability_directory.all_skills().await;
     let mut matches: Vec<Value> = Vec::new();
-    for (key, entry) in snapshot.skills.iter() {
-        if key.moniker == moniker {
-            matches.push(serde_json::to_value(entry).unwrap_or_else(|_| json!({})));
+    for (provider, skill) in all {
+        if skill.id == skill_id {
+            matches.push(json!({
+                "provider": provider.as_str(),
+                "id": skill.id,
+                "primitive": skill.primitive.dotted(),
+                "display": {
+                    "name": skill.display.name,
+                    "description": skill.display.description,
+                    "tags": skill.display.tags,
+                    "preview_image": skill.display.preview_image,
+                },
+                "parameters": skill.parameters,
+            }));
         }
     }
 
@@ -557,7 +456,7 @@ pub async fn get_skill(
         return bail(
             StatusCode::NOT_FOUND,
             "not_found",
-            format!("no skill registered with moniker `{moniker_str}`"),
+            format!("no skill registered with id `{skill_id}`"),
         );
     }
 
@@ -568,97 +467,76 @@ pub async fn get_skill(
 
     // Multi-match (different providers): return both as a list.
     let body = json!({
-        "moniker": moniker_str,
+        "id": skill_id,
         "matches": matches,
     });
     (StatusCode::OK, Json(body)).into_response()
 }
 
-/// `DELETE /v1/skills/{moniker}` — remove a loaded skill from every
-/// provider that has registered it.
+/// `DELETE /v1/skills/{skill_id}` — best-effort on-disk removal of
+/// the ComfyUI skill directory at
+/// `{data_dir}/skills/comfyui/{skill_id}/`. ComfyUI's hot-reload
+/// will drop the skill from its in-memory state on the next sweep
+/// (or operator restart will catch it).
 ///
-/// Returns the list of `(provider, moniker)` tuples that were removed.
-/// On-disk removal of `{data_dir}/skills/{provider}/{moniker}/` is
-/// best-effort and only happens for ComfyUI (the only provider with a
-/// disk-backed skill loader today).
+/// Returns the list of paths that were removed.
 pub async fn delete_skill(
     State(state): State<AppState>,
-    Path(moniker_str): Path<String>,
+    Path(skill_id): Path<String>,
 ) -> Response {
-    let moniker = match Moniker::new(&moniker_str) {
-        Ok(m) => m,
-        Err(e) => {
-            return bail(
-                StatusCode::BAD_REQUEST,
-                "validation_failed",
-                format!("invalid moniker `{moniker_str}`: {e}"),
-            );
-        }
-    };
-
-    // Collect every key matching this moniker (across providers).
-    let snapshot = state.skills.snapshot();
-    let keys_to_remove: Vec<SkillKey> = snapshot
-        .skills
-        .keys()
-        .filter(|k| k.moniker == moniker)
-        .cloned()
-        .collect();
-
-    if keys_to_remove.is_empty() {
+    // Validate the path segment is sane (no traversal).
+    if skill_id.contains('/') || skill_id.contains('\\') || skill_id.contains("..") {
         return bail(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            format!("no skill registered with moniker `{moniker_str}`"),
+            StatusCode::BAD_REQUEST,
+            "validation_failed",
+            format!("invalid skill id `{skill_id}`"),
         );
     }
 
-    let mut removed: Vec<HashMap<&'static str, String>> = Vec::new();
-    for key in &keys_to_remove {
-        // Remove from in-memory aggregate
-        state.skills.unregister(key).await;
+    let disk_dir = state
+        .data_dir
+        .join("skills")
+        .join("comfyui")
+        .join(&skill_id);
 
-        // Publish lifecycle event so dashboards drop the entry live.
-        state
-            .events
-            .publish(
-                format!("skills.{}.state", key.moniker.as_str()),
-                &json!({
-                    "moniker": key.moniker.as_str(),
-                    "provider": key.provider.as_str(),
-                    "state": "removed",
-                }),
-            )
-            .await;
-
-        // Best-effort on-disk removal: scan for the directory under
-        // `{data_dir}/skills/{provider}/{moniker}` and remove if
-        // present. We log failures but don't fail the request — the
-        // in-memory removal is the source of truth.
-        let disk_dir = state
-            .data_dir
-            .join("skills")
-            .join(key.provider.as_str())
-            .join(key.moniker.as_str());
-        if disk_dir.exists() {
-            if let Err(e) = tokio::fs::remove_dir_all(&disk_dir).await {
-                tracing::warn!(
-                    error = %e,
-                    path = %disk_dir.display(),
-                    "skills delete: on-disk removal failed (in-memory removal succeeded)"
-                );
-            }
-        }
-
-        let mut h = HashMap::new();
-        h.insert("provider", key.provider.as_str().to_string());
-        h.insert("moniker", key.moniker.as_str().to_string());
-        removed.push(h);
+    if !disk_dir.exists() {
+        return bail(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("no skill directory found at `{}`", disk_dir.display()),
+        );
     }
 
+    if let Err(e) = tokio::fs::remove_dir_all(&disk_dir).await {
+        tracing::warn!(
+            error = %e,
+            path = %disk_dir.display(),
+            "skills delete: on-disk removal failed"
+        );
+        return bail(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            format!("on-disk removal failed: {e}"),
+        );
+    }
+
+    // Publish lifecycle event so dashboards refresh.
+    state
+        .events
+        .publish(
+            format!("skills.{skill_id}.state"),
+            &json!({
+                "id": skill_id,
+                "state": "removed",
+                "path": disk_dir.display().to_string(),
+            }),
+        )
+        .await;
+
     let body = json!({
-        "moniker": moniker_str,
-        "removed": removed,
+        "id": skill_id,
+        "removed_path": disk_dir.display().to_string(),
+        "note": "in-memory state will update after the next ComfyUI hot-reload or restart",
     });
     (StatusCode::OK, Json(body)).into_response()
 }

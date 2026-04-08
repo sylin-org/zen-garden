@@ -1,28 +1,38 @@
-//! The Dispatcher — a ten-line coordinator that owns the request
-//! pipeline from raw caller intent through provider handoff.
+//! The Dispatcher — a coordinator that owns the request pipeline
+//! from raw caller intent through provider handoff.
 //!
 //! Responsibilities (ADR §Pipeline + §Job model):
 //! - Pre-create a `Job` record before calling `onboard`.
 //! - Assemble the `ExecutionContext` (media store, job sink, cancel,
 //!   span).
-//! - Run the contextualizer.
+//! - Run the contextualizer (which queries `CapabilityDirectory`).
 //! - Consult the idempotency cache.
 //! - Run the media resolver.
-//! - Look up the provider by resolved name.
+//! - Look up the provider handle by resolved name in
+//!   [`crate::services::provider_registry::ProviderRegistry`].
 //! - Call `onboard`.
 //! - Reserve referenced media for Async/Streaming outcomes (bound
 //!   to the job id).
 //! - Persist a synchronous result in the idempotency cache or, for
 //!   async outcomes, the job reference.
-//! - Update the demand ledger.
 //!
 //! No per-primitive logic; no per-provider branching.
+//!
+//! # ORCH-0030 R2 M3 changes
+//!
+//! - The dispatcher takes
+//!   [`crate::services::directory_subscriber::CapabilityDirectory`]
+//!   and [`crate::services::provider_registry::ProviderRegistry`]
+//!   instead of the legacy `Directory` aggregate.
+//! - The demand ledger is gone (the recommendation engine that
+//!   consumed it is gone).
+//! - `resolved_model` is gone from the request type — model
+//!   resolution is adapter-local.
 
 use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::domain::directory::Directory;
 use crate::domain::errors::{ErrorCode, OrchestratorError};
 use crate::domain::idempotency::{
     CachedResponse, ContentFingerprint, IdempotencyKey, IdempotencyRecord, IdempotencyStore,
@@ -34,8 +44,9 @@ use crate::domain::media::{MediaReservation, SharedMediaStore};
 use crate::domain::provider::ProviderOutcome;
 use crate::domain::request::{ExecutionContext, OrchestratorRequest, RawRequest};
 use crate::services::contextualizer::Contextualizer;
+use crate::services::directory_subscriber::CapabilityDirectory;
 use crate::services::media_resolver::MediaResolver;
-use crate::services::recommendation::{DemandKey, DemandLedger};
+use crate::services::provider_registry::ProviderRegistry;
 
 /// The outcome returned to HTTP handlers.
 pub enum DispatchResult {
@@ -62,11 +73,11 @@ impl std::fmt::Debug for DispatchResult {
 }
 
 pub struct Dispatcher {
-    directory: Arc<Directory>,
+    capability_directory: Arc<CapabilityDirectory>,
+    provider_registry: Arc<ProviderRegistry>,
     contextualizer: Arc<Contextualizer>,
     media_resolver: Arc<MediaResolver>,
     idempotency: Arc<dyn IdempotencyStore>,
-    demand: Arc<DemandLedger>,
     job_store: Arc<dyn JobStore>,
     media_store: SharedMediaStore,
 }
@@ -74,20 +85,20 @@ pub struct Dispatcher {
 impl Dispatcher {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        directory: Arc<Directory>,
+        capability_directory: Arc<CapabilityDirectory>,
+        provider_registry: Arc<ProviderRegistry>,
         contextualizer: Arc<Contextualizer>,
         media_resolver: Arc<MediaResolver>,
         idempotency: Arc<dyn IdempotencyStore>,
-        demand: Arc<DemandLedger>,
         job_store: Arc<dyn JobStore>,
         media_store: SharedMediaStore,
     ) -> Self {
         Self {
-            directory,
+            capability_directory,
+            provider_registry,
             contextualizer,
             media_resolver,
             idempotency,
-            demand,
             job_store,
             media_store,
         }
@@ -137,13 +148,15 @@ impl Dispatcher {
             constraints: raw.constraints,
             media: crate::domain::request::MediaContext::default(),
             resolved_provider: None,
-            resolved_model: None,
             context,
         };
 
         // 3. Contextualize.
-        let snapshot = self.directory.snapshot();
-        let request = match self.contextualizer.resolve(request, &snapshot).await {
+        let request = match self
+            .contextualizer
+            .resolve(request, &self.capability_directory)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 let _ = self
@@ -206,7 +219,11 @@ impl Dispatcher {
         }
 
         // 5. Resolve media.
-        let request = match self.media_resolver.resolve(request, &snapshot).await {
+        let request = match self
+            .media_resolver
+            .resolve(request, &self.capability_directory)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 let _ = self
@@ -223,7 +240,7 @@ impl Dispatcher {
             }
         };
 
-        // 6. Look up provider.
+        // 6. Look up provider handle in the registry.
         let provider_name = request.resolved_provider.clone().ok_or_else(|| {
             OrchestratorError::new(
                 ErrorCode::InternalError,
@@ -231,8 +248,8 @@ impl Dispatcher {
             )
         })?;
         let provider = self
-            .directory
-            .provider(&provider_name)
+            .provider_registry
+            .get(&provider_name)
             .await
             .ok_or_else(|| {
                 OrchestratorError::new(
@@ -335,21 +352,6 @@ impl Dispatcher {
             }
         }
 
-        // 10. Demand ledger (passive).
-        let model_label = outcome_request
-            .resolved_model
-            .as_ref()
-            .map(|m| m.short_name.clone())
-            .unwrap_or_default();
-        self.demand
-            .record(DemandKey {
-                primitive: outcome_request.action.primitive,
-                provider: provider_name.as_str().to_string(),
-                model: model_label,
-                outcome: outcome_variant(&outcome).to_string(),
-            })
-            .await;
-
         Ok(DispatchResult::Fresh(outcome, outcome_request))
     }
 
@@ -365,14 +367,6 @@ impl Dispatcher {
     }
 }
 
-fn outcome_variant(outcome: &ProviderOutcome) -> &'static str {
-    match outcome {
-        ProviderOutcome::Sync(_) => "sync",
-        ProviderOutcome::Async(_) => "async",
-        ProviderOutcome::Streaming { .. } => "stream",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! Direct dispatcher unit tests (§Acceptance-4).
@@ -382,8 +376,6 @@ mod tests {
     //! that are invisible from a 200/202/SSE envelope check:
     //!
     //! - a job record is pre-created **before** the provider is invoked
-    //! - the demand ledger receives one record per dispatch with the
-    //!   right key shape
     //! - sync outcomes complete the job and write to the idempotency cache
     //! - async outcomes transition the job to Running and reserve every
     //!   referenced media bound to that job id
@@ -391,8 +383,9 @@ mod tests {
     //! - cache hits cancel the pre-created job (it must not linger as Queued)
     //! - content-fingerprint mismatches surface as `IdempotencyConflict`
     //!
-    //! Each test builds a fresh Directory containing a single
-    //! `MockProvider` whose script is set per-test.
+    //! Each test builds a fresh `CapabilityDirectory` populated by the
+    //! `DirectorySubscriber` from a synthetic announcement, plus a
+    //! `ProviderRegistry` containing a `MockProvider`.
 
     use super::*;
 
@@ -402,30 +395,33 @@ mod tests {
     use chrono::Utc;
     use futures_util::stream::{self, BoxStream};
     use tempfile::TempDir;
-    use tokio::sync::{watch, Mutex as TokioMutex};
+    use tokio::sync::Mutex as TokioMutex;
     use tokio_util::sync::CancellationToken;
     use tracing::Span;
 
-    use crate::domain::directory::Directory;
-    use crate::domain::ids::{CorrelationId, ProviderName, RegistrationId, RequestId};
+    use crate::domain::capability_announcement::{
+        Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput,
+    };
+    use crate::domain::events::EventBus;
+    use crate::domain::ids::{CorrelationId, ProviderName, RequestId};
     use crate::domain::jobs::{JobFilter, JobState};
     use crate::domain::keys;
-    use crate::domain::media::{MediaSource, MediaStore};
+    use crate::domain::media::{MediaDelivery, MediaSource, MediaStore};
     use crate::domain::output::Output;
     use crate::domain::primitive::Primitive;
-    use crate::domain::provider::{
-        HonoredField, Provider, ProviderError, ProviderHealth, ProviderOutcome, ProviderState,
-        ProviderStatePublisher, Registration, RegistrationStrategy,
-    };
+    use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
     use crate::domain::request::{Action, RawRequest};
     use crate::domain::selectors::{Constraints, Selectors};
     use crate::domain::vocabulary::VocabularyRegistry;
     use crate::services::contextualizer::Contextualizer;
+    use crate::services::directory_subscriber::{
+        CapabilityDirectory, DirectorySubscriber,
+    };
     use crate::services::idempotency_store::InMemoryIdempotencyStore;
     use crate::services::job_store::DiskJobStore;
     use crate::services::media_resolver::MediaResolver;
     use crate::services::media_store::DiskMediaStore;
-    use crate::services::recommendation::{DemandLedger, PinRegistry, RecommendationEngine};
+    use crate::services::provider_registry::ProviderRegistry;
 
     type Scripted = dyn Fn(OrchestratorRequest) -> Result<ProviderOutcome, ProviderError>
         + Send
@@ -435,7 +431,6 @@ mod tests {
     /// Minimal in-test mock provider with a swappable scripted onboard.
     struct MockProvider {
         name: ProviderName,
-        publisher: ProviderStatePublisher,
         script: TokioMutex<Arc<Scripted>>,
         invoked_at: TokioMutex<Option<chrono::DateTime<Utc>>>,
     }
@@ -443,26 +438,10 @@ mod tests {
     impl MockProvider {
         fn new(name: &str) -> Arc<Self> {
             let provider_name = ProviderName::new(name);
-            let registration = Registration {
-                id: RegistrationId::generate(),
-                provider: provider_name.clone(),
-                primitive: Primitive::TextChat,
-                strategy: RegistrationStrategy::Bare,
-                honored_fields: vec![HonoredField::new(keys::text::PROMPT_USER).required()],
-                media_inputs: Vec::new(),
-                media_outputs: Vec::new(),
-            };
-            let initial = ProviderState {
-                health: ProviderHealth::Healthy,
-                registrations: vec![registration],
-                models: Vec::new(),
-                performance_hints: Vec::new(),
-            };
             let default: Arc<Scripted> =
                 Arc::new(|_req: OrchestratorRequest| Ok(ProviderOutcome::Sync(Output::new())));
             Arc::new(Self {
                 name: provider_name,
-                publisher: ProviderStatePublisher::new(initial),
                 script: TokioMutex::new(default),
                 invoked_at: TokioMutex::new(None),
             })
@@ -484,12 +463,6 @@ mod tests {
         fn name(&self) -> ProviderName {
             self.name.clone()
         }
-        fn state(&self) -> Arc<ProviderState> {
-            self.publisher.snapshot()
-        }
-        fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
-            self.publisher.subscribe()
-        }
         async fn onboard(
             &self,
             request: OrchestratorRequest,
@@ -504,11 +477,10 @@ mod tests {
     struct Harness {
         _tmp: TempDir,
         dispatcher: Dispatcher,
-        directory: Arc<Directory>,
+        capability_directory: Arc<CapabilityDirectory>,
         provider: Arc<MockProvider>,
         job_store: Arc<dyn JobStore>,
         idempotency_store: Arc<dyn IdempotencyStore>,
-        demand: Arc<DemandLedger>,
         media_store: Arc<dyn MediaStore>,
     }
 
@@ -516,13 +488,27 @@ mod tests {
         let tmp = TempDir::new().expect("tmp");
         let data_dir = tmp.path().to_path_buf();
 
-        let directory = Directory::new();
+        let capability_directory = CapabilityDirectory::new();
+        let events = EventBus::new();
+        let subscriber =
+            DirectorySubscriber::new(capability_directory.clone(), events.clone());
+
         let provider = MockProvider::new("mockchat");
-        directory
-            .register(provider.clone())
+        let provider_registry = ProviderRegistry::new();
+        provider_registry.register(provider.clone()).await;
+
+        // Publish a synthetic announcement so the directory knows
+        // mockchat serves text.chat.
+        let announcement = CapabilityAnnouncement {
+            provider: provider.name.clone(),
+            enabled: true,
+            capabilities: vec![AnnCapability::new(Primitive::TextChat)],
+            skills: Vec::new(),
+        };
+        subscriber
+            .apply(announcement)
             .await
-            .expect("register");
-        directory.rebuild_snapshot().await;
+            .expect("apply mockchat announcement");
 
         let media_store: Arc<dyn MediaStore> =
             DiskMediaStore::load(&data_dir).await.expect("media");
@@ -531,23 +517,16 @@ mod tests {
         let idempotency_store: Arc<dyn IdempotencyStore> =
             Arc::new(InMemoryIdempotencyStore::new());
 
-        let pins = Arc::new(PinRegistry::load(&data_dir).await);
-        let demand = Arc::new(DemandLedger::new());
-        let recommendation =
-            RecommendationEngine::new(directory.clone(), pins, demand.clone());
-        let resolver: Arc<
-            dyn crate::services::contextualizer::RecommendationResolver,
-        > = recommendation.clone();
         let vocabularies = VocabularyRegistry::build();
-        let contextualizer = Arc::new(Contextualizer::new(vocabularies, Some(resolver)));
+        let contextualizer = Arc::new(Contextualizer::new(vocabularies));
         let media_resolver = Arc::new(MediaResolver);
 
         let dispatcher = Dispatcher::new(
-            directory.clone(),
+            capability_directory.clone(),
+            provider_registry,
             contextualizer,
             media_resolver,
             idempotency_store.clone(),
-            demand.clone(),
             job_store.clone(),
             media_store.clone(),
         );
@@ -555,11 +534,10 @@ mod tests {
         Harness {
             _tmp: tmp,
             dispatcher,
-            directory,
+            capability_directory,
             provider,
             job_store,
             idempotency_store,
-            demand,
             media_store,
         }
     }
@@ -584,7 +562,7 @@ mod tests {
     // ── ProviderOutcome::Sync ─────────────────────────────────
 
     #[tokio::test]
-    async fn sync_outcome_completes_job_and_writes_cache_and_records_demand() {
+    async fn sync_outcome_completes_job_and_writes_cache() {
         let h = build_harness().await;
         h.provider
             .set_script(|_req| {
@@ -617,14 +595,6 @@ mod tests {
             .unwrap()
             .expect("cache write happened");
         assert!(matches!(record.response, CachedResponse::Sync { .. }));
-
-        // Demand ledger received exactly one entry.
-        let snap = h.demand.snapshot().await;
-        assert_eq!(snap.values().sum::<u64>(), 1);
-        let key = snap.keys().next().unwrap();
-        assert_eq!(key.primitive, Primitive::TextChat);
-        assert_eq!(key.provider, "mockchat");
-        assert_eq!(key.outcome, "sync");
     }
 
     // ── ProviderOutcome::Async ────────────────────────────────
@@ -644,63 +614,53 @@ mod tests {
             .await
             .unwrap();
 
-        // Re-register a provider that accepts image.analyze ById so the
-        // contextualizer doesn't reject the media reference.
-        let directory = Directory::new();
-        let provider = {
-            let provider_name = ProviderName::new("xfer");
-            let registration = Registration {
-                id: RegistrationId::generate(),
-                provider: provider_name.clone(),
+        // Re-publish a `xfer` provider that accepts image.analyze ById
+        // so the contextualizer doesn't reject the media reference.
+        let xfer_directory = CapabilityDirectory::new();
+        let xfer_events = EventBus::new();
+        let xfer_subscriber =
+            DirectorySubscriber::new(xfer_directory.clone(), xfer_events.clone());
+
+        let xfer_provider = Arc::new(MockProvider {
+            name: ProviderName::new("xfer"),
+            script: TokioMutex::new(Arc::new(|_| {
+                let mut out = Output::new();
+                out.set(&keys::job::ID, "job-async-1");
+                out.set(&keys::job::STATUS, keys::job::values::STATUS_RUNNING);
+                Ok(ProviderOutcome::Async(out))
+            })),
+            invoked_at: TokioMutex::new(None),
+        });
+        let xfer_registry = ProviderRegistry::new();
+        xfer_registry.register(xfer_provider.clone()).await;
+
+        let xfer_announcement = CapabilityAnnouncement {
+            provider: xfer_provider.name.clone(),
+            enabled: true,
+            capabilities: vec![AnnCapability {
                 primitive: Primitive::ImageAnalyze,
-                strategy: RegistrationStrategy::Bare,
-                honored_fields: vec![HonoredField::new(keys::image::SOURCE).required()],
-                media_inputs: vec![crate::domain::provider::MediaInputSpec {
-                    field: keys::image::SOURCE,
-                    delivery: crate::domain::media::MediaDelivery::ById,
+                media_inputs: vec![CapabilityMediaInput {
+                    field: keys::image::SOURCE.as_str().to_string(),
+                    delivery: MediaDelivery::ById,
                     accepted_types: vec!["image/png".to_string()],
                     overlay: None,
                 }],
-                media_outputs: Vec::new(),
-            };
-            let initial = ProviderState {
-                health: ProviderHealth::Healthy,
-                registrations: vec![registration],
-                models: Vec::new(),
-                performance_hints: Vec::new(),
-            };
-            Arc::new(MockProvider {
-                name: provider_name,
-                publisher: ProviderStatePublisher::new(initial),
-                script: TokioMutex::new(Arc::new(|_| {
-                    let mut out = Output::new();
-                    out.set(&keys::job::ID, "job-async-1");
-                    out.set(&keys::job::STATUS, keys::job::values::STATUS_RUNNING);
-                    Ok(ProviderOutcome::Async(out))
-                })),
-                invoked_at: TokioMutex::new(None),
-            })
+            }],
+            skills: Vec::new(),
         };
-        directory.register(provider).await.unwrap();
-        directory.rebuild_snapshot().await;
+        xfer_subscriber
+            .apply(xfer_announcement)
+            .await
+            .expect("apply xfer announcement");
 
-        let pins = Arc::new(PinRegistry::load(h._tmp.path()).await);
-        let demand = Arc::new(DemandLedger::new());
-        let recommendation =
-            RecommendationEngine::new(directory.clone(), pins, demand.clone());
-        let resolver: Arc<
-            dyn crate::services::contextualizer::RecommendationResolver,
-        > = recommendation.clone();
-        let contextualizer = Arc::new(Contextualizer::new(
-            VocabularyRegistry::build(),
-            Some(resolver),
-        ));
+        let contextualizer =
+            Arc::new(Contextualizer::new(VocabularyRegistry::build()));
         let dispatcher = Dispatcher::new(
-            directory,
+            xfer_directory.clone(),
+            xfer_registry,
             contextualizer,
             Arc::new(MediaResolver),
             h.idempotency_store.clone(),
-            demand.clone(),
             h.job_store.clone(),
             h.media_store.clone(),
         );
@@ -729,7 +689,9 @@ mod tests {
         // Media must be Reserved bound to this job id.
         let meta = h.media_store.get_metadata(&entry.id).await.unwrap();
         match meta.lifecycle {
-            crate::domain::media::MediaLifecycle::Reserved { ref reservation, .. } => {
+            crate::domain::media::MediaLifecycle::Reserved {
+                ref reservation, ..
+            } => {
                 assert_eq!(
                     reservation.job_id.as_ref().map(|j| j.as_str()),
                     Some(job.id.as_str()),
@@ -738,11 +700,6 @@ mod tests {
             }
             ref other => panic!("expected Reserved lifecycle, got {other:?}"),
         }
-
-        // Demand ledger reflects the async outcome.
-        let snap = demand.snapshot().await;
-        assert_eq!(snap.values().sum::<u64>(), 1);
-        assert_eq!(snap.keys().next().unwrap().outcome, "async");
     }
 
     // ── ProviderOutcome::Streaming ────────────────────────────
@@ -779,10 +736,6 @@ mod tests {
             h.idempotency_store.lookup(&key).await.unwrap().is_none(),
             "streaming outcomes must not be cached (§ADR Idempotency)"
         );
-
-        // Demand ledger reflects the stream outcome.
-        let snap = h.demand.snapshot().await;
-        assert_eq!(snap.keys().next().unwrap().outcome, "stream");
     }
 
     // ── Cache hit cancels the pre-created job ─────────────────
@@ -893,7 +846,7 @@ mod tests {
         );
         assert!(job.created_at >= before);
 
-        // Suppress warning about unused field on the harness.
-        let _ = &h.directory;
+        // Suppress unused-field warning on the harness.
+        let _ = &h.capability_directory;
     }
 }

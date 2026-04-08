@@ -1,41 +1,47 @@
-//! Docling provider — `image.analyze.ocr`.
+//! Docling provider — capability-event driven (ORCH-0030 R2 M3).
 //!
 //! Docling (https://github.com/DS4SD/docling) runs document layout
-//! analysis and OCR on uploaded images/PDFs. Registered as a
-//! skill-oriented action under `image.analyze/ocr`; callers hit
-//! `POST /v1/image/analyze/ocr` with a media reference and get
-//! back extracted text.
+//! analysis and OCR on uploaded images/PDFs. After M3, Docling
+//! publishes a [`CapabilityAnnouncement`] on the bus declaring the
+//! `image.analyze` primitive plus the `ocr` skill, and the
+//! `CapabilityDirectory` (populated by `DirectorySubscriber`) is the
+//! authoritative view of what Docling can serve.
 //!
-//! Wire: `POST /v1/convert/file` with a multipart `files` field.
-//! Returns JSON with `document.md_content`, `document.text_content`,
-//! and other per-element metadata.
+//! # Wire
+//!
+//! `POST /v1/convert/file` with a multipart `files` field. Returns
+//! JSON with `document.md_content`, `document.text_content`, and
+//! other per-element metadata. Docling has no model concept — the
+//! adapter ignores `selectors.model` entirely.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
-use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
-use crate::domain::ids::{ProviderName, RegistrationId};
+use crate::domain::capability_announcement::{
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, SkillDeclaration,
+    SkillDisplay, SkillParameter,
+};
+use crate::domain::events::EventBus;
+use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::media::MediaDelivery;
-use crate::domain::moniker::Moniker;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{
-    HonoredField, MediaInputSpec, Provider, ProviderError, ProviderHealth, ProviderOutcome,
-    ProviderState, ProviderStatePublisher, Registration, RegistrationStrategy,
-};
+use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
 use crate::domain::request::OrchestratorRequest;
-
+use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
-use tokio_util::sync::CancellationToken;
 
 use super::common::{
     build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
 };
 
+/// Docling base name. Discovery's base-name match picks up `docling`
+/// and any `docling::adopted`, `docling::dev`, etc. variants.
 const FQNS: &[&'static str] = &["docling"];
 
 #[derive(Debug, Clone, Default)]
@@ -45,92 +51,85 @@ pub struct DoclingProvider {
     name: ProviderName,
     instances: Arc<InstancePool>,
     http: Client,
-    publisher: ProviderStatePublisher,
-}
-
-fn build_registration(name: &ProviderName) -> Registration {
-    let moniker = Moniker::new("ocr").expect("valid skill moniker");
-    Registration {
-        id: RegistrationId::generate(),
-        provider: name.clone(),
-        primitive: Primitive::ImageAnalyze,
-        strategy: RegistrationStrategy::Skill {
-            moniker,
-            display_name: "Docling OCR".to_string(),
-            description: Some(
-                "Document layout + OCR via Docling. Returns extracted text and markdown."
-                    .to_string(),
-            ),
-        },
-        honored_fields: vec![HonoredField::new(keys::image::SOURCE).required()],
-        media_inputs: vec![MediaInputSpec {
-            field: keys::image::SOURCE,
-            delivery: MediaDelivery::Transfer,
-            accepted_types: vec![
-                "image/png".to_string(),
-                "image/jpeg".to_string(),
-                "image/tiff".to_string(),
-                "application/pdf".to_string(),
-            ],
-            overlay: None,
-        }],
-        media_outputs: Vec::new(),
-    }
+    events: Arc<EventBus>,
 }
 
 impl DoclingProvider {
     pub fn new(
         _config: DoclingConfig,
         discovery: Arc<GardenDiscovery>,
+        events: Arc<EventBus>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let name = ProviderName::new(keys::providers::DOCLING);
-        let initial = ProviderState {
-            health: ProviderHealth::Offline {
-                reason: "no garden instances discovered yet".to_string(),
-            },
-            registrations: vec![build_registration(&name)],
-            models: Vec::new(),
-            performance_hints: Vec::new(),
-        };
-
         let provider = Arc::new(Self {
             name,
             instances: Arc::new(InstancePool::new()),
             http: build_http_client(),
-            publisher: ProviderStatePublisher::new(initial),
+            events,
         });
         spawn_subscriber(provider.clone(), discovery, shutdown);
         provider
     }
 
+    /// Round-robin pick of the next instance base URL.
     fn pick(&self) -> Result<String, ProviderError> {
         self.instances.pick().ok_or_else(|| {
             ProviderError::Unreachable("no docling instances in the garden".to_string())
         })
     }
-}
 
-impl DoclingProvider {
-    fn apply_merged(&self, urls: Vec<String>) {
+    /// Publish the current instance pool state as a capability
+    /// announcement. Called every time the instance pool changes.
+    async fn publish_capabilities(&self) {
+        let enabled = !self.instances.is_empty();
+        let announcement = CapabilityAnnouncement {
+            provider: self.name.clone(),
+            enabled,
+            capabilities: vec![AnnCapability {
+                primitive: Primitive::ImageAnalyze,
+                media_inputs: vec![CapabilityMediaInput {
+                    field: keys::image::SOURCE.as_str().to_string(),
+                    delivery: MediaDelivery::Transfer,
+                    accepted_types: vec![
+                        "image/png".to_string(),
+                        "image/jpeg".to_string(),
+                        "image/tiff".to_string(),
+                        "application/pdf".to_string(),
+                    ],
+                    overlay: None,
+                }],
+            }],
+            skills: vec![SkillDeclaration {
+                id: "ocr".to_string(),
+                primitive: Primitive::ImageAnalyze,
+                display: SkillDisplay::new("Docling OCR").with_description(
+                    "Document layout + OCR via Docling. Returns extracted text and markdown.",
+                ),
+                parameters: vec![SkillParameter {
+                    field: keys::image::SOURCE.as_str().to_string(),
+                    required: true,
+                    description: Some("The document/image to analyze.".into()),
+                    default: None,
+                    auto: None,
+                    pinnable: false,
+                }],
+            }],
+        };
+        publish_capability_announcement(&self.events, &announcement).await;
+    }
+
+    /// Apply a merged URL list from discovery. Publishes a fresh
+    /// capability announcement if the pool structurally changed.
+    async fn apply_merged(&self, urls: Vec<String>) {
         if !self.instances.set(urls) {
             return;
         }
-        let count = self.instances.len();
-        let name = self.name.clone();
-        self.publisher.modify(move |mut state| {
-            state.health = if count == 0 {
-                ProviderHealth::Offline {
-                    reason: "no garden instances discovered".to_string(),
-                }
-            } else {
-                ProviderHealth::Healthy
-            };
-            state.registrations = vec![build_registration(&name)];
-            state
-        });
+        self.publish_capabilities().await;
     }
 }
+
+// ── Discovery subscriber ─────────────────────────────────────
 
 fn spawn_subscriber(
     provider: Arc<DoclingProvider>,
@@ -145,14 +144,17 @@ fn spawn_subscriber(
                 _ = shutdown.cancelled() => break,
                 event = rx.recv() => {
                     let Some(event) = event else { break };
-                    let urls: Vec<String> = event.instances.into_iter().map(|i| i.url).collect();
+                    let urls: Vec<String> =
+                        event.instances.into_iter().map(|i| i.url).collect();
                     pool.set(&event.fqn, urls);
-                    provider.apply_merged(pool.flatten());
+                    provider.apply_merged(pool.flatten()).await;
                 }
             }
         }
     });
 }
+
+// ── Provider trait impl ──────────────────────────────────────
 
 #[async_trait]
 impl Provider for DoclingProvider {
@@ -160,25 +162,10 @@ impl Provider for DoclingProvider {
         self.name.clone()
     }
 
-    fn state(&self) -> Arc<ProviderState> {
-        self.publisher.snapshot()
-    }
-
-    fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
-        self.publisher.subscribe()
-    }
-
     async fn onboard(
         &self,
         request: OrchestratorRequest,
     ) -> Result<ProviderOutcome, ProviderError> {
-        if request.action.primitive != Primitive::ImageAnalyze {
-            return Err(ProviderError::Unsupported(format!(
-                "docling does not serve {}",
-                request.action.primitive.dotted()
-            )));
-        }
-
         let media_ref = request
             .media
             .find_at_field(&keys::image::SOURCE)
@@ -216,10 +203,7 @@ impl Provider for DoclingProvider {
         let form = reqwest::multipart::Form::new().part("files", part);
 
         let base = self.pick()?;
-        let endpoint = format!(
-            "{}/v1/convert/file",
-            base.trim_end_matches('/')
-        );
+        let endpoint = format!("{}/v1/convert/file", base.trim_end_matches('/'));
         let resp = self
             .http
             .post(&endpoint)

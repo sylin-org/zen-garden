@@ -25,10 +25,61 @@ use crate::domain::media::MediaDelivery;
 use crate::domain::moniker::Moniker;
 use crate::domain::primitive::Primitive;
 
-// Re-export the constraint types from `domain/provider.rs` — they
-// live there (not here) so the orchestrator core can refer to them
-// without pulling in `services::skills`.
-pub use crate::domain::provider::{AutoKind, FieldConstraint, ParamOption};
+// ── Constraint types (canonical home; ORCH-0030 R2 M3) ──────
+//
+// These types describe how a skill narrows a vocabulary field.
+// They live in this module — not in `domain/provider.rs` — because
+// they are skill-schema types, not provider-trait types. The disk
+// schema (v3) depends on them; the canonical lean Provider trait
+// does not.
+
+/// Narrows a vocabulary `FieldType` for a specific skill (ORCH-0029).
+///
+/// Skills declare these on their bindings. The dashboard reads the
+/// vocabulary's base `FieldType` and applies this overlay to pick
+/// the right widget (slider, dropdown, autofill). The contextualizer
+/// validates incoming values against the constraint after passing
+/// the vocabulary's broader type check.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldConstraint {
+    /// Restrict to a finite set of values. Compatible with
+    /// vocabulary types `String`, `Integer`, `Number`.
+    Options { options: Vec<ParamOption> },
+    /// Tighten a numeric range. Compatible with `Integer`, `Number`.
+    /// `min`/`max` MUST be inside the vocabulary's declared range.
+    Range {
+        min: f64,
+        max: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        step: Option<f64>,
+    },
+    /// Auto-generated value (e.g., random seed). The dispatcher
+    /// fills the field if the caller omits it. The dashboard
+    /// renders a "regenerate" button.
+    Auto {
+        #[serde(rename = "auto")]
+        kind_inner: AutoKind,
+    },
+}
+
+impl Eq for FieldConstraint {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParamOption {
+    pub value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+impl Eq for ParamOption {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoKind {
+    /// Random unsigned 64-bit integer per request (seeds).
+    RandomInt,
+}
 
 // ── In-memory typed model ─────────────────────────────────────
 

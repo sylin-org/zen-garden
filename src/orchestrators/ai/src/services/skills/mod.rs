@@ -1,27 +1,28 @@
-//! Skill subsystem (ORCH-0029).
+//! Skill subsystem (ORCH-0029, post-ORCH-0030 R2 M3).
 //!
 //! A skill is a **narrowing of a primitive's vocabulary plus a binding
 //! to a backend execution plan**. The orchestrator core holds the
-//! schema (vocabulary), the static metadata (Directory registrations),
-//! and the dynamic state (this module's `Skills` aggregate). Each
-//! skill-aware adapter (currently ComfyUI; later Whisper, Docling,
-//! and others) owns the lifecycle: load from disk, register, watch
-//! the filesystem, provision dependencies, dispatch at execution
-//! time.
+//! schema (vocabulary). After M3, **adapters own the dynamic state
+//! directly** — there is no central `Skills` aggregate any more.
+//! ComfyUI loads its skills from disk, holds the `LoadedSkill` map
+//! internally, and publishes its skill catalogue as part of its
+//! `CapabilityAnnouncement`.
 //!
-//! This module hosts:
+//! This module hosts the still-shared infrastructure:
 //!
 //! - [`types`] — the v3 disk schema and the in-memory shapes the
 //!   loader produces (`SkillDefinition`, `Binding`, `ModelSelector`,
-//!   `ModelRef`, `Variant`).
+//!   `ModelRef`, `Variant`, `FieldConstraint`, `ParamOption`,
+//!   `AutoKind`).
 //! - [`loader`] — disk scanner with v1/v2 → v3 legacy translation.
-//! - [`registry`] — the `Skills` aggregate: private mutable state
-//!   behind a `tokio::sync::Mutex`, snapshot via `watch::channel`,
-//!   event API per ORCH-0028 §13.
-//! - `cache` (Phase 2) — content-addressed dependency cache + manifest.
-//! - `provisioner` (Phase 2) — streaming download + push to instance.
-//! - `queue` (Phase 2) — bounded provisioning worker.
-//! - `import` (Phase 3) — CivitAI / PNG / JSON import pipeline.
+//! - [`cache`] — content-addressed dependency cache + manifest.
+//! - [`provisioner`] — streaming download + push to instance.
+//! - [`queue`] — bounded provisioning worker.
+//! - [`moss_volume`] — Moss volume API helpers for pushing models.
+//! - [`import`] — CivitAI / PNG / JSON import pipeline.
+//!
+//! **Removed in M3:** the `registry` submodule (the `Skills`
+//! aggregate). ComfyUI now owns its skill state directly.
 //!
 //! See [`docs/decisions/ORCH-0029-skill-subsystem.md`] for the design.
 
@@ -31,7 +32,6 @@ pub mod loader;
 pub mod moss_volume;
 pub mod provisioner;
 pub mod queue;
-pub mod registry;
 pub mod types;
 
 pub use queue::{
@@ -39,7 +39,6 @@ pub use queue::{
     QueueEvent,
 };
 
-pub use registry::{InstanceReadiness, Skills, SkillsSnapshot, SkillEntry, SkillEvent, SkillKey, SkillMeta};
 pub use types::{
     AutoKind, Binding, BindingTarget, FieldConstraint, ModelRef, ModelSelector, ParamOption,
     SkillDefinition, Variant,

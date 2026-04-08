@@ -1,9 +1,24 @@
-//! `GET /metrics` — Prometheus text format exposing the
-//! [`DemandLedger`] per-request counters and live Directory shape.
+//! `GET /metrics` — Prometheus text format exposing the live
+//! `CapabilityDirectory` shape.
 //!
-//! This is the raw data source for a future demand-weighted advisor
-//! (ADR §RecommendationEngine, §Demand ledger). v1 emits counters
-//! passively; no decisions are made from them.
+//! # ORCH-0030 R2 M3 changes
+//!
+//! The legacy `Directory` aggregate and the `DemandLedger` have
+//! been deleted. Metrics now read from
+//! [`crate::services::directory_subscriber::CapabilityDirectory`]
+//! and report:
+//!
+//! - `zg_orchestrator_directory_version` — monotonic snapshot version
+//! - `zg_orchestrator_providers_total{enabled}` — number of registered
+//!   providers, partitioned by enabled / disabled
+//! - `zg_orchestrator_capabilities_total` — number of distinct
+//!   (provider, primitive) pairs currently published
+//! - `zg_orchestrator_skills_total` — number of distinct
+//!   (provider, skill_id) pairs currently published
+//!
+//! Per-request demand counters are gone — adapters that need
+//! per-model demand for their own scoring (Ollama) maintain their
+//! own internal counters.
 
 use axum::extract::State;
 use axum::http::{header, HeaderValue, StatusCode};
@@ -16,23 +31,35 @@ pub async fn get_metrics(State(state): State<AppState>) -> Response {
     let mut body = String::new();
 
     // Directory shape.
-    let snap = state.directory.snapshot();
-    writeln!(
-        &mut body,
-        "# HELP zg_orchestrator_directory_version Monotonic Directory snapshot version."
-    )
-    .ok();
-    writeln!(&mut body, "# TYPE zg_orchestrator_directory_version gauge").ok();
-    writeln!(
-        &mut body,
-        "zg_orchestrator_directory_version {}",
-        snap.version
-    )
-    .ok();
+    let version = state.capability_directory.version();
+    let providers_map = state.capability_directory.providers().await;
+    let provider_count = providers_map.len();
+    let enabled_count = providers_map.values().filter(|p| p.enabled).count();
+    let disabled_count = provider_count - enabled_count;
+
+    let capability_count: usize = providers_map
+        .values()
+        .filter(|p| p.enabled)
+        .map(|p| p.announcement.capabilities.len())
+        .sum();
+
+    let skill_count: usize = providers_map
+        .values()
+        .filter(|p| p.enabled)
+        .map(|p| p.announcement.skills.len())
+        .sum();
 
     writeln!(
         &mut body,
-        "# HELP zg_orchestrator_providers_total Number of registered providers by health state."
+        "# HELP zg_orchestrator_directory_version Monotonic CapabilityDirectory version."
+    )
+    .ok();
+    writeln!(&mut body, "# TYPE zg_orchestrator_directory_version gauge").ok();
+    writeln!(&mut body, "zg_orchestrator_directory_version {}", version).ok();
+
+    writeln!(
+        &mut body,
+        "# HELP zg_orchestrator_providers_total Number of registered providers, partitioned by enabled state."
     )
     .ok();
     writeln!(
@@ -42,61 +69,41 @@ pub async fn get_metrics(State(state): State<AppState>) -> Response {
     .ok();
     writeln!(
         &mut body,
-        "zg_orchestrator_providers_total{{health=\"healthy\"}} {}",
-        snap.healthy_provider_count()
+        "zg_orchestrator_providers_total{{enabled=\"true\"}} {}",
+        enabled_count
     )
     .ok();
     writeln!(
         &mut body,
-        "zg_orchestrator_providers_total{{health=\"degraded\"}} {}",
-        snap.degraded_provider_count()
-    )
-    .ok();
-    writeln!(
-        &mut body,
-        "zg_orchestrator_providers_total{{health=\"offline\"}} {}",
-        snap.offline_provider_count()
+        "zg_orchestrator_providers_total{{enabled=\"false\"}} {}",
+        disabled_count
     )
     .ok();
 
     writeln!(
         &mut body,
-        "# HELP zg_orchestrator_models_total Models currently registered in the Directory."
+        "# HELP zg_orchestrator_capabilities_total Number of distinct (provider, primitive) capability declarations."
     )
     .ok();
-    writeln!(&mut body, "# TYPE zg_orchestrator_models_total gauge").ok();
     writeln!(
         &mut body,
-        "zg_orchestrator_models_total {}",
-        snap.models.len()
+        "# TYPE zg_orchestrator_capabilities_total gauge"
+    )
+    .ok();
+    writeln!(
+        &mut body,
+        "zg_orchestrator_capabilities_total {}",
+        capability_count
     )
     .ok();
 
-    // Demand ledger.
     writeln!(
         &mut body,
-        "# HELP zg_orchestrator_requests_total Completed requests bucketed by primitive, provider, model, and outcome mode."
+        "# HELP zg_orchestrator_skills_total Number of distinct (provider, skill_id) skill declarations."
     )
     .ok();
-    writeln!(
-        &mut body,
-        "# TYPE zg_orchestrator_requests_total counter"
-    )
-    .ok();
-
-    let counters = state.recommendation.demand().snapshot().await;
-    for (key, count) in counters {
-        writeln!(
-            &mut body,
-            "zg_orchestrator_requests_total{{primitive=\"{}\",provider=\"{}\",model=\"{}\",outcome=\"{}\"}} {}",
-            escape_label(key.primitive.dotted()),
-            escape_label(&key.provider),
-            escape_label(&key.model),
-            escape_label(&key.outcome),
-            count
-        )
-        .ok();
-    }
+    writeln!(&mut body, "# TYPE zg_orchestrator_skills_total gauge").ok();
+    writeln!(&mut body, "zg_orchestrator_skills_total {}", skill_count).ok();
 
     let mut response = (StatusCode::OK, body).into_response();
     response.headers_mut().insert(
@@ -104,18 +111,4 @@ pub async fn get_metrics(State(state): State<AppState>) -> Response {
         HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
     );
     response
-}
-
-/// Escape a label value per the Prometheus text exposition format.
-fn escape_label(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            _ => out.push(c),
-        }
-    }
-    out
 }

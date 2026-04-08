@@ -1,80 +1,63 @@
 //! The Contextualizer — request normalization and validation.
 //!
-//! Eight passes run in order; each is pure and unit-testable with a
-//! mocked Directory snapshot:
+//! Six passes run in order; each is pure and unit-testable with a
+//! mocked `CapabilityDirectory`:
 //!
-//! 1. `validate_action` — the action exists.
-//! 2. `normalize_payload` — apply aliases, flatten shortcuts.
+//! 1. `validate_action` — at least one provider serves the action's
+//!    primitive (and skill, if any).
+//! 2. `normalize_payload` — apply aliases, decompose `messages`,
+//!    flatten shortcuts.
 //! 3. `validate_input` — validate the canonical payload against the
 //!    input vocabulary (types, ranges, required fields).
 //! 4. `extract_media` — walk the payload, collect every
 //!    `{media_id: "..."}` reference.
-//! 5. `resolve_model` — translate `recommended:*` to a concrete
-//!    model FQN.
-//! 6. `resolve_provider` — find the target provider via skill, model,
-//!    or primitive-only lookup.
-//! 7. `validate_provider_narrowing` — apply the chosen provider's
-//!    `honored_fields` constraints.
-//! 8. `validate_constraints` — zone constraint compatibility.
+//! 5. `resolve_provider` — pick the target provider via skill,
+//!    explicit `selectors.provider`, or primitive-only lookup. Sets
+//!    `request.resolved_provider`.
+//! 6. `validate_constraints` — zone constraint compatibility (advisory
+//!    in v1).
+//!
+//! # ORCH-0030 R2 M3 changes
+//!
+//! Two passes from the legacy contextualizer were deleted:
+//!
+//! - **`resolve_model`** — model resolution is now adapter-local.
+//!   Each adapter reads `request.selectors.model` inside its own
+//!   `onboard` and applies its own resolution policy (Ollama's
+//!   capability matrix; static cloud lists via
+//!   [`crate::providers::cloud_common::resolve_cloud_model`]).
+//! - **`validate_provider_narrowing`** — provider-side narrowings
+//!   (`HonoredField::required` / `range` / `constraint`) were
+//!   deleted with the legacy `Registration` type. Vocabulary
+//!   validation in pass 3 covers the field-level checks; skill
+//!   bindings narrow via `Binding.narrow` and are validated by
+//!   the dispatching adapter when a skill is invoked.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use crate::domain::directory::{DirectorySnapshot, ModelView};
 use crate::domain::errors::{ErrorCode, OrchestratorError};
 use crate::domain::field_path::FieldPath;
-use crate::domain::ids::{MediaId, ModelFqn, ProviderName};
+use crate::domain::ids::MediaId;
 use crate::domain::keys;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{
-    FieldRange, HonoredField, Provider, ProviderHealth, Registration, RegistrationStrategy,
-};
-use crate::domain::request::{Action, MediaContext, MediaReference, ModelRef, OrchestratorRequest};
+use crate::domain::request::{Action, MediaContext, MediaReference, OrchestratorRequest};
 use crate::domain::selectors::ZoneConstraint;
 use crate::domain::vocabulary::{
-    AliasCondition, FieldSpec, FieldType, IoSchema, SharedNamespace, Vocabulary,
-    VocabularyRegistry,
+    AliasCondition, FieldType, Vocabulary, VocabularyRegistry,
 };
-
-/// Recommended moniker prefix used by the caller to ask for a
-/// capability-based model (§ORCH-0011).
-pub const RECOMMENDED_PREFIX: &str = "recommended:";
+use crate::services::directory_subscriber::CapabilityDirectory;
 
 /// The contextualization pipeline.
 pub struct Contextualizer {
     vocabularies: VocabularyRegistry,
-    recommendation: Option<Arc<dyn RecommendationResolver>>,
-}
-
-/// Pluggable recommendation lookup. Implemented by
-/// [`crate::services::recommendation::RecommendationEngine`]; a stub
-/// implementation is used in unit tests.
-///
-/// The contextualizer reads three things from the resolver:
-/// - The model selected for an explicit `recommended:<capability>`
-///   moniker.
-/// - The primitive a capability label maps to (so the contextualizer
-///   can wire the resolved model to the right dispatch path).
-/// - The default capability for a bare primitive (used when a caller
-///   omits the model selector entirely — `text.chat` with no model
-///   becomes `recommended:chat` under the hood).
-pub trait RecommendationResolver: Send + Sync + 'static {
-    fn selected_for_capability(&self, capability: &str) -> Option<ModelFqn>;
-    fn primitive_for_capability(&self, capability: &str) -> Option<Primitive>;
-    fn default_capability_for_primitive(&self, primitive: Primitive) -> Option<String>;
 }
 
 impl Contextualizer {
-    pub fn new(
-        vocabularies: VocabularyRegistry,
-        recommendation: Option<Arc<dyn RecommendationResolver>>,
-    ) -> Self {
-        Self {
-            vocabularies,
-            recommendation,
-        }
+    pub fn new(vocabularies: VocabularyRegistry) -> Self {
+        Self { vocabularies }
     }
 
     /// Run every pass in order. Returns an enriched request or a
@@ -83,15 +66,12 @@ impl Contextualizer {
     pub async fn resolve(
         &self,
         mut request: OrchestratorRequest,
-        snapshot: &DirectorySnapshot,
+        directory: &Arc<CapabilityDirectory>,
     ) -> Result<OrchestratorRequest, OrchestratorError> {
-        let vocabulary = self
-            .vocabularies
-            .get(request.action.primitive)
-            .clone();
+        let vocabulary = self.vocabularies.get(request.action.primitive).clone();
 
         // Pass 1
-        self.validate_action(&request, snapshot)?;
+        self.validate_action(&request, directory).await?;
 
         // Pass 2
         request.payload = self.normalize_payload(&request.action, request.payload, &vocabulary)?;
@@ -102,43 +82,28 @@ impl Contextualizer {
         // Pass 4
         request.media = self.extract_media(&request.payload)?;
 
-        // Pass 5
-        self.resolve_model(&mut request, snapshot)?;
+        // Pass 5 (was Pass 6 in the legacy contextualizer)
+        self.resolve_provider(&mut request, directory).await?;
 
-        // Pass 6
-        self.resolve_provider(&mut request, snapshot)?;
-
-        // Pass 7
-        self.validate_provider_narrowing(&request, snapshot)?;
-
-        // Pass 8
-        self.validate_constraints(&request, snapshot)?;
+        // Pass 6 (was Pass 8)
+        self.validate_constraints(&request)?;
 
         Ok(request)
     }
 
     // ── Pass 1: validate_action ───────────────────────────────
 
-    fn validate_action(
+    async fn validate_action(
         &self,
         request: &OrchestratorRequest,
-        snapshot: &DirectorySnapshot,
+        directory: &Arc<CapabilityDirectory>,
     ) -> Result<(), OrchestratorError> {
         let primitive = request.action.primitive;
-        if snapshot.providers_for(primitive).is_empty() {
-            return Err(OrchestratorError::new(
-                ErrorCode::NoCandidates,
-                format!(
-                    "No provider is registered for primitive `{}`.",
-                    primitive.dotted()
-                ),
-            )
-            .with_details(serde_json::json!({
-                "primitive": primitive.dotted(),
-            })));
-        }
         if let Some(skill) = request.action.skill.as_ref() {
-            if snapshot.find_skill(primitive, skill).is_none() {
+            let providers = directory
+                .providers_for_skill(primitive, skill.as_str())
+                .await;
+            if providers.is_empty() {
                 return Err(OrchestratorError::new(
                     ErrorCode::NotFound,
                     format!(
@@ -152,6 +117,19 @@ impl Contextualizer {
                     "skill": skill.as_str(),
                 })));
             }
+            return Ok(());
+        }
+        if directory.providers_for_primitive(primitive).await.is_empty() {
+            return Err(OrchestratorError::new(
+                ErrorCode::NoCandidates,
+                format!(
+                    "No provider is registered for primitive `{}`.",
+                    primitive.dotted()
+                ),
+            )
+            .with_details(serde_json::json!({
+                "primitive": primitive.dotted(),
+            })));
         }
         Ok(())
     }
@@ -311,208 +289,52 @@ impl Contextualizer {
         Ok(ctx)
     }
 
-    // ── Pass 5: resolve_model ─────────────────────────────────
+    // ── Pass 5: resolve_provider ──────────────────────────────
 
-    fn resolve_model(
+    async fn resolve_provider(
         &self,
         request: &mut OrchestratorRequest,
-        snapshot: &DirectorySnapshot,
-    ) -> Result<(), OrchestratorError> {
-        // If caller supplied a model, attempt resolution.
-        let model_hint = request.selectors.model.clone();
-        if let Some(hint) = model_hint {
-            if let Some(fqn) = hint.strip_prefix(RECOMMENDED_PREFIX) {
-                self.apply_recommended(request, fqn)?;
-            } else {
-                let resolved = self.resolve_concrete_model(
-                    &hint,
-                    request.action.primitive,
-                    snapshot,
-                )?;
-                request.resolved_model = Some(ModelRef::new(
-                    resolved.provider.clone(),
-                    resolved.short_name.clone(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Short-name or FQN resolution. ADR §Directory disambiguation:
-    /// operator pins first, alphabetical tiebreaker second.
-    fn resolve_concrete_model<'a>(
-        &self,
-        hint: &'a str,
-        primitive: Primitive,
-        snapshot: &'a DirectorySnapshot,
-    ) -> Result<&'a ModelView, OrchestratorError> {
-        if hint.contains('|') {
-            let fqn = ModelFqn::parse(hint).map_err(|_| {
-                OrchestratorError::new(
-                    ErrorCode::ValidationFailed,
-                    format!("Model FQN `{hint}` is malformed."),
-                )
-            })?;
-            return snapshot.model(&fqn).ok_or_else(|| {
-                OrchestratorError::new(
-                    ErrorCode::NotFound,
-                    format!("Model `{hint}` is not registered."),
-                )
-            });
-        }
-        let mut matches: Vec<&ModelView> = snapshot.models_by_short_name(hint).collect();
-        if matches.is_empty() {
-            return Err(OrchestratorError::new(
-                ErrorCode::NotFound,
-                format!("Model `{hint}` is not registered with any provider."),
-            ));
-        }
-        if matches.len() == 1 {
-            return Ok(matches[0]);
-        }
-        // Layer 1: pin precedence. The default capability for
-        // this primitive (e.g. `chat` for TextChat) tells us which
-        // capability the operator's pin would apply to. If that
-        // pinned model's short name equals the hint, that pin wins
-        // regardless of alphabetical ordering.
-        if let Some(resolver) = self.recommendation.as_ref() {
-            if let Some(default_cap) = resolver.default_capability_for_primitive(primitive) {
-                if let Some(pinned_fqn) = resolver.selected_for_capability(&default_cap) {
-                    if pinned_fqn.short_name() == hint {
-                        if let Some(winner) = matches
-                            .iter()
-                            .find(|m| m.fqn == pinned_fqn)
-                            .copied()
-                        {
-                            return Ok(winner);
-                        }
-                    }
-                }
-            }
-        }
-        // Layer 2: alphabetical provider tiebreaker.
-        matches.sort_by(|a, b| a.provider.cmp(&b.provider));
-        Ok(matches[0])
-    }
-
-    fn apply_recommended(
-        &self,
-        request: &mut OrchestratorRequest,
-        capability: &str,
-    ) -> Result<(), OrchestratorError> {
-        let Some(resolver) = self.recommendation.as_ref() else {
-            return Err(OrchestratorError::new(
-                ErrorCode::NoCandidates,
-                format!(
-                    "Recommendation engine is not available for capability `{capability}`."
-                ),
-            )
-            .with_details(serde_json::json!({ "capability": capability })));
-        };
-
-        // The capability must exist in the registry, AND must
-        // match the request's primitive (a caller asking for
-        // text.chat with `recommended:vision` is a usage error).
-        let Some(target_primitive) = resolver.primitive_for_capability(capability) else {
-            return Err(OrchestratorError::new(
-                ErrorCode::ValidationFailed,
-                format!("Unknown capability `{capability}` in `recommended:*` moniker."),
-            )
-            .with_details(serde_json::json!({ "capability": capability })));
-        };
-        if target_primitive != request.action.primitive {
-            return Err(OrchestratorError::new(
-                ErrorCode::ValidationFailed,
-                format!(
-                    "Capability `{capability}` serves `{}`, not `{}` as requested.",
-                    target_primitive.dotted(),
-                    request.action.primitive.dotted()
-                ),
-            )
-            .with_details(serde_json::json!({
-                "capability": capability,
-                "capability_primitive": target_primitive.dotted(),
-                "request_primitive": request.action.primitive.dotted(),
-            })));
-        }
-
-        if let Some(fqn) = resolver.selected_for_capability(capability) {
-            request.resolved_model = Some(ModelRef::new(
-                ProviderName::new(fqn.provider()),
-                fqn.short_name(),
-            ));
-            return Ok(());
-        }
-        Err(OrchestratorError::new(
-            ErrorCode::NoCandidates,
-            format!(
-                "No model is currently registered for capability `{capability}` (primitive `{}`).",
-                target_primitive.dotted()
-            ),
-        )
-        .with_details(serde_json::json!({
-            "capability": capability,
-            "primitive": target_primitive.dotted(),
-        })))
-    }
-
-    // ── Pass 6: resolve_provider ──────────────────────────────
-
-    fn resolve_provider(
-        &self,
-        request: &mut OrchestratorRequest,
-        snapshot: &DirectorySnapshot,
+        directory: &Arc<CapabilityDirectory>,
     ) -> Result<(), OrchestratorError> {
         let primitive = request.action.primitive;
 
-        // Skill path: skill identifies provider uniquely.
+        // Skill path: the skill+primitive pair narrows the
+        // candidate set, then `selectors.provider` (if present)
+        // tightens the choice.
         if let Some(skill) = request.action.skill.as_ref() {
-            let view = snapshot.find_skill(primitive, skill).ok_or_else(|| {
-                OrchestratorError::new(
+            let candidates = directory
+                .providers_for_skill(primitive, skill.as_str())
+                .await;
+            if candidates.is_empty() {
+                return Err(OrchestratorError::new(
                     ErrorCode::NotFound,
-                    format!("Skill `{}` is not registered for `{}`.", skill, primitive.dotted()),
-                )
-            })?;
-            let provider = view.provider.clone();
-            // Caller-supplied provider must agree.
+                    format!(
+                        "Skill `{}` is not registered for `{}`.",
+                        skill,
+                        primitive.dotted()
+                    ),
+                ));
+            }
             if let Some(override_provider) = request.selectors.provider.as_ref() {
-                if override_provider != &provider {
+                if !candidates.iter().any(|p| p == override_provider) {
                     return Err(OrchestratorError::new(
                         ErrorCode::ValidationFailed,
                         format!(
-                            "Skill `{}` is served by `{}`, not `{}` as requested.",
-                            skill, provider, override_provider
+                            "Skill `{}` is not served by `{}`.",
+                            skill, override_provider
                         ),
                     ));
                 }
+                request.resolved_provider = Some(override_provider.clone());
+            } else {
+                request.resolved_provider = Some(candidates.into_iter().next().unwrap());
             }
-            request.resolved_provider = Some(provider);
             return Ok(());
         }
 
-        // Resolved model path: model → provider.
-        if let Some(model_ref) = &request.resolved_model {
-            if let Some(override_provider) = request.selectors.provider.as_ref() {
-                if override_provider != &model_ref.provider {
-                    return Err(OrchestratorError::new(
-                        ErrorCode::ValidationFailed,
-                        format!(
-                            "Model `{}` is served by `{}`, not `{}` as requested.",
-                            model_ref.short_name, model_ref.provider, override_provider
-                        ),
-                    ));
-                }
-            }
-            request.resolved_provider = Some(model_ref.provider.clone());
-            return Ok(());
-        }
-
-        // Provider-only: the caller named a provider without a model.
+        // Provider-only: the caller named a provider without a skill.
         if let Some(provider) = request.selectors.provider.clone() {
-            if snapshot
-                .find_registration(&provider, primitive, request.action.skill.as_ref())
-                .is_none()
-            {
+            if directory.capability(&provider, primitive).await.is_none() {
                 return Err(OrchestratorError::new(
                     ErrorCode::NotFound,
                     format!(
@@ -526,30 +348,13 @@ impl Contextualizer {
             return Ok(());
         }
 
-        // Implicit path: ask the recommendation engine for the
-        // primitive's default capability (e.g. `chat` for
-        // TextChat). If a model is available there, use it. This
-        // is what makes a bare `text.chat` request route through
-        // the same ranking pipeline as `recommended:chat`.
-        if let Some(engine) = self.recommendation.as_ref() {
-            if let Some(default_cap) = engine.default_capability_for_primitive(primitive) {
-                if let Some(fqn) = engine.selected_for_capability(&default_cap) {
-                    let provider_name = ProviderName::new(fqn.provider());
-                    request.resolved_model =
-                        Some(ModelRef::new(provider_name.clone(), fqn.short_name()));
-                    request.resolved_provider = Some(provider_name);
-                    return Ok(());
-                }
-            }
-        }
-        let first_healthy = snapshot
-            .providers_for(primitive)
-            .into_iter()
-            .find(|v| matches!(v.health, ProviderHealth::Healthy))
-            .or_else(|| snapshot.providers_for(primitive).into_iter().next());
-        match first_healthy {
-            Some(view) => {
-                request.resolved_provider = Some(view.name.clone());
+        // Implicit path: pick the first provider that serves the
+        // primitive. M1 has no preferences/locality routing — that
+        // is R2.5 commit 12, deferred per the M0 plan.
+        let candidates = directory.providers_for_primitive(primitive).await;
+        match candidates.into_iter().next() {
+            Some(provider) => {
+                request.resolved_provider = Some(provider);
                 Ok(())
             }
             None => Err(OrchestratorError::new(
@@ -562,70 +367,11 @@ impl Contextualizer {
         }
     }
 
-    // ── Pass 7: validate_provider_narrowing ───────────────────
-
-    fn validate_provider_narrowing(
-        &self,
-        request: &OrchestratorRequest,
-        snapshot: &DirectorySnapshot,
-    ) -> Result<(), OrchestratorError> {
-        let Some(provider) = request.resolved_provider.as_ref() else {
-            return Ok(());
-        };
-        let Some(registration) = snapshot.find_registration(
-            provider,
-            request.action.primitive,
-            request.action.skill.as_ref(),
-        ) else {
-            return Ok(());
-        };
-
-        let populated = match &request.payload {
-            Value::Object(root) => {
-                let mut flat = BTreeMap::new();
-                flatten_nested("", root, &mut flat);
-                flat
-            }
-            _ => BTreeMap::new(),
-        };
-
-        // Required narrowings.
-        for hf in &registration.honored_fields {
-            if hf.required && !populated.contains_key(hf.path.as_str()) {
-                return Err(OrchestratorError::new(
-                    ErrorCode::ValidationFailed,
-                    format!(
-                        "Provider `{}` requires field `{}` for `{}` but it is missing.",
-                        provider,
-                        hf.path,
-                        request.action.dotted()
-                    ),
-                )
-                .with_details(serde_json::json!({
-                    "provider": provider.as_str(),
-                    "field": hf.path.as_str(),
-                    "action": request.action.dotted(),
-                })));
-            }
-        }
-
-        // Range narrowings.
-        for hf in &registration.honored_fields {
-            if let (Some(value), Some(range)) = (populated.get(hf.path.as_str()), hf.range.as_ref())
-            {
-                validate_range(provider, &hf.path, value, range)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    // ── Pass 8: validate_constraints ──────────────────────────
+    // ── Pass 6: validate_constraints ──────────────────────────
 
     fn validate_constraints(
         &self,
         request: &OrchestratorRequest,
-        _snapshot: &DirectorySnapshot,
     ) -> Result<(), OrchestratorError> {
         // Zone constraints are advisory in v1; all providers are
         // considered internal by default. The pass stays in the
@@ -905,11 +651,7 @@ fn is_known_path(path: &str, vocab: &Vocabulary, known: &HashSet<String>) -> boo
     // Output-only shared namespaces for cross-modal primitives:
     // image.analyze's payload may legitimately carry `text.*` even
     // though it's an image primitive.
-    if matches!(
-        vocab.primitive,
-        Primitive::ImageAnalyze
-    ) && path.starts_with("text.")
-    {
+    if matches!(vocab.primitive, Primitive::ImageAnalyze) && path.starts_with("text.") {
         return true;
     }
     // Output-only shared namespaces similarly for audio.transcribe.
@@ -1058,44 +800,6 @@ fn range_error_num(
     }))
 }
 
-fn validate_range(
-    provider: &ProviderName,
-    path: &FieldPath,
-    value: &Value,
-    range: &FieldRange,
-) -> Result<(), OrchestratorError> {
-    let out_of_range = match (value, range) {
-        (Value::Number(n), FieldRange::Integer { min, max }) => {
-            if let Some(i) = n.as_i64() {
-                min.map(|m| i < m).unwrap_or(false) || max.map(|m| i > m).unwrap_or(false)
-            } else {
-                true
-            }
-        }
-        (Value::Number(n), FieldRange::Number { min, max }) => {
-            if let Some(f) = n.as_f64() {
-                min.map(|m| f < m).unwrap_or(false) || max.map(|m| f > m).unwrap_or(false)
-            } else {
-                true
-            }
-        }
-        _ => false,
-    };
-    if out_of_range {
-        return Err(OrchestratorError::new(
-            ErrorCode::ValidationFailed,
-            format!(
-                "Field `{path}` is outside the range provider `{provider}` allows for this action."
-            ),
-        )
-        .with_details(serde_json::json!({
-            "provider": provider.as_str(),
-            "field": path.as_str(),
-        })));
-    }
-    Ok(())
-}
-
 fn walk_for_media(
     prefix: &str,
     map: &Map<String, Value>,
@@ -1138,21 +842,10 @@ fn walk_for_media(
     Ok(())
 }
 
-
-/// Suppress unused-import warnings for types only referenced in
-/// downstream modules.
-#[allow(dead_code)]
-fn _unused(_: FieldSpec, _: IoSchema, _: Registration, _: HonoredField, _: Arc<dyn Provider>) {
-    let _ = SharedNamespace::Meta;
-    let _ = RegistrationStrategy::Bare;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ids::ProviderName;
     use crate::domain::primitive::Primitive;
-    use crate::domain::selectors::{Constraints, Selectors};
     use crate::domain::vocabulary::VocabularyRegistry;
 
     fn vocab() -> VocabularyRegistry {
@@ -1160,7 +853,7 @@ mod tests {
     }
 
     fn ctx() -> Contextualizer {
-        Contextualizer::new(vocab(), None)
+        Contextualizer::new(vocab())
     }
 
     #[test]
@@ -1251,9 +944,6 @@ mod tests {
         let ctx = ctx();
         let vocabulary = vocab().get(Primitive::TextChat).clone();
 
-        // (alias_name, body_with_both_forms) pairs.
-        // Order is the same as the vocabulary's alias declarations
-        // for easy diffing when a new alias is added.
         let cases = [
             (
                 "prompt",
@@ -1327,9 +1017,6 @@ mod tests {
             ),
             (
                 "messages",
-                // The decomposer sets text.prompt.user from the final
-                // user message; pre-populating it canonically is the
-                // collision.
                 serde_json::json!({
                     "messages": [{"role": "user", "content": "Hi!"}],
                     "text": {"prompt": {"user": "Hi!"}}
@@ -1360,11 +1047,7 @@ mod tests {
         // Each case must be rejected.
         for (name, body) in cases {
             let err = ctx
-                .normalize_payload(
-                    &Action::bare(Primitive::TextChat),
-                    body,
-                    &vocabulary,
-                )
+                .normalize_payload(&Action::bare(Primitive::TextChat), body, &vocabulary)
                 .unwrap_err();
             assert_eq!(
                 err.code,
@@ -1503,95 +1186,5 @@ mod tests {
         let payload = serde_json::json!({"text": {"sampling": {"temperature": 0.5}}});
         let err = ctx.validate_input(&payload, &vocabulary).unwrap_err();
         assert_eq!(err.code, ErrorCode::ValidationFailed);
-    }
-
-    // Suppress a minor linting complaint about an unused selector
-    // import in the tests.
-    fn _use_unused_imports() {
-        let _ = Selectors::default();
-        let _ = Constraints::default();
-        let _ = ProviderName::new("x");
-    }
-
-    // ── Pin disambiguation for short-name model resolution ────
-
-    struct StubResolver(Option<ModelFqn>);
-    impl RecommendationResolver for StubResolver {
-        fn selected_for_capability(&self, _capability: &str) -> Option<ModelFqn> {
-            self.0.clone()
-        }
-        fn primitive_for_capability(&self, _capability: &str) -> Option<Primitive> {
-            Some(Primitive::TextChat)
-        }
-        fn default_capability_for_primitive(&self, _primitive: Primitive) -> Option<String> {
-            Some("chat".to_string())
-        }
-    }
-
-    fn snapshot_with_models(
-        models: Vec<(ProviderName, &str)>,
-    ) -> DirectorySnapshot {
-        use crate::domain::directory::ModelView;
-        use crate::domain::ids::RegistrationId;
-        use std::collections::HashMap;
-        let mut models_map = HashMap::new();
-        for (provider, short) in models {
-            let fqn = ModelFqn::new(&provider, short);
-            models_map.insert(
-                fqn.clone(),
-                ModelView {
-                    fqn,
-                    short_name: short.to_string(),
-                    provider,
-                    registration_id: RegistrationId::from("reg"),
-                    primitives: vec![Primitive::TextChat.dotted().to_string()],
-                    capability_tags: vec![],
-                    size_bytes: None,
-                    context_length: None,
-                    parameter_count: None,
-                },
-            );
-        }
-        DirectorySnapshot {
-            version: 1,
-            updated_at: chrono::Utc::now(),
-            providers: Arc::new(HashMap::new()),
-            primitives: Arc::new(HashMap::new()),
-            skills: Arc::new(HashMap::new()),
-            models: Arc::new(models_map),
-        }
-    }
-
-    #[test]
-    fn pin_wins_over_alphabetical_for_short_name() {
-        let ollama = ProviderName::new("ollama");
-        let zcloud = ProviderName::new("zcloud");
-        let snapshot = snapshot_with_models(vec![
-            (ollama.clone(), "llama-3.1"),
-            (zcloud.clone(), "llama-3.1"),
-        ]);
-        // Alphabetically `ollama` would win, but pin points at zcloud.
-        let resolver: Arc<dyn RecommendationResolver> =
-            Arc::new(StubResolver(Some(ModelFqn::new(&zcloud, "llama-3.1"))));
-        let ctx = Contextualizer::new(vocab(), Some(resolver));
-        let model = ctx
-            .resolve_concrete_model("llama-3.1", Primitive::TextChat, &snapshot)
-            .unwrap();
-        assert_eq!(model.provider.as_str(), "zcloud");
-    }
-
-    #[test]
-    fn alphabetical_tiebreaker_without_pin() {
-        let ollama = ProviderName::new("ollama");
-        let zcloud = ProviderName::new("zcloud");
-        let snapshot = snapshot_with_models(vec![
-            (ollama, "llama-3.1"),
-            (zcloud, "llama-3.1"),
-        ]);
-        let ctx = Contextualizer::new(vocab(), None);
-        let model = ctx
-            .resolve_concrete_model("llama-3.1", Primitive::TextChat, &snapshot)
-            .unwrap();
-        assert_eq!(model.provider.as_str(), "ollama");
     }
 }

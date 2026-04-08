@@ -1,4 +1,5 @@
-//! ComfyUI provider — skill-driven dispatch via the ORCH-0029 model.
+//! ComfyUI provider — skill-driven dispatch via the ORCH-0029 model,
+//! rewritten for the ORCH-0030 R2 M3 lean `Provider` trait.
 //!
 //! ComfyUI workflows are node graphs serialized as JSON. Each
 //! workflow is a "skill" — a declarative binding from canonical
@@ -6,30 +7,31 @@
 //! workflow template, plus a list of `required_models` for the
 //! provisioning subsystem.
 //!
-//! ## Lifecycle (ORCH-0029 §The ComfyUI adapter — owner of the lifecycle)
+//! # M3 shape
+//!
+//! After M3 the `Provider` trait is lean: `name`, `onboard`,
+//! `flush_caches`. The adapter publishes its capability set directly
+//! to the bus as a [`CapabilityAnnouncement`] and owns its skill
+//! state internally — the central `Skills` aggregate is gone.
+//!
+//! The ComfyUI adapter holds a private `HashMap<Moniker, LoadedSkill>`
+//! behind a `RwLock`, publishes a fresh snapshot whenever its
+//! instance pool or loaded-skill set changes, and reads the map on
+//! every dispatch.
+//!
+//! ## Lifecycle
 //!
 //! 1. **Construction**: scan `{data_dir}/skills/comfyui/` via the
-//!    shared `services::skills::loader`. Each `SkillDefinition` is
-//!    split into:
-//!    - **Public Registration** — pushed to the Directory via
-//!      `ProviderState`. Carries `HonoredField` entries derived from
-//!      the skill's `Binding`s, with constraint/default/label
-//!      overlays. The catalog renders forms by joining vocabulary +
-//!      these overlays.
-//!    - **Private `LoadedSkill`** — kept in `Arc<RwLock<HashMap>>`
-//!      inside the adapter. Carries the workflow JSON files
-//!      (potentially multiple variants), the model selector, the
-//!      output node, and the required model list. Never leaves the
-//!      provider.
-//!    - **`SkillMeta`** — pushed to the `Skills` aggregate on
-//!      `AppState` so the catalog can render the skill's variants,
-//!      model selector, source/preview, and per-instance readiness
-//!      alongside its schema.
+//!    shared `services::skills::loader`. Every `SkillDefinition`
+//!    is converted to a private [`LoadedSkill`] and stashed in the
+//!    provider's skill map. The initial capability announcement is
+//!    published immediately with `enabled: false` — no instances yet.
 //!
-//! 2. **Discovery**: when a ComfyUI instance comes up via
+//! 2. **Discovery**: when ComfyUI instances surface via
 //!    `garden_discovery`, the adapter updates its instance pool,
-//!    re-publishes provider state with `Healthy` health, and (in
-//!    Phase 2) submits provisioning jobs for any missing models.
+//!    runs the readiness fast path (submitting provisioning jobs for
+//!    any missing models), and republishes the announcement with
+//!    `enabled: true`.
 //!
 //! 3. **Dispatch (`onboard`)**: lookup the loaded skill by moniker,
 //!    pick the workflow variant via `selectors.variant`, walk the
@@ -38,7 +40,7 @@
 //!    return a `ProviderOutcome::Sync(Output)` with `image.media_id`
 //!    populated. **Zero per-skill branches.**
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,35 +49,31 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    SkillDeclaration, SkillDisplay, SkillParameter,
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, SkillDeclaration,
+    SkillDisplay, SkillParameter,
 };
-use crate::domain::ids::{ProviderName, RegistrationId};
+use crate::domain::events::EventBus;
+use crate::domain::ids::ProviderName;
 use crate::domain::keys;
-use crate::domain::media::MediaSource;
+use crate::domain::media::{MediaDelivery, MediaSource};
 use crate::domain::moniker::Moniker;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{
-    HonoredField, MediaInputSpec, MediaOutputSpec, Provider, ProviderError, ProviderHealth,
-    ProviderOutcome, ProviderState, ProviderStatePublisher, Registration, RegistrationStrategy,
-};
+use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
 use crate::domain::request::OrchestratorRequest;
+use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::{DiscoveredInstance, GardenDiscovery};
 use crate::services::skills::cache::{CachePaths, DependencyManifest};
+use crate::services::skills::loader as skills_loader;
 use crate::services::skills::moss_volume::{self, COMFYUI_MODELS_VOLUME};
 use crate::services::skills::provisioner;
 use crate::services::skills::queue::{Priority, ProvisioningQueue, ProvisioningTarget};
-use crate::services::skills::registry::{
-    InstanceReadiness as SkillReadiness, SkillKey, SkillMeta, Skills,
-};
 use crate::services::skills::types::{
     Binding, BindingTarget, ModelSelector, SkillDefinition, Variant,
 };
-use crate::services::skills::{loader as skills_loader};
 
 use super::common::{
     build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
@@ -123,13 +121,6 @@ struct LoadedSkill {
 }
 
 impl LoadedSkill {
-    /// Used by the provisioning worker (Phase 2) to look up the
-    /// matching `Skills` aggregate entry.
-    #[allow(dead_code)]
-    fn key(&self, provider: &ProviderName) -> SkillKey {
-        SkillKey::new(provider.clone(), self.moniker.clone())
-    }
-
     /// Synthesize a `SkillDefinition` the provisioner can consume.
     /// The provisioner only reads `moniker`, `required_models`, and
     /// the primitive — everything else is empty.
@@ -157,18 +148,13 @@ pub struct ComfyUiProvider {
     name: ProviderName,
     instances: Arc<InstancePool>,
     http: Client,
-    publisher: ProviderStatePublisher,
     /// Adapter-private skill state. Loaded at construction and
     /// re-loaded by hot-reload (Phase 4). Read on every dispatch.
     skills: Arc<tokio::sync::RwLock<HashMap<Moniker, LoadedSkill>>>,
-    /// Cached list of registrations published to the Directory. We
-    /// keep them so health changes can re-publish the same set
-    /// without rebuilding the bindings.
-    initial_registrations: Vec<Registration>,
-    /// Shared `Skills` aggregate — adapter writes registration
-    /// metadata at load time and per-instance readiness as
-    /// provisioning progresses.
-    skills_aggregate: Arc<Skills>,
+    /// Event bus — the adapter publishes `CapabilityAnnouncement`
+    /// events to the `directory.provider.comfyui.capabilities` topic
+    /// whenever its instance pool or skill set changes.
+    events: Arc<EventBus>,
     /// Shared provisioning queue — adapter submits jobs to this
     /// when discovery surfaces instances that don't have every
     /// required model yet. The worker loop drains it.
@@ -188,9 +174,9 @@ impl ComfyUiProvider {
     /// stops the rest of the registry from coming up.
     pub async fn new(
         config: ComfyUiConfig,
-        skills_aggregate: Arc<Skills>,
         provisioning: Arc<ProvisioningQueue>,
         discovery: Arc<GardenDiscovery>,
+        events: Arc<EventBus>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let name = ProviderName::new(keys::providers::COMFYUI);
@@ -207,51 +193,35 @@ impl ComfyUiProvider {
             "comfyui: loaded skill definitions from disk"
         );
 
-        // Split each definition into:
-        //   - public Registration (Directory) + SkillMeta (Skills aggregate)
-        //   - private LoadedSkill (workflow files + binding plan)
+        // Convert every `SkillDefinition` into a private `LoadedSkill`.
+        // There is no public Registration anymore — the adapter
+        // announces its capabilities (and the skills that cover them)
+        // directly on the bus via `publish_capabilities`.
         let mut skills_map: HashMap<Moniker, LoadedSkill> = HashMap::new();
-        let mut registrations: Vec<Registration> = Vec::new();
         for def in definitions {
-            let (registration, loaded, meta) = match split_definition(&name, def) {
-                Ok(triple) => triple,
-                Err(e) => {
-                    tracing::warn!(error = %e, "comfyui: skipping skill that failed to split");
-                    continue;
-                }
-            };
-            // Publish to Skills aggregate immediately — the adapter is
-            // the writer, the catalog is the reader.
-            skills_aggregate.register(meta).await;
-
-            registrations.push(registration);
+            let loaded = definition_to_loaded(def);
             skills_map.insert(loaded.moniker.clone(), loaded);
         }
         tracing::info!(
-            registered = registrations.len(),
-            "comfyui: published registrations to Directory"
+            loaded = skills_map.len(),
+            "comfyui: constructed loaded-skill map"
         );
-
-        let initial = ProviderState {
-            health: ProviderHealth::Offline {
-                reason: "no garden instances discovered yet".to_string(),
-            },
-            registrations: registrations.clone(),
-            models: Vec::new(),
-            performance_hints: Vec::new(),
-        };
 
         let provider = Arc::new(Self {
             name,
             instances: Arc::new(InstancePool::new()),
             http: build_http_client(),
-            publisher: ProviderStatePublisher::new(initial),
             skills: Arc::new(tokio::sync::RwLock::new(skills_map)),
-            initial_registrations: registrations,
-            skills_aggregate,
+            events,
             provisioning,
             cache_paths,
         });
+
+        // Publish the initial snapshot. No instances yet, so
+        // `enabled` will be false — but the Directory learns the
+        // provider exists and sees its full skill list.
+        provider.publish_capabilities().await;
+
         spawn_subscriber(provider.clone(), discovery, shutdown.clone());
         spawn_provisioning_worker(provider.clone(), shutdown);
         provider
@@ -263,40 +233,49 @@ impl ComfyUiProvider {
         })
     }
 
-    fn apply_merged(&self, urls: Vec<String>) {
+    /// Publish the current loaded-skill set + instance pool state as
+    /// a `CapabilityAnnouncement` event. Called at construction and
+    /// on every instance-pool / skill-set change.
+    ///
+    /// The announcement carries:
+    /// - `enabled`: `true` iff at least one ComfyUI instance is in
+    ///   the pool. False when no instances are reachable, even if
+    ///   the skill list is non-empty.
+    /// - `capabilities`: one entry per unique primitive any loaded
+    ///   skill declares. Each capability's `media_inputs` is the
+    ///   union of media bindings across every skill for that
+    ///   primitive.
+    /// - `skills`: the full `SkillDeclaration` list, in the shape
+    ///   `compute_skill_declarations` produces.
+    async fn publish_capabilities(&self) {
+        let map = self.skills.read().await;
+        let skills = compute_skill_declarations(&map);
+        let capabilities = compute_capabilities(&map);
+        drop(map);
+
+        let enabled = !self.instances.is_empty() && !capabilities.is_empty();
+
+        let announcement = CapabilityAnnouncement {
+            provider: self.name.clone(),
+            enabled,
+            capabilities,
+            skills,
+        };
+        publish_capability_announcement(&self.events, &announcement).await;
+    }
+
+    /// Replace the instance pool with the given URL list and publish
+    /// a fresh capability announcement if the pool actually changed.
+    async fn apply_merged(&self, urls: Vec<String>) {
         if !self.instances.set(urls) {
             return;
         }
-        let count = self.instances.len();
-        let registrations = self.initial_registrations.clone();
-        self.publisher.modify(move |mut state| {
-            state.health = if count == 0 {
-                ProviderHealth::Offline {
-                    reason: "no garden instances discovered".to_string(),
-                }
-            } else {
-                ProviderHealth::Healthy
-            };
-            state.registrations = registrations;
-            state
-        });
+        self.publish_capabilities().await;
     }
 
     /// Snapshot the adapter's currently-loaded skills as a list of
-    /// `SkillDeclaration`s in the shape the post-M3 `CapabilityDirectory`
-    /// will accept.
-    ///
-    /// **Status (ORCH-0030 R2 M2):** This method is additive and
-    /// currently unused outside its own unit tests. It exists so the
-    /// M3 trait switch can wire ComfyUI's capability publication
-    /// path with no new conversion code or risk. Once M3 lands, the
-    /// adapter will publish a `CapabilityAnnouncement` event whose
-    /// `skills` field is exactly this vector, and delete the legacy
-    /// `Skills` aggregate path.
-    ///
-    /// The conversion lives in the free function
-    /// [`compute_skill_declarations`] so the unit tests can exercise
-    /// it without constructing a full provider.
+    /// `SkillDeclaration`s in the shape the `CapabilityDirectory`
+    /// accepts. Used by tests and diagnostics.
     pub async fn skill_declarations(&self) -> Vec<SkillDeclaration> {
         let map = self.skills.read().await;
         compute_skill_declarations(&map)
@@ -304,8 +283,7 @@ impl ComfyUiProvider {
 
     /// Readiness fast path: for every loaded skill × every freshly-
     /// discovered instance, check whether all required models are
-    /// present on that instance. If yes, publish readiness to the
-    /// Skills aggregate. If no, submit a provisioning job.
+    /// present on that instance. If no, submit a provisioning job.
     ///
     /// Called from the discovery subscriber every time a
     /// `DiscoveryEvent` arrives.
@@ -329,19 +307,6 @@ impl ComfyUiProvider {
                     COMFYUI_MODELS_VOLUME,
                 )
                 .await;
-                let key = SkillKey::new(self.name.clone(), moniker.clone());
-                self.skills_aggregate
-                    .set_readiness(
-                        &key,
-                        SkillReadiness {
-                            stone_name: instance.stone_name.clone(),
-                            endpoint: instance.url.clone(),
-                            ready: readiness.ready,
-                            reason: readiness.reason.clone(),
-                            vram_mb: 0,
-                        },
-                    )
-                    .await;
                 if !readiness.ready {
                     // Submit the provisioning job. Returns false if
                     // the queue already has this target in flight
@@ -374,8 +339,7 @@ impl ComfyUiProvider {
 
     /// Execute a single provisioning job: download any missing
     /// models into the local cache, then push cached files to the
-    /// target instance. Updates `Skills.set_readiness` and marks
-    /// the queue entry complete/failed on exit.
+    /// target instance. Marks the queue entry complete/failed on exit.
     async fn run_one_job(self: Arc<Self>, job: crate::services::skills::queue::ProvisioningJob) {
         use std::time::Instant;
         let started = Instant::now();
@@ -411,23 +375,10 @@ impl ComfyUiProvider {
         }
         .await;
 
-        let key = SkillKey::new(self.name.clone(), moniker.clone());
         match result {
             Ok(()) => {
                 self.provisioning
                     .complete(&target, started.elapsed())
-                    .await;
-                self.skills_aggregate
-                    .set_readiness(
-                        &key,
-                        SkillReadiness {
-                            stone_name: job.stone_name.clone(),
-                            endpoint: endpoint.clone(),
-                            ready: true,
-                            reason: "provisioned".into(),
-                            vram_mb: 0,
-                        },
-                    )
                     .await;
                 tracing::info!(
                     skill = moniker.as_str(),
@@ -439,18 +390,6 @@ impl ComfyUiProvider {
             Err(e) => {
                 let reason = format!("{e:#}");
                 self.provisioning.fail(&target, reason.clone()).await;
-                self.skills_aggregate
-                    .set_readiness(
-                        &key,
-                        SkillReadiness {
-                            stone_name: job.stone_name.clone(),
-                            endpoint: endpoint.clone(),
-                            ready: false,
-                            reason: format!("provisioning failed: {reason}"),
-                            vram_mb: 0,
-                        },
-                    )
-                    .await;
                 tracing::warn!(
                     skill = moniker.as_str(),
                     endpoint = %endpoint,
@@ -475,22 +414,22 @@ fn spawn_subscriber(
                 _ = shutdown.cancelled() => break,
                 event = rx.recv() => {
                     let Some(event) = event else { break };
-                    // Update the instance pool + publisher health.
+                    // Update the instance pool + republish capabilities.
                     let instances = event.instances.clone();
                     let urls: Vec<String> =
                         instances.iter().map(|i| i.url.clone()).collect();
                     pool.set(&event.fqn, urls);
-                    provider.apply_merged(pool.flatten());
+                    provider.apply_merged(pool.flatten()).await;
 
                     // For every instance in this event, run the
                     // readiness fast path per skill and, if any
                     // model is missing, submit a provisioning job.
                     //
-                    // This is the main entry point into Phase 2's
+                    // This is the main entry point into the
                     // download-and-push pipeline. Happy path for
-                    // the workspace's 90 GB cache: every required
-                    // model is already present, readiness passes,
-                    // no provisioning job is ever submitted.
+                    // the workspace's pre-populated cache: every
+                    // required model is already present, readiness
+                    // passes, no provisioning job is ever submitted.
                     let provider_for_check = provider.clone();
                     tokio::spawn(async move {
                         provider_for_check
@@ -504,12 +443,11 @@ fn spawn_subscriber(
 }
 
 /// Background worker that drains the shared `ProvisioningQueue` and
-/// runs `ensure_cached` → `push_to_instance` for each job, updating
-/// the `Skills` aggregate with per-instance readiness on success.
+/// runs `ensure_cached` → `push_to_instance` for each job.
 ///
-/// Single writer (`set_readiness`, `complete`, `fail`) per
-/// ORCH-0028 §6. The concurrency cap is owned by the queue, not the
-/// worker — we spawn up to `max_concurrency` in-flight tasks.
+/// Single writer per queue entry — the worker cap is owned by the
+/// queue, not the worker; we spawn up to `max_concurrency` in-flight
+/// tasks here.
 fn spawn_provisioning_worker(provider: Arc<ComfyUiProvider>, shutdown: CancellationToken) {
     tokio::spawn(async move {
         let concurrency = provider.provisioning.max_concurrency();
@@ -549,18 +487,12 @@ fn spawn_provisioning_worker(provider: Arc<ComfyUiProvider>, shutdown: Cancellat
     });
 }
 
+// ── Provider trait impl ──────────────────────────────────────
+
 #[async_trait]
 impl Provider for ComfyUiProvider {
     fn name(&self) -> ProviderName {
         self.name.clone()
-    }
-
-    fn state(&self) -> Arc<ProviderState> {
-        self.publisher.snapshot()
-    }
-
-    fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
-        self.publisher.subscribe()
     }
 
     async fn onboard(
@@ -630,7 +562,7 @@ impl Provider for ComfyUiProvider {
         // For each binding: pull the value from the request payload
         // (or fall back to the binding's skill-default), then apply
         // it to the workflow via the binding's target. Image bindings
-        // are deferred to step 5 (they need an upload to the picked
+        // are deferred to step 6 (they need an upload to the picked
         // instance first).
         let mut deferred_media_bindings: Vec<&Binding> = Vec::new();
         for binding in &skill.bindings {
@@ -670,7 +602,11 @@ impl Provider for ComfyUiProvider {
                     )));
                 }
             }
-            substitute_placeholder_in_workflow(&mut workflow, &selector.placeholder, &Value::String(chosen));
+            substitute_placeholder_in_workflow(
+                &mut workflow,
+                &selector.placeholder,
+                &Value::String(chosen),
+            );
         }
 
         // ── 6. Upload media for deferred image bindings ───────
@@ -769,7 +705,8 @@ impl Provider for ComfyUiProvider {
             let Some(history_entry) = body.get(&prompt_id) else {
                 continue;
             };
-            let Some(outputs) = history_entry.pointer("/outputs").and_then(|v| v.as_object()) else {
+            let Some(outputs) = history_entry.pointer("/outputs").and_then(|v| v.as_object())
+            else {
                 continue;
             };
 
@@ -795,8 +732,10 @@ impl Provider for ComfyUiProvider {
                     .filter(|a| !a.is_empty())
                 {
                     let first = &images[0];
-                    output_filename = first.get("filename").and_then(|v| v.as_str()).map(String::from);
-                    output_subfolder = first.get("subfolder").and_then(|v| v.as_str()).map(String::from);
+                    output_filename =
+                        first.get("filename").and_then(|v| v.as_str()).map(String::from);
+                    output_subfolder =
+                        first.get("subfolder").and_then(|v| v.as_str()).map(String::from);
                     output_type = first.get("type").and_then(|v| v.as_str()).map(String::from);
                     break;
                 }
@@ -875,101 +814,16 @@ impl Provider for ComfyUiProvider {
     }
 }
 
-// ── Definition splitting ──────────────────────────────────────
+// ── Definition conversion ─────────────────────────────────────
 
-/// Split a loaded `SkillDefinition` into the three things the
-/// orchestrator needs:
-///
-/// 1. **Public Registration** for the Directory.
-/// 2. **Private LoadedSkill** for the adapter's `onboard`.
-/// 3. **SkillMeta** for the Skills aggregate.
-fn split_definition(
-    provider: &ProviderName,
-    def: SkillDefinition,
-) -> Result<(Registration, LoadedSkill, SkillMeta), String> {
-    // Build HonoredField + MediaInputSpec lists from the bindings.
-    let mut honored_fields: Vec<HonoredField> = Vec::new();
-    let mut media_inputs: Vec<MediaInputSpec> = Vec::new();
-    for binding in &def.bindings {
-        if is_media_binding(binding) {
-            media_inputs.push(MediaInputSpec {
-                field: binding.field.clone(),
-                delivery: binding
-                    .delivery
-                    .unwrap_or(crate::domain::media::MediaDelivery::Transfer),
-                accepted_types: binding.accepted_types.clone(),
-                overlay: binding.overlay.clone(),
-            });
-            honored_fields.push(
-                HonoredField::new(binding.field.clone())
-                    .with_label(binding.label.clone().unwrap_or_default()),
-            );
-        } else {
-            let mut hf = HonoredField::new(binding.field.clone());
-            if binding.required {
-                hf = hf.required();
-            }
-            if let Some(label) = &binding.label {
-                hf = hf.with_label(label.clone());
-            }
-            if let Some(default) = &binding.default {
-                hf = hf.with_default(default.clone());
-            }
-            if let Some(narrow) = &binding.narrow {
-                hf = hf.with_constraint(narrow.clone());
-            }
-            honored_fields.push(hf);
-        }
-    }
-
-    // The output spec depends on the primitive.
-    let media_outputs = match def.primitive {
-        Primitive::ImageGenerate | Primitive::ImageEdit | Primitive::ImageUpscale => {
-            vec![MediaOutputSpec {
-                field: keys::image::MEDIA_ID,
-                content_type: "image/png".to_string(),
-            }]
-        }
-        Primitive::AudioGenerate => vec![MediaOutputSpec {
-            field: keys::audio::MEDIA_ID,
-            content_type: "audio/mpeg".to_string(),
-        }],
-        _ => Vec::new(),
-    };
-
-    let registration = Registration {
-        id: RegistrationId::generate(),
-        provider: provider.clone(),
-        primitive: def.primitive,
-        strategy: RegistrationStrategy::Skill {
-            moniker: def.moniker.clone(),
-            display_name: def.display_name.clone(),
-            description: if def.description.is_empty() {
-                None
-            } else {
-                Some(def.description.clone())
-            },
-        },
-        honored_fields,
-        media_inputs,
-        media_outputs,
-    };
-
-    let meta = SkillMeta {
-        provider: provider.clone(),
-        moniker: def.moniker.clone(),
-        primitive: def.primitive,
-        display_name: def.display_name.clone(),
-        description: def.description.clone(),
-        vram_mb: def.vram_mb,
-        variants: def.variants.clone(),
-        model_selector: def.model_selector.clone(),
-        required_models: def.required_models.clone(),
-        source: def.source.clone(),
-        preview_url: def.preview_url.clone(),
-    };
-
-    let loaded = LoadedSkill {
+/// Strip a loaded `SkillDefinition` down to the private `LoadedSkill`
+/// the adapter keeps in its skill map. Every field the `onboard`
+/// dispatch logic needs is copied; metadata-only fields (`source`,
+/// `preview_url`) are dropped because the adapter no longer feeds a
+/// public catalog structure directly — the catalog builder renders
+/// from the `CapabilityAnnouncement` the adapter publishes.
+fn definition_to_loaded(def: SkillDefinition) -> LoadedSkill {
+    LoadedSkill {
         moniker: def.moniker,
         primitive: def.primitive,
         display_name: def.display_name,
@@ -982,9 +836,7 @@ fn split_definition(
         output_node: def.output_node,
         variants: def.variants,
         required_models: def.required_models,
-    };
-
-    Ok((registration, loaded, meta))
+    }
 }
 
 /// A binding is a media binding when it has a `delivery` mode set
@@ -1088,14 +940,80 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-// ── SkillDeclaration conversion (ORCH-0030 R2 M2) ─────────────
-//
-// These free functions translate the adapter's private
-// `LoadedSkill` map into the public `SkillDeclaration` shape that
-// the M3 trait switch will publish over the bus. They live here
-// (rather than as `impl LoadedSkill` methods) so the unit tests can
-// build synthetic `LoadedSkill`s and exercise the conversion
-// without constructing a full `ComfyUiProvider`.
+// ── Capability + SkillDeclaration conversion (ORCH-0030 R2 M3) ─
+
+/// Walk a `LoadedSkill` map and produce the list of `Capability`
+/// entries for the provider's announcement.
+///
+/// One capability entry per unique primitive any loaded skill
+/// declares. Each entry's `media_inputs` list is the union of every
+/// media binding whose owning skill targets that primitive —
+/// deduplicated by `field` so two skills asking for `image.source`
+/// don't produce duplicate entries. Accepted types are unioned.
+///
+/// Output is sorted by primitive dotted name for stable
+/// announcements (the `DirectorySubscriber` diffs by primitive, so
+/// a stable ordering keeps derived events clean).
+fn compute_capabilities(skills: &HashMap<Moniker, LoadedSkill>) -> Vec<AnnCapability> {
+    // Group media bindings by (primitive, field) so two skills that
+    // both accept `image.source` for `image.generate` collapse to a
+    // single entry with the union of accepted types.
+    let mut by_primitive: HashMap<Primitive, HashMap<String, CapabilityMediaInput>> =
+        HashMap::new();
+
+    for loaded in skills.values() {
+        let entry = by_primitive.entry(loaded.primitive).or_default();
+        for binding in &loaded.bindings {
+            if !is_media_binding(binding) {
+                continue;
+            }
+            let field_key = binding.field.as_str().to_string();
+            let delivery = binding.delivery.unwrap_or(MediaDelivery::Transfer);
+            match entry.get_mut(&field_key) {
+                Some(existing) => {
+                    // Union accepted types while preserving insertion
+                    // order of the first occurrence.
+                    let mut seen: HashSet<String> =
+                        existing.accepted_types.iter().cloned().collect();
+                    for ty in &binding.accepted_types {
+                        if seen.insert(ty.clone()) {
+                            existing.accepted_types.push(ty.clone());
+                        }
+                    }
+                    if existing.overlay.is_none() {
+                        existing.overlay = binding.overlay.clone();
+                    }
+                }
+                None => {
+                    entry.insert(
+                        field_key.clone(),
+                        CapabilityMediaInput {
+                            field: field_key,
+                            delivery,
+                            accepted_types: binding.accepted_types.clone(),
+                            overlay: binding.overlay.clone(),
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    let mut capabilities: Vec<AnnCapability> = by_primitive
+        .into_iter()
+        .map(|(primitive, media_map)| {
+            let mut media_inputs: Vec<CapabilityMediaInput> = media_map.into_values().collect();
+            // Stable order: sort by field name.
+            media_inputs.sort_by(|a, b| a.field.cmp(&b.field));
+            AnnCapability {
+                primitive,
+                media_inputs,
+            }
+        })
+        .collect();
+    capabilities.sort_by(|a, b| a.primitive.dotted().cmp(b.primitive.dotted()));
+    capabilities
+}
 
 /// Walk a `LoadedSkill` map and produce one `SkillDeclaration` per
 /// entry. The output ordering follows the underlying `HashMap`
@@ -1384,5 +1302,92 @@ mod tests {
             variant_param.default.as_ref().and_then(|v| v.as_str()),
             Some("fast")
         );
+    }
+
+    #[test]
+    fn empty_skill_map_yields_empty_capabilities() {
+        let map: HashMap<Moniker, LoadedSkill> = HashMap::new();
+        let caps = compute_capabilities(&map);
+        assert!(caps.is_empty());
+    }
+
+    #[test]
+    fn capabilities_group_by_primitive_and_union_media_inputs() {
+        // Two skills on image.generate, both with an image.source
+        // media binding (different accepted types) → one capability
+        // with unioned accepted_types.
+        let (m_a, loaded_a) = synthetic_skill(
+            "skill-a",
+            Primitive::ImageGenerate,
+            vec![media_binding("image.source", &["image/png"])],
+            None,
+            None,
+        );
+        let (m_b, loaded_b) = synthetic_skill(
+            "skill-b",
+            Primitive::ImageGenerate,
+            vec![media_binding("image.source", &["image/jpeg", "image/png"])],
+            None,
+            None,
+        );
+        // A third skill on image.upscale with a different media
+        // field → separate capability entry.
+        let (m_c, loaded_c) = synthetic_skill(
+            "skill-c",
+            Primitive::ImageUpscale,
+            vec![media_binding("image.source", &["image/webp"])],
+            None,
+            None,
+        );
+
+        let mut map: HashMap<Moniker, LoadedSkill> = HashMap::new();
+        map.insert(m_a, loaded_a);
+        map.insert(m_b, loaded_b);
+        map.insert(m_c, loaded_c);
+
+        let caps = compute_capabilities(&map);
+        assert_eq!(caps.len(), 2);
+
+        // image.generate carries the unioned types.
+        let generate_cap = caps
+            .iter()
+            .find(|c| c.primitive == Primitive::ImageGenerate)
+            .expect("image.generate capability missing");
+        assert_eq!(generate_cap.media_inputs.len(), 1);
+        let media = &generate_cap.media_inputs[0];
+        assert_eq!(media.field, "image.source");
+        assert!(media.accepted_types.contains(&"image/png".to_string()));
+        assert!(media.accepted_types.contains(&"image/jpeg".to_string()));
+
+        // image.upscale carries just its one entry.
+        let up = caps
+            .iter()
+            .find(|c| c.primitive == Primitive::ImageUpscale)
+            .expect("image.upscale capability missing");
+        assert_eq!(up.media_inputs.len(), 1);
+        assert_eq!(up.media_inputs[0].accepted_types, vec!["image/webp"]);
+    }
+
+    #[test]
+    fn capabilities_include_skills_with_no_media_bindings() {
+        // A skill with only canonical (non-media) bindings still
+        // contributes a capability entry — just with an empty
+        // `media_inputs` list. Needed so the dispatcher can route
+        // primitives whose skills don't take media inputs.
+        let (m, loaded) = synthetic_skill(
+            "skill-only-text",
+            Primitive::ImageGenerate,
+            vec![param_binding("image.prompt.positive", "Prompt", true)],
+            None,
+            None,
+        );
+
+        let mut map: HashMap<Moniker, LoadedSkill> = HashMap::new();
+        map.insert(m, loaded);
+
+        let caps = compute_capabilities(&map);
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].primitive, Primitive::ImageGenerate);
+        assert!(caps[0].media_inputs.is_empty());
     }
 }

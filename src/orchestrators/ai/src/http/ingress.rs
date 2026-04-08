@@ -255,7 +255,7 @@ async fn deliver_fresh(
                 &request.id,
                 action_dotted,
                 request.resolved_provider.as_ref(),
-                request.resolved_model.as_ref().map(|m| m.short_name.clone()),
+                None, // resolved_model removed in ORCH-0030 R2 M3 (adapter-local)
                 "sync",
                 received_at,
             );
@@ -268,7 +268,7 @@ async fn deliver_fresh(
                 &request.id,
                 action_dotted,
                 request.resolved_provider.as_ref(),
-                request.resolved_model.as_ref().map(|m| m.short_name.clone()),
+                None, // resolved_model removed in ORCH-0030 R2 M3 (adapter-local)
                 "async",
                 received_at,
             );
@@ -281,7 +281,7 @@ async fn deliver_fresh(
                 &request.id,
                 action_dotted.clone(),
                 request.resolved_provider.as_ref(),
-                request.resolved_model.as_ref().map(|m| m.short_name.clone()),
+                None, // resolved_model removed in ORCH-0030 R2 M3 (adapter-local)
                 "stream",
                 received_at,
             );
@@ -315,7 +315,7 @@ async fn deliver_cached(
         &request.id,
         request.action.dotted(),
         request.resolved_provider.as_ref(),
-        request.resolved_model.as_ref().map(|m| m.short_name.clone()),
+        None, // resolved_model removed in ORCH-0030 R2 M3 (adapter-local)
         "sync",
         received_at,
     )

@@ -8,11 +8,13 @@ use serde_json::json;
 use crate::app_state::AppState;
 
 pub async fn get_health(State(state): State<AppState>) -> impl IntoResponse {
-    let snapshot = state.directory.snapshot();
+    let providers_map = state.capability_directory.providers().await;
+    let providers_registered = providers_map.len();
+    let providers_enabled = providers_map.values().filter(|p| p.enabled).count();
     Json(json!({
         "status": "ok",
-        "directory_version": snapshot.version,
-        "providers_registered": snapshot.providers_count(),
-        "providers_healthy": snapshot.healthy_provider_count(),
+        "directory_version": state.capability_directory.version(),
+        "providers_registered": providers_registered,
+        "providers_enabled": providers_enabled,
     }))
 }

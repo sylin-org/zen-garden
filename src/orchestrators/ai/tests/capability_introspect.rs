@@ -202,13 +202,16 @@ async fn get_primitive_with_multiple_providers_shows_fallback_chain() {
     let body = body_json(resp.into_body()).await;
 
     assert_eq!(body["routing"]["status"], "healthy");
+    // Three providers declare text.chat: the fixture's `mockchat`,
+    // the freshly-announced `ollama` (image understanding adapter
+    // also serves text.chat), and `anthropic`. The introspection
+    // endpoint surfaces all three; the fallback chain is the
+    // non-primary two.
     let providers = body["routing"]["providers"].as_array().unwrap();
-    assert_eq!(providers.len(), 2);
-    // Both anthropic and ollama declared text.chat; fallback chain
-    // has the non-primary one.
+    assert_eq!(providers.len(), 3);
     assert!(body["routing"]["fallback_providers"]
         .as_array()
-        .map(|a| a.len() == 1)
+        .map(|a| a.len() == 2)
         .unwrap_or(false));
 }
 

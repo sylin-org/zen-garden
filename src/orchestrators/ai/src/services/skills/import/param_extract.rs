@@ -34,9 +34,10 @@ use serde_json::Value;
 use crate::domain::field_path::FieldPath;
 use crate::domain::keys;
 use crate::domain::media::MediaDelivery;
-use crate::domain::provider::{AutoKind, FieldConstraint, ParamOption};
 
-use crate::services::skills::types::{Binding, BindingTarget};
+use crate::services::skills::types::{
+    AutoKind, Binding, BindingTarget, FieldConstraint, ParamOption,
+};
 
 /// Result of the extraction pass.
 pub struct ExtractionResult {

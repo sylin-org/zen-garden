@@ -1,14 +1,11 @@
-//! Ollama provider — capability-event driven (ORCH-0030 commit 7).
+//! Ollama provider — capability-event driven (ORCH-0030 R2 M3).
 //!
-//! # What changed from ORCH-0028
-//!
-//! The Ollama adapter no longer feeds the legacy `Directory` aggregate
-//! via `ProviderState::registrations`. Instead, it maintains its own
-//! [`OllamaCapabilityMatrix`] built from probing every stone's
-//! `/api/tags`, `/api/ps`, and `/api/show`, and publishes a
-//! [`CapabilityAnnouncement`] event to the bus on every change. The
-//! new [`CapabilityDirectory`] (populated by the `DirectorySubscriber`
-//! task) becomes the authoritative view of what Ollama can serve.
+//! Ollama maintains its own [`OllamaCapabilityMatrix`] built from
+//! probing every stone's `/api/tags`, `/api/ps`, and `/api/show`,
+//! and publishes a [`CapabilityAnnouncement`] event to the bus on
+//! every change. The [`CapabilityDirectory`] (populated by the
+//! `DirectorySubscriber` task) is the authoritative view of what
+//! Ollama can serve.
 //!
 //! # Dispatch flow
 //!
@@ -30,16 +27,6 @@
 //! ORCH-0030: **never recommend a model that is not actually
 //! installed on a healthy instance.** See [`ollama_matrix::tests::
 //! scoring_anti_phantom_filter_rejects_uninstalled_models`].
-//!
-//! # Legacy `Provider` trait
-//!
-//! The adapter still implements `Provider` because the Dispatcher and
-//! eleven other adapters depend on the trait. Ollama's `state()`
-//! returns an empty `ProviderState` — the legacy `Directory` sees no
-//! registrations, no models, and a persistent `Offline` health for
-//! Ollama. The dispatcher's routing path (updated in commit 7c) now
-//! consults `CapabilityDirectory` first and only falls back to the
-//! legacy `Directory` for adapters that have not been migrated yet.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +35,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::{watch, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
@@ -59,10 +46,7 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{
-    Provider, ProviderError, ProviderHealth, ProviderOutcome, ProviderState,
-    ProviderStatePublisher,
-};
+use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
@@ -85,10 +69,6 @@ pub struct OllamaProvider {
     matrix: Arc<RwLock<OllamaCapabilityMatrix>>,
     http: Client,
     events: Arc<EventBus>,
-    /// Stub publisher returning an empty state. Kept only so the
-    /// `Provider` trait impl has something to return; the legacy
-    /// `Directory` aggregate will see Ollama as persistently offline.
-    publisher: ProviderStatePublisher,
 }
 
 impl OllamaProvider {
@@ -99,20 +79,11 @@ impl OllamaProvider {
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let name = ProviderName::new(keys::providers::OLLAMA);
-        let initial = ProviderState {
-            health: ProviderHealth::Offline {
-                reason: "ollama uses capability events, not legacy Directory".to_string(),
-            },
-            registrations: Vec::new(),
-            models: Vec::new(),
-            performance_hints: Vec::new(),
-        };
         let provider = Arc::new(Self {
             name: name.clone(),
             matrix: Arc::new(RwLock::new(OllamaCapabilityMatrix::new())),
             http: build_http_client(),
             events,
-            publisher: ProviderStatePublisher::new(initial),
         });
         spawn_subscriber(provider.clone(), discovery, shutdown);
         provider
@@ -443,18 +414,6 @@ fn spawn_subscriber(
 impl Provider for OllamaProvider {
     fn name(&self) -> ProviderName {
         self.name.clone()
-    }
-
-    fn state(&self) -> Arc<ProviderState> {
-        // Legacy trait method. Ollama no longer contributes to the
-        // Directory aggregate; returning the stub offline state keeps
-        // the trait impl working until the Dispatcher cleanup in
-        // commit 13 retires `Provider::state` entirely.
-        self.publisher.snapshot()
-    }
-
-    fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
-        self.publisher.subscribe()
     }
 
     async fn onboard(

@@ -105,26 +105,6 @@ impl MediaContext {
     }
 }
 
-// ── ModelRef ──────────────────────────────────────────────────
-
-/// The resolved model identity after the contextualizer's
-/// `resolve_model` pass. Either a fully-qualified name (`provider|short`)
-/// or a short name scoped to a known provider.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelRef {
-    pub provider: ProviderName,
-    pub short_name: String,
-}
-
-impl ModelRef {
-    pub fn new(provider: ProviderName, short_name: impl Into<String>) -> Self {
-        Self {
-            provider,
-            short_name: short_name.into(),
-        }
-    }
-}
-
 // ── ExecutionContext ──────────────────────────────────────────
 
 /// Non-data dependencies providers receive alongside the request. The
@@ -193,9 +173,14 @@ pub struct OrchestratorRequest {
     // Media
     pub media: MediaContext,
 
-    // Resolution state
+    /// The provider chosen by the contextualizer to serve this
+    /// request. Adapter `onboard` reads this to confirm it is the
+    /// addressee. Set to `None` until the contextualizer runs.
+    ///
+    /// Note (ORCH-0030 R2 M3): the legacy `resolved_model` field
+    /// has been removed — model resolution is now adapter-local
+    /// and lives inside each adapter's `onboard`.
     pub resolved_provider: Option<ProviderName>,
-    pub resolved_model: Option<ModelRef>,
 
     // Execution context
     pub context: ExecutionContext,
@@ -209,7 +194,6 @@ impl std::fmt::Debug for OrchestratorRequest {
             .field("action", &self.action.dotted())
             .field("payload_keys", &payload_keys(&self.payload))
             .field("resolved_provider", &self.resolved_provider)
-            .field("resolved_model", &self.resolved_model)
             .finish()
     }
 }

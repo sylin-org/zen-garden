@@ -63,7 +63,7 @@ use tokio::sync::{broadcast, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    AnnouncementError, CapabilityAnnouncement, SkillDeclaration,
+    AnnouncementError, Capability, CapabilityAnnouncement, SkillDeclaration,
 };
 use crate::domain::events::{Event, EventBus};
 use crate::domain::ids::ProviderName;
@@ -199,6 +199,32 @@ impl CapabilityDirectory {
         state
             .get(provider)
             .and_then(|p| p.announcement.find_skill(skill_id).cloned())
+    }
+
+    /// Look up the capability declaration (with `media_inputs`) that
+    /// `provider` exposes for `primitive`. Returns `None` if the
+    /// provider is not registered, is disabled, or does not declare
+    /// the primitive.
+    ///
+    /// This is the primary lookup for the dispatcher and the
+    /// media_resolver after ORCH-0030 R2 M3 — the dispatcher uses
+    /// it to confirm the chosen provider serves the requested
+    /// primitive, and the media_resolver reads the returned
+    /// `media_inputs` list to resolve every media reference in the
+    /// request.
+    pub async fn capability(
+        &self,
+        provider: &ProviderName,
+        primitive: Primitive,
+    ) -> Option<Capability> {
+        let state = self.providers.read().await;
+        state.get(provider).filter(|p| p.enabled).and_then(|p| {
+            p.announcement
+                .capabilities
+                .iter()
+                .find(|c| c.primitive == primitive)
+                .cloned()
+        })
     }
 
     /// All skills across all enabled providers, grouped by provider.

@@ -1,22 +1,42 @@
-//! Google Gemini provider — `text.chat`, `text.embed`,
-//! `image.analyze`.
+//! Google Gemini provider — capability-event driven (ORCH-0030 R2 M3).
 //!
-//! Wire API (`https://generativelanguage.googleapis.com/v1beta`):
+//! Google is the only cloud adapter that ships in M1. Unlike
+//! instance-pool adapters (Ollama), it has no discovery loop: there
+//! is exactly one fixed cloud endpoint
+//! (`https://generativelanguage.googleapis.com` by default), one
+//! API key, and a **static** list of supported models that the
+//! adapter resolves `selectors.model` against via
+//! [`crate::providers::cloud_common::resolve_cloud_model`].
 //!
-//! - `POST /models/{model}:generateContent?key=<key>` — chat + vision
-//! - `POST /models/{model}:embedContent?key=<key>` — embeddings
+//! # Wire API
 //!
-//! Content shape: `{contents: [{role, parts: [{text|inlineData}]}]}`.
-//! Vision uses Base64 delivery inline — the `inlineData` part carries
-//! `{mimeType, data}`.
+//! - `POST /v1beta/models/{model}:generateContent?key=<key>` — chat +
+//!   vision (unified `contents` array of `{role, parts}` objects).
+//! - `POST /v1beta/models/{model}:embedContent?key=<key>` —
+//!   embeddings (one request per document).
 //!
-//! Scope note: Google also exposes Cloud TTS, Cloud Speech, and
-//! Imagen for audio/image generation, but those are distinct APIs
-//! with separate auth (service account) and are deliberately not
-//! registered by this provider. A caller targeting
-//! `audio.generate` / `audio.transcribe` / `image.generate` on
-//! Google would need a dedicated provider; OpenAI and local
-//! providers already cover those primitives.
+//! Vision uses Base64 delivery inline — the `inlineData` part of the
+//! user message carries `{mimeType, data}`.
+//!
+//! # Scope note
+//!
+//! Google also exposes Cloud TTS, Cloud Speech, and Imagen for
+//! audio/image generation, but those are distinct APIs with separate
+//! auth (service account) and are deliberately not declared here. A
+//! caller targeting `audio.generate`, `audio.transcribe`, or
+//! `image.generate` on Google would need a dedicated provider;
+//! Ollama/ComfyUI/WhisperCpp/Kokoro already cover those primitives.
+//!
+//! # Capability publication
+//!
+//! Because cloud adapters have no discovery subscriber to trigger
+//! the first publish, [`GoogleProvider::new`] spawns a one-shot task
+//! that calls [`GoogleProvider::publish_capabilities`] immediately so
+//! the [`crate::services::directory_subscriber::CapabilityDirectory`]
+//! sees Google as available right away. `enabled: true` is constant
+//! — runtime failures (expired keys, quota exhaustion, network
+//! blips) surface inside `onboard` as `ProviderError` variants and
+//! never flip the announcement.
 
 use std::sync::Arc;
 
@@ -24,20 +44,23 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::watch;
 
-use crate::domain::ids::{ModelFqn, ProviderName, RegistrationId};
+use crate::domain::capability_announcement::{
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput,
+};
+use crate::domain::events::EventBus;
+use crate::domain::ids::ProviderName;
 use crate::domain::keys;
-use crate::domain::media::MediaDelivery;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{
-    HonoredField, MediaInputSpec, Model, Provider, ProviderError, ProviderHealth,
-    ProviderOutcome, ProviderState, ProviderStatePublisher, Registration, RegistrationStrategy,
-};
+use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
 use crate::domain::request::OrchestratorRequest;
+use crate::providers::cloud_common::resolve_cloud_model;
+use crate::services::directory_subscriber::publish_capability_announcement;
 
 use super::common::{build_http_client, check_status, map_reqwest_error};
+
+// ── Config ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct GoogleConfig {
@@ -54,76 +77,115 @@ impl Default for GoogleConfig {
     }
 }
 
-const CHAT_MODELS: &[&str] = &[
+// ── Static supported model list ──────────────────────────────
+//
+// Cloud adapters resolve `selectors.model` against this fixed list
+// via `cloud_common::resolve_cloud_model`. Any `recommended:*`
+// moniker collapses to `DEFAULT_MODEL`; an unknown concrete name
+// returns `ProviderError::PinNotServable`.
+
+const SUPPORTED_MODELS: &[&str] = &[
+    "gemini-2.0-flash",
     "gemini-2.0-flash-exp",
+    "gemini-2.0-pro",
+    "gemini-2.0-pro-exp",
     "gemini-1.5-pro",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
 ];
-const EMBED_MODELS: &[&str] = &["text-embedding-004", "embedding-001"];
+
+const DEFAULT_MODEL: &str = "gemini-2.0-flash";
+
+// Accepted MIME types for `image.source` on `image.analyze`. Matches
+// Gemini's documented vision input set.
+const ACCEPTED_IMAGE_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+];
+
+// ── Provider struct ──────────────────────────────────────────
 
 pub struct GoogleProvider {
     name: ProviderName,
-    config: GoogleConfig,
+    base_url: String,
+    api_key: String,
     http: Client,
-    publisher: ProviderStatePublisher,
+    events: Arc<EventBus>,
 }
 
 impl GoogleProvider {
-    pub fn new(config: GoogleConfig) -> Arc<Self> {
+    /// Construct a Google/Gemini adapter.
+    ///
+    /// Cloud adapters take no `discovery` and no `shutdown` — there
+    /// is nothing to subscribe to or cancel. They do take an
+    /// [`EventBus`] handle because they publish a static
+    /// [`CapabilityAnnouncement`] once at startup so the
+    /// [`crate::services::directory_subscriber::CapabilityDirectory`]
+    /// sees the adapter immediately.
+    pub fn new(config: GoogleConfig, events: Arc<EventBus>) -> Arc<Self> {
         let name = ProviderName::new(keys::providers::GOOGLE);
-
-        let registrations = vec![
-            build_chat_registration(&name),
-            build_embed_registration(&name),
-            build_analyze_registration(&name),
-        ];
-
-        let mut models: Vec<Model> = Vec::new();
-        for m in CHAT_MODELS {
-            models.push(Model {
-                fqn: ModelFqn::new(&name, *m),
-                short_name: m.to_string(),
-                primitives: vec![Primitive::TextChat, Primitive::ImageAnalyze],
-                capability_tags: vec!["chat".to_string(), "vision".to_string()],
-                size_bytes: None,
-                context_length: Some(1_000_000),
-                parameter_count: None,
-            });
-        }
-        for m in EMBED_MODELS {
-            models.push(Model {
-                fqn: ModelFqn::new(&name, *m),
-                short_name: m.to_string(),
-                primitives: vec![Primitive::TextEmbed],
-                capability_tags: vec!["embed".to_string()],
-                size_bytes: None,
-                context_length: None,
-                parameter_count: None,
-            });
-        }
-
-        let initial = ProviderState {
-            health: if config.api_key.is_empty() {
-                ProviderHealth::Degraded {
-                    reason: "missing GOOGLE_API_KEY".to_string(),
-                }
-            } else {
-                ProviderHealth::Healthy
-            },
-            registrations,
-            models,
-            performance_hints: Vec::new(),
-        };
-
-        Arc::new(Self {
+        let provider = Arc::new(Self {
             name,
-            config,
+            base_url: config.base_url,
+            api_key: config.api_key,
             http: build_http_client(),
-            publisher: ProviderStatePublisher::new(initial),
-        })
+            events,
+        });
+
+        // Publish the static capability list immediately. `new` is
+        // sync, so we spawn a one-shot task rather than blocking on
+        // an async call. Idempotent re-publishing is allowed by the
+        // M3 contract, so there's no harm if the directory
+        // subscriber isn't running yet — the event stays on the bus
+        // for late subscribers.
+        let publisher = provider.clone();
+        tokio::spawn(async move {
+            publisher.publish_capabilities().await;
+        });
+
+        provider
+    }
+
+    /// Build and publish the static capability announcement.
+    ///
+    /// Google/Gemini's primitive surface is fixed at compile time:
+    ///
+    /// - `text.chat` — no media inputs
+    /// - `text.embed` — no media inputs
+    /// - `image.analyze` — one `image.source` input, Base64 delivery
+    ///
+    /// `enabled: true` is constant for cloud adapters; runtime
+    /// failures surface inside `onboard` as `ProviderError` variants.
+    async fn publish_capabilities(&self) {
+        let announcement = CapabilityAnnouncement {
+            provider: self.name.clone(),
+            enabled: true,
+            capabilities: vec![
+                AnnCapability {
+                    primitive: Primitive::TextChat,
+                    media_inputs: Vec::new(),
+                },
+                AnnCapability {
+                    primitive: Primitive::TextEmbed,
+                    media_inputs: Vec::new(),
+                },
+                AnnCapability {
+                    primitive: Primitive::ImageAnalyze,
+                    media_inputs: vec![CapabilityMediaInput::base64(
+                        keys::image::SOURCE.as_str().to_string(),
+                        ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
+                    )],
+                },
+            ],
+            skills: Vec::new(),
+        };
+        publish_capability_announcement(&self.events, &announcement).await;
     }
 }
+
+// ── Provider trait impl ──────────────────────────────────────
 
 #[async_trait]
 impl Provider for GoogleProvider {
@@ -131,19 +193,11 @@ impl Provider for GoogleProvider {
         self.name.clone()
     }
 
-    fn state(&self) -> Arc<ProviderState> {
-        self.publisher.snapshot()
-    }
-
-    fn subscribe(&self) -> watch::Receiver<Arc<ProviderState>> {
-        self.publisher.subscribe()
-    }
-
     async fn onboard(
         &self,
         request: OrchestratorRequest,
     ) -> Result<ProviderOutcome, ProviderError> {
-        if self.config.api_key.is_empty() {
+        if self.api_key.is_empty() {
             return Err(ProviderError::AuthFailed(
                 "google api key is not configured".to_string(),
             ));
@@ -160,18 +214,19 @@ impl Provider for GoogleProvider {
     }
 }
 
+// ── Wire-format dispatch ─────────────────────────────────────
+
 impl GoogleProvider {
     async fn do_chat(
         &self,
         request: OrchestratorRequest,
         with_image: bool,
     ) -> Result<ProviderOutcome, ProviderError> {
-        let model = request
-            .resolved_model
-            .as_ref()
-            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
-            .short_name
-            .clone();
+        let model = resolve_cloud_model(
+            request.selectors.model.as_deref(),
+            DEFAULT_MODEL,
+            SUPPORTED_MODELS,
+        )?;
 
         // Build contents array. Gemini uses `role: "user"` or
         // `role: "model"` and each message holds `parts: [...]`.
@@ -278,8 +333,8 @@ impl GoogleProvider {
 
         let endpoint = format!(
             "{}/v1beta/models/{model}:generateContent?key={}",
-            self.config.base_url.trim_end_matches('/'),
-            urlencode(&self.config.api_key),
+            self.base_url.trim_end_matches('/'),
+            urlencode(&self.api_key),
         );
         let resp = self
             .http
@@ -333,12 +388,11 @@ impl GoogleProvider {
         &self,
         request: OrchestratorRequest,
     ) -> Result<ProviderOutcome, ProviderError> {
-        let model = request
-            .resolved_model
-            .as_ref()
-            .ok_or_else(|| ProviderError::Unsupported("model selector required".to_string()))?
-            .short_name
-            .clone();
+        let model = resolve_cloud_model(
+            request.selectors.model.as_deref(),
+            DEFAULT_MODEL,
+            SUPPORTED_MODELS,
+        )?;
         let input = request
             .payload
             .pointer("/text/input")
@@ -362,8 +416,8 @@ impl GoogleProvider {
         // complexity for v1.
         let endpoint_template = format!(
             "{}/v1beta/models/{model}:embedContent?key={}",
-            self.config.base_url.trim_end_matches('/'),
-            urlencode(&self.config.api_key),
+            self.base_url.trim_end_matches('/'),
+            urlencode(&self.api_key),
         );
 
         let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(inputs.len());
@@ -395,6 +449,8 @@ impl GoogleProvider {
     }
 }
 
+// ── URL-encoding helper ──────────────────────────────────────
+
 fn urlencode(s: &str) -> String {
     // Minimal URL-encoder for API keys (alphanumeric + a handful of
     // safe chars).
@@ -411,68 +467,7 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-// ── Registration builders ─────────────────────────────────────
-
-fn build_chat_registration(provider: &ProviderName) -> Registration {
-    Registration {
-        id: RegistrationId::generate(),
-        provider: provider.clone(),
-        primitive: Primitive::TextChat,
-        strategy: RegistrationStrategy::Bare,
-        honored_fields: vec![
-            HonoredField::new(keys::text::PROMPT_USER).required(),
-            HonoredField::new(keys::text::PROMPT_SYSTEM),
-            HonoredField::new(keys::text::PROMPT_PREVIOUS),
-            HonoredField::new(keys::text::TOKENS_MAX),
-            HonoredField::new(keys::text::SAMPLING_TEMPERATURE),
-            HonoredField::new(keys::text::SAMPLING_TOP_P),
-            HonoredField::new(keys::text::SAMPLING_TOP_K),
-            HonoredField::new(keys::text::STOP_SEQUENCES),
-        ],
-        media_inputs: Vec::new(),
-        media_outputs: Vec::new(),
-    }
-}
-
-fn build_embed_registration(provider: &ProviderName) -> Registration {
-    Registration {
-        id: RegistrationId::generate(),
-        provider: provider.clone(),
-        primitive: Primitive::TextEmbed,
-        strategy: RegistrationStrategy::Bare,
-        honored_fields: vec![HonoredField::new(keys::text::INPUT).required()],
-        media_inputs: Vec::new(),
-        media_outputs: Vec::new(),
-    }
-}
-
-fn build_analyze_registration(provider: &ProviderName) -> Registration {
-    Registration {
-        id: RegistrationId::generate(),
-        provider: provider.clone(),
-        primitive: Primitive::ImageAnalyze,
-        strategy: RegistrationStrategy::Bare,
-        honored_fields: vec![
-            HonoredField::new(keys::image::SOURCE).required(),
-            HonoredField::new(keys::text::PROMPT_USER),
-        ],
-        media_inputs: vec![MediaInputSpec {
-            field: keys::image::SOURCE,
-            delivery: MediaDelivery::Base64,
-            accepted_types: vec![
-                "image/png".to_string(),
-                "image/jpeg".to_string(),
-                "image/webp".to_string(),
-                "image/heic".to_string(),
-                "image/heif".to_string(),
-            ],
-            overlay: None,
-        }],
-        media_outputs: Vec::new(),
-    }
-}
-
-// ── Wire types ────────────────────────────────────────────────
+// ── Wire types ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct GenerateResponse {

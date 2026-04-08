@@ -52,7 +52,7 @@ use tokio::sync::{watch, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement,
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -129,13 +129,17 @@ impl OllamaProvider {
         let matrix = self.matrix.read().await;
         let primitives = matrix.supported_primitives();
         let enabled = !primitives.is_empty() && !matrix.healthy_instances().is_empty();
+        let capabilities: Vec<AnnCapability> = primitives
+            .into_iter()
+            .map(|p| AnnCapability {
+                primitive: p,
+                media_inputs: ollama_media_inputs_for(p),
+            })
+            .collect();
         let announcement = CapabilityAnnouncement {
             provider: self.name.clone(),
             enabled,
-            capabilities: primitives
-                .into_iter()
-                .map(AnnCapability::new)
-                .collect(),
+            capabilities,
             // Skills come later — commits 8+ handle the generalized
             // skill publication from any adapter that has them. Ollama
             // will declare its first skill (e.g. image-understanding)
@@ -751,6 +755,32 @@ impl OllamaProvider {
             out.set(&keys::usage::TOKENS_OUTPUT, count);
         }
         Ok(ProviderOutcome::Sync(out))
+    }
+}
+
+// ── Media input declarations per primitive ───────────────────
+
+/// Per-primitive media input declarations Ollama publishes as part
+/// of its capability announcement. The MediaResolver reads these
+/// off the CapabilityDirectory and applies the declared delivery
+/// mode (Base64 inline, by-id pass-through, or staged transfer).
+///
+/// `text.chat` and `text.embed` never carry media → empty list.
+/// `image.analyze` accepts one image at `image.source`, delivered
+/// as base64 because Ollama's `/api/chat` wire format embeds
+/// images inline in the messages array.
+fn ollama_media_inputs_for(primitive: Primitive) -> Vec<CapabilityMediaInput> {
+    match primitive {
+        Primitive::ImageAnalyze => vec![CapabilityMediaInput::base64(
+            keys::image::SOURCE.as_str().to_string(),
+            vec![
+                "image/png".to_string(),
+                "image/jpeg".to_string(),
+                "image/webp".to_string(),
+                "image/gif".to_string(),
+            ],
+        )],
+        _ => Vec::new(),
     }
 }
 

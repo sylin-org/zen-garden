@@ -55,6 +55,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::domain::ids::ProviderName;
+use crate::domain::media::MediaDelivery;
 use crate::domain::primitive::Primitive;
 
 // ── The announcement ─────────────────────────────────────────
@@ -151,11 +152,96 @@ impl CapabilityAnnouncement {
 pub struct Capability {
     /// The closed-enum primitive this capability covers.
     pub primitive: Primitive,
+
+    /// Media inputs this capability honors. One entry per field
+    /// that accepts a media reference (e.g. `image.source` for
+    /// `image.analyze`). The [`MediaResolver`] reads this list
+    /// instead of the legacy `Registration.media_inputs` and applies
+    /// the declared [`MediaDelivery`] mode to each reference.
+    ///
+    /// Empty for primitives that never accept media (text.chat,
+    /// text.embed, text.rerank, text.translate). Non-empty for
+    /// `image.analyze`, `image.edit`, `image.upscale`,
+    /// `audio.transcribe`, etc.
+    ///
+    /// See [`CapabilityMediaInput`] for the wire shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media_inputs: Vec<CapabilityMediaInput>,
 }
 
 impl Capability {
+    /// Construct a bare capability with no media inputs.
     pub fn new(primitive: Primitive) -> Self {
-        Self { primitive }
+        Self {
+            primitive,
+            media_inputs: Vec::new(),
+        }
+    }
+
+    /// Add a media input declaration to this capability.
+    pub fn with_media_input(mut self, input: CapabilityMediaInput) -> Self {
+        self.media_inputs.push(input);
+        self
+    }
+}
+
+/// Serializable wire shape of a media input declaration attached to
+/// a capability. Mirrors the fields of the legacy
+/// [`crate::domain::provider::MediaInputSpec`] but lives in the
+/// capability announcement schema so it can travel on the bus and
+/// round-trip through JSON.
+///
+/// The caller sends a media reference (`{media_id: "..."}`) at
+/// `field`; the `MediaResolver` resolves it according to `delivery`
+/// and validates the bytes' content type against `accepted_types`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityMediaInput {
+    /// Dotted canonical field path where the caller places the
+    /// media reference (e.g. `"image.source"`).
+    pub field: String,
+
+    /// How the media resolver should deliver the bytes to the
+    /// adapter's `onboard` method.
+    pub delivery: MediaDelivery,
+
+    /// Accepted MIME types. Empty means any content type is
+    /// acceptable (the adapter handles validation itself).
+    #[serde(default)]
+    pub accepted_types: Vec<String>,
+
+    /// Optional overlay hint for inpaint-style skills that paint on
+    /// top of another image. Mirrors the legacy
+    /// `MediaInputSpec.overlay`. Rare — only skill workflows use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<String>,
+}
+
+impl CapabilityMediaInput {
+    pub fn base64(field: impl Into<String>, accepted_types: Vec<String>) -> Self {
+        Self {
+            field: field.into(),
+            delivery: MediaDelivery::Base64,
+            accepted_types,
+            overlay: None,
+        }
+    }
+
+    pub fn by_id(field: impl Into<String>, accepted_types: Vec<String>) -> Self {
+        Self {
+            field: field.into(),
+            delivery: MediaDelivery::ById,
+            accepted_types,
+            overlay: None,
+        }
+    }
+
+    pub fn transfer(field: impl Into<String>, accepted_types: Vec<String>) -> Self {
+        Self {
+            field: field.into(),
+            delivery: MediaDelivery::Transfer,
+            accepted_types,
+            overlay: None,
+        }
     }
 }
 

@@ -35,7 +35,8 @@ use crate::domain::primitive::Primitive;
 use crate::services::skills::import::{
     analyze, draft_builder, model_resolve, namer,
 };
-use crate::services::skills::registry::SkillKey;
+use crate::services::skills::registry::{SkillKey, SkillMeta};
+use crate::services::skills::types::{ImportSource, ModelRef};
 
 /// Request body for the JSON variant of `POST /v1/skills/{provider}/import`.
 #[derive(Debug, Deserialize)]
@@ -115,6 +116,18 @@ pub async fn post_import(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "skills import: analyze failed");
+            // Publish a synthetic failure event with no moniker —
+            // there's no skill to attach state to yet.
+            state
+                .events
+                .publish(
+                    "skills.import.failed",
+                    &json!({
+                        "stage": "analyze",
+                        "reason": format!("{e:#}"),
+                    }),
+                )
+                .await;
             return bail(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation_failed",
@@ -123,12 +136,43 @@ pub async fn post_import(
         }
     };
 
+    let moniker_str = result.moniker.clone();
+    let topic_state = format!("skills.{moniker_str}.state");
+
+    // Publish: analyzing → confirmed (the analysis stage succeeded;
+    // the next stages — draft write, registration, naming — flow
+    // from here)
+    state
+        .events
+        .publish(
+            &topic_state,
+            &json!({
+                "moniker": moniker_str,
+                "state": "analyzing",
+                "primitive": result.primitive.dotted(),
+                "display_name": result.display_name,
+            }),
+        )
+        .await;
+
     // ── Step 2: write the draft to disk ──────────────────────
     let skills_dir = data_dir.join("skills");
     let draft_dir = match draft_builder::create_draft(&skills_dir, "comfyui", &result).await {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "skills import: draft write failed");
+            state
+                .events
+                .publish(
+                    &topic_state,
+                    &json!({
+                        "moniker": moniker_str,
+                        "state": "failed",
+                        "stage": "draft_write",
+                        "reason": format!("{e:#}"),
+                    }),
+                )
+                .await;
             return bail(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
@@ -137,27 +181,151 @@ pub async fn post_import(
         }
     };
 
-    // ── Step 3: fire AI naming in the background ─────────────
+    // ── Step 3: register the skill in the aggregate ─────────
     //
-    // Best-effort. The import response returns immediately; the
-    // namer updates the Skills aggregate (and, eventually, the
-    // on-disk `skill.json`) when it finishes. Phase 4 wires the
-    // name update back to disk; Phase 3 only updates the in-memory
-    // aggregate via a `rename` call.
+    // The on-disk loader skips drafts, but our import flow needs
+    // the skill to be visible to `GET /v1/skills` immediately.
+    // Build a SkillMeta directly from the analysis result and
+    // publish it to the in-memory aggregate. The skill will also
+    // pick up auto-naming via the async namer, which calls
+    // `Skills::rename` and emits a `skill.named` lifecycle event.
+    let provider_name = ProviderName::new("comfyui");
+    if let Ok(moniker_typed) = Moniker::new(&moniker_str) {
+        let model_refs: Vec<ModelRef> = result
+            .models
+            .iter()
+            .map(|m| match m {
+                model_resolve::ModelResolution::Resolved {
+                    filename,
+                    url,
+                    sha256,
+                    size_bytes,
+                    model_type,
+                    license,
+                    ..
+                } => ModelRef {
+                    filename: filename.clone(),
+                    model_type: model_type.clone(),
+                    url: Some(url.clone()),
+                    size_bytes: *size_bytes,
+                    sha256: sha256.clone(),
+                    license: license.clone(),
+                    description: None,
+                },
+                model_resolve::ModelResolution::Cached {
+                    filename,
+                    model_type,
+                } => ModelRef {
+                    filename: filename.clone(),
+                    model_type: model_type.clone(),
+                    url: None,
+                    size_bytes: None,
+                    sha256: None,
+                    license: None,
+                    description: None,
+                },
+                model_resolve::ModelResolution::AuthRequired {
+                    filename,
+                    url,
+                    model_type,
+                    ..
+                } => ModelRef {
+                    filename: filename.clone(),
+                    model_type: model_type.clone(),
+                    url: Some(url.clone()),
+                    size_bytes: None,
+                    sha256: None,
+                    license: None,
+                    description: None,
+                },
+                model_resolve::ModelResolution::Unresolved {
+                    filename,
+                    model_type,
+                    ..
+                } => ModelRef {
+                    filename: filename.clone(),
+                    model_type: model_type.clone(),
+                    url: None,
+                    size_bytes: None,
+                    sha256: None,
+                    license: None,
+                    description: None,
+                },
+            })
+            .collect();
+
+        let import_source = result.source.as_ref().map(|s| ImportSource {
+            kind: s.source_type.clone(),
+            url: s.url.clone(),
+            image_id: s.image_id,
+            username: s.username.clone(),
+        });
+
+        let meta = SkillMeta {
+            provider: provider_name.clone(),
+            moniker: moniker_typed.clone(),
+            primitive: result.primitive,
+            display_name: result.display_name.clone(),
+            description: result.description.clone(),
+            vram_mb: 0,
+            variants: result.variants.clone(),
+            model_selector: result.model_selector.clone(),
+            required_models: model_refs,
+            source: import_source,
+            preview_url: result.preview_url.clone(),
+        };
+        state.skills.register(meta).await;
+
+        // Publish: ready (the skill is fully registered, models
+        // resolved, draft on disk; only naming may still be pending)
+        state
+            .events
+            .publish(
+                &topic_state,
+                &json!({
+                    "moniker": moniker_str,
+                    "state": "ready",
+                    "primitive": result.primitive.dotted(),
+                    "models": result.models.len(),
+                }),
+            )
+            .await;
+    } else {
+        tracing::warn!(moniker = %moniker_str, "skills import: generated moniker is invalid");
+    }
+
+    // ── Step 4: fire AI naming in the background ─────────────
+    //
+    // Best-effort. The import response has already returned the
+    // moniker; the namer updates the Skills aggregate (and emits
+    // a `skill.named` event on the bus) when it finishes.
     spawn_async_namer(
         state.clone(),
-        result.moniker.clone(),
+        moniker_str.clone(),
         namer_context_from_result(&result),
     );
 
-    // ── Step 4: return the analysis result ──────────────────
-    let moniker = result.moniker.clone();
+    // ── Step 5: return 202 + Location + thin body ───────────
+    //
+    // The body is intentionally minimal: clients fetch the full
+    // metadata via `GET /v1/skills/{moniker}` and watch for
+    // updates on `/v1/events?focus=skills.{moniker}.*`.
+    let location = format!("/v1/skills/{moniker_str}");
+    let topic_focus = format!("skills.{moniker_str}.*");
     let body = json!({
-        "moniker": moniker,
+        "moniker": moniker_str,
+        "primitive": result.primitive.dotted(),
         "draft_dir": draft_dir.display().to_string(),
-        "result": result,
+        "links": {
+            "self": &location,
+            "events": format!("/v1/events?focus={topic_focus}"),
+        }
     });
-    (StatusCode::CREATED, Json(body)).into_response()
+    let mut resp = (StatusCode::ACCEPTED, Json(body)).into_response();
+    if let Ok(loc_value) = axum::http::HeaderValue::from_str(&location) {
+        resp.headers_mut().insert(axum::http::header::LOCATION, loc_value);
+    }
+    resp
 }
 
 /// Build the naming context from the analyze result.
@@ -212,12 +380,22 @@ fn spawn_async_namer(
                 moniker = %moniker,
                 "skills import: AI naming skipped (no chat provider available or request failed)"
             );
+            // Publish a soft notice so dashboards stop spinning the
+            // "naming…" indicator without falsely claiming a name.
+            state
+                .events
+                .publish(
+                    format!("skills.{moniker}.named"),
+                    &json!({
+                        "moniker": moniker,
+                        "skipped": true,
+                        "reason": "no chat provider available or request failed",
+                    }),
+                )
+                .await;
             return;
         };
         // Locate the skill in the aggregate and update its metadata.
-        // The key requires a typed Moniker; if the moniker string
-        // fails validation (unlikely — it came from our own
-        // generator) we just log and drop the update.
         let Ok(moniker_typed) = crate::domain::moniker::Moniker::new(&moniker) else {
             tracing::warn!(moniker, "skills import: generated moniker is invalid");
             return;
@@ -228,7 +406,21 @@ fn spawn_async_namer(
         );
         state
             .skills
-            .rename(&key, naming.name, naming.description)
+            .rename(&key, naming.name.clone(), naming.description.clone())
+            .await;
+
+        // Publish the lifecycle event. Subscribers focused on
+        // `skills.{moniker}.named` get a real-time push.
+        state
+            .events
+            .publish(
+                format!("skills.{moniker}.named"),
+                &json!({
+                    "moniker": moniker,
+                    "display_name": naming.name,
+                    "description": naming.description,
+                }),
+            )
             .await;
     });
 }
@@ -425,6 +617,19 @@ pub async fn delete_skill(
     for key in &keys_to_remove {
         // Remove from in-memory aggregate
         state.skills.unregister(key).await;
+
+        // Publish lifecycle event so dashboards drop the entry live.
+        state
+            .events
+            .publish(
+                format!("skills.{}.state", key.moniker.as_str()),
+                &json!({
+                    "moniker": key.moniker.as_str(),
+                    "provider": key.provider.as_str(),
+                    "state": "removed",
+                }),
+            )
+            .await;
 
         // Best-effort on-disk removal: scan for the directory under
         // `{data_dir}/skills/{provider}/{moniker}` and remove if

@@ -9,6 +9,7 @@ use crate::domain::events::EventBus;
 use crate::domain::idempotency::IdempotencyStore;
 use crate::domain::jobs::JobStore;
 use crate::domain::media::SharedMediaStore;
+use crate::domain::resources::Resources;
 use crate::domain::vocabulary::VocabularyRegistry;
 use crate::services::catalog_builder::CatalogBuilder;
 use crate::services::dispatcher::Dispatcher;
@@ -42,4 +43,7 @@ pub struct AppState {
     /// nervous system. Every domain publishes state transitions here;
     /// HTTP `/v1/events` exposes a glob-filtered view.
     pub events: Arc<EventBus>,
+    /// Resources domain (ORCH-0030 §2) — physical stone resources
+    /// (GPU VRAM, system memory) with claim-based accounting.
+    pub resources: Arc<Resources>,
 }

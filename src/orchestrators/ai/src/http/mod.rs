@@ -17,6 +17,7 @@ pub mod jobs;
 pub mod media;
 pub mod metrics;
 pub mod recommendations;
+pub mod resources;
 pub mod router;
 pub mod sitemap;
 pub mod skills;

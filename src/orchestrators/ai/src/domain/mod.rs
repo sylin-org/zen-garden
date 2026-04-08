@@ -49,5 +49,6 @@ pub mod primitive;
 pub mod provider;
 pub mod recommendation_types;
 pub mod request;
+pub mod resources;
 pub mod selectors;
 pub mod vocabulary;

@@ -34,6 +34,7 @@ use zen_garden_ai_orchestrator::{
         idempotency::IdempotencyStore,
         jobs::JobStore,
         media::MediaStore,
+        resources::Resources,
         vocabulary::VocabularyRegistry,
     },
     http::router,
@@ -135,6 +136,13 @@ async fn main() -> Result<()> {
     // view. Built before any domain constructor so they can capture
     // it by handle at wiring time.
     let events = EventBus::new();
+
+    // ── Resources domain (ORCH-0030 §2) ─────────────────────────
+    //
+    // Physical stone resource accounting. Topology is hydrated by
+    // garden discovery as stones come online; adapters claim
+    // resources before dispatching work and release on completion.
+    let resources = Resources::new(events.clone());
 
     // ── Vocabulary & Directory ──────────────────────────────────
     let vocabularies = VocabularyRegistry::build();
@@ -321,6 +329,7 @@ async fn main() -> Result<()> {
         provisioning: provisioning.clone(),
         data_dir: data_dir.clone(),
         events: events.clone(),
+        resources: resources.clone(),
     };
 
     // ── Background tasks ────────────────────────────────────────

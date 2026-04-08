@@ -7,7 +7,7 @@ use crate::app_state::AppState;
 
 use super::{
     actions_index, catalog, events, flush, health, ingress, jobs, media, metrics,
-    recommendations, sitemap, skills,
+    recommendations, resources, sitemap, skills,
 };
 
 /// Build the full `/v1/*` router plus `/health`.
@@ -61,6 +61,16 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/v1/skills/{moniker}",
             get(skills::get_skill).delete(skills::delete_skill),
+        )
+        // Resources domain (ORCH-0030 §2 commit 4)
+        .route("/v1/resources", get(resources::list_resources))
+        .route(
+            "/v1/resources/stones/{name}",
+            get(resources::get_stone_resources),
+        )
+        .route(
+            "/v1/resources/stones/{name}/pressure",
+            get(resources::get_stone_pressure),
         )
         .with_state(state)
 }

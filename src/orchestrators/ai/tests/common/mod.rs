@@ -29,6 +29,7 @@ use zen_garden_ai_orchestrator::{
         ids::{ProviderName, RegistrationId},
         jobs::JobStore,
         keys,
+        resources::Resources,
         media::{MediaDelivery, MediaStore},
         output::Output,
         primitive::Primitive,
@@ -283,6 +284,7 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
     let provisioning =
         zen_garden_ai_orchestrator::services::skills::ProvisioningQueue::with_default_concurrency();
     let events = EventBus::new();
+    let resources = Resources::new(events.clone());
     let catalog = CatalogBuilder::new(
         directory.clone(),
         vocabularies.clone(),
@@ -307,6 +309,7 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
         provisioning,
         data_dir: data_dir.clone(),
         events,
+        resources,
     };
 
     Fixture {

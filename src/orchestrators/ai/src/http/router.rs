@@ -6,7 +6,7 @@ use axum::Router;
 use crate::app_state::AppState;
 
 use super::{
-    actions_index, catalog, events, flush, health, ingress, jobs, media, metrics,
+    actions_index, catalog, events, flush, health, ingress, introspect, jobs, media, metrics,
     recommendations, resources, sitemap, skills,
 };
 
@@ -20,9 +20,15 @@ pub fn build(state: AppState) -> Router {
         .route("/v1", get(sitemap::get_sitemap))
         // Action dispatcher
         .route("/v1/do", post(ingress::post_do).get(actions_index::get_actions).options(ingress::options_do))
-        // Hierarchical sugar
-        .route("/v1/{modality}/{leaf}", post(ingress::post_primitive))
-        .route("/v1/{modality}/{leaf}/{skill}", post(ingress::post_skill))
+        // Hierarchical sugar (POST invokes, GET introspects — ORCH-0030 §R2.8.3)
+        .route(
+            "/v1/{modality}/{leaf}",
+            post(ingress::post_primitive).get(introspect::get_primitive),
+        )
+        .route(
+            "/v1/{modality}/{leaf}/{skill}",
+            post(ingress::post_skill).get(introspect::get_skill),
+        )
         // Catalog (REST state contract)
         .route("/v1/catalog", get(catalog::get_catalog))
         // Events: unified bus (ORCH-0030 §1).

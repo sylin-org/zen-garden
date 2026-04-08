@@ -44,6 +44,7 @@ use zen_garden_ai_orchestrator::{
     services::{
         catalog_builder::CatalogBuilder,
         contextualizer::Contextualizer,
+        directory_subscriber::{CapabilityDirectory, DirectorySubscriber},
         dispatcher::Dispatcher,
         idempotency_store::InMemoryIdempotencyStore,
         job_store::DiskJobStore,
@@ -246,6 +247,8 @@ pub struct Fixture {
     pub idempotency_store: Arc<dyn IdempotencyStore>,
     pub demand: Arc<DemandLedger>,
     pub recommendation: Arc<RecommendationEngine>,
+    pub capability_directory: Arc<CapabilityDirectory>,
+    pub directory_subscriber: Arc<DirectorySubscriber>,
 }
 
 pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
@@ -296,6 +299,10 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
     directory.rebuild_snapshot().await;
     recommendation.rebuild().await;
 
+    let capability_directory = CapabilityDirectory::new();
+    let directory_subscriber =
+        DirectorySubscriber::new(capability_directory.clone(), events.clone());
+
     let state = AppState {
         directory: directory.clone(),
         vocabularies,
@@ -310,6 +317,7 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
         data_dir: data_dir.clone(),
         events,
         resources,
+        capability_directory: capability_directory.clone(),
     };
 
     Fixture {
@@ -321,6 +329,8 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
         idempotency_store,
         demand,
         recommendation,
+        capability_directory,
+        directory_subscriber,
     }
 }
 

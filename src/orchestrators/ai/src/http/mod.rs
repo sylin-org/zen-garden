@@ -13,6 +13,7 @@ pub mod events;
 pub mod flush;
 pub mod health;
 pub mod ingress;
+pub mod introspect;
 pub mod jobs;
 pub mod media;
 pub mod metrics;

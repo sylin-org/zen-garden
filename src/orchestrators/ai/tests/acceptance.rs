@@ -1064,48 +1064,13 @@ async fn metrics_endpoint_exposes_prometheus_text_format() {
     );
 }
 
-// ── /v1/catalog/events SSE stream ─────────────────────────────
-
-#[tokio::test]
-async fn catalog_events_streams_initial_snapshot() {
-    let (fx, _mock) = fixture_with_mock_chat().await;
-    // Prime the catalog so there's at least one snapshot to emit.
-    // The fixture builder registers a provider and rebuilds the
-    // directory snapshot, but CatalogBuilder::run is not spawned in
-    // tests. Call the render path directly by subscribing to the
-    // directory and pushing one render through the catalog.
-    let mut dir_rx = fx.directory.subscribe();
-    let current = dir_rx.borrow_and_update().clone();
-    // Force an initial render via the public subscribe path plus a
-    // one-shot dispatch: simplest is to directly manipulate the
-    // watch channel via a helper. The catalog builder owns the
-    // channel, so rebuild it by spawning its run() briefly.
-    let catalog = fx.state.catalog.clone();
-    let _token = tokio_util::sync::CancellationToken::new();
-    // Kick one render cycle synchronously.
-    let initial_docs_version = catalog.snapshot().directory_version;
-    let _ = current;
-    let _ = initial_docs_version;
-
-    // Just exercise the SSE endpoint — it should return 200 and
-    // content-type text/event-stream, with at least one event
-    // buffered for delivery. We do not drain the stream fully since
-    // keep-alive would block; instead read the first ~1KB.
-    let app = router::build(fx.state);
-    let resp = app.oneshot(get("/v1/catalog/events")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(
-        ct.starts_with("text/event-stream"),
-        "catalog events must be SSE: got {ct}"
-    );
-}
+// ── /v1/catalog/events retired ────────────────────────────────
+//
+// The endpoint was retired in ORCH-0030 commit 1 (§1.6). Clients
+// migrate to `/v1/events?focus=catalog.*,directory.*`, which is
+// tested in `events_stream.rs`. The old test that hit
+// `/v1/catalog/events` was removed rather than migrated because
+// the coverage has moved to `tests/events_stream.rs`.
 
 // ── Silence warnings for constants referenced only for completeness ──
 #[allow(dead_code)]

@@ -134,6 +134,14 @@ impl EventBus {
         self.seq.load(Ordering::SeqCst)
     }
 
+    /// Raw broadcast subscription — no focus filter, no replay, no
+    /// gap detection. Used by internal consumers (like the Directory
+    /// subscriber) that want every event and handle their own
+    /// filtering. External clients should use [`subscribe`] instead.
+    pub fn raw_subscribe(&self) -> broadcast::Receiver<Event> {
+        self.tx.subscribe()
+    }
+
     /// Subscribe with a focus matcher and an optional resume point.
     ///
     /// Returns a [`Subscription`] that yields events matching the

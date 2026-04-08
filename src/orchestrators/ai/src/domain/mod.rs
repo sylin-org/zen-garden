@@ -34,6 +34,7 @@
 //! - [`recommendation_types`] — value objects used by the
 //!   `RecommendationEngine` (lives in [`crate::services::recommendation`]).
 
+pub mod capability_announcement;
 pub mod directory;
 pub mod errors;
 pub mod events;

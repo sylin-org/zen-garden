@@ -1292,6 +1292,176 @@ A request that cannot be served fails loudly with a typed error. A pinned model 
 
 These invariants are enforced by code, not convention: typed error enums, typed events, typed capability payloads. Tests verify each invariant with an explicit fail-loud expectation.
 
+### R2.8 — Capabilities vs skills (refinement of R2.2)
+
+R2.2 used the word "variant" as a placeholder for specialization. During design review the distinction sharpened into two structurally different concepts that adapters announce independently.
+
+**Capability** — a base primitive the adapter can serve natively through its regular model/instance machinery. The caller sends the primitive's standard honored fields; the adapter picks a model (if applicable), picks an instance, and runs it. Capabilities carry no caller-visible configuration beyond the primitive's vocabulary.
+
+**Skill** — a named, pre-configured invocation of a primitive. The adapter bakes some fields (system prompts, workflow graphs, output shaping rules) and exposes a reduced or renamed parameter surface to the caller. Skills always sit *on top of* a capability — an adapter cannot publish a skill for a primitive it does not declare as a capability.
+
+An adapter publishes `0..N` capabilities and `0..N` skills in a single announcement. The two lists are independent: an adapter with zero capabilities is disabled; an adapter with capabilities but zero skills is a bare-primitive provider; an adapter can add or remove skills while its capability set is stable.
+
+#### R2.8.1 — Two worked examples
+
+**Ollama offering "Image Understanding" as a skill:**
+
+```json
+{
+  "provider": "ollama",
+  "enabled": true,
+  "capabilities": [
+    { "primitive": "text.chat" },
+    { "primitive": "text.embed" },
+    { "primitive": "image.analyze" }
+  ],
+  "skills": [
+    {
+      "id": "image-understanding",
+      "primitive": "image.analyze",
+      "display": {
+        "name": "Image Understanding",
+        "description": "Extract a JSON description and tag list from an image.",
+        "tags": ["vision", "json", "tagging"]
+      },
+      "parameters": [
+        { "field": "image.source", "required": true, "description": "The image to analyze." },
+        {
+          "field": "selectors.model",
+          "default": "recommended:vision",
+          "pinnable": true,
+          "auto": {
+            "default": "recommended:vision",
+            "description": "Ollama picks a vision-capable model from its loaded set."
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+The skill bakes one thing (a system prompt asking for JSON with description+tags) and exposes two fields to the caller: the image source and the optional model pin. The baked system prompt is adapter-internal — the announcement does not carry it. Model selection flows through Ollama's normal `recommended:*` resolver; a skill invocation is a pre-configured path through the same machinery, not a replacement.
+
+**ComfyUI offering two imported skills:**
+
+```json
+{
+  "provider": "comfyui",
+  "enabled": true,
+  "capabilities": [
+    { "primitive": "image.generate" },
+    { "primitive": "image.upscale" }
+  ],
+  "skills": [
+    {
+      "id": "tron",
+      "primitive": "image.generate",
+      "display": { "name": "Tron Legacy", "tags": ["stylized"] },
+      "parameters": [
+        { "field": "image.prompt.positive", "required": true },
+        { "field": "image.sampling.steps", "default": 28 },
+        { "field": "image.sampling.guidance", "default": 3.5 }
+      ]
+    },
+    {
+      "id": "flux-butterflies",
+      "primitive": "image.generate",
+      "display": { "name": "Flux Butterfly Dreamscape", "tags": ["flux"] },
+      "parameters": [
+        { "field": "image.prompt.positive", "required": true }
+      ]
+    }
+  ]
+}
+```
+
+The structural difference between Ollama's `image-understanding` and ComfyUI's `tron` is only how much gets baked: one prompt vs. an entire workflow graph with checkpoint + LoRAs + sampler config. The Directory sees the same shape from both.
+
+#### R2.8.2 — Load-bearing invariants
+
+1. **Capability is a prerequisite for skill.** A skill whose primitive does not appear in the announcement's `capabilities` list is rejected by the `DirectorySubscriber` with a typed error. No implicit derivation.
+2. **Skill ids are unique within provider, not globally.** `image-understanding` from Ollama and `image-understanding` from a hypothetical Gemini adapter coexist as distinct entries. When the caller invokes `/v1/image/analyze/image-understanding` without a provider hint, the dispatcher ranks by preferences (locality default: local wins) and picks one. Same rule as bare primitives with multiple providers.
+3. **Skill parameters are declarative.** The announcement carries typed parameter descriptors (`field`, `type`, `required`, `default`, `auto`, `pinnable`, `description`). The catalog renders forms from this shape; the adapter owns how each parameter is applied internally.
+4. **Skills cannot bake the primitive or the skill id.** A skill on `image.generate` always invokes the `image.generate` primitive through the adapter; it cannot masquerade as a different primitive. Cross-primitive composition goes through `/v1/do` flows (commit 11), not through skills.
+5. **Preview images are out-of-band URLs**, not inline bytes. Announcements stay small; SSE subscribers don't pay image cost.
+
+#### R2.8.3 — GET as the discovery surface
+
+Every invocable URL is also a GET introspection URL. The handler resolves:
+
+```
+GET /v1/{modality}/{leaf}              → describe the bare primitive
+GET /v1/{modality}/{leaf}/{skill_id}   → describe the named skill
+```
+
+The response is the full object model the caller needs to build a successful `POST` to the same URL — routing (which provider will handle it, which are fallbacks, current health), invocation (method, URL, content-type), parameters (with `effective_default` that layers preferences over declared defaults and names the source of the active default), and an example body. Concretely:
+
+```json
+{
+  "kind": "skill",
+  "primitive": "image.analyze",
+  "skill_id": "image-understanding",
+  "display": { "name": "...", "description": "...", "tags": [...] },
+  "routing": {
+    "providers": ["ollama"],
+    "will_run_on": "ollama",
+    "provider_health": "healthy",
+    "fallback_providers": []
+  },
+  "invocation": {
+    "method": "POST",
+    "url": "/v1/image/analyze/image-understanding",
+    "content_type": "application/json"
+  },
+  "parameters": [
+    {
+      "field": "selectors.model",
+      "type": "string",
+      "default": "recommended:vision",
+      "effective_default": "llava:34b",
+      "default_source": "preferences",
+      "pinnable": true,
+      "auto": { "default": "recommended:vision", "description": "..." }
+    }
+  ],
+  "example": {
+    "url": "/v1/image/analyze/image-understanding",
+    "body": { "image.source": "@upload:abc123" }
+  }
+}
+```
+
+Two load-bearing fields:
+
+- **`effective_default`** resolves the current default by layering preferences over the skill's declared default. If the operator has pinned `selectors.model = "llava:34b"` globally, `effective_default` reflects that and `default_source` is `"preferences"`. Otherwise the skill default wins and `default_source` is `"skill"`. Preferences (commit 12) plug into this field without any code changes to the introspection handler — they are just another layer in the resolution chain.
+- **`routing.will_run_on`** is the live dispatcher decision: given the current Directory state and current preferences, which provider would actually handle this call right now. A dashboard subscribed to `directory.provider.*.updated` sees the answer change in real time as adapters come and go.
+
+The introspection endpoint also serves bare primitives with `kind: "primitive"` and a `skills_available` list so a caller browsing `GET /v1/image/analyze` discovers the `image-understanding` skill and can then GET its detail page. One URL grammar, three HTTP verbs (GET describes, POST invokes, SSE subscribes via `/v1/events?focus=dispatch.*`).
+
+#### R2.8.4 — Derived events from the subscriber
+
+`DirectorySubscriber` diffs old and new announcements and emits fine-grained events so clients can react to specific changes without re-fetching state:
+
+```
+directory.provider.{name}.updated              — coarse "something changed" (always fires)
+directory.provider.{name}.capability.added     — { primitive }
+directory.provider.{name}.capability.removed   — { primitive }
+directory.provider.{name}.skill.added          — { skill_id, primitive, display }
+directory.provider.{name}.skill.removed        — { skill_id, primitive }
+directory.provider.{name}.enabled              — { enabled: true/false }
+```
+
+A dashboard wanting live updates to the skill list subscribes to `directory.provider.*.skill.*`. A provider health widget subscribes to `directory.provider.*.enabled`. Either can also subscribe to the coarse `*.updated` and refetch everything; both patterns are supported.
+
+#### R2.8.5 — Terminology replacement
+
+Every use of "variant" or "specialization" in R2.2-R2.6 is replaced with "skill" (or "skill_id" in code contexts). The replacement is semantic, not cosmetic: "variant" suggested a narrow taxonomic sub-classification; "skill" accurately captures that these are independent named invocations with their own parameter contracts and catalog presence.
+
+Commit 6 lands all of §R2.8: the announcement types, the `DirectorySubscriber`, the GET introspection handler, the derived-event emission, and the structural validation. Commits 7 and 8 adopt it in the Ollama and ComfyUI adapters respectively.
+
+---
+
 ### R2.7 — What this revision does NOT change
 
 - **§1 Event bus** — unchanged. The design is sound; commits 0-1 landed cleanly.

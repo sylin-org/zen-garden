@@ -24,6 +24,7 @@ pub mod catalog_builder;
 pub mod cloud_secrets;
 pub mod contextualizer;
 pub mod directory_maintenance;
+pub mod directory_subscriber;
 pub mod dispatcher;
 pub mod garden_discovery;
 pub mod idempotency_store;

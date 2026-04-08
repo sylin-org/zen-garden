@@ -12,6 +12,7 @@ use crate::domain::media::SharedMediaStore;
 use crate::domain::resources::Resources;
 use crate::domain::vocabulary::VocabularyRegistry;
 use crate::services::catalog_builder::CatalogBuilder;
+use crate::services::directory_subscriber::CapabilityDirectory;
 use crate::services::dispatcher::Dispatcher;
 use crate::services::recommendation::RecommendationEngine;
 use crate::services::skills::{ProvisioningQueue, Skills};
@@ -46,4 +47,10 @@ pub struct AppState {
     /// Resources domain (ORCH-0030 §2) — physical stone resources
     /// (GPU VRAM, system memory) with claim-based accounting.
     pub resources: Arc<Resources>,
+    /// Capability directory (ORCH-0030 §R2.2, §R2.8) — read-only
+    /// view of every provider's currently-declared capabilities and
+    /// skills, rebuilt from bus events by the DirectorySubscriber.
+    /// Empty until adapters start publishing capability events
+    /// (commits 7+).
+    pub capability_directory: Arc<CapabilityDirectory>,
 }

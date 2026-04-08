@@ -57,6 +57,7 @@ use zen_garden_ai_orchestrator::{
         cloud_secrets::CloudSecrets,
         contextualizer::Contextualizer,
         directory_maintenance,
+        directory_subscriber::{CapabilityDirectory, DirectorySubscriber},
         dispatcher::Dispatcher,
         garden_discovery::GardenDiscovery,
         idempotency_store::InMemoryIdempotencyStore,
@@ -315,6 +316,13 @@ async fn main() -> Result<()> {
         tracing::info!("registered Google provider from cloud_providers.json");
     }
 
+    // ── Capability directory + subscriber (ORCH-0030 §R2.2) ─────
+    let capability_directory = CapabilityDirectory::new();
+    let directory_subscriber = DirectorySubscriber::new(
+        capability_directory.clone(),
+        events.clone(),
+    );
+
     // ── Shared AppState ─────────────────────────────────────────
     let state = AppState {
         directory: directory.clone(),
@@ -330,6 +338,7 @@ async fn main() -> Result<()> {
         data_dir: data_dir.clone(),
         events: events.clone(),
         resources: resources.clone(),
+        capability_directory: capability_directory.clone(),
     };
 
     // ── Background tasks ────────────────────────────────────────
@@ -339,6 +348,9 @@ async fn main() -> Result<()> {
     ));
     let catalog_handle = tokio::spawn(catalog.clone().run(shutdown.clone()));
     let recommendation_handle = tokio::spawn(recommendation.clone().run(shutdown.clone()));
+    let directory_subscriber_handle = tokio::spawn(
+        directory_subscriber.clone().run(shutdown.clone()),
+    );
 
     // Garden discovery is already running — `GardenDiscovery::spawn`
     // launched its own SSE consumer above. Adapters subscribed at
@@ -446,6 +458,7 @@ async fn main() -> Result<()> {
     let _ = tokio::time::timeout(timeout, async {
         let _ = tokio::join!(
             directory_maintenance_handle,
+            directory_subscriber_handle,
             catalog_handle,
             recommendation_handle,
             terminal_reaper_handle,

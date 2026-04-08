@@ -6,8 +6,8 @@ use axum::Router;
 use crate::app_state::AppState;
 
 use super::{
-    actions_index, catalog, flush, health, ingress, jobs, media, metrics, recommendations, sitemap,
-    skills,
+    actions_index, catalog, events, flush, health, ingress, jobs, media, metrics,
+    recommendations, sitemap, skills,
 };
 
 /// Build the full `/v1/*` router plus `/health`.
@@ -23,9 +23,12 @@ pub fn build(state: AppState) -> Router {
         // Hierarchical sugar
         .route("/v1/{modality}/{leaf}", post(ingress::post_primitive))
         .route("/v1/{modality}/{leaf}/{skill}", post(ingress::post_skill))
-        // Catalog
+        // Catalog (REST state contract)
         .route("/v1/catalog", get(catalog::get_catalog))
-        .route("/v1/catalog/events", get(catalog::get_catalog_events))
+        // Events: unified bus (ORCH-0030 §1).
+        // `/v1/catalog/events` is retired — clients migrate to
+        // `/v1/events?focus=catalog.*,directory.*`.
+        .route("/v1/events", get(events::get_events))
         // Media
         .route("/v1/media", post(media::post_upload).get(media::list_media))
         .route(

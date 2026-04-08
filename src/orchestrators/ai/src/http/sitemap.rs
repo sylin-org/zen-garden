@@ -8,9 +8,10 @@ pub async fn get_sitemap() -> impl IntoResponse {
     Json(json!({
         "actions": "/v1/do",
         "catalog": "/v1/catalog",
-        "media": "/v1/media",
-        "jobs": "/v1/jobs",
+        "events":  "/v1/events",
+        "media":   "/v1/media",
+        "jobs":    "/v1/jobs",
         "recommendations": "/v1/recommendations",
-        "health": "/health",
+        "health":  "/health",
     }))
 }

@@ -36,6 +36,7 @@
 
 pub mod directory;
 pub mod errors;
+pub mod events;
 pub mod field_path;
 pub mod ids;
 pub mod idempotency;

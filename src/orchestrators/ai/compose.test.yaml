@@ -1,0 +1,82 @@
+# Test harness compose file for the Zen Garden AI orchestrator.
+#
+# Brings up the orchestrator as a Docker container pointed at a real
+# stone (via `ZG_STONE`), exposing its HTTP surface on port 7190, and
+# runs the parallel smoke test against it.
+#
+# Usage:
+#
+#   # Launch the orchestrator only (tends an explicit stone)
+#   docker compose -f compose.test.yaml up orchestrator
+#
+#   # Run the parallel smoke test against a separately-started orchestrator
+#   AI_ORCH_TEST_URL=http://localhost:7190 \
+#     cargo test --test parallel_smoke -- --nocapture
+#
+#   # Run the full suite (orchestrator + test harness in one command)
+#   docker compose -f compose.test.yaml up --abort-on-container-exit
+#
+# Required env:
+#   ZG_STONE       — HTTP endpoint of the stone this orchestrator tends.
+#                    Defaults to the reference test garden.
+
+services:
+  orchestrator:
+    image: zen-garden-ai-orchestrator:test
+    build:
+      # Build from the repo root so the Dockerfile can pull in the
+      # workspace Cargo.toml + sibling crates (garden-common,
+      # orchestrator-common).
+      context: ../../..
+      dockerfile: src/orchestrators/ai/Dockerfile
+    container_name: zen-garden-ai-orchestrator-test
+    ports:
+      - "7190:7190"
+      - "21434-21439:21434-21439"
+    environment:
+      # Primary knobs
+      AI_ORCH_PORT: "7190"
+      AI_ORCH_DATA_DIR: "/data"
+      RUST_LOG: "info,zen_garden_ai_orchestrator=debug"
+
+      # Explicit stone override (avoids mDNS discovery inside the
+      # container). Defaults to the reference test garden; override
+      # per-run via `ZG_STONE=http://my-stone:7185 docker compose up`.
+      ZG_STONE: "${ZG_STONE:-http://host.docker.internal:7185}"
+    volumes:
+      - orchestrator-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7190/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    extra_hosts:
+      # Allow the container to resolve `host.docker.internal` on Linux
+      # hosts the same way Mac/Windows Docker Desktop does.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # Optional: a second service that waits for the orchestrator to be
+  # healthy and runs the test harness against it. Uncomment to run the
+  # full suite with a single `docker compose up`.
+  #
+  # test-runner:
+  #   image: rust:latest
+  #   container_name: zen-garden-ai-orchestrator-test-runner
+  #   depends_on:
+  #     orchestrator:
+  #       condition: service_healthy
+  #   environment:
+  #     AI_ORCH_TEST_URL: "http://orchestrator:7190"
+  #     AI_ORCH_TEST_REQUIRE: "1"
+  #   volumes:
+  #     - ../../..:/workspace
+  #   working_dir: /workspace/src/orchestrators/ai
+  #   command: >
+  #     bash -c "
+  #       cargo test --test parallel_smoke -- --nocapture --test-threads=1
+  #     "
+
+volumes:
+  orchestrator-data:

@@ -30,6 +30,7 @@ use zen_garden_ai_orchestrator::{
     app_state::AppState,
     domain::{
         directory::Directory,
+        events::EventBus,
         idempotency::IdempotencyStore,
         jobs::JobStore,
         media::MediaStore,
@@ -127,6 +128,14 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("job store: {e}"))?;
     let idempotency_store = Arc::new(InMemoryIdempotencyStore::new());
 
+    // ── Event bus (ORCH-0030 §1) ────────────────────────────────
+    //
+    // The unified nervous system. Every domain publishes state
+    // transitions here; HTTP `/v1/events` exposes a glob-filtered
+    // view. Built before any domain constructor so they can capture
+    // it by handle at wiring time.
+    let events = EventBus::new();
+
     // ── Vocabulary & Directory ──────────────────────────────────
     let vocabularies = VocabularyRegistry::build();
     let directory = Directory::new();
@@ -171,7 +180,12 @@ async fn main() -> Result<()> {
         job_store.clone(),
         media_store.clone(),
     ));
-    let catalog = CatalogBuilder::new(directory.clone(), vocabularies.clone(), skills.clone());
+    let catalog = CatalogBuilder::new(
+        directory.clone(),
+        vocabularies.clone(),
+        skills.clone(),
+        events.clone(),
+    );
 
     let shutdown = CancellationToken::new();
 
@@ -306,6 +320,7 @@ async fn main() -> Result<()> {
         skills: skills.clone(),
         provisioning: provisioning.clone(),
         data_dir: data_dir.clone(),
+        events: events.clone(),
     };
 
     // ── Background tasks ────────────────────────────────────────

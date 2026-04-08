@@ -3,8 +3,13 @@
 //! Exports a builder-style [`Fixture`] that wires an [`AppState`]
 //! with a configurable mock provider. Each test binary in
 //! `tests/*.rs` imports this via `mod common;`.
+//!
+//! Docker-era tests that speak HTTP to a running orchestrator use
+//! [`garden_probe::GardenHandle`] instead of [`Fixture`].
 
 #![allow(dead_code)]
+
+pub mod garden_probe;
 
 use std::sync::Arc;
 
@@ -18,6 +23,7 @@ use zen_garden_ai_orchestrator::{
     app_state::AppState,
     domain::{
         directory::Directory,
+        events::EventBus,
         field_path::FieldPath,
         idempotency::IdempotencyStore,
         ids::{ProviderName, RegistrationId},
@@ -276,7 +282,13 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
     let skills = zen_garden_ai_orchestrator::services::skills::Skills::new();
     let provisioning =
         zen_garden_ai_orchestrator::services::skills::ProvisioningQueue::with_default_concurrency();
-    let catalog = CatalogBuilder::new(directory.clone(), vocabularies.clone(), skills.clone());
+    let events = EventBus::new();
+    let catalog = CatalogBuilder::new(
+        directory.clone(),
+        vocabularies.clone(),
+        skills.clone(),
+        events.clone(),
+    );
 
     directory.register(provider).await.expect("register");
     directory.rebuild_snapshot().await;
@@ -294,6 +306,7 @@ pub async fn fixture_with_provider(provider: Arc<dyn Provider>) -> Fixture {
         skills,
         provisioning,
         data_dir: data_dir.clone(),
+        events,
     };
 
     Fixture {

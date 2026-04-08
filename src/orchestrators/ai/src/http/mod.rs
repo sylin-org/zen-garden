@@ -9,6 +9,7 @@ pub mod actions_index;
 pub mod catalog;
 pub mod envelopes;
 pub mod errors;
+pub mod events;
 pub mod flush;
 pub mod health;
 pub mod ingress;

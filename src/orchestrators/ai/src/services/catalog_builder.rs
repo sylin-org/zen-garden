@@ -16,6 +16,7 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::directory::{Directory, DirectorySnapshot};
+use crate::domain::events::EventBus;
 use crate::domain::primitive::Primitive;
 use crate::domain::provider::ProviderHealth;
 use crate::domain::vocabulary::VocabularyRegistry;
@@ -59,6 +60,7 @@ pub struct CatalogBuilder {
     directory: Arc<Directory>,
     vocabularies: VocabularyRegistry,
     skills: Arc<Skills>,
+    events: Arc<EventBus>,
     tx: watch::Sender<Arc<CatalogDocuments>>,
 }
 
@@ -67,12 +69,14 @@ impl CatalogBuilder {
         directory: Arc<Directory>,
         vocabularies: VocabularyRegistry,
         skills: Arc<Skills>,
+        events: Arc<EventBus>,
     ) -> Arc<Self> {
         let (tx, _rx) = watch::channel(Arc::new(CatalogDocuments::initial()));
         Arc::new(Self {
             directory,
             vocabularies,
             skills,
+            events,
             tx,
         })
     }
@@ -129,6 +133,19 @@ impl CatalogBuilder {
         // been hit yet — `send` would silently fail and the stored
         // value would never advance past `CatalogDocuments::initial`.
         let _ = self.tx.send_replace(docs);
+
+        // Publish a `catalog.version` event on the unified bus so
+        // subscribers can react without keeping a watch handle.
+        // ORCH-0030 §1.6: this replaces the `/v1/catalog/events`
+        // endpoint that used to expose the watch::channel directly.
+        self.events
+            .publish(
+                "catalog.version",
+                &serde_json::json!({
+                    "version": snapshot.version,
+                }),
+            )
+            .await;
     }
 }
 

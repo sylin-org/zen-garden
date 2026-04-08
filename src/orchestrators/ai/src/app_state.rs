@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::domain::directory::Directory;
+use crate::domain::events::EventBus;
 use crate::domain::idempotency::IdempotencyStore;
 use crate::domain::jobs::JobStore;
 use crate::domain::media::SharedMediaStore;
@@ -37,4 +38,8 @@ pub struct AppState {
     /// Shared across handlers that need to write new files
     /// (import drafts, CRUD edits) into the on-disk layout.
     pub data_dir: PathBuf,
+    /// Unified event bus (ORCH-0030 §1) — the orchestrator's single
+    /// nervous system. Every domain publishes state transitions here;
+    /// HTTP `/v1/events` exposes a glob-filtered view.
+    pub events: Arc<EventBus>,
 }

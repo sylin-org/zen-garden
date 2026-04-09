@@ -229,6 +229,7 @@ fn build_capability_announcement(
                 ],
                 overlay: None,
             }],
+            parameters: vec![],
         }],
         skills: vec![SkillDeclaration {
             id: "ocr".to_string(),
@@ -243,6 +244,14 @@ fn build_capability_announcement(
                 default: None,
                 auto: None,
                 pinnable: false,
+                label: None,
+                field_type: None,
+                widget: None,
+                min: None,
+                max: None,
+                step: None,
+                options: None,
+                placeholder: None,
             }],
         }],
     }

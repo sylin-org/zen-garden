@@ -247,6 +247,7 @@ fn build_capability_announcement(
         capabilities: vec![AnnCapability {
             primitive: Primitive::TextTranslate,
             media_inputs: Vec::new(),
+            parameters: vec![],
         }],
         skills: Vec::new(),
     }

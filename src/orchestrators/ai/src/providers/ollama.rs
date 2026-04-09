@@ -752,6 +752,7 @@ fn build_capability_announcement(
         .map(|p| AnnCapability {
             primitive: p,
             media_inputs: ollama_media_inputs_for(p),
+            parameters: vec![],
         })
         .collect();
     CapabilityAnnouncement {

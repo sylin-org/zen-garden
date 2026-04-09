@@ -533,14 +533,44 @@ impl DirectorySubscriber {
         Ok(diff)
     }
 
-    /// Run the subscriber loop. Consumes events from the bus's
-    /// broadcast receiver and applies any matching
-    /// `directory.provider.*.capabilities` payloads. Returns when
-    /// the cancellation token is cancelled or the bus is closed.
+    /// Run the subscriber loop. Two phases:
+    ///
+    /// 1. **Snapshot recovery.** Atomically grab every stateful
+    ///    event currently in the bus's snapshot map (one entry per
+    ///    topic — the latest capability announcement per provider)
+    ///    plus a fresh broadcast receiver. Apply each snapshot
+    ///    event in turn so the `CapabilityDirectory` reflects every
+    ///    provider that has *ever* published a stateful event.
+    /// 2. **Live tail.** Consume new events from the broadcast
+    ///    receiver. The atomic capture in step 1 guarantees no
+    ///    event is missed in the gap between snapshot and tail —
+    ///    publishers using `publish_with_snapshot` hold the
+    ///    snapshot write lock during their broadcast, and we hold
+    ///    the snapshot read lock while subscribing to the
+    ///    broadcast.
+    ///
+    /// This design lets the subscriber start arbitrarily late
+    /// without losing any provider's announcement — even if the
+    /// publisher fired its first announcement before the subscriber
+    /// task was scheduled, the snapshot map preserves it for
+    /// replay. The race condition the early-spawn workaround in
+    /// `main.rs` mitigates is fully closed by this snapshot path.
     pub async fn run(self: Arc<Self>, shutdown: CancellationToken) {
-        let mut rx = self.events.raw_subscribe();
-        tracing::info!("directory_subscriber: started");
+        let (snapshot, mut rx) = self.events.raw_subscribe_with_snapshot().await;
+        tracing::info!(
+            snapshot_len = snapshot.len(),
+            "directory_subscriber: started, replaying stateful snapshot"
+        );
 
+        // Phase 1: replay the snapshot. Apply each
+        // `directory.provider.*.capabilities` event. Non-matching
+        // events in the snapshot (other publishers' stateful
+        // topics) are silently filtered by extract_capability_announcement.
+        for event in snapshot {
+            self.apply_event(&event).await;
+        }
+
+        // Phase 2: live tail.
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
@@ -550,29 +580,7 @@ impl DirectorySubscriber {
                 result = rx.recv() => {
                     match result {
                         Ok(event) => {
-                            if let Some(announcement) = extract_capability_announcement(&event) {
-                                match self.apply(announcement).await {
-                                    Ok(diff) => {
-                                        if !diff.is_empty() {
-                                            tracing::debug!(
-                                                topic = %event.topic,
-                                                capabilities_added = diff.capabilities_added.len(),
-                                                capabilities_removed = diff.capabilities_removed.len(),
-                                                skills_added = diff.skills_added.len(),
-                                                skills_removed = diff.skills_removed.len(),
-                                                "capability announcement applied",
-                                            );
-                                        }
-                                    }
-                                    Err(err) => {
-                                        tracing::warn!(
-                                            topic = %event.topic,
-                                            error = %err,
-                                            "capability announcement rejected",
-                                        );
-                                    }
-                                }
-                            }
+                            self.apply_event(&event).await;
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             tracing::warn!(
@@ -586,6 +594,37 @@ impl DirectorySubscriber {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Apply a single event from snapshot or live tail. Filters out
+    /// non-capability-announcement topics, calls `apply` on a
+    /// matching announcement, and logs the diff outcome. Pulled
+    /// out of `run()` so both phases share the same processing.
+    async fn apply_event(&self, event: &Event) {
+        let Some(announcement) = extract_capability_announcement(event) else {
+            return;
+        };
+        match self.apply(announcement).await {
+            Ok(diff) => {
+                if !diff.is_empty() {
+                    tracing::debug!(
+                        topic = %event.topic,
+                        capabilities_added = diff.capabilities_added.len(),
+                        capabilities_removed = diff.capabilities_removed.len(),
+                        skills_added = diff.skills_added.len(),
+                        skills_removed = diff.skills_removed.len(),
+                        "capability announcement applied",
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    topic = %event.topic,
+                    error = %err,
+                    "capability announcement rejected",
+                );
             }
         }
     }
@@ -616,6 +655,14 @@ fn extract_capability_announcement(event: &Event) -> Option<CapabilityAnnounceme
 /// Helper for adapters: publish a capability announcement under the
 /// correct topic. Use this from adapter code instead of calling
 /// `EventBus::publish` directly to ensure topic grammar is consistent.
+///
+/// Capability announcements are **stateful** — every late
+/// subscriber needs to recover the latest one per provider — so we
+/// route through [`EventBus::publish_with_snapshot`]. The bus
+/// records the latest event per topic in its snapshot map and
+/// late `DirectorySubscriber` consumers replay it via
+/// [`EventBus::raw_subscribe_with_snapshot`] without ever needing
+/// to trawl the full history ring.
 pub async fn publish_capability_announcement(
     events: &EventBus,
     announcement: &CapabilityAnnouncement,
@@ -624,7 +671,7 @@ pub async fn publish_capability_announcement(
         "directory.provider.{}.capabilities",
         announcement.provider
     );
-    events.publish(topic, announcement).await;
+    events.publish_with_snapshot(topic, announcement).await;
 }
 
 // ── Tests ───────────────────────────────────────────────────
@@ -668,6 +715,14 @@ mod tests {
                 default: Some(serde_json::json!("recommended:vision")),
                 auto: None,
                 pinnable: true,
+                label: None,
+                field_type: None,
+                widget: None,
+                min: None,
+                max: None,
+                step: None,
+                options: None,
+                placeholder: None,
             }],
         }
     }

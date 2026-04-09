@@ -148,7 +148,7 @@ impl CapabilityAnnouncement {
 /// A single base-primitive capability. Adapters publish one entry
 /// per primitive they can serve; the Directory joins across providers
 /// to answer "who can serve `image.analyze`?"
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capability {
     /// The closed-enum primitive this capability covers.
     pub primitive: Primitive,
@@ -167,6 +167,15 @@ pub struct Capability {
     /// See [`CapabilityMediaInput`] for the wire shape.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media_inputs: Vec<CapabilityMediaInput>,
+
+    /// Form-schema parameters for this base primitive. Identical
+    /// shape to `SkillDeclaration.parameters`. The catalog renders
+    /// these when the user selects the base primitive (e.g.,
+    /// `GET /v1/catalog/text.chat` returns the full field list).
+    ///
+    /// Added in ORCH-0030 R2 commit 6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<SkillParameter>,
 }
 
 impl Capability {
@@ -175,6 +184,7 @@ impl Capability {
         Self {
             primitive,
             media_inputs: Vec::new(),
+            parameters: Vec::new(),
         }
     }
 
@@ -182,6 +192,18 @@ impl Capability {
     pub fn with_media_input(mut self, input: CapabilityMediaInput) -> Self {
         self.media_inputs.push(input);
         self
+    }
+
+    /// Add a parameter to this capability's form schema.
+    pub fn with_parameter(mut self, param: SkillParameter) -> Self {
+        self.parameters.push(param);
+        self
+    }
+
+    /// The dotted registration path for this base primitive.
+    /// E.g., `Primitive::TextChat` → `"text.chat"`.
+    pub fn registration_path(&self) -> &str {
+        self.primitive.dotted()
     }
 }
 
@@ -271,6 +293,16 @@ pub struct SkillDeclaration {
     pub parameters: Vec<SkillParameter>,
 }
 
+impl SkillDeclaration {
+    /// The dotted registration path for this skill, suitable for URL
+    /// routing and catalog indexing. For example, a skill with
+    /// `id = "sample-tron"` and `primitive = ImageGenerate` produces
+    /// `"image.generate.sample-tron"`.
+    pub fn registration_path(&self) -> String {
+        format!("{}.{}", self.primitive.dotted(), self.id)
+    }
+}
+
 // ── Display metadata ─────────────────────────────────────────
 
 /// Human-facing labels and assets attached to a skill. Used by the
@@ -324,9 +356,14 @@ impl SkillDisplay {
 
 // ── Parameter contract ───────────────────────────────────────
 
-/// A single typed parameter a skill exposes to callers. Mirrors the
-/// shape of a primitive's honored field entry so the catalog can
-/// render both primitives and skills through one code path.
+/// A single typed parameter a skill or primitive exposes to callers.
+/// Carries enough information to render a complete input form widget
+/// and validate before submit — no other data source needed.
+///
+/// The form-schema fields (`label`, `field_type`, `widget`, `min`,
+/// `max`, `step`, `options`, `placeholder`) were added in ORCH-0030
+/// R2 (commit 6). All are optional/defaulted so existing
+/// announcements and tests continue to deserialize.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkillParameter {
     /// Dotted field path the caller uses in the request body, e.g.,
@@ -369,6 +406,78 @@ pub struct SkillParameter {
     /// them, not optionally pinning).
     #[serde(default)]
     pub pinnable: bool,
+
+    // ── Form-schema fields (ORCH-0030 R2 commit 6) ──────────
+
+    /// Human-readable label shown on the form widget. Falls back to
+    /// `description` or the vocabulary entry's label if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+
+    /// Data type for validation. `None` → inferred from vocabulary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_type: Option<ParameterType>,
+
+    /// Rendering hint for the form widget. `None` → the client picks
+    /// a default widget based on `field_type`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget: Option<ParameterWidget>,
+
+    /// Minimum value for `Slider` / `Number` widgets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+
+    /// Maximum value for `Slider` / `Number` widgets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+
+    /// Step granularity for `Slider` / `Number` widgets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+
+    /// Closed set of valid values for `Select` widgets. Each value
+    /// is a JSON value (string, number, bool) matching `field_type`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<serde_json::Value>>,
+
+    /// Ghost text for empty text inputs and textareas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+}
+
+/// Data type of a parameter value, for validation and form rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ParameterType {
+    String,
+    Integer,
+    Number,
+    Boolean,
+}
+
+/// Rendering hint for a form widget. Clients may ignore this and
+/// render a default widget based on `ParameterType`, but dashboards
+/// that honor widget hints produce a much better experience.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ParameterWidget {
+    /// Multi-line text input (prompts, system prompts).
+    Textarea,
+    /// Range slider with `min`, `max`, `step`.
+    Slider,
+    /// Numeric spinner input.
+    Number,
+    /// Dropdown with `options`.
+    Select,
+    /// On/off toggle (boolean fields).
+    Toggle,
+    /// Field exists in the schema but is not shown to the user.
+    /// Used for fields the adapter fills internally (e.g., model
+    /// selector on ComfyUI skills where the model is baked into
+    /// the workflow).
+    Hidden,
+    /// File upload widget (media inputs).
+    File,
 }
 
 /// Describes the auto-resolution behavior for a field that participates
@@ -448,6 +557,14 @@ mod tests {
                     default: None,
                     auto: None,
                     pinnable: false,
+                    label: None,
+                    field_type: None,
+                    widget: None,
+                    min: None,
+                    max: None,
+                    step: None,
+                    options: None,
+                    placeholder: None,
                 },
                 SkillParameter {
                     field: "selectors.model".into(),
@@ -459,6 +576,14 @@ mod tests {
                         description: Some("Ollama picks a vision-capable model.".into()),
                     }),
                     pinnable: true,
+                    label: None,
+                    field_type: None,
+                    widget: None,
+                    min: None,
+                    max: None,
+                    step: None,
+                    options: None,
+                    placeholder: None,
                 },
             ],
         }

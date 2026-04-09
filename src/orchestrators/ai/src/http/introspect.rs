@@ -437,6 +437,14 @@ mod tests {
             default: Some(json!("recommended:vision")),
             auto: None,
             pinnable: true,
+            label: None,
+            field_type: None,
+            widget: None,
+            min: None,
+            max: None,
+            step: None,
+            options: None,
+            placeholder: None,
         };
         let view = parameter_view_from_declaration(&param);
         assert_eq!(view.default_source, Some("skill"));
@@ -452,6 +460,14 @@ mod tests {
             default: None,
             auto: None,
             pinnable: false,
+            label: None,
+            field_type: None,
+            widget: None,
+            min: None,
+            max: None,
+            step: None,
+            options: None,
+            placeholder: None,
         };
         let view = parameter_view_from_declaration(&param);
         assert_eq!(view.default_source, None);
@@ -472,6 +488,14 @@ mod tests {
                     default: None,
                     auto: None,
                     pinnable: false,
+                    label: None,
+                    field_type: None,
+                    widget: None,
+                    min: None,
+                    max: None,
+                    step: None,
+                    options: None,
+                    placeholder: None,
                 },
                 SkillParameter {
                     field: "selectors.model".into(),
@@ -480,6 +504,14 @@ mod tests {
                     default: Some(json!("recommended:vision")),
                     auto: None,
                     pinnable: true,
+                    label: None,
+                    field_type: None,
+                    widget: None,
+                    min: None,
+                    max: None,
+                    step: None,
+                    options: None,
+                    placeholder: None,
                 },
             ],
         };

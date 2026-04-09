@@ -645,6 +645,7 @@ mod tests {
                     accepted_types: vec!["image/png".to_string()],
                     overlay: None,
                 }],
+                parameters: vec![],
             }],
             skills: Vec::new(),
         };

@@ -288,6 +288,7 @@ fn build_capability_announcement(
         capabilities: vec![Capability {
             primitive: Primitive::AudioGenerate,
             media_inputs: Vec::new(),
+            parameters: vec![],
         }],
         skills: Vec::new(),
     }

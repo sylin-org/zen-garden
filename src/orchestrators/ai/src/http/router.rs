@@ -29,8 +29,11 @@ pub fn build(state: AppState) -> Router {
             "/v1/{modality}/{leaf}/{skill}",
             post(ingress::post_skill).get(introspect::get_skill),
         )
-        // Catalog (REST state contract)
+        // Catalog: two-view (ORCH-0030 R2 §R2.2.3)
+        //   /v1/catalog         → navigation summary
+        //   /v1/catalog/{path}  → full schema for one registration
         .route("/v1/catalog", get(catalog::get_catalog))
+        .route("/v1/catalog/{path}", get(catalog::get_catalog_detail))
         // Events: unified bus (ORCH-0030 §1).
         // `/v1/catalog/events` is retired — clients migrate to
         // `/v1/events?focus=catalog.*,directory.*`.

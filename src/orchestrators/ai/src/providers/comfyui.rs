@@ -162,6 +162,37 @@ pub struct ComfyUiProvider {
     /// Paths for the content-addressed dependency cache shared
     /// across all ComfyUI skills.
     cache_paths: CachePaths,
+    /// Per-instance volume inventory (ORCH-0030 R2 M5).
+    ///
+    /// Key: instance URL (the ComfyUI service endpoint, NOT the
+    /// derived Moss endpoint).
+    /// Value: the set of volume-relative file paths present on that
+    /// instance's `comfyui-models` volume, as returned by
+    /// `moss_volume::list_volume_paths`.
+    ///
+    /// Populated by [`Self::refresh_inventory_and_readiness`] on every
+    /// discovery event. The single source of truth for both
+    /// capability publication and dispatch routing — mirrors
+    /// Ollama's `OllamaCapabilityMatrix.instances[*].models_available`
+    /// pattern. An instance whose probe fails (Moss unreachable, 5xx,
+    /// malformed body) is absent from the map and contributes to
+    /// zero skill readiness — conservative by design.
+    instance_inventories:
+        Arc<tokio::sync::RwLock<HashMap<String, std::collections::HashSet<String>>>>,
+    /// Per-skill ready instance list (ORCH-0030 R2 M5).
+    ///
+    /// Key: skill moniker.
+    /// Value: instance URLs that have **all** of the skill's
+    /// `required_models` present in their inventory (alias-resolved
+    /// through the dependency manifest).
+    ///
+    /// Populated by [`Self::refresh_inventory_and_readiness`] after
+    /// every inventory pass. Read by [`publish_capabilities`] (to
+    /// filter the announced skill list) and by `onboard` (to pick a
+    /// dispatch target). Skills missing from the map have zero
+    /// healthy instances and are NOT published — the dispatcher
+    /// routes around them via `CapabilityDirectory`.
+    ready_instances: Arc<tokio::sync::RwLock<HashMap<Moniker, Vec<String>>>>,
 }
 
 impl ComfyUiProvider {
@@ -215,11 +246,16 @@ impl ComfyUiProvider {
             events,
             provisioning,
             cache_paths,
+            instance_inventories: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            ready_instances: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         });
 
-        // Publish the initial snapshot. No instances yet, so
-        // `enabled` will be false — but the Directory learns the
-        // provider exists and sees its full skill list.
+        // Publish the initial snapshot. No instances and no
+        // inventory probe yet, so `enabled` will be false and the
+        // skill list will be empty — but the Directory learns the
+        // provider exists. The first real announcement happens
+        // after `refresh_inventory_and_readiness` completes its
+        // first pass on the next discovery event.
         provider.publish_capabilities().await;
 
         spawn_subscriber(provider.clone(), discovery, shutdown.clone());
@@ -227,31 +263,52 @@ impl ComfyUiProvider {
         provider
     }
 
-    fn pick(&self) -> Result<String, ProviderError> {
-        self.instances.pick().ok_or_else(|| {
-            ProviderError::Unreachable("no comfyui instances in the garden".to_string())
-        })
-    }
+    // ORCH-0030 R2 M5: the unconstrained `pick()` was removed.
+    // Dispatch routing now goes through `pick_ready_instance(&moniker)`
+    // which only returns instances that have all the skill's
+    // required models present in their inventory — never routes to
+    // an instance missing dependencies, mirroring Ollama's
+    // `pick_pinned` semantics.
 
-    /// Publish the current loaded-skill set + instance pool state as
-    /// a `CapabilityAnnouncement` event. Called at construction and
-    /// on every instance-pool / skill-set change.
+    /// Publish the current loaded-skill set as a
+    /// `CapabilityAnnouncement` event, filtered by per-skill
+    /// instance readiness. Called at construction and on every
+    /// instance-pool / inventory / skill-set change.
+    ///
+    /// **Inventory-first gating (ORCH-0030 R2 M5):** only skills
+    /// listed in `self.ready_instances` are announced. A skill is
+    /// "ready" iff at least one ComfyUI instance has every required
+    /// model present on its volume — verified by walking the
+    /// per-instance file inventory built from
+    /// [`crate::services::skills::moss_volume::list_volume_paths`].
     ///
     /// The announcement carries:
     /// - `enabled`: `true` iff at least one ComfyUI instance is in
-    ///   the pool. False when no instances are reachable, even if
-    ///   the skill list is non-empty.
-    /// - `capabilities`: one entry per unique primitive any loaded
-    ///   skill declares. Each capability's `media_inputs` is the
-    ///   union of media bindings across every skill for that
-    ///   primitive.
-    /// - `skills`: the full `SkillDeclaration` list, in the shape
-    ///   `compute_skill_declarations` produces.
+    ///   the pool AND at least one skill has a ready instance.
+    ///   False when the pool is empty OR every skill is missing its
+    ///   dependencies on every instance.
+    /// - `capabilities`: one entry per unique primitive any **ready**
+    ///   skill declares. Skills missing dependencies do not
+    ///   contribute to the capability set, so a primitive that has
+    ///   no usable skill is not advertised at all.
+    /// - `skills`: the `SkillDeclaration` list filtered to ready
+    ///   skills only.
     async fn publish_capabilities(&self) {
-        let map = self.skills.read().await;
-        let skills = compute_skill_declarations(&map);
-        let capabilities = compute_capabilities(&map);
-        drop(map);
+        // Snapshot the inputs into local owned values so we can
+        // drop both locks before the (potentially heavy)
+        // computation + bus publish.
+        let filtered_map: HashMap<Moniker, LoadedSkill> = {
+            let skills_map = self.skills.read().await;
+            let ready = self.ready_instances.read().await;
+            skills_map
+                .iter()
+                .filter(|(moniker, _)| ready.contains_key(*moniker))
+                .map(|(moniker, loaded)| (moniker.clone(), loaded.clone()))
+                .collect()
+        };
+
+        let skills = compute_skill_declarations(&filtered_map);
+        let capabilities = compute_capabilities(&filtered_map);
 
         let announcement = build_capability_announcement(
             &self.name,
@@ -262,13 +319,149 @@ impl ComfyUiProvider {
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
-    /// Replace the instance pool with the given URL list and publish
-    /// a fresh capability announcement if the pool actually changed.
-    async fn apply_merged(&self, urls: Vec<String>) {
-        if !self.instances.set(urls) {
-            return;
+    /// Refresh the per-instance volume inventory and recompute
+    /// per-skill readiness, then republish capabilities.
+    ///
+    /// This is the inventory-first pattern (ORCH-0030 R2 M5) that
+    /// mirrors Ollama's matrix rebuild: probe every instance for
+    /// its installed resources ONCE, store the result on the
+    /// adapter, and use it for both publication AND routing.
+    ///
+    /// Probes are issued in parallel via
+    /// [`crate::services::skills::moss_volume::list_volume_paths`].
+    /// An instance whose probe fails (Moss unreachable, 5xx,
+    /// malformed body) is absent from the inventory map and
+    /// therefore contributes zero readiness — no skill becomes
+    /// publishable on that instance until the next refresh
+    /// succeeds.
+    ///
+    /// The provisioning queue is still notified about missing
+    /// dependencies via [`Self::queue_missing_dependencies`] —
+    /// inventory gating doesn't replace provisioning, it informs
+    /// it.
+    async fn refresh_inventory_and_readiness(&self, instance_urls: &[String]) {
+        // Step 1: probe every instance in parallel.
+        let probe_futs = instance_urls.iter().map(|url| {
+            let http = self.http.clone();
+            let provider_name = self.name.clone();
+            let url_owned = url.clone();
+            async move {
+                let moss = moss_volume::derive_moss_endpoint(&url_owned);
+                let paths = moss_volume::list_volume_paths(
+                    &http,
+                    &moss,
+                    provider_name.as_str(),
+                    COMFYUI_MODELS_VOLUME,
+                )
+                .await;
+                (url_owned, paths)
+            }
+        });
+        let results: Vec<(String, Option<std::collections::HashSet<String>>)> =
+            futures_util::future::join_all(probe_futs).await;
+
+        // Step 2: replace the inventory map. Probes that returned
+        // None are dropped — the instance has no entry, so no skill
+        // can be marked ready on it.
+        let mut new_inventories: HashMap<String, std::collections::HashSet<String>> =
+            HashMap::new();
+        let mut probe_failures = 0usize;
+        for (url, paths) in &results {
+            match paths {
+                Some(p) => {
+                    tracing::debug!(
+                        instance = %url,
+                        files = p.len(),
+                        "comfyui: inventory probe ok"
+                    );
+                    new_inventories.insert(url.clone(), p.clone());
+                }
+                None => {
+                    probe_failures += 1;
+                    tracing::warn!(
+                        instance = %url,
+                        "comfyui: inventory probe failed (instance contributes zero readiness)"
+                    );
+                }
+            }
         }
+        {
+            let mut inv = self.instance_inventories.write().await;
+            *inv = new_inventories;
+        }
+
+        // Step 3: recompute ready_instances from skills × inventories.
+        // The dependency manifest is loaded once per pass — it's a
+        // small JSON file and the read is cheap, but pulling it in
+        // loop iterations would be wasteful.
+        let manifest = DependencyManifest::load(&self.cache_paths.manifest_path).await;
+        let new_ready: HashMap<Moniker, Vec<String>> = {
+            let skills_map = self.skills.read().await;
+            let inventories = self.instance_inventories.read().await;
+            let mut ready: HashMap<Moniker, Vec<String>> = HashMap::new();
+            for (moniker, loaded) in skills_map.iter() {
+                let mut ready_for_skill: Vec<String> = Vec::new();
+                for (instance_url, inventory) in inventories.iter() {
+                    if skill_dependencies_present(loaded, inventory, &manifest) {
+                        ready_for_skill.push(instance_url.clone());
+                    }
+                }
+                if !ready_for_skill.is_empty() {
+                    // Sort for deterministic dispatch ordering.
+                    ready_for_skill.sort();
+                    ready.insert(moniker.clone(), ready_for_skill);
+                }
+            }
+            ready
+        };
+        let ready_skill_count = new_ready.len();
+        {
+            let mut ready = self.ready_instances.write().await;
+            *ready = new_ready;
+        }
+
+        tracing::info!(
+            instance_count = instance_urls.len(),
+            probe_failures,
+            ready_skills = ready_skill_count,
+            "comfyui: inventory + readiness pass complete"
+        );
+
+        // Step 4: republish the (newly filtered) capability set.
         self.publish_capabilities().await;
+    }
+
+    /// Pick one ready instance for the given skill. Returns
+    /// `Unreachable` when no instance has all required dependencies
+    /// installed — never routes to an instance missing models, in
+    /// the same way Ollama's selector never routes to an instance
+    /// missing the requested model.
+    async fn pick_ready_instance(
+        &self,
+        skill_moniker: &Moniker,
+    ) -> Result<String, ProviderError> {
+        let ready = self.ready_instances.read().await;
+        let urls = ready.get(skill_moniker);
+        match urls.and_then(|v| v.first()) {
+            Some(url) => Ok(url.clone()),
+            None => Err(ProviderError::Unreachable(format!(
+                "no comfyui instance in the garden has all required models for skill `{}`",
+                skill_moniker
+            ))),
+        }
+    }
+
+    /// Replace the instance pool with the given URL list. Returns
+    /// `true` if the pool changed structurally (so the caller knows
+    /// whether to issue a fresh inventory pass).
+    ///
+    /// Capability publication does NOT happen here — it is owned by
+    /// [`Self::refresh_inventory_and_readiness`], which runs after
+    /// each apply_merged in the discovery subscriber loop. Without
+    /// the inventory probe, `ready_instances` would be stale and
+    /// `publish_capabilities` would either lie or stay empty.
+    async fn apply_merged(&self, urls: Vec<String>) -> bool {
+        self.instances.set(urls)
     }
 
     /// Snapshot the adapter's currently-loaded skills as a list of
@@ -279,57 +472,63 @@ impl ComfyUiProvider {
         compute_skill_declarations(&map)
     }
 
-    /// Readiness fast path: for every loaded skill × every freshly-
-    /// discovered instance, check whether all required models are
-    /// present on that instance. If no, submit a provisioning job.
+    /// For every loaded skill × every discovered instance, check the
+    /// in-memory inventory and submit a provisioning job for any
+    /// (skill, instance) pair where the dependencies are missing.
     ///
-    /// Called from the discovery subscriber every time a
-    /// `DiscoveryEvent` arrives.
-    async fn readiness_pass(&self, instances: &[DiscoveredInstance]) {
+    /// **Inventory-first (ORCH-0030 R2 M5):** this no longer issues
+    /// HEAD probes per file. The inventory was already populated by
+    /// [`Self::refresh_inventory_and_readiness`] with one LIST call
+    /// per instance. We just walk the cached file set in memory.
+    /// Per-file network calls were O(skills × instances ×
+    /// required_models); the inventory-first path is O(instances).
+    ///
+    /// The provisioning queue dedupes by (skill, endpoint), so
+    /// re-submitting the same target on every discovery event is
+    /// harmless — the queue ignores duplicates already in flight.
+    async fn queue_missing_dependencies(&self, instances: &[DiscoveredInstance]) {
         if instances.is_empty() {
             return;
         }
         let manifest = DependencyManifest::load(&self.cache_paths.manifest_path).await;
         let loaded = self.skills.read().await.clone();
+        let inventories = self.instance_inventories.read().await.clone();
+
         for (moniker, loaded_skill) in loaded.iter() {
-            let def = loaded_skill.as_skill_definition(moniker);
             for instance in instances {
-                let moss_endpoint = moss_volume::derive_moss_endpoint(&instance.url);
-                // Fast path — HEAD every required model.
-                let readiness = provisioner::check_instance_readiness(
-                    &self.http,
-                    &def,
-                    &manifest,
-                    &moss_endpoint,
-                    self.name.as_str(),
-                    COMFYUI_MODELS_VOLUME,
-                )
-                .await;
-                if !readiness.ready {
-                    // Submit the provisioning job. Returns false if
-                    // the queue already has this target in flight
-                    // (dedup), which is harmless.
-                    let target = ProvisioningTarget {
-                        skill: moniker.clone(),
-                        endpoint: instance.url.clone(),
-                    };
-                    let submitted = self
-                        .provisioning
-                        .submit(
-                            target,
-                            Priority::Discovery,
-                            instance.stone_name.clone(),
-                            self.name.as_str().to_string(),
-                        )
-                        .await;
-                    if submitted {
-                        tracing::info!(
-                            skill = moniker.as_str(),
-                            endpoint = %instance.url,
-                            reason = %readiness.reason,
-                            "comfyui: queued provisioning job"
-                        );
-                    }
+                // Look up this instance's inventory. Probe failures
+                // mean the inventory map has no entry — treat that
+                // as "we don't know what's there", which is more
+                // conservative than "nothing is there". We do NOT
+                // queue downloads against unknown inventories.
+                let Some(inventory) = inventories.get(&instance.url) else {
+                    continue;
+                };
+                if skill_dependencies_present(loaded_skill, inventory, &manifest) {
+                    // Already provisioned. Nothing to do.
+                    continue;
+                }
+                // Submit. Returns false if the queue already has
+                // this target in flight (dedup), which is harmless.
+                let target = ProvisioningTarget {
+                    skill: moniker.clone(),
+                    endpoint: instance.url.clone(),
+                };
+                let submitted = self
+                    .provisioning
+                    .submit(
+                        target,
+                        Priority::Discovery,
+                        instance.stone_name.clone(),
+                        self.name.as_str().to_string(),
+                    )
+                    .await;
+                if submitted {
+                    tracing::info!(
+                        skill = moniker.as_str(),
+                        endpoint = %instance.url,
+                        "comfyui: queued provisioning job (missing dependencies)"
+                    );
                 }
             }
         }
@@ -412,26 +611,38 @@ fn spawn_subscriber(
                 _ = shutdown.cancelled() => break,
                 event = rx.recv() => {
                     let Some(event) = event else { break };
-                    // Update the instance pool + republish capabilities.
                     let instances = event.instances.clone();
                     let urls: Vec<String> =
                         instances.iter().map(|i| i.url.clone()).collect();
                     pool.set(&event.fqn, urls);
-                    provider.apply_merged(pool.flatten()).await;
+                    let merged = pool.flatten();
+                    provider.apply_merged(merged.clone()).await;
 
-                    // For every instance in this event, run the
-                    // readiness fast path per skill and, if any
-                    // model is missing, submit a provisioning job.
+                    // ORCH-0030 R2 M5 inventory-first pipeline:
                     //
-                    // This is the main entry point into the
-                    // download-and-push pipeline. Happy path for
-                    // the workspace's pre-populated cache: every
-                    // required model is already present, readiness
-                    // passes, no provisioning job is ever submitted.
-                    let provider_for_check = provider.clone();
+                    // 1. Probe each instance's volume ONCE via
+                    //    Moss's LIST endpoint and cache the file
+                    //    set on the adapter.
+                    // 2. Recompute per-skill readiness from the
+                    //    in-memory inventory.
+                    // 3. Republish the (filtered) capability set.
+                    // 4. Submit provisioning jobs for any (skill,
+                    //    instance) pair that's still missing
+                    //    dependencies — the queue dedupes by
+                    //    (skill, endpoint) so we never submit the
+                    //    same job twice.
+                    //
+                    // Steps 1-3 happen synchronously inside
+                    // `refresh_inventory_and_readiness`; the
+                    // provisioning queue submission is fire-and-
+                    // forget after that.
+                    let provider_for_refresh = provider.clone();
                     tokio::spawn(async move {
-                        provider_for_check
-                            .readiness_pass(&instances)
+                        provider_for_refresh
+                            .refresh_inventory_and_readiness(&merged)
+                            .await;
+                        provider_for_refresh
+                            .queue_missing_dependencies(&instances)
                             .await;
                     });
                 }
@@ -523,13 +734,16 @@ impl Provider for ComfyUiProvider {
             )));
         }
 
-        // ── 2. Pin an instance ────────────────────────────────
+        // ── 2. Pin a READY instance ───────────────────────────
         //
         // A ComfyUI request must use the SAME instance for upload,
-        // queue, history poll, and view — workflows reference uploaded
-        // filenames that only exist on the instance they were uploaded
-        // to.
-        let instance = self.pick()?;
+        // queue, history poll, and view — workflows reference
+        // uploaded filenames that only exist on the instance they
+        // were uploaded to. ORCH-0030 R2 M5: the picked instance
+        // must also have every required model for this skill —
+        // `pick_ready_instance` enforces that and returns
+        // `Unreachable` otherwise.
+        let instance = self.pick_ready_instance(skill_moniker).await?;
         let instance = instance.trim_end_matches('/').to_string();
 
         // ── 3. Pick the workflow variant ──────────────────────
@@ -1006,11 +1220,45 @@ fn compute_capabilities(skills: &HashMap<Moniker, LoadedSkill>) -> Vec<AnnCapabi
             AnnCapability {
                 primitive,
                 media_inputs,
+                parameters: vec![],
             }
         })
         .collect();
     capabilities.sort_by(|a, b| a.primitive.dotted().cmp(b.primitive.dotted()));
     capabilities
+}
+
+/// Check whether every required model for a skill is present in
+/// the given instance inventory, alias-resolved through the
+/// dependency manifest. Pure function — no IO, no `&self` — so the
+/// readiness pass and any unit tests can exercise it directly.
+///
+/// A skill with empty `required_models` is always present (no
+/// dependencies to satisfy). Otherwise, every model must resolve
+/// to a path `{model_type}/{canonical_filename}` that exists in
+/// the inventory set.
+///
+/// The canonical filename comes from the dependency manifest's
+/// alias chain: when ComfyUI's filesystem stores `model-v2.bin`
+/// but the skill references `model.bin`, the manifest holds the
+/// alias and `manifest.resolve()` returns `model-v2.bin` so the
+/// inventory lookup hits the actual file on disk.
+fn skill_dependencies_present(
+    skill: &LoadedSkill,
+    inventory: &std::collections::HashSet<String>,
+    manifest: &DependencyManifest,
+) -> bool {
+    if skill.required_models.is_empty() {
+        return true;
+    }
+    for model in &skill.required_models {
+        let canonical = manifest.resolve(&model.filename);
+        let path = format!("{}/{}", model.model_type, canonical);
+        if !inventory.contains(&path) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Bundle the provider name, instance pool state, computed
@@ -1079,6 +1327,14 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
             default: binding.default.clone(),
             auto: None,
             pinnable: !is_media,
+            label: None,
+            field_type: None,
+            widget: None,
+            min: None,
+            max: None,
+            step: None,
+            options: None,
+            placeholder: None,
         });
     }
 
@@ -1090,6 +1346,14 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
             default: Some(serde_json::Value::String(selector.default.clone())),
             auto: None,
             pinnable: true,
+            label: None,
+            field_type: None,
+            widget: None,
+            min: None,
+            max: None,
+            step: None,
+            options: None,
+            placeholder: None,
         });
     }
 
@@ -1104,6 +1368,14 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
                     .map(|v| serde_json::Value::String(v.value.clone())),
                 auto: None,
                 pinnable: true,
+                label: None,
+                field_type: None,
+                widget: None,
+                min: None,
+                max: None,
+                step: None,
+                options: None,
+                placeholder: None,
             });
         }
     }

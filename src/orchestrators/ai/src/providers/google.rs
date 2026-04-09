@@ -180,10 +180,12 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
             AnnCapability {
                 primitive: Primitive::TextChat,
                 media_inputs: Vec::new(),
+                parameters: vec![],
             },
             AnnCapability {
                 primitive: Primitive::TextEmbed,
                 media_inputs: Vec::new(),
+                parameters: vec![],
             },
             AnnCapability {
                 primitive: Primitive::ImageAnalyze,
@@ -191,6 +193,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
                     keys::image::SOURCE.as_str().to_string(),
                     ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
                 )],
+                parameters: vec![],
             },
         ],
         skills: Vec::new(),

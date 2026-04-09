@@ -318,6 +318,7 @@ fn build_capability_announcement(
         capabilities: vec![Capability {
             primitive: Primitive::AudioGenerate,
             media_inputs: Vec::new(), // TTS produces media; consumes none
+            parameters: vec![],
         }],
         skills: Vec::new(),
     }

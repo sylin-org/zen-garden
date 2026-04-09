@@ -292,6 +292,7 @@ fn build_capability_announcement(
                 ],
                 overlay: None,
             }],
+            parameters: vec![],
         }],
         skills: Vec::new(),
     }

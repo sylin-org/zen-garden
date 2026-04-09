@@ -1135,61 +1135,191 @@ The fundamental correction: **adapters announce their capabilities via events on
 1. **Adapter construction** — each adapter is instantiated with the list of stones it manages (from garden discovery) and its own configuration.
 2. **Instance probing** — the adapter opens connections to its instances and queries their state (models installed, models loaded, hardware details).
 3. **Capability matrix construction** — the adapter builds an *internal* matrix of what it can serve. This matrix is adapter-private: it may contain instance-level detail (which stone has which model warm), benchmark results, pressure readings, warmth tracking, etc.
-4. **Capability announcement** — the adapter publishes a single event to the bus:
-   ```
-   topic:   directory.provider.{name}.capabilities
-   payload: {
-     "provider": "ollama",
-     "enabled":  true,
-     "capabilities": [
-       { "primitive": "text.chat",  "variant": "llama3.1:8b" },
-       { "primitive": "text.chat",  "variant": "qwen2.5:7b" },
-       { "primitive": "text.embed", "variant": "nomic-embed-text" }
-     ]
-   }
-   ```
-   The payload is a **full snapshot**, not a delta. The adapter publishes whenever its internal capability set changes, for any reason (instance probe result, health flap, operator toggle, model pulled, model evicted). Upstream only ever sees `(provider, primitive, variant)` tuples — **no stones, no VRAM numbers, no ready flags**. Instance-level detail is adapter-private.
+4. **Capability announcement** — the adapter publishes a single event to the bus carrying its full set of registrations. Each registration is a **descriptor** with a dotted path, display metadata, and a complete input form schema.
+
+The announcement is a **full snapshot**, not a delta. The adapter publishes whenever its internal capability set changes, for any reason (instance probe result, health flap, operator toggle, model pulled, model evicted). Instance-level detail (stones, VRAM, warmth, ready flags) stays adapter-private — the announcement only carries what the Directory and catalog need.
+
 5. **Directory subscribes** — a `DirectorySubscriber` task reads `directory.provider.*.capabilities` events and rebuilds the Directory's view of the provider wholesale on each announcement. The Directory is a pure downstream consumer; it holds no authoritative state of its own about what providers can do.
 6. **Eventually consistent ready state** — requests arriving before any adapter announces get `503 no_providers_for_primitive`. The orchestrator's `/health` returns `ok` from boot; the living garden fills in capabilities as adapters probe.
 
-#### R2.2.2 — Dispatch flow under capability events
+#### R2.2.2 — Registrations, not variants
+
+There are no "variants." Every callable endpoint is a **registration** with a dotted path. The adapter decides the path at registration time — it is not inferred or heuristic.
+
+Each registration is a full **descriptor** that carries everything needed to render an input form and validate a request:
+
+```rust
+pub struct RegistrationDescriptor {
+    pub path: String,           // "image.generate.sample-tron"
+    pub provider: String,       // "comfyui"
+    pub display_name: String,   // "Sample Tron"
+    pub description: String,    // human-readable
+    pub fields: Vec<FieldDescriptor>,
+    pub media_inputs: Vec<MediaSpec>,
+    pub media_outputs: Vec<MediaSpec>,
+}
+
+pub struct FieldDescriptor {
+    pub key: String,            // canonical dotted path: "image.sampling.steps"
+    pub label: String,          // human-readable: "Steps"
+    pub field_type: FieldType,  // String | Integer | Number | Boolean
+    pub widget: Widget,         // Textarea | Slider | Number | Select | Toggle | Hidden | File
+    pub required: bool,
+    pub default: Option<serde_json::Value>,
+    pub placeholder: Option<String>,
+    pub min: Option<f64>,       // Slider / Number widgets
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+    pub options: Option<Vec<serde_json::Value>>,  // Select widget
+    pub auto: Option<AutoDescriptor>,             // recommended:* fields
+}
+
+pub struct AutoDescriptor {
+    pub default: String,        // "recommended:chat"
+    pub description: String,    // "The garden picks the best available chat model"
+}
+
+pub enum FieldType { String, Integer, Number, Boolean }
+pub enum Widget { Textarea, Slider, Number, Select, Toggle, Hidden, File }
+```
+
+Every field the form needs to render is on the descriptor: type, widget hint, constraints (`min`/`max`/`step`), closed options for select dropdowns, default value, placeholder text, and the `auto` descriptor for `recommended:*` fields. A client that reads one descriptor can render a complete, interactive input form without any other data source.
+
+**Examples:**
+
+ComfyUI skill registration:
+```json
+{
+  "path": "image.generate.sample-tron",
+  "provider": "comfyui",
+  "display_name": "Sample Tron",
+  "description": "Tron-styled image generation with fixed LoRAs and checkpoint",
+  "fields": [
+    {"key": "image.prompt.positive", "label": "Prompt", "type": "string", "widget": "textarea", "required": true},
+    {"key": "image.sampling.steps", "label": "Steps", "type": "integer", "widget": "slider", "default": 28, "min": 1, "max": 50, "step": 1},
+    {"key": "image.sampling.guidance", "label": "CFG Scale", "type": "number", "widget": "slider", "default": 3.5, "min": 1.0, "max": 30.0, "step": 0.5},
+    {"key": "selectors.model", "label": "Model", "type": "string", "widget": "hidden",
+      "auto": {"default": "recommended:generate", "description": "Model is fixed by the skill's workflow"}}
+  ],
+  "media_outputs": [{"key": "image.output", "mime": "image/png", "label": "Generated Image"}]
+}
+```
+
+Ollama base registration:
+```json
+{
+  "path": "text.chat",
+  "provider": "ollama",
+  "display_name": "Text Chat",
+  "description": "Conversational text completion",
+  "fields": [
+    {"key": "text.prompt.user", "label": "Message", "type": "string", "widget": "textarea", "required": true},
+    {"key": "text.prompt.system", "label": "System Prompt", "type": "string", "widget": "textarea"},
+    {"key": "text.sampling.temperature", "label": "Temperature", "type": "number", "widget": "slider", "default": 0.7, "min": 0.0, "max": 2.0, "step": 0.1},
+    {"key": "selectors.model", "label": "Model", "type": "string", "widget": "select",
+      "options": ["llama3.1:8b", "qwen2.5:7b", "gemma2:9b"],
+      "auto": {"default": "recommended:chat", "description": "The garden picks the best available chat model"}}
+  ]
+}
+```
+
+Skill registrations use `"widget": "hidden"` on `selectors.model` because the model is baked into the workflow. Ollama uses `"widget": "select"` with `options` populated from the adapter's live model list. Same schema shape, different adapter decisions.
+
+**The capability announcement payload:**
+
+```rust
+pub struct CapabilityAnnouncement {
+    pub provider: String,
+    pub enabled: bool,
+    pub registrations: Vec<RegistrationDescriptor>,
+}
+```
+
+Full snapshot every time. Adapter publishes whenever its capability set changes (model pull, skill import, health flap, operator toggle). The bus debounces at the adapter level if multiple changes land in quick succession.
+
+**Naming rules:**
+
+- A registration path is a dotted string: `image.generate`, `image.generate.sample-tron`, `text.chat`, `image.tag.product-classifier`.
+- The path maps directly to a URL: `image.generate.sample-tron` → `/v1/image/generate/sample-tron`.
+- Child registrations (skills) have a parent primitive as their prefix. The adapter chooses the parent at registration time.
+- Monikers are unique. The import pipeline generates them with enough entropy to avoid collision.
+- The Directory stores registrations indexed by path. Dispatch is a `HashMap::get` on the path extracted from the URL.
+
+#### R2.2.3 — Catalog: two views, one store
+
+The Directory stores the full `RegistrationDescriptor` internally — it needs the field schema for contextualizer validation. The catalog HTTP surface projects **two different views** depending on what the caller asked:
+
+**`GET /v1/catalog`** — navigation view. Only what's needed to render a menu:
+
+```json
+{
+  "registrations": [
+    {"path": "text.chat", "display_name": "Text Chat", "providers": ["ollama", "anthropic"]},
+    {"path": "text.embed", "display_name": "Text Embedding", "providers": ["ollama", "infinity"]},
+    {"path": "image.generate", "display_name": "Image Generation", "providers": ["comfyui"]},
+    {"path": "image.generate.sample-tron", "display_name": "Sample Tron", "providers": ["comfyui"]},
+    {"path": "image.generate.flux-butterfly", "display_name": "Flux Butterfly", "providers": ["comfyui"]},
+    {"path": "image.upscale", "display_name": "Image Upscale", "providers": ["comfyui"]},
+    {"path": "audio.transcribe", "display_name": "Audio Transcription", "providers": ["whispercpp"]}
+  ]
+}
+```
+
+Path, display name, who serves it. No fields, no constraints, no media specs. Tiny payload, cacheable, changes only when registrations change.
+
+**`GET /v1/catalog/{path}`** — full schema for one registration. Returns the complete `RegistrationDescriptor` including all fields with types, widgets, constraints, defaults, options, auto descriptors, and media specs. This is what drives the Try It form.
+
+One store (the Directory), two projections (list vs detail). The adapter publishes the full descriptor once; the HTTP layer decides how much to show based on the request path.
+
+#### R2.2.4 — Dispatch flow under registrations
 
 1. **Caller sends** `POST /v1/text/chat` with `model: "recommended:chat"` (or omitted, in which case the Contextualizer injects the default).
-2. **Dispatcher queries Directory**: "which providers declare capability `(text.chat, *)`?" Returns `[ollama, anthropic]`.
+2. **Dispatcher queries Directory**: "which providers registered the path `text.chat`?" Returns `[ollama, anthropic]`.
 3. **Dispatcher ranks providers** by locality (local=0, cloud=-10 default) and preferences. Ollama wins in the default configuration.
-4. **Dispatcher hands off to Ollama adapter** with the original `ProviderRequest` unchanged — `selectors.model = "recommended:chat"` stays intact.
-5. **Ollama adapter resolves `recommended:chat` locally**:
-   - Consults its capability matrix for chat-capable models.
-   - For each candidate model, checks instance availability and warmth.
-   - Reads stone pressure from the Resources domain.
-   - Ranks `(model, instance)` pairs using layered scoring (availability → fitness → context → quality → affinity).
-   - Picks the top pair. Acquires a concurrency permit from its `InstancePool`. Places a resource claim. Assembles a `Selection`.
-   - Dispatches.
-6. **Dispatcher emits** `dispatch.{id}.routed` with the full reasoning trace (which provider, which instance, which model, why).
-7. **Result returns** through the dispatcher to the caller.
+4. **Contextualizer validates the request** against Ollama's `text.chat` registration descriptor: are the caller's fields a subset of `fields`? Do values satisfy `field_type`? Within `min..max`? One of `options`? Required fields present? All pure validation against the stored descriptor, no adapter round-trip.
+5. **Dispatcher hands off to Ollama adapter** with the validated `ProviderRequest` — `selectors.model = "recommended:chat"` stays intact.
+6. **Ollama adapter resolves `recommended:chat` locally**: consults its internal capability matrix, ranks `(model, instance)` pairs, acquires a concurrency permit from its `InstancePool`, places a resource claim, dispatches.
+7. **Dispatcher emits** `dispatch.{id}.routed` with the full reasoning trace.
+8. **Result returns** through the dispatcher to the caller.
 
-#### R2.2.3 — Pinning semantics
+For a skill call (`POST /v1/image/generate/sample-tron`):
+- Step 2 looks up path `image.generate.sample-tron` → `[comfyui]`.
+- Step 4 validates against ComfyUI's `sample-tron` descriptor (different field set, different constraints than the base `image.generate`).
+- Step 5 hands off to ComfyUI. The adapter recognizes `sample-tron`, loads the workflow, dispatches to an instance that has the required models ready.
 
-When the caller sends `model: "llama3.1:8b"` (a concrete variant, not `recommended:*`):
+Same flow, same validation, same dispatch — the registration path is the only difference.
 
-1. **Dispatcher queries Directory**: "which providers declare `(text.chat, llama3.1:8b)`?" Only Ollama (the variant is registered as part of its capability set).
-2. **Dispatcher hands off to Ollama adapter** with the pin intact.
-3. **Ollama adapter honors the pin**: looks up which of its instances actually serve `llama3.1:8b`. If one is available, dispatches. If all are busy, queues. If none serve the model (a race with a hot capability change), returns `PinNotServable { model, reason }`.
-4. **Other instances are not considered**, even if they have compatible hardware. The operator's pin is first-class: if they explicitly want `llama3.1:8b`, they did not want a substitute. If the same model is loaded on stone-02, the adapter's capability matrix reflects that and stone-02 becomes eligible automatically — no configuration, no policy change.
+#### R2.2.5 — Pinning semantics
 
-This preserves operator intent as a hard contract.
+When the caller sends `model: "llama3.1:8b"` (a concrete model, not `recommended:*`):
 
-#### R2.2.4 — Hot changes
+1. **Dispatcher queries Directory** for the registration path (e.g. `text.chat`) — returns `[ollama, anthropic]`.
+2. **Dispatcher ranks and picks Ollama** (locality preference).
+3. **Dispatcher hands off** with the pin intact.
+4. **Ollama adapter honors the pin**: looks up which of its instances actually serve `llama3.1:8b`. If one is available, dispatches. If all are busy, queues. If none serve the model (a race with a hot capability change), returns `PinNotServable { model, reason }`.
+5. If Ollama returns `PinNotServable`, the dispatcher tries the next provider in rank order (Anthropic). If no provider can serve the pin, the dispatcher returns the error to the caller.
+6. **Other instances on the same provider are not considered** unless they also have the pinned model loaded. The pin is sacred.
 
-Every internal event in the adapter (instance health change, model pulled, model evicted, operator toggle) triggers a recompute of the capability matrix. When the matrix changes in any observable way, the adapter republishes its full capability snapshot. The Directory subscriber replaces its view of the provider wholesale.
+Model pinning is strictly adapter-internal. The Directory doesn't know about models — it knows about registration paths. The model is a `selectors.model` field in the request payload, resolved inside the adapter.
 
-There is **no scheduled republish path**. Event-driven is the only path. Scheduled republication would be a safety net for a class of bugs that shouldn't exist — if the adapter's internal model is wrong, scheduled republish won't fix it.
+#### R2.2.6 — Hot changes
 
-#### R2.2.5 — Skills aggregate retirement
+Every internal event in the adapter (instance health change, model pulled, model evicted, operator toggle, skill imported) triggers a recompute of the internal capability matrix. When the matrix changes in any observable way, the adapter republishes its full `CapabilityAnnouncement` with updated `Vec<RegistrationDescriptor>`. The Directory subscriber replaces its view of the provider wholesale.
 
-The `Skills` aggregate becomes redundant under capability events. ComfyUI's adapter does the same thing Ollama's does: loads skills at startup, probes instances for readiness, publishes capability events with each skill as a variant (`image.generate/flux`, `image.generate/tron`). A skill is architecturally indistinguishable from an Ollama model — both are `(provider, primitive, variant)` tuples.
+Specific changes and their effects on registrations:
+- **Model pulled on Ollama** → `text.chat`'s `selectors.model.options` list gains the new model name. Republish.
+- **Model evicted** → options list shrinks. Republish.
+- **Skill imported on ComfyUI** → new `image.generate.{moniker}` registration added to the announcement. Republish.
+- **Skill deleted** → registration removed. Republish.
+- **Instance goes unhealthy** → if the instance was the sole provider of a model, that model drops from options. If the instance was the sole provider of a skill, that registration drops. Republish.
 
-The `Skills` aggregate, its `watch::channel`, and its parallel wiring through `AppState` are deleted as part of the ComfyUI adapter rewrite. `GET /v1/skills` (the noun surface from commit 2) stays on the wire but is rewired to read from the Directory with a `provider=comfyui` filter. The skill import flow (commit 3) continues to return `202 + Location`; what changes is that the post-import registration publishes a capability event instead of directly mutating the Skills aggregate.
+There is **no scheduled republish path**. Event-driven only.
+
+#### R2.2.7 — Skills aggregate retirement
+
+The `Skills` aggregate becomes redundant under capability events. ComfyUI's adapter publishes skills as child registrations under their parent primitive (e.g., `image.generate.sample-tron`). A skill registration is architecturally indistinguishable from any other registration — same descriptor shape, same Directory storage, same dispatch flow.
+
+The `Skills` aggregate, its `watch::channel`, and its parallel wiring through `AppState` are deleted as part of the ComfyUI adapter rewrite. `GET /v1/skills` (the noun surface from commit 2) stays on the wire but is rewired to read from the Directory with a `provider=comfyui` filter on child registrations. The skill import flow (commit 3) continues to return `202 + Location`; what changes is that the post-import step publishes a capability event with the new registration instead of directly mutating the Skills aggregate.
 
 ### R2.3 — Instance Manager correction
 

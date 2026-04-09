@@ -451,6 +451,185 @@ curl -X DELETE http://localhost:7190/v1/preferences/image.width
 
 Layering order: `caller payload > preferences > field default > recommended:*`
 
+### How preferences layer into dispatch
+
+When a request reaches the contextualizer, preferences inject values for every dotted field path the caller did not explicitly set. The check uses JSON Pointer resolution (`image.width` → `/image/width`): if the pointer resolves to nothing in the caller's payload, the preference value is injected with intermediate objects created as needed.
+
+Example: the operator sets `text.sampling.temperature = 0.3` as a preference. A caller sends `{"text": {"prompt": {"user": "Hello"}}}` without specifying temperature. The contextualizer injects `0.3` before dispatch. If the caller explicitly sends `temperature: 1.5`, the caller's value wins — preferences never overwrite explicit input.
+
+Preferences persist to `{data_dir}/preferences.json` and reload on startup. Every mutation publishes `preferences.changed` on the event bus so the catalog rebuilds with updated default values.
+
+---
+
+## Ollama orchestration
+
+The Ollama adapter is the reference implementation of the bottom-up capability-event architecture. It discovers instances from the garden, probes them for models, builds a scoring matrix, and publishes capabilities to the Directory.
+
+### Startup and discovery
+
+1. The adapter subscribes to `GardenDiscovery` for FQN `"ollama"` (matches `ollama`, `ollama::adopted`, `ollama::dev`, etc.).
+2. When discovery events arrive with instance URLs, the adapter probes each in parallel:
+   - `/api/tags` → list of installed models (`models_available`)
+   - `/api/ps` → list of currently loaded models in VRAM (`models_loaded`)
+   - `/api/show` (per unique model) → capabilities, parameter count, context length from GGUF metadata
+3. The results populate the `OllamaCapabilityMatrix` — an in-memory cross-product of instances, models, and their metadata.
+4. The adapter publishes a `CapabilityAnnouncement` with:
+   - Base primitives derived from the union of Ollama capability tags across all healthy instances
+   - Full form-schema parameters per primitive (prompt, system prompt, temperature slider, max tokens, model selector with live `options` from the installed model list)
+
+### Capability mapping
+
+| Ollama tag | Primitives registered | `recommended:*` capability |
+|---|---|---|
+| `completion` | `text.chat` | `chat`, `quick`, `synthesis`, `thinking` |
+| `embedding` | `text.embed` | `embed` |
+| `vision` | `image.analyze` | `vision`, `ocr` |
+| `tools` | (via `text.chat`) | `tools` |
+| `thinking` | (via `text.chat`) | `thinking` |
+
+A model with tags `[completion, tools, vision]` is eligible for chat, tools, and vision requests. The adapter never infers capabilities — it reads them from Ollama's `/api/show` response.
+
+### Model selection: `recommended:*`
+
+When a request arrives with `selectors.model = "recommended:chat"` (or absent, which defaults to `recommended:chat` for `text.chat`), the adapter's `OllamaSelector` scores every eligible model through five layers:
+
+**Layer 0 — Availability (floor)**
+- `+50` if the model is installed on any healthy instance
+- `+10` per additional stone that has it (capped at `+30` for 4+ stones)
+- `+20` warmth bonus if the model is currently loaded in VRAM on at least one instance
+
+**Layer 1 — Capability filter (hard)**
+- Models that don't declare the required Ollama tag are removed entirely, not deprioritized
+- `chat` requests filter to `completion` tag; `embed` to `embedding`; `vision` to `vision`
+- `tools` and `thinking` require exact tag match
+
+**Layer 2 — Context window**
+- Formula: `min(context_tokens / 1000, cap)`
+- Caps per capability: Synthesis=500, Thinking=300, Tools=250, Vision=200, Chat=150, Quick=0
+- A 128K-context model beats an 8K model by ~120 points for synthesis
+
+**Layer 3 — Quality (parameter count)**
+- Formula: `min(params_billions * multiplier, cap)`
+- Multipliers: Thinking=60/B, Tools/Vision=50/B, Chat/Synthesis=40/B, OCR=15/B
+- OCR has a deliberately low multiplier: a purpose-built 1B OCR model beats a generic 13B
+- Quality cap per capability: Thinking=500, Tools/Vision=450, Chat/Synthesis=400, Quick=0
+
+**Layer 4 — Name affinity**
+- If the model name contains the capability keyword, bonus applies
+- Currently only OCR: `+300` for models with "ocr" in the name
+
+After scoring, models are sorted by score descending (ties broken by name for determinism). The top model is paired with its best instance using warmth-first, then lowest queue depth, then stable by stone name.
+
+### Model selection: pinned
+
+When a request specifies `model: "llama3.1:8b"`, scoring is bypassed entirely. The adapter looks up which healthy instances have the model installed, picks the one with lowest queue depth (warm preferred), and dispatches. If no healthy instance has the model:
+
+- Model exists somewhere but all instances are unhealthy → `PinNotServable { reason: "no healthy instance currently hosts this model" }`
+- Model is completely unknown → `PinNotServable { reason: "model is not installed on any instance in the garden" }`
+
+### Anti-phantom invariant
+
+The selector's first step is to compute the **loadable model set**: the union of `models_available` across all healthy instances. Any model in the metadata catalog that doesn't appear in this set is invisible to recommendation. This prevents the phantom-model bug where the engine recommends a model no instance can actually serve.
+
+### Live model options in the catalog
+
+The capability announcement carries the sorted list of loadable model names as `options` on the `selectors.model` field descriptor. When a dashboard renders `GET /v1/catalog/text.chat`, the model selector dropdown shows exactly the models currently available in the garden — not a static list. When models are pulled or evicted, the adapter republishes and the catalog updates.
+
+---
+
+## ComfyUI skill import
+
+The import pipeline accepts a URL, PNG, or raw text and produces a ready-to-use skill definition on disk.
+
+### Accepted input types
+
+| Input | Detection | Example |
+|-------|-----------|---------|
+| CivitAI image | `civitai.com/images/<id>` URL | `https://civitai.com/images/126242620` |
+| CivitAI model | `civitai.com/models/<id>` URL | `https://civitai.com/models/12345` |
+| PNG with embedded workflow | `.png` URL or raw PNG bytes | Any ComfyUI-generated PNG |
+| Generic URL | Any HTTP URL (tried as JSON workflow) | `https://example.com/workflow.json` |
+| Raw workflow JSON | JSON with `class_type` fields | `{"1": {"class_type": "KSampler", ...}}` |
+| Generation text | Text containing `Negative prompt:`, `Steps:`, etc. | Pasted from Automatic1111 |
+
+### Pipeline stages
+
+```
+Input → Classify → Extract → Parse → Extract params → Resolve models → Build draft
+```
+
+1. **Classify** (`input_detect`) — regex/parse determines input type, no I/O.
+
+2. **Extract** — each input type has its own extraction path:
+   - CivitAI image → fetch image metadata API → extract embedded workflow or generation parameters from the `meta` field
+   - CivitAI model → fetch model page → download associated workflow file
+   - PNG → download bytes → extract `tEXt`/`zTXt`/`iTXt` PNG chunks containing the workflow
+   - Generation text → parse A1111-style parameters, then synthesize a txt2img workflow
+
+3. **Parse** (`workflow_parser`) — analyze the ComfyUI node graph. Identify KSampler, model loaders, output nodes. Build a dependency tree.
+
+4. **Extract parameters** (`param_extract`) — plant `PLACEHOLDER_*` tokens into the workflow for every user-configurable field. Emit typed `Binding` objects with field paths, defaults, labels, and `FieldConstraint` narrows (range, options, auto).
+   - KSampler-driven role detection: positive/negative prompt roles determined by tracing connections from the KSampler's conditioning inputs back through CLIP text encode nodes
+   - Checkpoint and LoRA loaders become model selector entries
+   - Numeric parameters (steps, guidance, seed) get range constraints from the node definition
+
+5. **Resolve models** (`model_resolve`) — 5-level cascade to find download URLs:
+   1. Exact filename match in local cache
+   2. Known-models database (86 common community models with CivitAI URLs)
+   3. CivitAI hash lookup (SHA256 of the safetensors file)
+   4. CivitAI model version search
+   5. Filename-based web search
+   Unresolvable checkpoints are hard failures; other models (LoRAs, upscalers) produce warnings.
+
+6. **Build draft** (`draft_builder`) — writes three files to `{data_dir}/skills/{provider}/{moniker}/`:
+   - `skill.json` — v3 schema with `draft: true`, primitive, bindings, model_selector, variants, required_models, source provenance
+   - `workflow.json` — the ComfyUI API-format workflow with placeholder tokens
+   - `_debug.json` — resolved model details, warnings, analysis metadata
+
+### AI-assisted naming
+
+After the draft is written, the import handler spawns an async naming task. The namer dispatches a `text.chat` request through the orchestrator's own `Dispatcher` with `selectors.model = "recommended:chat"` — no external HTTP call, the garden's own chat model names the skill.
+
+The prompt describes the workflow's structure, models, and extracted parameters. The chat model returns a JSON response with `display_name` and `description`. The namer has a 30-second timeout; on failure it falls back to a heuristic name derived from the moniker.
+
+Naming progress is visible on the event bus:
+- `skills.{moniker}.state = analyzing` → import started
+- `skills.{moniker}.state = naming` → draft written, AI naming in progress
+- `skills.{moniker}.named` → display name assigned
+- `skills.{moniker}.state = ready` → skill available for dispatch
+
+### Importing via the API
+
+```bash
+# From a CivitAI image page
+curl -X POST http://localhost:7190/v1/skills/comfyui/import \
+  -H "Content-Type: application/json" \
+  -d '{"input": "https://civitai.com/images/126242620"}'
+
+# From a PNG with embedded workflow
+curl -X POST http://localhost:7190/v1/skills/comfyui/import \
+  -H "Content-Type: image/png" \
+  --data-binary @workflow.png
+
+# From raw workflow JSON
+curl -X POST http://localhost:7190/v1/skills/comfyui/import \
+  -H "Content-Type: application/json" \
+  -d '{"input": "{\"1\": {\"class_type\": \"KSampler\", ...}}"}'
+```
+
+Response: `202 Accepted` with `Location: /v1/skills/{moniker}`
+
+```json
+{
+  "moniker": "flux-26239",
+  "draft_dir": "/data/skills/comfyui/flux-26239"
+}
+```
+
+### Skill provisioning
+
+After import, the skill may need models pushed to ComfyUI instances. The provisioning queue downloads missing models from CivitAI and streams them to instances via the Moss volume API (`PUT /api/v1/stone/offerings/comfyui/volumes/comfyui-models/...`). Progress is logged and visible in the container logs. Skills transition to `ready` only after all required models are available on at least one instance.
+
 ---
 
 ## Resources

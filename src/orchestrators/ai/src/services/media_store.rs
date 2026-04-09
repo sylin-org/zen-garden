@@ -293,23 +293,43 @@ impl MediaStore for DiskMediaStore {
         let hash = Self::hash_content(&bytes).await;
 
         // Content-addressed dedup.
-        {
+        //
+        // The lookup reads the `by_hash` and `index` maps through
+        // short-lived blocks that hand back owned clones. It is
+        // critical that no `RwLockReadGuard` remains alive when we
+        // call `touch()` below — `touch()` acquires the `index`
+        // write lock, so holding an `index` read guard here would
+        // deadlock. Bind the clone to a local and drop the guard
+        // before touching.
+        let existing_id: Option<String> = {
             let by_hash = self.by_hash.read().await;
-            if let Some(existing_id) = by_hash.get(&hash).cloned() {
-                drop(by_hash);
-                if let Some(entry) = self.index.read().await.get(&existing_id).cloned() {
-                    // Refresh TTL on re-upload.
-                    let _ = self.touch(&entry.id).await;
-                    return Ok(entry);
-                }
+            by_hash.get(&hash).cloned()
+        };
+        if let Some(existing_id) = existing_id {
+            let existing_entry: Option<MediaEntry> = {
+                let index = self.index.read().await;
+                index.get(&existing_id).cloned()
+            };
+            if let Some(entry) = existing_entry {
+                // Refresh TTL on re-upload.
+                let _ = self.touch(&entry.id).await;
+                return Ok(entry);
             }
         }
 
         let _guard = self.write_lock.lock().await;
 
-        // Double-check after lock.
-        if let Some(existing_id) = self.by_hash.read().await.get(&hash).cloned() {
-            if let Some(entry) = self.index.read().await.get(&existing_id).cloned() {
+        // Double-check after lock — same deadlock hazard, same fix.
+        let existing_id: Option<String> = {
+            let by_hash = self.by_hash.read().await;
+            by_hash.get(&hash).cloned()
+        };
+        if let Some(existing_id) = existing_id {
+            let existing_entry: Option<MediaEntry> = {
+                let index = self.index.read().await;
+                index.get(&existing_id).cloned()
+            };
+            if let Some(entry) = existing_entry {
                 return Ok(entry);
             }
         }

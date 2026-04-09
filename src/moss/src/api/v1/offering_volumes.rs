@@ -4,8 +4,11 @@
 //! - `PUT  /api/v1/stone/offerings/{fqn}/volumes/{volume}/*path` — write file
 //! - `GET  /api/v1/stone/offerings/{fqn}/volumes/{volume}/*path` — read file
 //! - `HEAD /api/v1/stone/offerings/{fqn}/volumes/{volume}/*path` — check existence
+//! - `GET  /api/v1/stone/offerings/{fqn}/volumes/{volume}` — list every file
+//!   in the volume (recursive walk, returns relative paths + sizes).
 //!
-//! Used by the AI orchestrator to provision model files to ComfyUI instances.
+//! Used by the AI orchestrator to provision model files to ComfyUI instances
+//! and to inventory installed resources for capability publication.
 //! Path traversal is validated — `..` segments are rejected.
 
 use axum::body::Body;
@@ -19,6 +22,10 @@ use crate::AppState;
 
 /// Path parameters: (fqn, volume, file_path)
 type VolumePath = (String, String, String);
+
+/// Path parameters for the listing endpoint: (fqn, volume) — no
+/// trailing `*path` segment.
+type VolumeRoot = (String, String);
 
 /// `PUT /api/v1/stone/offerings/{fqn}/volumes/{volume}/*path`
 ///
@@ -176,6 +183,166 @@ pub async fn head_volume_file(
             .body(Body::empty())
             .unwrap_or_else(|_| StatusCode::NOT_FOUND.into_response()),
     }
+}
+
+/// `GET /api/v1/stone/offerings/{fqn}/volumes/{volume}`
+///
+/// List every file in the offering's volume. Walks the volume root
+/// recursively and returns one entry per file with its volume-relative
+/// path and byte size. Used by the AI orchestrator to inventory
+/// installed resources (e.g. ComfyUI checkpoint files) so it can
+/// gate skill publication and dispatch on actual resource presence.
+///
+/// Same path resolution and "missing volume = 404" semantics as
+/// [`head_volume_file`], just walking the directory instead of
+/// stat-ing one file. Empty volumes return 200 with `count: 0`.
+///
+/// Response shape:
+/// ```json
+/// {
+///   "fqn": "comfyui",
+///   "volume": "comfyui-models",
+///   "files": [
+///     {"path": "checkpoints/sdxl.safetensors", "size": 6938040744}
+///   ],
+///   "count": 1,
+///   "total_bytes": 6938040744
+/// }
+/// ```
+pub async fn list_volume_files(
+    State(_state): State<AppState>,
+    Path((fqn, volume)): Path<VolumeRoot>,
+) -> Response {
+    // Resolve to the volume root by passing an empty path. The
+    // helper builds `{volumes_dir}/{encoded_fqn}/{volume}/`, which
+    // is exactly what we walk.
+    let host_root = match resolve_volume_path(&fqn, &volume, "") {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+    // Strip the trailing `/` so std::path::Path treats it as a
+    // directory consistently.
+    let root = host_root.trim_end_matches('/').to_string();
+
+    // Confirm the volume root exists. If the offering has never
+    // been provisioned (no PUT yet), the directory may be absent —
+    // return 404 to mirror the file-level behavior.
+    match tokio::fs::metadata(&root).await {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => {
+            return not_found_response(&format!(
+                "Volume root is not a directory: {fqn}/{volume}"
+            ));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return not_found_response(&format!(
+                "Volume not provisioned: {fqn}/{volume}"
+            ));
+        }
+        Err(e) => {
+            return internal_response(&format!("Failed to stat volume root: {e}"));
+        }
+    }
+
+    // Walk recursively. Errors on individual entries are logged
+    // but do not abort the listing — partial results are more
+    // useful than no results when the orchestrator is trying to
+    // decide what to provision.
+    let mut files: Vec<serde_json::Value> = Vec::new();
+    let mut total_bytes: u64 = 0;
+    if let Err(e) = walk_volume_dir(
+        std::path::Path::new(&root),
+        std::path::Path::new(&root),
+        &mut files,
+        &mut total_bytes,
+    )
+    .await
+    {
+        return internal_response(&format!("Failed to walk volume directory: {e}"));
+    }
+
+    let count = files.len();
+    let body = serde_json::json!({
+        "fqn": fqn,
+        "volume": volume,
+        "files": files,
+        "count": count,
+        "total_bytes": total_bytes,
+    });
+
+    tracing::debug!(
+        fqn = %fqn,
+        volume = %volume,
+        count,
+        total_bytes,
+        "listed offering volume files"
+    );
+
+    (StatusCode::OK, axum::Json(body)).into_response()
+}
+
+/// Recursive directory walker for [`list_volume_files`].
+///
+/// Implemented with manual recursion (rather than `walkdir`) to keep
+/// the dependency footprint identical to `head_volume_file`'s
+/// `tokio::fs::metadata` path. Async recursion needs `Box::pin` to
+/// satisfy the borrow checker on the future-returning call site.
+fn walk_volume_dir<'a>(
+    root: &'a std::path::Path,
+    dir: &'a std::path::Path,
+    out: &'a mut Vec<serde_json::Value>,
+    total_bytes: &'a mut u64,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut entries = tokio::fs::read_dir(dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let file_type = match entry.file_type().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "skipping directory entry: failed to read file type"
+                    );
+                    continue;
+                }
+            };
+            if file_type.is_dir() {
+                walk_volume_dir(root, &path, out, total_bytes).await?;
+            } else if file_type.is_file() {
+                // Compute the volume-relative path with forward slashes
+                // (matching the input format of `PUT/HEAD/GET *path`).
+                let relative = match path.strip_prefix(root) {
+                    Ok(r) => r
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                    Err(_) => continue,
+                };
+                let size = match entry.metadata().await {
+                    Ok(m) => m.len(),
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %e,
+                            "skipping directory entry: failed to read metadata"
+                        );
+                        continue;
+                    }
+                };
+                *total_bytes += size;
+                out.push(serde_json::json!({
+                    "path": relative,
+                    "size": size,
+                }));
+            }
+            // Symlinks and other entry types are ignored — the
+            // listing is for regular files only.
+        }
+        Ok(())
+    })
 }
 
 // ── Helpers ────────────────────────────────────────────────────

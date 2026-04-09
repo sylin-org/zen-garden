@@ -1045,9 +1045,15 @@ impl StoneInfoApi<'_> {
             .await
     }
 
-    /// SSE event stream. Returns raw response for streaming consumption.
+    /// SSE presence event stream. Returns raw response for streaming consumption.
     pub async fn events(&self) -> Result<reqwest::Response, StoneApiError> {
-        self.api.get_raw("/api/v1/events").await
+        self.api.get_raw("/api/v1/stone/presence/stream").await
+    }
+
+    /// Get status of a background job.
+    pub async fn job_status(&self, job_id: &str) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!("/api/v1/jobs/{}", urlencoding::encode(job_id));
+        self.api.get(&path).await
     }
 
     /// Set console output mode (sing/quiet/silent/minimal).
@@ -1091,11 +1097,14 @@ impl StoneInfoApi<'_> {
     }
 
     /// Upload a binary for refresh (dev tool).
+    ///
+    /// **Note:** Server-side handler is not yet implemented.
+    /// Calls will return 404 until the admin refresh endpoint is added to Moss.
     pub async fn refresh_binary<B: Serialize>(
         &self,
         body: &B,
     ) -> Result<serde_json::Value, StoneApiError> {
-        self.api.post("/api/v1/system/refresh", body).await
+        self.api.post("/api/v1/admin/moss/refresh", body).await
     }
 
     /// Get the API manifest (endpoint documentation).
@@ -1146,7 +1155,7 @@ impl GardenApi<'_> {
     pub async fn observe(
         &self,
     ) -> Result<Vec<crate::TopologyEntry>, StoneApiError> {
-        self.api.get("/api/v1/garden/observe").await
+        self.api.get("/api/v1/garden/topology").await
     }
 
     /// Aggregate updates.

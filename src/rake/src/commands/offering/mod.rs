@@ -311,7 +311,13 @@ async fn print_offerings_index(api: &StoneApi) -> Result<()> {
     let term = ui::TerminalInfo::detect();
 
     // Fetch running services
-    let services: Vec<ServiceInfo> = api.services().list().await.unwrap_or_default();
+    let services: Vec<ServiceInfo> = match api.services().list().await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to fetch services for offerings index");
+            Vec::new()
+        }
+    };
 
     // Display running services if any
     if !services.is_empty() {
@@ -684,8 +690,8 @@ async fn stream_job_progress(
     service_name: &str,
     quiet: bool,
 ) -> Result<()> {
-    let events_url = format!(
-        "{}/api/v1/events?job_id={}",
+    let job_url = format!(
+        "{}/api/v1/jobs/{}",
         api.endpoint(),
         job_id
     );
@@ -693,73 +699,6 @@ async fn stream_job_progress(
     let term = ui::TerminalInfo::detect();
     let start_time = std::time::Instant::now();
 
-    // Check if stone supports /api/v1/events (probe with HEAD request)
-    let probe = client.head(&events_url).send().await;
-    let events_supported =
-        matches!(probe, Ok(resp) if resp.status() != reqwest::StatusCode::NOT_FOUND);
-
-    if !events_supported {
-        // Fallback: show elapsed time without progress details
-        if !quiet {
-            println!(
-                "{}{} Installing... (progress endpoint unavailable)",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::progress_step(true, "")
-            );
-        }
-
-        // Simple elapsed time loop (5 minute timeout)
-        let mut interval = tokio::time::interval(Duration::from_millis(500));
-        let timeout = Duration::from_secs(300);
-
-        loop {
-            interval.tick().await;
-            let elapsed = start_time.elapsed();
-
-            if elapsed >= timeout {
-                println!(
-                    "\n{}⏱  Operation timeout ({})",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::format_elapsed_time(timeout)
-                );
-                println!(
-                    "{}Check status: garden-rake list",
-                    " ".repeat(ui::constants::DEFAULT_INDENT)
-                );
-                break;
-            }
-
-            // Check completion by querying service list
-            if let Ok(services) = api.services().list().await {
-                    if services.iter().any(|s| s.name == service_name) {
-                        if !quiet {
-                            println!(
-                                "\n{}{} Installation complete [{}]",
-                                " ".repeat(ui::constants::DEFAULT_INDENT),
-                                ui::status_indicator("ok", term.supports_color),
-                                ui::format_elapsed_time(elapsed)
-                            );
-                        }
-                        break;
-                    }
-                }
-
-            // Update progress display every 2 seconds
-            if elapsed.as_secs().is_multiple_of(2) && !quiet {
-                print!(
-                    "\r{}Installing... [{}]",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
-                    ui::format_elapsed_time(elapsed)
-                );
-                use std::io::Write;
-                std::io::stdout().flush().ok();
-            }
-        }
-
-        return Ok(());
-    }
-
-    // Full progress streaming from /api/v1/events
     if !quiet {
         println!(
             "{}{} Installation started",
@@ -770,7 +709,7 @@ async fn stream_job_progress(
 
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     let timeout = Duration::from_secs(300); // 5 minutes
-    let mut last_message = String::new();
+    let mut last_completed_count: usize = 0;
 
     loop {
         interval.tick().await;
@@ -789,42 +728,50 @@ async fn stream_job_progress(
             break;
         }
 
-        // Poll /api/v1/events for job updates
-        match client.get(&events_url).send().await {
+        // Poll /api/v1/jobs/{job_id} for status
+        match client.get(&job_url).send().await {
             Ok(response) if response.status().is_success() => {
-                if let Ok(event) = response.json::<serde_json::Value>().await {
-                    let status = event
+                if let Ok(body) = response.json::<serde_json::Value>().await {
+                    // Job response is wrapped in ApiResponse: { data: { ... } }
+                    let job = body.get("data").unwrap_or(&body);
+
+                    let status = job
                         .get("status")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
-                    let message = event.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                    let progress = event.get("progress").and_then(|v| v.as_u64());
+                    let completed = job
+                        .get("completed")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    let total = job
+                        .get("offerings")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(1);
+                    let failed = job
+                        .get("failed")
+                        .and_then(|v| v.as_object())
+                        .map(|m| m.len())
+                        .unwrap_or(0);
 
-                    // Display new status updates
-                    if !message.is_empty() && message != last_message && !quiet {
-                        if let Some(pct) = progress {
-                            println!(
-                                "\r{}{}% {} [{}]",
-                                " ".repeat(ui::constants::DEFAULT_INDENT),
-                                pct,
-                                message,
-                                ui::format_elapsed_time(elapsed)
-                            );
-                        } else {
-                            println!(
-                                "\r{}{} [{}]",
-                                " ".repeat(ui::constants::DEFAULT_INDENT),
-                                message,
-                                ui::format_elapsed_time(elapsed)
-                            );
-                        }
-                        last_message = message.to_string();
+                    // Show progress when new offerings complete
+                    if completed > last_completed_count && !quiet {
+                        let pct = (completed * 100) / total.max(1);
+                        println!(
+                            "\r{}{}% — {}/{} offerings installed [{}]",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            pct,
+                            completed,
+                            total,
+                            ui::format_elapsed_time(elapsed)
+                        );
+                        last_completed_count = completed;
                     }
 
-                    // Check for completion
-                    if status == garden_common::constants::STATUS_COMPLETED
-                        || status == garden_common::constants::STATUS_SUCCESS
-                    {
+                    // Check terminal states
+                    let status_lower = status.to_lowercase();
+                    if status_lower == "completed" {
                         if !quiet {
                             println!(
                                 "\n{}{} Installation complete [{}]",
@@ -834,33 +781,74 @@ async fn stream_job_progress(
                             );
                         }
                         break;
-                    } else if status == garden_common::constants::STATUS_FAILED
-                        || status == garden_common::constants::STATUS_ERROR
-                    {
+                    } else if status_lower == "failed" {
+                        let error_detail = job
+                            .get("failed")
+                            .and_then(|v| v.as_object())
+                            .and_then(|m| m.values().next())
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown error");
                         println!(
-                            "\n{}{} Installation failed: {}",
+                            "\n{}{} Installation failed: {} ({} of {} failed)",
                             " ".repeat(ui::constants::DEFAULT_INDENT),
                             ui::status_indicator("error", term.supports_color),
-                            message
+                            error_detail,
+                            failed,
+                            total,
                         );
                         break;
+                    }
+
+                    // Elapsed time update every 2 seconds while still running
+                    if elapsed.as_secs().is_multiple_of(2) && completed == last_completed_count && !quiet {
+                        print!(
+                            "\r{}Installing... [{}]",
+                            " ".repeat(ui::constants::DEFAULT_INDENT),
+                            ui::format_elapsed_time(elapsed)
+                        );
+                        use std::io::Write;
+                        std::io::stdout().flush().ok();
                     }
                 }
             }
             Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
-                // Job completed or not found
-                if !quiet {
-                    println!(
-                        "\n{}{} Installation complete (job finished) [{}]",
-                        " ".repeat(ui::constants::DEFAULT_INDENT),
-                        ui::status_indicator("ok", term.supports_color),
-                        ui::format_elapsed_time(elapsed)
-                    );
+                // Job completed and was cleaned up, or ID is wrong.
+                // Check if the service actually appeared.
+                match api.services().list().await {
+                    Ok(services) if services.iter().any(|s| s.name == service_name) => {
+                        if !quiet {
+                            println!(
+                                "\n{}{} Installation complete [{}]",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("ok", term.supports_color),
+                                ui::format_elapsed_time(elapsed)
+                            );
+                        }
+                    }
+                    _ => {
+                        tracing::warn!(job_id, "Job not found — may have completed or been pruned");
+                        if !quiet {
+                            println!(
+                                "\n{}{} Job no longer tracked (may have completed) [{}]",
+                                " ".repeat(ui::constants::DEFAULT_INDENT),
+                                ui::status_indicator("warn", term.supports_color),
+                                ui::format_elapsed_time(elapsed)
+                            );
+                        }
+                    }
                 }
                 break;
             }
-            _ => {
-                // Network error or server issue, continue polling
+            Ok(response) => {
+                tracing::debug!(
+                    status = %response.status(),
+                    job_id,
+                    "Unexpected response polling job status"
+                );
+            }
+            Err(e) => {
+                // Network error — log and continue polling
+                tracing::debug!(error = %e, job_id, "Job poll failed, retrying");
                 if elapsed.as_secs().is_multiple_of(5) && !quiet {
                     print!(
                         "\r{}Checking progress... [{}]",

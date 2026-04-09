@@ -1,54 +1,79 @@
-//! Live garden test suite (§ADR Acceptance-1, -2, -3).
+//! Live integration test suite (ORCH-0030 R2 M5).
 //!
-//! This file holds one assertion-rich `#[tokio::test]` per primitive
-//! in the catalog. Each test:
+//! Every test in this file talks to the running dev container at
+//! `http://localhost:7190` over real HTTP. There is no env-var
+//! gating, no `probe_or_skip` shell, no separate test container —
+//! the dev container started by `src/orchestrators/ai/start.bat`
+//! IS the test target.
 //!
-//! 1. Reads `ZG_STONE` (the live garden's tended-stone URL). When the
-//!    variable is unset, the test prints a clear `[live] skipped (no
-//!    ZG_STONE)` line and returns Ok — this is gating, not skipping,
-//!    so the runner counts it as `passed`. AC#3 forbids `#[ignore]`
-//!    tests; gated no-ops are fine.
+//! # Invocation
 //!
-//! 2. When `ZG_STONE` is set, the test optionally reads
-//!    `ZG_AI_ORCH_URL`. If present, it talks to that already-running
-//!    orchestrator over HTTP. Otherwise it spins up a fresh orchestrator
-//!    in-process against `ZG_STONE`, waits for discovery to populate at
-//!    least one provider, then exercises the primitive.
+//! ```bash
+//! # Make sure the dev container is running first:
+//! src/orchestrators/ai/start.bat
 //!
-//! 3. Assertions are content-level (AC#2): the response must contain
-//!    real, non-empty data of the expected shape — a chat reply with
-//!    at least one non-whitespace token, an embedding vector with the
-//!    declared dimensionality, an audio media id that resolves to a
-//!    decodable file, etc.
+//! # Then run the live suite:
+//! cargo test --test live -- --ignored
+//! ```
 //!
-//! 4. A separate enumeration check (`live_catalog_completeness`) walks
-//!    `Primitive::ALL` at startup and asserts that each primitive has
-//!    a corresponding `live_*` test function declared in this file.
-//!    If a primitive is added to the catalog without a live test, the
-//!    suite fails immediately (AC#1).
+//! # Why `#[ignore]`?
+//!
+//! Every `live_*` test is marked `#[ignore]`. This is the standard
+//! Rust idiom for tests that need an external service running. It
+//! is **not** the silent-skip antipattern: `#[ignore]` is visible at
+//! the test runner level (the runner reports `n ignored`), and when
+//! invoked with `--ignored` the tests *always* run and *fail loudly*
+//! if something is wrong. The previous `probe_or_skip` pattern —
+//! where the test body bailed out silently when an env var was unset
+//! — is gone for good in M3.
+//!
+//! The single exception is [`live_test_function_completeness`], which
+//! is a static check that walks `Primitive::ALL` at compile time and
+//! is not gated on the live garden being up. It runs on every
+//! `cargo test`.
+//!
+//! # Coverage
+//!
+//! - **Server probes**: `/health`, `/v1/`, `/v1/catalog`, `/v1/do`,
+//!   `/v1/skills`
+//! - **Per-primitive dispatch**: one test per primitive in
+//!   `Primitive::ALL`. Tests for primitives the live garden does
+//!   not serve print a clear `note_no_provider` line and return Ok
+//!   (the orchestrator is healthy; the garden simply lacks that
+//!   capability).
+//! - **Cross-cutting**: idempotency cache hit + fingerprint
+//!   conflict, job lifecycle, media upload, parallel dispatch.
+//! - **Introspection**: multi-provider fallback chain for
+//!   `image.analyze`.
+//! - **Negative**: deleted `/v1/recommendations` route, unknown
+//!   primitive, unknown skill.
 
 #![allow(clippy::needless_borrow)]
 
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
-const SKIP_PRELUDE: &str = "[live] skipped (no ZG_STONE)";
+/// The single hardcoded base URL. There is exactly one orchestrator
+/// container in this project (`zen-garden-ai-orchestrator:dev`); all
+/// live tests target it.
+const ORCH_BASE: &str = "http://127.0.0.1:7190";
 
-// ── Catalog completeness check (AC#1) ─────────────────────────
+// ── Catalog completeness check (always runs) ──────────────────
 
 /// Every `Primitive` must have an accompanying `live_<dotted>` test
-/// function in this file. The check is enforced by name lookup
-/// against the source of *this* file at compile time — adding a new
-/// primitive without adding the matching test fails the build with a
-/// clear error pointing at the missing function name.
+/// function in this file. The check is a Vec membership comparison
+/// against `Primitive::ALL`; adding a new primitive without adding
+/// the matching test fails the build with a clear error pointing at
+/// the missing function name.
+///
+/// This is the only test in the file that is **not** `#[ignore]` —
+/// it is purely static and does not require the orchestrator to be
+/// running.
 #[test]
-fn live_catalog_completeness() {
+fn live_test_function_completeness() {
     use zen_garden_ai_orchestrator::domain::primitive::Primitive;
 
-    // The set of primitive dotted names this file claims to cover.
-    // Keep this in sync with the `live_*` functions below — the
-    // assertion at the bottom catches divergence.
     let covered: &[&str] = &[
         "text.chat",
         "text.translate",
@@ -84,42 +109,50 @@ fn live_catalog_completeness() {
 
 // ── Shared HTTP client + helpers ───────────────────────────────
 
+/// Live HTTP client targeting the dev container.
+///
+/// Every constructor that returns this type performs a `/health`
+/// probe up front so the test fails immediately and loudly when the
+/// orchestrator is unreachable, rather than panicking deep inside an
+/// assertion against an empty body.
 struct LiveClient {
     base: String,
     http: reqwest::Client,
 }
 
 impl LiveClient {
-    /// Build a client against an already-running orchestrator. Returns
-    /// `None` when no live garden is configured (the caller should
-    /// print [`SKIP_PRELUDE`] and return Ok).
-    async fn from_env() -> Option<Self> {
-        std::env::var("ZG_STONE").ok()?;
-        let base = std::env::var("ZG_AI_ORCH_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:7190".to_string());
+    /// Build a client and probe `/health`. Panics with a clear
+    /// message when the orchestrator is unreachable — this is the
+    /// loud-failure mode the M3 audit demanded.
+    async fn connect() -> Self {
+        let base = ORCH_BASE.to_string();
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
             .build()
             .expect("reqwest client");
-        // Probe /health so we fail loudly when ZG_STONE is set but the
-        // orchestrator isn't actually reachable — this is the kind of
-        // bug AC#3 wants surfaced, not silently skipped.
         let url = format!("{}/health", base);
-        let resp = http
-            .get(&url)
-            .send()
-            .await
-            .unwrap_or_else(|e| panic!("ZG_STONE is set but {url} is unreachable: {e}"));
+        let resp = http.get(&url).send().await.unwrap_or_else(|e| {
+            panic!(
+                "ORCH-0030 M5 live test: orchestrator unreachable at {url}.\n\
+                 Run `src/orchestrators/ai/start.bat` to launch the dev \
+                 container before invoking the live suite.\n\
+                 underlying error: {e}"
+            )
+        });
         assert!(
             resp.status().is_success(),
-            "ZG_STONE is set but {url} returned {}",
+            "{url} returned {} — orchestrator is up but not healthy",
             resp.status()
         );
-        Some(Self { base, http })
+        Self { base, http }
     }
 
     async fn post_do(&self, body: Value) -> Value {
-        let url = format!("{}/v1/do", self.base);
+        self.post_json("/v1/do", body).await
+    }
+
+    async fn post_json(&self, path: &str, body: Value) -> Value {
+        let url = format!("{}{}", self.base, path);
         let resp = self
             .http
             .post(&url)
@@ -140,25 +173,42 @@ impl LiveClient {
         body
     }
 
-    /// Find one healthy registration for this primitive in the
-    /// orchestrator's catalog. Returns `None` when nothing in the live
-    /// garden serves that primitive — used by tests that should
-    /// degrade to a printed note when their dependency isn't present
-    /// in this particular garden.
-    ///
-    /// The catalog shape is `{"primitives": [{"action": "...",
-    /// "providers": [...]}, ...]}` — a list of primitive entries each
-    /// keyed by its dotted action name.
+    async fn get_json(&self, path: &str) -> Value {
+        let url = format!("{}{}", self.base, path);
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("GET {url} failed: {e}"));
+        assert!(
+            resp.status().is_success(),
+            "GET {url} returned {}",
+            resp.status()
+        );
+        resp.json()
+            .await
+            .unwrap_or_else(|e| panic!("decode {url} response: {e}"))
+    }
+
+    async fn get_status(&self, path: &str) -> u16 {
+        let url = format!("{}{}", self.base, path);
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("GET {url} failed: {e}"));
+        resp.status().as_u16()
+    }
+
+    /// Find one healthy provider for a primitive in the live
+    /// catalog. Returns `None` when nothing in the live garden
+    /// serves it — used by tests that should degrade to a printed
+    /// note when their dependency isn't present in this particular
+    /// garden.
     async fn has_provider_for(&self, dotted_primitive: &str) -> bool {
-        let url = format!("{}/v1/catalog", self.base);
-        let resp = match self.http.get(&url).send().await {
-            Ok(r) => r,
-            Err(_) => return false,
-        };
-        let body: Value = match resp.json().await {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
+        let body = self.get_json("/v1/catalog").await;
         let Some(primitives) = body.get("primitives").and_then(|v| v.as_array()) else {
             return false;
         };
@@ -175,10 +225,8 @@ impl LiveClient {
         })
     }
 
-    /// Upload raw bytes. The orchestrator's `/v1/media` is a raw-body
-    /// endpoint — the request's `Content-Type` header is what the
-    /// store records, so we set it explicitly rather than wrapping in
-    /// multipart.
+    /// Upload raw bytes to the media store. Returns the assigned
+    /// media id.
     async fn upload_media(&self, bytes: Vec<u8>, content_type: &str) -> String {
         let url = format!("{}/v1/media", self.base);
         let resp = self
@@ -225,50 +273,128 @@ impl LiveClient {
     }
 }
 
-/// Resolve the live client; print the skip prelude and return None
-/// when no garden is configured. Each test calls this as its first
-/// line so the gating behavior is uniform.
-async fn live_or_skip(label: &str) -> Option<LiveClient> {
-    match LiveClient::from_env().await {
-        Some(c) => Some(c),
-        None => {
-            eprintln!("{SKIP_PRELUDE}: {label}");
-            None
-        }
-    }
-}
-
 /// Print a clear "no provider" notice and return — used when the
 /// live garden is up but doesn't have a provider for this particular
 /// primitive (e.g. an Infinity rerank instance is offline). The
 /// orchestrator is healthy; the garden simply doesn't carry that
-/// capability today. AC#1 says every primitive must have a test;
-/// it doesn't say every garden must serve every primitive.
+/// capability today. This is **not** the silent-skip antipattern —
+/// the test ran, hit the live orchestrator, queried its catalog,
+/// and made an explicit precondition decision.
 fn note_no_provider(primitive: &str) {
     eprintln!("[live] {primitive}: no provider in this garden — pass-through");
 }
 
-// ── Per-primitive tests ────────────────────────────────────────
+// ══ Server probes ══════════════════════════════════════════════
 
 #[tokio::test]
+#[ignore]
+async fn live_health_endpoint_responds() {
+    let client = LiveClient::connect().await;
+    let body = client.get_json("/health").await;
+    assert_eq!(body["status"], json!("ok"));
+    let registered = body["providers_registered"]
+        .as_u64()
+        .expect("providers_registered must be a number");
+    assert!(
+        registered > 0,
+        "live garden must have at least one registered provider"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_sitemap_does_not_advertise_recommendations() {
+    let client = LiveClient::connect().await;
+    let body = client.get_json("/v1/").await;
+    assert!(
+        body.get("recommendations").is_none(),
+        "ORCH-0030 R2 M3: /v1/recommendations route was deleted; sitemap must not list it"
+    );
+    // Spot-check the routes that DID survive M3.
+    assert_eq!(body["health"], json!("/health"));
+    assert_eq!(body["catalog"], json!("/v1/catalog"));
+    assert_eq!(body["actions"], json!("/v1/do"));
+    assert_eq!(body["skills"], json!("/v1/skills"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_catalog_lists_providers_and_primitives() {
+    let client = LiveClient::connect().await;
+    let body = client.get_json("/v1/catalog").await;
+    let providers = body["providers"]
+        .as_array()
+        .expect("/v1/catalog must include a providers array");
+    assert!(!providers.is_empty(), "live garden must publish providers");
+    let primitives = body["primitives"]
+        .as_array()
+        .expect("/v1/catalog must include a primitives array");
+    assert!(
+        !primitives.is_empty(),
+        "live garden must publish at least one primitive"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_action_index_lists_primitives() {
+    let client = LiveClient::connect().await;
+    let body = client.get_json("/v1/do").await;
+    let actions = body["actions"]
+        .as_array()
+        .expect("/v1/do must include an actions array");
+    assert!(!actions.is_empty(), "/v1/do must list available actions");
+    let status = body
+        .get("status")
+        .expect("/v1/do must include a status section");
+    assert!(
+        status["providers_enabled"].as_u64().unwrap_or(0) > 0,
+        "status.providers_enabled must be > 0"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_metrics_uses_m3_metric_names() {
+    let client = LiveClient::connect().await;
+    let url = format!("{}/metrics", client.base);
+    let resp = client
+        .http
+        .get(&url)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("GET {url} failed: {e}"));
+    assert!(resp.status().is_success(), "/metrics returned {}", resp.status());
+    let text = resp.text().await.expect("metrics body");
+    assert!(text.contains("zg_orchestrator_directory_version"));
+    assert!(text.contains("zg_orchestrator_providers_total"));
+    assert!(text.contains("zg_orchestrator_capabilities_total"));
+    assert!(text.contains("zg_orchestrator_skills_total"));
+    // The legacy demand-counter metric is gone in M3.
+    assert!(
+        !text.contains("zg_orchestrator_requests_total"),
+        "the M3 metrics rewrite dropped the per-request demand counters"
+    );
+}
+
+// ══ Per-primitive dispatch ═════════════════════════════════════
+
+#[tokio::test]
+#[ignore]
 async fn live_text_chat() {
-    let Some(client) = live_or_skip("text.chat").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("text.chat").await {
         note_no_provider("text.chat");
         return;
     }
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "text.chat",
-            "model": "recommended:quickchat",
-            "text": {
-                "prompt": {"user": "Reply with the single word: garden"},
-                "tokens": {"max": 32},
-                "sampling": {"temperature": 0.0}
-            }
+            "model": "recommended:chat",
+            "prompt": "Reply with the single word: garden",
+            "max_tokens": 256,
+            "temperature": 0.0
         }))
         .await;
 
@@ -282,17 +408,16 @@ async fn live_text_chat() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_text_translate() {
-    let Some(client) = live_or_skip("text.translate").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("text.translate").await {
         note_no_provider("text.translate");
         return;
     }
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "text.translate",
             "text": {
                 "body": "Hello, world",
@@ -316,19 +441,18 @@ async fn live_text_translate() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_text_embed() {
-    let Some(client) = live_or_skip("text.embed").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("text.embed").await {
         note_no_provider("text.embed");
         return;
     }
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "text.embed",
-            "model": "recommended:embed",
+            "model": "recommended:embedding",
             "text": {"input": ["the quick brown fox"]}
         }))
         .await;
@@ -359,17 +483,16 @@ async fn live_text_embed() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_text_rerank() {
-    let Some(client) = live_or_skip("text.rerank").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("text.rerank").await {
         note_no_provider("text.rerank");
         return;
     }
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "text.rerank",
             "text": {
                 "query": "the capital of France",
@@ -389,8 +512,6 @@ async fn live_text_rerank() {
         !segments.is_empty(),
         "rerank must return at least one scored segment"
     );
-    // The top result must be the Paris document — that's the only
-    // assertion testable across reranker implementations.
     let top = &segments[0];
     let top_index = top["index"]
         .as_u64()
@@ -402,17 +523,16 @@ async fn live_text_rerank() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_image_generate() {
-    let Some(client) = live_or_skip("image.generate").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("image.generate").await {
         note_no_provider("image.generate");
         return;
     }
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "image.generate",
             "image": {
                 "prompt": {"positive": "a small red square on a white background"},
@@ -437,10 +557,9 @@ async fn live_image_generate() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_image_edit() {
-    let Some(client) = live_or_skip("image.edit").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("image.edit").await {
         note_no_provider("image.edit");
         return;
@@ -450,7 +569,7 @@ async fn live_image_edit() {
     let media_id = client.upload_media(png, "image/png").await;
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "image.edit",
             "image": {
                 "source": {"media_id": media_id},
@@ -471,10 +590,9 @@ async fn live_image_edit() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_image_upscale() {
-    let Some(client) = live_or_skip("image.upscale").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("image.upscale").await {
         note_no_provider("image.upscale");
         return;
@@ -484,7 +602,7 @@ async fn live_image_upscale() {
     let media_id = client.upload_media(png, "image/png").await;
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "image.upscale",
             "image": {
                 "source": {"media_id": media_id},
@@ -505,10 +623,9 @@ async fn live_image_upscale() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_image_analyze() {
-    let Some(client) = live_or_skip("image.analyze").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("image.analyze").await {
         note_no_provider("image.analyze");
         return;
@@ -518,7 +635,7 @@ async fn live_image_analyze() {
     let media_id = client.upload_media(png, "image/png").await;
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "image.analyze",
             "image": {"source": {"media_id": media_id}},
             "text": {
@@ -538,17 +655,16 @@ async fn live_image_analyze() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_audio_generate() {
-    let Some(client) = live_or_skip("audio.generate").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("audio.generate").await {
         note_no_provider("audio.generate");
         return;
     }
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "audio.generate",
             "model": "recommended:speech",
             "audio": {"text": "the garden is alive"}
@@ -571,10 +687,9 @@ async fn live_audio_generate() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn live_audio_transcribe() {
-    let Some(client) = live_or_skip("audio.transcribe").await else {
-        return;
-    };
+    let client = LiveClient::connect().await;
     if !client.has_provider_for("audio.transcribe").await {
         note_no_provider("audio.transcribe");
         return;
@@ -587,7 +702,7 @@ async fn live_audio_transcribe() {
         return;
     }
     let synth = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "audio.generate",
             "model": "recommended:speech",
             "audio": {"text": "the quick brown fox"}
@@ -598,7 +713,7 @@ async fn live_audio_transcribe() {
         .expect("synthesis must produce media id");
 
     let body = client
-        .post_do(serde_json::json!({
+        .post_do(json!({
             "action": "audio.transcribe",
             "audio": {"source": {"media_id": synth_media}}
         }))
@@ -613,18 +728,457 @@ async fn live_audio_transcribe() {
     );
 }
 
+// ══ Cross-cutting tests ════════════════════════════════════════
+
+/// Idempotency cache hit: same key + same body twice should return
+/// the same response with `_meta.idempotent: true` on the second
+/// call. Replaces the equivalent in-process test in
+/// `services/dispatcher.rs` with a real HTTP round trip.
+#[tokio::test]
+#[ignore]
+async fn live_idempotency_cache_hit() {
+    let client = LiveClient::connect().await;
+    if !client.has_provider_for("text.chat").await {
+        note_no_provider("text.chat");
+        return;
+    }
+
+    let key = format!("m5-live-idem-{}", uuid_like());
+    let payload = json!({
+        "action": "text.chat",
+        "text": {
+            "prompt": {"user": "Reply with: cached"},
+            "sampling": {"temperature": 0.0}
+        }
+    });
+
+    let url = format!("{}/v1/do", client.base);
+    let first = client
+        .http
+        .post(&url)
+        .header("Idempotency-Key", &key)
+        .json(&payload)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("POST {url} (1st) failed: {e}"));
+    assert!(first.status().is_success(), "first call must succeed");
+    let first_body: Value = first.json().await.expect("first body");
+    let first_idem = first_body["_meta"]["idempotent"].as_bool().unwrap_or(false);
+    assert!(!first_idem, "first call must NOT be marked idempotent");
+
+    let second = client
+        .http
+        .post(&url)
+        .header("Idempotency-Key", &key)
+        .json(&payload)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("POST {url} (2nd) failed: {e}"));
+    assert!(
+        second.status().is_success(),
+        "second call (cache hit) must succeed"
+    );
+    let second_body: Value = second.json().await.expect("second body");
+    let second_idem = second_body["_meta"]["idempotent"].as_bool().unwrap_or(false);
+    assert!(
+        second_idem,
+        "second call with same key + body must be marked idempotent: {second_body}"
+    );
+    assert_eq!(
+        first_body["output"], second_body["output"],
+        "cached output must match the original"
+    );
+}
+
+/// Idempotency fingerprint conflict: same key + DIFFERENT body must
+/// return HTTP 422 `idempotency_conflict` with both fingerprints in
+/// the error details. Replaces the in-process equivalent.
+#[tokio::test]
+#[ignore]
+async fn live_idempotency_fingerprint_conflict() {
+    let client = LiveClient::connect().await;
+    if !client.has_provider_for("text.chat").await {
+        note_no_provider("text.chat");
+        return;
+    }
+
+    let key = format!("m5-live-conflict-{}", uuid_like());
+    let url = format!("{}/v1/do", client.base);
+
+    // Warm the cache.
+    let _ = client
+        .http
+        .post(&url)
+        .header("Idempotency-Key", &key)
+        .json(&json!({
+            "action": "text.chat",
+            "text": {"prompt": {"user": "first body"}, "sampling": {"temperature": 0.0}}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Same key, DIFFERENT body — must conflict.
+    let conflict = client
+        .http
+        .post(&url)
+        .header("Idempotency-Key", &key)
+        .json(&json!({
+            "action": "text.chat",
+            "text": {"prompt": {"user": "second body"}, "sampling": {"temperature": 0.0}}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        conflict.status().as_u16(),
+        422,
+        "idempotency conflict must surface as HTTP 422"
+    );
+    let body: Value = conflict.json().await.expect("conflict body");
+    assert_eq!(body["error"]["code"], json!("idempotency_conflict"));
+    assert!(
+        body["error"]["details"]["stored_fingerprint"].is_string(),
+        "conflict response must include stored_fingerprint in details"
+    );
+    assert!(
+        body["error"]["details"]["request_fingerprint"].is_string(),
+        "conflict response must include request_fingerprint in details"
+    );
+}
+
+/// Job lifecycle: dispatch a sync request, then list jobs and look
+/// up the specific job by id, plus its result.
+#[tokio::test]
+#[ignore]
+async fn live_job_lifecycle_for_sync_dispatch() {
+    let client = LiveClient::connect().await;
+    if !client.has_provider_for("text.chat").await {
+        note_no_provider("text.chat");
+        return;
+    }
+
+    // Dispatch.
+    let dispatch = client
+        .post_do(json!({
+            "action": "text.chat",
+            "text": {
+                "prompt": {"user": "Reply with: live-jobs-test"},
+                "sampling": {"temperature": 0.0}
+            }
+        }))
+        .await;
+    let request_id = dispatch["_meta"]["request_id"]
+        .as_str()
+        .expect("response must include request_id");
+    assert!(!request_id.is_empty());
+
+    // List jobs and find at least one in `Done` state for text.chat.
+    let jobs_body = client.get_json("/v1/jobs").await;
+    let jobs = jobs_body["jobs"]
+        .as_array()
+        .expect("/v1/jobs must include a jobs array");
+    assert!(!jobs.is_empty(), "live garden must have at least one job after dispatch");
+    let some_done = jobs
+        .iter()
+        .find(|j| j["state"] == "done" && j["action"] == "text.chat")
+        .expect("at least one text.chat job must be in `done` state");
+    let job_id = some_done["id"].as_str().expect("job id");
+
+    // Look it up by id.
+    let job = client.get_json(&format!("/v1/jobs/{job_id}")).await;
+    assert_eq!(job["state"], json!("done"));
+    assert_eq!(job["action"], json!("text.chat"));
+
+    // Fetch the result.
+    let result = client.get_json(&format!("/v1/jobs/{job_id}/result")).await;
+    assert!(
+        result["output"].is_object(),
+        "job result must include an output object"
+    );
+}
+
+/// Media upload + download round-trip via the public HTTP surface.
+#[tokio::test]
+#[ignore]
+async fn live_media_upload_and_download_roundtrip() {
+    let client = LiveClient::connect().await;
+    let png = minimal_red_png();
+    let original_len = png.len();
+    let media_id = client.upload_media(png, "image/png").await;
+    assert!(!media_id.is_empty());
+
+    let (bytes, content_type) = client.download_media(&media_id).await;
+    assert_eq!(content_type, "image/png");
+    assert_eq!(
+        bytes.len(),
+        original_len,
+        "round-tripped bytes must match the upload exactly"
+    );
+}
+
+/// Parallel dispatch: fire 5 concurrent text.chat requests at the
+/// orchestrator and require all of them to complete successfully.
+/// Replaces the deleted `tests/parallel_smoke.rs`.
+#[tokio::test]
+#[ignore]
+async fn live_parallel_chat_dispatch() {
+    let client = LiveClient::connect().await;
+    if !client.has_provider_for("text.chat").await {
+        note_no_provider("text.chat");
+        return;
+    }
+
+    use futures_util::future::join_all;
+    let url = format!("{}/v1/do", client.base);
+    let http = client.http.clone();
+    let futs = (0..5).map(|i| {
+        let http = http.clone();
+        let url = url.clone();
+        async move {
+            let resp = http
+                .post(&url)
+                .json(&json!({
+                    "action": "text.chat",
+                    "text": {
+                        "prompt": {"user": format!("Say the word: parallel-{i}")},
+                        "tokens": {"max": 32},
+                        "sampling": {"temperature": 0.0}
+                    }
+                }))
+                .send()
+                .await
+                .unwrap_or_else(|e| panic!("parallel POST {url} failed: {e}"));
+            assert!(
+                resp.status().is_success(),
+                "parallel request {i} returned {}",
+                resp.status()
+            );
+            let body: Value = resp.json().await.expect("parallel body");
+            assert!(
+                body["output"]["text"]["response"].is_string(),
+                "parallel request {i} must return text.response"
+            );
+        }
+    });
+    join_all(futs).await;
+}
+
+// ══ Skill noun surface ═════════════════════════════════════════
+
+/// `GET /v1/skills` reads from `CapabilityDirectory.all_skills()`.
+/// Replaces the deleted `tests/skills_nouns.rs`.
+#[tokio::test]
+#[ignore]
+async fn live_skills_list_returns_published_skills() {
+    let client = LiveClient::connect().await;
+    let body = client.get_json("/v1/skills").await;
+    let count = body["count"].as_u64().expect("count must be a number");
+    let skills = body["skills"].as_array().expect("skills must be an array");
+    assert_eq!(skills.len() as u64, count);
+    // The dev garden has ComfyUI, which loads on-disk skills. We
+    // require AT LEAST one skill — the exact count depends on the
+    // workspace's `.zen-garden/ai-orchestrator/skills/` contents.
+    assert!(
+        count > 0,
+        "live garden must publish at least one skill via ComfyUI"
+    );
+    // Each skill entry has the M3 shape: provider + id + primitive
+    // + display + parameters.
+    for skill in skills {
+        assert!(skill["provider"].is_string(), "skill must include provider");
+        assert!(skill["id"].is_string(), "skill must include id");
+        assert!(skill["primitive"].is_string(), "skill must include primitive");
+        assert!(skill["display"].is_object(), "skill must include display object");
+        assert!(skill["parameters"].is_array(), "skill must include parameters array");
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_skills_filter_by_provider() {
+    let client = LiveClient::connect().await;
+    let all = client.get_json("/v1/skills").await;
+    let total = all["count"].as_u64().unwrap_or(0);
+    let filtered = client.get_json("/v1/skills?provider=comfyui").await;
+    let filtered_count = filtered["count"].as_u64().unwrap_or(0);
+    assert!(filtered_count <= total, "filtered count must not exceed total");
+    for s in filtered["skills"].as_array().expect("skills array") {
+        assert_eq!(
+            s["provider"], json!("comfyui"),
+            "every skill in the filtered set must belong to comfyui"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_skills_filter_by_primitive() {
+    let client = LiveClient::connect().await;
+    let body = client
+        .get_json("/v1/skills?primitive=image.generate")
+        .await;
+    let skills = body["skills"].as_array().expect("skills array");
+    for s in skills {
+        assert_eq!(
+            s["primitive"], json!("image.generate"),
+            "every skill in the filtered set must declare image.generate"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_skills_filter_by_unknown_primitive_returns_400() {
+    let client = LiveClient::connect().await;
+    let url = format!("{}/v1/skills?primitive=text.nosuch", client.base);
+    let resp = client.http.get(&url).send().await.unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "filter by unknown primitive must return 400"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_skills_get_by_id_returns_full_metadata() {
+    let client = LiveClient::connect().await;
+    let all = client.get_json("/v1/skills").await;
+    let skills = all["skills"].as_array().expect("skills array");
+    let Some(first) = skills.first() else {
+        eprintln!("[live] no skills published — skipping skill detail test");
+        return;
+    };
+    let id = first["id"].as_str().expect("first skill id");
+    let detail = client.get_json(&format!("/v1/skills/{id}")).await;
+    // The detail endpoint may return either a single object or
+    // {id, matches: [...]}; both are valid per the M3 contract.
+    if detail.get("matches").is_some() {
+        let matches = detail["matches"].as_array().expect("matches array");
+        assert!(!matches.is_empty());
+        assert_eq!(matches[0]["id"], json!(id));
+    } else {
+        assert_eq!(detail["id"], json!(id));
+        assert!(detail["display"].is_object());
+        assert!(detail["parameters"].is_array());
+    }
+}
+
+// ══ Capability introspection ═══════════════════════════════════
+
+/// `GET /v1/text/chat` returns the `kind: primitive` introspection
+/// shape with routing populated from the live `CapabilityDirectory`.
+#[tokio::test]
+#[ignore]
+async fn live_introspect_text_chat() {
+    let client = LiveClient::connect().await;
+    let body = client.get_json("/v1/text/chat").await;
+    assert_eq!(body["kind"], json!("primitive"));
+    assert_eq!(body["primitive"], json!("text.chat"));
+    let providers = body["routing"]["providers"]
+        .as_array()
+        .expect("routing.providers must be an array");
+    assert!(!providers.is_empty(), "text.chat must have at least one provider");
+}
+
+/// `GET /v1/image/analyze` is the multi-provider primitive in the
+/// dev garden — both ComfyUI (with the OCR skill) and Ollama serve
+/// it. The introspection endpoint must show a fallback chain.
+#[tokio::test]
+#[ignore]
+async fn live_introspect_image_analyze_shows_multi_provider_routing() {
+    let client = LiveClient::connect().await;
+    let body = client.get_json("/v1/image/analyze").await;
+    let providers = body["routing"]["providers"]
+        .as_array()
+        .expect("routing.providers must be an array");
+    // The dev garden has both ComfyUI and Ollama serving image.analyze.
+    // We assert >= 1 (so the test still passes if one provider is
+    // temporarily down) and check for the fallback_providers field
+    // when there are 2+.
+    assert!(!providers.is_empty());
+    if providers.len() >= 2 {
+        let fallback = body["routing"]["fallback_providers"]
+            .as_array()
+            .expect("multi-provider routing must include fallback_providers");
+        assert_eq!(
+            fallback.len(),
+            providers.len() - 1,
+            "fallback_providers count must be (providers - 1)"
+        );
+    }
+}
+
+// ══ Negative paths ═════════════════════════════════════════════
+
+#[tokio::test]
+#[ignore]
+async fn live_recommendations_route_is_404() {
+    let client = LiveClient::connect().await;
+    let status = client.get_status("/v1/recommendations").await;
+    assert_eq!(
+        status, 404,
+        "/v1/recommendations was deleted in M3 and must return 404"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_unknown_skill_under_known_primitive_is_404() {
+    let client = LiveClient::connect().await;
+    let url = format!("{}/v1/text/chat/nonexistent-skill", client.base);
+    let resp = client
+        .http
+        .post(&url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "unknown skill under a known primitive must return 404"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_unknown_skill_id_lookup_returns_404() {
+    let client = LiveClient::connect().await;
+    let status = client
+        .get_status("/v1/skills/this-skill-does-not-exist-anywhere")
+        .await;
+    assert_eq!(status, 404);
+}
+
 // ── Fixtures ───────────────────────────────────────────────────
 
 /// Minimal solid-red 8x8 PNG. Smallest viable image input the live
-/// providers will accept; chosen so the same fixture works for edit /
-/// upscale / analyze without pulling in an image generation library.
+/// providers will accept; chosen so the same fixture works for edit
+/// / upscale / analyze without pulling in an image generation
+/// library.
 fn minimal_red_png() -> Vec<u8> {
-    // Hand-rolled PNG so the test has zero external dependencies for
-    // fixture generation.
     let img = image::ImageBuffer::from_fn(8u32, 8u32, |_, _| image::Rgb([255u8, 0, 0]));
     let mut buf: Vec<u8> = Vec::new();
     image::DynamicImage::ImageRgb8(img)
         .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
         .expect("encode PNG");
     buf
+}
+
+/// Tiny pseudo-uuid suffix for idempotency keys so successive runs
+/// of the live suite don't collide on stale cache entries. Not a
+/// real UUID — just enough entropy from the system clock + a counter
+/// to be distinct within a single test invocation.
+fn uuid_like() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{now:x}-{n:x}")
 }

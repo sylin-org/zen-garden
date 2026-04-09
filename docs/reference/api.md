@@ -178,7 +178,7 @@ All endpoints respect the `X-Quiet: true` header, which suppresses suggestion ge
 - `GET /api/v1/garden/services` - Find services across garden
 - `GET /api/v1/garden/updates` - Garden-wide updates
 - `POST /api/v1/garden/updates/execute` - Execute garden updates
-- `GET /api/v1/garden/observe` - Aggregate topology
+- `GET /api/v1/garden/topology` - Aggregate topology
 - `GET /api/v1/garden/tools` - List garden-wide tools
 - `GET /api/v1/garden/tools/stream` - Tool changes (SSE)
 

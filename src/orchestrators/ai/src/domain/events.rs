@@ -74,6 +74,19 @@ pub struct EventBus {
     history: RwLock<VecDeque<Event>>,
     history_capacity: usize,
     tx: broadcast::Sender<Event>,
+    /// Latest-event-per-topic snapshot for **stateful** topics (the
+    /// ones publishers explicitly opt in to via
+    /// [`Self::publish_with_snapshot`]). New internal consumers
+    /// (like the `DirectorySubscriber`) replay this snapshot at
+    /// startup to recover the current state of the world without
+    /// trawling the entire history ring.
+    ///
+    /// Bounded by the number of distinct *stateful* topics — the
+    /// AI orchestrator publishes ~5 stateful topic patterns × ~10
+    /// providers, so the map stays in the low hundreds at most.
+    /// Transient per-request topics (`dispatch.{id}.*`) NEVER land
+    /// here because they go through plain [`Self::publish`].
+    snapshot: RwLock<std::collections::HashMap<String, Event>>,
 }
 
 impl EventBus {
@@ -88,6 +101,7 @@ impl EventBus {
             history: RwLock::new(VecDeque::with_capacity(history_cap)),
             history_capacity: history_cap,
             tx,
+            snapshot: RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -105,6 +119,43 @@ impl EventBus {
             }
         };
         self.publish_raw(topic, payload).await;
+    }
+
+    /// Publish a **stateful** typed payload. Same as [`Self::publish`]
+    /// but ALSO records the event in the per-topic snapshot map. The
+    /// snapshot's entry for `topic` is overwritten on every call —
+    /// only the LATEST stateful event per topic is kept.
+    ///
+    /// Use this for events whose latest value represents a piece of
+    /// canonical state that late subscribers must be able to recover:
+    /// capability announcements, catalog version markers, resource
+    /// roll-up snapshots, etc. Use plain [`Self::publish`] for
+    /// transient events (per-request lifecycle, dispatch traces).
+    ///
+    /// The snapshot map is unbounded by design — the contract is
+    /// that publishers only call this for topics whose cardinality
+    /// is known to be small (provider count × topic patterns, not
+    /// per-request unique ids).
+    pub async fn publish_with_snapshot<T: Serialize>(
+        &self,
+        topic: impl Into<String>,
+        payload: &T,
+    ) {
+        let payload = match serde_json::to_value(payload) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "event bus: failed to serialize stateful payload; dropping event"
+                );
+                return;
+            }
+        };
+        let topic_string = topic.into();
+        // publish_raw_with_snapshot does both the broadcast AND
+        // the snapshot map update inside one critical section so
+        // late subscribers see consistent state.
+        self.publish_raw_with_snapshot(topic_string, payload).await;
     }
 
     /// Publish a pre-serialized payload. Prefer [`publish`] when the
@@ -128,6 +179,42 @@ impl EventBus {
         let _ = self.tx.send(event);
     }
 
+    /// Publish a pre-serialized payload AND update the per-topic
+    /// snapshot map. Internal helper for [`Self::publish_with_snapshot`].
+    /// Holds the snapshot write lock for the duration of the
+    /// broadcast send so a concurrent
+    /// [`Self::raw_subscribe_with_snapshot`] cannot interleave and
+    /// observe a partial state.
+    pub async fn publish_raw_with_snapshot(
+        &self,
+        topic: String,
+        payload: serde_json::Value,
+    ) {
+        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let event = Event::new(seq, topic.clone(), payload);
+
+        // Push to history (same as plain publish_raw).
+        {
+            let mut history = self.history.write().await;
+            if history.len() == self.history_capacity {
+                history.pop_front();
+            }
+            history.push_back(event.clone());
+        }
+
+        // Update the snapshot map. The lock is held briefly — only
+        // for the map insert and the broadcast send below.
+        {
+            let mut snapshot = self.snapshot.write().await;
+            snapshot.insert(topic, event.clone());
+            // Broadcast WHILE holding the snapshot lock so a
+            // raw_subscribe_with_snapshot caller cannot grab the
+            // snapshot, miss this event, then subscribe (which would
+            // also miss it because the broadcast already happened).
+            let _ = self.tx.send(event);
+        }
+    }
+
     /// Current (highest assigned) sequence number. The next event will
     /// carry `current_seq() + 1`.
     pub fn current_seq(&self) -> u64 {
@@ -140,6 +227,49 @@ impl EventBus {
     /// filtering. External clients should use [`subscribe`] instead.
     pub fn raw_subscribe(&self) -> broadcast::Receiver<Event> {
         self.tx.subscribe()
+    }
+
+    /// Raw broadcast subscription with a snapshot of every
+    /// **stateful** topic's latest event (one entry per topic, not
+    /// the full history).
+    ///
+    /// Returns `(stateful_snapshot, live_receiver)` atomically — the
+    /// snapshot map is captured **while** holding its read lock, and
+    /// the broadcast receiver is created in the same critical
+    /// section. Publishers using [`Self::publish_with_snapshot`]
+    /// cannot interleave between the snapshot capture and the
+    /// receiver creation, so:
+    ///
+    /// - Events whose latest is in the snapshot are reflected there.
+    /// - Events published AFTER this call go to `live_receiver`.
+    /// - The two sets do not overlap and together cover every
+    ///   stateful event the consumer needs to rebuild canonical
+    ///   state.
+    ///
+    /// Transient events published via [`Self::publish`] do NOT
+    /// appear in the snapshot — only the live tail. Consumers that
+    /// need stateful recovery should publish via
+    /// [`Self::publish_with_snapshot`] and consume via this method.
+    ///
+    /// Use this for internal consumers that need to recover state
+    /// after a late start (the `DirectorySubscriber` rebuild after
+    /// adapter publish, the catalog builder's startup snapshot,
+    /// etc.). External clients should still use [`Self::subscribe`]
+    /// with a focus filter.
+    pub async fn raw_subscribe_with_snapshot(
+        &self,
+    ) -> (Vec<Event>, broadcast::Receiver<Event>) {
+        let snapshot = self.snapshot.read().await;
+        // Subscribe to the broadcast WHILE holding the snapshot
+        // read lock. A concurrent publish_raw_with_snapshot would
+        // need the WRITE lock to update the map, so it blocks
+        // until we release. By the time it runs, our receiver is
+        // already in the broadcast channel and will get the live
+        // event — no race window.
+        let live_rx = self.tx.subscribe();
+        let stateful: Vec<Event> = snapshot.values().cloned().collect();
+        drop(snapshot);
+        (stateful, live_rx)
     }
 
     /// Subscribe with a focus matcher and an optional resume point.

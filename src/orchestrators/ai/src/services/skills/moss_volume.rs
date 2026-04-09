@@ -1,9 +1,10 @@
 //! Moss volume API client — the bridge between the orchestrator's
-//! local dependency cache and a remote ComfyUI instance (ORCH-0029).
+//! local dependency cache and a remote ComfyUI instance (ORCH-0029,
+//! extended in ORCH-0030 R2 M5).
 //!
 //! Moss exposes each offering's mounted volume as an HTTP
-//! filesystem. This module wraps the three verbs the provisioner
-//! needs:
+//! filesystem. This module wraps the verbs the provisioner and the
+//! ComfyUI adapter need:
 //!
 //! - `HEAD {moss}/api/v1/stone/offerings/{fqn}/volumes/{volume}/{path}`
 //!   — existence check, 5-second timeout, boolean result.
@@ -13,16 +14,24 @@
 //!   TCP keepalive detects dead connections instead).
 //! - `PUT`-a-small-buffer variant for skill JSON files (Tier 3
 //!   persistence).
+//! - `GET  {moss}/api/v1/stone/offerings/{fqn}/volumes/{volume}` —
+//!   recursive volume listing. Used by ComfyUI's inventory-first
+//!   capability publication: probe each instance's installed
+//!   resources once, cache the file set, and use that single source
+//!   of truth for both skill announcement and dispatch routing
+//!   (mirroring Ollama's `/api/tags` pattern).
 //!
 //! All endpoints are scoped to a single offering FQN and volume
 //! name. For ComfyUI that's `fqn = "comfyui"` and `volume =
 //! "comfyui-models"`.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use reqwest::Client;
+use serde::Deserialize;
 
 use garden_common::constants::MOSS_HTTP;
 
@@ -35,12 +44,26 @@ pub const COMFYUI_MODELS_VOLUME: &str = "comfyui-models";
 /// and a slow stone shouldn't block the whole pass.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Timeout for the recursive volume listing. ComfyUI volumes can
+/// hold dozens of GB across hundreds of files, but the LIST
+/// endpoint just walks `read_dir` and returns names + sizes — even
+/// a large volume completes in well under a second on local disk.
+/// 30 seconds is generous enough to absorb a slow network hop.
+const LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Build the full volume URL for a given path. Path segments are
 /// NOT url-encoded — the caller is responsible for producing a
 /// safe `{model_type}/{filename}` string.
 fn volume_url(moss_endpoint: &str, fqn: &str, volume: &str, path: &str) -> String {
     let base = moss_endpoint.trim_end_matches('/');
     format!("{base}/api/v1/stone/offerings/{fqn}/volumes/{volume}/{path}")
+}
+
+/// Build the volume-root URL (no `*path` segment). This hits the
+/// LIST endpoint added in ORCH-0030 R2 M5.
+fn volume_root_url(moss_endpoint: &str, fqn: &str, volume: &str) -> String {
+    let base = moss_endpoint.trim_end_matches('/');
+    format!("{base}/api/v1/stone/offerings/{fqn}/volumes/{volume}")
 }
 
 /// Derive the Moss HTTP endpoint from a service endpoint like
@@ -77,6 +100,78 @@ pub async fn file_exists(
         Ok(resp) => resp.status().is_success(),
         Err(_) => false,
     }
+}
+
+/// One file in a volume listing — the response shape Moss's
+/// `list_volume_files` handler emits per entry.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VolumeFile {
+    /// Path relative to the volume root, joined with `/`. Matches
+    /// the format `PUT/HEAD/GET *path` accepts.
+    pub path: String,
+    /// File size in bytes.
+    pub size: u64,
+}
+
+/// Wire-shape of `GET /api/v1/stone/offerings/{fqn}/volumes/{volume}`.
+#[derive(Debug, Clone, Deserialize)]
+struct VolumeListing {
+    files: Vec<VolumeFile>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    count: usize,
+    #[serde(default)]
+    #[allow(dead_code)]
+    total_bytes: u64,
+}
+
+/// Recursively list every file in the offering's volume.
+///
+/// Returns the full set of files present on the remote instance —
+/// the orchestrator uses this to inventory installed resources
+/// (e.g. ComfyUI checkpoint files) so it can gate skill publication
+/// and dispatch on actual resource presence rather than the
+/// hopeful "we declared it on disk so it must work" pattern.
+///
+/// Returns `None` on any network error or non-success response.
+/// Callers should treat that as "the inventory is unknown right
+/// now" and either skip publication for skills depending on this
+/// instance, or fall back to a per-file HEAD probe.
+///
+/// The empty-volume case (200 with `count: 0`) returns
+/// `Some(Vec::new())`, which is distinct from a network failure.
+pub async fn list_volume_files(
+    http: &Client,
+    moss_endpoint: &str,
+    fqn: &str,
+    volume: &str,
+) -> Option<Vec<VolumeFile>> {
+    let url = volume_root_url(moss_endpoint, fqn, volume);
+    let resp = http.get(&url).timeout(LIST_TIMEOUT).send().await.ok()?;
+    if !resp.status().is_success() {
+        tracing::warn!(
+            url = %url,
+            status = %resp.status(),
+            "moss_volume: list_volume_files non-success"
+        );
+        return None;
+    }
+    let listing: VolumeListing = resp.json().await.ok()?;
+    Some(listing.files)
+}
+
+/// Convenience: collapse a [`list_volume_files`] result into a
+/// hash set of relative paths for fast `O(1)` membership tests.
+/// Returns `None` for the same reasons as the source call (so the
+/// caller can distinguish "inventory unknown" from "inventory empty").
+pub async fn list_volume_paths(
+    http: &Client,
+    moss_endpoint: &str,
+    fqn: &str,
+    volume: &str,
+) -> Option<HashSet<String>> {
+    let files = list_volume_files(http, moss_endpoint, fqn, volume).await?;
+    Some(files.into_iter().map(|f| f.path).collect())
 }
 
 /// Stream a local file to the remote volume via PUT.
@@ -176,6 +271,18 @@ mod tests {
         assert_eq!(
             volume_url("http://stone:7185/", "comfyui", "comfyui-models", "foo"),
             "http://stone:7185/api/v1/stone/offerings/comfyui/volumes/comfyui-models/foo"
+        );
+    }
+
+    #[test]
+    fn volume_root_url_composes_without_trailing_slash() {
+        assert_eq!(
+            volume_root_url("http://stone:7185", "comfyui", "comfyui-models"),
+            "http://stone:7185/api/v1/stone/offerings/comfyui/volumes/comfyui-models"
+        );
+        assert_eq!(
+            volume_root_url("http://stone:7185/", "comfyui", "comfyui-models"),
+            "http://stone:7185/api/v1/stone/offerings/comfyui/volumes/comfyui-models"
         );
     }
 

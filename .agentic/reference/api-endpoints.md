@@ -155,7 +155,7 @@ All conditional headers honored: `If-Match`, `If-None-Match`, `If-Modified-Since
 | GET | `/api/v1/garden/services?q={query}` | Find services across garden |
 | GET | `/api/v1/garden/updates` | Aggregate updates |
 | POST | `/api/v1/garden/updates/execute` | Dispatch to affected stones |
-| GET | `/api/v1/garden/observe` | Aggregate topology |
+| GET | `/api/v1/garden/topology` | Aggregate topology |
 
 ### Garden Storage (STORAGE-0009)
 

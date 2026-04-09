@@ -443,9 +443,14 @@ async fn stream_loop(
 
             _ = topology_interval.tick() => {
                 // Poll topology in background
-                if let Ok(entries) = fetch_topology(api).await {
-                    state.topology = entries;
-                    dirty = true;
+                match fetch_topology(api).await {
+                    Ok(entries) => {
+                        state.topology = entries;
+                        dirty = true;
+                    }
+                    Err(e) => {
+                        tracing::debug!(error = %e, "Topology poll failed");
+                    }
                 }
             }
 

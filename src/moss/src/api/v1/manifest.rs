@@ -241,12 +241,12 @@ fn build_manifest(base_url: &str) -> ApiManifest {
 
     // Events & Jobs
     endpoints.push(
-        EndpointSpec::new("GET", "/api/v1/events", "events")
-            .description("Stream Moss events (SSE - installs, upgrades, state changes)")
+        EndpointSpec::new("GET", "/api/v1/stone/presence/stream", "events")
+            .description("Stream stone presence events (SSE - installs, upgrades, state changes)")
             .response_type("text/event-stream")
             .example(
                 "Watch events",
-                "curl -N http://stone-01:7185/api/v1/events",
+                "curl -N http://stone-01:7185/api/v1/stone/presence/stream",
                 "event: offering_install\ndata: {\"offering\": \"mongodb\", \"status\": \"started\"}\n\n"
             )
     );
@@ -334,7 +334,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             garden_common::api_manifest::ApiCategory {
                 name: "events".into(),
                 description: "Event streams and job tracking".into(),
-                endpoints: vec!["/api/v1/events".into(), "/api/v1/jobs/:job_id".into()],
+                endpoints: vec!["/api/v1/stone/presence/stream".into(), "/api/v1/jobs/:job_id".into()],
             },
             garden_common::api_manifest::ApiCategory {
                 name: "admin".into(),

@@ -89,7 +89,17 @@ impl StoneBag {
             .get_or_init(|| async {
                 let api = StoneApi::new(self.client.clone(), self.endpoint.clone());
                 tracing::debug!(endpoint = %self.endpoint, "StoneBag: fetching capabilities");
-                api.stone().capabilities_core().await.ok()
+                match api.stone().capabilities_core().await {
+                    Ok(caps) => Some(caps),
+                    Err(e) => {
+                        tracing::debug!(
+                            endpoint = %self.endpoint,
+                            error = %e,
+                            "StoneBag: capabilities fetch failed"
+                        );
+                        None
+                    }
+                }
             })
             .await
             .as_ref()

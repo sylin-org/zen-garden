@@ -415,6 +415,14 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/offerings/{fqn}/volumes/{volume}/{*path}",
             head(api::v1::offering_volumes::head_volume_file),
         )
+        // Offering volume LISTING — recursive walk, no path segment.
+        // Used by the AI orchestrator to inventory installed
+        // resources (e.g. ComfyUI checkpoints) before publishing
+        // skill capabilities.
+        .route(
+            "/api/v1/stone/offerings/{fqn}/volumes/{volume}",
+            get(api::v1::offering_volumes::list_volume_files),
+        )
         // Greenhouse — manifest authoring + file CRUD
         .route(
             "/api/v1/stone/greenhouse/containers",

@@ -37,7 +37,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement,
+    Capability as AnnCapability, CapabilityAnnouncement, ParameterType, ParameterWidget,
+    SkillParameter,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -247,7 +248,11 @@ fn build_capability_announcement(
         capabilities: vec![AnnCapability {
             primitive: Primitive::TextTranslate,
             media_inputs: Vec::new(),
-            parameters: vec![],
+            parameters: vec![
+                SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to translate...".into()), ..Default::default() },
+                SkillParameter { field: "text.translate.source_language".into(), required: false, label: Some("Source Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), placeholder: Some("Auto-detect".into()), ..Default::default() },
+                SkillParameter { field: "text.translate.target_language".into(), required: true, label: Some("Target Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), ..Default::default() },
+            ],
         }],
         skills: Vec::new(),
     }

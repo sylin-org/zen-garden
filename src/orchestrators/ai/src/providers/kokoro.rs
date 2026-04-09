@@ -41,7 +41,9 @@ use reqwest::Client;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::capability_announcement::{Capability, CapabilityAnnouncement};
+use crate::domain::capability_announcement::{
+    Capability, CapabilityAnnouncement, ParameterType, ParameterWidget, SkillParameter,
+};
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
 use crate::domain::keys;
@@ -318,7 +320,11 @@ fn build_capability_announcement(
         capabilities: vec![Capability {
             primitive: Primitive::AudioGenerate,
             media_inputs: Vec::new(), // TTS produces media; consumes none
-            parameters: vec![],
+            parameters: vec![
+                SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to speak...".into()), ..Default::default() },
+                SkillParameter { field: "audio.voice".into(), required: false, label: Some("Voice".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), ..Default::default() },
+                SkillParameter { field: "audio.speed".into(), required: false, label: Some("Speed".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(1.0)), min: Some(0.5), max: Some(2.0), step: Some(0.1), ..Default::default() },
+            ],
         }],
         skills: Vec::new(),
     }

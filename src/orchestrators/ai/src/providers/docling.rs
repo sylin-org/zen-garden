@@ -22,8 +22,8 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, SkillDeclaration,
-    SkillDisplay, SkillParameter,
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, ParameterType,
+    ParameterWidget, SkillDeclaration, SkillDisplay, SkillParameter,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -229,7 +229,9 @@ fn build_capability_announcement(
                 ],
                 overlay: None,
             }],
-            parameters: vec![],
+            parameters: vec![
+                SkillParameter { field: "image.source".into(), required: true, label: Some("Document".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::File), ..Default::default() },
+            ],
         }],
         skills: vec![SkillDeclaration {
             id: "ocr".to_string(),

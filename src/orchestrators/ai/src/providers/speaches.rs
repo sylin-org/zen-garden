@@ -38,7 +38,8 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    Capability, CapabilityAnnouncement, CapabilityMediaInput,
+    Capability, CapabilityAnnouncement, CapabilityMediaInput, ParameterType, ParameterWidget,
+    SkillParameter,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -314,7 +315,10 @@ fn build_capability_announcement(
                 ],
                 overlay: None,
             }],
-            parameters: vec![],
+            parameters: vec![
+                SkillParameter { field: "audio.source".into(), required: true, label: Some("Audio File".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::File), ..Default::default() },
+                SkillParameter { field: "audio.language".into(), required: false, label: Some("Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), placeholder: Some("Auto-detect".into()), ..Default::default() },
+            ],
         }],
         skills: Vec::new(),
     }

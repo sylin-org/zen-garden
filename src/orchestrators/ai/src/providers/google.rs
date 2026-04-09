@@ -46,7 +46,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput,
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, ParameterType,
+    ParameterWidget, SkillParameter,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -180,12 +181,19 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
             AnnCapability {
                 primitive: Primitive::TextChat,
                 media_inputs: Vec::new(),
-                parameters: vec![],
+                parameters: vec![
+                    SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Message".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Ask anything...".into()), ..Default::default() },
+                    SkillParameter { field: "text.prompt.system".into(), required: false, label: Some("System Prompt".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("You are a helpful assistant...".into()), ..Default::default() },
+                    SkillParameter { field: "text.sampling.temperature".into(), required: false, label: Some("Temperature".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(0.7)), min: Some(0.0), max: Some(2.0), step: Some(0.1), ..Default::default() },
+                    SkillParameter { field: "text.tokens.max".into(), required: false, label: Some("Max Tokens".into()), field_type: Some(ParameterType::Integer), widget: Some(ParameterWidget::Number), default: Some(serde_json::json!(2048)), min: Some(1.0), max: Some(131072.0), ..Default::default() },
+                ],
             },
             AnnCapability {
                 primitive: Primitive::TextEmbed,
                 media_inputs: Vec::new(),
-                parameters: vec![],
+                parameters: vec![
+                    SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to embed...".into()), ..Default::default() },
+                ],
             },
             AnnCapability {
                 primitive: Primitive::ImageAnalyze,
@@ -193,7 +201,9 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
                     keys::image::SOURCE.as_str().to_string(),
                     ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
                 )],
-                parameters: vec![],
+                parameters: vec![
+                    SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Question".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Describe this image...".into()), ..Default::default() },
+                ],
             },
         ],
         skills: Vec::new(),

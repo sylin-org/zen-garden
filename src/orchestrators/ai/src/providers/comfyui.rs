@@ -1316,10 +1316,56 @@ fn compute_skill_declarations(
 /// `None` for skills — auto-resolution is a primitive-level
 /// concern, not a skill-level one.
 fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
+    use crate::domain::capability_announcement::{
+        AutoDescriptor, ParameterType, ParameterWidget,
+    };
+    use crate::services::skills::types::FieldConstraint;
+
     let mut parameters: Vec<SkillParameter> = Vec::with_capacity(loaded.bindings.len() + 2);
 
     for binding in &loaded.bindings {
         let is_media = is_media_binding(binding);
+
+        // Derive widget and constraints from the binding's narrow field.
+        let (widget, min, max, step, options) = match &binding.narrow {
+            Some(FieldConstraint::Range { min, max, step }) => (
+                Some(ParameterWidget::Slider),
+                Some(*min),
+                Some(*max),
+                *step,
+                None,
+            ),
+            Some(FieldConstraint::Options { options: opts }) => (
+                Some(ParameterWidget::Select),
+                None,
+                None,
+                None,
+                Some(opts.iter().map(|o| o.value.clone()).collect()),
+            ),
+            Some(FieldConstraint::Auto { .. }) => (
+                Some(ParameterWidget::Hidden),
+                None,
+                None,
+                None,
+                None,
+            ),
+            None if is_media => (Some(ParameterWidget::File), None, None, None, None),
+            None => (None, None, None, None, None),
+        };
+
+        // Derive field_type from self_described_type or fall back to
+        // string for text fields, number for numeric constraints.
+        let field_type = if binding.self_described_type.is_some() {
+            // x_* fields with a self-described type — use that.
+            Some(ParameterType::String)
+        } else if min.is_some() || max.is_some() {
+            // Has numeric constraints → Number
+            Some(ParameterType::Number)
+        } else {
+            // Default to String for text fields
+            None
+        };
+
         parameters.push(SkillParameter {
             field: binding.field.as_str().to_string(),
             required: binding.required || is_media,
@@ -1327,32 +1373,47 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
             default: binding.default.clone(),
             auto: None,
             pinnable: !is_media,
-            label: None,
-            field_type: None,
-            widget: None,
-            min: None,
-            max: None,
-            step: None,
-            options: None,
+            label: binding.label.clone(),
+            field_type,
+            widget,
+            min,
+            max,
+            step,
+            options,
             placeholder: None,
         });
     }
 
     if let Some(selector) = &loaded.model_selector {
+        // Model selector is hidden for skills — the model is baked
+        // into the workflow. The adapter decides, not the caller.
         parameters.push(SkillParameter {
             field: "selectors.model".to_string(),
             required: false,
             description: Some("Model used by this skill.".to_string()),
             default: Some(serde_json::Value::String(selector.default.clone())),
-            auto: None,
-            pinnable: true,
-            label: None,
-            field_type: None,
-            widget: None,
+            auto: Some(AutoDescriptor {
+                default: "recommended:generate".to_string(),
+                description: Some("Model is fixed by the skill's workflow".to_string()),
+            }),
+            pinnable: false,
+            label: Some("Model".to_string()),
+            field_type: Some(ParameterType::String),
+            widget: Some(ParameterWidget::Hidden),
             min: None,
             max: None,
             step: None,
-            options: None,
+            options: if selector.options.is_empty() {
+                None
+            } else {
+                Some(
+                    selector
+                        .options
+                        .iter()
+                        .map(|o| o.value.clone())
+                        .collect(),
+                )
+            },
             placeholder: None,
         });
     }
@@ -1368,13 +1429,18 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
                     .map(|v| serde_json::Value::String(v.value.clone())),
                 auto: None,
                 pinnable: true,
-                label: None,
-                field_type: None,
-                widget: None,
+                label: Some("Variant".to_string()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Select),
                 min: None,
                 max: None,
                 step: None,
-                options: None,
+                options: Some(
+                    variants
+                        .iter()
+                        .map(|v| serde_json::Value::String(v.value.clone()))
+                        .collect(),
+                ),
                 placeholder: None,
             });
         }
@@ -1568,7 +1634,9 @@ mod tests {
             .find(|p| p.field == "selectors.model")
             .expect("selectors.model parameter missing");
         assert!(!model_param.required);
-        assert!(model_param.pinnable);
+        // Model is baked into the workflow → hidden, not pinnable.
+        assert!(!model_param.pinnable);
+        assert_eq!(model_param.widget, Some(crate::domain::capability_announcement::ParameterWidget::Hidden));
         assert_eq!(
             model_param.default.as_ref().and_then(|v| v.as_str()),
             Some("sdxl_base.safetensors")

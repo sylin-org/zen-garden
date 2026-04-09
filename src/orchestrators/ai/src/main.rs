@@ -171,6 +171,22 @@ async fn main() -> Result<()> {
 
     let shutdown = CancellationToken::new();
 
+    // ── Spawn directory_subscriber EARLY ────────────────────────
+    //
+    // The DirectorySubscriber consumes capability announcements
+    // from the EventBus. The bus is a broadcast channel: late
+    // subscribers MISS events that were published before they
+    // subscribed. If we waited until after adapter construction,
+    // any adapter that publishes during its `new()` (e.g. the
+    // cloud Google adapter, or any future adapter that fires an
+    // initial announcement during startup) would publish into a
+    // void and never appear in `CapabilityDirectory`.
+    //
+    // Spawning here, before adapters are built, guarantees the
+    // subscriber is consuming the bus from tick zero.
+    let directory_subscriber_handle =
+        tokio::spawn(directory_subscriber.clone().run(shutdown.clone()));
+
     // ── Resolve tended stone ────────────────────────────────────
     //
     // Done before constructing the discovery service so the SSE
@@ -298,6 +314,13 @@ async fn main() -> Result<()> {
         events.clone(),
     );
 
+    // ── Preferences (ORCH-0030 §8) ──────────────────────────────
+    let preferences = crate::domain::preferences::Preferences::load(
+        &data_dir,
+        events.clone(),
+    )
+    .await;
+
     // ── Shared AppState ─────────────────────────────────────────
     let state = AppState {
         vocabularies: vocabularies.clone(),
@@ -312,12 +335,17 @@ async fn main() -> Result<()> {
         resources: resources.clone(),
         capability_directory: capability_directory.clone(),
         provider_registry: provider_registry.clone(),
+        preferences,
     };
 
     // ── Background tasks ────────────────────────────────────────
     let catalog_handle = tokio::spawn(catalog.clone().run(shutdown.clone()));
-    let directory_subscriber_handle =
-        tokio::spawn(directory_subscriber.clone().run(shutdown.clone()));
+
+    // The directory_subscriber task was spawned earlier (before
+    // adapter construction) so the EventBus consumer was running
+    // from tick zero. The handle is held on the same `let
+    // directory_subscriber_handle = ...` binding declared above
+    // and joined alongside the other background tasks at shutdown.
 
     // Garden discovery is already running — `GardenDiscovery::spawn`
     // launched its own SSE consumer above. Adapters subscribed at

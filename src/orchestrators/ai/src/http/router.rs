@@ -1,13 +1,13 @@
 //! Axum router assembly.
 
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 
 use crate::app_state::AppState;
 
 use super::{
     actions_index, catalog, events, flush, health, ingress, introspect, jobs, media, metrics,
-    resources, sitemap, skills,
+    preferences, resources, sitemap, skills,
 };
 
 /// Build the full `/v1/*` router plus `/health`.
@@ -77,6 +77,15 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/v1/resources/stones/{name}/pressure",
             get(resources::get_stone_pressure),
+        )
+        // Preferences (ORCH-0030 §8 commit 12)
+        .route(
+            "/v1/preferences",
+            get(preferences::get_preferences).put(preferences::put_preferences),
+        )
+        .route(
+            "/v1/preferences/{key}",
+            delete(preferences::delete_preference),
         )
         .with_state(state)
 }

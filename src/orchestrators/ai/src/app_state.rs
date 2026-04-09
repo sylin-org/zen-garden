@@ -18,6 +18,7 @@ use crate::domain::events::EventBus;
 use crate::domain::idempotency::IdempotencyStore;
 use crate::domain::jobs::JobStore;
 use crate::domain::media::SharedMediaStore;
+use crate::domain::preferences::Preferences;
 use crate::domain::resources::Resources;
 use crate::domain::vocabulary::VocabularyRegistry;
 use crate::services::catalog_builder::CatalogBuilder;
@@ -60,4 +61,8 @@ pub struct AppState {
     /// every constructed adapter handle. The dispatcher reads from
     /// this to invoke `provider.onboard()`.
     pub provider_registry: Arc<ProviderRegistry>,
+    /// Preferences (ORCH-0030 §8) — global field-path-to-value map.
+    /// Layered over field defaults at catalog render time, and under
+    /// caller payload at dispatch time.
+    pub preferences: Arc<Preferences>,
 }

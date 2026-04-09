@@ -275,6 +275,12 @@ pub async fn fixture_with_provider_capabilities(
         events.clone(),
     );
 
+    let preferences = zen_garden_ai_orchestrator::domain::preferences::Preferences::load(
+        &data_dir,
+        events.clone(),
+    )
+    .await;
+
     let state = AppState {
         vocabularies,
         media_store: media_store.clone(),
@@ -288,6 +294,7 @@ pub async fn fixture_with_provider_capabilities(
         resources,
         capability_directory: capability_directory.clone(),
         provider_registry: provider_registry.clone(),
+        preferences,
     };
 
     Fixture {

@@ -6,13 +6,14 @@ use serde_json::json;
 
 pub async fn get_sitemap() -> impl IntoResponse {
     Json(json!({
-        "actions": "/v1/do",
-        "catalog": "/v1/catalog",
-        "events":  "/v1/events",
-        "media":   "/v1/media",
-        "jobs":    "/v1/jobs",
-        "skills":  "/v1/skills",
-        "resources": "/v1/resources",
-        "health":  "/health",
+        "actions":     "/v1/do",
+        "catalog":     "/v1/catalog",
+        "events":      "/v1/events",
+        "media":       "/v1/media",
+        "jobs":        "/v1/jobs",
+        "skills":      "/v1/skills",
+        "resources":   "/v1/resources",
+        "preferences": "/v1/preferences",
+        "health":      "/health",
     }))
 }

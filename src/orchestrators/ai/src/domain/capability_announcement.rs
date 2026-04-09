@@ -364,7 +364,7 @@ impl SkillDisplay {
 /// `max`, `step`, `options`, `placeholder`) were added in ORCH-0030
 /// R2 (commit 6). All are optional/defaulted so existing
 /// announcements and tests continue to deserialize.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct SkillParameter {
     /// Dotted field path the caller uses in the request body, e.g.,
     /// `"image.source"` or `"selectors.model"`. The field path must

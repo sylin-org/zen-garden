@@ -96,15 +96,25 @@ impl OllamaProvider {
     }
 
     /// Publish the current matrix as a capability announcement.
+    /// Includes the model selector field with live `options` from
+    /// installed models so the catalog can render a dropdown.
     async fn publish_capabilities(&self) {
-        let (primitives, has_healthy) = {
+        let (primitives, has_healthy, model_names) = {
             let matrix = self.matrix.read().await;
+            let mut names: Vec<String> = matrix
+                .loadable_models()
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+            names.sort();
             (
                 matrix.supported_primitives(),
                 !matrix.healthy_instances().is_empty(),
+                names,
             )
         };
-        let announcement = build_capability_announcement(&self.name, primitives, has_healthy);
+        let announcement =
+            build_capability_announcement(&self.name, primitives, has_healthy, &model_names);
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -745,25 +755,158 @@ fn build_capability_announcement(
     name: &ProviderName,
     primitives: Vec<Primitive>,
     has_healthy_instances: bool,
+    model_names: &[String],
 ) -> CapabilityAnnouncement {
+    use crate::domain::capability_announcement::{
+        AutoDescriptor, ParameterType, ParameterWidget, SkillParameter,
+    };
+
     let enabled = !primitives.is_empty() && has_healthy_instances;
+
+    // Build the model selector parameter with live options.
+    let model_options: Vec<serde_json::Value> =
+        model_names.iter().map(|n| json!(n)).collect();
+
     let capabilities: Vec<AnnCapability> = primitives
         .into_iter()
-        .map(|p| AnnCapability {
-            primitive: p,
-            media_inputs: ollama_media_inputs_for(p),
-            parameters: vec![],
+        .map(|p| {
+            let cap_name = capability_name_for(p);
+            let mut params = base_parameters_for(p);
+
+            // Add model selector with live options and auto descriptor.
+            params.push(SkillParameter {
+                field: "selectors.model".into(),
+                required: false,
+                description: Some("Model to use for this request".into()),
+                default: None,
+                auto: Some(AutoDescriptor {
+                    default: format!("recommended:{cap_name}"),
+                    description: Some(format!(
+                        "The garden picks the best available {cap_name} model"
+                    )),
+                }),
+                pinnable: true,
+                label: Some("Model".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Select),
+                min: None,
+                max: None,
+                step: None,
+                options: if model_options.is_empty() {
+                    None
+                } else {
+                    Some(model_options.clone())
+                },
+                placeholder: None,
+            });
+
+            AnnCapability {
+                primitive: p,
+                media_inputs: ollama_media_inputs_for(p),
+                parameters: params,
+            }
         })
         .collect();
+
     CapabilityAnnouncement {
         provider: name.clone(),
         enabled,
         capabilities,
-        // Skills come later — commits 8+ handle the generalized
-        // skill publication from any adapter that has them. Ollama
-        // will declare its first skill (e.g. image-understanding)
-        // in a follow-up.
         skills: Vec::new(),
+    }
+}
+
+/// Human-readable capability name for the recommended:* moniker.
+fn capability_name_for(p: Primitive) -> &'static str {
+    match p {
+        Primitive::TextChat => "chat",
+        Primitive::TextTranslate => "translate",
+        Primitive::TextEmbed => "embed",
+        Primitive::TextRerank => "rerank",
+        Primitive::ImageGenerate => "generate",
+        Primitive::ImageEdit => "edit",
+        Primitive::ImageUpscale => "upscale",
+        Primitive::ImageAnalyze => "vision",
+        Primitive::AudioGenerate => "speech",
+        Primitive::AudioTranscribe => "transcribe",
+    }
+}
+
+/// Base form-schema parameters for Ollama's primitives.
+/// These are the fields the Try It form renders (excluding
+/// the model selector, which is added separately with live options).
+fn base_parameters_for(p: Primitive) -> Vec<crate::domain::capability_announcement::SkillParameter> {
+    use crate::domain::capability_announcement::{ParameterType, ParameterWidget, SkillParameter};
+
+    match p {
+        Primitive::TextChat => vec![
+            SkillParameter {
+                field: "text.prompt.user".into(),
+                required: true,
+                label: Some("Message".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("Ask anything...".into()),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "text.prompt.system".into(),
+                required: false,
+                label: Some("System Prompt".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("You are a helpful assistant...".into()),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "text.sampling.temperature".into(),
+                required: false,
+                label: Some("Temperature".into()),
+                field_type: Some(ParameterType::Number),
+                widget: Some(ParameterWidget::Slider),
+                default: Some(json!(0.7)),
+                min: Some(0.0),
+                max: Some(2.0),
+                step: Some(0.1),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "text.tokens.max".into(),
+                required: false,
+                label: Some("Max Tokens".into()),
+                field_type: Some(ParameterType::Integer),
+                widget: Some(ParameterWidget::Number),
+                default: Some(json!(2048)),
+                min: Some(1.0),
+                max: Some(131072.0),
+                ..Default::default()
+            },
+        ],
+        Primitive::TextEmbed => vec![
+            SkillParameter {
+                field: "text.prompt.user".into(),
+                required: true,
+                label: Some("Text".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("Text to embed...".into()),
+                ..Default::default()
+            },
+        ],
+        Primitive::ImageAnalyze => vec![
+            SkillParameter {
+                field: "text.prompt.user".into(),
+                required: true,
+                label: Some("Question".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("Describe this image...".into()),
+                ..Default::default()
+            },
+        ],
+        // Other primitives get an empty field list — they'll gain
+        // parameters as Ollama's support for them matures.
+        _ => vec![],
     }
 }
 
@@ -968,7 +1111,7 @@ mod tests {
 
     #[test]
     fn announcement_disabled_when_no_primitives() {
-        let ann = build_capability_announcement(&provider_name(), Vec::new(), true);
+        let ann = build_capability_announcement(&provider_name(), Vec::new(), true, &[]);
         assert!(!ann.enabled);
         assert!(ann.capabilities.is_empty());
     }
@@ -981,6 +1124,7 @@ mod tests {
             &provider_name(),
             vec![Primitive::TextChat],
             false,
+            &[],
         );
         assert!(!ann.enabled);
     }
@@ -991,6 +1135,7 @@ mod tests {
             &provider_name(),
             vec![Primitive::TextChat],
             true,
+            &[],
         );
         assert!(ann.enabled);
         assert_eq!(ann.capabilities.len(), 1);
@@ -1003,6 +1148,7 @@ mod tests {
             &provider_name(),
             vec![Primitive::TextChat, Primitive::TextEmbed],
             true,
+            &[],
         );
         assert_eq!(ann.capabilities.len(), 2);
         for cap in &ann.capabilities {
@@ -1016,6 +1162,7 @@ mod tests {
             &provider_name(),
             vec![Primitive::ImageAnalyze],
             true,
+            &[],
         );
         let cap = &ann.capabilities[0];
         assert_eq!(cap.primitive, Primitive::ImageAnalyze);
@@ -1040,6 +1187,7 @@ mod tests {
             &provider_name(),
             vec![Primitive::TextChat, Primitive::ImageAnalyze],
             true,
+            &[],
         );
         assert!(ann.skills.is_empty());
     }
@@ -1047,8 +1195,68 @@ mod tests {
     #[test]
     fn announcement_provider_name_matches_keys_constant() {
         let ann =
-            build_capability_announcement(&provider_name(), vec![Primitive::TextChat], true);
+            build_capability_announcement(&provider_name(), vec![Primitive::TextChat], true, &[]);
         assert_eq!(ann.provider.as_str(), keys::providers::OLLAMA);
         assert_eq!(ann.provider.as_str(), "ollama");
+    }
+
+    #[test]
+    fn announcement_chat_carries_form_schema_parameters() {
+        let models = vec!["llama3.1:8b".to_string(), "qwen2.5:7b".to_string()];
+        let ann = build_capability_announcement(
+            &provider_name(),
+            vec![Primitive::TextChat],
+            true,
+            &models,
+        );
+        let cap = &ann.capabilities[0];
+        assert!(!cap.parameters.is_empty(), "chat should have form-schema parameters");
+
+        // Find the model selector parameter
+        let model_param = cap.parameters.iter().find(|p| p.field == "selectors.model");
+        assert!(model_param.is_some(), "should have a selectors.model parameter");
+        let mp = model_param.unwrap();
+
+        // It should be a Select widget with auto descriptor
+        assert_eq!(
+            mp.widget,
+            Some(crate::domain::capability_announcement::ParameterWidget::Select)
+        );
+        assert!(mp.auto.is_some());
+        assert_eq!(mp.auto.as_ref().unwrap().default, "recommended:chat");
+
+        // Options should contain the live model names
+        let opts = mp.options.as_ref().expect("should have options");
+        assert_eq!(opts.len(), 2);
+        assert!(opts.contains(&serde_json::json!("llama3.1:8b")));
+        assert!(opts.contains(&serde_json::json!("qwen2.5:7b")));
+
+        // Should also have prompt and temperature fields
+        let prompt = cap.parameters.iter().find(|p| p.field == "text.prompt.user");
+        assert!(prompt.is_some(), "should have text.prompt.user");
+        assert!(prompt.unwrap().required);
+
+        let temp = cap.parameters.iter().find(|p| p.field == "text.sampling.temperature");
+        assert!(temp.is_some(), "should have temperature");
+        let t = temp.unwrap();
+        assert_eq!(t.min, Some(0.0));
+        assert_eq!(t.max, Some(2.0));
+        assert_eq!(t.step, Some(0.1));
+        assert_eq!(t.default, Some(serde_json::json!(0.7)));
+    }
+
+    #[test]
+    fn announcement_empty_models_omits_options() {
+        let ann = build_capability_announcement(
+            &provider_name(),
+            vec![Primitive::TextChat],
+            true,
+            &[],
+        );
+        let cap = &ann.capabilities[0];
+        let model_param = cap.parameters.iter().find(|p| p.field == "selectors.model").unwrap();
+        // No models → no options (but auto descriptor still present)
+        assert!(model_param.options.is_none());
+        assert!(model_param.auto.is_some());
     }
 }

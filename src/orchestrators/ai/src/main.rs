@@ -315,7 +315,7 @@ async fn main() -> Result<()> {
     );
 
     // ── Preferences (ORCH-0030 §8) ──────────────────────────────
-    let preferences = crate::domain::preferences::Preferences::load(
+    let preferences = zen_garden_ai_orchestrator::domain::preferences::Preferences::load(
         &data_dir,
         events.clone(),
     )

@@ -21,6 +21,7 @@
 //!   version bumps.
 
 pub mod catalog_builder;
+pub mod flow_executor;
 pub mod cloud_secrets;
 pub mod contextualizer;
 pub mod directory_subscriber;

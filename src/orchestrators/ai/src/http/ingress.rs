@@ -35,6 +35,22 @@ use super::errors::quick_error_response;
 // ── Handlers ──────────────────────────────────────────────────
 
 /// `POST /v1/do` — the universal dispatcher.
+///
+/// Accepts two shapes:
+///
+/// **Single action** (existing):
+/// ```json
+/// { "action": "text.chat", "payload": { ... } }
+/// ```
+///
+/// **Flow** (ORCH-0030 §7):
+/// ```json
+/// { "actions": [ { "id": "...", "action": "...", "payload": { ... } }, ... ] }
+/// ```
+///
+/// The handler detects the shape from the presence of `action`
+/// (single) vs `actions` (flow). Ambiguous bodies (both present)
+/// are rejected.
 pub async fn post_do(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -50,12 +66,27 @@ pub async fn post_do(
         }
     };
 
+    let has_action = body_value.get("action").is_some();
+    let has_actions = body_value.get("actions").is_some();
+
+    if has_action && has_actions {
+        return quick_error_response(
+            ErrorCode::ValidationFailed,
+            "Request body cannot contain both `action` and `actions`. Use `action` for a single invocation or `actions` for a flow.",
+        );
+    }
+
+    if has_actions {
+        return execute_flow_handler(state, body_value, headers).await;
+    }
+
+    // Single action path (existing behavior).
     let action_dotted = match body_value.get("action").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => {
             return quick_error_response(
                 ErrorCode::ValidationFailed,
-                "`action` field is required in POST /v1/do body.",
+                "`action` or `actions` field is required in POST /v1/do body.",
             );
         }
     };
@@ -71,6 +102,45 @@ pub async fn post_do(
     };
 
     execute(state, action, body_value, headers).await
+}
+
+/// Handle a flow (multi-step) request via `/v1/do`.
+async fn execute_flow_handler(
+    state: AppState,
+    body: Value,
+    headers: HeaderMap,
+) -> Response {
+    use crate::services::flow_executor;
+
+    let flow = match flow_executor::parse_flow(&body) {
+        Ok(f) => f,
+        Err(e) => {
+            return quick_error_response(
+                ErrorCode::ValidationFailed,
+                format!("Invalid flow: {e}"),
+            );
+        }
+    };
+
+    let correlation_id = correlation_from_headers(&headers);
+    let job_id = RequestId::generate().as_str().to_string();
+
+    let result = flow_executor::execute_flow(
+        flow,
+        state.dispatcher.clone(),
+        state.events.clone(),
+        job_id,
+        correlation_id,
+    )
+    .await;
+
+    let status = if result.status == flow_executor::FlowStatus::Completed {
+        StatusCode::OK
+    } else {
+        StatusCode::MULTI_STATUS // 207 — partial success
+    };
+
+    (status, Json(json!(result))).into_response()
 }
 
 /// `POST /v1/{modality}/{leaf}` — hierarchical sugar.

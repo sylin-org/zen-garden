@@ -159,29 +159,41 @@ impl GoogleProvider {
     /// `enabled: true` is constant for cloud adapters; runtime
     /// failures surface inside `onboard` as `ProviderError` variants.
     async fn publish_capabilities(&self) {
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled: true,
-            capabilities: vec![
-                AnnCapability {
-                    primitive: Primitive::TextChat,
-                    media_inputs: Vec::new(),
-                },
-                AnnCapability {
-                    primitive: Primitive::TextEmbed,
-                    media_inputs: Vec::new(),
-                },
-                AnnCapability {
-                    primitive: Primitive::ImageAnalyze,
-                    media_inputs: vec![CapabilityMediaInput::base64(
-                        keys::image::SOURCE.as_str().to_string(),
-                        ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
-                    )],
-                },
-            ],
-            skills: Vec::new(),
-        };
+        let announcement = build_capability_announcement(&self.name);
         publish_capability_announcement(&self.events, &announcement).await;
+    }
+}
+
+// ── Pure helper (testable without runtime) ───────────────────
+
+/// Build the static capability announcement Google publishes at
+/// startup. Pure function — no IO, no `&self` — so unit tests can
+/// exercise the wire shape directly.
+fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement {
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        // Cloud adapters have no discovery loop; `enabled: true` is
+        // constant. Runtime failures surface inside `onboard` as
+        // `ProviderError` variants and never flip the announcement.
+        enabled: true,
+        capabilities: vec![
+            AnnCapability {
+                primitive: Primitive::TextChat,
+                media_inputs: Vec::new(),
+            },
+            AnnCapability {
+                primitive: Primitive::TextEmbed,
+                media_inputs: Vec::new(),
+            },
+            AnnCapability {
+                primitive: Primitive::ImageAnalyze,
+                media_inputs: vec![CapabilityMediaInput::base64(
+                    keys::image::SOURCE.as_str().to_string(),
+                    ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
+                )],
+            },
+        ],
+        skills: Vec::new(),
     }
 }
 
@@ -512,4 +524,115 @@ struct EmbedResponse {
 #[derive(Debug, Deserialize)]
 struct EmbeddingValues {
     values: Vec<f32>,
+}
+
+// ── Tests (ORCH-0030 R2 M4) ──────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::media::MediaDelivery;
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::GOOGLE)
+    }
+
+    // ── Capability publication ──
+
+    #[test]
+    fn announcement_is_always_enabled() {
+        // Cloud adapters do not flip enabled based on instance pool
+        // state — they trust the cloud endpoint and surface failures
+        // inside onboard.
+        let ann = build_capability_announcement(&provider_name());
+        assert!(ann.enabled);
+        assert_eq!(ann.provider.as_str(), "google");
+    }
+
+    #[test]
+    fn announcement_declares_three_primitives() {
+        let ann = build_capability_announcement(&provider_name());
+        let prims: Vec<Primitive> = ann.capabilities.iter().map(|c| c.primitive).collect();
+        assert!(prims.contains(&Primitive::TextChat));
+        assert!(prims.contains(&Primitive::TextEmbed));
+        assert!(prims.contains(&Primitive::ImageAnalyze));
+        assert_eq!(prims.len(), 3);
+    }
+
+    #[test]
+    fn text_capabilities_have_no_media_inputs() {
+        let ann = build_capability_announcement(&provider_name());
+        for cap in &ann.capabilities {
+            if matches!(cap.primitive, Primitive::TextChat | Primitive::TextEmbed) {
+                assert!(cap.media_inputs.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn image_analyze_uses_base64_delivery_with_accepted_types() {
+        let ann = build_capability_announcement(&provider_name());
+        let analyze = ann
+            .capabilities
+            .iter()
+            .find(|c| c.primitive == Primitive::ImageAnalyze)
+            .expect("image.analyze capability missing");
+        assert_eq!(analyze.media_inputs.len(), 1);
+        let media = &analyze.media_inputs[0];
+        assert_eq!(media.field, "image.source");
+        assert!(matches!(media.delivery, MediaDelivery::Base64));
+        assert!(media.accepted_types.contains(&"image/png".to_string()));
+        assert!(media.accepted_types.contains(&"image/jpeg".to_string()));
+        assert!(media.accepted_types.contains(&"image/webp".to_string()));
+    }
+
+    #[test]
+    fn announcement_publishes_no_skills() {
+        let ann = build_capability_announcement(&provider_name());
+        assert!(ann.skills.is_empty());
+    }
+
+    // ── Model resolution (Google-specific defaults) ──
+    //
+    // The general behavior of `cloud_common::resolve_cloud_model` is
+    // tested in `cloud_common.rs` itself; these tests pin Google's
+    // specific `DEFAULT_MODEL` and `SUPPORTED_MODELS` constants.
+
+    #[test]
+    fn cloud_model_resolution_no_input_returns_default() {
+        let m = resolve_cloud_model(None, DEFAULT_MODEL, SUPPORTED_MODELS).unwrap();
+        assert_eq!(m, DEFAULT_MODEL);
+        assert_eq!(m, "gemini-2.0-flash");
+    }
+
+    #[test]
+    fn cloud_model_resolution_recommended_returns_default() {
+        let m = resolve_cloud_model(Some("recommended:chat"), DEFAULT_MODEL, SUPPORTED_MODELS)
+            .unwrap();
+        assert_eq!(m, DEFAULT_MODEL);
+        let m = resolve_cloud_model(Some("recommended:vision"), DEFAULT_MODEL, SUPPORTED_MODELS)
+            .unwrap();
+        assert_eq!(m, DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn cloud_model_resolution_supported_concrete_passes_through() {
+        for &supported in SUPPORTED_MODELS {
+            let m = resolve_cloud_model(Some(supported), DEFAULT_MODEL, SUPPORTED_MODELS).unwrap();
+            assert_eq!(m, supported);
+        }
+    }
+
+    #[test]
+    fn cloud_model_resolution_unknown_concrete_is_pin_not_servable() {
+        let err = resolve_cloud_model(Some("gpt-4o"), DEFAULT_MODEL, SUPPORTED_MODELS).unwrap_err();
+        match err {
+            ProviderError::PinNotServable { model, reason } => {
+                assert_eq!(model, "gpt-4o");
+                // The reason should mention at least one supported model.
+                assert!(reason.contains("gemini"));
+            }
+            other => panic!("expected PinNotServable, got {other:?}"),
+        }
+    }
 }

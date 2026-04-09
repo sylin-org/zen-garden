@@ -82,40 +82,8 @@ impl DoclingProvider {
     /// Publish the current instance pool state as a capability
     /// announcement. Called every time the instance pool changes.
     async fn publish_capabilities(&self) {
-        let enabled = !self.instances.is_empty();
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
-            capabilities: vec![AnnCapability {
-                primitive: Primitive::ImageAnalyze,
-                media_inputs: vec![CapabilityMediaInput {
-                    field: keys::image::SOURCE.as_str().to_string(),
-                    delivery: MediaDelivery::Transfer,
-                    accepted_types: vec![
-                        "image/png".to_string(),
-                        "image/jpeg".to_string(),
-                        "image/tiff".to_string(),
-                        "application/pdf".to_string(),
-                    ],
-                    overlay: None,
-                }],
-            }],
-            skills: vec![SkillDeclaration {
-                id: "ocr".to_string(),
-                primitive: Primitive::ImageAnalyze,
-                display: SkillDisplay::new("Docling OCR").with_description(
-                    "Document layout + OCR via Docling. Returns extracted text and markdown.",
-                ),
-                parameters: vec![SkillParameter {
-                    field: keys::image::SOURCE.as_str().to_string(),
-                    required: true,
-                    description: Some("The document/image to analyze.".into()),
-                    default: None,
-                    auto: None,
-                    pinnable: false,
-                }],
-            }],
-        };
+        let announcement =
+            build_capability_announcement(&self.name, !self.instances.is_empty());
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -236,6 +204,50 @@ impl Provider for DoclingProvider {
     }
 }
 
+// ── Pure helpers (testable without runtime) ──────────────────
+
+/// Build the capability announcement Docling publishes given the
+/// current instance pool state. Pure function — no IO, no &self —
+/// so unit tests can exercise the wire shape directly.
+fn build_capability_announcement(
+    name: &ProviderName,
+    has_instances: bool,
+) -> CapabilityAnnouncement {
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled: has_instances,
+        capabilities: vec![AnnCapability {
+            primitive: Primitive::ImageAnalyze,
+            media_inputs: vec![CapabilityMediaInput {
+                field: keys::image::SOURCE.as_str().to_string(),
+                delivery: MediaDelivery::Transfer,
+                accepted_types: vec![
+                    "image/png".to_string(),
+                    "image/jpeg".to_string(),
+                    "image/tiff".to_string(),
+                    "application/pdf".to_string(),
+                ],
+                overlay: None,
+            }],
+        }],
+        skills: vec![SkillDeclaration {
+            id: "ocr".to_string(),
+            primitive: Primitive::ImageAnalyze,
+            display: SkillDisplay::new("Docling OCR").with_description(
+                "Document layout + OCR via Docling. Returns extracted text and markdown.",
+            ),
+            parameters: vec![SkillParameter {
+                field: keys::image::SOURCE.as_str().to_string(),
+                required: true,
+                description: Some("The document/image to analyze.".into()),
+                default: None,
+                auto: None,
+                pinnable: false,
+            }],
+        }],
+    }
+}
+
 // ── Wire types ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -251,3 +263,59 @@ struct ConvertDocument {
     #[serde(default)]
     text_content: Option<String>,
 }
+
+// ── Tests (ORCH-0030 R2 M4) ──────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::DOCLING)
+    }
+
+    #[test]
+    fn announcement_disabled_when_no_instances() {
+        let ann = build_capability_announcement(&provider_name(), false);
+        assert_eq!(ann.provider.as_str(), "docling");
+        assert!(!ann.enabled);
+    }
+
+    #[test]
+    fn announcement_enabled_when_instances_present() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert!(ann.enabled);
+    }
+
+    #[test]
+    fn announcement_declares_image_analyze_with_transfer_media_input() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert_eq!(ann.capabilities.len(), 1);
+        let cap = &ann.capabilities[0];
+        assert_eq!(cap.primitive, Primitive::ImageAnalyze);
+        assert_eq!(cap.media_inputs.len(), 1);
+        let media = &cap.media_inputs[0];
+        assert_eq!(media.field, "image.source");
+        assert!(matches!(media.delivery, MediaDelivery::Transfer));
+        assert!(media.accepted_types.contains(&"image/png".to_string()));
+        assert!(media.accepted_types.contains(&"application/pdf".to_string()));
+    }
+
+    #[test]
+    fn announcement_declares_one_ocr_skill() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert_eq!(ann.skills.len(), 1);
+        let skill = &ann.skills[0];
+        assert_eq!(skill.id, "ocr");
+        assert_eq!(skill.primitive, Primitive::ImageAnalyze);
+        assert_eq!(skill.display.name, "Docling OCR");
+        assert!(skill.display.description.is_some());
+        // The skill exposes one parameter for image.source.
+        assert_eq!(skill.parameters.len(), 1);
+        let param = &skill.parameters[0];
+        assert_eq!(param.field, "image.source");
+        assert!(param.required);
+        assert!(!param.pinnable);
+    }
+}
+

@@ -19,9 +19,7 @@ use reqwest::Client;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement,
-};
+use crate::domain::capability_announcement::{Capability, CapabilityAnnouncement};
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
 use crate::domain::keys;
@@ -109,65 +107,11 @@ impl OpenedaiSpeechProvider {
         })
     }
 
-    /// Resolve the voice selected for this request.
-    ///
-    /// Precedence:
-    /// 1. `request.selectors.model` — treated as a voice id. A
-    ///    `recommended:*` moniker falls back to `default_voice`. A
-    ///    concrete value must appear in `VOICES` or in the payload's
-    ///    `audio.voice.id`; otherwise `PinNotServable`.
-    /// 2. `payload./audio/voice/id` — caller-supplied voice id.
-    /// 3. `self.default_voice`.
-    fn resolve_voice(
-        &self,
-        request: &OrchestratorRequest,
-    ) -> Result<String, ProviderError> {
-        let payload_voice = request
-            .payload
-            .pointer("/audio/voice/id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        if let Some(selector) = request.selectors.model.as_deref() {
-            if selector.starts_with("recommended:") {
-                return Ok(self.default_voice.clone());
-            }
-            if self.voices.iter().any(|v| *v == selector) {
-                return Ok(selector.to_string());
-            }
-            if let Some(ref pv) = payload_voice {
-                if self.voices.iter().any(|v| *v == pv.as_str()) {
-                    return Ok(pv.clone());
-                }
-            }
-            return Err(ProviderError::PinNotServable {
-                model: selector.to_string(),
-                reason: format!(
-                    "voice not in openedai-speech catalog (supported: {})",
-                    self.voices.join(", ")
-                ),
-            });
-        }
-
-        Ok(payload_voice.unwrap_or_else(|| self.default_voice.clone()))
-    }
-
     /// Build a full capability announcement from the current instance
     /// pool and publish it to the bus.
     async fn publish_capabilities(&self) {
-        let enabled = !self.instances.is_empty();
-        // TTS has no media inputs — the caller supplies text, not
-        // bytes. Empty media_inputs list per the M3 contract.
-        let capabilities = vec![AnnCapability {
-            primitive: Primitive::AudioGenerate,
-            media_inputs: Vec::new(),
-        }];
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
-            capabilities,
-            skills: Vec::new(),
-        };
+        let announcement =
+            build_capability_announcement(&self.name, !self.instances.is_empty());
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -234,7 +178,15 @@ impl Provider for OpenedaiSpeechProvider {
             .ok_or_else(|| ProviderError::Unsupported("missing audio.text".to_string()))?
             .to_string();
 
-        let voice = self.resolve_voice(&request)?;
+        let voice = resolve_voice(
+            request.selectors.model.as_deref(),
+            request
+                .payload
+                .pointer("/audio/voice/id")
+                .and_then(|v| v.as_str()),
+            &self.default_voice,
+            self.voices,
+        )?;
 
         let format = request
             .payload
@@ -315,5 +267,171 @@ impl Provider for OpenedaiSpeechProvider {
         out.set(&keys::audio::MEDIA_ID, entry.id.as_str());
         out.set(&keys::audio::FORMAT, format);
         Ok(ProviderOutcome::Sync(out))
+    }
+}
+
+// ── Pure helpers (testable without runtime) ──────────────────
+
+/// Build the capability announcement OpenedaiSpeech publishes given
+/// the current instance pool state. Pure function — no IO, no `&self`
+/// — so unit tests can exercise the wire shape directly.
+///
+/// TTS adapters declare `audio.generate` with an empty `media_inputs`
+/// list: the caller supplies text in the payload, not media bytes.
+fn build_capability_announcement(
+    name: &ProviderName,
+    has_instances: bool,
+) -> CapabilityAnnouncement {
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled: has_instances,
+        capabilities: vec![Capability {
+            primitive: Primitive::AudioGenerate,
+            media_inputs: Vec::new(),
+        }],
+        skills: Vec::new(),
+    }
+}
+
+/// Resolve the voice selected for this request.
+///
+/// Precedence (matches the legacy in-struct implementation):
+///
+/// 1. If `selector` is `Some(s)`:
+///    - `recommended:*` → `default_voice`.
+///    - `s` in `voices` → use `s`.
+///    - Else if `payload_voice` is in `voices` → use `payload_voice`.
+///    - Else `PinNotServable`.
+/// 2. If `selector` is `None`:
+///    - `payload_voice` if present (passed through unvalidated,
+///      matching legacy behaviour).
+///    - Else `default_voice`.
+fn resolve_voice(
+    selector: Option<&str>,
+    payload_voice: Option<&str>,
+    default_voice: &str,
+    voices: &[&str],
+) -> Result<String, ProviderError> {
+    if let Some(selector) = selector {
+        if selector.starts_with("recommended:") {
+            return Ok(default_voice.to_string());
+        }
+        if voices.iter().any(|v| *v == selector) {
+            return Ok(selector.to_string());
+        }
+        if let Some(pv) = payload_voice {
+            if voices.iter().any(|v| *v == pv) {
+                return Ok(pv.to_string());
+            }
+        }
+        return Err(ProviderError::PinNotServable {
+            model: selector.to_string(),
+            reason: format!(
+                "voice not in openedai-speech catalog (supported: {})",
+                voices.join(", ")
+            ),
+        });
+    }
+
+    Ok(payload_voice
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| default_voice.to_string()))
+}
+
+// ── Tests (ORCH-0030 R2 M4) ──────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::OPENEDAI_SPEECH)
+    }
+
+    fn voices() -> Vec<&'static str> {
+        VOICES.to_vec()
+    }
+
+    // ── Capability publication ──
+
+    #[test]
+    fn announcement_disabled_when_no_instances() {
+        let ann = build_capability_announcement(&provider_name(), false);
+        assert_eq!(ann.provider.as_str(), "openedai_speech");
+        assert!(!ann.enabled);
+        assert_eq!(ann.capabilities.len(), 1);
+        assert!(ann.skills.is_empty());
+    }
+
+    #[test]
+    fn announcement_enabled_when_instances_present() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert!(ann.enabled);
+    }
+
+    #[test]
+    fn announcement_declares_audio_generate_with_empty_media_inputs() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert_eq!(ann.capabilities.len(), 1);
+        let cap = &ann.capabilities[0];
+        assert_eq!(cap.primitive, Primitive::AudioGenerate);
+        // TTS produces audio — it does not consume media inputs.
+        assert!(cap.media_inputs.is_empty());
+    }
+
+    // ── Voice resolution ──
+
+    #[test]
+    fn resolve_voice_no_input_returns_default() {
+        let v = resolve_voice(None, None, "alloy", &voices()).unwrap();
+        assert_eq!(v, "alloy");
+    }
+
+    #[test]
+    fn resolve_voice_recommended_moniker_returns_default() {
+        let v = resolve_voice(Some("recommended:tts"), None, "alloy", &voices()).unwrap();
+        assert_eq!(v, "alloy");
+    }
+
+    #[test]
+    fn resolve_voice_known_selector_passes_through() {
+        let v = resolve_voice(Some("echo"), None, "alloy", &voices()).unwrap();
+        assert_eq!(v, "echo");
+    }
+
+    #[test]
+    fn resolve_voice_payload_voice_fallback_when_no_selector() {
+        // With no selector, payload voice passes through unvalidated —
+        // matching the legacy in-struct behaviour.
+        let v = resolve_voice(None, Some("nova"), "alloy", &voices()).unwrap();
+        assert_eq!(v, "nova");
+    }
+
+    #[test]
+    fn resolve_voice_unknown_selector_rescued_by_valid_payload_voice() {
+        // Selector is not in the catalog, but the payload carries a
+        // valid voice — legacy precedence rescues the request.
+        let v = resolve_voice(Some("bogus"), Some("shimmer"), "alloy", &voices()).unwrap();
+        assert_eq!(v, "shimmer");
+    }
+
+    #[test]
+    fn resolve_voice_unknown_selector_returns_pin_not_servable() {
+        let err = resolve_voice(Some("nope-voice"), None, "alloy", &voices()).unwrap_err();
+        match err {
+            ProviderError::PinNotServable { model, reason } => {
+                assert_eq!(model, "nope-voice");
+                assert!(reason.contains("alloy"));
+                assert!(reason.contains("openedai-speech"));
+            }
+            other => panic!("expected PinNotServable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_voice_unknown_selector_with_unknown_payload_voice_is_pin_not_servable() {
+        let err =
+            resolve_voice(Some("bogus"), Some("also-bogus"), "alloy", &voices()).unwrap_err();
+        assert!(matches!(err, ProviderError::PinNotServable { .. }));
     }
 }

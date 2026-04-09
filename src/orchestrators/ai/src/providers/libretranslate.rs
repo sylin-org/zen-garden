@@ -98,26 +98,11 @@ impl LibreTranslateProvider {
         provider
     }
 
-    /// Build the current capability announcement. LibreTranslate
-    /// serves exactly one primitive (`text.translate`), has no media
-    /// inputs, and publishes no skills.
-    fn build_announcement(&self) -> CapabilityAnnouncement {
-        let enabled = !self.instances.is_empty();
-        CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
-            capabilities: vec![AnnCapability {
-                primitive: Primitive::TextTranslate,
-                media_inputs: Vec::new(),
-            }],
-            skills: Vec::new(),
-        }
-    }
-
     /// Publish the current pool state as a capability announcement.
     /// Called by the discovery subscriber on every pool change.
     async fn publish_capabilities(&self) {
-        let announcement = self.build_announcement();
+        let announcement =
+            build_capability_announcement(&self.name, !self.instances.is_empty());
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -246,6 +231,27 @@ impl Provider for LibreTranslateProvider {
     }
 }
 
+// ── Pure helpers (testable without runtime) ──────────────────
+
+/// Build the capability announcement LibreTranslate publishes given
+/// the current instance pool state. LibreTranslate serves exactly
+/// one primitive (`text.translate`), has no media inputs, and
+/// publishes no skills.
+fn build_capability_announcement(
+    name: &ProviderName,
+    has_instances: bool,
+) -> CapabilityAnnouncement {
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled: has_instances,
+        capabilities: vec![AnnCapability {
+            primitive: Primitive::TextTranslate,
+            media_inputs: Vec::new(),
+        }],
+        skills: Vec::new(),
+    }
+}
+
 // ── Wire types ────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -272,4 +278,46 @@ struct DetectedLanguage {
     #[serde(default)]
     #[allow(dead_code)]
     confidence: f64,
+}
+
+// ── Tests (ORCH-0030 R2 M4) ──────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::LIBRETRANSLATE)
+    }
+
+    #[test]
+    fn announcement_disabled_when_no_instances() {
+        let ann = build_capability_announcement(&provider_name(), false);
+        assert_eq!(ann.provider.as_str(), "libretranslate");
+        assert!(!ann.enabled);
+    }
+
+    #[test]
+    fn announcement_enabled_when_instances_present() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert!(ann.enabled);
+    }
+
+    #[test]
+    fn announcement_declares_text_translate_with_no_media_inputs() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert_eq!(ann.capabilities.len(), 1);
+        let cap = &ann.capabilities[0];
+        assert_eq!(cap.primitive, Primitive::TextTranslate);
+        // text.translate is text-in / text-out — no media references.
+        assert!(cap.media_inputs.is_empty());
+    }
+
+    #[test]
+    fn announcement_publishes_no_skills() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        // LibreTranslate has no per-skill specializations; the
+        // primitive is the entire surface.
+        assert!(ann.skills.is_empty());
+    }
 }

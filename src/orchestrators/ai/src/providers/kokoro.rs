@@ -41,9 +41,7 @@ use reqwest::Client;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement,
-};
+use crate::domain::capability_announcement::{Capability, CapabilityAnnouncement};
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
 use crate::domain::keys;
@@ -149,16 +147,8 @@ impl KokoroProvider {
     /// empty `media_inputs` list — TTS produces media, it does not
     /// consume any.
     async fn publish_capabilities(&self) {
-        let enabled = !self.instances.is_empty();
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
-            capabilities: vec![AnnCapability {
-                primitive: Primitive::AudioGenerate,
-                media_inputs: Vec::new(),
-            }],
-            skills: Vec::new(),
-        };
+        let announcement =
+            build_capability_announcement(&self.name, !self.instances.is_empty());
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -172,71 +162,6 @@ impl KokoroProvider {
         self.publish_capabilities().await;
     }
 
-    /// Resolve the caller's voice selector against [`KOKORO_VOICES`].
-    ///
-    /// Precedence:
-    /// 1. `request.selectors.model` (treated as the voice id).
-    /// 2. `payload./audio/voice/id`.
-    /// 3. `self.default_voice`.
-    ///
-    /// `recommended:*` monikers always fall back to the default —
-    /// Kokoro has no recommendation engine and every voice is equally
-    /// valid. A concrete selector that is not in [`KOKORO_VOICES`] and
-    /// does not match the payload fallback returns
-    /// [`ProviderError::PinNotServable`].
-    fn resolve_voice(&self, request: &OrchestratorRequest) -> Result<String, ProviderError> {
-        // Case 1: caller set selectors.model.
-        if let Some(sel) = request.selectors.model.as_deref() {
-            if sel.starts_with("recommended:") {
-                return Ok(self.default_voice.clone());
-            }
-            if self.voices.contains(&sel) {
-                return Ok(sel.to_string());
-            }
-            // The selector was concrete but not in the Kokoro voice
-            // catalog. Give the payload fallback one chance — a caller
-            // that knows what they're doing may have pinned a voice
-            // directly in `audio.voice.id` without touching the model
-            // selector.
-            if let Some(payload_voice) = request
-                .payload
-                .pointer("/audio/voice/id")
-                .and_then(|v| v.as_str())
-            {
-                if self.voices.contains(&payload_voice) {
-                    return Ok(payload_voice.to_string());
-                }
-            }
-            return Err(ProviderError::PinNotServable {
-                model: sel.to_string(),
-                reason: format!(
-                    "voice not in kokoro catalog (available: {})",
-                    self.voices.join(", ")
-                ),
-            });
-        }
-
-        // Case 2: caller omitted selectors.model, try the payload.
-        if let Some(payload_voice) = request
-            .payload
-            .pointer("/audio/voice/id")
-            .and_then(|v| v.as_str())
-        {
-            if self.voices.contains(&payload_voice) {
-                return Ok(payload_voice.to_string());
-            }
-            return Err(ProviderError::PinNotServable {
-                model: payload_voice.to_string(),
-                reason: format!(
-                    "voice not in kokoro catalog (available: {})",
-                    self.voices.join(", ")
-                ),
-            });
-        }
-
-        // Case 3: nothing pinned, use the default.
-        Ok(self.default_voice.clone())
-    }
 }
 
 // ── Discovery subscriber ─────────────────────────────────────
@@ -292,7 +217,15 @@ impl Provider for KokoroProvider {
             .ok_or_else(|| ProviderError::Unsupported("missing audio.text".to_string()))?
             .to_string();
 
-        let voice = self.resolve_voice(&request)?;
+        let voice = resolve_voice(
+            request.selectors.model.as_deref(),
+            request
+                .payload
+                .pointer("/audio/voice/id")
+                .and_then(|v| v.as_str()),
+            &self.default_voice,
+            self.voices,
+        )?;
 
         let format = request
             .payload
@@ -363,5 +296,191 @@ impl Provider for KokoroProvider {
         out.set(&keys::audio::MEDIA_ID, entry.id.as_str());
         out.set(&keys::audio::FORMAT, format);
         Ok(ProviderOutcome::Sync(out))
+    }
+}
+
+// ── Pure helpers (testable without runtime) ──────────────────
+
+/// Build the capability announcement Kokoro publishes given the
+/// current instance pool state. Pure function — no IO, no &self —
+/// so unit tests can exercise the wire shape directly.
+///
+/// Kokoro declares a single `AudioGenerate` capability with an
+/// empty `media_inputs` list — TTS produces media, it does not
+/// consume any.
+fn build_capability_announcement(
+    name: &ProviderName,
+    has_instances: bool,
+) -> CapabilityAnnouncement {
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled: has_instances,
+        capabilities: vec![Capability {
+            primitive: Primitive::AudioGenerate,
+            media_inputs: Vec::new(), // TTS produces media; consumes none
+        }],
+        skills: Vec::new(),
+    }
+}
+
+/// Resolve the caller's voice selector against the Kokoro voice
+/// catalog.
+///
+/// Precedence (preserved from the original `KokoroProvider::resolve_voice`):
+///
+/// 1. `selector` (from `request.selectors.model`) set:
+///    - `recommended:*` → `default_voice`.
+///    - known voice in `voices` → passes through.
+///    - unknown selector → try `payload_voice`: if it is a known
+///      voice, use it; otherwise return `PinNotServable { model: selector }`.
+/// 2. `selector` absent, `payload_voice` present:
+///    - known voice → passes through.
+///    - unknown voice → `PinNotServable { model: payload_voice }`.
+/// 3. Neither set → `default_voice`.
+fn resolve_voice(
+    selector: Option<&str>,
+    payload_voice: Option<&str>,
+    default_voice: &str,
+    voices: &[&str],
+) -> Result<String, ProviderError> {
+    // Case 1: caller set selectors.model.
+    if let Some(sel) = selector {
+        if sel.starts_with("recommended:") {
+            return Ok(default_voice.to_string());
+        }
+        if voices.contains(&sel) {
+            return Ok(sel.to_string());
+        }
+        // The selector was concrete but not in the Kokoro voice
+        // catalog. Give the payload fallback one chance — a caller
+        // that knows what they're doing may have pinned a voice
+        // directly in `audio.voice.id` without touching the model
+        // selector.
+        if let Some(pv) = payload_voice {
+            if voices.contains(&pv) {
+                return Ok(pv.to_string());
+            }
+        }
+        return Err(ProviderError::PinNotServable {
+            model: sel.to_string(),
+            reason: format!(
+                "voice not in kokoro catalog (available: {})",
+                voices.join(", ")
+            ),
+        });
+    }
+
+    // Case 2: caller omitted selectors.model, try the payload.
+    if let Some(pv) = payload_voice {
+        if voices.contains(&pv) {
+            return Ok(pv.to_string());
+        }
+        return Err(ProviderError::PinNotServable {
+            model: pv.to_string(),
+            reason: format!(
+                "voice not in kokoro catalog (available: {})",
+                voices.join(", ")
+            ),
+        });
+    }
+
+    // Case 3: nothing pinned, use the default.
+    Ok(default_voice.to_string())
+}
+
+// ── Tests (ORCH-0030 R2 M4) ──────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::KOKORO)
+    }
+
+    fn voices() -> &'static [&'static str] {
+        KOKORO_VOICES
+    }
+
+    // ── Capability publication ──
+
+    #[test]
+    fn announcement_disabled_when_no_instances() {
+        let ann = build_capability_announcement(&provider_name(), false);
+        assert_eq!(ann.provider.as_str(), "kokoro");
+        assert!(!ann.enabled);
+        assert_eq!(ann.capabilities.len(), 1);
+        assert!(ann.skills.is_empty());
+    }
+
+    #[test]
+    fn announcement_enabled_when_instances_present() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert!(ann.enabled);
+    }
+
+    #[test]
+    fn announcement_declares_audio_generate_without_media_inputs() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert_eq!(ann.capabilities.len(), 1);
+        let cap = &ann.capabilities[0];
+        assert_eq!(cap.primitive, Primitive::AudioGenerate);
+        // TTS adapters PRODUCE media; they do not CONSUME media inputs.
+        assert!(cap.media_inputs.is_empty());
+    }
+
+    // ── Voice resolution ──
+
+    #[test]
+    fn resolve_voice_no_input_returns_default() {
+        let v = resolve_voice(None, None, "af_bella", voices()).unwrap();
+        assert_eq!(v, "af_bella");
+    }
+
+    #[test]
+    fn resolve_voice_recommended_moniker_returns_default() {
+        let v = resolve_voice(Some("recommended:tts"), None, "af_bella", voices()).unwrap();
+        assert_eq!(v, "af_bella");
+    }
+
+    #[test]
+    fn resolve_voice_known_selector_passes_through() {
+        let v = resolve_voice(Some("am_adam"), None, "af_bella", voices()).unwrap();
+        assert_eq!(v, "am_adam");
+    }
+
+    #[test]
+    fn resolve_voice_falls_back_to_payload_voice_when_no_selector() {
+        // With no selector set, a payload voice that IS in the catalog
+        // passes through. The adapter validates payload voices against
+        // the catalog (not passed through unvalidated).
+        let v = resolve_voice(None, Some("am_michael"), "af_bella", voices()).unwrap();
+        assert_eq!(v, "am_michael");
+    }
+
+    #[test]
+    fn resolve_voice_unknown_selector_returns_pin_not_servable() {
+        let err =
+            resolve_voice(Some("nope-voice"), None, "af_bella", voices()).unwrap_err();
+        match err {
+            ProviderError::PinNotServable { model, .. } => {
+                assert_eq!(model, "nope-voice");
+            }
+            other => panic!("expected PinNotServable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_voice_unknown_payload_voice_returns_pin_not_servable() {
+        // With no selector, an unknown payload voice is validated
+        // against the catalog and rejected.
+        let err =
+            resolve_voice(None, Some("zz_ghost"), "af_bella", voices()).unwrap_err();
+        match err {
+            ProviderError::PinNotServable { model, .. } => {
+                assert_eq!(model, "zz_ghost");
+            }
+            other => panic!("expected PinNotServable, got {other:?}"),
+        }
     }
 }

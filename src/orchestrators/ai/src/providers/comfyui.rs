@@ -253,14 +253,12 @@ impl ComfyUiProvider {
         let capabilities = compute_capabilities(&map);
         drop(map);
 
-        let enabled = !self.instances.is_empty() && !capabilities.is_empty();
-
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
+        let announcement = build_capability_announcement(
+            &self.name,
+            !self.instances.is_empty(),
             capabilities,
             skills,
-        };
+        );
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -1015,6 +1013,34 @@ fn compute_capabilities(skills: &HashMap<Moniker, LoadedSkill>) -> Vec<AnnCapabi
     capabilities
 }
 
+/// Bundle the provider name, instance pool state, computed
+/// capabilities, and skill declarations into the wire-shaped
+/// [`CapabilityAnnouncement`] published to the bus.
+///
+/// `enabled` is true only when both conditions hold:
+///
+/// - the instance pool has at least one URL (something to dispatch to)
+/// - the loaded skill set produces at least one capability (otherwise
+///   ComfyUI is technically up but cannot serve anything until skills
+///   land on disk)
+///
+/// Either condition alone leaves the adapter `enabled: false`. The
+/// dispatcher then routes around it via `CapabilityDirectory`.
+fn build_capability_announcement(
+    name: &ProviderName,
+    has_instances: bool,
+    capabilities: Vec<AnnCapability>,
+    skills: Vec<SkillDeclaration>,
+) -> CapabilityAnnouncement {
+    let enabled = has_instances && !capabilities.is_empty();
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled,
+        capabilities,
+        skills,
+    }
+}
+
 /// Walk a `LoadedSkill` map and produce one `SkillDeclaration` per
 /// entry. The output ordering follows the underlying `HashMap`
 /// iteration order — callers that care must sort by `id`.
@@ -1389,5 +1415,97 @@ mod tests {
         assert_eq!(caps.len(), 1);
         assert_eq!(caps[0].primitive, Primitive::ImageGenerate);
         assert!(caps[0].media_inputs.is_empty());
+    }
+
+    // ── M4: bundled CapabilityAnnouncement ────────────────────
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::COMFYUI)
+    }
+
+    fn loaded_pair_for_announcement_test(
+    ) -> (HashMap<Moniker, LoadedSkill>, Vec<AnnCapability>, Vec<SkillDeclaration>) {
+        let (m_a, loaded_a) = synthetic_skill(
+            "skill-a",
+            Primitive::ImageGenerate,
+            vec![
+                param_binding("image.prompt.positive", "Positive", true),
+                media_binding("image.source", &["image/png"]),
+            ],
+            None,
+            None,
+        );
+        let (m_b, loaded_b) = synthetic_skill(
+            "skill-b",
+            Primitive::ImageUpscale,
+            vec![param_binding("image.upscale.factor", "Factor", false)],
+            None,
+            None,
+        );
+        let mut map: HashMap<Moniker, LoadedSkill> = HashMap::new();
+        map.insert(m_a, loaded_a);
+        map.insert(m_b, loaded_b);
+        let caps = compute_capabilities(&map);
+        let skills = compute_skill_declarations(&map);
+        (map, caps, skills)
+    }
+
+    #[test]
+    fn announcement_disabled_when_no_instances() {
+        let (_map, caps, skills) = loaded_pair_for_announcement_test();
+        let ann = build_capability_announcement(&provider_name(), false, caps, skills);
+        assert!(!ann.enabled);
+        // Even disabled, the contents are still attached so observers
+        // can see what ComfyUI WOULD serve once an instance comes up.
+        assert!(!ann.capabilities.is_empty());
+        assert!(!ann.skills.is_empty());
+    }
+
+    #[test]
+    fn announcement_disabled_when_no_loaded_skills() {
+        // Empty map → empty capabilities → enabled=false even with
+        // a non-empty instance pool. ComfyUI without any loaded
+        // skills cannot serve anything.
+        let map: HashMap<Moniker, LoadedSkill> = HashMap::new();
+        let caps = compute_capabilities(&map);
+        let skills = compute_skill_declarations(&map);
+        let ann = build_capability_announcement(&provider_name(), true, caps, skills);
+        assert!(!ann.enabled);
+        assert!(ann.capabilities.is_empty());
+        assert!(ann.skills.is_empty());
+    }
+
+    #[test]
+    fn announcement_enabled_when_instances_and_skills_present() {
+        let (_map, caps, skills) = loaded_pair_for_announcement_test();
+        let ann = build_capability_announcement(&provider_name(), true, caps, skills);
+        assert!(ann.enabled);
+    }
+
+    #[test]
+    fn announcement_bundles_capabilities_and_skills_together() {
+        let (_map, caps, skills) = loaded_pair_for_announcement_test();
+        let cap_count = caps.len();
+        let skill_count = skills.len();
+        let ann = build_capability_announcement(&provider_name(), true, caps, skills);
+        assert_eq!(ann.capabilities.len(), cap_count);
+        assert_eq!(ann.skills.len(), skill_count);
+        assert_eq!(ann.provider.as_str(), "comfyui");
+        // The two test skills declare two distinct primitives, so
+        // capabilities should also be 2.
+        assert_eq!(ann.capabilities.len(), 2);
+        assert_eq!(ann.skills.len(), 2);
+    }
+
+    #[test]
+    fn announcement_validates_against_directory_subscriber() {
+        // The DirectorySubscriber rejects an announcement whose
+        // skills reference a primitive that isn't declared in the
+        // capabilities list. Our compute_capabilities +
+        // compute_skill_declarations pair should always produce a
+        // pair that round-trips through `validate()`.
+        let (_map, caps, skills) = loaded_pair_for_announcement_test();
+        let ann = build_capability_announcement(&provider_name(), true, caps, skills);
+        ann.validate().expect("self-built announcement must validate");
     }
 }

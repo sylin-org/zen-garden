@@ -101,31 +101,8 @@ impl WhisperCppProvider {
     /// Publish the current capability set to the bus. Called from the
     /// discovery subscriber whenever the instance pool changes.
     async fn publish_capabilities(&self) {
-        let enabled = !self.instances.is_empty();
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
-            capabilities: vec![Capability {
-                primitive: Primitive::AudioTranscribe,
-                media_inputs: vec![CapabilityMediaInput {
-                    field: keys::audio::SOURCE.as_str().to_string(),
-                    delivery: crate::domain::media::MediaDelivery::Transfer,
-                    accepted_types: vec![
-                        "audio/mpeg".to_string(),
-                        "audio/mp3".to_string(),
-                        "audio/wav".to_string(),
-                        "audio/wave".to_string(),
-                        "audio/ogg".to_string(),
-                        "audio/flac".to_string(),
-                        "audio/webm".to_string(),
-                        "audio/mp4".to_string(),
-                        "audio/m4a".to_string(),
-                    ],
-                    overlay: None,
-                }],
-            }],
-            skills: Vec::new(),
-        };
+        let announcement =
+            build_capability_announcement(&self.name, !self.instances.is_empty());
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -198,19 +175,7 @@ impl Provider for WhisperCppProvider {
         // static model — there is no `recommended:*` path. If the
         // caller pinned something we don't know about, reject with
         // `PinNotServable`; otherwise use `default_model`.
-        let model = match request.selectors.model.as_deref() {
-            None => self.default_model.clone(),
-            Some(m) if MODELS.iter().any(|known| *known == m) => m.to_string(),
-            Some(m) => {
-                return Err(ProviderError::PinNotServable {
-                    model: m.to_string(),
-                    reason: format!(
-                        "whispercpp serves only: {}",
-                        MODELS.join(", ")
-                    ),
-                });
-            }
-        };
+        let model = resolve_model(request.selectors.model.as_deref(), &self.default_model)?;
 
         // Transfer delivery: pull bytes from the media store and
         // construct our own multipart body.
@@ -297,6 +262,62 @@ impl Provider for WhisperCppProvider {
     }
 }
 
+// ── Pure helpers (testable without runtime) ──────────────────
+
+/// Build the capability announcement WhisperCpp publishes given the
+/// current instance pool state. Pure function — no IO, no &self —
+/// so unit tests can exercise the wire shape directly.
+fn build_capability_announcement(
+    name: &ProviderName,
+    has_instances: bool,
+) -> CapabilityAnnouncement {
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled: has_instances,
+        capabilities: vec![Capability {
+            primitive: Primitive::AudioTranscribe,
+            media_inputs: vec![CapabilityMediaInput {
+                field: keys::audio::SOURCE.as_str().to_string(),
+                delivery: crate::domain::media::MediaDelivery::Transfer,
+                accepted_types: vec![
+                    "audio/mpeg".to_string(),
+                    "audio/mp3".to_string(),
+                    "audio/wav".to_string(),
+                    "audio/wave".to_string(),
+                    "audio/ogg".to_string(),
+                    "audio/flac".to_string(),
+                    "audio/webm".to_string(),
+                    "audio/mp4".to_string(),
+                    "audio/m4a".to_string(),
+                ],
+                overlay: None,
+            }],
+        }],
+        skills: Vec::new(),
+    }
+}
+
+/// Resolve `selectors.model` for WhisperCpp.
+///
+/// - `None` → returns `default_model`.
+/// - `Some(name)` where `name` is in [`MODELS`] → returns the name.
+/// - `Some(name)` where `name` is **not** in [`MODELS`] →
+///   `Err(PinNotServable)`.
+///
+/// Whisper has no `recommended:*` resolution because the model
+/// catalog is a single static entry; cloud-style monikers reach
+/// the unknown branch and surface as `PinNotServable`.
+fn resolve_model(input: Option<&str>, default_model: &str) -> Result<String, ProviderError> {
+    match input {
+        None => Ok(default_model.to_string()),
+        Some(m) if MODELS.iter().any(|known| *known == m) => Ok(m.to_string()),
+        Some(m) => Err(ProviderError::PinNotServable {
+            model: m.to_string(),
+            reason: format!("whispercpp serves only: {}", MODELS.join(", ")),
+        }),
+    }
+}
+
 // ── Wire types ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -305,3 +326,88 @@ struct TranscriptionResponse {
     #[serde(default)]
     language: Option<String>,
 }
+
+// ── Tests (ORCH-0030 R2 M4) ──────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::media::MediaDelivery;
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::WHISPERCPP)
+    }
+
+    // ── Capability publication ──
+
+    #[test]
+    fn announcement_disabled_when_no_instances() {
+        let ann = build_capability_announcement(&provider_name(), false);
+        assert_eq!(ann.provider.as_str(), "whispercpp");
+        assert!(!ann.enabled);
+        assert_eq!(ann.capabilities.len(), 1);
+        assert!(ann.skills.is_empty());
+    }
+
+    #[test]
+    fn announcement_enabled_when_instances_present() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert!(ann.enabled);
+    }
+
+    #[test]
+    fn announcement_declares_audio_transcribe_with_transfer_media_input() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert_eq!(ann.capabilities.len(), 1);
+        let cap = &ann.capabilities[0];
+        assert_eq!(cap.primitive, Primitive::AudioTranscribe);
+        assert_eq!(cap.media_inputs.len(), 1);
+        let media = &cap.media_inputs[0];
+        assert_eq!(media.field, "audio.source");
+        assert!(matches!(media.delivery, MediaDelivery::Transfer));
+        assert!(media.overlay.is_none());
+        // Cover the breadth of audio mime types Whisper accepts.
+        assert!(media.accepted_types.contains(&"audio/mpeg".to_string()));
+        assert!(media.accepted_types.contains(&"audio/wav".to_string()));
+        assert!(media.accepted_types.contains(&"audio/flac".to_string()));
+        assert!(media.accepted_types.contains(&"audio/webm".to_string()));
+        assert!(media.accepted_types.len() >= 9);
+    }
+
+    // ── Model resolution ──
+
+    #[test]
+    fn resolve_model_none_returns_default() {
+        let m = resolve_model(None, "whisper-1").unwrap();
+        assert_eq!(m, "whisper-1");
+    }
+
+    #[test]
+    fn resolve_model_known_passes_through() {
+        let m = resolve_model(Some("whisper-1"), "whisper-1").unwrap();
+        assert_eq!(m, "whisper-1");
+    }
+
+    #[test]
+    fn resolve_model_unknown_returns_pin_not_servable() {
+        let err = resolve_model(Some("nope-model"), "whisper-1").unwrap_err();
+        match err {
+            ProviderError::PinNotServable { model, reason } => {
+                assert_eq!(model, "nope-model");
+                assert!(reason.contains("whisper-1"));
+            }
+            other => panic!("expected PinNotServable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_model_recommended_moniker_is_pin_not_servable() {
+        // Whisper has no recommended:* resolution; the moniker is
+        // not in MODELS, so it surfaces as a pin error rather than
+        // silently falling back. Cloud adapters fall back to default;
+        // this adapter does not.
+        let err = resolve_model(Some("recommended:transcribe"), "whisper-1").unwrap_err();
+        assert!(matches!(err, ProviderError::PinNotServable { .. }));
+    }
+}
+

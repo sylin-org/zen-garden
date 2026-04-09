@@ -118,31 +118,8 @@ impl SpeachesProvider {
     /// Publish the current capability set to the bus. Called from the
     /// discovery subscriber whenever the instance pool changes.
     async fn publish_capabilities(&self) {
-        let enabled = !self.instances.is_empty();
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
-            capabilities: vec![Capability {
-                primitive: Primitive::AudioTranscribe,
-                media_inputs: vec![CapabilityMediaInput {
-                    field: keys::audio::SOURCE.as_str().to_string(),
-                    delivery: MediaDelivery::Transfer,
-                    accepted_types: vec![
-                        "audio/mpeg".to_string(),
-                        "audio/mp3".to_string(),
-                        "audio/wav".to_string(),
-                        "audio/wave".to_string(),
-                        "audio/ogg".to_string(),
-                        "audio/flac".to_string(),
-                        "audio/webm".to_string(),
-                        "audio/mp4".to_string(),
-                        "audio/m4a".to_string(),
-                    ],
-                    overlay: None,
-                }],
-            }],
-            skills: Vec::new(),
-        };
+        let announcement =
+            build_capability_announcement(&self.name, !self.instances.is_empty());
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -172,22 +149,6 @@ impl SpeachesProvider {
         match &self.api_key {
             Some(key) => rb.bearer_auth(key),
             None => rb,
-        }
-    }
-
-    /// Resolve `request.selectors.model` against the static MODELS
-    /// list. `None` and any `recommended:*` moniker fall back to the
-    /// configured default; a concrete pin outside the list is rejected
-    /// with `PinNotServable`.
-    fn resolve_model(&self, selector: Option<&str>) -> Result<String, ProviderError> {
-        match selector {
-            None => Ok(self.default_model.clone()),
-            Some(s) if s.starts_with("recommended:") => Ok(self.default_model.clone()),
-            Some(s) if MODELS.iter().any(|known| *known == s) => Ok(s.to_string()),
-            Some(s) => Err(ProviderError::PinNotServable {
-                model: s.to_string(),
-                reason: format!("speaches serves only: {}", MODELS.join(", ")),
-            }),
         }
     }
 }
@@ -238,7 +199,7 @@ impl Provider for SpeachesProvider {
         }
 
         // Adapter-local model resolution.
-        let model = self.resolve_model(request.selectors.model.as_deref())?;
+        let model = resolve_model(request.selectors.model.as_deref(), &self.default_model)?;
 
         // Transfer delivery: pull bytes from the media store and
         // construct our own multipart body.
@@ -323,6 +284,61 @@ impl Provider for SpeachesProvider {
     }
 }
 
+// ── Pure helpers (testable without runtime) ──────────────────
+
+/// Build the capability announcement Speaches publishes given the
+/// current instance pool state. Pure function — no IO, no &self —
+/// so unit tests can exercise the wire shape directly.
+fn build_capability_announcement(
+    name: &ProviderName,
+    has_instances: bool,
+) -> CapabilityAnnouncement {
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled: has_instances,
+        capabilities: vec![Capability {
+            primitive: Primitive::AudioTranscribe,
+            media_inputs: vec![CapabilityMediaInput {
+                field: keys::audio::SOURCE.as_str().to_string(),
+                delivery: MediaDelivery::Transfer,
+                accepted_types: vec![
+                    "audio/mpeg".to_string(),
+                    "audio/mp3".to_string(),
+                    "audio/wav".to_string(),
+                    "audio/wave".to_string(),
+                    "audio/ogg".to_string(),
+                    "audio/flac".to_string(),
+                    "audio/webm".to_string(),
+                    "audio/mp4".to_string(),
+                    "audio/m4a".to_string(),
+                ],
+                overlay: None,
+            }],
+        }],
+        skills: Vec::new(),
+    }
+}
+
+/// Resolve `selectors.model` for Speaches.
+///
+/// - `None` → returns `default_model`.
+/// - `Some("recommended:*")` → returns `default_model` (Speaches
+///   treats recommended monikers as "give me your default").
+/// - `Some(name)` where `name` is in [`MODELS`] → returns the name.
+/// - `Some(name)` where `name` is **not** in [`MODELS`] →
+///   `Err(PinNotServable)`.
+fn resolve_model(input: Option<&str>, default_model: &str) -> Result<String, ProviderError> {
+    match input {
+        None => Ok(default_model.to_string()),
+        Some(s) if s.starts_with("recommended:") => Ok(default_model.to_string()),
+        Some(m) if MODELS.iter().any(|known| *known == m) => Ok(m.to_string()),
+        Some(m) => Err(ProviderError::PinNotServable {
+            model: m.to_string(),
+            reason: format!("speaches serves only: {}", MODELS.join(", ")),
+        }),
+    }
+}
+
 // ── Wire types ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -330,4 +346,84 @@ struct TranscriptionResponse {
     text: String,
     #[serde(default)]
     language: Option<String>,
+}
+
+// ── Tests (ORCH-0030 R2 M4) ──────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::media::MediaDelivery;
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::SPEACHES)
+    }
+
+    // ── Capability publication ──
+
+    #[test]
+    fn announcement_disabled_when_no_instances() {
+        let ann = build_capability_announcement(&provider_name(), false);
+        assert_eq!(ann.provider.as_str(), "speaches");
+        assert!(!ann.enabled);
+        assert_eq!(ann.capabilities.len(), 1);
+        assert!(ann.skills.is_empty());
+    }
+
+    #[test]
+    fn announcement_enabled_when_instances_present() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        assert!(ann.enabled);
+    }
+
+    #[test]
+    fn announcement_declares_audio_transcribe_with_transfer_media_input() {
+        let ann = build_capability_announcement(&provider_name(), true);
+        let cap = &ann.capabilities[0];
+        assert_eq!(cap.primitive, Primitive::AudioTranscribe);
+        assert_eq!(cap.media_inputs.len(), 1);
+        let media = &cap.media_inputs[0];
+        assert_eq!(media.field, "audio.source");
+        assert!(matches!(media.delivery, MediaDelivery::Transfer));
+        assert!(media.accepted_types.contains(&"audio/mpeg".to_string()));
+        assert!(media.accepted_types.contains(&"audio/wav".to_string()));
+        assert!(media.accepted_types.len() >= 9);
+    }
+
+    // ── Model resolution ──
+
+    #[test]
+    fn resolve_model_none_returns_default() {
+        let m = resolve_model(None, "Systran/faster-distil-whisper-large-v3").unwrap();
+        assert_eq!(m, "Systran/faster-distil-whisper-large-v3");
+    }
+
+    #[test]
+    fn resolve_model_recommended_moniker_returns_default() {
+        // Speaches treats recommended:* as "give me your default".
+        let m = resolve_model(Some("recommended:transcribe"), "Systran/faster-whisper-medium").unwrap();
+        assert_eq!(m, "Systran/faster-whisper-medium");
+    }
+
+    #[test]
+    fn resolve_model_known_concrete_passes_through() {
+        let m = resolve_model(
+            Some("Systran/faster-whisper-large-v3"),
+            "Systran/faster-distil-whisper-large-v3",
+        )
+        .unwrap();
+        assert_eq!(m, "Systran/faster-whisper-large-v3");
+    }
+
+    #[test]
+    fn resolve_model_unknown_returns_pin_not_servable() {
+        let err = resolve_model(Some("nope-model"), "Systran/faster-distil-whisper-large-v3").unwrap_err();
+        match err {
+            ProviderError::PinNotServable { model, reason } => {
+                assert_eq!(model, "nope-model");
+                assert!(reason.contains("Systran"));
+            }
+            other => panic!("expected PinNotServable, got {other:?}"),
+        }
+    }
 }

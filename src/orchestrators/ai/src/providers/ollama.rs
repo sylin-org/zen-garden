@@ -97,27 +97,14 @@ impl OllamaProvider {
 
     /// Publish the current matrix as a capability announcement.
     async fn publish_capabilities(&self) {
-        let matrix = self.matrix.read().await;
-        let primitives = matrix.supported_primitives();
-        let enabled = !primitives.is_empty() && !matrix.healthy_instances().is_empty();
-        let capabilities: Vec<AnnCapability> = primitives
-            .into_iter()
-            .map(|p| AnnCapability {
-                primitive: p,
-                media_inputs: ollama_media_inputs_for(p),
-            })
-            .collect();
-        let announcement = CapabilityAnnouncement {
-            provider: self.name.clone(),
-            enabled,
-            capabilities,
-            // Skills come later — commits 8+ handle the generalized
-            // skill publication from any adapter that has them. Ollama
-            // will declare its first skill (e.g. image-understanding)
-            // in a follow-up.
-            skills: Vec::new(),
+        let (primitives, has_healthy) = {
+            let matrix = self.matrix.read().await;
+            (
+                matrix.supported_primitives(),
+                !matrix.healthy_instances().is_empty(),
+            )
         };
-        drop(matrix);
+        let announcement = build_capability_announcement(&self.name, primitives, has_healthy);
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
@@ -743,6 +730,42 @@ fn ollama_media_inputs_for(primitive: Primitive) -> Vec<CapabilityMediaInput> {
     }
 }
 
+/// Build the capability announcement Ollama publishes for the given
+/// matrix snapshot. Pure function — no IO, no `&self` — so unit
+/// tests can exercise the wire shape directly.
+///
+/// `enabled` is true only when the matrix supports at least one
+/// primitive AND has at least one healthy instance. Either condition
+/// alone is insufficient: a matrix with primitives but no healthy
+/// instances means the adapter knows what models are installed but
+/// nobody is reachable; a matrix with healthy instances but no
+/// supported primitives means the instances exist but lack any
+/// capability tag the orchestrator routes on.
+fn build_capability_announcement(
+    name: &ProviderName,
+    primitives: Vec<Primitive>,
+    has_healthy_instances: bool,
+) -> CapabilityAnnouncement {
+    let enabled = !primitives.is_empty() && has_healthy_instances;
+    let capabilities: Vec<AnnCapability> = primitives
+        .into_iter()
+        .map(|p| AnnCapability {
+            primitive: p,
+            media_inputs: ollama_media_inputs_for(p),
+        })
+        .collect();
+    CapabilityAnnouncement {
+        provider: name.clone(),
+        enabled,
+        capabilities,
+        // Skills come later — commits 8+ handle the generalized
+        // skill publication from any adapter that has them. Ollama
+        // will declare its first skill (e.g. image-understanding)
+        // in a follow-up.
+        skills: Vec::new(),
+    }
+}
+
 // ── Payload helpers ──────────────────────────────────────────
 
 fn build_chat_messages(payload: &Value, _vision: bool) -> Result<Vec<Value>, ProviderError> {
@@ -934,5 +957,97 @@ mod tests {
             reason: "no healthy instance",
         });
         assert!(matches!(err, ProviderError::PinNotServable { .. }));
+    }
+
+    // ── M4: capability publication ──
+
+    fn provider_name() -> ProviderName {
+        ProviderName::new(keys::providers::OLLAMA)
+    }
+
+    #[test]
+    fn announcement_disabled_when_no_primitives() {
+        let ann = build_capability_announcement(&provider_name(), Vec::new(), true);
+        assert!(!ann.enabled);
+        assert!(ann.capabilities.is_empty());
+    }
+
+    #[test]
+    fn announcement_disabled_when_no_healthy_instances() {
+        // Even if the matrix knows about supported primitives, an
+        // adapter with zero healthy instances cannot serve traffic.
+        let ann = build_capability_announcement(
+            &provider_name(),
+            vec![Primitive::TextChat],
+            false,
+        );
+        assert!(!ann.enabled);
+    }
+
+    #[test]
+    fn announcement_enabled_when_primitives_and_healthy_instances() {
+        let ann = build_capability_announcement(
+            &provider_name(),
+            vec![Primitive::TextChat],
+            true,
+        );
+        assert!(ann.enabled);
+        assert_eq!(ann.capabilities.len(), 1);
+        assert_eq!(ann.capabilities[0].primitive, Primitive::TextChat);
+    }
+
+    #[test]
+    fn announcement_text_primitives_carry_no_media_inputs() {
+        let ann = build_capability_announcement(
+            &provider_name(),
+            vec![Primitive::TextChat, Primitive::TextEmbed],
+            true,
+        );
+        assert_eq!(ann.capabilities.len(), 2);
+        for cap in &ann.capabilities {
+            assert!(cap.media_inputs.is_empty(), "{:?} should have no media", cap.primitive);
+        }
+    }
+
+    #[test]
+    fn announcement_image_analyze_carries_base64_media_input() {
+        let ann = build_capability_announcement(
+            &provider_name(),
+            vec![Primitive::ImageAnalyze],
+            true,
+        );
+        let cap = &ann.capabilities[0];
+        assert_eq!(cap.primitive, Primitive::ImageAnalyze);
+        assert_eq!(cap.media_inputs.len(), 1);
+        let media = &cap.media_inputs[0];
+        assert_eq!(media.field, "image.source");
+        assert!(matches!(
+            media.delivery,
+            crate::domain::media::MediaDelivery::Base64
+        ));
+        assert!(media.accepted_types.contains(&"image/png".to_string()));
+        assert!(media.accepted_types.contains(&"image/jpeg".to_string()));
+        assert!(media.accepted_types.contains(&"image/webp".to_string()));
+    }
+
+    #[test]
+    fn announcement_publishes_no_skills_in_m1() {
+        // Ollama's first skill (image-understanding) lands in a
+        // post-M1 commit; in M1 the skills list is empty even when
+        // capabilities are populated.
+        let ann = build_capability_announcement(
+            &provider_name(),
+            vec![Primitive::TextChat, Primitive::ImageAnalyze],
+            true,
+        );
+        assert!(ann.skills.is_empty());
+    }
+
+    #[test]
+    fn announcement_provider_name_matches_keys_constant() {
+        let ann =
+            build_capability_announcement(&provider_name(), vec![Primitive::TextChat], true);
+        assert_eq!(ann.provider.as_str(), keys::providers::OLLAMA);
+        assert_eq!(ann.provider.as_str(), "ollama");
     }
 }

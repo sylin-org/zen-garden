@@ -33,7 +33,7 @@ export default function SkillList() {
   return (
     <div className="flex h-full">
       {/* Master: skill list */}
-      <div className="flex-1 flex flex-col overflow-hidden border-r border-border">
+      <div className="flex flex-col overflow-hidden border-r border-border transition-all duration-300" style={{ flexBasis: selected ? "60%" : "100%" }}>
         {/* Search */}
         <div className="p-3 border-b border-border shrink-0">
           <input
@@ -79,15 +79,11 @@ export default function SkillList() {
       </div>
 
       {/* Detail */}
-      <div className="w-[380px] shrink-0 overflow-y-auto bg-surface">
-        {selected ? (
+      {selected && (
+        <div className="border-l border-border overflow-y-auto bg-surface transition-all duration-300" style={{ flexBasis: "40%" }}>
           <SkillDetail skill={selected} />
-        ) : (
-          <div className="flex items-center justify-center h-full text-text-dimmer text-xs italic">
-            Select a skill
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

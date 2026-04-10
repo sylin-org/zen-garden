@@ -98,8 +98,10 @@ pub enum FieldType {
     /// A `{media_id: "..."}` reference. Accepted as a bare string
     /// (`media_id`) or an object with a `media_id` field.
     MediaRef,
-    /// An array of `{user, assistant}` pairs representing prior turns.
-    MessageHistory,
+    /// A dialogue: alternating user/assistant turns. Rendered as a
+    /// conversation thread widget. Replaces the prior `MessageHistory`
+    /// name for clearer semantics.
+    Dialogue,
 }
 
 /// Input-field alias rewrites.
@@ -124,7 +126,7 @@ pub enum AliasCondition {
     WhenArray,
     /// Special-case decomposer: expands an OpenAI-shape
     /// `messages: [...]` array into `text.prompt.user`,
-    /// `text.prompt.system`, and `text.prompt.previous`. See
+    /// `text.prompt.system`, and `text.prompt.history`. See
     /// [`crate::services::contextualizer`] for the implementation.
     MessagesDecomposer,
 }
@@ -298,7 +300,7 @@ fn field_view(spec: &FieldSpec) -> FieldSpecView<'_> {
         FieldType::Array => ("array", None, None),
         FieldType::Object => ("object", None, None),
         FieldType::MediaRef => ("media_ref", None, None),
-        FieldType::MessageHistory => ("message_history", None, None),
+        FieldType::Dialogue => ("dialogue", None, None),
     };
     FieldSpecView {
         path: spec.path.as_str(),

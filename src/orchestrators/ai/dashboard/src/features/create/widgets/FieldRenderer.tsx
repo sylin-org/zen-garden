@@ -4,15 +4,18 @@ import SliderWidget from "./SliderWidget";
 import SelectWidget from "./SelectWidget";
 import NumberWidget from "./NumberWidget";
 import ToggleWidget from "./ToggleWidget";
+import DialogueWidget from "./DialogueWidget";
 
 interface Props {
   field: CatalogField;
   value: unknown;
   onChange: (value: unknown) => void;
+  /** Streaming text for dialogue fields (tokens arriving). */
+  streamingText?: string;
 }
 
 /** Renders the appropriate widget for a catalog field descriptor. */
-export default function FieldRenderer({ field, value, onChange }: Props) {
+export default function FieldRenderer({ field, value, onChange, streamingText }: Props) {
   const widget = field.widget ?? inferWidget(field);
 
   switch (widget) {
@@ -56,13 +59,19 @@ export default function FieldRenderer({ field, value, onChange }: Props) {
           onChange={onChange}
         />
       );
+    case "dialogue":
+      return (
+        <DialogueWidget
+          value={(value as { user: string; assistant: string }[]) ?? []}
+          streamingText={streamingText}
+          onChange={onChange}
+        />
+      );
     case "hidden":
       return null;
     case "file":
-      // File widgets are handled separately via media_inputs
       return null;
     default:
-      // Fallback: render as textarea
       return (
         <TextareaWidget
           field={field}
@@ -74,6 +83,7 @@ export default function FieldRenderer({ field, value, onChange }: Props) {
 }
 
 function inferWidget(field: CatalogField): string {
+  if (field.field_type === "dialogue") return "dialogue";
   if (field.options && field.options.length > 0) return "select";
   if (field.field_type === "boolean") return "toggle";
   if (field.field_type === "number" || field.field_type === "integer") {

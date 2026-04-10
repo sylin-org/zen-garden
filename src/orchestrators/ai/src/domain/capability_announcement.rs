@@ -464,6 +464,9 @@ pub enum ParameterType {
     Integer,
     Number,
     Boolean,
+    /// Alternating user/assistant turns — rendered as a conversation
+    /// thread widget.
+    Dialogue,
 }
 
 /// Rendering hint for a form widget. Clients may ignore this and
@@ -489,6 +492,10 @@ pub enum ParameterWidget {
     Hidden,
     /// File upload widget (media inputs).
     File,
+    /// Conversation thread — alternating user/assistant messages.
+    /// The widget accumulates turns and includes the full history
+    /// in every dispatch as the field value.
+    Dialogue,
 }
 
 /// Describes the auto-resolution behavior for a field that participates

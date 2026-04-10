@@ -99,8 +99,8 @@ export interface CatalogField {
   pinnable: boolean;
   label?: string;
   description?: string;
-  field_type?: "string" | "integer" | "number" | "boolean";
-  widget?: "textarea" | "slider" | "number" | "select" | "toggle" | "hidden" | "file";
+  field_type?: "string" | "integer" | "number" | "boolean" | "dialogue";
+  widget?: "textarea" | "slider" | "number" | "select" | "toggle" | "hidden" | "file" | "dialogue";
   default?: unknown;
   min?: number;
   max?: number;

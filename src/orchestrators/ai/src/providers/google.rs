@@ -186,6 +186,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
                     SkillParameter { field: "text.prompt.system".into(), required: false, label: Some("System Prompt".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("You are a helpful assistant...".into()), ..Default::default() },
                     SkillParameter { field: "text.sampling.temperature".into(), required: false, label: Some("Temperature".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(0.7)), min: Some(0.0), max: Some(2.0), step: Some(0.1), ..Default::default() },
                     SkillParameter { field: "text.tokens.max".into(), required: false, label: Some("Max Tokens".into()), field_type: Some(ParameterType::Integer), widget: Some(ParameterWidget::Number), default: Some(serde_json::json!(2048)), min: Some(1.0), max: Some(131072.0), ..Default::default() },
+                    SkillParameter { field: "text.prompt.history".into(), required: false, label: Some("Conversation".into()), field_type: Some(ParameterType::Dialogue), widget: Some(ParameterWidget::Dialogue), ..Default::default() },
                 ],
                 examples: vec![Example { label: "Creative writing".into(), description: Some("Test creative generation".into()), payload: json!({"text": {"prompt": {"user": "Write a haiku about a zen garden in autumn"}}}) }],
             },
@@ -264,7 +265,7 @@ impl GoogleProvider {
         let mut contents: Vec<Value> = Vec::new();
         if let Some(previous) = request
             .payload
-            .pointer("/text/prompt/previous")
+            .pointer("/text/prompt/history")
             .and_then(|v| v.as_array())
         {
             for turn in previous {

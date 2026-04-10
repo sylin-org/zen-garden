@@ -17,7 +17,7 @@ export default function MediaBrowser() {
   return (
     <div className="flex h-full">
       {/* Master: media grid */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="overflow-y-auto p-4 transition-all duration-300" style={{ flexBasis: selected ? "65%" : "100%" }}>
         {loading ? (
           <div className="text-text-dimmer text-sm">Loading...</div>
         ) : media.length === 0 ? (
@@ -67,15 +67,11 @@ export default function MediaBrowser() {
       </div>
 
       {/* Detail */}
-      <div className="w-[300px] shrink-0 border-l border-border overflow-y-auto bg-surface">
-        {selected ? (
+      {selected && (
+        <div className="border-l border-border overflow-y-auto bg-surface transition-all duration-300" style={{ flexBasis: "35%" }}>
           <MediaDetail entry={selected} />
-        ) : (
-          <div className="flex items-center justify-center h-full text-text-dimmer text-xs italic">
-            Select a media item
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

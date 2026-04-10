@@ -38,7 +38,7 @@ export default function GardenView() {
   return (
     <div className="flex h-full">
       {/* Master: stone cards */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="overflow-y-auto p-4 transition-all duration-300" style={{ flexBasis: selected ? "60%" : "100%" }}>
         <div className="grid grid-cols-2 gap-3">
           {resources.map((stone) => (
             <div
@@ -76,15 +76,11 @@ export default function GardenView() {
       </div>
 
       {/* Detail */}
-      <div className="w-[350px] shrink-0 border-l border-border overflow-y-auto bg-surface">
-        {selected ? (
+      {selected && (
+        <div className="border-l border-border overflow-y-auto bg-surface transition-all duration-300" style={{ flexBasis: "40%" }}>
           <StoneDetail stone={selected} />
-        ) : (
-          <div className="flex items-center justify-center h-full text-text-dimmer text-xs italic">
-            Select a stone
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

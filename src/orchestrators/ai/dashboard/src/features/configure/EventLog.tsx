@@ -37,7 +37,7 @@ export default function EventLog() {
   return (
     <div className="flex h-full">
       {/* Master: event list */}
-      <div className="flex-1 flex flex-col overflow-hidden border-r border-border">
+      <div className="flex flex-col overflow-hidden border-r border-border transition-all duration-300" style={{ flexBasis: selected ? "60%" : "100%" }}>
         {/* Filter bar */}
         <div className="flex gap-2 p-3 border-b border-border shrink-0">
           <input
@@ -94,8 +94,8 @@ export default function EventLog() {
       </div>
 
       {/* Detail */}
-      <div className="w-[380px] shrink-0 overflow-y-auto bg-surface">
-        {selected ? (
+      {selected && (
+        <div className="border-l border-border overflow-y-auto bg-surface transition-all duration-300" style={{ flexBasis: "40%" }}>
           <div className="p-4">
             <div className="text-[10px] text-text-dimmer mb-1">Topic</div>
             <div className="text-[12px] font-mono text-accent mb-3">{selected.topic}</div>
@@ -106,12 +106,8 @@ export default function EventLog() {
               {JSON.stringify(selected.payload, null, 2)}
             </pre>
           </div>
-        ) : (
-          <div className="flex items-center justify-center h-full text-text-dimmer text-xs italic">
-            Click an event to inspect
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

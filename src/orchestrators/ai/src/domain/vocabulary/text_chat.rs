@@ -26,9 +26,9 @@ pub fn vocabulary() -> Vocabulary {
                     description: "System prompt providing persona or instructions.",
                 },
                 FieldSpec {
-                    path: text::PROMPT_PREVIOUS,
-                    field_type: FieldType::MessageHistory,
-                    description: "Prior turns as an array of {user, assistant} pairs.",
+                    path: text::PROMPT_HISTORY,
+                    field_type: FieldType::Dialogue,
+                    description: "Conversation history as alternating user/assistant turns.",
                 },
                 FieldSpec {
                     path: text::TOKENS_MAX,

@@ -13,7 +13,7 @@ export default function ProviderList() {
   return (
     <div className="flex h-full">
       {/* Master */}
-      <div className="flex-1 overflow-y-auto border-r border-border">
+      <div className="overflow-y-auto border-r border-border transition-all duration-300" style={{ flexBasis: selected ? "60%" : "100%" }}>
         {catalog.providers.map((p) => (
           <div
             key={p.name}
@@ -36,15 +36,11 @@ export default function ProviderList() {
       </div>
 
       {/* Detail */}
-      <div className="w-[350px] shrink-0 overflow-y-auto bg-surface">
-        {selected ? (
+      {selected && (
+        <div className="border-l border-border overflow-y-auto bg-surface transition-all duration-300" style={{ flexBasis: "40%" }}>
           <ProviderDetail provider={selected} />
-        ) : (
-          <div className="flex items-center justify-center h-full text-text-dimmer text-xs italic">
-            Select a provider
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

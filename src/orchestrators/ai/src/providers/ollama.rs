@@ -967,14 +967,15 @@ fn base_parameters_for(p: Primitive) -> Vec<crate::domain::capability_announceme
                 max: Some(131072.0),
                 ..Default::default()
             },
-            // Hidden field: signals to the dashboard that this
-            // primitive supports conversation history. The chat UI
-            // detects this field and renders a thread instead of a
-            // flat form.
+            // Conversation history: the dashboard renders this as a
+            // dialogue thread widget. The type and widget carry the
+            // rendering intent — no special-casing on field names.
             SkillParameter {
-                field: "text.prompt.previous".into(),
+                field: "text.prompt.history".into(),
                 required: false,
-                widget: Some(ParameterWidget::Hidden),
+                label: Some("Conversation".into()),
+                field_type: Some(ParameterType::Dialogue),
+                widget: Some(ParameterWidget::Dialogue),
                 ..Default::default()
             },
         ],
@@ -1019,7 +1020,7 @@ fn build_chat_messages(payload: &Value, _vision: bool) -> Result<Vec<Value>, Pro
     }
 
     if let Some(previous) = payload
-        .pointer("/text/prompt/previous")
+        .pointer("/text/prompt/history")
         .and_then(|v| v.as_array())
     {
         for turn in previous {

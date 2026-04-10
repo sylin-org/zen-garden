@@ -8,8 +8,8 @@ use crate::domain::field_path::FieldPath;
 pub const PROMPT_USER: FieldPath = FieldPath::new("text.prompt.user");
 /// System prompt (persona, instructions).
 pub const PROMPT_SYSTEM: FieldPath = FieldPath::new("text.prompt.system");
-/// Prior conversation turns as an array of `{user, assistant}` pairs.
-pub const PROMPT_PREVIOUS: FieldPath = FieldPath::new("text.prompt.previous");
+/// Conversation history as an array of `{user, assistant}` dialogue turns.
+pub const PROMPT_HISTORY: FieldPath = FieldPath::new("text.prompt.history");
 
 /// Maximum output length in tokens.
 pub const TOKENS_MAX: FieldPath = FieldPath::new("text.tokens.max");

@@ -565,7 +565,7 @@ fn decompose_messages(
                 _ => None,
             })
             .collect();
-        let prev_path = keys::text::PROMPT_PREVIOUS;
+        let prev_path = keys::text::PROMPT_HISTORY;
         let prev_segments: Vec<&str> = prev_path.as_str().split('.').collect();
         set_nested(root, &prev_segments, Value::Array(previous_array), &prev_path)?;
     }
@@ -708,7 +708,7 @@ fn validate_field_type(
             Value::Object(map) => map.contains_key("media_id"),
             _ => false,
         },
-        FieldType::MessageHistory => match value {
+        FieldType::Dialogue => match value {
             Value::Array(arr) => arr.iter().all(|item| {
                 item.get("user").and_then(|v| v.as_str()).is_some()
                     && item.get("assistant").and_then(|v| v.as_str()).is_some()
@@ -743,7 +743,7 @@ fn describe_type(t: &FieldType) -> &'static str {
         FieldType::Array => "array",
         FieldType::Object => "object",
         FieldType::MediaRef => "media_ref",
-        FieldType::MessageHistory => "message_history",
+        FieldType::Dialogue => "dialogue",
     }
 }
 

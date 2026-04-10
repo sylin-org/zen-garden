@@ -286,6 +286,12 @@ impl Dispatcher {
                 .map(|s| s.to_string()),
         };
 
+        // Extract lineage.parent from the raw input (ORCH-0036).
+        let parent_id = raw_input_snapshot
+            .pointer("/lineage/parent")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         let persisted = PersistedRequest::new_running(
             request.id.clone(),
             request.correlation_id.as_ref().to_string(),
@@ -298,7 +304,7 @@ impl Dispatcher {
                 .as_ref()
                 .map(|p| p.as_str().to_string()),
             Some(job_id.clone()),
-            None, // parent_id — set by the HTTP handler for fork workflows
+            parent_id,
         );
         // Non-blocking: persist failure should not fail the dispatch.
         if let Err(e) = self.request_store.create(persisted).await {

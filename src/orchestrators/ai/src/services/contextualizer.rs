@@ -161,7 +161,7 @@ impl Contextualizer {
         // they are parsed elsewhere (selectors). The ingress layer is
         // responsible for extracting them; here we simply drop any
         // leftover copies so they don't fail validation.
-        for key in &["provider", "model", "skill", "variant", "action"] {
+        for key in &["provider", "model", "skill", "variant", "action", "lineage"] {
             root.remove(*key);
         }
 

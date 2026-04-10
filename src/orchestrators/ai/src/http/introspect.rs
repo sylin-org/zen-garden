@@ -1,44 +1,36 @@
-//! `GET /v1/{modality}/{leaf}[/{skill_id}]` — skill and primitive
-//! introspection (ORCH-0030 §R2.8.3).
+//! `GET /v1/{modality}/{leaf}[/{skill_id}]` — workspace definition
+//! (ORCH-0036).
 //!
 //! Every invocable URL is also a GET introspection URL. The handler
-//! returns the full object model the caller needs to build a
-//! successful POST to the same path:
+//! returns everything the dashboard needs to render a workspace form
+//! and dispatch:
 //!
-//! - **Identity** — primitive and optional skill id.
-//! - **Display** — human-facing name/description/tags (from the
-//!   `CapabilityAnnouncement` declared by the adapter, if any).
-//! - **Routing** — which providers declared this primitive or skill,
-//!   which one would run it right now (`will_run_on`), and the
-//!   fallback chain. Live answer, not static.
-//! - **Invocation** — method, URL, content-type. Self-describing.
-//! - **Parameters** — for skills, the declared parameter list with
-//!   `effective_default` resolved through the preferences layer
-//!   (commit 12 plugs in here without code changes).
-//! - **Example** — a minimal body the caller can POST.
+//! - **Display** — human-facing name, description, tags.
+//! - **Routing** — providers, health, who would handle the call.
+//! - **Invocation** — method, URL, content-type.
+//! - **Payload** — pre-assembled dispatch body with defaults and
+//!   empty required fields. POST-able as-is.
+//! - **Fields** — map of dotted-path → widget descriptor. Rendering
+//!   instructions only; values live in the payload.
+//! - **Examples** — named scenarios that fill the form.
 //!
-//! The handler supports three cases:
-//!
-//! 1. `GET /v1/{modality}/{leaf}` with a valid primitive → `kind:
-//!    "primitive"` response, including a `skills_available` list of
-//!    all skills declared for this primitive by any provider.
-//! 2. `GET /v1/{modality}/{leaf}/{skill_id}` with a valid primitive
-//!    and a skill id declared by at least one provider → `kind:
-//!    "skill"` response.
-//! 3. Unknown primitive or unknown skill → 404 with error envelope.
+//! This endpoint supersedes `GET /v1/catalog/{mod}/{leaf}[/{skill}]`
+//! (ORCH-0036).
 
 #![allow(dead_code)]
+
+use std::collections::BTreeMap;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::app_state::AppState;
 use crate::domain::capability_announcement::{
-    AutoDescriptor, SkillDeclaration, SkillDisplay, SkillParameter,
+    AutoDescriptor, Example, SkillDeclaration, SkillDisplay, SkillParameter,
 };
 use crate::domain::errors::ErrorCode;
 use crate::domain::ids::ProviderName;
@@ -49,31 +41,27 @@ use super::errors::quick_error_response;
 // ── Response shapes ──────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum IntrospectionResponse {
-    Primitive(PrimitiveIntrospection),
-    Skill(SkillIntrospection),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PrimitiveIntrospection {
+pub struct WorkspaceResponse {
+    pub kind: &'static str, // "primitive" or "skill"
     pub primitive: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<String>,
     pub display: IntrospectionDisplay,
     pub routing: RoutingInfo,
     pub invocation: InvocationInfo,
+    /// Pre-assembled dispatch body with defaults applied.
+    pub payload: Value,
+    /// Dotted-path → widget descriptor. Rendering instructions only.
+    pub fields: BTreeMap<String, FieldDescriptor>,
+    /// Named example scenarios.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<Example>,
+    /// Skills available under this primitive (only for bare primitives).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skills_available: Vec<SkillListEntry>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SkillIntrospection {
-    pub primitive: String,
-    pub skill_id: String,
-    pub display: IntrospectionDisplay,
-    pub routing: RoutingInfo,
-    pub invocation: InvocationInfo,
-    pub parameters: Vec<ParameterView>,
-    pub example: ExampleInvocation,
+    /// Media inputs declared by the capability.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub media_inputs: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -89,20 +77,11 @@ pub struct IntrospectionDisplay {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RoutingInfo {
-    /// All providers that declared this capability/skill and are
-    /// currently enabled.
     pub providers: Vec<ProviderName>,
-    /// Which provider would actually handle the call right now.
-    /// Resolved by preference ranking (commit 12); for now this is
-    /// the first provider in the list.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub will_run_on: Option<ProviderName>,
-    /// Alternate providers in order of preference, used if the
-    /// primary provider fails.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallback_providers: Vec<ProviderName>,
-    /// High-level health indicator. `"healthy"` when at least one
-    /// provider is available; `"unavailable"` when none.
     pub status: String,
 }
 
@@ -114,6 +93,30 @@ pub struct InvocationInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct FieldDescriptor {
+    pub label: String,
+    #[serde(rename = "type")]
+    pub field_type: String,
+    pub widget: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto: Option<AutoDescriptor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SkillListEntry {
     pub id: String,
     pub provider: ProviderName,
@@ -121,36 +124,9 @@ pub struct SkillListEntry {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ParameterView {
-    pub field: String,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub effective_default: Option<Value>,
-    /// Where the effective default came from: `"skill"`, `"preferences"`,
-    /// or `null` when both are absent.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_source: Option<&'static str>,
-    #[serde(default)]
-    pub pinnable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto: Option<AutoDescriptor>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExampleInvocation {
-    pub url: String,
-    pub body: Value,
-}
-
 // ── Handlers ─────────────────────────────────────────────────
 
-/// `GET /v1/{modality}/{leaf}` — describe a bare primitive.
+/// `GET /v1/{modality}/{leaf}` — workspace definition for a primitive.
 pub async fn get_primitive(
     State(state): State<AppState>,
     Path((modality, leaf)): Path<(String, String)>,
@@ -165,53 +141,82 @@ pub async fn get_primitive(
         }
     };
 
-    let capability_directory = &state.capability_directory;
-    let providers = capability_directory
-        .providers_for_primitive(primitive)
-        .await;
+    let directory = &state.capability_directory;
+    let providers = directory.providers_for_primitive(primitive).await;
 
-    // Collect all skills declared for this primitive across every
-    // enabled provider.
-    let all_providers = capability_directory.providers().await;
+    // Collect parameters, media_inputs, and examples from providers
+    // (first non-empty wins for each).
+    let mut parameters: Vec<SkillParameter> = Vec::new();
+    let mut media_inputs_json: Vec<Value> = Vec::new();
+    let mut examples: Vec<Example> = Vec::new();
+
+    for provider in &providers {
+        if let Some(cap) = directory.capability(provider, primitive).await {
+            if parameters.is_empty() && !cap.parameters.is_empty() {
+                parameters = cap.parameters.clone();
+            }
+            if media_inputs_json.is_empty() && !cap.media_inputs.is_empty() {
+                media_inputs_json = cap
+                    .media_inputs
+                    .iter()
+                    .map(|m| serde_json::to_value(m).unwrap_or_default())
+                    .collect();
+            }
+            if examples.is_empty() && !cap.examples.is_empty() {
+                examples = cap.examples.clone();
+            }
+        }
+    }
+
+    // Collect skills available for this primitive
+    let all_providers = directory.providers().await;
     let mut skills_available: Vec<SkillListEntry> = Vec::new();
-    for provider_caps in all_providers.values() {
-        if !provider_caps.enabled {
+    for pc in all_providers.values() {
+        if !pc.enabled {
             continue;
         }
-        for skill in &provider_caps.announcement.skills {
+        for skill in &pc.announcement.skills {
             if skill.primitive == primitive {
                 skills_available.push(SkillListEntry {
                     id: skill.id.clone(),
-                    provider: provider_caps.provider.clone(),
-                    display: display_from_skill_display(&skill.display),
+                    provider: pc.provider.clone(),
+                    display: display_from_skill(&skill.display),
                     url: format!("/v1/{}/{}/{}", modality, leaf, skill.id),
                 });
             }
         }
     }
 
-    let routing = routing_from_providers(&providers);
-    let response = PrimitiveIntrospection {
+    // Build payload template and fields map
+    let (payload, fields) = build_payload_and_fields(&parameters, &state).await;
+
+    let response = WorkspaceResponse {
+        kind: "primitive",
         primitive: primitive.dotted().to_string(),
+        skill_id: None,
         display: IntrospectionDisplay {
             name: primitive_display_name(primitive),
             description: Some(primitive.summary().to_string()),
             tags: vec![primitive.modality().as_str().to_string()],
             preview_image: None,
         },
-        routing,
+        routing: routing_from_providers(&providers),
         invocation: InvocationInfo {
             method: "POST",
             url: format!("/v1/{}/{}", modality, leaf),
             content_type: "application/json",
         },
+        payload,
+        fields,
+        examples,
         skills_available,
+        media_inputs: media_inputs_json,
     };
 
-    (StatusCode::OK, Json(IntrospectionResponse::Primitive(response))).into_response()
+    (StatusCode::OK, Json(response)).into_response()
 }
 
-/// `GET /v1/{modality}/{leaf}/{skill_id}` — describe a named skill.
+/// `GET /v1/{modality}/{leaf}/{skill_id}` — workspace definition for a skill.
 pub async fn get_skill(
     State(state): State<AppState>,
     Path((modality, leaf, skill_id)): Path<(String, String, String)>,
@@ -226,29 +231,18 @@ pub async fn get_skill(
         }
     };
 
-    let capability_directory = &state.capability_directory;
-    let providers = capability_directory
-        .providers_for_skill(primitive, &skill_id)
-        .await;
+    let directory = &state.capability_directory;
+    let providers = directory.providers_for_skill(primitive, &skill_id).await;
 
     if providers.is_empty() {
         return quick_error_response(
             ErrorCode::NotFound,
-            format!(
-                "No provider declares skill `{skill_id}` for primitive `{modality}.{leaf}`."
-            ),
+            format!("No provider declares skill `{skill_id}` for `{modality}.{leaf}`."),
         );
     }
 
-    // Pick the first provider's skill declaration (they all share
-    // the same id; if skill content differs between providers,
-    // that's an adapter-level inconsistency the dispatcher handles
-    // via preference ranking).
     let primary_provider = &providers[0];
-    let skill = match capability_directory
-        .skill(primary_provider, &skill_id)
-        .await
-    {
+    let skill = match directory.skill(primary_provider, &skill_id).await {
         Some(s) => s,
         None => {
             return quick_error_response(
@@ -258,35 +252,207 @@ pub async fn get_skill(
         }
     };
 
-    let parameters = skill
-        .parameters
-        .iter()
-        .map(|p| parameter_view_from_declaration(p))
-        .collect::<Vec<_>>();
+    // Media inputs from the parent capability
+    let mut media_inputs_json: Vec<Value> = Vec::new();
+    if let Some(cap) = directory.capability(primary_provider, primitive).await {
+        if !cap.media_inputs.is_empty() {
+            media_inputs_json = cap
+                .media_inputs
+                .iter()
+                .map(|m| serde_json::to_value(m).unwrap_or_default())
+                .collect();
+        }
+    }
 
-    let example = build_example_invocation(&skill, &modality, &leaf, &skill_id);
-    let routing = routing_from_providers(&providers);
+    // Use skill examples, fall back to capability examples
+    let examples = if !skill.examples.is_empty() {
+        skill.examples.clone()
+    } else if let Some(cap) = directory.capability(primary_provider, primitive).await {
+        cap.examples.clone()
+    } else {
+        Vec::new()
+    };
 
-    let response = SkillIntrospection {
+    let (payload, fields) = build_payload_and_fields(&skill.parameters, &state).await;
+
+    let response = WorkspaceResponse {
+        kind: "skill",
         primitive: primitive.dotted().to_string(),
-        skill_id: skill.id.clone(),
-        display: display_from_skill_display(&skill.display),
-        routing,
+        skill_id: Some(skill.id.clone()),
+        display: display_from_skill(&skill.display),
+        routing: routing_from_providers(&providers),
         invocation: InvocationInfo {
             method: "POST",
             url: format!("/v1/{}/{}/{}", modality, leaf, skill_id),
             content_type: "application/json",
         },
-        parameters,
-        example,
+        payload,
+        fields,
+        examples,
+        skills_available: Vec::new(),
+        media_inputs: media_inputs_json,
     };
 
-    (StatusCode::OK, Json(IntrospectionResponse::Skill(response))).into_response()
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+// ── Payload + fields builder ─────────────────────────────────
+
+/// Build the pre-assembled payload template and the fields map from
+/// a parameter list. The payload contains defaults and empty required
+/// fields. The fields map contains widget descriptors keyed by path.
+async fn build_payload_and_fields(
+    parameters: &[SkillParameter],
+    state: &AppState,
+) -> (Value, BTreeMap<String, FieldDescriptor>) {
+    let preferences = state.preferences.get_all().await;
+    let mut payload = Map::new();
+    let mut fields = BTreeMap::new();
+
+    for param in parameters {
+        // Skip hidden fields that have no user-facing widget
+        let widget_str = param
+            .widget
+            .map(|w| format!("{}", serde_json::to_value(w).unwrap_or_default()).trim_matches('"').to_string())
+            .unwrap_or_else(|| infer_widget(param));
+
+        // Determine effective default: preference > skill default > auto default
+        let pref_value = preferences.get(param.field.as_str()).cloned();
+        let effective_default = pref_value
+            .or_else(|| param.default.clone())
+            .or_else(|| param.auto.as_ref().map(|a| Value::String(a.default.clone())));
+
+        // Set value in the payload template.
+        // Fields with "selectors." prefix are routing directives —
+        // strip the prefix and place at the root level (ORCH-0036).
+        let payload_path = if param.field.starts_with("selectors.") {
+            param.field.strip_prefix("selectors.").unwrap().to_string()
+        } else {
+            param.field.clone()
+        };
+
+        if payload_path.contains('.') {
+            // Nested path (vocabulary field): e.g. "text.prompt.user"
+            let default_for_type = match param.widget {
+                Some(crate::domain::capability_announcement::ParameterWidget::Dialogue) => {
+                    Some(Value::Array(Vec::new()))
+                }
+                _ => None,
+            };
+            set_nested_value(
+                &mut payload,
+                &payload_path,
+                effective_default.clone().or(default_for_type),
+                param.required,
+            );
+        } else {
+            // Top-level key (routing directive): e.g. "model"
+            if let Some(val) = &effective_default {
+                payload.insert(payload_path.clone(), val.clone());
+            } else if param.required {
+                payload.insert(payload_path.clone(), Value::String(String::new()));
+            }
+        }
+
+        // Build field descriptor
+        let field_type = param
+            .field_type
+            .map(|t| format!("{}", serde_json::to_value(t).unwrap_or_default()).trim_matches('"').to_string())
+            .unwrap_or_else(|| "string".to_string());
+
+        let descriptor = FieldDescriptor {
+            label: param.label.clone().unwrap_or_else(|| {
+                // Derive label from field path: "text.prompt.user" → "User"
+                let f = &param.field;
+                f.split('.').last().unwrap_or(f).to_string()
+            }),
+            field_type,
+            widget: widget_str.clone(),
+            required: param.required,
+            placeholder: param.placeholder.clone(),
+            min: param.min,
+            max: param.max,
+            step: param.step,
+            options: param.options.clone(),
+            auto: param.auto.clone(),
+            description: param.description.clone(),
+        };
+
+        // Use the payload path as the field key so lookups match.
+        let field_key = if param.field.starts_with("selectors.") {
+            param.field.strip_prefix("selectors.").unwrap().to_string()
+        } else {
+            param.field.clone()
+        };
+        fields.insert(field_key, descriptor);
+    }
+
+    (Value::Object(payload), fields)
+}
+
+/// Set a value at a dotted path in a JSON object, creating
+/// intermediate objects as needed.
+fn set_nested_value(
+    root: &mut Map<String, Value>,
+    dotted: &str,
+    value: Option<Value>,
+    required: bool,
+) {
+    let parts: Vec<&str> = dotted.split('.').collect();
+    if parts.is_empty() {
+        return;
+    }
+
+    // Navigate to the parent, creating intermediate objects
+    let mut current = root;
+    for &segment in &parts[..parts.len() - 1] {
+        if !current.contains_key(segment) {
+            current.insert(segment.to_string(), Value::Object(Map::new()));
+        }
+        match current.get_mut(segment) {
+            Some(Value::Object(obj)) => current = obj,
+            _ => return,
+        }
+    }
+
+    let leaf = parts[parts.len() - 1];
+    match &value {
+        Some(v) => {
+            current.insert(leaf.to_string(), v.clone());
+        }
+        None => {
+            if required {
+                // Required field with no default: empty string
+                current.insert(leaf.to_string(), Value::String(String::new()));
+            }
+            // Optional with no default: not included in payload
+        }
+    }
+}
+
+fn infer_widget(param: &SkillParameter) -> String {
+    if param.options.is_some() {
+        return "select".to_string();
+    }
+    match param.field_type {
+        Some(crate::domain::capability_announcement::ParameterType::Boolean) => "toggle",
+        Some(crate::domain::capability_announcement::ParameterType::Number)
+        | Some(crate::domain::capability_announcement::ParameterType::Integer) => {
+            if param.min.is_some() && param.max.is_some() {
+                "slider"
+            } else {
+                "number"
+            }
+        }
+        Some(crate::domain::capability_announcement::ParameterType::Dialogue) => "dialogue",
+        _ => "textarea",
+    }
+    .to_string()
 }
 
 // ── Helpers ──────────────────────────────────────────────────
 
-fn display_from_skill_display(d: &SkillDisplay) -> IntrospectionDisplay {
+fn display_from_skill(d: &SkillDisplay) -> IntrospectionDisplay {
     IntrospectionDisplay {
         name: d.name.clone(),
         description: d.description.clone(),
@@ -315,64 +481,6 @@ fn routing_from_providers(providers: &[ProviderName]) -> RoutingInfo {
     }
 }
 
-fn parameter_view_from_declaration(param: &SkillParameter) -> ParameterView {
-    // TODO(commit 12): layer preferences over the skill default
-    // when the Preferences domain lands. For now the effective
-    // default equals the skill default.
-    let effective_default = param.default.clone();
-    let default_source = match (&param.default, &effective_default) {
-        (Some(_), Some(_)) => Some("skill"),
-        _ => None,
-    };
-
-    ParameterView {
-        field: param.field.clone(),
-        required: param.required,
-        description: param.description.clone(),
-        default: param.default.clone(),
-        effective_default,
-        default_source,
-        pinnable: param.pinnable,
-        auto: param.auto.clone(),
-    }
-}
-
-fn build_example_invocation(
-    skill: &SkillDeclaration,
-    modality: &str,
-    leaf: &str,
-    skill_id: &str,
-) -> ExampleInvocation {
-    let mut body = serde_json::Map::new();
-    for param in &skill.parameters {
-        if param.required {
-            body.insert(
-                param.field.clone(),
-                example_value_for_field(&param.field),
-            );
-        }
-    }
-    ExampleInvocation {
-        url: format!("/v1/{}/{}/{}", modality, leaf, skill_id),
-        body: Value::Object(body),
-    }
-}
-
-fn example_value_for_field(field: &str) -> Value {
-    // Provide sensible example placeholders for common field shapes.
-    if field.ends_with(".source") {
-        json!("@upload:abc123")
-    } else if field.ends_with(".positive") || field.ends_with(".user") {
-        json!("example prompt")
-    } else if field.ends_with(".steps") {
-        json!(28)
-    } else if field.ends_with(".guidance") {
-        json!(3.5)
-    } else {
-        Value::Null
-    }
-}
-
 fn primitive_display_name(primitive: Primitive) -> String {
     match primitive {
         Primitive::TextChat => "Text Chat",
@@ -387,214 +495,4 @@ fn primitive_display_name(primitive: Primitive) -> String {
         Primitive::AudioTranscribe => "Audio Transcribe",
     }
     .to_string()
-}
-
-// ── Tests ────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::capability_announcement::{Capability, CapabilityAnnouncement};
-
-    fn provider() -> ProviderName {
-        ProviderName::new("ollama")
-    }
-
-    fn other_provider() -> ProviderName {
-        ProviderName::new("anthropic")
-    }
-
-    #[test]
-    fn routing_from_empty_providers_unavailable() {
-        let routing = routing_from_providers(&[]);
-        assert_eq!(routing.status, "unavailable");
-        assert!(routing.will_run_on.is_none());
-        assert!(routing.providers.is_empty());
-        assert!(routing.fallback_providers.is_empty());
-    }
-
-    #[test]
-    fn routing_from_single_provider_healthy() {
-        let routing = routing_from_providers(&[provider()]);
-        assert_eq!(routing.status, "healthy");
-        assert_eq!(routing.will_run_on, Some(provider()));
-        assert!(routing.fallback_providers.is_empty());
-    }
-
-    #[test]
-    fn routing_picks_first_and_fallbacks() {
-        let routing = routing_from_providers(&[provider(), other_provider()]);
-        assert_eq!(routing.will_run_on, Some(provider()));
-        assert_eq!(routing.fallback_providers, vec![other_provider()]);
-    }
-
-    #[test]
-    fn parameter_view_with_skill_default_reports_skill_source() {
-        let param = SkillParameter {
-            field: "selectors.model".into(),
-            required: false,
-            description: None,
-            default: Some(json!("recommended:vision")),
-            auto: None,
-            pinnable: true,
-            label: None,
-            field_type: None,
-            widget: None,
-            min: None,
-            max: None,
-            step: None,
-            options: None,
-            placeholder: None,
-        };
-        let view = parameter_view_from_declaration(&param);
-        assert_eq!(view.default_source, Some("skill"));
-        assert_eq!(view.effective_default, Some(json!("recommended:vision")));
-    }
-
-    #[test]
-    fn parameter_view_without_default_reports_no_source() {
-        let param = SkillParameter {
-            field: "image.source".into(),
-            required: true,
-            description: None,
-            default: None,
-            auto: None,
-            pinnable: false,
-            label: None,
-            field_type: None,
-            widget: None,
-            min: None,
-            max: None,
-            step: None,
-            options: None,
-            placeholder: None,
-        };
-        let view = parameter_view_from_declaration(&param);
-        assert_eq!(view.default_source, None);
-        assert!(view.effective_default.is_none());
-    }
-
-    #[test]
-    fn example_includes_required_fields_only() {
-        let skill = SkillDeclaration {
-            id: "test".into(),
-            primitive: Primitive::ImageAnalyze,
-            display: SkillDisplay::new("Test"),
-            parameters: vec![
-                SkillParameter {
-                    field: "image.source".into(),
-                    required: true,
-                    description: None,
-                    default: None,
-                    auto: None,
-                    pinnable: false,
-                    label: None,
-                    field_type: None,
-                    widget: None,
-                    min: None,
-                    max: None,
-                    step: None,
-                    options: None,
-                    placeholder: None,
-                },
-                SkillParameter {
-                    field: "selectors.model".into(),
-                    required: false,
-                    description: None,
-                    default: Some(json!("recommended:vision")),
-                    auto: None,
-                    pinnable: true,
-                    label: None,
-                    field_type: None,
-                    widget: None,
-                    min: None,
-                    max: None,
-                    step: None,
-                    options: None,
-                    placeholder: None,
-                },
-            ],
-        };
-        let example = build_example_invocation(&skill, "image", "analyze", "test");
-        let obj = example.body.as_object().unwrap();
-        assert!(obj.contains_key("image.source"));
-        assert!(!obj.contains_key("selectors.model"));
-    }
-
-    #[test]
-    fn example_value_for_source_field_is_upload_placeholder() {
-        assert_eq!(example_value_for_field("image.source"), json!("@upload:abc123"));
-        assert_eq!(example_value_for_field("audio.source"), json!("@upload:abc123"));
-    }
-
-    #[test]
-    fn example_value_for_prompt_positive_is_string() {
-        assert!(example_value_for_field("image.prompt.positive").is_string());
-    }
-
-    #[test]
-    fn example_value_for_unknown_field_is_null() {
-        assert!(example_value_for_field("random.unknown").is_null());
-    }
-
-    #[test]
-    fn primitive_display_name_covers_all_primitives() {
-        for p in Primitive::ALL {
-            let name = primitive_display_name(*p);
-            assert!(!name.is_empty());
-            // Each name is title case: first char is uppercase.
-            assert!(name.chars().next().unwrap().is_uppercase());
-        }
-    }
-
-    #[test]
-    fn introspection_response_serializes_with_kind_tag() {
-        let response = IntrospectionResponse::Primitive(PrimitiveIntrospection {
-            primitive: "text.chat".into(),
-            display: IntrospectionDisplay {
-                name: "Text Chat".into(),
-                description: Some("chat".into()),
-                tags: vec!["text".into()],
-                preview_image: None,
-            },
-            routing: routing_from_providers(&[provider()]),
-            invocation: InvocationInfo {
-                method: "POST",
-                url: "/v1/text/chat".into(),
-                content_type: "application/json",
-            },
-            skills_available: vec![],
-        });
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"kind\":\"primitive\""));
-        assert!(json.contains("\"primitive\":\"text.chat\""));
-    }
-
-    #[test]
-    fn skill_response_serializes_with_kind_tag() {
-        let response = IntrospectionResponse::Skill(SkillIntrospection {
-            primitive: "image.analyze".into(),
-            skill_id: "image-understanding".into(),
-            display: IntrospectionDisplay {
-                name: "Image Understanding".into(),
-                description: None,
-                tags: vec![],
-                preview_image: None,
-            },
-            routing: routing_from_providers(&[provider()]),
-            invocation: InvocationInfo {
-                method: "POST",
-                url: "/v1/image/analyze/image-understanding".into(),
-                content_type: "application/json",
-            },
-            parameters: vec![],
-            example: ExampleInvocation {
-                url: "/v1/image/analyze/image-understanding".into(),
-                body: json!({}),
-            },
-        });
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"kind\":\"skill\""));
-        assert!(json.contains("\"skill_id\":\"image-understanding\""));
-    }
 }

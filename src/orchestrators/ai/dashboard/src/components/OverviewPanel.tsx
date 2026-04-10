@@ -157,11 +157,6 @@ function HistoryEntry({
   onClick: () => void;
   onPin: (e: React.MouseEvent) => void;
 }) {
-  const time = new Date(request.created_at).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
   const statusColor =
     request.status === "success"
       ? "bg-green"
@@ -169,38 +164,24 @@ function HistoryEntry({
         ? "bg-red"
         : "bg-orange";
 
-  // Extract a preview from the input
-  const inputPreview = extractPreview(request.input);
+  // Use adapter-generated summary if available, fall back to action name
+  const label = request.meta.summary ?? request.action;
 
   return (
     <div
       onClick={onClick}
-      className="group flex items-start gap-2 p-2 rounded-md cursor-pointer
+      className="group flex items-center gap-1.5 py-1.5 px-1 rounded cursor-pointer
                  hover:bg-accent-bg transition-colors"
     >
-      <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${statusColor}`} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-text-dimmer">{time}</span>
-          <span className="text-[10px] text-text-dim font-medium truncate">
-            {request.action}
-          </span>
-        </div>
-        {inputPreview && (
-          <div className="text-[10px] text-text-dimmer truncate mt-0.5">
-            {inputPreview}
-          </div>
-        )}
-        {request.meta.latency_ms != null && (
-          <span className="text-[9px] text-text-dimmer">
-            {request.meta.provider} · {request.meta.latency_ms}ms
-          </span>
-        )}
-      </div>
+      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor}`} />
+      <span className="text-[10px] text-text-dim truncate flex-1">{label}</span>
+      <span className="text-[9px] text-text-dimmer shrink-0">
+        {relativeTime(request.created_at)}
+      </span>
       <button
         onClick={onPin}
         className={[
-          "text-[12px] shrink-0 transition-opacity mt-0.5",
+          "text-[10px] shrink-0 transition-opacity",
           request.pinned
             ? "text-accent opacity-100"
             : "text-text-dimmer opacity-0 group-hover:opacity-100",
@@ -213,29 +194,15 @@ function HistoryEntry({
   );
 }
 
-function extractPreview(input: unknown): string | null {
-  if (!input || typeof input !== "object") return null;
-  const obj = input as Record<string, unknown>;
-
-  // Try common prompt paths
-  const paths = [
-    "text.prompt.user",
-    "text.body",
-    "image.prompt.positive",
-  ];
-  for (const path of paths) {
-    const val = getNestedString(obj, path);
-    if (val) return val.slice(0, 60);
-  }
-  return null;
-}
-
-function getNestedString(obj: Record<string, unknown>, dotted: string): string | null {
-  const parts = dotted.split(".");
-  let current: unknown = obj;
-  for (const part of parts) {
-    if (!current || typeof current !== "object") return null;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return typeof current === "string" ? current : null;
+/** Compact relative timestamp: "12s", "4m", "2h", "3d" */
+function relativeTime(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 0) return "now";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
 }

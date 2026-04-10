@@ -43,13 +43,14 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
+use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderResult};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
 
 use super::common::{
-    build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
+    build_http_client, check_status, map_reqwest_error, truncate_str, InstancePool,
+    PerFqnInstances,
 };
 
 // ── Configuration ────────────────────────────────────────────
@@ -163,7 +164,7 @@ impl Provider for WhisperCppProvider {
     async fn onboard(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<ProviderResult, ProviderError> {
         if request.action.primitive != Primitive::AudioTranscribe {
             return Err(ProviderError::Unsupported(format!(
                 "{} does not serve {}",
@@ -218,6 +219,7 @@ impl Provider for WhisperCppProvider {
             .file_name(filename)
             .mime_str(&meta.content_type)
             .map_err(|e| ProviderError::Internal(format!("mime: {e}")))?;
+        let model_name = model.clone();
         let mut form = reqwest::multipart::Form::new()
             .text("model", model)
             .part("file", file_part);
@@ -254,12 +256,21 @@ impl Provider for WhisperCppProvider {
             .await
             .map_err(|e| ProviderError::Upstream(e.to_string()))?;
 
+        let summary = format!("→ '{}'", truncate_str(&wire.text, 30));
         let mut out = Output::new();
         out.set(&keys::text::RESPONSE, wire.text);
         if let Some(lang) = wire.language {
             out.set(&keys::text::LANGUAGE, lang);
         }
-        Ok(ProviderOutcome::Sync(out))
+        Ok(ProviderResult::sync_with(
+            out,
+            ProviderMeta {
+                model: Some(model_name),
+                instance: Some(base),
+                summary: Some(summary),
+                ..Default::default()
+            },
+        ))
     }
 }
 

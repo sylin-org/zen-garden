@@ -46,12 +46,12 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
+use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderOutcome, ProviderResult};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
 
-use super::common::{build_http_client, check_status, map_reqwest_error, PerFqnInstances};
+use super::common::{build_http_client, check_status, map_reqwest_error, truncate_str, PerFqnInstances};
 use super::ollama_matrix::{
     Capability, InstanceEntry, InstanceHealth, ModelInfo, OllamaCapabilityMatrix, OllamaSelector,
     SelectionError, SelectionResult,
@@ -416,34 +416,97 @@ impl Provider for OllamaProvider {
     async fn onboard(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<ProviderResult, ProviderError> {
         let selection = self.resolve_selection(&request).await?;
         let model = selection.winner.model.clone();
         let endpoint = selection.winner.instance.clone();
+        let stone = selection.winner.stone_name.clone();
 
-        // Log the routing decision for observability. Commit 7c adds
-        // `dispatch.{id}.routed` to the bus; for now the tracing span
-        // carries the information.
         tracing::debug!(
             provider = %self.name_ref(),
             request_id = %request.id,
             model = %model,
             instance = %endpoint,
-            stone = %selection.winner.stone_name,
+            stone = %stone,
             score = selection.winner.score,
             alternates = selection.alternates.len(),
             "ollama resolved selection",
         );
 
-        match request.action.primitive {
-            Primitive::TextChat => self.do_chat(request, &model, &endpoint).await,
-            Primitive::TextEmbed => self.do_embed(request, &model, &endpoint).await,
-            Primitive::ImageAnalyze => self.do_analyze(request, &model, &endpoint).await,
-            other => Err(ProviderError::Unsupported(format!(
-                "ollama does not serve {}",
-                other.dotted()
-            ))),
-        }
+        // Extract input preview for summary before move.
+        let input_preview = request
+            .payload
+            .pointer("/text/prompt/user")
+            .or_else(|| request.payload.pointer("/text/input"))
+            .and_then(|v| v.as_str())
+            .map(|s| truncate_str(s, 25))
+            .unwrap_or_default();
+
+        let primitive = request.action.primitive;
+        let outcome = match primitive {
+            Primitive::TextChat => self.do_chat(request, &model, &endpoint).await?,
+            Primitive::TextEmbed => self.do_embed(request, &model, &endpoint).await?,
+            Primitive::ImageAnalyze => self.do_analyze(request, &model, &endpoint).await?,
+            other => {
+                return Err(ProviderError::Unsupported(format!(
+                    "ollama does not serve {}",
+                    other.dotted()
+                )));
+            }
+        };
+
+        // Extract output preview and tokens from the outcome.
+        let (output_preview, tokens_in, tokens_out) = match &outcome {
+            ProviderOutcome::Sync(out) => {
+                let text = out
+                    .get(&keys::text::RESPONSE)
+                    .or_else(|| out.get(&keys::text::DETECTED_LANGUAGE))
+                    .and_then(|v| v.as_str())
+                    .map(|s| truncate_str(s, 25));
+                let ti = out.get(&keys::usage::TOKENS_INPUT).and_then(|v| v.as_u64());
+                let to = out.get(&keys::usage::TOKENS_OUTPUT).and_then(|v| v.as_u64());
+                (text, ti, to)
+            }
+            _ => (None, None, None),
+        };
+
+        let summary = match primitive {
+            Primitive::TextChat => {
+                let out_part = output_preview
+                    .map(|o| format!(" → '{o}'"))
+                    .unwrap_or_default();
+                Some(format!("'{input_preview}'{out_part}"))
+            }
+            Primitive::TextEmbed => {
+                let dims = match &outcome {
+                    ProviderOutcome::Sync(out) => out
+                        .get(&keys::text::DIMENSIONS)
+                        .and_then(|v| v.as_u64()),
+                    _ => None,
+                };
+                let dims_str = dims.map(|d| format!(", {d} dims")).unwrap_or_default();
+                Some(format!("'{input_preview}'{dims_str}"))
+            }
+            Primitive::ImageAnalyze => {
+                let out_part = output_preview
+                    .map(|o| format!(" → '{o}'"))
+                    .unwrap_or_default();
+                Some(format!("'{input_preview}'{out_part}"))
+            }
+            _ => None,
+        };
+
+        Ok(ProviderResult {
+            outcome,
+            meta: ProviderMeta {
+                model: Some(model),
+                instance: Some(endpoint),
+                stone: Some(stone),
+                tokens_in,
+                tokens_out,
+                summary,
+            },
+        })
     }
 }
 

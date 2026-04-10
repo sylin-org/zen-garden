@@ -165,10 +165,29 @@ export default function Workspace() {
   // Determine parent_id for fork lineage
   const parentId = forkFromId ?? (requestId ? requestId : undefined);
 
+  const hasResult = result != null || streamText != null;
+
+  // Detect output type for split ratio:
+  // - Image results get more space (60% result)
+  // - Text results get equal split (50/50)
+  // - No result = form takes full width
+  const outputHasImage =
+    hasResult &&
+    result &&
+    typeof result === "object" &&
+    (nested(result as Record<string, unknown>, "output.image.data") != null ||
+      nested(result as Record<string, unknown>, "output.image.media_id") != null);
+
+  const formBasis = !hasResult ? "100%" : outputHasImage ? "40%" : "50%";
+  const resultBasis = outputHasImage ? "60%" : "50%";
+
   return (
     <div className="flex h-full">
-      {/* Center panel */}
-      <div className="flex-1 overflow-hidden">
+      {/* Form panel — full width when no result, proportional split when result exists */}
+      <div
+        className="overflow-hidden shrink-0 transition-all duration-300"
+        style={{ flexBasis: formBasis, minWidth: hasResult ? "320px" : undefined }}
+      >
         {showSkillPicker ? (
           <SkillPicker
             skills={relatedSkills}
@@ -189,12 +208,28 @@ export default function Workspace() {
         )}
       </div>
 
-      {/* Result panel */}
-      <div className="w-[340px] shrink-0 border-l border-border bg-surface overflow-hidden">
-        <ResultPanel result={result} streaming={streamText} />
-      </div>
+      {/* Result panel — only visible when there's content */}
+      {hasResult && (
+        <div
+          className="border-l border-border bg-surface overflow-hidden transition-all duration-300"
+          style={{ flexBasis: resultBasis }}
+        >
+          <ResultPanel result={result} streaming={streamText} />
+        </div>
+      )}
     </div>
   );
+}
+
+/** Access a nested value via dotted path. */
+function nested(obj: Record<string, unknown>, path: string): unknown {
+  const parts = path.split(".");
+  let current: unknown = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
 }
 
 /** Flatten a nested object to dotted-path keys. */

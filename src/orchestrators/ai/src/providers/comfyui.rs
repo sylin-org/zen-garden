@@ -62,7 +62,7 @@ use crate::domain::media::{MediaDelivery, MediaSource};
 use crate::domain::moniker::Moniker;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
+use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderResult};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::{DiscoveredInstance, GardenDiscovery};
@@ -76,7 +76,8 @@ use crate::services::skills::types::{
 };
 
 use super::common::{
-    build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
+    build_http_client, check_status, map_reqwest_error, truncate_str, InstancePool,
+    PerFqnInstances,
 };
 
 const FQNS: &[&'static str] = &["comfyui"];
@@ -707,7 +708,7 @@ impl Provider for ComfyUiProvider {
     async fn onboard(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<ProviderResult, ProviderError> {
         // ── 1. Resolve the skill ──────────────────────────────
         let skill_moniker = request.action.skill.as_ref().ok_or_else(|| {
             ProviderError::Unsupported(
@@ -1022,7 +1023,25 @@ impl Provider for ComfyUiProvider {
                 out.set(&keys::image::MEDIA_ID, entry.id.as_str());
             }
         }
-        Ok(ProviderOutcome::Sync(out))
+        // Build summary from available context.
+        let prompt_preview = request
+            .payload
+            .pointer("/image/prompt/positive")
+            .and_then(|v| v.as_str())
+            .map(|s| truncate_str(s, 25));
+        let summary = match prompt_preview {
+            Some(p) => format!("{}: '{p}'", skill_moniker),
+            None => skill_moniker.to_string(),
+        };
+
+        Ok(ProviderResult::sync_with(
+            out,
+            ProviderMeta {
+                instance: Some(instance),
+                summary: Some(summary),
+                ..Default::default()
+            },
+        ))
     }
 }
 

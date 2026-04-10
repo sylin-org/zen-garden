@@ -41,7 +41,7 @@ use crate::domain::ids::JobId;
 use crate::domain::jobs::{JobCategory, JobSink, JobStore};
 use crate::domain::keys;
 use crate::domain::media::{MediaReservation, SharedMediaStore};
-use crate::domain::provider::ProviderOutcome;
+use crate::domain::provider::{ProviderOutcome, ProviderResult};
 use crate::domain::persisted_request::{
     ErrorSnapshot, PersistedRequest, RequestMedia, RequestMeta, SelectorsSnapshot,
 };
@@ -54,7 +54,7 @@ use crate::services::request_store::DiskRequestStore;
 
 /// The outcome returned to HTTP handlers.
 pub enum DispatchResult {
-    Fresh(ProviderOutcome, OrchestratorRequest),
+    Fresh(ProviderResult, OrchestratorRequest),
     Cached(IdempotencyRecord, OrchestratorRequest),
 }
 
@@ -325,8 +325,8 @@ impl Dispatcher {
 
         // 7. Hand off.
         let outcome_request = request.clone();
-        let outcome = match provider.onboard(request.clone()).await {
-            Ok(o) => o,
+        let provider_result = match provider.onboard(request.clone()).await {
+            Ok(r) => r,
             Err(e) => {
                 let err = OrchestratorError::new(e.code(), e.message()).with_details(
                     serde_json::json!({ "provider": provider_name.as_str() }),
@@ -362,19 +362,19 @@ impl Dispatcher {
         };
 
         // 8. Post-onboard: job state + media reservation bookkeeping.
-        match &outcome {
+        let provider_meta = &provider_result.meta;
+        match &provider_result.outcome {
             ProviderOutcome::Sync(output) => {
                 // Sync: the result is in-hand. Mark the job done
                 // inline. No reservation is needed — media TTL of 24h
                 // is sufficient.
                 let _ = self.job_store.complete(&job_id, output.clone()).await;
 
-                // ORCH-0033: mark request as succeeded with output.
+                // ORCH-0033 + ORCH-0034: mark request as succeeded
+                // with output and provider resolution metadata.
                 let output_value = output.to_nested();
                 let media_outputs = extract_media_outputs(&output_value);
-                let latency = outcome_request
-                    .received_at
-                    .signed_duration_since(chrono::Utc::now())
+                let latency = (chrono::Utc::now() - outcome_request.received_at)
                     .num_milliseconds()
                     .unsigned_abs();
                 let _ = self
@@ -388,8 +388,12 @@ impl Dispatcher {
                                 .resolved_provider
                                 .as_ref()
                                 .map(|p| p.as_str().to_string()),
+                            model: provider_meta.model.clone(),
+                            stone: provider_meta.stone.clone(),
                             latency_ms: Some(latency),
-                            ..Default::default()
+                            tokens_in: provider_meta.tokens_in,
+                            tokens_out: provider_meta.tokens_out,
+                            summary: provider_meta.summary.clone(),
                         },
                     )
                     .await;
@@ -423,7 +427,7 @@ impl Dispatcher {
 
         // 9. Idempotency cache write.
         if let (Some(key), Some(fingerprint)) = (idem_key, idem_print) {
-            match &outcome {
+            match &provider_result.outcome {
                 ProviderOutcome::Sync(output) => {
                     let _ = self
                         .idempotency
@@ -458,7 +462,7 @@ impl Dispatcher {
             }
         }
 
-        Ok(DispatchResult::Fresh(outcome, outcome_request))
+        Ok(DispatchResult::Fresh(provider_result, outcome_request))
     }
 
     fn build_idempotency_pair(
@@ -515,7 +519,7 @@ mod tests {
     use crate::domain::media::{MediaDelivery, MediaSource, MediaStore};
     use crate::domain::output::Output;
     use crate::domain::primitive::Primitive;
-    use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
+    use crate::domain::provider::{Provider, ProviderError, ProviderOutcome, ProviderResult};
     use crate::domain::request::{Action, RawRequest};
     use crate::domain::selectors::{Constraints, Selectors};
     use crate::domain::vocabulary::VocabularyRegistry;
@@ -529,7 +533,7 @@ mod tests {
     use crate::services::media_store::DiskMediaStore;
     use crate::services::provider_registry::ProviderRegistry;
 
-    type Scripted = dyn Fn(OrchestratorRequest) -> Result<ProviderOutcome, ProviderError>
+    type Scripted = dyn Fn(OrchestratorRequest) -> Result<ProviderResult, ProviderError>
         + Send
         + Sync
         + 'static;
@@ -545,7 +549,7 @@ mod tests {
         fn new(name: &str) -> Arc<Self> {
             let provider_name = ProviderName::new(name);
             let default: Arc<Scripted> =
-                Arc::new(|_req: OrchestratorRequest| Ok(ProviderOutcome::Sync(Output::new())));
+                Arc::new(|_req: OrchestratorRequest| Ok(ProviderResult::sync(Output::new())));
             Arc::new(Self {
                 name: provider_name,
                 script: TokioMutex::new(default),
@@ -555,7 +559,7 @@ mod tests {
 
         async fn set_script<F>(&self, f: F)
         where
-            F: Fn(OrchestratorRequest) -> Result<ProviderOutcome, ProviderError>
+            F: Fn(OrchestratorRequest) -> Result<ProviderResult, ProviderError>
                 + Send
                 + Sync
                 + 'static,
@@ -572,7 +576,7 @@ mod tests {
         async fn onboard(
             &self,
             request: OrchestratorRequest,
-        ) -> Result<ProviderOutcome, ProviderError> {
+        ) -> Result<ProviderResult, ProviderError> {
             *self.invoked_at.lock().await = Some(Utc::now());
             let script = self.script.lock().await.clone();
             script(request)
@@ -674,7 +678,7 @@ mod tests {
             .set_script(|_req| {
                 let mut out = Output::new();
                 out.set(&keys::text::RESPONSE, "ok");
-                Ok(ProviderOutcome::Sync(out))
+                Ok(ProviderResult::sync(out))
             })
             .await;
 
@@ -854,7 +858,7 @@ mod tests {
             .set_script(|_req| {
                 let mut out = Output::new();
                 out.set(&keys::text::RESPONSE, "first");
-                Ok(ProviderOutcome::Sync(out))
+                Ok(ProviderResult::sync(out))
             })
             .await;
 
@@ -891,7 +895,7 @@ mod tests {
     async fn idempotency_fingerprint_mismatch_returns_conflict() {
         let h = build_harness().await;
         h.provider
-            .set_script(|_req| Ok(ProviderOutcome::Sync(Output::new())))
+            .set_script(|_req| Ok(ProviderResult::sync(Output::new())))
             .await;
 
         // Warm the cache.
@@ -927,7 +931,7 @@ mod tests {
     async fn job_is_pre_created_before_provider_invocation() {
         let h = build_harness().await;
         h.provider
-            .set_script(|_req| Ok(ProviderOutcome::Sync(Output::new())))
+            .set_script(|_req| Ok(ProviderResult::sync(Output::new())))
             .await;
 
         let before = Utc::now();

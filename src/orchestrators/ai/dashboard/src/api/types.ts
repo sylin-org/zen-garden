@@ -284,6 +284,7 @@ export interface PersistedRequest {
     latency_ms?: number;
     tokens_in?: number;
     tokens_out?: number;
+    summary?: string;
   };
   pinned: boolean;
   job_id?: string;

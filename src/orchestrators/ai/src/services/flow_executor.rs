@@ -379,8 +379,8 @@ pub async fn execute_flow(
         };
 
         match dispatcher.dispatch(raw).await {
-            Ok(crate::services::dispatcher::DispatchResult::Fresh(outcome, _req)) => {
-                match outcome {
+            Ok(crate::services::dispatcher::DispatchResult::Fresh(result, _req)) => {
+                match result.outcome {
                     crate::domain::provider::ProviderOutcome::Sync(output) => {
                         let output_value = serde_json::to_value(&output).unwrap_or(json!({}));
                         completed_outputs.insert(step.id.clone(), output_value.clone());

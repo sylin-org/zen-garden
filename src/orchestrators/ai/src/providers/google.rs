@@ -54,12 +54,12 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
+use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderOutcome, ProviderResult};
 use crate::domain::request::OrchestratorRequest;
 use crate::providers::cloud_common::resolve_cloud_model;
 use crate::services::directory_subscriber::publish_capability_announcement;
 
-use super::common::{build_http_client, check_status, map_reqwest_error};
+use super::common::{build_http_client, check_status, map_reqwest_error, truncate_str};
 
 // ── Config ───────────────────────────────────────────────────
 
@@ -221,21 +221,24 @@ impl Provider for GoogleProvider {
     async fn onboard(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<ProviderResult, ProviderError> {
         if self.api_key.is_empty() {
             return Err(ProviderError::AuthFailed(
                 "google api key is not configured".to_string(),
             ));
         }
-        match request.action.primitive {
-            Primitive::TextChat => self.do_chat(request, false).await,
-            Primitive::ImageAnalyze => self.do_chat(request, true).await,
-            Primitive::TextEmbed => self.do_embed(request).await,
-            other => Err(ProviderError::Unsupported(format!(
-                "google does not serve {}",
-                other.dotted()
-            ))),
-        }
+        let (outcome, meta) = match request.action.primitive {
+            Primitive::TextChat => self.do_chat(request, false).await?,
+            Primitive::ImageAnalyze => self.do_chat(request, true).await?,
+            Primitive::TextEmbed => self.do_embed(request).await?,
+            other => {
+                return Err(ProviderError::Unsupported(format!(
+                    "google does not serve {}",
+                    other.dotted()
+                )));
+            }
+        };
+        Ok(ProviderResult { outcome, meta })
     }
 }
 
@@ -246,7 +249,7 @@ impl GoogleProvider {
         &self,
         request: OrchestratorRequest,
         with_image: bool,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<(ProviderOutcome, ProviderMeta), ProviderError> {
         let model = resolve_cloud_model(
             request.selectors.model.as_deref(),
             DEFAULT_MODEL,
@@ -300,11 +303,12 @@ impl GoogleProvider {
                 .to_string();
             parts.push(json!({"inlineData": {"mimeType": mime, "data": b64}}));
         }
-        parts.push(json!({"text": if user_text.is_empty() && with_image {
+        let prompt_text = if user_text.is_empty() && with_image {
             "Describe this image.".to_string()
         } else {
-            user_text
-        }}));
+            user_text.clone()
+        };
+        parts.push(json!({"text": prompt_text}));
         contents.push(json!({"role": "user", "parts": parts}));
 
         // System instruction (Gemini calls it `systemInstruction`).
@@ -390,6 +394,11 @@ impl GoogleProvider {
             }
         }
 
+        let summary = format!(
+            "'{}' → '{}'",
+            truncate_str(&user_text, 20),
+            truncate_str(&text, 20),
+        );
         let mut out = Output::new();
         out.set(&keys::text::RESPONSE, text);
         let finish = match candidate.finish_reason.as_deref() {
@@ -401,18 +410,31 @@ impl GoogleProvider {
             _ => keys::text::values::FINISH_REASON_STOP,
         };
         out.set(&keys::text::FINISH_REASON, finish);
-        if let Some(u) = wire.usage_metadata {
+        let (tokens_in, tokens_out) = if let Some(u) = wire.usage_metadata {
             out.set(&keys::usage::TOKENS_INPUT, u.prompt_token_count);
             out.set(&keys::usage::TOKENS_OUTPUT, u.candidates_token_count);
             out.set(&keys::usage::TOKENS_TOTAL, u.total_token_count);
-        }
-        Ok(ProviderOutcome::Sync(out))
+            (Some(u.prompt_token_count), Some(u.candidates_token_count))
+        } else {
+            (None, None)
+        };
+        Ok((
+            ProviderOutcome::Sync(out),
+            ProviderMeta {
+                model: Some(model),
+                instance: Some(self.base_url.clone()),
+                tokens_in,
+                tokens_out,
+                summary: Some(summary),
+                ..Default::default()
+            },
+        ))
     }
 
     async fn do_embed(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<(ProviderOutcome, ProviderMeta), ProviderError> {
         let model = resolve_cloud_model(
             request.selectors.model.as_deref(),
             DEFAULT_MODEL,
@@ -470,7 +492,15 @@ impl GoogleProvider {
             &keys::text::EMBEDDINGS,
             serde_json::to_value(vectors).unwrap_or(Value::Null),
         );
-        Ok(ProviderOutcome::Sync(out))
+        Ok((
+            ProviderOutcome::Sync(out),
+            ProviderMeta {
+                model: Some(model),
+                instance: Some(self.base_url.clone()),
+                summary: Some(format!("{} inputs", inputs.len())),
+                ..Default::default()
+            },
+        ))
     }
 }
 

@@ -287,8 +287,8 @@ async fn execute(
 
     let dispatcher = state.dispatcher.clone();
     match dispatcher.dispatch(raw).await {
-        Ok(DispatchResult::Fresh(outcome, completed_request)) => {
-            deliver_fresh(outcome, completed_request).await
+        Ok(DispatchResult::Fresh(result, completed_request)) => {
+            deliver_fresh(result.outcome, completed_request, result.meta).await
         }
         Ok(DispatchResult::Cached(record, completed_request)) => {
             deliver_cached(record, completed_request, received_at).await
@@ -311,12 +311,13 @@ async fn execute(
 async fn deliver_fresh(
     outcome: ProviderOutcome,
     request: OrchestratorRequest,
+    provider_meta: crate::domain::provider::ProviderMeta,
 ) -> Response {
     let received_at = request.received_at;
     let action_dotted = request.action.dotted();
-    // The job-sink bound to the request is the dispatcher's handle;
-    // terminal transitions are owned by the dispatcher + provider, so
-    // handlers never touch the job store directly here.
+    // Model attribution restored in ORCH-0034: the provider returns
+    // the resolved model name in ProviderMeta.
+    let resolved_model = provider_meta.model.clone();
     let job_id = request.context.job_sink.job_id().clone();
     match outcome {
         ProviderOutcome::Sync(output) => {
@@ -325,7 +326,7 @@ async fn deliver_fresh(
                 &request.id,
                 action_dotted,
                 request.resolved_provider.as_ref(),
-                None, // resolved_model removed in ORCH-0030 R2 M3 (adapter-local)
+                resolved_model,
                 "sync",
                 received_at,
             );
@@ -338,7 +339,7 @@ async fn deliver_fresh(
                 &request.id,
                 action_dotted,
                 request.resolved_provider.as_ref(),
-                None, // resolved_model removed in ORCH-0030 R2 M3 (adapter-local)
+                resolved_model,
                 "async",
                 received_at,
             );
@@ -351,7 +352,7 @@ async fn deliver_fresh(
                 &request.id,
                 action_dotted.clone(),
                 request.resolved_provider.as_ref(),
-                None, // resolved_model removed in ORCH-0030 R2 M3 (adapter-local)
+                resolved_model,
                 "stream",
                 received_at,
             );

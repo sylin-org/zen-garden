@@ -28,13 +28,14 @@ use crate::domain::keys;
 use crate::domain::media::MediaSource;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
+use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderResult};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
 
 use super::common::{
-    build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
+    build_http_client, check_status, map_reqwest_error, truncate_str, InstancePool,
+    PerFqnInstances,
 };
 
 // ── Constants ────────────────────────────────────────────────
@@ -163,7 +164,7 @@ impl Provider for OpenedaiSpeechProvider {
     async fn onboard(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<ProviderResult, ProviderError> {
         if request.action.primitive != Primitive::AudioGenerate {
             return Err(ProviderError::Unsupported(format!(
                 "{} does not serve {}",
@@ -268,7 +269,19 @@ impl Provider for OpenedaiSpeechProvider {
         let mut out = Output::new();
         out.set(&keys::audio::MEDIA_ID, entry.id.as_str());
         out.set(&keys::audio::FORMAT, format);
-        Ok(ProviderOutcome::Sync(out))
+        Ok(ProviderResult::sync_with(
+            out,
+            ProviderMeta {
+                model: Some(self.tts_model_id.clone()),
+                instance: Some(base),
+                summary: Some(format!(
+                    "'{}' [{}]",
+                    truncate_str(&text, 20),
+                    voice,
+                )),
+                ..Default::default()
+            },
+        ))
     }
 }
 

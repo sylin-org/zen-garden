@@ -45,13 +45,14 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderOutcome};
+use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderResult};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
 
 use super::common::{
-    build_http_client, check_status, map_reqwest_error, InstancePool, PerFqnInstances,
+    build_http_client, check_status, map_reqwest_error, truncate_str, InstancePool,
+    PerFqnInstances,
 };
 
 /// Garden offering FQNs this adapter claims. LibreTranslate has a
@@ -218,7 +219,7 @@ impl Provider for LibreTranslateProvider {
     async fn onboard(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError> {
+    ) -> Result<ProviderResult, ProviderError> {
         let endpoint = self.instances.pick().ok_or_else(|| {
             ProviderError::Unreachable(
                 "no libretranslate instances are running in the garden".to_string(),
@@ -262,6 +263,15 @@ impl Provider for LibreTranslateProvider {
 
         let response = self.call_translate(&endpoint, &payload).await?;
 
+        // Build summary: "'Good mo...' en→es"
+        let detected_src = response
+            .detected_language
+            .as_ref()
+            .map(|d| d.language.as_str())
+            .unwrap_or(source);
+        let preview = truncate_str(body, 20);
+        let summary = format!("'{preview}' {detected_src}→{target}");
+
         let mut out = Output::new();
         out.set(&keys::text::TRANSLATED, response.translated_text);
         if source == "auto" {
@@ -270,7 +280,15 @@ impl Provider for LibreTranslateProvider {
             }
         }
         out.set(&keys::usage::CHARACTERS, body.chars().count() as u64);
-        Ok(ProviderOutcome::Sync(out))
+
+        Ok(ProviderResult::sync_with(
+            out,
+            ProviderMeta {
+                instance: Some(endpoint),
+                summary: Some(summary),
+                ..Default::default()
+            },
+        ))
     }
 }
 

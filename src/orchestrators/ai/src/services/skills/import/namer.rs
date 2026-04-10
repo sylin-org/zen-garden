@@ -90,7 +90,7 @@ pub async fn generate_name(
         .ok()?;
 
     let output = match result {
-        DispatchResult::Fresh(outcome, _) => extract_sync_output(outcome)?,
+        DispatchResult::Fresh(result, _) => extract_sync_output(result.outcome)?,
         DispatchResult::Cached(record, _) => extract_cached_output(record)?,
     };
 

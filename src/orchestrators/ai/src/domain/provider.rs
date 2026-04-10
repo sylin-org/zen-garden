@@ -66,14 +66,17 @@ pub trait Provider: Send + Sync + 'static {
     /// `request.selectors.model`), protocol translation, and
     /// response construction.
     ///
-    /// On success returns a [`ProviderOutcome`] describing how the
-    /// result will be delivered (`Sync`, `Async`, or `Streaming`).
+    /// On success returns a [`ProviderResult`] containing the
+    /// [`ProviderOutcome`] (how the result is delivered) and
+    /// [`ProviderMeta`] (resolution metadata: model, instance,
+    /// stone, tokens, summary). ORCH-0034.
+    ///
     /// On failure returns a [`ProviderError`] from the canonical
     /// taxonomy.
     async fn onboard(
         &self,
         request: OrchestratorRequest,
-    ) -> Result<ProviderOutcome, ProviderError>;
+    ) -> Result<ProviderResult, ProviderError>;
 
     /// Clear any artifacts cached on the provider's instances.
     /// Default is a no-op; providers that stage files (ComfyUI,
@@ -100,6 +103,58 @@ pub enum ProviderOutcome {
         initial: Output,
         stream: BoxStream<'static, Result<Output, ProviderError>>,
     },
+}
+
+// ── Resolution metadata (ORCH-0034) ──────────────────────────
+
+/// Structured metadata about how the provider resolved and fulfilled
+/// a request. Populated by the adapter from its domain knowledge.
+/// Every field is optional — adapters return what they know.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ProviderMeta {
+    /// The model actually used (adapter-resolved).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The instance URL that served the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    /// The stone name the instance runs on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stone: Option<String>,
+    /// Input token count, if tracked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<u64>,
+    /// Output token count, if tracked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<u64>,
+    /// Human-readable one-liner summarizing the interaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+/// The combined result of `Provider::onboard`: the delivery outcome
+/// plus resolution metadata.
+pub struct ProviderResult {
+    pub outcome: ProviderOutcome,
+    pub meta: ProviderMeta,
+}
+
+impl ProviderResult {
+    /// Convenience: wrap a sync output with default (empty) metadata.
+    pub fn sync(output: Output) -> Self {
+        Self {
+            outcome: ProviderOutcome::Sync(output),
+            meta: ProviderMeta::default(),
+        }
+    }
+
+    /// Convenience: wrap a sync output with populated metadata.
+    pub fn sync_with(output: Output, meta: ProviderMeta) -> Self {
+        Self {
+            outcome: ProviderOutcome::Sync(output),
+            meta,
+        }
+    }
 }
 
 impl std::fmt::Debug for ProviderOutcome {

@@ -168,3 +168,14 @@ pub async fn check_status(
         )))
     }
 }
+
+/// Truncate a string to `max_chars` with ellipsis. Shared across
+/// adapters for summary generation (ORCH-0034).
+pub fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{truncated}...")
+    }
+}

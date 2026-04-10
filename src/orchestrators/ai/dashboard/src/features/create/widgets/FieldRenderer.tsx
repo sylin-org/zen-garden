@@ -5,6 +5,7 @@ import SelectWidget from "./SelectWidget";
 import NumberWidget from "./NumberWidget";
 import ToggleWidget from "./ToggleWidget";
 import DialogueWidget from "./DialogueWidget";
+import RandomSeedWidget from "./RandomSeedWidget";
 
 interface Props {
   field: CatalogField;
@@ -25,6 +26,14 @@ export default function FieldRenderer({ field, value, onChange, streamingText }:
       return <SelectWidget field={field} value={value} onChange={onChange} />;
     case "number":
       return <NumberWidget field={field} value={(value as number) ?? 0} onChange={onChange} />;
+    case "random_seed":
+      return (
+        <RandomSeedWidget
+          field={field}
+          value={(value as number) ?? field.min ?? 0}
+          onChange={onChange}
+        />
+      );
     case "toggle":
       return <ToggleWidget field={field} value={(value as boolean) ?? false} onChange={onChange} />;
     case "dialogue":

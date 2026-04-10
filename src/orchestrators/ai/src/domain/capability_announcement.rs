@@ -504,6 +504,14 @@ pub enum ParameterWidget {
     /// The widget accumulates turns and includes the full history
     /// in every dispatch as the field value.
     Dialogue,
+    /// Integer input paired with a "re-roll" dice button that
+    /// generates a uniformly random value in `[min, max]`. When
+    /// `min`/`max` are omitted, the full `u32` range is used. Used
+    /// for generative seeds (image diffusion, text sampling) where
+    /// the user wants reproducibility by default but one-click
+    /// randomization on demand.
+    #[serde(rename = "random_seed")]
+    RandomSeed,
 }
 
 /// Describes the auto-resolution behavior for a field that participates

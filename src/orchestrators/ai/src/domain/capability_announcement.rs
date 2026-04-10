@@ -153,6 +153,12 @@ pub struct Capability {
     /// The closed-enum primitive this capability covers.
     pub primitive: Primitive,
 
+    /// Provider priority for this primitive (ORCH-0037). Higher wins
+    /// when selecting the default provider for composed introspect.
+    /// Local providers default to 0; cloud/external to -10.
+    #[serde(default)]
+    pub priority: i32,
+
     /// Media inputs this capability honors. One entry per field
     /// that accepts a media reference (e.g. `image.source` for
     /// `image.analyze`). The [`MediaResolver`] reads this list
@@ -182,6 +188,7 @@ pub struct Capability {
     /// using canonical vocabulary field paths.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub examples: Vec<Example>,
+
 }
 
 impl Capability {
@@ -189,6 +196,7 @@ impl Capability {
     pub fn new(primitive: Primitive) -> Self {
         Self {
             primitive,
+            priority: 0,
             media_inputs: Vec::new(),
             parameters: Vec::new(),
             examples: Vec::new(),

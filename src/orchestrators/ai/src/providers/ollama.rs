@@ -865,6 +865,7 @@ fn build_capability_announcement(
 
             AnnCapability {
                 primitive: p,
+                priority: 0,
                 media_inputs: ollama_media_inputs_for(p),
                 parameters: params,
                 examples: ollama_examples_for(p),

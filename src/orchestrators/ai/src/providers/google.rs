@@ -180,6 +180,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
         capabilities: vec![
             AnnCapability {
                 primitive: Primitive::TextChat,
+                priority: -10,
                 media_inputs: Vec::new(),
                 parameters: vec![
                     SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Message".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Ask anything...".into()), ..Default::default() },
@@ -192,6 +193,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
             },
             AnnCapability {
                 primitive: Primitive::TextEmbed,
+                priority: -10,
                 media_inputs: Vec::new(),
                 parameters: vec![
                     SkillParameter { field: "text.input".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to embed...".into()), ..Default::default() },
@@ -200,6 +202,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
             },
             AnnCapability {
                 primitive: Primitive::ImageAnalyze,
+                priority: -10,
                 media_inputs: vec![CapabilityMediaInput::base64(
                     keys::image::SOURCE.as_str().to_string(),
                     ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),

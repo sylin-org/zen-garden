@@ -710,22 +710,39 @@ impl Provider for ComfyUiProvider {
         request: OrchestratorRequest,
     ) -> Result<ProviderResult, ProviderError> {
         // ── 1. Resolve the skill ──────────────────────────────
-        let skill_moniker = request.action.skill.as_ref().ok_or_else(|| {
-            ProviderError::Unsupported(
-                "comfyui requires a skill moniker; use `image.generate.<skill>`".to_string(),
-            )
-        })?;
-        let skill = {
+        //
+        // If the caller specified a skill moniker, use it. Otherwise
+        // auto-select the first loaded skill for this primitive
+        // (ORCH-0037: bare-primitive dispatch is the provider's
+        // responsibility to resolve internally).
+        let (skill_moniker, skill) = {
             let map = self.skills.read().await;
-            map.get(skill_moniker).cloned()
-        }
-        .ok_or_else(|| {
-            ProviderError::Unsupported(format!(
-                "comfyui skill `{}.{}` not loaded",
-                request.action.primitive.dotted(),
-                skill_moniker
-            ))
-        })?;
+            if let Some(moniker) = request.action.skill.as_ref() {
+                // Explicit skill
+                let loaded = map.get(moniker).cloned().ok_or_else(|| {
+                    ProviderError::Unsupported(format!(
+                        "comfyui skill `{}.{}` not loaded",
+                        request.action.primitive.dotted(),
+                        moniker,
+                    ))
+                })?;
+                (moniker.clone(), loaded)
+            } else {
+                // Bare-primitive: pick the first skill for this primitive.
+                let mut candidates: Vec<_> = map
+                    .iter()
+                    .filter(|(_, s)| s.primitive == request.action.primitive)
+                    .collect();
+                candidates.sort_by(|(a, _), (b, _)| a.cmp(b)); // stable by name
+                let (moniker, loaded) = candidates.into_iter().next().ok_or_else(|| {
+                    ProviderError::Unsupported(format!(
+                        "comfyui has no skills loaded for `{}`",
+                        request.action.primitive.dotted(),
+                    ))
+                })?;
+                (moniker.clone(), loaded.clone())
+            }
+        };
         if skill.primitive != request.action.primitive {
             return Err(ProviderError::Unsupported(format!(
                 "skill `{}` is registered for primitive `{}`, not `{}`",
@@ -744,7 +761,7 @@ impl Provider for ComfyUiProvider {
         // must also have every required model for this skill —
         // `pick_ready_instance` enforces that and returns
         // `Unreachable` otherwise.
-        let instance = self.pick_ready_instance(skill_moniker).await?;
+        let instance = self.pick_ready_instance(&skill_moniker).await?;
         let instance = instance.trim_end_matches('/').to_string();
 
         // ── 3. Pick the workflow variant ──────────────────────
@@ -1238,6 +1255,7 @@ fn compute_capabilities(skills: &HashMap<Moniker, LoadedSkill>) -> Vec<AnnCapabi
             media_inputs.sort_by(|a, b| a.field.cmp(&b.field));
             AnnCapability {
                 primitive,
+                priority: 0,
                 media_inputs,
                 parameters: comfyui_base_parameters_for(primitive),
                 examples: Vec::new(), // Skills carry their own examples

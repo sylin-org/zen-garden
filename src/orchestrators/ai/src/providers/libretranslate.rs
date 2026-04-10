@@ -315,6 +315,7 @@ fn build_capability_announcement(
         enabled: has_instances,
         capabilities: vec![AnnCapability {
             primitive: Primitive::TextTranslate,
+            priority: 0,
             media_inputs: Vec::new(),
             // Field keys use the vocabulary's canonical paths so
             // the dashboard form, the dispatch payload, and the

@@ -302,6 +302,7 @@ fn build_capability_announcement(
         enabled: has_instances,
         capabilities: vec![Capability {
             primitive: Primitive::AudioGenerate,
+            priority: 0,
             media_inputs: Vec::new(),
             parameters: vec![
                 SkillParameter { field: "audio.text".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to speak...".into()), ..Default::default() },

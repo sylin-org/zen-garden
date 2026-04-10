@@ -310,6 +310,7 @@ fn build_capability_announcement(
         enabled: has_instances,
         capabilities: vec![Capability {
             primitive: Primitive::AudioTranscribe,
+            priority: 0,
             media_inputs: vec![CapabilityMediaInput {
                 field: keys::audio::SOURCE.as_str().to_string(),
                 delivery: MediaDelivery::Transfer,

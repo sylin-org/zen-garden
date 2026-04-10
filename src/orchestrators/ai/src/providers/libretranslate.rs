@@ -74,6 +74,10 @@ pub struct LibreTranslateProvider {
     instances: Arc<InstancePool>,
     http: Client,
     events: Arc<EventBus>,
+    /// Probed language codes from /languages. Populated on first
+    /// instance discovery, then included as `options` on the
+    /// language selector fields.
+    languages: tokio::sync::RwLock<Vec<String>>,
 }
 
 impl LibreTranslateProvider {
@@ -94,6 +98,7 @@ impl LibreTranslateProvider {
             instances: Arc::new(InstancePool::new()),
             http: build_http_client(),
             events,
+            languages: tokio::sync::RwLock::new(Vec::new()),
         });
         spawn_subscriber(provider.clone(), discovery, shutdown);
         provider
@@ -102,9 +107,40 @@ impl LibreTranslateProvider {
     /// Publish the current pool state as a capability announcement.
     /// Called by the discovery subscriber on every pool change.
     async fn publish_capabilities(&self) {
+        let langs = self.languages.read().await.clone();
         let announcement =
-            build_capability_announcement(&self.name, !self.instances.is_empty());
+            build_capability_announcement(&self.name, !self.instances.is_empty(), &langs);
         publish_capability_announcement(&self.events, &announcement).await;
+    }
+
+    /// Probe the first healthy instance for available languages.
+    /// Called once when instances first become available.
+    async fn probe_languages(&self) {
+        let endpoint = match self.instances.pick() {
+            Some(e) => e,
+            None => return,
+        };
+        let url = format!("{}/languages", endpoint.trim_end_matches('/'));
+        match self.http.get(&url).send().await {
+            Ok(resp) => {
+                if let Ok(langs) = resp.json::<Vec<WireLanguage>>().await {
+                    let codes: Vec<String> = langs.into_iter().map(|l| l.code).collect();
+                    tracing::info!(
+                        provider = %self.name,
+                        count = codes.len(),
+                        "probed libretranslate languages",
+                    );
+                    *self.languages.write().await = codes;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    provider = %self.name,
+                    error = %e,
+                    "failed to probe libretranslate languages — fields will have no options",
+                );
+            }
+        }
     }
 
     /// Apply a fresh merged URL list. Returns `true` if the pool
@@ -148,6 +184,7 @@ fn spawn_subscriber(
     tokio::spawn(async move {
         let pool = PerFqnInstances::new();
         let mut rx = discovery.subscribe(FQNS).await;
+        let mut probed_languages = false;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -157,6 +194,11 @@ fn spawn_subscriber(
                         event.instances.into_iter().map(|i| i.url).collect();
                     pool.set(&event.fqn, urls);
                     if provider.apply_merged(pool.flatten()) {
+                        // Probe languages on first pool change.
+                        if !probed_languages && !provider.instances.is_empty() {
+                            provider.probe_languages().await;
+                            probed_languages = true;
+                        }
                         provider.publish_capabilities().await;
                     }
                 }
@@ -241,7 +283,14 @@ impl Provider for LibreTranslateProvider {
 fn build_capability_announcement(
     name: &ProviderName,
     has_instances: bool,
+    languages: &[String],
 ) -> CapabilityAnnouncement {
+    let lang_options: Option<Vec<serde_json::Value>> = if languages.is_empty() {
+        None
+    } else {
+        Some(languages.iter().map(|l| serde_json::json!(l)).collect())
+    };
+
     CapabilityAnnouncement {
         provider: name.clone(),
         enabled: has_instances,
@@ -253,8 +302,8 @@ fn build_capability_announcement(
             // stored request record all use the same keys (ORCH-0033).
             parameters: vec![
                 SkillParameter { field: "text.body".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to translate...".into()), ..Default::default() },
-                SkillParameter { field: "text.language.source".into(), required: false, label: Some("Source Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), placeholder: Some("Auto-detect".into()), ..Default::default() },
-                SkillParameter { field: "text.language.target".into(), required: true, label: Some("Target Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), ..Default::default() },
+                SkillParameter { field: "text.language.source".into(), required: false, label: Some("Source Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), placeholder: Some("Auto-detect".into()), options: lang_options.clone(), ..Default::default() },
+                SkillParameter { field: "text.language.target".into(), required: true, label: Some("Target Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), options: lang_options, ..Default::default() },
             ],
         }],
         skills: Vec::new(),
@@ -262,6 +311,14 @@ fn build_capability_announcement(
 }
 
 // ── Wire types ────────────────────────────────────────────────
+
+/// Response from LibreTranslate's `GET /languages` endpoint.
+#[derive(Debug, Deserialize)]
+struct WireLanguage {
+    code: String,
+    #[allow(dead_code)]
+    name: String,
+}
 
 #[derive(Debug, Serialize)]
 struct WirePayload<'a> {

@@ -755,6 +755,7 @@ mod tests {
             enabled: true,
             capabilities: vec![AnnCapability {
                 primitive: Primitive::ImageAnalyze,
+                priority: 0,
                 media_inputs: vec![CapabilityMediaInput {
                     field: keys::image::SOURCE.as_str().to_string(),
                     delivery: MediaDelivery::ById,

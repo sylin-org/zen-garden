@@ -50,7 +50,9 @@ use crate::domain::keys;
 use crate::domain::media::MediaSource;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderResult};
+use crate::domain::provider::{
+    Provider, ProviderError, ProviderMeta, ProviderResult, WorkspaceDescription,
+};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
@@ -311,6 +313,28 @@ impl Provider for KokoroProvider {
                 ..Default::default()
             },
         ))
+    }
+
+    async fn describe_workspace(
+        &self,
+        primitive: Primitive,
+        _model_hint: Option<&str>,
+    ) -> Option<WorkspaceDescription> {
+        if primitive != Primitive::AudioGenerate {
+            return None;
+        }
+        let has_instances = !self.instances.is_empty();
+        let announcement = build_capability_announcement(&self.name, has_instances);
+        let cap = announcement
+            .capabilities
+            .into_iter()
+            .find(|c| c.primitive == primitive)?;
+        Some(WorkspaceDescription {
+            resolved_model: Some(self.tts_model_id.clone()),
+            fields: cap.parameters,
+            media_inputs: cap.media_inputs,
+            examples: cap.examples,
+        })
     }
 }
 

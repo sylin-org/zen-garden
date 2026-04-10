@@ -46,7 +46,9 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderOutcome, ProviderResult};
+use crate::domain::provider::{
+    Provider, ProviderError, ProviderMeta, ProviderOutcome, ProviderResult, WorkspaceDescription,
+};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::GardenDiscovery;
@@ -508,6 +510,81 @@ impl Provider for OllamaProvider {
             },
         })
     }
+
+    async fn describe_workspace(
+        &self,
+        primitive: Primitive,
+        model_hint: Option<&str>,
+    ) -> Option<WorkspaceDescription> {
+        // Snapshot the matrix: supported primitives, healthy flag, and
+        // the list of loadable models that declare the tag for this
+        // primitive.
+        let (supported, has_healthy, mut model_names) = {
+            let matrix = self.matrix.read().await;
+            let supported = matrix.supported_primitives();
+            let has_healthy = !matrix.healthy_instances().is_empty();
+            let loadable = matrix.loadable_models();
+            let tag = match primitive {
+                Primitive::TextChat => Some("completion"),
+                Primitive::TextEmbed => Some("embedding"),
+                Primitive::ImageAnalyze => Some("vision"),
+                _ => None,
+            };
+            let names: Vec<String> = match tag {
+                Some(tag) => {
+                    let mut v: Vec<String> = matrix
+                        .models
+                        .values()
+                        .filter(|m| loadable.contains(m.name.as_str()))
+                        .filter(|m| m.has_capability(tag))
+                        .map(|m| m.name.clone())
+                        .collect();
+                    v.sort();
+                    v.dedup();
+                    v
+                }
+                None => Vec::new(),
+            };
+            (supported, has_healthy, names)
+        };
+
+        if !supported.contains(&primitive) {
+            return None;
+        }
+
+        // Resolve the model hint: prefer the hint if we have it, else
+        // pick the first available model as the "recommended" default.
+        let resolved = match model_hint {
+            Some(m) => {
+                if model_names.iter().any(|n| n == m) {
+                    Some(m.to_string())
+                } else {
+                    return None;
+                }
+            }
+            None => model_names.first().cloned(),
+        };
+
+        // Ensure deterministic order for options rendering.
+        model_names.sort();
+
+        // Build fields directly — base params tailored to the
+        // resolved model, plus the live-options model selector.
+        // This is the ORCH-0038 hook point: base_parameters_for
+        // receives the resolved model and may append per-model
+        // overlay fields (e.g. reasoning-mode controls).
+        let mut fields = base_parameters_for(primitive, resolved.as_deref());
+        fields.push(build_model_selector(primitive, &model_names));
+
+        let _ = has_healthy; // currently only gates announcement enabled flag
+
+        Some(WorkspaceDescription {
+            resolved_model: resolved,
+            fields,
+            media_inputs: ollama_media_inputs_for(primitive),
+            examples: ollama_examples_for(primitive),
+        })
+    }
 }
 
 // ── Wire-format dispatch ─────────────────────────────────────
@@ -820,48 +897,17 @@ fn build_capability_announcement(
     has_healthy_instances: bool,
     model_names: &[String],
 ) -> CapabilityAnnouncement {
-    use crate::domain::capability_announcement::{
-        AutoDescriptor, ParameterType, ParameterWidget, SkillParameter,
-    };
-
     let enabled = !primitives.is_empty() && has_healthy_instances;
-
-    // Build the model selector parameter with live options.
-    let model_options: Vec<serde_json::Value> =
-        model_names.iter().map(|n| json!(n)).collect();
 
     let capabilities: Vec<AnnCapability> = primitives
         .into_iter()
         .map(|p| {
-            let cap_name = capability_name_for(p);
-            let mut params = base_parameters_for(p);
-
-            // Add model selector with live options and auto descriptor.
-            params.push(SkillParameter {
-                field: "selectors.model".into(),
-                required: false,
-                description: Some("Model to use for this request".into()),
-                default: None,
-                auto: Some(AutoDescriptor {
-                    default: format!("recommended:{cap_name}"),
-                    description: Some(format!(
-                        "The garden picks the best available {cap_name} model"
-                    )),
-                }),
-                pinnable: true,
-                label: Some("Model".into()),
-                field_type: Some(ParameterType::String),
-                widget: Some(ParameterWidget::Select),
-                min: None,
-                max: None,
-                step: None,
-                options: if model_options.is_empty() {
-                    None
-                } else {
-                    Some(model_options.clone())
-                },
-                placeholder: None,
-            });
+            // Startup announcement: no resolved model yet.
+            // Live per-request resolution goes through
+            // Provider::describe_workspace, which passes the
+            // resolved model to these helpers.
+            let mut params = base_parameters_for(p, None);
+            params.push(build_model_selector(p, model_names));
 
             AnnCapability {
                 primitive: p,
@@ -878,6 +924,44 @@ fn build_capability_announcement(
         enabled,
         capabilities,
         skills: Vec::new(),
+    }
+}
+
+/// Build Ollama's `selectors.model` field with live options and a
+/// `recommended:{cap}` auto descriptor. Extracted so both the
+/// startup announcement and the live `describe_workspace` path build
+/// it the same way.
+fn build_model_selector(
+    p: Primitive,
+    model_names: &[String],
+) -> crate::domain::capability_announcement::SkillParameter {
+    use crate::domain::capability_announcement::{
+        AutoDescriptor, ParameterType, ParameterWidget, SkillParameter,
+    };
+
+    let cap_name = capability_name_for(p);
+    let options: Vec<Value> = model_names.iter().map(|n| json!(n)).collect();
+
+    SkillParameter {
+        field: "selectors.model".into(),
+        required: false,
+        description: Some("Model to use for this request".into()),
+        default: None,
+        auto: Some(AutoDescriptor {
+            default: format!("recommended:{cap_name}"),
+            description: Some(format!(
+                "The garden picks the best available {cap_name} model"
+            )),
+        }),
+        pinnable: true,
+        label: Some("Model".into()),
+        field_type: Some(ParameterType::String),
+        widget: Some(ParameterWidget::Select),
+        min: None,
+        max: None,
+        step: None,
+        options: if options.is_empty() { None } else { Some(options) },
+        placeholder: None,
     }
 }
 
@@ -922,10 +1006,19 @@ fn ollama_examples_for(p: Primitive) -> Vec<Example> {
 /// Base form-schema parameters for Ollama's primitives.
 /// These are the fields the Try It form renders (excluding
 /// the model selector, which is added separately with live options).
-fn base_parameters_for(p: Primitive) -> Vec<crate::domain::capability_announcement::SkillParameter> {
+///
+/// `resolved_model` is the concrete model the provider would use for
+/// this call. When `Some`, the function may append model-specific
+/// fields (e.g. a `thinking` toggle for reasoning models). When
+/// `None` (used at startup, before any model is resolved), the
+/// function returns the base field surface only.
+fn base_parameters_for(
+    p: Primitive,
+    resolved_model: Option<&str>,
+) -> Vec<crate::domain::capability_announcement::SkillParameter> {
     use crate::domain::capability_announcement::{ParameterType, ParameterWidget, SkillParameter};
 
-    match p {
+    let mut params = match p {
         Primitive::TextChat => vec![
             SkillParameter {
                 field: "text.prompt.user".into(),
@@ -1005,7 +1098,23 @@ fn base_parameters_for(p: Primitive) -> Vec<crate::domain::capability_announceme
         // Other primitives get an empty field list — they'll gain
         // parameters as Ollama's support for them matures.
         _ => vec![],
-    }
+    };
+
+    // Model-specific field overlays. This is the hook ORCH-0038
+    // reserves for per-model differentiation. Ollama doesn't yet
+    // surface any reasoning-model specific fields, but the hook
+    // is in place so adding one is a local change in this function.
+    //
+    // Example (future): detect reasoning models and append a
+    // "reasoning depth" slider for TextChat.
+    //   if p == Primitive::TextChat
+    //       && resolved_model.is_some_and(is_reasoning_model)
+    //   {
+    //       params.push(reasoning_depth_field());
+    //   }
+    let _ = resolved_model;
+
+    params
 }
 
 // ── Payload helpers ──────────────────────────────────────────

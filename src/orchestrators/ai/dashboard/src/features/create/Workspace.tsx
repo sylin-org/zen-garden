@@ -20,15 +20,23 @@ export default function Workspace() {
   const [streamText, setStreamText] = useState<string | undefined>(undefined);
   const [sourceRequest, setSourceRequest] = useState<PersistedRequest | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
+  // ORCH-0038: the model the user has picked. When set, the introspect
+  // call passes `?model=` so the winning adapter can return a
+  // context-aware field surface (e.g. reasoning-mode controls).
+  const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
 
   // Fetch workspace spec from the introspect endpoint.
-  // Includes ?provider= when the user switches providers.
+  // Includes ?provider= and/or ?model= when the user has picked them.
   const basePath = skill
     ? `/v1/${modality}/${leaf}/${skill}`
     : `/v1/${modality}/${leaf}`;
-  const introspectUrl = selectedProvider
-    ? `${basePath}?provider=${encodeURIComponent(selectedProvider)}`
-    : basePath;
+  const introspectUrl = (() => {
+    const params = new URLSearchParams();
+    if (selectedProvider) params.set("provider", selectedProvider);
+    if (selectedModel) params.set("model", selectedModel);
+    const qs = params.toString();
+    return qs ? `${basePath}?${qs}` : basePath;
+  })();
 
   useEffect(() => {
     setLoading(true);
@@ -73,6 +81,7 @@ export default function Workspace() {
       setStreamText(undefined);
       setSourceRequest(null);
       setSelectedProvider(undefined);
+      setSelectedModel(undefined);
       prevBasePath.current = basePath;
     }
   }, [basePath]);
@@ -89,9 +98,18 @@ export default function Workspace() {
 
   const handleProviderChange = useCallback((provider: string | undefined) => {
     setSelectedProvider(provider);
-    // Reset result when switching providers
+    // Switching provider resets the model hint — the new provider
+    // may not have the previously selected model.
+    setSelectedModel(undefined);
     setResult(null);
     setStreamText(undefined);
+  }, []);
+
+  const handleModelChange = useCallback((model: string | undefined) => {
+    // ORCH-0038: triggers a re-fetch of the introspect endpoint.
+    // We keep the result panel contents so the user can compare
+    // runs across models without losing the last output.
+    setSelectedModel(model);
   }, []);
 
   if (loading) {
@@ -148,6 +166,7 @@ export default function Workspace() {
             onProviderChange={
               spec.routing.providers.length > 1 ? handleProviderChange : undefined
             }
+            onModelChange={handleModelChange}
           />
         )}
       </div>

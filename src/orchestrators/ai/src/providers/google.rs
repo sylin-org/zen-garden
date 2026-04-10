@@ -54,7 +54,9 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderOutcome, ProviderResult};
+use crate::domain::provider::{
+    Provider, ProviderError, ProviderMeta, ProviderOutcome, ProviderResult, WorkspaceDescription,
+};
 use crate::domain::request::OrchestratorRequest;
 use crate::providers::cloud_common::resolve_cloud_model;
 use crate::services::directory_subscriber::publish_capability_announcement;
@@ -170,49 +172,96 @@ impl GoogleProvider {
 /// Build the static capability announcement Google publishes at
 /// startup. Pure function — no IO, no `&self` — so unit tests can
 /// exercise the wire shape directly.
+/// Google's per-primitive form-schema parameters.
+///
+/// `resolved_model` is the concrete model the provider would use for
+/// the upcoming call. Currently unused — Gemini 2.0/1.5 expose the
+/// same surface — but this is the ORCH-0038 hook point. When Google
+/// adds model-specific controls (e.g. a thinking-budget slider for
+/// a future `gemini-2.5-thinking`), the conditional goes here.
+fn google_base_parameters_for(
+    p: Primitive,
+    resolved_model: Option<&str>,
+) -> Vec<SkillParameter> {
+    let _ = resolved_model;
+    match p {
+        Primitive::TextChat => vec![
+            SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Message".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Ask anything...".into()), ..Default::default() },
+            SkillParameter { field: "text.prompt.system".into(), required: false, label: Some("System Prompt".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("You are a helpful assistant...".into()), ..Default::default() },
+            SkillParameter { field: "text.sampling.temperature".into(), required: false, label: Some("Temperature".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(0.7)), min: Some(0.0), max: Some(2.0), step: Some(0.1), ..Default::default() },
+            SkillParameter { field: "text.tokens.max".into(), required: false, label: Some("Max Tokens".into()), field_type: Some(ParameterType::Integer), widget: Some(ParameterWidget::Number), default: Some(serde_json::json!(2048)), min: Some(1.0), max: Some(131072.0), ..Default::default() },
+            SkillParameter { field: "text.prompt.history".into(), required: false, label: Some("Conversation".into()), field_type: Some(ParameterType::Dialogue), widget: Some(ParameterWidget::Dialogue), ..Default::default() },
+        ],
+        Primitive::TextEmbed => vec![
+            SkillParameter { field: "text.input".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to embed...".into()), ..Default::default() },
+        ],
+        Primitive::ImageAnalyze => vec![
+            SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Question".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Describe this image...".into()), ..Default::default() },
+        ],
+        _ => vec![],
+    }
+}
+
+fn google_media_inputs_for(p: Primitive) -> Vec<CapabilityMediaInput> {
+    match p {
+        Primitive::ImageAnalyze => vec![CapabilityMediaInput::base64(
+            keys::image::SOURCE.as_str().to_string(),
+            ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
+        )],
+        _ => Vec::new(),
+    }
+}
+
+fn google_examples_for(p: Primitive) -> Vec<Example> {
+    match p {
+        Primitive::TextChat => vec![Example {
+            label: "Creative writing".into(),
+            description: Some("Test creative generation".into()),
+            payload: json!({"text": {"prompt": {"user": "Write a haiku about a zen garden in autumn"}}}),
+        }],
+        Primitive::TextEmbed => vec![Example {
+            label: "Embed a paragraph".into(),
+            description: None,
+            payload: json!({"text": {"input": "Artificial intelligence is transforming how we interact with technology."}}),
+        }],
+        Primitive::ImageAnalyze => vec![Example {
+            label: "Describe an image".into(),
+            description: None,
+            payload: json!({"text": {"prompt": {"user": "What objects and colors do you see?"}}}),
+        }],
+        _ => vec![],
+    }
+}
+
+/// Which primitives Google serves.
+const GOOGLE_PRIMITIVES: &[Primitive] = &[
+    Primitive::TextChat,
+    Primitive::TextEmbed,
+    Primitive::ImageAnalyze,
+];
+
 fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement {
+    let capabilities: Vec<AnnCapability> = GOOGLE_PRIMITIVES
+        .iter()
+        .copied()
+        .map(|p| AnnCapability {
+            primitive: p,
+            priority: -10,
+            // Startup announcement: no resolved model yet, pass None.
+            // Live per-request resolution goes through describe_workspace.
+            parameters: google_base_parameters_for(p, None),
+            media_inputs: google_media_inputs_for(p),
+            examples: google_examples_for(p),
+        })
+        .collect();
+
     CapabilityAnnouncement {
         provider: name.clone(),
         // Cloud adapters have no discovery loop; `enabled: true` is
         // constant. Runtime failures surface inside `onboard` as
         // `ProviderError` variants and never flip the announcement.
         enabled: true,
-        capabilities: vec![
-            AnnCapability {
-                primitive: Primitive::TextChat,
-                priority: -10,
-                media_inputs: Vec::new(),
-                parameters: vec![
-                    SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Message".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Ask anything...".into()), ..Default::default() },
-                    SkillParameter { field: "text.prompt.system".into(), required: false, label: Some("System Prompt".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("You are a helpful assistant...".into()), ..Default::default() },
-                    SkillParameter { field: "text.sampling.temperature".into(), required: false, label: Some("Temperature".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(0.7)), min: Some(0.0), max: Some(2.0), step: Some(0.1), ..Default::default() },
-                    SkillParameter { field: "text.tokens.max".into(), required: false, label: Some("Max Tokens".into()), field_type: Some(ParameterType::Integer), widget: Some(ParameterWidget::Number), default: Some(serde_json::json!(2048)), min: Some(1.0), max: Some(131072.0), ..Default::default() },
-                    SkillParameter { field: "text.prompt.history".into(), required: false, label: Some("Conversation".into()), field_type: Some(ParameterType::Dialogue), widget: Some(ParameterWidget::Dialogue), ..Default::default() },
-                ],
-                examples: vec![Example { label: "Creative writing".into(), description: Some("Test creative generation".into()), payload: json!({"text": {"prompt": {"user": "Write a haiku about a zen garden in autumn"}}}) }],
-            },
-            AnnCapability {
-                primitive: Primitive::TextEmbed,
-                priority: -10,
-                media_inputs: Vec::new(),
-                parameters: vec![
-                    SkillParameter { field: "text.input".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to embed...".into()), ..Default::default() },
-                ],
-                examples: vec![Example { label: "Embed a paragraph".into(), description: None, payload: json!({"text": {"input": "Artificial intelligence is transforming how we interact with technology."}}) }],
-            },
-            AnnCapability {
-                primitive: Primitive::ImageAnalyze,
-                priority: -10,
-                media_inputs: vec![CapabilityMediaInput::base64(
-                    keys::image::SOURCE.as_str().to_string(),
-                    ACCEPTED_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
-                )],
-                parameters: vec![
-                    SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Question".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Describe this image...".into()), ..Default::default() },
-                ],
-                examples: vec![Example { label: "Describe an image".into(), description: None, payload: json!({"text": {"prompt": {"user": "What objects and colors do you see?"}}}) }],
-            },
-        ],
+        capabilities,
         skills: Vec::new(),
     }
 }
@@ -246,6 +295,34 @@ impl Provider for GoogleProvider {
             }
         };
         Ok(ProviderResult { outcome, meta })
+    }
+
+    async fn describe_workspace(
+        &self,
+        primitive: Primitive,
+        model_hint: Option<&str>,
+    ) -> Option<WorkspaceDescription> {
+        if !GOOGLE_PRIMITIVES.contains(&primitive) {
+            return None;
+        }
+        // Resolve model: honor the hint if it names a supported model,
+        // otherwise fall back to DEFAULT_MODEL.
+        let resolved = match model_hint {
+            Some(m) if SUPPORTED_MODELS.contains(&m) => m.to_string(),
+            Some(_) => return None,
+            None => DEFAULT_MODEL.to_string(),
+        };
+        // Build fields with the resolved model in scope. This is the
+        // ORCH-0038 hook: google_base_parameters_for may append
+        // model-specific fields (e.g. a thinking budget slider) as
+        // Google adds reasoning-mode models.
+        let fields = google_base_parameters_for(primitive, Some(&resolved));
+        Some(WorkspaceDescription {
+            resolved_model: Some(resolved),
+            fields,
+            media_inputs: google_media_inputs_for(primitive),
+            examples: google_examples_for(primitive),
+        })
     }
 }
 

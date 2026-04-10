@@ -43,9 +43,11 @@ use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use serde::Serialize;
 
+use crate::domain::capability_announcement::{CapabilityMediaInput, Example, SkillParameter};
 use crate::domain::errors::ErrorCode;
 use crate::domain::ids::ProviderName;
 use crate::domain::output::Output;
+use crate::domain::primitive::Primitive;
 use crate::domain::request::OrchestratorRequest;
 
 // ── The lean Provider trait ───────────────────────────────────
@@ -78,12 +80,57 @@ pub trait Provider: Send + Sync + 'static {
         request: OrchestratorRequest,
     ) -> Result<ProviderResult, ProviderError>;
 
+    /// Describe the workspace this provider would render for the
+    /// given primitive and optional model hint (ORCH-0038).
+    ///
+    /// Returns `None` if the provider doesn't serve this primitive,
+    /// or doesn't have the requested model. The adapter is the
+    /// single authority on its own field surface — the returned
+    /// fields may vary by model (e.g. Claude 4's "thinking" mode
+    /// only appears for claude-4-* models).
+    ///
+    /// The resolved_model field carries the concrete model the
+    /// provider would use given the hint. For providers with no
+    /// model concept (LibreTranslate), this is `None`.
+    ///
+    /// Called by the introspect handler for every workspace
+    /// description — static capability parameters are just an
+    /// initial hint; this method is the live answer.
+    async fn describe_workspace(
+        &self,
+        primitive: Primitive,
+        model_hint: Option<&str>,
+    ) -> Option<WorkspaceDescription>;
+
     /// Clear any artifacts cached on the provider's instances.
     /// Default is a no-op; providers that stage files (ComfyUI,
     /// WhisperCpp uploads, etc.) override.
     async fn flush_caches(&self) -> Result<FlushReport, ProviderError> {
         Ok(FlushReport::empty())
     }
+}
+
+// ── Workspace description (ORCH-0038) ────────────────────────
+
+/// The adapter's answer to "what does the form look like for this
+/// primitive, given an optional model hint?" Returned by
+/// `Provider::describe_workspace`.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceDescription {
+    /// The model the provider would use given the hint. `None` for
+    /// providers without a model concept (LibreTranslate, ComfyUI
+    /// workflow-fixed skills).
+    pub resolved_model: Option<String>,
+
+    /// Field surface the form should render. Context-aware —
+    /// may include model-specific fields.
+    pub fields: Vec<SkillParameter>,
+
+    /// Media inputs accepted by this primitive for this provider.
+    pub media_inputs: Vec<CapabilityMediaInput>,
+
+    /// Example scenarios for this primitive.
+    pub examples: Vec<Example>,
 }
 
 // ── Provider outcomes ─────────────────────────────────────────

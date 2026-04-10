@@ -1,9 +1,13 @@
 //! `GET /v1/{modality}/{leaf}[/{skill_id}]` — workspace definition
-//! (ORCH-0036, ORCH-0037).
+//! (ORCH-0036, ORCH-0037, ORCH-0038).
 //!
-//! Returns a composed workspace spec: vocabulary base fields +
-//! provider-specific overlay fields. The winning provider is selected
-//! by priority (or forced via `?provider=`).
+//! Returns a composed workspace spec. The winning provider is asked
+//! (via [`Provider::describe_workspace`]) to describe the workspace
+//! for the requested context (primitive + optional model hint).
+//! Provider candidates are walked in priority order; the first one
+//! whose `describe_workspace` returns `Some` wins. The handler no
+//! longer reads `Capability.parameters` directly — that field is a
+//! startup-time hint, not the live source of truth.
 
 #![allow(dead_code)]
 
@@ -14,16 +18,17 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use crate::app_state::AppState;
 use crate::domain::capability_announcement::{
-    AutoDescriptor, Capability, Example, SkillDeclaration, SkillDisplay, SkillParameter,
+    AutoDescriptor, Example, SkillDisplay, SkillParameter,
 };
 use crate::domain::errors::ErrorCode;
 use crate::domain::ids::ProviderName;
 use crate::domain::primitive::Primitive;
-use crate::domain::vocabulary::{FieldSpec, FieldType, Vocabulary};
+use crate::domain::provider::WorkspaceDescription;
+use crate::domain::vocabulary::{FieldType, Vocabulary};
 
 use super::errors::quick_error_response;
 
@@ -32,6 +37,10 @@ use super::errors::quick_error_response;
 #[derive(Debug, Deserialize, Default)]
 pub struct IntrospectQuery {
     pub provider: Option<String>,
+    /// ORCH-0038: optional model hint. The winning provider uses
+    /// this to tailor the returned field surface (e.g. a reasoning
+    /// model exposes extra controls that a plain chat model lacks).
+    pub model: Option<String>,
 }
 
 // ── Response shapes ──────────────────────────────────────────
@@ -144,48 +153,68 @@ pub async fn get_primitive(
         );
     }
 
-    // Select the winning provider: forced by ?provider= or by priority.
-    let (winner, capability) = match select_provider(
-        &query.provider,
+    // ORCH-0038 unified resolver: walk providers in priority order,
+    // ask each one to describe the workspace for the given (primitive,
+    // model_hint). First Some() wins — the adapter is the single
+    // authority on its own field surface.
+    let model_hint = query.model.as_deref();
+    let (winner, description) = match resolve_workspace(
+        query.provider.as_deref(),
+        model_hint,
         &all_providers_for,
         primitive,
-        directory,
+        &state,
     )
     .await
     {
         Some(result) => result,
         None => {
-            return quick_error_response(
-                ErrorCode::NotFound,
-                format!(
-                    "Provider `{}` does not serve `{modality}.{leaf}`.",
-                    query.provider.as_deref().unwrap_or("?")
+            let detail = match (query.provider.as_deref(), model_hint) {
+                (Some(p), Some(m)) => format!(
+                    "Provider `{p}` does not serve `{modality}.{leaf}` with model `{m}`."
                 ),
-            );
+                (Some(p), None) => {
+                    format!("Provider `{p}` does not serve `{modality}.{leaf}`.")
+                }
+                (None, Some(m)) => format!(
+                    "No provider serves `{modality}.{leaf}` with model `{m}`."
+                ),
+                (None, None) => {
+                    format!("No provider could describe `{modality}.{leaf}`.")
+                }
+            };
+            return quick_error_response(ErrorCode::NotFound, detail);
         }
     };
 
-    // Layer 1: vocabulary base fields
+    // Layer 1: vocabulary base fields (used only if adapter returned
+    // an empty overlay — the bare-primitive fallback).
     let vocabulary = state.vocabularies.get(primitive);
 
-    // Layer 2: provider overlay (parameters from the winning capability)
-    let overlay_params = &capability.parameters;
+    // Layer 2: provider overlay from the live workspace description.
+    let overlay_params = &description.fields;
 
     // Compose
     let preferences = state.preferences.get_all().await;
-    let (payload, fields) =
+    let (mut payload, fields) =
         compose_payload_and_fields(vocabulary, overlay_params, &winner, &preferences);
 
-    // Media inputs from the winning capability
-    let media_inputs_json: Vec<Value> = capability
+    // Inject the resolved model into payload so the client sees
+    // what the provider actually picked. The client can pass this
+    // back on the next call via `?model=`.
+    if let Some(resolved) = description.resolved_model.as_deref() {
+        inject_resolved_model(&mut payload, resolved);
+    }
+
+    // Media inputs + examples from the live description.
+    let media_inputs_json: Vec<Value> = description
         .media_inputs
         .iter()
         .map(|m| serde_json::to_value(m).unwrap_or_default())
         .collect();
 
-    // Examples: prefer capability-level, fall back across providers
-    let examples = if !capability.examples.is_empty() {
-        capability.examples.clone()
+    let examples = if !description.examples.is_empty() {
+        description.examples.clone()
     } else {
         collect_first_examples(&all_providers_for, primitive, directory).await
     };
@@ -344,41 +373,67 @@ pub async fn get_skill(
     (StatusCode::OK, Json(response)).into_response()
 }
 
-// ── Provider selection ───────────────────────────────────────
+// ── Unified resolver (ORCH-0038) ─────────────────────────────
 
-/// Select a provider by `?provider=` override or by highest priority.
-async fn select_provider(
-    forced: &Option<String>,
+/// Walk provider candidates in priority order and ask each one to
+/// describe the workspace for the given (primitive, model_hint). The
+/// first `Some` result wins — the adapter is the single authority on
+/// its own field surface.
+///
+/// When `?provider=` is set, only that provider is asked. When
+/// `?model=` is set, the adapter may return `None` if it doesn't have
+/// the requested model, which lets the resolver fall through to the
+/// next candidate.
+async fn resolve_workspace(
+    provider_hint: Option<&str>,
+    model_hint: Option<&str>,
     available: &[ProviderName],
     primitive: Primitive,
-    directory: &crate::services::directory_subscriber::CapabilityDirectory,
-) -> Option<(ProviderName, Capability)> {
-    if let Some(name) = forced {
-        let pn = ProviderName::new(name);
-        if available.contains(&pn) {
-            if let Some(cap) = directory.capability(&pn, primitive).await {
-                return Some((pn, cap));
-            }
-        }
-        return None;
-    }
+    state: &AppState,
+) -> Option<(ProviderName, WorkspaceDescription)> {
+    let directory = &state.capability_directory;
 
-    // Select by priority: highest wins, stable by name on tie.
-    let mut best: Option<(ProviderName, Capability, i32)> = None;
-    for provider in available {
-        if let Some(cap) = directory.capability(provider, primitive).await {
-            let priority = cap.priority;
-            match &best {
-                None => best = Some((provider.clone(), cap, priority)),
-                Some((_, _, best_priority)) => {
-                    if priority > *best_priority {
-                        best = Some((provider.clone(), cap, priority));
-                    }
-                }
+    // Filter + prioritize candidates. Each candidate's priority comes
+    // from its startup capability announcement in the directory.
+    let mut ranked: Vec<(ProviderName, i32)> = Vec::new();
+    for name in available {
+        if let Some(hint) = provider_hint {
+            if name.as_str() != hint {
+                continue;
             }
         }
+        let priority = directory
+            .capability(name, primitive)
+            .await
+            .map(|c| c.priority)
+            .unwrap_or(i32::MIN);
+        ranked.push((name.clone(), priority));
     }
-    best.map(|(name, cap, _)| (name, cap))
+    // Highest priority first; stable by name on tie.
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_str().cmp(b.0.as_str())));
+
+    for (name, _) in ranked {
+        let provider = match state.provider_registry.get(&name).await {
+            Some(p) => p,
+            None => continue,
+        };
+        if let Some(desc) = provider.describe_workspace(primitive, model_hint).await {
+            return Some((name, desc));
+        }
+    }
+    None
+}
+
+/// Inject `resolved_model` into the payload template at
+/// `selectors.model` so the client round-trips it on the next call.
+/// The adapter's `selectors.model` field is surfaced to the UI
+/// without the `selectors.` prefix (see `compose_payload_and_fields`),
+/// so we write to the stripped key `model` as well.
+fn inject_resolved_model(payload: &mut Value, resolved: &str) {
+    let Some(obj) = payload.as_object_mut() else {
+        return;
+    };
+    obj.insert("model".to_string(), Value::String(resolved.to_string()));
 }
 
 /// Collect first non-empty examples across providers for a primitive.

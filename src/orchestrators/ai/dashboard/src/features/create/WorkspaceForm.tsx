@@ -21,6 +21,10 @@ interface Props {
   onError: (error: unknown) => void;
   /** Called when the user switches provider (multi-provider primitives). */
   onProviderChange?: (provider: string | undefined) => void;
+  /** Called when the user picks a different model (ORCH-0038). Triggers
+   *  a re-fetch of the introspect endpoint with `?model=` so the
+   *  adapter can return model-specific fields. */
+  onModelChange?: (model: string | undefined) => void;
 }
 
 export default function WorkspaceForm({
@@ -29,6 +33,7 @@ export default function WorkspaceForm({
   onResult,
   onError,
   onProviderChange,
+  onModelChange,
 }: Props) {
   const manager = useActiveRequestManager();
 
@@ -98,7 +103,14 @@ export default function WorkspaceForm({
   const setValue = useCallback((path: string, value: unknown) => {
     setPayload((prev) => setNestedValue(prev, path, value));
     setUserTouched(true);
-  }, []);
+    // ORCH-0038: when the user changes the model selector, notify
+    // the parent so it can re-fetch the introspect endpoint with
+    // `?model=` and let the adapter return model-specific fields.
+    if (path === "model" && onModelChange) {
+      const next = typeof value === "string" && value.length > 0 ? value : undefined;
+      onModelChange(next);
+    }
+  }, [onModelChange]);
 
   const applyExample = useCallback((examplePayload: Record<string, unknown>) => {
     // Merge example payload into current payload (deep merge)

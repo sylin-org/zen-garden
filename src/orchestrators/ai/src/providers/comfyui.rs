@@ -62,7 +62,9 @@ use crate::domain::media::{MediaDelivery, MediaSource};
 use crate::domain::moniker::Moniker;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
-use crate::domain::provider::{Provider, ProviderError, ProviderMeta, ProviderResult};
+use crate::domain::provider::{
+    Provider, ProviderError, ProviderMeta, ProviderResult, WorkspaceDescription,
+};
 use crate::domain::request::OrchestratorRequest;
 use crate::services::directory_subscriber::publish_capability_announcement;
 use crate::services::garden_discovery::{DiscoveredInstance, GardenDiscovery};
@@ -1060,6 +1062,27 @@ impl Provider for ComfyUiProvider {
             },
         ))
     }
+
+    async fn describe_workspace(
+        &self,
+        primitive: Primitive,
+        _model_hint: Option<&str>,
+    ) -> Option<WorkspaceDescription> {
+        // ComfyUI publishes capabilities derived from loaded skills.
+        // Recompute the same capability set here so the form schema
+        // matches what the directory sees.
+        let caps = {
+            let skills = self.skills.read().await;
+            compute_capabilities(&skills)
+        };
+        let cap = caps.into_iter().find(|c| c.primitive == primitive)?;
+        Some(WorkspaceDescription {
+            resolved_model: None,
+            fields: cap.parameters,
+            media_inputs: cap.media_inputs,
+            examples: cap.examples,
+        })
+    }
 }
 
 // ── Definition conversion ─────────────────────────────────────
@@ -1365,7 +1388,14 @@ fn comfyui_base_parameters_for(p: Primitive) -> Vec<SkillParameter> {
                 field: "image.sampling.seed".into(),
                 required: false,
                 label: Some("Seed".into()),
-                widget: Some(ParameterWidget::Hidden),
+                description: Some(
+                    "Deterministic seed — click the dice to re-roll".into(),
+                ),
+                field_type: Some(ParameterType::Integer),
+                widget: Some(ParameterWidget::RandomSeed),
+                min: Some(0.0),
+                max: Some(u32::MAX as f64),
+                step: Some(1.0),
                 ..Default::default()
             },
         ],
@@ -1507,7 +1537,7 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
     use crate::domain::capability_announcement::{
         AutoDescriptor, ParameterType, ParameterWidget,
     };
-    use crate::services::skills::types::FieldConstraint;
+    use crate::services::skills::types::{AutoKind, FieldConstraint};
 
     let mut parameters: Vec<SkillParameter> = Vec::with_capacity(loaded.bindings.len() + 2);
 
@@ -1515,12 +1545,13 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
         let is_media = is_media_binding(binding);
 
         // Derive widget and constraints from the binding's narrow field.
-        let (widget, min, max, step, options) = match &binding.narrow {
+        let (widget, min, max, step, options, narrow_type) = match &binding.narrow {
             Some(FieldConstraint::Range { min, max, step }) => (
                 Some(ParameterWidget::Slider),
                 Some(*min),
                 Some(*max),
                 *step,
+                None,
                 None,
             ),
             Some(FieldConstraint::Options { options: opts }) => (
@@ -1529,21 +1560,30 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
                 None,
                 None,
                 Some(opts.iter().map(|o| o.value.clone()).collect()),
-            ),
-            Some(FieldConstraint::Auto { .. }) => (
-                Some(ParameterWidget::Hidden),
-                None,
-                None,
-                None,
                 None,
             ),
-            None if is_media => (Some(ParameterWidget::File), None, None, None, None),
-            None => (None, None, None, None, None),
+            Some(FieldConstraint::Auto {
+                kind_inner: AutoKind::RandomInt,
+            }) => (
+                // Random-int auto fields (seeds) render as a number
+                // input paired with a dice re-roll button. The range
+                // is the full u32 space unless the skill narrows it.
+                Some(ParameterWidget::RandomSeed),
+                Some(0.0),
+                Some(u32::MAX as f64),
+                Some(1.0),
+                None,
+                Some(ParameterType::Integer),
+            ),
+            None if is_media => (Some(ParameterWidget::File), None, None, None, None, None),
+            None => (None, None, None, None, None, None),
         };
 
         // Derive field_type from self_described_type or fall back to
         // string for text fields, number for numeric constraints.
-        let field_type = if binding.self_described_type.is_some() {
+        let field_type = if let Some(t) = narrow_type {
+            Some(t)
+        } else if binding.self_described_type.is_some() {
             // x_* fields with a self-described type — use that.
             Some(ParameterType::String)
         } else if min.is_some() || max.is_some() {

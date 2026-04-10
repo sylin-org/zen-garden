@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import type { CatalogDetail, PersistedRequest } from "../../api/types";
 import { upload } from "../../api/client";
 import { useActiveRequestManager, useActiveRequest } from "../../contexts/ActiveRequestManager";
@@ -376,22 +377,37 @@ function DialogueTurn({ user, assistant, streaming }: { user: string; assistant:
 }
 
 function ForkBanner({ parentId, sourceRequest }: { parentId?: string; sourceRequest: PersistedRequest }) {
+  const navigate = useNavigate();
+  const handleClick = () => {
+    const url = `/create/${sourceRequest.action.replace(/\./g, "/")}?r=${sourceRequest.id}`;
+    navigate(url, { state: { request: sourceRequest } });
+  };
+
   return (
-    <div className="mb-4 p-3 rounded-lg bg-accent-bg border border-accent/20 text-[11px]">
+    <div
+      className="mb-4 p-3 rounded-lg bg-accent-bg border border-accent/20 text-[11px] cursor-pointer hover:border-accent transition-colors"
+      onClick={handleClick}
+      title="Click to view this request"
+    >
       <span className="text-accent font-medium">
         {parentId ? "Forked from" : "Viewing"} request
       </span>
-      <span className="text-text-dim ml-1.5 font-mono">
+      <span className="text-text-dim ml-1.5 font-mono hover:text-accent transition-colors">
         {sourceRequest.id.slice(0, 12)}...
       </span>
       {sourceRequest.meta.provider && (
         <span className="text-text-dimmer ml-1.5">
           via {sourceRequest.meta.provider}
-          {sourceRequest.meta.latency_ms != null && ` · ${sourceRequest.meta.latency_ms}ms`}
+          {sourceRequest.meta.latency_ms != null && ` · ${formatLatency(sourceRequest.meta.latency_ms)}ms`}
         </span>
       )}
     </div>
   );
+}
+
+function formatLatency(ms: number): string {
+  if (ms < 1000) return String(ms);
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function setNested(obj: Record<string, unknown>, dotted: string, value: unknown) {

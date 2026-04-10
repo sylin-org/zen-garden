@@ -1,9 +1,8 @@
 import { useState, useCallback } from "react";
 
 interface Props {
-  /** The dispatch URL path, e.g. "/v1/text/translate" */
   url: string;
-  /** Current form values as dotted-path keys. */
+  /** The payload object — already nested, ready to serialize. */
   values: Record<string, unknown>;
 }
 
@@ -11,8 +10,7 @@ export default function CopyAsCurl({ url, values }: Props) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    const payload = buildNested(values);
-    const json = JSON.stringify(payload, null, 2);
+    const json = JSON.stringify(values, null, 2);
     const escaped = json.replace(/'/g, "'\\''");
     const curl = `curl -X POST http://localhost:7190${url} \\\n  -H "Content-Type: application/json" \\\n  -d '${escaped}'`;
 
@@ -31,22 +29,4 @@ export default function CopyAsCurl({ url, values }: Props) {
       {copied ? "Copied!" : "curl"}
     </button>
   );
-}
-
-function buildNested(flat: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [dotted, value] of Object.entries(flat)) {
-    if (value === undefined || value === null) continue;
-    const parts = dotted.split(".");
-    let current: Record<string, unknown> = result;
-    for (let i = 0; i < parts.length - 1; i++) {
-      const key = parts[i];
-      if (typeof current[key] !== "object" || current[key] === null) {
-        current[key] = {};
-      }
-      current = current[key] as Record<string, unknown>;
-    }
-    current[parts[parts.length - 1]] = value;
-  }
-  return result;
 }

@@ -70,37 +70,68 @@ export interface CatalogProvider {
   skill_count: number;
 }
 
-// ── Catalog Detail ───────────────────────────────────────────
+// ── Workspace (from GET /v1/{mod}/{leaf}[/{skill}]) ──────────
 
-export interface CatalogDetail {
-  path: string;
+/** The full workspace definition returned by the introspect endpoint. */
+export interface WorkspaceSpec {
   kind: "primitive" | "skill";
   primitive: string;
   skill_id?: string;
-  display_name?: string;
-  description?: string;
-  providers: string[];
-  fields?: CatalogField[];
+  display: { name: string; description?: string; tags?: string[]; preview_image?: string };
+  routing: { providers: string[]; will_run_on?: string; status: string };
+  invocation: { method: string; url: string; content_type: string };
+  /** Pre-assembled dispatch body with defaults. POST-able as-is. */
+  payload: Record<string, unknown>;
+  /** Dotted-path → widget descriptor. Rendering instructions only. */
+  fields: Record<string, FieldDescriptor>;
+  examples?: WorkspaceExample[];
+  skills_available?: SkillListEntry[];
   media_inputs?: MediaInput[];
-  examples?: CatalogExample[];
-  tags?: string[];
-  preview_image?: string;
 }
 
-export interface CatalogExample {
+export interface FieldDescriptor {
+  label: string;
+  type: string;
+  widget: string;
+  required?: boolean;
+  description?: string;
+  placeholder?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: unknown[];
+  auto?: AutoDescriptor;
+}
+
+export interface AutoDescriptor {
+  default: string;
+  description?: string;
+}
+
+export interface WorkspaceExample {
   label: string;
   description?: string;
-  payload: unknown;
+  payload: Record<string, unknown>;
 }
 
+export interface SkillListEntry {
+  id: string;
+  provider: string;
+  display: { name: string; description?: string; tags?: string[] };
+  url: string;
+}
+
+/** Legacy field shape used by widget components. Bridged from
+ * FieldDescriptor via fieldDescToLegacy(). TODO: update widgets
+ * to use FieldDescriptor directly. */
 export interface CatalogField {
   field: string;
   required: boolean;
   pinnable: boolean;
   label?: string;
   description?: string;
-  field_type?: "string" | "integer" | "number" | "boolean" | "dialogue";
-  widget?: "textarea" | "slider" | "number" | "select" | "toggle" | "hidden" | "file" | "dialogue";
+  field_type?: string;
+  widget?: string;
   default?: unknown;
   min?: number;
   max?: number;
@@ -108,11 +139,6 @@ export interface CatalogField {
   options?: unknown[];
   placeholder?: string;
   auto?: AutoDescriptor;
-}
-
-export interface AutoDescriptor {
-  default: string;
-  description?: string;
 }
 
 // ── Dispatch ─────────────────────────────────────────────────

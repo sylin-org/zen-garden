@@ -1,7 +1,7 @@
-import type { CatalogExample } from "../../api/types";
+import type { WorkspaceExample } from "../../api/types";
 
 interface Props {
-  examples: CatalogExample[];
+  examples: WorkspaceExample[];
   onSelect: (payload: Record<string, unknown>) => void;
   /** Hide cards when the form already has user input. */
   hidden?: boolean;
@@ -20,9 +20,8 @@ export default function ExampleCards({ examples, onSelect, hidden }: Props) {
         <button
           key={i}
           onClick={() => {
-            // Flatten the nested payload to dotted paths for form population
-            const flat = flattenToDotted(ex.payload as Record<string, unknown>);
-            onSelect(flat);
+            // Pass the example payload directly — the form deep-merges it.
+            onSelect(ex.payload);
           }}
           className="flex-1 p-3 rounded-lg bg-surface-2 border border-border
                      hover:border-accent hover:bg-accent-bg transition-colors
@@ -47,18 +46,3 @@ export default function ExampleCards({ examples, onSelect, hidden }: Props) {
   );
 }
 
-function flattenToDotted(
-  obj: Record<string, unknown>,
-  prefix = "",
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    const path = prefix ? `${prefix}.${key}` : key;
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      Object.assign(result, flattenToDotted(value as Record<string, unknown>, path));
-    } else {
-      result[path] = value;
-    }
-  }
-  return result;
-}

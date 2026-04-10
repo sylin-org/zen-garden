@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import type { CatalogDetail, PersistedRequest } from "../../api/types";
+import type { WorkspaceSpec, FieldDescriptor, PersistedRequest } from "../../api/types";
 import { upload } from "../../api/client";
 import { useActiveRequestManager, useActiveRequest } from "../../contexts/ActiveRequestManager";
 import FieldRenderer from "./widgets/FieldRenderer";
@@ -15,185 +15,170 @@ interface Turn {
 }
 
 interface Props {
-  detail: CatalogDetail;
-  initialValues?: Record<string, unknown> | null;
-  parentId?: string;
+  spec: WorkspaceSpec;
   sourceRequest?: PersistedRequest | null;
   onResult: (result: unknown) => void;
   onError: (error: unknown) => void;
-  onStreaming: (reader: ReadableStreamDefaultReader<Uint8Array>) => void;
 }
 
 export default function WorkspaceForm({
-  detail,
-  initialValues,
-  parentId,
+  spec,
   sourceRequest,
   onResult,
   onError,
-  onStreaming: _onStreaming,
 }: Props) {
-  const fields = detail.fields ?? [];
-  const mediaInputs = detail.media_inputs ?? [];
   const manager = useActiveRequestManager();
 
+  const fields = spec.fields;
+  const fieldEntries = Object.entries(fields);
+  const mediaInputs = spec.media_inputs ?? [];
+
   // Detect dialogue mode from field types
-  const dialogueField = fields.find(
-    (f) => f.widget === "dialogue" || f.field_type === "dialogue",
-  );
-  const isDialogue = !!dialogueField;
+  const dialogueEntry = fieldEntries.find(([, f]) => f.widget === "dialogue");
+  const dialogueKey = dialogueEntry?.[0];
+  const isDialogue = !!dialogueKey;
 
-  // Split fields
-  const primaryFields = fields.filter(
-    (f) => f.required && f.widget !== "hidden" && f.widget !== "dialogue",
+  // Split fields by role
+  const requiredFields = fieldEntries.filter(
+    ([, f]) => f.required && f.widget !== "hidden" && f.widget !== "dialogue",
   );
-  const secondaryFields = fields.filter(
-    (f) => !f.required && f.widget !== "hidden" && f.widget !== "dialogue",
+  const optionalFields = fieldEntries.filter(
+    ([, f]) => !f.required && f.widget !== "hidden" && f.widget !== "dialogue",
   );
 
-  // Form state
-  const [values, setValues] = useState<Record<string, unknown>>(() => {
-    const defaults: Record<string, unknown> = {};
-    for (const f of fields) {
-      if (f.default !== undefined && f.default !== null) {
-        defaults[f.field] = f.default;
-      }
+  // Form state: the payload IS the form state.
+  // If viewing a stored request, use the stored input as the payload.
+  // Otherwise use the spec's pre-assembled payload template.
+  const [payload, setPayload] = useState<Record<string, unknown>>(() => {
+    if (sourceRequest?.input && typeof sourceRequest.input === "object") {
+      return structuredClone(sourceRequest.input as Record<string, unknown>);
     }
-    if (dialogueField) {
-      defaults[dialogueField.field] = [];
-    }
-    if (initialValues) {
-      return { ...defaults, ...initialValues };
-    }
-    return defaults;
+    return structuredClone(spec.payload);
   });
 
   const [files, setFiles] = useState<Record<string, File>>({});
-  const [userTouched, setUserTouched] = useState(!!initialValues);
+  const [userTouched, setUserTouched] = useState(!!sourceRequest);
   const [activeRequestId, setActiveRequestId] = useState<string | undefined>(undefined);
   const [settingsOpen, setSettingsOpen] = useState(() => {
     try {
-      return localStorage.getItem(`settings-open:${detail.path}`) === "true";
-    } catch {
-      return false;
-    }
+      return localStorage.getItem(`settings-open:${spec.primitive}`) === "true";
+    } catch { return false; }
   });
 
   const activeReq = useActiveRequest(activeRequestId);
   const isSending = activeReq?.status === "sending" || activeReq?.status === "streaming";
   const threadRef = useRef<HTMLDivElement>(null);
 
-  // Load dialogue history from localStorage
+  // Persist dialogue history
   useEffect(() => {
-    if (dialogueField && !initialValues) {
+    if (dialogueKey) {
       try {
-        const saved = localStorage.getItem(`dialogue:${detail.path}`);
+        const history = getNestedValue(payload, dialogueKey);
+        if (Array.isArray(history) && history.length > 0) {
+          localStorage.setItem(`dialogue:${spec.primitive}`, JSON.stringify(history));
+        }
+      } catch { /* ignore */ }
+    }
+  }, [dialogueKey, payload, spec.primitive]);
+
+  // Load dialogue history from localStorage on fresh mount
+  useEffect(() => {
+    if (dialogueKey && !sourceRequest) {
+      try {
+        const saved = localStorage.getItem(`dialogue:${spec.primitive}`);
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
-            setValues((prev) => ({ ...prev, [dialogueField.field]: parsed }));
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setPayload((prev) => setNestedValue(prev, dialogueKey, parsed));
           }
         }
       } catch { /* ignore */ }
     }
-  }, [dialogueField, detail.path, initialValues]);
+  }, [dialogueKey, spec.primitive, sourceRequest]);
 
-  // Persist dialogue history
-  useEffect(() => {
-    if (dialogueField) {
-      try {
-        const history = values[dialogueField.field];
-        if (Array.isArray(history) && history.length > 0) {
-          localStorage.setItem(`dialogue:${detail.path}`, JSON.stringify(history));
-        }
-      } catch { /* ignore */ }
-    }
-  }, [dialogueField, values, detail.path]);
-
-  // Scroll dialogue on new content
+  // Scroll dialogue
   useEffect(() => {
     if (isDialogue && threadRef.current) {
       threadRef.current.scrollTo({ top: 0, behavior: "smooth" });
     }
-  }, [isDialogue, values, activeReq?.streamAccumulator]);
+  }, [isDialogue, payload, activeReq?.streamAccumulator]);
 
-  const setValue = useCallback((field: string, value: unknown) => {
-    setValues((prev) => ({ ...prev, [field]: value }));
+  /** Get a value from the payload at a dotted path. */
+  const getValue = useCallback(
+    (path: string): unknown => getNestedValue(payload, path),
+    [payload],
+  );
+
+  /** Set a value in the payload at a dotted path. */
+  const setValue = useCallback((path: string, value: unknown) => {
+    setPayload((prev) => setNestedValue(prev, path, value));
     setUserTouched(true);
   }, []);
 
-  const applyExample = useCallback((flat: Record<string, unknown>) => {
-    setValues((prev) => ({ ...prev, ...flat }));
+  const applyExample = useCallback((examplePayload: Record<string, unknown>) => {
+    // Merge example payload into current payload (deep merge)
+    setPayload((prev) => deepMerge(prev, examplePayload));
     setUserTouched(true);
   }, []);
 
   const toggleSettings = useCallback(() => {
     setSettingsOpen((prev) => {
       const next = !prev;
-      try { localStorage.setItem(`settings-open:${detail.path}`, String(next)); } catch { /* */ }
+      try { localStorage.setItem(`settings-open:${spec.primitive}`, String(next)); } catch { /* */ }
       return next;
     });
-  }, [detail.path]);
+  }, [spec.primitive]);
 
   const handleSubmit = useCallback(async () => {
     if (isSending) return;
 
     // For dialogue: capture user message before clearing
-    const userMessageField = primaryFields.find((f) => f.field === "text.prompt.user");
-    const userMessage = isDialogue && userMessageField
-      ? (values[userMessageField.field] as string)?.trim() ?? ""
+    const userMessage = isDialogue
+      ? (getNestedValue(payload, "text.prompt.user") as string)?.trim() ?? ""
       : "";
 
     if (isDialogue && !userMessage) return;
 
     // Upload files first
-    const mediaRefs: Record<string, string> = {};
+    const payloadToSend = structuredClone(payload);
     for (const [fieldPath, file] of Object.entries(files)) {
       const result = await upload("/v1/media", file) as { media_id: string };
-      mediaRefs[fieldPath] = result.media_id;
+      setNestedInObject(payloadToSend, fieldPath, { media_id: result.media_id });
     }
 
-    // Build nested payload
-    const payload: Record<string, unknown> = {};
-    for (const [dotted, value] of Object.entries(values)) {
-      if (value === undefined || value === null) continue;
-      setNested(payload, dotted, value);
-    }
-    for (const [fieldPath, mediaId] of Object.entries(mediaRefs)) {
-      setNested(payload, fieldPath, { media_id: mediaId });
+    // Inject lineage if this is a fork
+    if (sourceRequest) {
+      (payloadToSend as Record<string, unknown>).lineage = { parent: sourceRequest.id };
     }
 
     // Clear dialogue input immediately
-    if (isDialogue && userMessageField) {
-      setValues((prev) => ({ ...prev, [userMessageField.field]: "" }));
+    if (isDialogue) {
+      setPayload((prev) => setNestedValue(prev, "text.prompt.user", ""));
     }
 
     // Dispatch via manager
-    const url = `/v1/${detail.path.replace(/\./g, "/")}`;
     const reqId = manager.dispatch({
-      url,
-      payload,
-      action: detail.path,
+      url: spec.invocation.url,
+      payload: payloadToSend,
+      action: spec.skill_id
+        ? `${spec.primitive}.${spec.skill_id}`
+        : spec.primitive,
       userMessage: isDialogue ? userMessage : undefined,
-      dialogueField: dialogueField?.field,
-      onResult: (result) => {
-        onResult(result);
-      },
-      onError: (error) => {
-        onError(error);
-      },
-      onTurnComplete: dialogueField
+      dialogueField: dialogueKey,
+      onResult,
+      onError,
+      onTurnComplete: dialogueKey
         ? (turn) => {
-            setValues((prev) => {
-              const history = (prev[dialogueField.field] as Turn[]) ?? [];
-              return { ...prev, [dialogueField.field]: [...history, turn] };
+            setPayload((prev) => {
+              const history = (getNestedValue(prev, dialogueKey) as Turn[]) ?? [];
+              return setNestedValue(prev, dialogueKey, [...history, turn]);
             });
           }
         : undefined,
     });
 
     setActiveRequestId(reqId);
-  }, [isSending, values, files, detail.path, isDialogue, dialogueField, primaryFields, manager, onResult, onError]);
+  }, [isSending, payload, files, spec, isDialogue, dialogueKey, sourceRequest, manager, onResult, onError]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -206,15 +191,15 @@ export default function WorkspaceForm({
   );
 
   const clearDialogue = useCallback(() => {
-    if (dialogueField) {
-      setValues((prev) => ({ ...prev, [dialogueField.field]: [] }));
-      try { localStorage.removeItem(`dialogue:${detail.path}`); } catch { /* */ }
+    if (dialogueKey) {
+      setPayload((prev) => setNestedValue(prev, dialogueKey, []));
+      try { localStorage.removeItem(`dialogue:${spec.primitive}`); } catch { /* */ }
     }
-  }, [dialogueField, detail.path]);
+  }, [dialogueKey, spec.primitive]);
 
-  // Dialogue history (newest first for display)
-  const dialogueHistory = dialogueField
-    ? ((values[dialogueField.field] as Turn[]) ?? [])
+  // Dialogue history (newest first)
+  const dialogueHistory = dialogueKey
+    ? ((getNestedValue(payload, dialogueKey) as Turn[]) ?? [])
     : [];
   const dialogueReversed = [...dialogueHistory].reverse();
 
@@ -228,35 +213,38 @@ export default function WorkspaceForm({
     <div className="flex flex-col h-full" onKeyDown={handleKeyDown}>
       {/* Top section: banner + examples + form fields */}
       <div className="p-6 shrink-0">
-        {sourceRequest && <ForkBanner parentId={parentId} sourceRequest={sourceRequest} />}
+        {sourceRequest && <ForkBanner sourceRequest={sourceRequest} />}
 
-        {detail.examples && detail.examples.length > 0 && (
+        {spec.examples && spec.examples.length > 0 && (
           <ExampleCards
-            examples={detail.examples}
+            examples={spec.examples}
             onSelect={applyExample}
             hidden={userTouched || dialogueHistory.length > 0}
           />
         )}
 
-        {/* Primary fields */}
+        {/* Required fields */}
         <div className="space-y-4">
-          {primaryFields.map((f) => (
+          {requiredFields.map(([path, desc]) => (
             <FieldRenderer
-              key={f.field}
-              field={f}
-              value={values[f.field]}
-              onChange={(v) => setValue(f.field, v)}
+              key={path}
+              field={fieldDescToLegacy(path, desc)}
+              value={getValue(path)}
+              onChange={(v) => setValue(path, v)}
             />
           ))}
 
-          {mediaInputs.map((mi) => (
-            <FileWidget
-              key={mi.field}
-              mediaInput={mi}
-              selectedFile={files[mi.field]}
-              onFileSelected={(file) => setFiles((prev) => ({ ...prev, [mi.field]: file }))}
-            />
-          ))}
+          {mediaInputs.map((mi) => {
+            const miObj = mi as unknown as { field: string; accepted_types: string[]; delivery: "base64" | "by_id" | "transfer" };
+            return (
+              <FileWidget
+                key={miObj.field}
+                mediaInput={miObj}
+                selectedFile={files[miObj.field]}
+                onFileSelected={(file) => setFiles((prev) => ({ ...prev, [miObj.field]: file }))}
+              />
+            );
+          })}
         </div>
 
         {/* Action bar */}
@@ -269,11 +257,8 @@ export default function WorkspaceForm({
           >
             {isSending ? "Sending" : "Send"}
           </button>
-          {/* Elapsed timer */}
           {elapsedText && (
-            <span className="text-[11px] text-orange font-mono animate-pulse">
-              {elapsedText}
-            </span>
+            <span className="text-[11px] text-orange font-mono animate-pulse">{elapsedText}</span>
           )}
           {isSending && (
             <button
@@ -284,12 +269,9 @@ export default function WorkspaceForm({
             </button>
           )}
           <span className="text-[10px] text-text-dimmer">
-            {detail.providers.join(", ")}
+            {spec.routing.providers.join(", ")}
           </span>
-          <CopyAsCurl
-            url={`/v1/${detail.path.replace(/\./g, "/")}`}
-            values={values}
-          />
+          <CopyAsCurl url={spec.invocation.url} values={payload} />
           {isDialogue && dialogueHistory.length > 0 && (
             <button
               onClick={clearDialogue}
@@ -300,8 +282,8 @@ export default function WorkspaceForm({
           )}
         </div>
 
-        {/* Settings */}
-        {secondaryFields.length > 0 && (
+        {/* Settings (optional fields) */}
+        {optionalFields.length > 0 && (
           <details className="mt-3" open={settingsOpen}>
             <summary
               onClick={(e) => { e.preventDefault(); toggleSettings(); }}
@@ -314,12 +296,12 @@ export default function WorkspaceForm({
               Settings
             </summary>
             <div className="grid grid-cols-2 gap-3 mt-3">
-              {secondaryFields.map((f) => (
+              {optionalFields.map(([path, desc]) => (
                 <FieldRenderer
-                  key={f.field}
-                  field={f}
-                  value={values[f.field]}
-                  onChange={(v) => setValue(f.field, v)}
+                  key={path}
+                  field={fieldDescToLegacy(path, desc)}
+                  value={getValue(path)}
+                  onChange={(v) => setValue(path, v)}
                 />
               ))}
             </div>
@@ -327,11 +309,10 @@ export default function WorkspaceForm({
         )}
       </div>
 
-      {/* Dialogue history (interleaved, newest first) */}
+      {/* Dialogue history (newest first, below the form) */}
       {isDialogue && (dialogueHistory.length > 0 || isSending) && (
         <div ref={threadRef} className="flex-1 overflow-y-auto px-6 pb-6 border-t border-border min-h-0">
           <div className="pt-3 space-y-1.5">
-            {/* In-flight: thinking indicator + user message at top */}
             {isSending && activeReq && (
               <>
                 <DialogueBlock
@@ -344,7 +325,6 @@ export default function WorkspaceForm({
               </>
             )}
 
-            {/* Completed turns — newest first, interleaved A/U blocks */}
             {dialogueReversed.map((turn, i) => (
               <div key={dialogueHistory.length - 1 - i}>
                 <DialogueBlock role="assistant" content={turn.assistant} />
@@ -374,7 +354,6 @@ function DialogueBlock({
   const isUser = role === "user";
 
   if (thinking && !content) {
-    // Thinking indicator — no content yet
     return (
       <div className="py-2 px-3 rounded-lg bg-surface-2 border border-accent/20 text-[12px] text-text-dim flex items-center gap-2">
         <span className="animate-pulse">Thinking...</span>
@@ -387,9 +366,7 @@ function DialogueBlock({
     <div
       className={[
         "py-2 px-3 rounded-lg text-[13px] leading-relaxed",
-        isUser
-          ? "bg-accent/8 text-text-dim text-[12px]"
-          : "bg-surface-2 text-text",
+        isUser ? "bg-accent/8 text-text-dim text-[12px]" : "bg-surface-2 text-text",
         thinking ? "border border-accent/20" : "",
       ].join(" ")}
     >
@@ -410,7 +387,7 @@ function DialogueBlock({
   );
 }
 
-function ForkBanner({ parentId, sourceRequest }: { parentId?: string; sourceRequest: PersistedRequest }) {
+function ForkBanner({ sourceRequest }: { sourceRequest: PersistedRequest }) {
   const navigate = useNavigate();
   const handleClick = () => {
     const url = `/create/${sourceRequest.action.replace(/\./g, "/")}?r=${sourceRequest.id}`;
@@ -423,29 +400,76 @@ function ForkBanner({ parentId, sourceRequest }: { parentId?: string; sourceRequ
       onClick={handleClick}
       title="Click to view this request"
     >
-      <span className="text-accent font-medium">
-        {parentId ? "Forked from" : "Viewing"} request
-      </span>
+      <span className="text-accent font-medium">Based on request</span>
       <span className="text-text-dim ml-1.5 font-mono hover:text-accent transition-colors">
         {sourceRequest.id.slice(0, 12)}...
       </span>
       {sourceRequest.meta.provider && (
         <span className="text-text-dimmer ml-1.5">
           via {sourceRequest.meta.provider}
-          {sourceRequest.meta.latency_ms != null && ` · ${formatLatency(sourceRequest.meta.latency_ms)}ms`}
+          {sourceRequest.meta.latency_ms != null && ` · ${formatLatency(sourceRequest.meta.latency_ms)}`}
         </span>
       )}
     </div>
   );
 }
 
-function formatLatency(ms: number): string {
-  if (ms < 1000) return String(ms);
-  return `${(ms / 1000).toFixed(1)}s`;
+// ── Utilities ────────────────────────────────────────────────
+
+/** Bridge from the new FieldDescriptor to the legacy CatalogField shape
+ * that FieldRenderer expects. TODO: update FieldRenderer to use
+ * FieldDescriptor directly in a follow-up. */
+function fieldDescToLegacy(path: string, desc: FieldDescriptor): {
+  field: string; label?: string; field_type?: string; widget?: string;
+  required: boolean; placeholder?: string; min?: number; max?: number;
+  step?: number; options?: unknown[]; auto?: { default: string; description?: string };
+  description?: string; pinnable: boolean; default?: unknown;
+} {
+  return {
+    field: path,
+    label: desc.label,
+    field_type: desc.type,
+    widget: desc.widget,
+    required: desc.required ?? false,
+    placeholder: desc.placeholder,
+    min: desc.min,
+    max: desc.max,
+    step: desc.step,
+    options: desc.options,
+    auto: desc.auto,
+    description: desc.description,
+    pinnable: false,
+    default: undefined,
+  };
 }
 
-function setNested(obj: Record<string, unknown>, dotted: string, value: unknown) {
-  const parts = dotted.split(".");
+function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
+  const parts = path.split(".");
+  let current: unknown = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
+  const parts = path.split(".");
+  const result = structuredClone(obj);
+  let current: Record<string, unknown> = result;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (typeof current[key] !== "object" || current[key] === null) {
+      current[key] = {};
+    }
+    current = current[key] as Record<string, unknown>;
+  }
+  current[parts[parts.length - 1]] = value;
+  return result;
+}
+
+function setNestedInObject(obj: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split(".");
   let current: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
@@ -455,4 +479,21 @@ function setNested(obj: Record<string, unknown>, dotted: string, value: unknown)
     current = current[key] as Record<string, unknown>;
   }
   current[parts[parts.length - 1]] = value;
+}
+
+function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+  const result = structuredClone(target);
+  for (const [key, value] of Object.entries(source)) {
+    if (value && typeof value === "object" && !Array.isArray(value) && result[key] && typeof result[key] === "object") {
+      result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>);
+    } else {
+      result[key] = structuredClone(value);
+    }
+  }
+  return result;
+}
+
+function formatLatency(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }

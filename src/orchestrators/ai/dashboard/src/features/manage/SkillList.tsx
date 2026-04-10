@@ -1,13 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { get } from "../../api/client";
-import type { SkillListResponse, SkillView } from "../../api/types";
+import type { SkillListResponse, SkillView, WorkspaceSpec } from "../../api/types";
 import { useSSE } from "../../hooks/useSSE";
+import WorkspaceForm from "../create/WorkspaceForm";
+import ResultPanel from "../create/ResultPanel";
 
 export default function SkillList() {
   const [skills, setSkills] = useState<SkillView[]>([]);
   const [selected, setSelected] = useState<SkillView | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
+
+  // Workspace spec for the selected skill
+  const [spec, setSpec] = useState<WorkspaceSpec | null>(null);
+  const [specLoading, setSpecLoading] = useState(false);
+  const [result, setResult] = useState<unknown>(null);
 
   const fetchSkills = async () => {
     try {
@@ -24,16 +31,38 @@ export default function SkillList() {
     onEvent: () => { fetchSkills(); },
   });
 
+  // Fetch workspace spec when a skill is selected
+  useEffect(() => {
+    if (!selected) {
+      setSpec(null);
+      setResult(null);
+      return;
+    }
+    setSpecLoading(true);
+    const url = `/v1/${selected.primitive.replace(/\./g, "/")}/${selected.id}`;
+    get<WorkspaceSpec>(url)
+      .then((s) => { setSpec(s); setSpecLoading(false); })
+      .catch(() => { setSpec(null); setSpecLoading(false); });
+  }, [selected]);
+
+  const handleResult = useCallback((r: unknown) => { setResult(r); }, []);
+  const handleError = useCallback((e: unknown) => { setResult(e); }, []);
+
   const filtered = skills.filter((s) =>
     !filter || s.display.name.toLowerCase().includes(filter.toLowerCase())
       || s.id.toLowerCase().includes(filter.toLowerCase())
       || s.primitive.includes(filter.toLowerCase()),
   );
 
+  const hasResult = result != null;
+
   return (
     <div className="flex h-full">
       {/* Master: skill list */}
-      <div className="flex flex-col overflow-hidden border-r border-border transition-all duration-300" style={{ flexBasis: selected ? "60%" : "100%" }}>
+      <div
+        className="flex flex-col overflow-hidden border-r border-border transition-all duration-300"
+        style={{ flexBasis: selected ? (hasResult ? "25%" : "35%") : "100%", minWidth: "200px" }}
+      >
         {/* Search */}
         <div className="p-3 border-b border-border shrink-0">
           <input
@@ -78,78 +107,40 @@ export default function SkillList() {
         </div>
       </div>
 
-      {/* Detail */}
+      {/* Detail: workspace form for the selected skill */}
       {selected && (
-        <div className="border-l border-border overflow-y-auto bg-surface transition-all duration-300" style={{ flexBasis: "40%" }}>
-          <SkillDetail skill={selected} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SkillDetail({ skill }: { skill: SkillView }) {
-  return (
-    <div className="p-5">
-      <h3 className="text-sm font-semibold mb-1">{skill.display.name}</h3>
-      <div className="text-[11px] text-text-dim mb-4">{skill.id}</div>
-
-      {skill.display.description && (
-        <div className="text-[12px] text-text-dim mb-4 leading-relaxed">
-          {skill.display.description}
-        </div>
-      )}
-
-      <Section label="Info">
-        <KV k="Primitive" v={skill.primitive} />
-        <KV k="Provider" v={skill.provider} />
-        <KV k="Parameters" v={String(skill.parameters.length)} />
-      </Section>
-
-      {skill.parameters.length > 0 && (
-        <Section label="Parameters">
-          {skill.parameters.map((p) => (
-            <div key={p.field} className="py-1">
-              <div className="text-[11px] font-mono text-accent">{p.field}</div>
-              <div className="text-[10px] text-text-dimmer">
-                {p.required ? "required" : "optional"}
-                {p.default !== undefined && p.default !== null
-                  ? ` · default: ${JSON.stringify(p.default)}`
-                  : ""}
-              </div>
-            </div>
-          ))}
-        </Section>
-      )}
-
-      <div className="mt-4">
-        <a
-          href={`/create/${skill.primitive.replace(/\./g, "/")}/${skill.id}`}
-          className="text-[11px] text-accent hover:underline"
+        <div
+          className="border-l border-border overflow-hidden bg-surface transition-all duration-300 flex"
+          style={{ flexBasis: hasResult ? "75%" : "65%" }}
         >
-          Try it →
-        </a>
-      </div>
-    </div>
-  );
-}
+          {/* Form */}
+          <div className="flex-1 overflow-hidden">
+            {specLoading ? (
+              <div className="flex items-center justify-center h-full text-text-dim text-sm">
+                Loading workspace...
+              </div>
+            ) : spec ? (
+              <WorkspaceForm
+                key={selected.id}
+                spec={spec}
+                onResult={handleResult}
+                onError={handleError}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-text-dimmer text-sm italic">
+                Failed to load workspace
+              </div>
+            )}
+          </div>
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-4">
-      <div className="text-[10px] uppercase tracking-wider text-text-dimmer font-semibold mb-2">
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function KV({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between py-0.5 text-[11px]">
-      <span className="text-text-dim">{k}</span>
-      <span className="text-text font-medium">{v}</span>
+          {/* Result panel — appears when there's a result */}
+          {hasResult && (
+            <div className="w-[340px] shrink-0 border-l border-border overflow-hidden">
+              <ResultPanel result={result} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

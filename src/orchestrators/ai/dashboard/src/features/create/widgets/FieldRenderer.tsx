@@ -10,55 +10,23 @@ interface Props {
   field: CatalogField;
   value: unknown;
   onChange: (value: unknown) => void;
-  /** Streaming text for dialogue fields (tokens arriving). */
   streamingText?: string;
 }
 
-/** Renders the appropriate widget for a catalog field descriptor. */
 export default function FieldRenderer({ field, value, onChange, streamingText }: Props) {
   const widget = field.widget ?? inferWidget(field);
 
   switch (widget) {
     case "textarea":
-      return (
-        <TextareaWidget
-          field={field}
-          value={(value as string) ?? ""}
-          onChange={onChange}
-        />
-      );
+      return <TextareaWidget field={field} value={(value as string) ?? ""} onChange={onChange} />;
     case "slider":
-      return (
-        <SliderWidget
-          field={field}
-          value={(value as number) ?? field.default ?? field.min ?? 0}
-          onChange={onChange}
-        />
-      );
+      return <SliderWidget field={field} value={(value as number) ?? field.min ?? 0} onChange={onChange} />;
     case "select":
-      return (
-        <SelectWidget
-          field={field}
-          value={value}
-          onChange={onChange}
-        />
-      );
+      return <SelectWidget field={field} value={value} onChange={onChange} />;
     case "number":
-      return (
-        <NumberWidget
-          field={field}
-          value={(value as number) ?? field.default ?? 0}
-          onChange={onChange}
-        />
-      );
+      return <NumberWidget field={field} value={(value as number) ?? 0} onChange={onChange} />;
     case "toggle":
-      return (
-        <ToggleWidget
-          field={field}
-          value={(value as boolean) ?? false}
-          onChange={onChange}
-        />
-      );
+      return <ToggleWidget field={field} value={(value as boolean) ?? false} onChange={onChange} />;
     case "dialogue":
       return (
         <DialogueWidget
@@ -72,13 +40,7 @@ export default function FieldRenderer({ field, value, onChange, streamingText }:
     case "file":
       return null;
     default:
-      return (
-        <TextareaWidget
-          field={field}
-          value={String(value ?? "")}
-          onChange={onChange}
-        />
-      );
+      return <TextareaWidget field={field} value={String(value ?? "")} onChange={onChange} />;
   }
 }
 

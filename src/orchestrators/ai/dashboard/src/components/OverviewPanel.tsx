@@ -164,18 +164,25 @@ export default function OverviewPanel({ open, onToggle }: Props) {
             <div className="text-[11px] text-text-dimmer italic">No requests yet</div>
           ) : (
             <div className="space-y-1">
-              {requests.map((req) => (
-                <HistoryEntry
-                  key={req.id}
-                  request={req}
-                  onClick={() => {
-                    const action = req.action;
-                    const url = `/create/${action.replace(/\./g, "/")}?r=${req.id}`;
-                    navigate(url, { state: { request: req } });
-                  }}
-                  onPin={(e) => handlePin(req.id, e)}
-                />
-              ))}
+              {groupByChain(requests).map((req) => {
+                // Count how many turns are in this chain
+                const chainLength = requests.filter(
+                  (r) => r.id === req.id || isInChain(requests, r, req.id),
+                ).length;
+                return (
+                  <HistoryEntry
+                    key={req.id}
+                    request={req}
+                    chainLength={chainLength > 1 ? chainLength : undefined}
+                    onClick={() => {
+                      const action = req.action;
+                      const url = `/create/${action.replace(/\./g, "/")}?r=${req.id}`;
+                      navigate(url, { state: { request: req } });
+                    }}
+                    onPin={(e) => handlePin(req.id, e)}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
@@ -195,10 +202,12 @@ function StatBox({ label, value }: { label: string; value: number }) {
 
 function HistoryEntry({
   request,
+  chainLength,
   onClick,
   onPin,
 }: {
   request: PersistedRequest;
+  chainLength?: number;
   onClick: () => void;
   onPin: (e: React.MouseEvent) => void;
 }) {
@@ -209,7 +218,6 @@ function HistoryEntry({
         ? "bg-red"
         : "bg-orange";
 
-  // Use adapter-generated summary if available, fall back to action name
   const label = request.meta.summary ?? request.action;
 
   return (
@@ -219,7 +227,12 @@ function HistoryEntry({
                  hover:bg-accent-bg transition-colors"
     >
       <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor}`} />
-      <span className="text-[10px] text-text-dim truncate flex-1">{label}</span>
+      <span className="text-[10px] text-text-dim truncate flex-1">
+        {label}
+        {chainLength && (
+          <span className="text-text-dimmer ml-1">({chainLength} turns)</span>
+        )}
+      </span>
       <span className="text-[9px] text-text-dimmer shrink-0">
         {relativeTime(request.created_at)}
       </span>
@@ -250,4 +263,38 @@ function relativeTime(iso: string): string {
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   return `${days}d`;
+}
+
+/**
+ * Group requests by conversation chain. For each chain, only the
+ * latest request (the one that is NOT a parent of any other) is shown.
+ * Standalone requests (no parent, no children) show as-is.
+ */
+function groupByChain(requests: PersistedRequest[]): PersistedRequest[] {
+  // Build a set of IDs that are parents of other requests
+  const parentIds = new Set<string>();
+  for (const r of requests) {
+    if (r.parent_id) parentIds.add(r.parent_id);
+  }
+
+  // A request is a "leaf" (latest in its chain) if no other request
+  // points to it as a parent. Show only leaves.
+  return requests.filter((r) => !parentIds.has(r.id));
+}
+
+/** Check if request `candidate` is in the ancestry chain leading to `leafId`. */
+function isInChain(
+  requests: PersistedRequest[],
+  candidate: PersistedRequest,
+  leafId: string,
+): boolean {
+  const byId = new Map(requests.map((r) => [r.id, r]));
+  let current = byId.get(leafId);
+  let depth = 0;
+  while (current && depth < 100) {
+    if (current.parent_id === candidate.id) return true;
+    current = current.parent_id ? byId.get(current.parent_id) : undefined;
+    depth++;
+  }
+  return false;
 }

@@ -44,61 +44,64 @@ export default function Shell() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      {/* ── Icon Sidebar (52px) ── */}
-      <aside className="w-[52px] shrink-0 flex flex-col items-center bg-sidebar border-r border-border select-none">
+      {/* ── Sidebar (160px, always expanded with labels) ── */}
+      <aside className="w-[160px] shrink-0 flex flex-col bg-sidebar border-r border-border select-none">
         {/* Logo */}
-        <NavLink to="/create" className="py-3 text-accent font-bold text-lg" title="Zen Garden AI">
-          ✦
+        <NavLink to="/create" className="flex items-center gap-2 px-4 py-3.5 border-b border-border">
+          <span className="text-accent font-bold text-sm">✦</span>
+          <span className="text-[12px] font-bold tracking-tight">
+            <span className="text-accent">Zen</span> Garden
+          </span>
         </NavLink>
 
-        <div className="w-6 border-t border-border mb-2" />
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto py-1">
+          {/* ── CREATE ── */}
+          <SidebarGroup label="CREATE" to="/create" active={isExact("/create")} />
+          {catalog?.modalities.map((mod) => (
+            <SidebarLeaf
+              key={mod.id}
+              to={MODALITY_DEFAULTS[mod.id] ?? `/create/${mod.id}`}
+              icon={mod.icon}
+              label={mod.label}
+              active={isActive(`/create/${mod.id}`)}
+            />
+          ))}
 
-        {/* CREATE group */}
-        <SidebarIcon to="/create" icon="+" label="Create" active={isExact("/create")} group />
-        {catalog?.modalities.map((mod) => (
-          <SidebarIcon
-            key={mod.id}
-            to={MODALITY_DEFAULTS[mod.id] ?? `/create/${mod.id}`}
-            icon={mod.icon}
-            label={mod.label}
-            active={isActive(`/create/${mod.id}`)}
-          />
-        ))}
+          {/* ── MANAGE ── */}
+          <SidebarGroup label="MANAGE" to="/manage" active={isExact("/manage")} className="mt-3" />
+          {MANAGE_ITEMS.filter((i) => !i.group).map((item) => (
+            <SidebarLeaf
+              key={item.path}
+              to={item.path}
+              icon={item.icon}
+              label={item.label}
+              active={isActive(item.path)}
+            />
+          ))}
 
-        <div className="w-6 border-t border-border my-2" />
-
-        {/* MANAGE group */}
-        {MANAGE_ITEMS.map((item) => (
-          <SidebarIcon
-            key={item.path}
-            to={item.path}
-            icon={item.icon}
-            label={item.label}
-            active={item.group ? isExact(item.path) : isActive(item.path)}
-            group={item.group}
-          />
-        ))}
-
-        <div className="w-6 border-t border-border my-2" />
-
-        {/* CONFIGURE group */}
-        {CONFIGURE_ITEMS.map((item) => (
-          <SidebarIcon
-            key={item.path}
-            to={item.path}
-            icon={item.icon}
-            label={item.label}
-            active={item.group ? isExact(item.path) : isActive(item.path)}
-            group={item.group}
-          />
-        ))}
-
-        {/* Spacer */}
-        <div className="flex-1" />
+          {/* ── CONFIGURE ── */}
+          <SidebarGroup label="CONFIGURE" to="/configure" active={isExact("/configure")} className="mt-3" />
+          {CONFIGURE_ITEMS.filter((i) => !i.group).map((item) => (
+            <SidebarLeaf
+              key={item.path}
+              to={item.path}
+              icon={item.icon}
+              label={item.label}
+              active={isActive(item.path)}
+            />
+          ))}
+        </nav>
 
         {/* Connection status */}
-        <div className="pb-3" title={connected ? "Connected" : "Disconnected"}>
-          <div className={`w-2 h-2 rounded-full ${connected ? "bg-green" : "bg-red"}`} />
+        <div className="flex items-center gap-1.5 px-4 py-2.5 border-t border-border text-[10px] text-text-dimmer">
+          <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${connected ? "bg-green" : "bg-red"}`} />
+          <span>{connected ? "Connected" : "Disconnected"}</span>
+          {catalog && (
+            <span className="ml-auto">
+              {catalog.providers.filter((p) => p.enabled).length}
+            </span>
+          )}
         </div>
       </aside>
 
@@ -116,38 +119,57 @@ export default function Shell() {
   );
 }
 
-function SidebarIcon({
+function SidebarGroup({
+  label,
+  to,
+  active,
+  className,
+}: {
+  label: string;
+  to: string;
+  active: boolean;
+  className?: string;
+}) {
+  return (
+    <NavLink
+      to={to}
+      className={[
+        "block px-4 pt-2.5 pb-1 text-[9px] uppercase tracking-widest font-semibold transition-colors",
+        active ? "text-accent" : "text-text-dimmer hover:text-text-dim",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {label}
+    </NavLink>
+  );
+}
+
+function SidebarLeaf({
   to,
   icon,
   label,
   active,
-  group,
 }: {
   to: string;
   icon: string;
   label: string;
   active: boolean;
-  group?: boolean;
 }) {
   return (
     <NavLink
       to={to}
-      title={label}
       className={[
-        "relative flex items-center justify-center w-10 h-10 rounded-lg text-[14px] transition-all",
-        group ? "text-[10px] font-bold uppercase tracking-wider mt-0" : "",
+        "flex items-center gap-2 px-4 py-[6px] text-[12px] cursor-pointer",
+        "border-l-2 transition-all",
         active
-          ? "bg-accent-bg text-accent"
-          : "text-text-dim hover:bg-surface hover:text-text",
-      ]
-        .filter(Boolean)
-        .join(" ")}
+          ? "bg-accent-bg text-accent border-accent font-medium"
+          : "text-text-dim border-transparent hover:bg-surface hover:text-text",
+      ].join(" ")}
     >
-      {/* Active indicator */}
-      {active && (
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-accent rounded-r" />
-      )}
-      <span>{icon}</span>
+      <span className="w-[16px] text-center text-[13px] shrink-0">{icon}</span>
+      <span className="truncate">{label}</span>
     </NavLink>
   );
 }

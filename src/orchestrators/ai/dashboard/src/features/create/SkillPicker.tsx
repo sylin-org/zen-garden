@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
-import type { CatalogSkill } from "../../api/types";
+import type { SkillListEntry } from "../../api/types";
 
 interface Props {
-  skills: CatalogSkill[];
+  skills: SkillListEntry[];
   modality: string;
   leaf: string;
 }
@@ -21,13 +21,6 @@ export default function SkillPicker({ skills, modality, leaf }: Props) {
             className="p-4 rounded-lg bg-surface border border-border hover:border-accent
                        transition-colors group"
           >
-            {s.display.preview_image && (
-              <img
-                src={s.display.preview_image}
-                alt={s.display.name}
-                className="w-full h-32 object-cover rounded mb-2"
-              />
-            )}
             <div className="text-[13px] font-medium group-hover:text-accent transition-colors truncate">
               {s.display.name}
             </div>

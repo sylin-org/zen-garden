@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useSearchParams, useLocation } from "react-router-dom";
 import { get } from "../../api/client";
-import { useCatalog } from "../../contexts/CatalogContext";
 import type { WorkspaceSpec, PersistedRequest } from "../../api/types";
 import WorkspaceForm from "./WorkspaceForm";
 import SkillPicker from "./SkillPicker";
@@ -11,8 +10,6 @@ export default function Workspace() {
   const { modality, leaf, skill } = useParams();
   const [searchParams] = useSearchParams();
   const location = useLocation();
-  const { catalog } = useCatalog();
-
   const requestId = searchParams.get("r");
   const navRequest = (location.state as { request?: PersistedRequest } | null)?.request;
 
@@ -22,16 +19,21 @@ export default function Workspace() {
   const [result, setResult] = useState<unknown>(null);
   const [streamText, setStreamText] = useState<string | undefined>(undefined);
   const [sourceRequest, setSourceRequest] = useState<PersistedRequest | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
 
-  // Fetch workspace spec from the introspect endpoint
-  const introspectPath = skill
+  // Fetch workspace spec from the introspect endpoint.
+  // Includes ?provider= when the user switches providers.
+  const basePath = skill
     ? `/v1/${modality}/${leaf}/${skill}`
     : `/v1/${modality}/${leaf}`;
+  const introspectUrl = selectedProvider
+    ? `${basePath}?provider=${encodeURIComponent(selectedProvider)}`
+    : basePath;
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    get<WorkspaceSpec>(introspectPath)
+    get<WorkspaceSpec>(introspectUrl)
       .then((s) => {
         setSpec(s);
         setLoading(false);
@@ -40,7 +42,7 @@ export default function Workspace() {
         setError(e instanceof Error ? e.message : "Failed to load");
         setLoading(false);
       });
-  }, [introspectPath]);
+  }, [introspectUrl]);
 
   // Load source request for ?r= (view/fork mode)
   useEffect(() => {
@@ -48,15 +50,10 @@ export default function Workspace() {
       setSourceRequest(null);
       return;
     }
-    // Use nav state if available (instant), otherwise fetch
     if (navRequest && navRequest.id === requestId) {
       setSourceRequest(navRequest);
-      if (navRequest.output) {
-        setResult({ output: navRequest.output, _meta: navRequest.meta });
-      }
-      if (navRequest.error) {
-        setResult({ error: navRequest.error, _meta: navRequest.meta });
-      }
+      if (navRequest.output) setResult({ output: navRequest.output, _meta: navRequest.meta });
+      if (navRequest.error) setResult({ error: navRequest.error, _meta: navRequest.meta });
       return;
     }
     get<PersistedRequest>(`/v1/requests/${requestId}`)
@@ -68,16 +65,17 @@ export default function Workspace() {
       .catch(() => setSourceRequest(null));
   }, [requestId, navRequest]);
 
-  // Reset result when switching tools
-  const prevPath = useRef(introspectPath);
+  // Reset when switching tools
+  const prevBasePath = useRef(basePath);
   useEffect(() => {
-    if (prevPath.current !== introspectPath) {
+    if (prevBasePath.current !== basePath) {
       setResult(null);
       setStreamText(undefined);
       setSourceRequest(null);
-      prevPath.current = introspectPath;
+      setSelectedProvider(undefined);
+      prevBasePath.current = basePath;
     }
-  }, [introspectPath]);
+  }, [basePath]);
 
   const handleResult = useCallback((r: unknown) => {
     setStreamText(undefined);
@@ -87,6 +85,13 @@ export default function Workspace() {
   const handleError = useCallback((e: unknown) => {
     setStreamText(undefined);
     setResult(e);
+  }, []);
+
+  const handleProviderChange = useCallback((provider: string | undefined) => {
+    setSelectedProvider(provider);
+    // Reset result when switching providers
+    setResult(null);
+    setStreamText(undefined);
   }, []);
 
   if (loading) {
@@ -107,9 +112,8 @@ export default function Workspace() {
 
   // Skill picker: if primitive has no fields and skills exist
   const hasFields = Object.keys(spec.fields).length > 0;
-  const primitiveAction = `${modality}.${leaf}`;
-  const relatedSkills = catalog?.skills.filter((s) => s.primitive === primitiveAction) ?? [];
-  const showSkillPicker = !hasFields && relatedSkills.length > 0 && !skill;
+  const hasSkills = (spec.skills_available?.length ?? 0) > 0;
+  const showSkillPicker = !hasFields && hasSkills && !skill;
 
   const hasResult = result != null || streamText != null;
   const outputHasImage =
@@ -130,17 +134,20 @@ export default function Workspace() {
       >
         {showSkillPicker ? (
           <SkillPicker
-            skills={relatedSkills}
+            skills={spec.skills_available ?? []}
             modality={modality!}
             leaf={leaf!}
           />
         ) : (
           <WorkspaceForm
-            key={sourceRequest?.id ?? introspectPath}
+            key={sourceRequest?.id ?? introspectUrl}
             spec={spec}
             sourceRequest={sourceRequest}
             onResult={handleResult}
             onError={handleError}
+            onProviderChange={
+              spec.routing.providers.length > 1 ? handleProviderChange : undefined
+            }
           />
         )}
       </div>

@@ -19,6 +19,8 @@ interface Props {
   sourceRequest?: PersistedRequest | null;
   onResult: (result: unknown) => void;
   onError: (error: unknown) => void;
+  /** Called when the user switches provider (multi-provider primitives). */
+  onProviderChange?: (provider: string | undefined) => void;
 }
 
 export default function WorkspaceForm({
@@ -26,6 +28,7 @@ export default function WorkspaceForm({
   sourceRequest,
   onResult,
   onError,
+  onProviderChange,
 }: Props) {
   const manager = useActiveRequestManager();
 
@@ -258,9 +261,25 @@ export default function WorkspaceForm({
               Cancel
             </button>
           )}
-          <span className="text-[10px] text-text-dimmer">
-            {spec.routing.providers.join(", ")}
-          </span>
+          {/* Provider selector — shown when multiple providers serve this primitive */}
+          {onProviderChange && spec.routing.providers.length > 1 ? (
+            <select
+              className="text-[10px] bg-surface-2 border border-border rounded px-2 py-1 text-text-dim outline-none focus:border-accent"
+              value={spec.routing.will_run_on ?? ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                onProviderChange(val || undefined);
+              }}
+            >
+              {spec.routing.providers.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-[10px] text-text-dimmer">
+              {spec.routing.will_run_on ?? spec.routing.providers.join(", ")}
+            </span>
+          )}
           <CopyAsCurl url={spec.invocation.url} values={payload} />
           {isDialogue && dialogueHistory.length > 0 && (
             <button

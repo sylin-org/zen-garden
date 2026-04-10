@@ -4,6 +4,7 @@ import { get } from "../../api/client";
 import { useCatalog } from "../../contexts/CatalogContext";
 import type { CatalogDetail, PersistedRequest } from "../../api/types";
 import WorkspaceForm from "./WorkspaceForm";
+import ChatWorkspace from "./ChatWorkspace";
 import SkillPicker from "./SkillPicker";
 import ResultPanel from "./ResultPanel";
 
@@ -170,6 +171,9 @@ export default function Workspace() {
   const relatedSkills = catalog?.skills.filter((s) => s.primitive === primitiveAction) ?? [];
   const showSkillPicker = !hasFields && relatedSkills.length > 0 && !skill;
 
+  // Detect conversation mode: the catalog includes text.prompt.previous
+  const isConversation = detail.fields?.some((f) => f.field === "text.prompt.previous") ?? false;
+
   // Determine parent_id for fork lineage
   const parentId = forkFromId ?? (requestId ? requestId : undefined);
 
@@ -201,6 +205,13 @@ export default function Workspace() {
             skills={relatedSkills}
             modality={modality!}
             leaf={leaf!}
+          />
+        ) : isConversation ? (
+          <ChatWorkspace
+            key={catalogPath}
+            detail={detail}
+            onResult={handleResult}
+            onError={handleError}
           />
         ) : (
           <WorkspaceForm

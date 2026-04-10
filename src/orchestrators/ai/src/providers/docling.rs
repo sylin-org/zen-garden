@@ -241,6 +241,7 @@ fn build_capability_announcement(
             parameters: vec![
                 SkillParameter { field: "image.source".into(), required: true, label: Some("Document".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::File), ..Default::default() },
             ],
+            examples: vec![], // Document analysis requires file upload
         }],
         skills: vec![SkillDeclaration {
             id: "ocr".to_string(),
@@ -264,6 +265,7 @@ fn build_capability_announcement(
                 options: None,
                 placeholder: None,
             }],
+            examples: vec![],
         }],
     }
 }

@@ -46,8 +46,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, ParameterType,
-    ParameterWidget, SkillParameter,
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, Example,
+    ParameterType, ParameterWidget, SkillParameter,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -187,6 +187,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
                     SkillParameter { field: "text.sampling.temperature".into(), required: false, label: Some("Temperature".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(0.7)), min: Some(0.0), max: Some(2.0), step: Some(0.1), ..Default::default() },
                     SkillParameter { field: "text.tokens.max".into(), required: false, label: Some("Max Tokens".into()), field_type: Some(ParameterType::Integer), widget: Some(ParameterWidget::Number), default: Some(serde_json::json!(2048)), min: Some(1.0), max: Some(131072.0), ..Default::default() },
                 ],
+                examples: vec![Example { label: "Creative writing".into(), description: Some("Test creative generation".into()), payload: json!({"text": {"prompt": {"user": "Write a haiku about a zen garden in autumn"}}}) }],
             },
             AnnCapability {
                 primitive: Primitive::TextEmbed,
@@ -194,6 +195,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
                 parameters: vec![
                     SkillParameter { field: "text.input".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to embed...".into()), ..Default::default() },
                 ],
+                examples: vec![Example { label: "Embed a paragraph".into(), description: None, payload: json!({"text": {"input": "Artificial intelligence is transforming how we interact with technology."}}) }],
             },
             AnnCapability {
                 primitive: Primitive::ImageAnalyze,
@@ -204,6 +206,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
                 parameters: vec![
                     SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Question".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Describe this image...".into()), ..Default::default() },
                 ],
+                examples: vec![Example { label: "Describe an image".into(), description: None, payload: json!({"text": {"prompt": {"user": "What objects and colors do you see?"}}}) }],
             },
         ],
         skills: Vec::new(),

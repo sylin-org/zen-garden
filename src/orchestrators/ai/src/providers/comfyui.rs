@@ -1240,6 +1240,7 @@ fn compute_capabilities(skills: &HashMap<Moniker, LoadedSkill>) -> Vec<AnnCapabi
                 primitive,
                 media_inputs,
                 parameters: comfyui_base_parameters_for(primitive),
+                examples: Vec::new(), // Skills carry their own examples
             }
         })
         .collect();
@@ -1625,6 +1626,7 @@ fn loaded_to_skill_declaration(loaded: &LoadedSkill) -> SkillDeclaration {
         primitive: loaded.primitive,
         display,
         parameters,
+        examples: vec![],
     }
 }
 

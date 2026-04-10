@@ -176,6 +176,12 @@ pub struct Capability {
     /// Added in ORCH-0030 R2 commit 6.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameters: Vec<SkillParameter>,
+
+    /// Named example scenarios that fill the form (ORCH-0035).
+    /// Each example carries a label (card text) and a payload
+    /// using canonical vocabulary field paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<Example>,
 }
 
 impl Capability {
@@ -185,6 +191,7 @@ impl Capability {
             primitive,
             media_inputs: Vec::new(),
             parameters: Vec::new(),
+            examples: Vec::new(),
         }
     }
 
@@ -291,6 +298,10 @@ pub struct SkillDeclaration {
     /// `effective_default` layered over preferences.
     #[serde(default)]
     pub parameters: Vec<SkillParameter>,
+
+    /// Named example scenarios (ORCH-0035).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<Example>,
 }
 
 impl SkillDeclaration {
@@ -491,6 +502,28 @@ pub struct AutoDescriptor {
     /// Human-readable explanation rendered in the dashboard form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+// ── Examples (ORCH-0035) ─────────────────────────────────────
+
+/// A named scenario that pre-fills the form. Adapters provide
+/// examples tailored to their domain — a Rilke poem for translate,
+/// a creative prompt for image generation, etc.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Example {
+    /// Short label shown on the example card, action-oriented.
+    /// E.g. "German poem to English", "Anime portrait".
+    pub label: String,
+
+    /// Optional one-liner expanding on what the example does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// The payload that fills the form. Uses canonical vocabulary
+    /// field paths as keys — identical structure to a dispatch
+    /// payload. The dashboard reads each key, matches it to a
+    /// catalog field, and populates the corresponding widget.
+    pub payload: serde_json::Value,
 }
 
 // ── Validation errors ────────────────────────────────────────

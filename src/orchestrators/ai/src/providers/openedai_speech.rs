@@ -20,7 +20,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    Capability, CapabilityAnnouncement, ParameterType, ParameterWidget, SkillParameter,
+    Capability, CapabilityAnnouncement, Example, ParameterType, ParameterWidget, SkillParameter,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -307,6 +307,13 @@ fn build_capability_announcement(
                 SkillParameter { field: "audio.text".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to speak...".into()), ..Default::default() },
                 SkillParameter { field: "audio.voice.id".into(), required: false, label: Some("Voice".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), ..Default::default() },
                 SkillParameter { field: "audio.voice.speed".into(), required: false, label: Some("Speed".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(1.0)), min: Some(0.5), max: Some(2.0), step: Some(0.1), ..Default::default() },
+            ],
+            examples: vec![
+                Example {
+                    label: "Read a story opening".into(),
+                    description: Some("Classic storytelling voice".into()),
+                    payload: json!({"audio": {"text": "Once upon a time, in a garden full of ancient stones, there lived a small firefly who dreamed of lighting up the entire world.", "voice": {"id": "alloy"}}}),
+                },
             ],
         }],
         skills: Vec::new(),

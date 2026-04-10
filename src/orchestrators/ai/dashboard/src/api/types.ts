@@ -82,8 +82,15 @@ export interface CatalogDetail {
   providers: string[];
   fields?: CatalogField[];
   media_inputs?: MediaInput[];
+  examples?: CatalogExample[];
   tags?: string[];
   preview_image?: string;
+}
+
+export interface CatalogExample {
+  label: string;
+  description?: string;
+  payload: unknown;
 }
 
 export interface CatalogField {

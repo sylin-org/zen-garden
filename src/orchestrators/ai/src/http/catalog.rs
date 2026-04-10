@@ -100,17 +100,23 @@ pub async fn get_catalog_primitive(
         "providers": providers,
     });
 
+    // Collect fields, media_inputs, and examples from providers.
+    // Use the first non-empty value for each — a primitive may be
+    // served by multiple providers with different detail levels.
     for provider in &providers {
         if let Some(cap) = directory.capability(provider, primitive).await {
-            if !cap.parameters.is_empty() {
+            if detail.get("fields").is_none() && !cap.parameters.is_empty() {
                 detail["fields"] = serde_json::to_value(&cap.parameters)
                     .unwrap_or_default();
             }
-            if !cap.media_inputs.is_empty() {
+            if detail.get("media_inputs").is_none() && !cap.media_inputs.is_empty() {
                 detail["media_inputs"] = serde_json::to_value(&cap.media_inputs)
                     .unwrap_or_default();
             }
-            break;
+            if detail.get("examples").is_none() && !cap.examples.is_empty() {
+                detail["examples"] = serde_json::to_value(&cap.examples)
+                    .unwrap_or_default();
+            }
         }
     }
 
@@ -181,12 +187,21 @@ pub async fn get_catalog_skill(
         }
         detail["fields"] = serde_json::to_value(&s.parameters)
             .unwrap_or_default();
+        if !s.examples.is_empty() {
+            detail["examples"] = serde_json::to_value(&s.examples)
+                .unwrap_or_default();
+        }
     }
 
-    // Attach media inputs from the parent capability.
+    // Attach media inputs and examples from the parent capability.
     if let Some(cap) = directory.capability(provider, primitive).await {
         if !cap.media_inputs.is_empty() {
             detail["media_inputs"] = serde_json::to_value(&cap.media_inputs)
+                .unwrap_or_default();
+        }
+        // Fall back to capability examples if the skill has none.
+        if skill.as_ref().is_some_and(|s| s.examples.is_empty()) && !cap.examples.is_empty() {
+            detail["examples"] = serde_json::to_value(&cap.examples)
                 .unwrap_or_default();
         }
     }

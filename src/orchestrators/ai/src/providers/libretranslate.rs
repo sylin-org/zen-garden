@@ -34,10 +34,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement, ParameterType, ParameterWidget,
+    Capability as AnnCapability, CapabilityAnnouncement, Example, ParameterType, ParameterWidget,
     SkillParameter,
 };
 use crate::domain::events::EventBus;
@@ -322,6 +323,18 @@ fn build_capability_announcement(
                 SkillParameter { field: "text.body".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to translate...".into()), ..Default::default() },
                 SkillParameter { field: "text.language.source".into(), required: false, label: Some("Source Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), placeholder: Some("Auto-detect".into()), options: lang_options.clone(), ..Default::default() },
                 SkillParameter { field: "text.language.target".into(), required: true, label: Some("Target Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), options: lang_options, ..Default::default() },
+            ],
+            examples: vec![
+                Example {
+                    label: "German poem to English".into(),
+                    description: Some("Rilke's Duino Elegies opening".into()),
+                    payload: json!({"text": {"body": "Wer, wenn ich schriee, hörte mich denn aus der Engel Ordnungen?", "language": {"target": "en"}}}),
+                },
+                Example {
+                    label: "Spanish greeting to French".into(),
+                    description: Some("Common conversational phrase".into()),
+                    payload: json!({"text": {"body": "Buenos días, ¿cómo estás? Espero que tengas un buen día.", "language": {"target": "fr"}}}),
+                },
             ],
         }],
         skills: Vec::new(),

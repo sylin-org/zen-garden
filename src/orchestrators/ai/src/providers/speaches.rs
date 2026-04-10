@@ -330,6 +330,7 @@ fn build_capability_announcement(
                 SkillParameter { field: "audio.source".into(), required: true, label: Some("Audio File".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::File), ..Default::default() },
                 SkillParameter { field: "audio.language.source".into(), required: false, label: Some("Language".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), placeholder: Some("Auto-detect".into()), ..Default::default() },
             ],
+            examples: vec![], // Transcription requires audio upload
         }],
         skills: Vec::new(),
     }

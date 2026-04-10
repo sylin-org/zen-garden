@@ -4,6 +4,7 @@ import { dispatch as apiDispatch, upload } from "../../api/client";
 import { useJobManager } from "../../contexts/JobManagerContext";
 import FieldRenderer from "./widgets/FieldRenderer";
 import FileWidget from "./widgets/FileWidget";
+import ExampleCards from "./ExampleCards";
 
 interface Props {
   detail: CatalogDetail;
@@ -47,6 +48,7 @@ export default function WorkspaceForm({
 
   const [files, setFiles] = useState<Record<string, File>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [userTouched, setUserTouched] = useState(!!initialValues);
   const [settingsOpen, setSettingsOpen] = useState(() => {
     try {
       return localStorage.getItem(`settings-open:${detail.path}`) === "true";
@@ -59,6 +61,12 @@ export default function WorkspaceForm({
 
   const setValue = useCallback((field: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [field]: value }));
+    setUserTouched(true);
+  }, []);
+
+  const applyExample = useCallback((flat: Record<string, unknown>) => {
+    setValues((prev) => ({ ...prev, ...flat }));
+    setUserTouched(true);
   }, []);
 
   const toggleSettings = useCallback(() => {
@@ -149,6 +157,15 @@ export default function WorkspaceForm({
               </span>
             )}
           </div>
+        )}
+
+        {/* Example cards — shown when the form hasn't been touched */}
+        {detail.examples && detail.examples.length > 0 && (
+          <ExampleCards
+            examples={detail.examples}
+            onSelect={applyExample}
+            hidden={userTouched}
+          />
         )}
 
         {/* Primary fields */}

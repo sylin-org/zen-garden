@@ -39,7 +39,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::capability_announcement::{
-    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput,
+    Capability as AnnCapability, CapabilityAnnouncement, CapabilityMediaInput, Example,
 };
 use crate::domain::events::EventBus;
 use crate::domain::ids::ProviderName;
@@ -867,6 +867,7 @@ fn build_capability_announcement(
                 primitive: p,
                 media_inputs: ollama_media_inputs_for(p),
                 parameters: params,
+                examples: ollama_examples_for(p),
             }
         })
         .collect();
@@ -892,6 +893,28 @@ fn capability_name_for(p: Primitive) -> &'static str {
         Primitive::ImageAnalyze => "vision",
         Primitive::AudioGenerate => "speech",
         Primitive::AudioTranscribe => "transcribe",
+    }
+}
+
+/// Per-primitive examples for Ollama's capability announcements.
+fn ollama_examples_for(p: Primitive) -> Vec<Example> {
+    match p {
+        Primitive::TextChat => vec![Example {
+            label: "Ask about geography".into(),
+            description: Some("A factual question to test knowledge".into()),
+            payload: json!({"text": {"prompt": {"user": "What are the three largest countries by area, and what makes each one geographically unique?"}}}),
+        }],
+        Primitive::TextEmbed => vec![Example {
+            label: "Embed a sentence".into(),
+            description: Some("A sample sentence for semantic embedding".into()),
+            payload: json!({"text": {"input": "The quick brown fox jumps over the lazy dog"}}),
+        }],
+        Primitive::ImageAnalyze => vec![Example {
+            label: "Describe what you see".into(),
+            description: Some("Vision analysis prompt".into()),
+            payload: json!({"text": {"prompt": {"user": "Describe everything you see in this image in detail."}}}),
+        }],
+        _ => vec![],
     }
 }
 
@@ -942,6 +965,16 @@ fn base_parameters_for(p: Primitive) -> Vec<crate::domain::capability_announceme
                 default: Some(json!(2048)),
                 min: Some(1.0),
                 max: Some(131072.0),
+                ..Default::default()
+            },
+            // Hidden field: signals to the dashboard that this
+            // primitive supports conversation history. The chat UI
+            // detects this field and renders a thread instead of a
+            // flat form.
+            SkillParameter {
+                field: "text.prompt.previous".into(),
+                required: false,
+                widget: Some(ParameterWidget::Hidden),
                 ..Default::default()
             },
         ],

@@ -327,25 +327,29 @@ export default function WorkspaceForm({
         )}
       </div>
 
-      {/* Dialogue history (newest first, below the form) */}
-      {isDialogue && (dialogueHistory.length > 0 || activeReq?.streamAccumulator) && (
+      {/* Dialogue history (interleaved, newest first) */}
+      {isDialogue && (dialogueHistory.length > 0 || isSending) && (
         <div ref={threadRef} className="flex-1 overflow-y-auto px-6 pb-6 border-t border-border min-h-0">
-          <div className="pt-3 space-y-3">
-            {/* Streaming in progress — show at top (newest) */}
-            {activeReq?.streamAccumulator && activeReq.status === "streaming" && (
-              <div className="space-y-1">
-                <div className="text-[9px] text-text-dimmer uppercase tracking-wider">Now</div>
-                <DialogueTurn
-                  user={activeReq.userMessage ?? ""}
-                  assistant={activeReq.streamAccumulator}
-                  streaming
+          <div className="pt-3 space-y-1.5">
+            {/* In-flight: thinking indicator + user message at top */}
+            {isSending && activeReq && (
+              <>
+                <DialogueBlock
+                  role="assistant"
+                  content={activeReq.streamAccumulator || undefined}
+                  thinking
+                  elapsed={elapsedText}
                 />
-              </div>
+                <DialogueBlock role="user" content={activeReq.userMessage ?? ""} />
+              </>
             )}
 
-            {/* Completed turns — newest first */}
+            {/* Completed turns — newest first, interleaved A/U blocks */}
             {dialogueReversed.map((turn, i) => (
-              <DialogueTurn key={dialogueHistory.length - 1 - i} user={turn.user} assistant={turn.assistant} />
+              <div key={dialogueHistory.length - 1 - i}>
+                <DialogueBlock role="assistant" content={turn.assistant} />
+                <DialogueBlock role="user" content={turn.user} />
+              </div>
             ))}
           </div>
         </div>
@@ -356,24 +360,52 @@ export default function WorkspaceForm({
 
 // ── Sub-components ───────────────────────────────────────────
 
-function DialogueTurn({ user, assistant, streaming }: { user: string; assistant: string; streaming?: boolean }) {
+function DialogueBlock({
+  role,
+  content,
+  thinking,
+  elapsed,
+}: {
+  role: "user" | "assistant";
+  content?: string;
+  thinking?: boolean;
+  elapsed?: string | null;
+}) {
+  const isUser = role === "user";
+
+  if (thinking && !content) {
+    // Thinking indicator — no content yet
+    return (
+      <div className="py-2 px-3 rounded-lg bg-surface-2 border border-accent/20 text-[12px] text-text-dim flex items-center gap-2">
+        <span className="animate-pulse">Thinking...</span>
+        {elapsed && <span className="text-orange font-mono text-[11px]">{elapsed}</span>}
+      </div>
+    );
+  }
+
   return (
-    <div className={[
-      "rounded-lg border border-border bg-surface p-3",
-      streaming ? "border-accent/30" : "",
-    ].join(" ")}>
-      {/* Assistant response (primary content) */}
-      <div className={[
-        "text-[13px] leading-relaxed",
-        streaming ? "animate-pulse" : "",
-      ].join(" ")}>
-        <Markdown content={assistant} />
-      </div>
-      {/* User question (context, shown below as dim label) */}
-      <div className="mt-2 pt-2 border-t border-border/50 text-[11px] text-text-dim">
-        <span className="text-text-dimmer mr-1">You:</span>
-        {user}
-      </div>
+    <div
+      className={[
+        "py-2 px-3 rounded-lg text-[13px] leading-relaxed",
+        isUser
+          ? "bg-accent/8 text-text-dim text-[12px]"
+          : "bg-surface-2 text-text",
+        thinking ? "border border-accent/20" : "",
+      ].join(" ")}
+    >
+      {isUser && <span className="text-text-dimmer text-[10px] mr-1.5">You:</span>}
+      {isUser ? (
+        <span>{content}</span>
+      ) : (
+        <div className="flex items-start gap-2">
+          <div className="flex-1">
+            <Markdown content={content ?? ""} />
+          </div>
+          {thinking && elapsed && (
+            <span className="text-orange font-mono text-[10px] shrink-0 mt-0.5 animate-pulse">{elapsed}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

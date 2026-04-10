@@ -5,6 +5,7 @@ import { useJobManager } from "../../contexts/JobManagerContext";
 import FieldRenderer from "./widgets/FieldRenderer";
 import FileWidget from "./widgets/FileWidget";
 import ExampleCards from "./ExampleCards";
+import CopyAsCurl from "./CopyAsCurl";
 
 interface Props {
   detail: CatalogDetail;
@@ -203,6 +204,10 @@ export default function WorkspaceForm({
           <span className="text-[10px] text-text-dimmer">
             {detail.providers.join(", ")}
           </span>
+          <CopyAsCurl
+            url={`/v1/${detail.path.replace(/\./g, "/")}`}
+            values={values}
+          />
         </div>
 
         {/* Settings (secondary fields) */}

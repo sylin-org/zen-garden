@@ -59,6 +59,7 @@ use zen_garden_ai_orchestrator::{
         media_resolver::MediaResolver,
         media_store::DiskMediaStore,
         provider_registry::ProviderRegistry,
+        request_store,
     },
 };
 
@@ -121,6 +122,9 @@ async fn main() -> Result<()> {
     let job_store = DiskJobStore::load(&data_dir)
         .await
         .map_err(|e| anyhow::anyhow!("job store: {e}"))?;
+    let request_store = request_store::DiskRequestStore::load(&data_dir)
+        .await
+        .map_err(|e| anyhow::anyhow!("request store: {e}"))?;
     let idempotency_store: Arc<dyn IdempotencyStore> =
         Arc::new(InMemoryIdempotencyStore::new());
 
@@ -307,6 +311,7 @@ async fn main() -> Result<()> {
         idempotency_store.clone(),
         job_store.clone(),
         media_store.clone(),
+        request_store.clone(),
     ));
     let catalog = CatalogBuilder::new(
         capability_directory.clone(),
@@ -336,6 +341,7 @@ async fn main() -> Result<()> {
         capability_directory: capability_directory.clone(),
         provider_registry: provider_registry.clone(),
         preferences,
+        request_store,
     };
 
     // ── Background tasks ────────────────────────────────────────

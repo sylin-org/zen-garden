@@ -42,11 +42,15 @@ use crate::domain::jobs::{JobCategory, JobSink, JobStore};
 use crate::domain::keys;
 use crate::domain::media::{MediaReservation, SharedMediaStore};
 use crate::domain::provider::ProviderOutcome;
+use crate::domain::persisted_request::{
+    ErrorSnapshot, PersistedRequest, RequestMedia, RequestMeta, SelectorsSnapshot,
+};
 use crate::domain::request::{ExecutionContext, OrchestratorRequest, RawRequest};
 use crate::services::contextualizer::Contextualizer;
 use crate::services::directory_subscriber::CapabilityDirectory;
 use crate::services::media_resolver::MediaResolver;
 use crate::services::provider_registry::ProviderRegistry;
+use crate::services::request_store::DiskRequestStore;
 
 /// The outcome returned to HTTP handlers.
 pub enum DispatchResult {
@@ -80,6 +84,7 @@ pub struct Dispatcher {
     idempotency: Arc<dyn IdempotencyStore>,
     job_store: Arc<dyn JobStore>,
     media_store: SharedMediaStore,
+    request_store: Arc<DiskRequestStore>,
 }
 
 impl Dispatcher {
@@ -92,6 +97,7 @@ impl Dispatcher {
         idempotency: Arc<dyn IdempotencyStore>,
         job_store: Arc<dyn JobStore>,
         media_store: SharedMediaStore,
+        request_store: Arc<DiskRequestStore>,
     ) -> Self {
         Self {
             capability_directory,
@@ -101,6 +107,7 @@ impl Dispatcher {
             idempotency,
             job_store,
             media_store,
+            request_store,
         }
     }
 
@@ -240,6 +247,57 @@ impl Dispatcher {
             }
         };
 
+        // 5b. Persist request record (ORCH-0033) — input snapshot.
+        //     The request is fully contextualized at this point:
+        //     payload normalized, provider resolved, media resolved.
+        let media_inputs: Vec<RequestMedia> = request
+            .media
+            .referenced
+            .iter()
+            .map(|mr| RequestMedia {
+                media_id: mr.id.as_str().to_string(),
+                field: mr.field.as_str().to_string(),
+                content_type: mr.content_type.clone(),
+            })
+            .collect();
+
+        let selectors_snapshot = SelectorsSnapshot {
+            provider: request
+                .selectors
+                .provider
+                .as_ref()
+                .map(|p| p.as_str().to_string()),
+            model: request
+                .selectors
+                .model
+                .as_ref()
+                .map(|s| s.to_string()),
+            variant: request
+                .selectors
+                .variant
+                .as_ref()
+                .map(|s| s.to_string()),
+        };
+
+        let persisted = PersistedRequest::new_running(
+            request.id.clone(),
+            request.correlation_id.as_ref().to_string(),
+            request.action.dotted().to_string(),
+            request.payload.clone(),
+            selectors_snapshot,
+            media_inputs,
+            request
+                .resolved_provider
+                .as_ref()
+                .map(|p| p.as_str().to_string()),
+            Some(job_id.clone()),
+            None, // parent_id — set by the HTTP handler for fork workflows
+        );
+        // Non-blocking: persist failure should not fail the dispatch.
+        if let Err(e) = self.request_store.create(persisted).await {
+            tracing::warn!(request_id = %request.id, error = %e, "failed to persist request record");
+        }
+
         // 6. Look up provider handle in the registry.
         let provider_name = request.resolved_provider.clone().ok_or_else(|| {
             OrchestratorError::new(
@@ -276,6 +334,22 @@ impl Dispatcher {
                         }),
                     )
                     .await;
+                // ORCH-0033: mark request as failed.
+                let _ = self
+                    .request_store
+                    .fail(
+                        request.id.as_str(),
+                        ErrorSnapshot {
+                            code: err.code.as_str().to_string(),
+                            message: err.message.clone(),
+                            details: if err.details.is_null() {
+                                None
+                            } else {
+                                Some(err.details.clone())
+                            },
+                        },
+                    )
+                    .await;
                 return Err(err);
             }
         };
@@ -287,6 +361,31 @@ impl Dispatcher {
                 // inline. No reservation is needed — media TTL of 24h
                 // is sufficient.
                 let _ = self.job_store.complete(&job_id, output.clone()).await;
+
+                // ORCH-0033: mark request as succeeded with output.
+                let output_value = output.to_nested();
+                let media_outputs = extract_media_outputs(&output_value);
+                let latency = outcome_request
+                    .received_at
+                    .signed_duration_since(chrono::Utc::now())
+                    .num_milliseconds()
+                    .unsigned_abs();
+                let _ = self
+                    .request_store
+                    .complete(
+                        outcome_request.id.as_str(),
+                        output_value,
+                        media_outputs,
+                        RequestMeta {
+                            provider: outcome_request
+                                .resolved_provider
+                                .as_ref()
+                                .map(|p| p.as_str().to_string()),
+                            latency_ms: Some(latency),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
             }
             ProviderOutcome::Async(_) | ProviderOutcome::Streaming { .. } => {
                 // Async/streaming: transition to Running and reserve
@@ -849,5 +948,54 @@ mod tests {
 
         // Suppress unused-field warning on the harness.
         let _ = &h.capability_directory;
+    }
+}
+
+// ── ORCH-0033 helpers ────────────────────────────────────────
+
+/// Scan a nested output Value for media_id references, returning
+/// structured `RequestMedia` entries. Looks for any object with a
+/// `media_id` key or string values that look like media references
+/// at known output paths (image.data, audio.data, etc.).
+fn extract_media_outputs(output: &serde_json::Value) -> Vec<RequestMedia> {
+    let mut results = Vec::new();
+    walk_for_media_ids("", output, &mut results);
+    results
+}
+
+fn walk_for_media_ids(prefix: &str, value: &serde_json::Value, out: &mut Vec<RequestMedia>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            // Direct media_id reference
+            if let Some(mid) = map.get("media_id").and_then(|v| v.as_str()) {
+                let content_type = map
+                    .get("content_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                out.push(RequestMedia {
+                    media_id: mid.to_string(),
+                    field: prefix.to_string(),
+                    content_type,
+                });
+                return;
+            }
+            // Recurse into nested objects
+            for (key, val) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                walk_for_media_ids(&path, val, out);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for (i, val) in arr.iter().enumerate() {
+                let path = format!("{prefix}[{i}]");
+                walk_for_media_ids(&path, val, out);
+            }
+        }
+        _ => {}
     }
 }

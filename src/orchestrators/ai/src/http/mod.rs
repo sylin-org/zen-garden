@@ -18,6 +18,7 @@ pub mod jobs;
 pub mod media;
 pub mod metrics;
 pub mod preferences;
+pub mod requests;
 pub mod resources;
 pub mod router;
 pub mod sitemap;

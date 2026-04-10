@@ -25,6 +25,7 @@ use crate::services::catalog_builder::CatalogBuilder;
 use crate::services::directory_subscriber::CapabilityDirectory;
 use crate::services::dispatcher::Dispatcher;
 use crate::services::provider_registry::ProviderRegistry;
+use crate::services::request_store::DiskRequestStore;
 use crate::services::skills::ProvisioningQueue;
 
 #[derive(Clone)]
@@ -65,4 +66,8 @@ pub struct AppState {
     /// Layered over field defaults at catalog render time, and under
     /// caller payload at dispatch time.
     pub preferences: Arc<Preferences>,
+    /// Request log (ORCH-0033) — persistent record of every user
+    /// interaction with input, output, media refs, lineage, and
+    /// bookmarks.
+    pub request_store: Arc<DiskRequestStore>,
 }

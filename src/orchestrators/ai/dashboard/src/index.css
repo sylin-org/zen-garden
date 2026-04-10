@@ -1,1 +1,38 @@
 @import "tailwindcss";
+
+@theme {
+  --color-bg: #111318;
+  --color-sidebar: #15171e;
+  --color-surface: #1a1d26;
+  --color-surface-2: #21242f;
+  --color-surface-3: #282c3a;
+  --color-border: #2a2e3c;
+  --color-border-focus: #3d4258;
+  --color-text: #e4e7f0;
+  --color-text-dim: #6d7490;
+  --color-text-dimmer: #4a4f64;
+  --color-accent: #818cf8;
+  --color-accent-dim: #6366f1;
+  --color-accent-bg: oklch(from #818cf8 l c h / 0.08);
+  --color-accent-bg-2: oklch(from #818cf8 l c h / 0.15);
+  --color-green: #34d399;
+  --color-green-dim: oklch(from #34d399 l c h / 0.15);
+  --color-orange: #fb923c;
+  --color-orange-dim: oklch(from #fb923c l c h / 0.15);
+  --color-red: #f87171;
+  --color-red-dim: oklch(from #f87171 l c h / 0.12);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  margin: 0;
+  overflow: hidden;
+}
+
+/* Scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-3) transparent;
+}

@@ -33,5 +33,6 @@ pub mod job_store;
 pub mod media_resolver;
 pub mod media_store;
 pub mod provider_registry;
+pub mod request_store;
 pub mod skills;
 pub mod vocab_drift;

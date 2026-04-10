@@ -1,101 +1,79 @@
-import { Routes, Route } from "react-router-dom";
-import { useStatus } from "./hooks/useStatus";
-import { useSkills } from "./hooks/useSkills";
-import { Sidebar } from "./components/Sidebar";
-import { Overview } from "./pages/Overview";
-import { CapabilityDetail } from "./pages/CapabilityDetail";
-import { ServicesList } from "./pages/ServicesList";
-import { ServiceDetail } from "./pages/ServiceDetail";
-import { CloudList } from "./pages/CloudList";
-import { CloudDetail } from "./pages/CloudDetail";
-import { CloudEdit } from "./pages/CloudEdit";
-import { Stones } from "./pages/Stones";
-import { Secrets } from "./pages/Secrets";
-import { Settings } from "./pages/Settings";
-import { SkillsList } from "./pages/SkillsList";
-import { SkillEdit } from "./pages/SkillEdit";
-import { SkillView } from "./pages/SkillView";
+import { lazy, Suspense } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
+import Shell from "./components/Shell";
 
-function App() {
-  const { status, loading, error } = useStatus();
-  const { skills } = useSkills();
+// Lazy-loaded surfaces
+const CreateSurface = lazy(() => import("./features/create/CreateSurface"));
+const CreateIndex = lazy(() => import("./features/create/CreateIndex"));
+const Workspace = lazy(() => import("./features/create/Workspace"));
+const ManageSurface = lazy(() => import("./features/manage/ManageSurface"));
+const ConfigureSurface = lazy(() => import("./features/configure/ConfigureSurface"));
 
+// Manage placeholders (Phase 3)
+const SkillListPlaceholder = lazy(() =>
+  import("./features/manage/Placeholder").then((m) => ({ default: m.SkillListPlaceholder })),
+);
+const JobListPlaceholder = lazy(() =>
+  import("./features/manage/Placeholder").then((m) => ({ default: m.JobListPlaceholder })),
+);
+const MediaBrowserPlaceholder = lazy(() =>
+  import("./features/manage/Placeholder").then((m) => ({ default: m.MediaBrowserPlaceholder })),
+);
+
+// Configure placeholders (Phase 4)
+const PreferencesPlaceholder = lazy(() =>
+  import("./features/configure/Placeholder").then((m) => ({ default: m.PreferencesPlaceholder })),
+);
+const GardenViewPlaceholder = lazy(() =>
+  import("./features/configure/Placeholder").then((m) => ({ default: m.GardenViewPlaceholder })),
+);
+const ProviderListPlaceholder = lazy(() =>
+  import("./features/configure/Placeholder").then((m) => ({ default: m.ProviderListPlaceholder })),
+);
+const EventLogPlaceholder = lazy(() =>
+  import("./features/configure/Placeholder").then((m) => ({ default: m.EventLogPlaceholder })),
+);
+
+function Loading() {
   return (
-    <div className="flex min-h-screen bg-[#0f1117] text-gray-400 font-[system-ui]">
-      <Sidebar status={status} skills={skills} />
-
-      <main className="flex-1 min-w-0 p-6 overflow-y-auto">
-        {loading && !status && (
-          <div className="flex items-center justify-center h-64">
-            <span className="text-sm text-gray-500">Loading...</span>
-          </div>
-        )}
-
-        {error && !status && (
-          <div className="flex flex-col items-center justify-center h-64 gap-2">
-            <span className="text-sm text-red-400">{error}</span>
-            <span className="text-[11px] text-gray-500">
-              Is the orchestrator running on port 7190?
-            </span>
-          </div>
-        )}
-
-        {error && status && (
-          <div className="mb-4 px-3 py-2 bg-yellow-400/5 border border-yellow-500/30 rounded text-[12px] text-yellow-400">
-            {error}
-          </div>
-        )}
-
-        {status && (
-          <Routes>
-            <Route path="/" element={<Overview status={status} />} />
-            <Route
-              path="/capability/:name"
-              element={<CapabilityDetail status={status} skills={skills} />}
-            />
-            <Route
-              path="/infra/services"
-              element={<ServicesList status={status} />}
-            />
-            <Route
-              path="/infra/services/:name"
-              element={<ServiceDetail status={status} />}
-            />
-            <Route
-              path="/infra/services/:provider/skills"
-              element={<SkillsList />}
-            />
-            <Route
-              path="/infra/services/:provider/skills/:moniker"
-              element={<SkillView />}
-            />
-            <Route
-              path="/infra/services/:provider/skills/:moniker/edit"
-              element={<SkillEdit />}
-            />
-            <Route
-              path="/infra/cloud"
-              element={<CloudList status={status} />}
-            />
-            <Route
-              path="/infra/cloud/:name"
-              element={<CloudDetail status={status} />}
-            />
-            <Route
-              path="/infra/cloud/:name/edit"
-              element={<CloudEdit status={status} />}
-            />
-            <Route
-              path="/infra/stones"
-              element={<Stones status={status} />}
-            />
-            <Route path="/infra/secrets" element={<Secrets />} />
-            <Route path="/settings" element={<Settings status={status} />} />
-          </Routes>
-        )}
-      </main>
+    <div className="flex items-center justify-center h-full text-text-dim text-sm">
+      Loading...
     </div>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <Routes>
+        <Route element={<Shell />}>
+          <Route index element={<Navigate to="/create" replace />} />
+
+          {/* Create surface */}
+          <Route path="create" element={<CreateSurface />}>
+            <Route index element={<CreateIndex />} />
+            <Route path=":modality/:leaf" element={<Workspace />} />
+            <Route path=":modality/:leaf/:skill" element={<Workspace />} />
+          </Route>
+
+          {/* Manage surface */}
+          <Route path="manage" element={<ManageSurface />}>
+            <Route index element={<Navigate to="skills" replace />} />
+            <Route path="skills" element={<SkillListPlaceholder />} />
+            <Route path="jobs" element={<JobListPlaceholder />} />
+            <Route path="media" element={<MediaBrowserPlaceholder />} />
+          </Route>
+
+          {/* Configure surface */}
+          <Route path="configure" element={<ConfigureSurface />}>
+            <Route index element={<Navigate to="preferences" replace />} />
+            <Route path="preferences" element={<PreferencesPlaceholder />} />
+            <Route path="garden" element={<GardenViewPlaceholder />} />
+            <Route path="providers" element={<ProviderListPlaceholder />} />
+            <Route path="events" element={<EventLogPlaceholder />} />
+          </Route>
+        </Route>
+      </Routes>
+    </Suspense>
+  );
+}

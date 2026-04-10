@@ -51,6 +51,7 @@ pub mod keys;
 pub mod media;
 pub mod moniker;
 pub mod output;
+pub mod persisted_request;
 pub mod preferences;
 pub mod primitive;
 pub mod provider;

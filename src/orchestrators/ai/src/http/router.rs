@@ -7,7 +7,7 @@ use crate::app_state::AppState;
 
 use super::{
     actions_index, catalog, events, flush, health, ingress, introspect, jobs, media, metrics,
-    preferences, resources, sitemap, skills, static_files,
+    preferences, requests, resources, sitemap, skills, static_files,
 };
 
 /// Build the full `/v1/*` router plus `/health`.
@@ -90,6 +90,17 @@ pub fn build(state: AppState) -> Router {
             "/v1/preferences/{key}",
             delete(preferences::delete_preference),
         )
+        // Request log (ORCH-0033) — persistent user interaction history
+        .route(
+            "/v1/requests",
+            get(requests::list_requests).delete(requests::flush_requests),
+        )
+        .route("/v1/requests/{id}", get(requests::get_request))
+        .route(
+            "/v1/requests/{id}/pin",
+            axum::routing::patch(requests::toggle_pin),
+        )
+        .route("/v1/requests/{id}/lineage", get(requests::get_lineage))
         // Dashboard SPA — serves embedded static files with SPA
         // fallback. Must be last so API routes take priority.
         .fallback(static_files::serve)

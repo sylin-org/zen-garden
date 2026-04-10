@@ -50,7 +50,7 @@ export default function SelectWidget({ field, value, onChange }: Props) {
       >
         {autoDefault && (
           <option value="__auto__">
-            Auto ({field.auto?.description ?? autoDefault})
+            Recommended ({field.auto?.description ?? autoDefault})
           </option>
         )}
         {options.map((opt) => (

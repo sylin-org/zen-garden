@@ -263,7 +263,7 @@ export default function WorkspaceForm({
                 onProviderChange(val === "__auto__" ? undefined : val);
               }}
             >
-              <option value="__auto__">Auto (recommended)</option>
+              <option value="__auto__">Recommended</option>
               {spec.routing.providers.map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams, useLocation } from "react-router-dom";
 import { get } from "../../api/client";
 import { useCatalog } from "../../contexts/CatalogContext";
 import type { CatalogDetail, PersistedRequest } from "../../api/types";
@@ -12,8 +12,12 @@ export default function Workspace() {
   const [searchParams] = useSearchParams();
   const { catalog } = useCatalog();
 
+  const location = useLocation();
   const requestId = searchParams.get("r");   // view mode
   const forkFromId = searchParams.get("from"); // fork mode
+  // Navigation state: the OverviewPanel passes the full request
+  // object so we skip the fetch round-trip.
+  const navRequest = (location.state as { request?: PersistedRequest } | null)?.request;
 
   const [detail, setDetail] = useState<CatalogDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,39 +46,43 @@ export default function Workspace() {
       });
   }, [catalogPath]);
 
-  // Load request record if ?r= or ?from= is present
+  // Load request record if ?r= or ?from= is present.
+  // If the OverviewPanel passed the request via navigation state,
+  // use it directly — no fetch needed.
   const sourceId = requestId ?? forkFromId;
   useEffect(() => {
     if (!sourceId) {
       setInitialValues(null);
       setSourceRequest(null);
-      // Don't clear result here — it persists within a session
       return;
     }
-    get<PersistedRequest>(`/v1/requests/${sourceId}`)
-      .then((req) => {
-        setSourceRequest(req);
-        // Flatten the stored input to dotted paths. The backend
-        // stores exactly what the caller sent — when the dashboard
-        // built the payload from catalog field keys, those same keys
-        // appear here. Simple 1:1 match.
-        const flat = flattenToDotted(req.input as Record<string, unknown>);
-        setInitialValues(flat);
 
-        // If viewing (not forking), show the result
-        if (requestId && req.output) {
-          setResult({ output: req.output, _meta: req.meta });
-        }
-        if (requestId && req.error) {
-          setResult({ error: req.error, _meta: req.meta });
-        }
-      })
+    const applyRequest = (req: PersistedRequest) => {
+      setSourceRequest(req);
+      const flat = flattenToDotted(req.input as Record<string, unknown>);
+      setInitialValues(flat);
+      if (requestId && req.output) {
+        setResult({ output: req.output, _meta: req.meta });
+      }
+      if (requestId && req.error) {
+        setResult({ error: req.error, _meta: req.meta });
+      }
+    };
+
+    // Use navigation state if it matches the requested ID.
+    if (navRequest && navRequest.id === sourceId) {
+      applyRequest(navRequest);
+      return;
+    }
+
+    // Otherwise fetch from the API.
+    get<PersistedRequest>(`/v1/requests/${sourceId}`)
+      .then(applyRequest)
       .catch(() => {
-        // Request not found — proceed with fresh form
         setInitialValues(null);
         setSourceRequest(null);
       });
-  }, [sourceId, requestId]);
+  }, [sourceId, requestId, navRequest]);
 
   // Reset when switching tools (but not when query params change)
   const prevCatalogPath = useRef(catalogPath);
@@ -196,7 +204,7 @@ export default function Workspace() {
           />
         ) : (
           <WorkspaceForm
-            key={sourceId ?? catalogPath}
+            key={sourceRequest?.id ?? catalogPath}
             detail={detail}
             initialValues={initialValues}
             parentId={parentId}

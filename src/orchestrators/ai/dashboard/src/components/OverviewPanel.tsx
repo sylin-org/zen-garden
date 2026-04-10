@@ -126,7 +126,7 @@ export default function OverviewPanel({ open, onToggle }: Props) {
                   onClick={() => {
                     const action = req.action;
                     const url = `/create/${action.replace(/\./g, "/")}?r=${req.id}`;
-                    navigate(url);
+                    navigate(url, { state: { request: req } });
                   }}
                   onPin={(e) => handlePin(req.id, e)}
                 />

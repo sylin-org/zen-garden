@@ -204,17 +204,9 @@ export default function WorkspaceForm({
 
   return (
     <div className="flex flex-col h-full" onKeyDown={handleKeyDown}>
-      {/* Top section: banner + examples + form fields */}
+      {/* Top section: banner + form fields */}
       <div className="p-6 shrink-0">
         {sourceRequest && <ForkBanner sourceRequest={sourceRequest} />}
-
-        {spec.examples && spec.examples.length > 0 && (
-          <ExampleCards
-            examples={spec.examples}
-            onSelect={applyExample}
-            hidden={userTouched || dialogueHistory.length > 0}
-          />
-        )}
 
         {/* Required fields */}
         <div className="space-y-4">
@@ -316,6 +308,15 @@ export default function WorkspaceForm({
               ))}
             </div>
           </details>
+        )}
+
+        {/* Example suggestions — at the bottom as discoverable shortcuts */}
+        {spec.examples && spec.examples.length > 0 && (
+          <ExampleCards
+            examples={spec.examples}
+            onSelect={applyExample}
+            hidden={userTouched || dialogueHistory.length > 0}
+          />
         )}
       </div>
 

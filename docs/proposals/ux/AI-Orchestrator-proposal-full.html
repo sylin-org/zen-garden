@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zen Garden — Full App Prototype</title>
+<style>
+  :root {
+    --bg: #111318;
+    --sidebar: #15171e;
+    --surface: #1a1d26;
+    --surface2: #21242f;
+    --surface3: #282c3a;
+    --border: #2a2e3c;
+    --border-focus: #3d4258;
+    --text: #e4e7f0;
+    --text-dim: #6d7490;
+    --text-dimmer: #4a4f64;
+    --accent: #818cf8;
+    --accent-dim: #6366f1;
+    --accent-bg: rgba(129,140,248,0.08);
+    --accent-bg2: rgba(129,140,248,0.15);
+    --green: #34d399;
+    --green-dim: rgba(52,211,153,0.15);
+    --orange: #fb923c;
+    --orange-dim: rgba(251,146,60,0.15);
+    --red: #f87171;
+    --red-dim: rgba(248,113,113,0.12);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --transition: 0.15s ease;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; font-size: 13px; }
+
+  /* ═══ LEFT SIDEBAR ═══ */
+  .sidebar {
+    width: 220px; background: var(--sidebar); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0; user-select: none;
+  }
+  .sidebar .logo { padding: 16px 18px; font-weight: 700; font-size: 13px; letter-spacing: -0.3px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .sidebar .logo span { color: var(--accent); }
+  .sidebar .logo .version { font-size: 10px; color: var(--text-dimmer); font-weight: 400; margin-left: auto; }
+
+  /* Surface tabs */
+  .surface-tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .surface-tab {
+    flex: 1; padding: 10px 0; text-align: center; font-size: 11px; font-weight: 600;
+    color: var(--text-dim); cursor: pointer; transition: all var(--transition);
+    border-bottom: 2px solid transparent; letter-spacing: 0.3px;
+  }
+  .surface-tab:hover { color: var(--text); }
+  .surface-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--accent-bg); }
+
+  /* Sidebar content — changes per surface */
+  .sidebar-content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--surface3) transparent; }
+  .sidebar-panel { display: none; }
+  .sidebar-panel.active { display: block; }
+
+  .sb-section { padding: 12px 0 4px; }
+  .sb-label { padding: 0 18px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dimmer); font-weight: 600; }
+
+  .sb-item {
+    display: flex; align-items: center; gap: 9px; padding: 7px 18px; cursor: pointer;
+    color: var(--text-dim); transition: all 0.08s; border-left: 2px solid transparent; font-size: 12px;
+  }
+  .sb-item:hover { background: var(--surface); color: var(--text); }
+  .sb-item.active { background: var(--accent-bg); color: var(--accent); border-left-color: var(--accent); font-weight: 500; }
+  .sb-item .icon { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; }
+  .sb-item .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-item .badge { font-size: 9px; background: var(--surface3); padding: 1px 6px; border-radius: 3px; color: var(--text-dimmer); }
+  .sb-item.active .badge { background: var(--accent-bg2); color: var(--accent); }
+
+  .sb-sub { padding-left: 45px; }
+  .sb-sub .sb-item { font-size: 11px; padding: 5px 18px 5px 0; }
+  .sb-expand { padding: 3px 18px 8px 45px; font-size: 10px; color: var(--accent); cursor: pointer; }
+  .sb-expand:hover { text-decoration: underline; }
+
+  /* Status footer */
+  .sidebar-footer { border-top: 1px solid var(--border); padding: 10px 18px; font-size: 10px; color: var(--text-dimmer); display: flex; align-items: center; gap: 6px; }
+  .sidebar-footer .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+
+  /* ═══ CENTER + RIGHT WORKSPACE ═══ */
+  .workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Header */
+  .ws-header {
+    padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface);
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  .ws-breadcrumb { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+  .ws-breadcrumb a { color: var(--text-dimmer); text-decoration: none; }
+  .ws-breadcrumb a:hover { color: var(--text-dim); }
+  .ws-breadcrumb .sep { color: var(--text-dimmer); }
+  .ws-title { font-size: 15px; font-weight: 600; }
+  .ws-tag { margin-left: auto; font-size: 10px; color: var(--text-dimmer); background: var(--surface2); padding: 3px 10px; border-radius: 4px; }
+
+  /* Body: center + right split */
+  .ws-body { flex: 1; display: flex; overflow: hidden; }
+
+  /* Center panel */
+  .center-panel { flex: 1; padding: 24px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--surface3) transparent; min-width: 0; }
+
+  /* Right panel */
+  .right-panel {
+    width: 340px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--surface);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .right-panel .rp-header { padding: 14px 20px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dimmer); font-weight: 600; }
+  .right-panel .rp-body { flex: 1; padding: 20px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--surface3) transparent; }
+  .right-panel .rp-footer { padding: 12px 20px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text-dimmer); display: flex; gap: 10px; }
+
+  /* ═══ SHARED FORM ELEMENTS ═══ */
+  textarea, input[type="text"] {
+    width: 100%; padding: 12px 14px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text); font-size: 13px; font-family: inherit;
+    outline: none; transition: border-color var(--transition); resize: vertical;
+  }
+  textarea:focus, input[type="text"]:focus { border-color: var(--accent); }
+  textarea::placeholder, input[type="text"]::placeholder { color: var(--text-dimmer); }
+
+  .btn {
+    padding: 8px 24px; border: none; border-radius: var(--radius-sm); font-size: 12px;
+    font-weight: 600; cursor: pointer; transition: all var(--transition);
+  }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-dim); }
+  .btn-ghost { background: none; border: 1px solid var(--border); color: var(--text-dim); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--text); }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; font-weight: 500; }
+  .field .val { color: var(--accent); font-weight: 600; }
+  .field input[type="range"] { width: 100%; accent-color: var(--accent); height: 4px; }
+  .field select {
+    width: 100%; padding: 8px 10px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 12px; outline: none;
+  }
+  .field select:focus { border-color: var(--accent); }
+
+  /* ═══ VIEW: CREATE ═══ */
+  .create-input textarea { min-height: 100px; }
+  .create-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .create-actions .hint { font-size: 10px; color: var(--text-dimmer); }
+
+  .settings-section { margin-top: 20px; }
+  .settings-section summary {
+    font-size: 11px; color: var(--text-dim); cursor: pointer; padding: 6px 0;
+    font-weight: 500; list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  .settings-section summary::before { content: ""; display: inline-block; width: 5px; height: 5px; border-right: 1.5px solid var(--text-dim); border-bottom: 1.5px solid var(--text-dim); transform: rotate(-45deg); transition: transform 0.15s; }
+  .settings-section[open] summary::before { transform: rotate(45deg); }
+  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+
+  /* Result in right panel */
+  .result-placeholder { color: var(--text-dimmer); font-size: 12px; font-style: italic; text-align: center; padding: 40px 0; }
+  .result-text { font-size: 13px; line-height: 1.7; }
+  .result-meta { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; gap: 10px; flex-wrap: wrap; }
+  .result-meta span { font-size: 10px; color: var(--text-dimmer); background: var(--surface2); padding: 2px 8px; border-radius: 4px; }
+
+  /* ═══ VIEW: MANAGE ═══ */
+  .manage-view { display: none; }
+  .manage-view.active { display: flex; flex-direction: column; height: 100%; }
+
+  .list-table { width: 100%; }
+  .list-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 0;
+    border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s;
+  }
+  .list-row:hover { background: var(--accent-bg); margin: 0 -24px; padding: 10px 24px; }
+  .list-row .row-icon { font-size: 16px; width: 24px; text-align: center; flex-shrink: 0; }
+  .list-row .row-name { font-size: 13px; font-weight: 500; flex: 1; }
+  .list-row .row-detail { font-size: 11px; color: var(--text-dim); }
+  .list-row .row-badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; }
+  .row-badge.ready { background: var(--green-dim); color: var(--green); }
+  .row-badge.draft { background: var(--orange-dim); color: var(--orange); }
+  .row-badge.error { background: var(--red-dim); color: var(--red); }
+
+  /* Detail in right panel */
+  .detail-header { margin-bottom: 16px; }
+  .detail-header h3 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .detail-header .sub { font-size: 11px; color: var(--text-dim); }
+  .detail-section { margin-bottom: 16px; }
+  .detail-section .ds-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dimmer); margin-bottom: 6px; font-weight: 600; }
+  .detail-kv { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+  .detail-kv .k { color: var(--text-dim); }
+  .detail-kv .v { color: var(--text); font-weight: 500; }
+  .detail-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .detail-tags .tag { font-size: 10px; padding: 2px 8px; background: var(--surface2); border-radius: 4px; color: var(--text-dim); }
+
+  .detail-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+  /* ═══ VIEW: CONFIGURE ═══ */
+  .pref-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .pref-row .pref-key { font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; color: var(--accent); flex: 1; }
+  .pref-row .pref-val { font-size: 12px; color: var(--text); font-weight: 500; }
+  .pref-row .pref-default { font-size: 10px; color: var(--text-dimmer); }
+  .pref-row .pref-action { opacity: 0; transition: opacity 0.15s; }
+  .pref-row:hover .pref-action { opacity: 1; }
+
+  /* Stone cards */
+  .stone-card { padding: 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 10px; }
+  .stone-card .sc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .stone-card .sc-name { font-size: 13px; font-weight: 600; }
+  .stone-card .sc-health { font-size: 10px; padding: 1px 8px; border-radius: 4px; }
+  .sc-health.healthy { background: var(--green-dim); color: var(--green); }
+  .sc-health.wilting { background: var(--orange-dim); color: var(--orange); }
+  .stone-card .sc-detail { font-size: 11px; color: var(--text-dim); }
+  .gpu-bar { height: 6px; background: var(--surface3); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .gpu-bar .gpu-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
+
+  /* Provider cards in detail */
+  .provider-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .provider-row .pr-name { font-size: 12px; font-weight: 500; flex: 1; }
+  .provider-row .pr-caps { font-size: 10px; color: var(--text-dim); }
+  .provider-row .pr-status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .pr-status.on { background: var(--green); }
+  .pr-status.off { background: var(--red); }
+</style>
+</head>
+<body>
+  <!-- ═══ SIDEBAR ═══ -->
+  <div class="sidebar">
+    <div class="logo">zen <span>garden</span> <span class="version">v0.2</span></div>
+
+    <div class="surface-tabs">
+      <div class="surface-tab active" onclick="switchSurface('create')">Create</div>
+      <div class="surface-tab" onclick="switchSurface('manage')">Manage</div>
+      <div class="surface-tab" onclick="switchSurface('configure')">Configure</div>
+    </div>
+
+    <div class="sidebar-content">
+      <!-- CREATE sidebar -->
+      <div class="sidebar-panel active" id="sb-create">
+        <div class="sb-section">
+          <div class="sb-label">Text</div>
+          <div class="sb-item active" onclick="selectTool(this,'chat','Chat','Conversational text completion.','ollama')">
+            <span class="icon">&#128172;</span><span class="name">Chat</span><span class="badge">22</span>
+          </div>
+          <div class="sb-item" onclick="selectTool(this,'translate','Translate','Translate between languages.','libretranslate')">
+            <span class="icon">&#127760;</span><span class="name">Translate</span>
+          </div>
+          <div class="sb-item" onclick="selectTool(this,'embed','Embed','Semantic embedding vectors.','ollama')">
+            <span class="icon">&#128200;</span><span class="name">Embed</span>
+          </div>
+        </div>
+        <div class="sb-section">
+          <div class="sb-label">Image</div>
+          <div class="sb-item" onclick="selectTool(this,'generate','Generate','Generate images from text.','comfyui')">
+            <span class="icon">&#127912;</span><span class="name">Generate</span><span class="badge">19</span>
+          </div>
+          <div class="sb-sub" id="gen-skills">
+            <div class="sb-item" onclick="selectTool(this,'flux','Flux Butterfly','Dreamscape generation with LoRAs.','comfyui')"><span class="name">Flux Butterfly</span></div>
+            <div class="sb-item" onclick="selectTool(this,'zturbo','Z-Image Turbo','Fast turbo generation.','comfyui')"><span class="name">Z-Image Turbo</span></div>
+            <div class="sb-item"><span class="name">Flat Vector</span></div>
+            <div class="sb-item"><span class="name">Animij</span></div>
+          </div>
+          <div class="sb-expand" onclick="this.textContent = this.textContent.includes('+') ? 'collapse' : '+ 15 more'">+ 15 more</div>
+          <div class="sb-item"><span class="icon">&#9999;</span><span class="name">Edit</span></div>
+          <div class="sb-item"><span class="icon">&#128316;</span><span class="name">Upscale</span></div>
+          <div class="sb-item"><span class="icon">&#128065;</span><span class="name">Analyze</span><span class="badge">3</span></div>
+        </div>
+        <div class="sb-section">
+          <div class="sb-label">Audio</div>
+          <div class="sb-item"><span class="icon">&#128266;</span><span class="name">Speak</span></div>
+          <div class="sb-item"><span class="icon">&#127908;</span><span class="name">Transcribe</span></div>
+        </div>
+      </div>
+
+      <!-- MANAGE sidebar -->
+      <div class="sidebar-panel" id="sb-manage">
+        <div class="sb-section">
+          <div class="sb-label">Content</div>
+          <div class="sb-item active" onclick="selectManage(this,'skills')">
+            <span class="icon">&#9881;</span><span class="name">Skills</span><span class="badge">20</span>
+          </div>
+          <div class="sb-item" onclick="selectManage(this,'jobs')">
+            <span class="icon">&#128196;</span><span class="name">Jobs</span><span class="badge">51</span>
+          </div>
+          <div class="sb-item" onclick="selectManage(this,'media')">
+            <span class="icon">&#128444;</span><span class="name">Media</span>
+          </div>
+          <div class="sb-item" onclick="selectManage(this,'import')">
+            <span class="icon">&#10133;</span><span class="name">Import skill</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONFIGURE sidebar -->
+      <div class="sidebar-panel" id="sb-configure">
+        <div class="sb-section">
+          <div class="sb-label">Settings</div>
+          <div class="sb-item active" onclick="selectConfig(this,'prefs')">
+            <span class="icon">&#9881;</span><span class="name">Preferences</span>
+          </div>
+          <div class="sb-item" onclick="selectConfig(this,'garden')">
+            <span class="icon">&#127793;</span><span class="name">Garden</span>
+          </div>
+          <div class="sb-item" onclick="selectConfig(this,'providers')">
+            <span class="icon">&#128268;</span><span class="name">Providers</span><span class="badge">7</span>
+          </div>
+          <div class="sb-item" onclick="selectConfig(this,'events')">
+            <span class="icon">&#9889;</span><span class="name">Events</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer"><div class="dot"></div> 7 providers &middot; 22 models</div>
+  </div>
+
+  <!-- ═══ WORKSPACE ═══ -->
+  <div class="workspace">
+    <div class="ws-header">
+      <div class="ws-breadcrumb">
+        <a href="#" onclick="return false">Create</a><span class="sep">/</span>
+        <a href="#" onclick="return false" id="bc-mod">Text</a><span class="sep">/</span>
+      </div>
+      <div class="ws-title" id="ws-title">Chat</div>
+      <div class="ws-tag" id="ws-tag">ollama &middot; auto</div>
+    </div>
+
+    <div class="ws-body">
+      <!-- ═══ CREATE view ═══ -->
+      <div class="center-panel" id="center-create">
+        <div class="create-input">
+          <textarea id="prompt" placeholder="Type your message... (Ctrl+Enter to send)" rows="5"></textarea>
+        </div>
+        <div class="create-actions">
+          <button class="btn btn-primary" onclick="simulateCreate()">Send</button>
+          <span class="hint">Ctrl+Enter</span>
+        </div>
+
+        <details class="settings-section">
+          <summary>Settings</summary>
+          <div class="settings-grid">
+            <div class="field">
+              <label>Model <span class="val">Auto</span></label>
+              <select>
+                <option>Auto (recommended:chat)</option>
+                <option>llama3.1:8b</option>
+                <option>gemma3:12b</option>
+                <option>magistral:24b</option>
+                <option>qwen3.5:9b</option>
+                <option>deepseek-r1:8b</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Temperature <span class="val" id="tv">0.7</span></label>
+              <input type="range" min="0" max="2" step="0.1" value="0.7" oninput="document.getElementById('tv').textContent=this.value">
+            </div>
+            <div class="field">
+              <label>Max tokens <span class="val" id="mv">2048</span></label>
+              <input type="range" min="256" max="8192" step="256" value="2048" oninput="document.getElementById('mv').textContent=this.value">
+            </div>
+            <div class="field">
+              <label>System prompt</label>
+              <textarea rows="2" placeholder="You are a helpful assistant..." style="min-height:auto;font-size:11px;"></textarea>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <!-- ═══ MANAGE center ═══ -->
+      <div class="center-panel manage-view" id="center-manage-skills" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <input type="text" placeholder="Search skills..." style="width:260px;padding:8px 12px;font-size:12px;">
+          <button class="btn btn-ghost" onclick="selectManage(document.querySelector('#sb-manage .sb-item:nth-child(4)'),'import')">+ Import</button>
+        </div>
+        <div class="list-table">
+          <div class="list-row" onclick="showSkillDetail('flux')">
+            <span class="row-icon">&#127912;</span>
+            <span class="row-name">Flux Butterfly Dreamscape</span>
+            <span class="row-detail">image.generate</span>
+            <span class="row-badge ready">ready</span>
+          </div>
+          <div class="list-row" onclick="showSkillDetail('zturbo')">
+            <span class="row-icon">&#127912;</span>
+            <span class="row-name">Z-Image Turbo</span>
+            <span class="row-detail">image.generate</span>
+            <span class="row-badge ready">ready</span>
+          </div>
+          <div class="list-row">
+            <span class="row-icon">&#127912;</span>
+            <span class="row-name">Flat Vector Character</span>
+            <span class="row-detail">image.generate</span>
+            <span class="row-badge ready">ready</span>
+          </div>
+          <div class="list-row">
+            <span class="row-icon">&#127912;</span>
+            <span class="row-name">Animij</span>
+            <span class="row-detail">image.generate</span>
+            <span class="row-badge ready">ready</span>
+          </div>
+          <div class="list-row">
+            <span class="row-icon">&#127912;</span>
+            <span class="row-name">Twinlight</span>
+            <span class="row-detail">image.generate</span>
+            <span class="row-badge draft">provisioning</span>
+          </div>
+          <div class="list-row">
+            <span class="row-icon">&#128065;</span>
+            <span class="row-name">Tag Image</span>
+            <span class="row-detail">image.analyze</span>
+            <span class="row-badge ready">ready</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ MANAGE: Import ═══ -->
+      <div class="center-panel manage-view" id="center-manage-import" style="display:none;">
+        <div style="margin-bottom:20px;">
+          <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Import a skill</div>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px;">Paste a CivitAI URL, a PNG with embedded workflow, or raw workflow JSON.</div>
+          <textarea rows="3" placeholder="https://civitai.com/images/126242620" style="min-height:auto;"></textarea>
+          <div style="margin-top:10px;"><button class="btn btn-primary">Import</button></div>
+        </div>
+      </div>
+
+      <!-- ═══ CONFIGURE: Preferences ═══ -->
+      <div class="center-panel manage-view" id="center-config-prefs" style="display:none;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Global Preferences</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:16px;">Defaults applied to every request unless the caller overrides.</div>
+        <div class="pref-row">
+          <span class="pref-key">image.width</span>
+          <span class="pref-val">1024</span>
+          <span class="pref-default">(default: 512)</span>
+          <button class="btn btn-ghost pref-action" style="padding:3px 8px;font-size:10px;">Reset</button>
+        </div>
+        <div class="pref-row">
+          <span class="pref-key">image.height</span>
+          <span class="pref-val">1024</span>
+          <span class="pref-default">(default: 512)</span>
+          <button class="btn btn-ghost pref-action" style="padding:3px 8px;font-size:10px;">Reset</button>
+        </div>
+        <div class="pref-row">
+          <span class="pref-key">text.sampling.temperature</span>
+          <span class="pref-val">0.7</span>
+          <span class="pref-default">(default: 1.0)</span>
+          <button class="btn btn-ghost pref-action" style="padding:3px 8px;font-size:10px;">Reset</button>
+        </div>
+        <div style="margin-top:16px;"><button class="btn btn-ghost">+ Add preference</button></div>
+      </div>
+
+      <!-- ═══ CONFIGURE: Garden ═══ -->
+      <div class="center-panel manage-view" id="center-config-garden" style="display:none;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:12px;">Garden Stones</div>
+        <div class="stone-card">
+          <div class="sc-header">
+            <span class="sc-name">stone-azure-pool</span>
+            <span class="sc-health wilting">wilting</span>
+          </div>
+          <div class="sc-detail">192.168.1.138 &middot; RTX 4090 24GB</div>
+          <div class="gpu-bar"><div class="gpu-fill" style="width:35%"></div></div>
+          <div style="font-size:10px;color:var(--text-dimmer);margin-top:4px;">GPU: 35% committed</div>
+        </div>
+        <div class="stone-card">
+          <div class="sc-header">
+            <span class="sc-name">stone-indigo-nave</span>
+            <span class="sc-health wilting">wilting</span>
+          </div>
+          <div class="sc-detail">192.168.1.145 &middot; RTX 3080 10GB</div>
+          <div class="gpu-bar"><div class="gpu-fill" style="width:60%"></div></div>
+          <div style="font-size:10px;color:var(--text-dimmer);margin-top:4px;">GPU: 60% committed</div>
+        </div>
+        <div class="stone-card">
+          <div class="sc-header">
+            <span class="sc-name">stone-stained-luminance</span>
+            <span class="sc-health healthy">healthy</span>
+          </div>
+          <div class="sc-detail">192.168.1.112 &middot; RTX 3060 12GB</div>
+          <div class="gpu-bar"><div class="gpu-fill" style="width:10%"></div></div>
+          <div style="font-size:10px;color:var(--text-dimmer);margin-top:4px;">GPU: 10% committed</div>
+        </div>
+      </div>
+
+      <!-- ═══ CONFIGURE: Providers ═══ -->
+      <div class="center-panel manage-view" id="center-config-providers" style="display:none;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:12px;">Providers</div>
+        <div class="provider-row">
+          <div class="pr-status on"></div>
+          <span class="pr-name">ollama</span>
+          <span class="pr-caps">text.chat, text.embed, image.analyze</span>
+        </div>
+        <div class="provider-row">
+          <div class="pr-status on"></div>
+          <span class="pr-name">comfyui</span>
+          <span class="pr-caps">image.generate, edit, upscale, analyze, audio.generate</span>
+        </div>
+        <div class="provider-row">
+          <div class="pr-status on"></div>
+          <span class="pr-name">libretranslate</span>
+          <span class="pr-caps">text.translate</span>
+        </div>
+        <div class="provider-row">
+          <div class="pr-status on"></div>
+          <span class="pr-name">kokoro</span>
+          <span class="pr-caps">audio.generate</span>
+        </div>
+        <div class="provider-row">
+          <div class="pr-status on"></div>
+          <span class="pr-name">whispercpp</span>
+          <span class="pr-caps">audio.transcribe</span>
+        </div>
+        <div class="provider-row">
+          <div class="pr-status on"></div>
+          <span class="pr-name">speaches</span>
+          <span class="pr-caps">audio.transcribe</span>
+        </div>
+        <div class="provider-row">
+          <div class="pr-status on"></div>
+          <span class="pr-name">docling</span>
+          <span class="pr-caps">image.analyze</span>
+        </div>
+      </div>
+
+      <!-- ═══ RIGHT PANEL ═══ -->
+      <div class="right-panel">
+        <div class="rp-header" id="rp-header">Response</div>
+        <div class="rp-body" id="rp-body">
+          <!-- CREATE: result -->
+          <div id="rp-create">
+            <div class="result-placeholder">Send a message to see the response</div>
+          </div>
+          <!-- MANAGE: skill detail -->
+          <div id="rp-manage" style="display:none;">
+            <div class="detail-header">
+              <h3 id="det-name">Flux Butterfly Dreamscape</h3>
+              <div class="sub" id="det-sub">image.generate.flux-butterfly &middot; comfyui</div>
+            </div>
+            <div class="detail-section">
+              <div class="ds-label">Status</div>
+              <div class="detail-kv"><span class="k">State</span><span class="v" style="color:var(--green);">ready</span></div>
+              <div class="detail-kv"><span class="k">Primitive</span><span class="v">image.generate</span></div>
+              <div class="detail-kv"><span class="k">Provider</span><span class="v">comfyui</span></div>
+              <div class="detail-kv"><span class="k">Moniker</span><span class="v">flux-butterfly</span></div>
+            </div>
+            <div class="detail-section">
+              <div class="ds-label">Fields (8)</div>
+              <div class="detail-kv"><span class="k">prompt</span><span class="v">textarea, required</span></div>
+              <div class="detail-kv"><span class="k">negative</span><span class="v">textarea</span></div>
+              <div class="detail-kv"><span class="k">steps</span><span class="v">slider 1-50</span></div>
+              <div class="detail-kv"><span class="k">guidance</span><span class="v">slider 1-30</span></div>
+              <div class="detail-kv"><span class="k">seed</span><span class="v">hidden (auto)</span></div>
+              <div class="detail-kv"><span class="k">width</span><span class="v">select [512-1536]</span></div>
+              <div class="detail-kv"><span class="k">height</span><span class="v">select [512-1536]</span></div>
+              <div class="detail-kv"><span class="k">model</span><span class="v">hidden (fixed)</span></div>
+            </div>
+            <div class="detail-section">
+              <div class="ds-label">Models (4)</div>
+              <div class="detail-kv"><span class="k">flux_dev.safetensors</span><span class="v">checkpoint</span></div>
+              <div class="detail-kv"><span class="k">ff_td_v10.safetensors</span><span class="v">lora</span></div>
+              <div class="detail-kv"><span class="k">nistyle_v10.safetensors</span><span class="v">lora</span></div>
+              <div class="detail-kv"><span class="k">CAICO_v10.safetensors</span><span class="v">lora</span></div>
+            </div>
+            <div class="detail-actions">
+              <button class="btn btn-primary" onclick="switchSurface('create');selectTool(null,'flux','Flux Butterfly','Dreamscape generation.','comfyui')">Try it</button>
+              <button class="btn btn-ghost" style="color:var(--red);">Delete</button>
+            </div>
+          </div>
+          <!-- CONFIGURE: detail -->
+          <div id="rp-config" style="display:none;">
+            <div class="detail-header">
+              <h3>Preference detail</h3>
+              <div class="sub">Select a preference to see its details</div>
+            </div>
+            <div class="detail-section">
+              <div class="ds-label">Layering</div>
+              <div class="detail-kv"><span class="k">Caller payload</span><span class="v">wins always</span></div>
+              <div class="detail-kv"><span class="k">Preference</span><span class="v">fills if absent</span></div>
+              <div class="detail-kv"><span class="k">Field default</span><span class="v">fallback</span></div>
+              <div class="detail-kv"><span class="k">recommended:*</span><span class="v">selectors only</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="rp-footer" id="rp-footer">
+          <span>Ready</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ═══ SURFACE SWITCHING ═══
+  function switchSurface(surface) {
+    // Tabs
+    document.querySelectorAll('.surface-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.surface-tab:nth-child(${surface==='create'?1:surface==='manage'?2:3})`).classList.add('active');
+
+    // Sidebar panels
+    document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('sb-' + surface).classList.add('active');
+
+    // Center panels
+    document.getElementById('center-create').style.display = surface === 'create' ? 'block' : 'none';
+    document.querySelectorAll('.manage-view').forEach(v => v.style.display = 'none');
+
+    // Right panel
+    document.getElementById('rp-create').style.display = surface === 'create' ? 'block' : 'none';
+    document.getElementById('rp-manage').style.display = surface === 'manage' ? 'block' : 'none';
+    document.getElementById('rp-config').style.display = surface === 'configure' ? 'block' : 'none';
+
+    if (surface === 'manage') {
+      document.getElementById('center-manage-skills').style.display = 'block';
+      document.getElementById('rp-header').textContent = 'Detail';
+      document.getElementById('ws-title').textContent = 'Skills';
+      document.getElementById('ws-tag').textContent = '20 skills';
+      document.getElementById('bc-mod').textContent = 'Manage';
+    } else if (surface === 'configure') {
+      document.getElementById('center-config-prefs').style.display = 'block';
+      document.getElementById('rp-header').textContent = 'Detail';
+      document.getElementById('ws-title').textContent = 'Preferences';
+      document.getElementById('ws-tag').textContent = '3 set';
+      document.getElementById('bc-mod').textContent = 'Configure';
+    } else {
+      document.getElementById('rp-header').textContent = 'Response';
+    }
+  }
+
+  // ═══ CREATE: tool selection ═══
+  function selectTool(el, id, title, desc, provider) {
+    document.querySelectorAll('#sb-create .sb-item').forEach(i => i.classList.remove('active'));
+    if (el) el.classList.add('active');
+
+    document.getElementById('ws-title').textContent = title;
+    document.getElementById('ws-tag').textContent = provider + ' \u00b7 auto';
+
+    const mods = { chat:'Text', translate:'Text', embed:'Text', generate:'Image', flux:'Image', zturbo:'Image' };
+    document.getElementById('bc-mod').textContent = mods[id] || 'Text';
+
+    const phs = { chat:'Type your message...', translate:'Text to translate...', generate:'Describe the image...', flux:'Describe your Flux Butterfly image...', zturbo:'Describe your image (turbo)...' };
+    document.getElementById('prompt').placeholder = phs[id] || 'Type here...';
+
+    document.getElementById('rp-create').innerHTML = '<div class="result-placeholder">Send a message to see the response</div>';
+    document.getElementById('center-create').style.display = 'block';
+    document.querySelectorAll('.manage-view').forEach(v => v.style.display = 'none');
+    document.getElementById('rp-create').style.display = 'block';
+    document.getElementById('rp-manage').style.display = 'none';
+    document.getElementById('rp-config').style.display = 'none';
+    document.getElementById('rp-header').textContent = 'Response';
+    document.getElementById('prompt').focus();
+  }
+
+  function simulateCreate() {
+    const r = document.getElementById('rp-create');
+    r.innerHTML = '<div class="result-text" style="opacity:0.4">Thinking...</div>';
+    document.getElementById('rp-footer').innerHTML = '<span style="color:var(--accent)">Processing...</span>';
+    setTimeout(() => {
+      r.innerHTML = '<div class="result-text">Paris is the capital of France. It is the most populous city in France, with a metropolitan area population of over 12 million. Paris is known as the "City of Light" and is famous for its iconic landmarks, world-class museums, and vibrant cultural scene.</div><div class="result-meta"><span>ollama</span><span>magistral:24b</span><span>21.3s</span><span>150 tokens</span></div>';
+      document.getElementById('rp-footer').innerHTML = '<span>ollama &middot; magistral:24b &middot; 21.3s</span>';
+    }, 1400);
+  }
+
+  // ═══ MANAGE: section selection ═══
+  function selectManage(el, section) {
+    document.querySelectorAll('#sb-manage .sb-item').forEach(i => i.classList.remove('active'));
+    if (el) el.classList.add('active');
+
+    document.querySelectorAll('.manage-view').forEach(v => v.style.display = 'none');
+    const panel = document.getElementById('center-manage-' + section);
+    if (panel) panel.style.display = 'block';
+
+    const titles = { skills:'Skills', jobs:'Jobs', media:'Media', import:'Import Skill' };
+    document.getElementById('ws-title').textContent = titles[section] || section;
+    document.getElementById('ws-tag').textContent = section === 'skills' ? '20 skills' : '';
+    document.getElementById('bc-mod').textContent = 'Manage';
+  }
+
+  function showSkillDetail(id) {
+    document.getElementById('rp-manage').style.display = 'block';
+    document.getElementById('rp-create').style.display = 'none';
+    document.getElementById('rp-config').style.display = 'none';
+    const names = { flux: 'Flux Butterfly Dreamscape', zturbo: 'Z-Image Turbo' };
+    document.getElementById('det-name').textContent = names[id] || id;
+  }
+
+  // ═══ CONFIGURE: section selection ═══
+  function selectConfig(el, section) {
+    document.querySelectorAll('#sb-configure .sb-item').forEach(i => i.classList.remove('active'));
+    if (el) el.classList.add('active');
+
+    document.querySelectorAll('.manage-view').forEach(v => v.style.display = 'none');
+    const panel = document.getElementById('center-config-' + section);
+    if (panel) panel.style.display = 'block';
+
+    const titles = { prefs:'Preferences', garden:'Garden', providers:'Providers', events:'Events' };
+    document.getElementById('ws-title').textContent = titles[section] || section;
+    document.getElementById('bc-mod').textContent = 'Configure';
+    document.getElementById('ws-tag').textContent = '';
+
+    document.getElementById('rp-config').style.display = 'block';
+    document.getElementById('rp-create').style.display = 'none';
+    document.getElementById('rp-manage').style.display = 'none';
+  }
+
+  // ═══ Keyboard ═══
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); simulateCreate(); }
+  });
+</script>
+</body>
+</html>

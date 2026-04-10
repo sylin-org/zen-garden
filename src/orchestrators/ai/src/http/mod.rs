@@ -22,3 +22,4 @@ pub mod resources;
 pub mod router;
 pub mod sitemap;
 pub mod skills;
+pub mod static_files;

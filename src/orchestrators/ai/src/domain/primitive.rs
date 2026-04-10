@@ -45,11 +45,38 @@ pub enum Modality {
 }
 
 impl Modality {
+    /// All known modalities in display order.
+    pub const ALL: &'static [Modality] = &[
+        Modality::Text,
+        Modality::Image,
+        Modality::Audio,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Modality::Text => "text",
             Modality::Image => "image",
             Modality::Audio => "audio",
+        }
+    }
+
+    /// Human-readable display label for the modality.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Modality::Text => "Text",
+            Modality::Image => "Image",
+            Modality::Audio => "Audio",
+        }
+    }
+
+    /// Unicode icon for the modality. Used by the catalog so the
+    /// dashboard can render visual grouping without client-side
+    /// icon maps (ORCH-0031 mandate).
+    pub const fn icon(self) -> &'static str {
+        match self {
+            Modality::Text => "\u{1F4AC}",   // 💬
+            Modality::Image => "\u{1F5BC}\u{FE0F}", // 🖼️
+            Modality::Audio => "\u{1F50A}",  // 🔊
         }
     }
 }

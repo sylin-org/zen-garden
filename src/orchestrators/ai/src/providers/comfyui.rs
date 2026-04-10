@@ -1220,12 +1220,162 @@ fn compute_capabilities(skills: &HashMap<Moniker, LoadedSkill>) -> Vec<AnnCapabi
             AnnCapability {
                 primitive,
                 media_inputs,
-                parameters: vec![],
+                parameters: comfyui_base_parameters_for(primitive),
             }
         })
         .collect();
     capabilities.sort_by(|a, b| a.primitive.dotted().cmp(b.primitive.dotted()));
     capabilities
+}
+
+/// Base form-schema parameters for ComfyUI primitives.
+///
+/// These are the common fields the catalog renders when the user
+/// selects a bare primitive (e.g. `GET /v1/catalog/image/generate`)
+/// without choosing a specific skill. Derived from the universal
+/// fields present across all skills for each primitive — see the
+/// live API analysis confirming these fields appear on 100% of
+/// image.generate skills.
+///
+/// Skills override these with skill-specific defaults and narrowing;
+/// the base parameters serve as a sensible starting point for bare-
+/// primitive dispatch and for the dashboard's skill picker view.
+fn comfyui_base_parameters_for(p: Primitive) -> Vec<SkillParameter> {
+    use crate::domain::capability_announcement::{
+        AutoDescriptor, ParameterType, ParameterWidget, SkillParameter,
+    };
+
+    match p {
+        Primitive::ImageGenerate => vec![
+            SkillParameter {
+                field: "image.prompt.positive".into(),
+                required: true,
+                label: Some("Prompt".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("Describe the image you want to create...".into()),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.prompt.negative".into(),
+                required: false,
+                label: Some("Negative Prompt".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("What to avoid...".into()),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.dimensions.width".into(),
+                required: false,
+                label: Some("Width".into()),
+                field_type: Some(ParameterType::Integer),
+                widget: Some(ParameterWidget::Select),
+                default: Some(serde_json::json!(1024)),
+                options: Some(vec![
+                    serde_json::json!(512),
+                    serde_json::json!(768),
+                    serde_json::json!(1024),
+                    serde_json::json!(1280),
+                    serde_json::json!(1536),
+                    serde_json::json!(2048),
+                ]),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.dimensions.height".into(),
+                required: false,
+                label: Some("Height".into()),
+                field_type: Some(ParameterType::Integer),
+                widget: Some(ParameterWidget::Select),
+                default: Some(serde_json::json!(1024)),
+                options: Some(vec![
+                    serde_json::json!(512),
+                    serde_json::json!(768),
+                    serde_json::json!(1024),
+                    serde_json::json!(1280),
+                    serde_json::json!(1536),
+                    serde_json::json!(2048),
+                ]),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.sampling.steps".into(),
+                required: false,
+                label: Some("Steps".into()),
+                field_type: Some(ParameterType::Number),
+                widget: Some(ParameterWidget::Slider),
+                default: Some(serde_json::json!(20)),
+                min: Some(1.0),
+                max: Some(50.0),
+                step: Some(1.0),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.sampling.guidance".into(),
+                required: false,
+                label: Some("CFG Scale".into()),
+                field_type: Some(ParameterType::Number),
+                widget: Some(ParameterWidget::Slider),
+                default: Some(serde_json::json!(7.0)),
+                min: Some(1.0),
+                max: Some(30.0),
+                step: Some(0.5),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.sampling.seed".into(),
+                required: false,
+                label: Some("Seed".into()),
+                widget: Some(ParameterWidget::Hidden),
+                ..Default::default()
+            },
+        ],
+
+        Primitive::ImageEdit => vec![
+            SkillParameter {
+                field: "image.prompt.positive".into(),
+                required: true,
+                label: Some("Prompt".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("Describe the edit...".into()),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.prompt.negative".into(),
+                required: false,
+                label: Some("Negative Prompt".into()),
+                field_type: Some(ParameterType::String),
+                widget: Some(ParameterWidget::Textarea),
+                placeholder: Some("What to avoid...".into()),
+                ..Default::default()
+            },
+            SkillParameter {
+                field: "image.sampling.steps".into(),
+                required: false,
+                label: Some("Steps".into()),
+                field_type: Some(ParameterType::Number),
+                widget: Some(ParameterWidget::Slider),
+                default: Some(serde_json::json!(20)),
+                min: Some(1.0),
+                max: Some(50.0),
+                step: Some(1.0),
+                ..Default::default()
+            },
+        ],
+
+        Primitive::ImageUpscale => vec![
+            // Upscale has minimal base parameters — source image
+            // is a media_input (handled separately), and the model/
+            // variant selectors come from the skill.
+        ],
+
+        // Other ComfyUI primitives (image.analyze via ComfyUI skills,
+        // audio.generate via TTS skills) get their parameters from
+        // skills only. The base capability is skill-driven.
+        _ => vec![],
+    }
 }
 
 /// Check whether every required model for a skill is present in

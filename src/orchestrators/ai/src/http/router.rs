@@ -7,7 +7,7 @@ use crate::app_state::AppState;
 
 use super::{
     actions_index, catalog, events, flush, health, ingress, introspect, jobs, media, metrics,
-    preferences, resources, sitemap, skills,
+    preferences, resources, sitemap, skills, static_files,
 };
 
 /// Build the full `/v1/*` router plus `/health`.
@@ -90,5 +90,8 @@ pub fn build(state: AppState) -> Router {
             "/v1/preferences/{key}",
             delete(preferences::delete_preference),
         )
+        // Dashboard SPA — serves embedded static files with SPA
+        // fallback. Must be last so API routes take priority.
+        .fallback(static_files::serve)
         .with_state(state)
 }

@@ -240,7 +240,27 @@ fn render_catalog(
         })
         .collect();
 
+    // Modalities section — keyed list of active modalities with
+    // display metadata (ORCH-0031: backend-owned icons).
+    let active_modalities: std::collections::HashSet<&str> = primitives
+        .iter()
+        .filter_map(|p| p.get("modality").and_then(|v| v.as_str()))
+        .collect();
+
+    let modalities: Vec<Value> = crate::domain::primitive::Modality::ALL
+        .iter()
+        .filter(|m| active_modalities.contains(m.as_str()))
+        .map(|m| {
+            json!({
+                "id": m.as_str(),
+                "label": m.label(),
+                "icon": m.icon(),
+            })
+        })
+        .collect();
+
     json!({
+        "modalities": modalities,
         "primitives": primitives,
         "skills": skills,
         "providers": providers,

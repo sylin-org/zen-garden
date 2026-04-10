@@ -402,12 +402,15 @@ async fn collect_first_examples(
 /// Compose vocabulary base fields + provider overlay into a payload
 /// template and a fields map.
 ///
-/// Layer 1 (vocabulary): required + optional fields from the
-/// primitive's vocabulary. These are the agreed-upon contract.
+/// When the provider declares overlay parameters, ONLY those fields
+/// appear in the form — the provider controls what's visible. The
+/// vocabulary enriches overlay fields with type information and
+/// validation constraints, but vocabulary-only fields don't leak
+/// into the UI.
 ///
-/// Layer 2 (overlay): provider-specific parameters. If an overlay
-/// field has the same path as a vocabulary field, the overlay wins
-/// (it narrows the field with widget hints, constraints, etc.).
+/// When the provider declares NO parameters (overlay is empty),
+/// vocabulary fields are used as the fallback — this is the
+/// bare-primitive case where no provider has claimed form ownership.
 fn compose_payload_and_fields(
     vocabulary: &Vocabulary,
     overlay: &[SkillParameter],
@@ -417,47 +420,44 @@ fn compose_payload_and_fields(
     let mut payload = Map::new();
     let mut fields = BTreeMap::new();
 
-    // Set of overlay paths — used to detect vocabulary fields that
-    // the overlay overrides.
-    let overlay_paths: std::collections::HashSet<&str> =
-        overlay.iter().map(|p| p.field.as_str()).collect();
+    let has_overlay = !overlay.is_empty();
 
-    // Layer 1: vocabulary base fields (only those NOT overridden by overlay)
-    for spec in vocabulary
-        .input
-        .required
-        .iter()
-        .chain(vocabulary.input.optional.iter())
-    {
-        let path = spec.path.as_str();
-        if overlay_paths.contains(path) {
-            continue; // overlay will handle this field
+    // Layer 1: vocabulary base fields.
+    // Only shown when the provider has NO overlay (bare primitive
+    // fallback). When the provider declares parameters, it controls
+    // the form surface — vocabulary fields that the overlay doesn't
+    // mention are NOT rendered (ORCH-0037).
+    if !has_overlay {
+        for spec in vocabulary
+            .input
+            .required
+            .iter()
+            .chain(vocabulary.input.optional.iter())
+        {
+            let path = spec.path.as_str();
+            let is_required = vocabulary.input.required.iter().any(|r| r.path == spec.path);
+
+            let (type_str, min, max) = field_type_to_strings(&spec.field_type);
+            let descriptor = FieldDescriptor {
+                label: derive_label(path),
+                field_type: type_str.to_string(),
+                widget: infer_widget_from_type(&spec.field_type, min.is_some()),
+                required: is_required,
+                placeholder: None,
+                min,
+                max,
+                step: None,
+                options: None,
+                auto: None,
+                description: Some(spec.description.to_string()),
+                source: Some("vocabulary".to_string()),
+            };
+            fields.insert(path.to_string(), descriptor);
+
+            let pref_value = preferences.get(path).cloned();
+            let default = pref_value.or_else(|| default_for_field_type(&spec.field_type));
+            set_nested_value(&mut payload, path, default, is_required);
         }
-
-        let is_required = vocabulary.input.required.iter().any(|r| r.path == spec.path);
-
-        // Build field descriptor from vocabulary
-        let (type_str, min, max) = field_type_to_strings(&spec.field_type);
-        let descriptor = FieldDescriptor {
-            label: derive_label(path),
-            field_type: type_str.to_string(),
-            widget: infer_widget_from_type(&spec.field_type, min.is_some()),
-            required: is_required,
-            placeholder: None,
-            min,
-            max,
-            step: None,
-            options: None,
-            auto: None,
-            description: Some(spec.description.to_string()),
-            source: Some("vocabulary".to_string()),
-        };
-        fields.insert(path.to_string(), descriptor);
-
-        // Set in payload
-        let pref_value = preferences.get(path).cloned();
-        let default = pref_value.or_else(|| default_for_field_type(&spec.field_type));
-        set_nested_value(&mut payload, path, default, is_required);
     }
 
     // Layer 2: provider overlay fields

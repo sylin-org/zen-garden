@@ -261,23 +261,24 @@ export default function WorkspaceForm({
               Cancel
             </button>
           )}
-          {/* Provider selector — shown when multiple providers serve this primitive */}
+          {/* Provider indicator */}
           {onProviderChange && spec.routing.providers.length > 1 ? (
             <select
               className="text-[10px] bg-surface-2 border border-border rounded px-2 py-1 text-text-dim outline-none focus:border-accent"
-              value={spec.routing.will_run_on ?? ""}
+              value={spec.routing.will_run_on ?? "__auto__"}
               onChange={(e) => {
                 const val = e.target.value;
-                onProviderChange(val || undefined);
+                onProviderChange(val === "__auto__" ? undefined : val);
               }}
             >
+              <option value="__auto__">Auto (recommended)</option>
               {spec.routing.providers.map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
           ) : (
             <span className="text-[10px] text-text-dimmer">
-              {spec.routing.will_run_on ?? spec.routing.providers.join(", ")}
+              {spec.routing.will_run_on ?? spec.routing.providers[0] ?? ""}
             </span>
           )}
           <CopyAsCurl url={spec.invocation.url} values={payload} />

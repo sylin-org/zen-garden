@@ -37,7 +37,7 @@ No manual configuration is needed. The orchestrator fills in providers as the ga
 | GET | `/health` | Health check |
 | GET | `/v1/` | Sitemap — lists all endpoint families |
 | GET | `/v1/catalog` | Navigation summary — what can I call? |
-| GET | `/v1/catalog/{path}` | Full form schema for one registration |
+| GET | `/v1/catalog/{modality}/{leaf}[/{skill}]` | Full form schema for one registration |
 | POST | `/v1/do` | Universal dispatch — single action or flow |
 | POST | `/v1/{modality}/{leaf}` | Sugar — single action by primitive |
 | POST | `/v1/{modality}/{leaf}/{skill}` | Sugar — invoke a named skill |
@@ -123,8 +123,14 @@ Supports `ETag` / `If-None-Match` for conditional requests.
 ### Full schema (Try It form)
 
 ```bash
-curl http://localhost:7190/v1/catalog/text.chat
+# Base primitive
+curl http://localhost:7190/v1/catalog/text/chat
+
+# Skill
+curl http://localhost:7190/v1/catalog/image/generate/flux-butterfly
 ```
+
+The URL grammar mirrors dispatch: `/v1/catalog/{modality}/{leaf}[/{skill}]`. A client that knows how to call `POST /v1/image/generate/flux-butterfly` already knows the catalog URL — change POST to GET and prefix with `/catalog`.
 
 Returns the complete field list with types, widgets, constraints, and defaults for one registration. This is everything a client needs to render a form.
 
@@ -533,7 +539,7 @@ The selector's first step is to compute the **loadable model set**: the union of
 
 ### Live model options in the catalog
 
-The capability announcement carries the sorted list of loadable model names as `options` on the `selectors.model` field descriptor. When a dashboard renders `GET /v1/catalog/text.chat`, the model selector dropdown shows exactly the models currently available in the garden — not a static list. When models are pulled or evicted, the adapter republishes and the catalog updates.
+The capability announcement carries the sorted list of loadable model names as `options` on the `selectors.model` field descriptor. When a dashboard renders `GET /v1/catalog/text/chat`, the model selector dropdown shows exactly the models currently available in the garden — not a static list. When models are pulled or evicted, the adapter republishes and the catalog updates.
 
 ---
 

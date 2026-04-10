@@ -51,121 +51,146 @@ pub async fn get_catalog(
     response
 }
 
-/// `GET /v1/catalog/{path}` — full schema for one registration.
+/// `GET /v1/catalog/{modality}/{leaf}` — full schema for a base primitive.
 ///
-/// The `{path}` is a dotted registration path like `text.chat` or
-/// `image.generate.sample-tron`. Returns the full field list with
-/// widget hints, constraints, and media specs — everything needed to
+/// Mirrors the dispatch URL grammar: `/v1/catalog/text/chat` returns the
+/// form schema for `text.chat`. Returns the full field list with widget
+/// hints, constraints, defaults, and media specs — everything needed to
 /// render a Try It form.
-pub async fn get_catalog_detail(
+pub async fn get_catalog_primitive(
     State(state): State<AppState>,
-    Path(path): Path<String>,
+    Path((modality, leaf)): Path<(String, String)>,
 ) -> Response {
     let directory = &state.capability_directory;
+    let dotted = format!("{modality}.{leaf}");
 
-    // Try as a base primitive first (e.g., "text.chat" → Primitive::TextChat)
-    if let Ok(primitive) = path.parse::<Primitive>() {
-        let providers = directory.providers_for_primitive(primitive).await;
-        if providers.is_empty() {
+    let primitive = match dotted.parse::<Primitive>() {
+        Ok(p) => p,
+        Err(_) => {
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({
                     "error": "registration_not_found",
-                    "message": format!("No provider registered for '{path}'"),
-                    "path": path,
+                    "message": format!("Unknown primitive '{dotted}'"),
+                    "path": dotted,
                 })),
             )
                 .into_response();
         }
+    };
 
-        // Find the first enabled provider's capability for this primitive
-        // to extract the full parameter schema.
-        let mut detail = json!({
-            "path": path,
-            "kind": "primitive",
-            "primitive": primitive,
-            "display_name": primitive.summary(),
-            "providers": providers,
-        });
-
-        // Attach field schema from the first provider that declares parameters.
-        for provider in &providers {
-            if let Some(cap) = directory.capability(provider, primitive).await {
-                if !cap.parameters.is_empty() {
-                    detail["fields"] = serde_json::to_value(&cap.parameters)
-                        .unwrap_or_default();
-                }
-                if !cap.media_inputs.is_empty() {
-                    detail["media_inputs"] = serde_json::to_value(&cap.media_inputs)
-                        .unwrap_or_default();
-                }
-                break;
-            }
-        }
-
-        return Json(detail).into_response();
+    let providers = directory.providers_for_primitive(primitive).await;
+    if providers.is_empty() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "registration_not_found",
+                "message": format!("No provider registered for '{dotted}'"),
+                "path": dotted,
+            })),
+        )
+            .into_response();
     }
 
-    // Try as a skill registration (e.g., "image.generate.sample-tron")
-    // Parse: everything up to the last dot is the primitive, the rest is the skill id.
-    if let Some(dot_pos) = path.rfind('.') {
-        let primitive_str = &path[..dot_pos];
-        let skill_id = &path[dot_pos + 1..];
+    let mut detail = json!({
+        "path": dotted,
+        "kind": "primitive",
+        "primitive": primitive,
+        "display_name": primitive.summary(),
+        "providers": providers,
+    });
 
-        if let Ok(primitive) = primitive_str.parse::<Primitive>() {
-            let providers = directory
-                .providers_for_skill(primitive, skill_id)
-                .await;
-
-            if !providers.is_empty() {
-                let provider = &providers[0];
-                let skill = directory.skill(provider, skill_id).await;
-
-                let mut detail = json!({
-                    "path": path,
-                    "kind": "skill",
-                    "primitive": primitive,
-                    "skill_id": skill_id,
-                    "providers": providers,
-                });
-
-                if let Some(s) = &skill {
-                    detail["display_name"] = json!(s.display.name);
-                    if let Some(desc) = &s.display.description {
-                        detail["description"] = json!(desc);
-                    }
-                    if !s.display.tags.is_empty() {
-                        detail["tags"] = json!(s.display.tags);
-                    }
-                    if let Some(img) = &s.display.preview_image {
-                        detail["preview_image"] = json!(img);
-                    }
-                    detail["fields"] = serde_json::to_value(&s.parameters)
-                        .unwrap_or_default();
-                }
-
-                // Also attach media inputs from the parent capability.
-                if let Some(cap) = directory.capability(provider, primitive).await {
-                    if !cap.media_inputs.is_empty() {
-                        detail["media_inputs"] = serde_json::to_value(&cap.media_inputs)
-                            .unwrap_or_default();
-                    }
-                }
-
-                return Json(detail).into_response();
+    for provider in &providers {
+        if let Some(cap) = directory.capability(provider, primitive).await {
+            if !cap.parameters.is_empty() {
+                detail["fields"] = serde_json::to_value(&cap.parameters)
+                    .unwrap_or_default();
             }
+            if !cap.media_inputs.is_empty() {
+                detail["media_inputs"] = serde_json::to_value(&cap.media_inputs)
+                    .unwrap_or_default();
+            }
+            break;
         }
     }
 
-    // Nothing matched.
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({
-            "error": "registration_not_found",
-            "message": format!("No registration found for path '{path}'"),
-            "path": path,
-        })),
-    )
-        .into_response()
+    Json(detail).into_response()
+}
+
+/// `GET /v1/catalog/{modality}/{leaf}/{skill}` — full schema for a skill.
+///
+/// Mirrors the dispatch URL grammar: `/v1/catalog/image/generate/flux-butterfly`
+/// returns the form schema for skill `flux-butterfly` under `image.generate`.
+pub async fn get_catalog_skill(
+    State(state): State<AppState>,
+    Path((modality, leaf, skill_id)): Path<(String, String, String)>,
+) -> Response {
+    let directory = &state.capability_directory;
+    let primitive_dotted = format!("{modality}.{leaf}");
+    let fqn = format!("{primitive_dotted}.{skill_id}");
+
+    let primitive = match primitive_dotted.parse::<Primitive>() {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": "registration_not_found",
+                    "message": format!("Unknown primitive '{primitive_dotted}'"),
+                    "path": fqn,
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let providers = directory.providers_for_skill(primitive, &skill_id).await;
+    if providers.is_empty() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "registration_not_found",
+                "message": format!("No provider registered for '{fqn}'"),
+                "path": fqn,
+            })),
+        )
+            .into_response();
+    }
+
+    let provider = &providers[0];
+    let skill = directory.skill(provider, &skill_id).await;
+
+    let mut detail = json!({
+        "path": fqn,
+        "kind": "skill",
+        "primitive": primitive,
+        "skill_id": skill_id,
+        "providers": providers,
+    });
+
+    if let Some(s) = &skill {
+        detail["display_name"] = json!(s.display.name);
+        if let Some(desc) = &s.display.description {
+            detail["description"] = json!(desc);
+        }
+        if !s.display.tags.is_empty() {
+            detail["tags"] = json!(s.display.tags);
+        }
+        if let Some(img) = &s.display.preview_image {
+            detail["preview_image"] = json!(img);
+        }
+        detail["fields"] = serde_json::to_value(&s.parameters)
+            .unwrap_or_default();
+    }
+
+    // Attach media inputs from the parent capability.
+    if let Some(cap) = directory.capability(provider, primitive).await {
+        if !cap.media_inputs.is_empty() {
+            detail["media_inputs"] = serde_json::to_value(&cap.media_inputs)
+                .unwrap_or_default();
+        }
+    }
+
+    Json(detail).into_response()
 }
 

@@ -30,10 +30,13 @@ pub fn build(state: AppState) -> Router {
             post(ingress::post_skill).get(introspect::get_skill),
         )
         // Catalog: two-view (ORCH-0030 R2 §R2.2.3)
-        //   /v1/catalog         → navigation summary
-        //   /v1/catalog/{path}  → full schema for one registration
+        //   /v1/catalog                           → navigation summary
+        //   /v1/catalog/{modality}/{leaf}          → full schema for a primitive
+        //   /v1/catalog/{modality}/{leaf}/{skill}  → full schema for a skill
+        // URL grammar mirrors dispatch: /v1/catalog/image/generate/flux-butterfly
         .route("/v1/catalog", get(catalog::get_catalog))
-        .route("/v1/catalog/{path}", get(catalog::get_catalog_detail))
+        .route("/v1/catalog/{modality}/{leaf}", get(catalog::get_catalog_primitive))
+        .route("/v1/catalog/{modality}/{leaf}/{skill}", get(catalog::get_catalog_skill))
         // Events: unified bus (ORCH-0030 §1).
         // `/v1/catalog/events` is retired — clients migrate to
         // `/v1/events?focus=catalog.*,directory.*`.

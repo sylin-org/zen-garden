@@ -59,6 +59,11 @@ export default function WorkspaceForm({
   const [files, setFiles] = useState<Record<string, File>>({});
   const [userTouched, setUserTouched] = useState(!!sourceRequest);
   const [activeRequestId, setActiveRequestId] = useState<string | undefined>(undefined);
+  // For dialogue: the request ID that serves as lineage parent for
+  // the next turn. Updated after each successful dispatch.
+  const [lineageParent, setLineageParent] = useState<string | undefined>(
+    sourceRequest?.id,
+  );
   const [settingsOpen, setSettingsOpen] = useState(() => {
     try {
       return localStorage.getItem(`settings-open:${spec.primitive}`) === "true";
@@ -69,32 +74,9 @@ export default function WorkspaceForm({
   const isSending = activeReq?.status === "sending" || activeReq?.status === "streaming";
   const threadRef = useRef<HTMLDivElement>(null);
 
-  // Persist dialogue history
-  useEffect(() => {
-    if (dialogueKey) {
-      try {
-        const history = getNestedValue(payload, dialogueKey);
-        if (Array.isArray(history) && history.length > 0) {
-          localStorage.setItem(`dialogue:${spec.primitive}`, JSON.stringify(history));
-        }
-      } catch { /* ignore */ }
-    }
-  }, [dialogueKey, payload, spec.primitive]);
-
-  // Load dialogue history from localStorage on fresh mount
-  useEffect(() => {
-    if (dialogueKey && !sourceRequest) {
-      try {
-        const saved = localStorage.getItem(`dialogue:${spec.primitive}`);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setPayload((prev) => setNestedValue(prev, dialogueKey, parsed));
-          }
-        }
-      } catch { /* ignore */ }
-    }
-  }, [dialogueKey, spec.primitive, sourceRequest]);
+  // Dialogue history comes from the source request's stored input
+  // (via ?r= param), not from localStorage. A fresh chat (no ?r=)
+  // starts with an empty history from the payload template.
 
   // Scroll dialogue
   useEffect(() => {
@@ -146,9 +128,9 @@ export default function WorkspaceForm({
       setNestedInObject(payloadToSend, fieldPath, { media_id: result.media_id });
     }
 
-    // Inject lineage if this is a fork
-    if (sourceRequest) {
-      (payloadToSend as Record<string, unknown>).lineage = { parent: sourceRequest.id };
+    // Inject lineage parent if we have one (fork or continuation)
+    if (lineageParent) {
+      (payloadToSend as Record<string, unknown>).lineage = { parent: lineageParent };
     }
 
     // Clear dialogue input immediately
@@ -165,10 +147,18 @@ export default function WorkspaceForm({
         : spec.primitive,
       userMessage: isDialogue ? userMessage : undefined,
       dialogueField: dialogueKey,
-      onResult,
+      onResult: (result) => {
+        onResult(result);
+        // After successful dispatch: this request becomes the
+        // lineage parent for the next turn. The compiled history
+        // is already in the payload — no reconstruction needed.
+        setLineageParent(reqId);
+      },
       onError,
       onTurnComplete: dialogueKey
         ? (turn) => {
+            // Append the completed turn to the dialogue history
+            // in the payload. The next dispatch will carry it.
             setPayload((prev) => {
               const history = (getNestedValue(prev, dialogueKey) as Turn[]) ?? [];
               return setNestedValue(prev, dialogueKey, [...history, turn]);
@@ -178,7 +168,7 @@ export default function WorkspaceForm({
     });
 
     setActiveRequestId(reqId);
-  }, [isSending, payload, files, spec, isDialogue, dialogueKey, sourceRequest, manager, onResult, onError]);
+  }, [isSending, payload, files, spec, isDialogue, dialogueKey, lineageParent, manager, onResult, onError]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -193,7 +183,7 @@ export default function WorkspaceForm({
   const clearDialogue = useCallback(() => {
     if (dialogueKey) {
       setPayload((prev) => setNestedValue(prev, dialogueKey, []));
-      try { localStorage.removeItem(`dialogue:${spec.primitive}`); } catch { /* */ }
+      setLineageParent(undefined); // Fresh conversation
     }
   }, [dialogueKey, spec.primitive]);
 

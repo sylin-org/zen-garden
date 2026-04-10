@@ -358,19 +358,21 @@ export default function WorkspaceForm({
 
 function DialogueTurn({ user, assistant, streaming }: { user: string; assistant: string; streaming?: boolean }) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex justify-end">
-        <div className="max-w-[85%] px-3 py-2 rounded-lg bg-accent/15 text-[13px] leading-relaxed">
-          <Markdown content={user} />
-        </div>
+    <div className={[
+      "rounded-lg border border-border bg-surface p-3",
+      streaming ? "border-accent/30" : "",
+    ].join(" ")}>
+      {/* Assistant response (primary content) */}
+      <div className={[
+        "text-[13px] leading-relaxed",
+        streaming ? "animate-pulse" : "",
+      ].join(" ")}>
+        <Markdown content={assistant} />
       </div>
-      <div className="flex justify-start">
-        <div className={[
-          "max-w-[85%] px-3 py-2 rounded-lg bg-surface-2 text-[13px] leading-relaxed",
-          streaming ? "animate-pulse" : "",
-        ].join(" ")}>
-          <Markdown content={assistant} />
-        </div>
+      {/* User question (context, shown below as dim label) */}
+      <div className="mt-2 pt-2 border-t border-border/50 text-[11px] text-text-dim">
+        <span className="text-text-dimmer mr-1">You:</span>
+        {user}
       </div>
     </div>
   );

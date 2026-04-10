@@ -145,6 +145,13 @@ impl Dispatcher {
             span: raw.span.clone(),
         };
 
+        // Capture the raw payload before contextualization (ORCH-0033).
+        // The contextualizer normalizes aliases (e.g. text.body →
+        // text.prompt.user) which mutates request.payload. We store the
+        // original so the dashboard can repopulate by simple key matching
+        // against the catalog field descriptors.
+        let raw_input_snapshot = raw.payload.clone();
+
         let request = OrchestratorRequest {
             id: raw.id,
             correlation_id: raw.correlation_id,
@@ -283,7 +290,7 @@ impl Dispatcher {
             request.id.clone(),
             request.correlation_id.as_ref().to_string(),
             request.action.dotted().to_string(),
-            request.payload.clone(),
+            raw_input_snapshot,
             selectors_snapshot,
             media_inputs,
             request

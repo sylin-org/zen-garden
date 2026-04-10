@@ -259,6 +259,47 @@ export interface IntrospectionResponse {
   example?: { url: string; body: unknown };
 }
 
+// ── Requests (ORCH-0033) ─────────────────────────────────────
+
+export type RequestStatus = "running" | "success" | "failure";
+
+export interface PersistedRequest {
+  id: string;
+  correlation_id: string;
+  created_at: string;
+  completed_at?: string;
+  parent_id?: string;
+  action: string;
+  status: RequestStatus;
+  input: unknown;
+  selectors: { provider?: string; model?: string; variant?: string };
+  output?: unknown;
+  error?: { code: string; message: string; details?: unknown };
+  media_inputs: RequestMediaRef[];
+  media_outputs: RequestMediaRef[];
+  meta: {
+    provider?: string;
+    model?: string;
+    stone?: string;
+    latency_ms?: number;
+    tokens_in?: number;
+    tokens_out?: number;
+  };
+  pinned: boolean;
+  job_id?: string;
+}
+
+export interface RequestMediaRef {
+  media_id: string;
+  field: string;
+  content_type: string;
+}
+
+export interface RequestListResponse {
+  count: number;
+  requests: PersistedRequest[];
+}
+
 // ── SSE Events ───────────────────────────────────────────────
 
 export interface SSEEvent {

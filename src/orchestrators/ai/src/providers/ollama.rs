@@ -884,7 +884,7 @@ fn base_parameters_for(p: Primitive) -> Vec<crate::domain::capability_announceme
         ],
         Primitive::TextEmbed => vec![
             SkillParameter {
-                field: "text.prompt.user".into(),
+                field: "text.input".into(),
                 required: true,
                 label: Some("Text".into()),
                 field_type: Some(ParameterType::String),

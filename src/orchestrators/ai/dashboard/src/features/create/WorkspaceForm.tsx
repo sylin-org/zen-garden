@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { CatalogDetail } from "../../api/types";
+import type { CatalogDetail, PersistedRequest } from "../../api/types";
 import { dispatch as apiDispatch, upload } from "../../api/client";
 import { useJobManager } from "../../contexts/JobManagerContext";
 import FieldRenderer from "./widgets/FieldRenderer";
@@ -7,12 +7,23 @@ import FileWidget from "./widgets/FileWidget";
 
 interface Props {
   detail: CatalogDetail;
+  initialValues?: Record<string, unknown> | null;
+  parentId?: string;
+  sourceRequest?: PersistedRequest | null;
   onResult: (result: unknown) => void;
   onError: (error: unknown) => void;
   onStreaming: (reader: ReadableStreamDefaultReader<Uint8Array>) => void;
 }
 
-export default function WorkspaceForm({ detail, onResult, onError, onStreaming }: Props) {
+export default function WorkspaceForm({
+  detail,
+  initialValues,
+  parentId,
+  sourceRequest,
+  onResult,
+  onError,
+  onStreaming,
+}: Props) {
   const fields = detail.fields ?? [];
   const mediaInputs = detail.media_inputs ?? [];
 
@@ -20,14 +31,18 @@ export default function WorkspaceForm({ detail, onResult, onError, onStreaming }
   const secondaryFields = fields.filter((f) => !f.required && f.widget !== "hidden");
 
   // Form state: dotted field path → value
+  // Priority: initialValues (from request record) > field defaults
   const [values, setValues] = useState<Record<string, unknown>>(() => {
-    const initial: Record<string, unknown> = {};
+    const defaults: Record<string, unknown> = {};
     for (const f of fields) {
       if (f.default !== undefined && f.default !== null) {
-        initial[f.field] = f.default;
+        defaults[f.field] = f.default;
       }
     }
-    return initial;
+    if (initialValues) {
+      return { ...defaults, ...initialValues };
+    }
+    return defaults;
   });
 
   const [files, setFiles] = useState<Record<string, File>>({});
@@ -118,6 +133,24 @@ export default function WorkspaceForm({ detail, onResult, onError, onStreaming }
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-6">
+        {/* Fork/view banner */}
+        {sourceRequest && (
+          <div className="mb-4 p-3 rounded-lg bg-accent-bg border border-accent/20 text-[11px]">
+            <span className="text-accent font-medium">
+              {parentId ? "Forked from" : "Viewing"} request
+            </span>
+            <span className="text-text-dim ml-1.5 font-mono">
+              {sourceRequest.id.slice(0, 12)}...
+            </span>
+            {sourceRequest.meta.provider && (
+              <span className="text-text-dimmer ml-1.5">
+                via {sourceRequest.meta.provider}
+                {sourceRequest.meta.latency_ms != null && ` · ${sourceRequest.meta.latency_ms}ms`}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Primary fields */}
         <div className="space-y-4">
           {primaryFields.map((f) => (

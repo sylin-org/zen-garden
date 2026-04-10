@@ -192,7 +192,7 @@ fn build_capability_announcement(name: &ProviderName) -> CapabilityAnnouncement 
                 primitive: Primitive::TextEmbed,
                 media_inputs: Vec::new(),
                 parameters: vec![
-                    SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to embed...".into()), ..Default::default() },
+                    SkillParameter { field: "text.input".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to embed...".into()), ..Default::default() },
                 ],
             },
             AnnCapability {

@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useCatalog } from "../contexts/CatalogContext";
 import { useJobManager } from "../contexts/JobManagerContext";
+import OverviewPanel from "./OverviewPanel";
 
 /** Default route when clicking a modality leaf in the sidebar. */
 const MODALITY_DEFAULTS: Record<string, string> = {
@@ -9,163 +11,143 @@ const MODALITY_DEFAULTS: Record<string, string> = {
   audio: "/create/audio/generate",
 };
 
-const MANAGE_ITEMS = [
-  { path: "/manage/skills", label: "Skills" },
-  { path: "/manage/jobs", label: "Jobs" },
-  { path: "/manage/media", label: "Media" },
+interface NavItem {
+  path: string;
+  icon: string;
+  label: string;
+  group?: boolean;
+}
+
+const MANAGE_ITEMS: NavItem[] = [
+  { path: "/manage", icon: "☰", label: "Manage", group: true },
+  { path: "/manage/skills", icon: "✦", label: "Skills" },
+  { path: "/manage/jobs", icon: "⏱", label: "Jobs" },
+  { path: "/manage/media", icon: "◻", label: "Media" },
 ];
 
-const CONFIGURE_ITEMS = [
-  { path: "/configure/preferences", label: "Preferences" },
-  { path: "/configure/garden", label: "Garden" },
-  { path: "/configure/providers", label: "Providers" },
-  { path: "/configure/events", label: "Events" },
+const CONFIGURE_ITEMS: NavItem[] = [
+  { path: "/configure", icon: "⚙", label: "Configure", group: true },
+  { path: "/configure/preferences", icon: "☰", label: "Preferences" },
+  { path: "/configure/garden", icon: "❋", label: "Garden" },
+  { path: "/configure/providers", icon: "⬡", label: "Providers" },
+  { path: "/configure/events", icon: "↯", label: "Events" },
 ];
 
 export default function Shell() {
   const location = useLocation();
   const { catalog } = useCatalog();
   const { connected } = useJobManager();
+  const [overviewOpen, setOverviewOpen] = useState(() => window.innerWidth > 1400);
 
-  const isActive = (prefix: string) => location.pathname.startsWith(prefix);
+  const isActive = (prefix: string) => location.pathname === prefix || location.pathname.startsWith(prefix + "/");
   const isExact = (path: string) => location.pathname === path;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      {/* ── Single unified sidebar ── */}
-      <aside className="w-[220px] shrink-0 flex flex-col bg-sidebar border-r border-border select-none">
+      {/* ── Icon Sidebar (52px) ── */}
+      <aside className="w-[52px] shrink-0 flex flex-col items-center bg-sidebar border-r border-border select-none">
         {/* Logo */}
-        <div className="flex items-center gap-2 px-[18px] py-4 border-b border-border">
-          <span className="text-[13px] font-bold tracking-tight">
-            <span className="text-accent">Zen</span> Garden
-          </span>
-          <span className="ml-auto text-[10px] text-text-dimmer">AI</span>
-        </div>
+        <NavLink to="/create" className="py-3 text-accent font-bold text-lg" title="Zen Garden AI">
+          ✦
+        </NavLink>
 
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto py-2">
-          {/* ── CREATE ── */}
-          <SidebarGroup
-            label="CREATE"
-            to="/create"
-            active={isExact("/create")}
-          />
-          {catalog?.modalities.map((mod) => (
-            <SidebarLeaf
-              key={mod.id}
-              to={MODALITY_DEFAULTS[mod.id] ?? `/create/${mod.id}`}
-              icon={mod.icon}
-              label={mod.label}
-              active={isActive(`/create/${mod.id}`)}
-            />
-          ))}
+        <div className="w-6 border-t border-border mb-2" />
 
-          {/* ── MANAGE ── */}
-          <SidebarGroup
-            label="MANAGE"
-            to="/manage"
-            active={isExact("/manage")}
-            className="mt-4"
+        {/* CREATE group */}
+        <SidebarIcon to="/create" icon="+" label="Create" active={isExact("/create")} group />
+        {catalog?.modalities.map((mod) => (
+          <SidebarIcon
+            key={mod.id}
+            to={MODALITY_DEFAULTS[mod.id] ?? `/create/${mod.id}`}
+            icon={mod.icon}
+            label={mod.label}
+            active={isActive(`/create/${mod.id}`)}
           />
-          {MANAGE_ITEMS.map((item) => (
-            <SidebarLeaf
-              key={item.path}
-              to={item.path}
-              label={item.label}
-              active={isActive(item.path)}
-            />
-          ))}
+        ))}
 
-          {/* ── CONFIGURE ── */}
-          <SidebarGroup
-            label="CONFIGURE"
-            to="/configure"
-            active={isExact("/configure")}
-            className="mt-4"
-          />
-          {CONFIGURE_ITEMS.map((item) => (
-            <SidebarLeaf
-              key={item.path}
-              to={item.path}
-              label={item.label}
-              active={isActive(item.path)}
-            />
-          ))}
-        </nav>
+        <div className="w-6 border-t border-border my-2" />
 
-        {/* Status footer */}
-        <div className="flex items-center gap-1.5 px-[18px] py-2.5 border-t border-border text-[10px] text-text-dimmer">
-          <div
-            className={`w-[5px] h-[5px] rounded-full shrink-0 ${connected ? "bg-green" : "bg-red"}`}
+        {/* MANAGE group */}
+        {MANAGE_ITEMS.map((item) => (
+          <SidebarIcon
+            key={item.path}
+            to={item.path}
+            icon={item.icon}
+            label={item.label}
+            active={item.group ? isExact(item.path) : isActive(item.path)}
+            group={item.group}
           />
-          <span>{connected ? "Connected" : "Disconnected"}</span>
-          {catalog && (
-            <span className="ml-auto">
-              {catalog.providers.filter((p) => p.enabled).length} providers
-            </span>
-          )}
+        ))}
+
+        <div className="w-6 border-t border-border my-2" />
+
+        {/* CONFIGURE group */}
+        {CONFIGURE_ITEMS.map((item) => (
+          <SidebarIcon
+            key={item.path}
+            to={item.path}
+            icon={item.icon}
+            label={item.label}
+            active={item.group ? isExact(item.path) : isActive(item.path)}
+            group={item.group}
+          />
+        ))}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Connection status */}
+        <div className="pb-3" title={connected ? "Connected" : "Disconnected"}>
+          <div className={`w-2 h-2 rounded-full ${connected ? "bg-green" : "bg-red"}`} />
         </div>
       </aside>
 
-      {/* ── Main content area ── */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Outlet />
-      </main>
+      {/* ── Main content area + Overview panel ── */}
+      <div className="flex-1 flex overflow-hidden relative">
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <Outlet />
+        </main>
+        <OverviewPanel
+          open={overviewOpen}
+          onToggle={() => setOverviewOpen((p) => !p)}
+        />
+      </div>
     </div>
   );
 }
 
-function SidebarGroup({
-  label,
-  to,
-  active,
-  className,
-}: {
-  label: string;
-  to: string;
-  active: boolean;
-  className?: string;
-}) {
-  return (
-    <NavLink
-      to={to}
-      className={[
-        "block px-[18px] pt-3 pb-1 text-[10px] uppercase tracking-widest font-semibold transition-colors",
-        active ? "text-accent" : "text-text-dimmer hover:text-text-dim",
-        className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      {label}
-    </NavLink>
-  );
-}
-
-function SidebarLeaf({
+function SidebarIcon({
   to,
   icon,
   label,
   active,
+  group,
 }: {
   to: string;
-  icon?: string;
+  icon: string;
   label: string;
   active: boolean;
+  group?: boolean;
 }) {
   return (
     <NavLink
       to={to}
+      title={label}
       className={[
-        "flex items-center gap-2 px-[18px] py-[7px] text-[12px] cursor-pointer",
-        "border-l-2 transition-all",
+        "relative flex items-center justify-center w-10 h-10 rounded-lg text-[14px] transition-all",
+        group ? "text-[10px] font-bold uppercase tracking-wider mt-0" : "",
         active
-          ? "bg-accent-bg text-accent border-accent font-medium"
-          : "text-text-dim border-transparent hover:bg-surface hover:text-text",
-      ].join(" ")}
+          ? "bg-accent-bg text-accent"
+          : "text-text-dim hover:bg-surface hover:text-text",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
-      {icon && <span className="w-[18px] text-center text-[14px] shrink-0">{icon}</span>}
-      <span className="truncate">{label}</span>
+      {/* Active indicator */}
+      {active && (
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-accent rounded-r" />
+      )}
+      <span>{icon}</span>
     </NavLink>
   );
 }

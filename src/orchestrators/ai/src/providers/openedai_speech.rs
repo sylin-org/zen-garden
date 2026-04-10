@@ -291,9 +291,9 @@ fn build_capability_announcement(
             primitive: Primitive::AudioGenerate,
             media_inputs: Vec::new(),
             parameters: vec![
-                SkillParameter { field: "text.prompt.user".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to speak...".into()), ..Default::default() },
-                SkillParameter { field: "audio.voice".into(), required: false, label: Some("Voice".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), ..Default::default() },
-                SkillParameter { field: "audio.speed".into(), required: false, label: Some("Speed".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(1.0)), min: Some(0.5), max: Some(2.0), step: Some(0.1), ..Default::default() },
+                SkillParameter { field: "audio.text".into(), required: true, label: Some("Text".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Textarea), placeholder: Some("Text to speak...".into()), ..Default::default() },
+                SkillParameter { field: "audio.voice.id".into(), required: false, label: Some("Voice".into()), field_type: Some(ParameterType::String), widget: Some(ParameterWidget::Select), ..Default::default() },
+                SkillParameter { field: "audio.voice.speed".into(), required: false, label: Some("Speed".into()), field_type: Some(ParameterType::Number), widget: Some(ParameterWidget::Slider), default: Some(serde_json::json!(1.0)), min: Some(0.5), max: Some(2.0), step: Some(0.1), ..Default::default() },
             ],
         }],
         skills: Vec::new(),

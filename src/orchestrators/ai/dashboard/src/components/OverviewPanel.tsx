@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { get } from "../api/client";
 import { useCatalog } from "../contexts/CatalogContext";
+import { useActiveRequestManager } from "../contexts/ActiveRequestManager";
 import type { PersistedRequest, RequestListResponse } from "../api/types";
 import { useSSE } from "../hooks/useSSE";
 
@@ -13,6 +14,7 @@ interface Props {
 export default function OverviewPanel({ open, onToggle }: Props) {
   const { catalog } = useCatalog();
   const navigate = useNavigate();
+  const { active: activeRequests } = useActiveRequestManager();
   const [requests, setRequests] = useState<PersistedRequest[]>([]);
 
   const fetchRequests = useCallback(async () => {
@@ -28,14 +30,23 @@ export default function OverviewPanel({ open, onToggle }: Props) {
     fetchRequests();
   }, [fetchRequests]);
 
-  // Refresh when any dispatch completes
+  // Refresh when any dispatch completes (SSE or active request finishing)
   useSSE({
     focus: "jobs.*",
-    onEvent: (_topic, _payload) => {
-      fetchRequests();
-    },
+    onEvent: () => { fetchRequests(); },
     enabled: open,
   });
+
+  // Also refresh when the active request count changes (a dispatch just completed)
+  const activeCount = activeRequests.length;
+  const prevActiveCount = useRef(activeCount);
+  useEffect(() => {
+    if (prevActiveCount.current > 0 && activeCount < prevActiveCount.current) {
+      // An active request just finished — refresh history
+      fetchRequests();
+    }
+    prevActiveCount.current = activeCount;
+  }, [activeCount, fetchRequests]);
 
   const handlePin = useCallback(
     async (id: string, e: React.MouseEvent) => {
@@ -106,6 +117,40 @@ export default function OverviewPanel({ open, onToggle }: Props) {
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Active requests (in-flight) */}
+        {activeRequests.length > 0 && (
+          <div className="px-4 py-3 border-b border-border">
+            <div className="text-[10px] uppercase tracking-wider text-text-dimmer font-semibold mb-2">
+              Active
+            </div>
+            <div className="space-y-1">
+              {activeRequests.map((req) => {
+                const elapsed = req.elapsed < 60
+                  ? `${req.elapsed.toFixed(1)}s`
+                  : `${Math.floor(req.elapsed / 60)}m${Math.floor(req.elapsed % 60)}s`;
+                return (
+                  <div
+                    key={req.id}
+                    className="flex items-center gap-1.5 py-1.5 px-1 rounded cursor-pointer hover:bg-accent-bg transition-colors"
+                    onClick={() => {
+                      const url = `/create/${req.action.replace(/\./g, "/")}`;
+                      navigate(url);
+                    }}
+                  >
+                    <div className="w-1.5 h-1.5 rounded-full bg-orange shrink-0 animate-pulse" />
+                    <span className="text-[10px] text-text-dim truncate flex-1">
+                      {req.action.split(".").pop()}
+                    </span>
+                    <span className="text-[9px] text-orange font-mono shrink-0">
+                      {elapsed}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

@@ -1,4 +1,5 @@
 import type { DispatchResponse, Meta } from "../../api/types";
+import Markdown from "../../components/Markdown";
 
 interface Props {
   result: unknown;
@@ -9,7 +10,7 @@ export default function ResultPanel({ result, streaming }: Props) {
   if (streaming !== undefined) {
     return (
       <ResultFrame title="Streaming...">
-        <div className="text-[13px] leading-relaxed whitespace-pre-wrap">{streaming}</div>
+        <Markdown content={streaming} />
       </ResultFrame>
     );
   }
@@ -54,7 +55,7 @@ export default function ResultPanel({ result, streaming }: Props) {
   if (typeof textResponse === "string") {
     return (
       <ResultFrame title="Response">
-        <div className="text-[13px] leading-relaxed whitespace-pre-wrap">{textResponse}</div>
+        <Markdown content={textResponse} />
         {data._meta && <MetaFooter meta={data._meta} />}
       </ResultFrame>
     );

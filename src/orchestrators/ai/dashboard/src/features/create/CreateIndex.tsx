@@ -1,14 +1,32 @@
 import { useCatalog } from "../../contexts/CatalogContext";
 import { Link } from "react-router-dom";
+import Skeleton from "../../components/Skeleton";
+import EmptyState from "../../components/EmptyState";
 
 export default function CreateIndex() {
-  const { catalog, loading } = useCatalog();
+  const { catalog, loading, error, refresh } = useCatalog();
 
-  if (loading || !catalog) {
+  if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-text-dim text-sm">
-        Loading catalog...
+      <div className="p-6 space-y-4">
+        <Skeleton lines={2} />
+        <div className="grid grid-cols-3 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-20 bg-surface-3 rounded-lg animate-pulse" />
+          ))}
+        </div>
       </div>
+    );
+  }
+
+  if (error || !catalog) {
+    return (
+      <EmptyState
+        icon="⚠"
+        title="Failed to load catalog"
+        description={error ?? "The orchestrator may be starting up. Try refreshing."}
+        action={{ label: "Retry", onClick: refresh }}
+      />
     );
   }
 

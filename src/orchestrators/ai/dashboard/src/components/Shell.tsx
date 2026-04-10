@@ -37,19 +37,19 @@ export default function Shell() {
   const location = useLocation();
   const { catalog } = useCatalog();
   const { connected } = useJobManager();
-  const [overviewOpen, setOverviewOpen] = useState(() => window.innerWidth > 1400);
+  const [overviewOpen, setOverviewOpen] = useState(() => window.innerWidth > 1200);
 
   const isActive = (prefix: string) => location.pathname === prefix || location.pathname.startsWith(prefix + "/");
   const isExact = (path: string) => location.pathname === path;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      {/* ── Sidebar (160px, always expanded with labels) ── */}
-      <aside className="w-[160px] shrink-0 flex flex-col bg-sidebar border-r border-border select-none">
+      {/* ── Sidebar: 48px on narrow, 160px on wide ── */}
+      <aside className="w-[48px] md:w-[160px] shrink-0 flex flex-col bg-sidebar border-r border-border select-none overflow-hidden">
         {/* Logo */}
-        <NavLink to="/create" className="flex items-center gap-2 px-4 py-3.5 border-b border-border">
+        <NavLink to="/create" className="flex items-center justify-center md:justify-start gap-2 px-2 md:px-4 py-3.5 border-b border-border">
           <span className="text-accent font-bold text-sm">✦</span>
-          <span className="text-[12px] font-bold tracking-tight">
+          <span className="text-[12px] font-bold tracking-tight hidden md:inline">
             <span className="text-accent">Zen</span> Garden
           </span>
         </NavLink>
@@ -94,9 +94,9 @@ export default function Shell() {
         </nav>
 
         {/* Connection status */}
-        <div className="flex items-center gap-1.5 px-4 py-2.5 border-t border-border text-[10px] text-text-dimmer">
+        <div className="flex items-center justify-center md:justify-start gap-1.5 px-2 md:px-4 py-2.5 border-t border-border text-[10px] text-text-dimmer">
           <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${connected ? "bg-green" : "bg-red"}`} />
-          <span>{connected ? "Connected" : "Disconnected"}</span>
+          <span className="hidden md:inline">{connected ? "Connected" : "Disconnected"}</span>
           {catalog && (
             <span className="ml-auto">
               {catalog.providers.filter((p) => p.enabled).length}
@@ -133,15 +133,17 @@ function SidebarGroup({
   return (
     <NavLink
       to={to}
+      title={label}
       className={[
-        "block px-4 pt-2.5 pb-1 text-[9px] uppercase tracking-widest font-semibold transition-colors",
+        "block px-2 md:px-4 pt-2.5 pb-1 text-[9px] uppercase tracking-widest font-semibold transition-colors",
         active ? "text-accent" : "text-text-dimmer hover:text-text-dim",
         className,
       ]
         .filter(Boolean)
         .join(" ")}
     >
-      {label}
+      <span className="hidden md:inline">{label}</span>
+      <span className="md:hidden text-center block text-[8px]">{label.slice(0, 3)}</span>
     </NavLink>
   );
 }
@@ -160,8 +162,9 @@ function SidebarLeaf({
   return (
     <NavLink
       to={to}
+      title={label}
       className={[
-        "flex items-center gap-2 px-4 py-[6px] text-[12px] cursor-pointer",
+        "flex items-center justify-center md:justify-start gap-2 px-2 md:px-4 py-[6px] text-[12px] cursor-pointer",
         "border-l-2 transition-all",
         active
           ? "bg-accent-bg text-accent border-accent font-medium"
@@ -169,7 +172,7 @@ function SidebarLeaf({
       ].join(" ")}
     >
       <span className="w-[16px] text-center text-[13px] shrink-0">{icon}</span>
-      <span className="truncate">{label}</span>
+      <span className="truncate hidden md:inline">{label}</span>
     </NavLink>
   );
 }

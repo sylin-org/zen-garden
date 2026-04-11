@@ -758,7 +758,7 @@ impl Offering {
                             _ => -1, // default: all GPUs
                         };
                         GpuDeviceRequest {
-                            driver: dev.driver.clone().unwrap_or_else(|| String::new()),
+                            driver: dev.driver.clone().unwrap_or_default(),
                             count,
                             capabilities: dev.capabilities.clone(),
                         }

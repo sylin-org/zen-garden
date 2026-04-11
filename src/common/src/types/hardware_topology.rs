@@ -400,7 +400,7 @@ pub fn chassis_type_name(code: u8) -> &'static str {
     match code {
         1 => "other",
         2 => "unknown",
-        3 | 4 | 5 | 6 | 7 => "desktop",
+        3..=7 => "desktop",
         8 | 9 | 10 | 14 | 31 => "laptop",
         11 => "handheld",
         13 => "all-in-one",

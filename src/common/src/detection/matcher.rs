@@ -141,10 +141,10 @@ fn resolve_child_port(
 
     for child in children {
         // If cmdline filter is set, child must also match
-        if let Some(pattern) = cmdline_filter {
-            if !child.cmdline.to_lowercase().contains(pattern.as_str()) {
-                continue;
-            }
+        if let Some(pattern) = cmdline_filter
+            && !child.cmdline.to_lowercase().contains(pattern.as_str())
+        {
+            continue;
         }
 
         if !child.listening_ports.is_empty() {

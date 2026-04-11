@@ -241,7 +241,7 @@ impl Predicate {
                     message: "Expected 'IN' after 'NOT'".to_string(),
                     position: Some(next_pos),
                 })?;
-                if next.to_ascii_uppercase() != "IN" {
+                if !next.eq_ignore_ascii_case("IN") {
                     return Err(PredicateError {
                         input: input.to_string(),
                         message: format!(
@@ -445,12 +445,12 @@ fn condition_type(condition: &Condition) -> FactType {
 fn parse_set_has(tokens: &mut Tokenizer, input: &str) -> Result<Condition, PredicateError> {
     // Check for HAS ALL modifier
     let checkpoint = tokens.pos();
-    if let Some(next) = tokens.peek_token() {
-        if next.to_ascii_uppercase() == "ALL" {
-            tokens.next_token(); // consume ALL
-            let values = parse_value_list(tokens, input)?;
-            return Ok(Condition::HasAll(values));
-        }
+    if let Some(next) = tokens.peek_token()
+        && next.eq_ignore_ascii_case("ALL")
+    {
+        tokens.next_token(); // consume ALL
+        let values = parse_value_list(tokens, input)?;
+        return Ok(Condition::HasAll(values));
     }
     tokens.set_pos(checkpoint);
 
@@ -486,7 +486,7 @@ fn parse_is(
             position: Some(val_pos),
         })?;
 
-        if val.to_ascii_lowercase() == "present" {
+        if val.eq_ignore_ascii_case("present") {
             Ok(Condition::Present(false))
         } else {
             Ok(Condition::IsNot(val.to_ascii_lowercase()))
@@ -609,16 +609,16 @@ fn parse_value_list_with_connectives(
     while i < parts.len() {
         let upper = parts[i].to_ascii_uppercase();
         if upper == "AND" || upper == "OR" {
-            if let Some(prev) = connective {
-                if prev != upper {
-                    return Err(PredicateError {
-                        input: input.to_string(),
-                        message: format!(
-                            "Cannot mix AND and OR in a single expression. Use separate when: entries."
-                        ),
-                        position: Some(pos),
-                    });
-                }
+            if let Some(prev) = connective
+                && prev != upper
+            {
+                return Err(PredicateError {
+                    input: input.to_string(),
+                    message:
+                        "Cannot mix AND and OR in a single expression. Use separate when: entries."
+                            .to_string(),
+                    position: Some(pos),
+                });
             }
             connective = Some(if upper == "AND" { "AND" } else { "OR" });
             i += 1;

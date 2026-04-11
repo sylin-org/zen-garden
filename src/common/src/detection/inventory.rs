@@ -164,12 +164,12 @@ fn build_cmdline_map() -> HashMap<u32, String> {
             let stdout = String::from_utf8_lossy(&out.stdout);
             for line in stdout.lines() {
                 let line = line.trim();
-                if let Some((pid_str, cmdline)) = line.split_once('|') {
-                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                        let cmdline = cmdline.trim();
-                        if !cmdline.is_empty() {
-                            map.insert(pid, cmdline.to_string());
-                        }
+                if let Some((pid_str, cmdline)) = line.split_once('|')
+                    && let Ok(pid) = pid_str.trim().parse::<u32>()
+                {
+                    let cmdline = cmdline.trim();
+                    if !cmdline.is_empty() {
+                        map.insert(pid, cmdline.to_string());
                     }
                 }
             }

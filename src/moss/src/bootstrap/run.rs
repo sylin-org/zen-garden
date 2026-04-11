@@ -290,7 +290,11 @@ async fn build_state(
     let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(
         garden_common::constants::channels::TOOL_DELTA,
     );
-    let tool = Arc::new(crate::domain::Tool::new(metrics_aggregate.clone(), tool_delta).await);
+    let tools_transport: Arc<dyn crate::domain::tool::ToolsBeaconTransport> =
+        Arc::new(crate::infra::tools::P2pBeaconTransport);
+    let tool = Arc::new(
+        crate::domain::Tool::new(metrics_aggregate.clone(), tool_delta, tools_transport).await,
+    );
 
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(

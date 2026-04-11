@@ -69,13 +69,23 @@ fn sample_tool(fqid: &str, category: &str, stone_id: &str) -> GardenTool {
 async fn new_tool() -> Tool {
     let metrics = Arc::new(Metrics::new());
     let (delta_tx, _delta_rx) = broadcast::channel::<ToolDelta>(256);
-    Tool::new(metrics, delta_tx).await
+    Tool::new(
+        metrics,
+        delta_tx,
+        Arc::new(super::transport::NoopBeaconTransport),
+    )
+    .await
 }
 
 async fn new_tool_with_metrics() -> (Tool, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::new());
     let (delta_tx, _delta_rx) = broadcast::channel::<ToolDelta>(256);
-    let tool = Tool::new(metrics.clone(), delta_tx).await;
+    let tool = Tool::new(
+        metrics.clone(),
+        delta_tx,
+        Arc::new(super::transport::NoopBeaconTransport),
+    )
+    .await;
     (tool, metrics)
 }
 

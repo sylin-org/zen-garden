@@ -33,6 +33,7 @@ pub mod event;
 pub mod projection;
 pub mod registry;
 pub mod sse;
+pub mod transport;
 
 #[cfg(test)]
 mod tests;
@@ -44,3 +45,4 @@ pub use registry::{
     EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery, new_registry,
 };
 pub use sse::{ToolsSnapshotPayload, stream_event_type_for_delta};
+pub use transport::{NoopBeaconTransport, ToolsBeaconTransport};

@@ -204,7 +204,14 @@ pub async fn build_test_state() -> AppState {
         start_time: Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: Arc::new(ConsolePrinter::new(ConsoleMode::Silent)),
-        tool: Arc::new(domain::Tool::new(test_metrics.clone(), tool_delta_tx).await),
+        tool: Arc::new(
+            domain::Tool::new(
+                test_metrics.clone(),
+                tool_delta_tx,
+                Arc::new(domain::tool::NoopBeaconTransport),
+            )
+            .await,
+        ),
         discovery: Arc::new(domain::Discovery {
             mdns: None,
             koi: koi_handle,

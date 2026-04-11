@@ -37,6 +37,7 @@
 
 use super::event::{ChangeKind, ToolChanged};
 use super::registry::{EntryOrigin, GardenRegistry, RegistryEntry, ToolQuery, new_registry};
+use super::transport::ToolsBeaconTransport;
 use crate::domain::Metrics;
 use garden_common::tools::{GardenTool, ToolDelta, ToolsBeacon};
 use std::collections::{BTreeMap, HashSet};
@@ -81,6 +82,11 @@ pub struct Tool {
 
     /// Metrics aggregate for mutation latency + per-kind event counts.
     metrics: Arc<Metrics>,
+
+    /// UDP beacon transport port. Injected at construction; the
+    /// aggregate publishes tool deltas to remote stones via this
+    /// instead of calling `crate::infra::*` directly.
+    transport: Arc<dyn ToolsBeaconTransport>,
 }
 
 impl Tool {
@@ -92,7 +98,11 @@ impl Tool {
     /// Register-with-kinds pattern: the kind set is known at
     /// construction time and never changes, so the Metrics hot path
     /// for this domain never takes a write lock on the kind map.
-    pub async fn new(metrics: Arc<Metrics>, delta: broadcast::Sender<ToolDelta>) -> Self {
+    pub async fn new(
+        metrics: Arc<Metrics>,
+        delta: broadcast::Sender<ToolDelta>,
+        transport: Arc<dyn ToolsBeaconTransport>,
+    ) -> Self {
         metrics
             .register_domain(Self::NAME, ChangeKind::ALL_NAMES)
             .await;
@@ -104,7 +114,44 @@ impl Tool {
             delta,
             changes,
             metrics,
+            transport,
         }
+    }
+
+    // ── Transport passthroughs ──────────────────────────────────────────
+
+    /// Publish an incremental tools beacon (skips empty beacons).
+    ///
+    /// Called from the projection task after commands produce deltas.
+    /// Stone identity + endpoint are passed in at call time — the
+    /// aggregate does not own them.
+    pub async fn publish_incremental(
+        &self,
+        stone_id: &str,
+        stone_name: &str,
+        endpoint: &str,
+        deltas: Vec<ToolDelta>,
+    ) -> anyhow::Result<()> {
+        self.transport
+            .broadcast_incremental(stone_id, stone_name, endpoint, deltas)
+            .await
+    }
+
+    /// Publish a snapshot tools beacon (authoritative full set).
+    ///
+    /// Used by announcer / discovery-join paths to publish the
+    /// stone's full local projection on startup and periodically
+    /// afterwards, so late-joining peers can fill their registries.
+    pub async fn publish_snapshot(
+        &self,
+        stone_id: &str,
+        stone_name: &str,
+        endpoint: &str,
+        deltas: Vec<ToolDelta>,
+    ) -> anyhow::Result<()> {
+        self.transport
+            .broadcast_snapshot(stone_id, stone_name, endpoint, deltas)
+            .await
     }
 
     // ── Event subscriptions ─────────────────────────────────────────────

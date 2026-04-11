@@ -12,6 +12,7 @@
 - [Discovery & Networking](#discovery--networking)
 - [Security](#security)
 - [Operations](#operations)
+- [Architectural Terms](#architectural-terms)
 
 ---
 
@@ -181,6 +182,60 @@
 **Replace** - Swap failing Stone with replacement. Services migrate to new Stone, old Stone retired. Apps reconnect automatically (connection strings unchanged).
 
 **Retire** - Responsibly end-of-life a Stone. Data wiped, hardware recycled or repurposed. Services migrated to other Stones first.
+
+---
+
+## Architectural Terms
+
+Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its books. These define how moss is *structured* — the vocabulary every contributor should share when reading, writing, or reviewing code under `src/moss/src/domain/`.
+
+**Bounded context** - A module with a single responsibility, private state, and an explicit contract for cross-boundary interaction. Every `src/moss/src/domain/<name>/` subdirectory is a bounded context. Contexts never reach into each other's state directly; they interact through events and typed method calls.  
+→ See: [specs/domain-aggregates.md](specs/domain-aggregates.md)
+
+**Aggregate** - The root type of a bounded context. Owns private state, enforces invariants, exposes typed reads and commands. Example: `Offerings` is the aggregate for the offerings bounded context.  
+→ See: [specs/domain-aggregates.md](specs/domain-aggregates.md)
+
+**Aggregate root** - Same as Aggregate. The single entry point for reading or mutating a bounded context's state. Callers never touch state except through the aggregate root's methods.
+
+**Command** - A write method on an aggregate. Mutates state, persists, emits an event, and returns a typed result. Commands use imperative verbs: `upsert`, `remove`, `promote`, `complete`, `join`. Every command funnels through a private `finalize` pipeline.
+
+**Query** - A read method on an aggregate. Pure — no side effects except lock acquisition. Queries return snapshots (`snapshot()`), single items (`find_by_id()`), or scoped closures (`with_active(|o| ...)`). Queries never return raw lock guards.
+
+**CQRS-lite** - Command/query separation. Read methods and write methods are distinct. API handlers translate HTTP `GET` requests to queries and HTTP `POST`/`PUT`/`DELETE` requests to commands. Moss uses a lightweight form of CQRS — the same aggregate holds both sides of the API, but they don't share code paths.
+
+**Domain event** - A broadcast message describing a state change in a bounded context. Every aggregate publishes one event type (e.g., `OfferingsChanged`) via a `broadcast::Sender`. Subscribers (typically projection tasks) react by rebuilding their derived view. Events are the lingua franca between contexts — contexts never call each other's command methods directly from inside another aggregate.
+
+**Ubiquitous language** - The shared vocabulary of a project, used identically in code, docs, and conversation. Moss's ubiquitous language is captured in this glossary. Metaphorical terms (stone, pond, companion, ceremony, nourishment) are *the* terms — not cute aliases. A bounded context that uses different words for a concept than this glossary is a bug.
+
+**Port** - A trait defining infrastructure a bounded context depends on. Example: `OfferingStore` is a port; `FileOfferingStore` is its adapter. Ports live inside their owning context (`domain/<context>/port.rs`); adapters live in `src/moss/src/infra/`. A domain module that imports `crate::infra::*` directly violates the port pattern.
+
+**Adapter** - A concrete implementation of a port. Adapters translate between domain types and foreign models (Bollard, filesystem, HTTP, UDP). Anti-corruption happens inside the adapter — foreign types never cross the adapter boundary into domain code.
+
+**Anti-corruption layer (ACL)** - The translation boundary where foreign models meet domain models. Moss has ACLs at every adapter: Bollard container types translate to `OfferingFqn` + `OfferingLocation`, Ollama's HTTP responses translate to `HealthChanged`, mDNS SRV records translate to `StoneDiscovered`. The ACL exists so foreign breaking changes are contained inside the adapter.
+
+**Projection** - A derived view of state, maintained by reacting to domain events. Example: the tool registry is a projection of offerings (plus storage banks). When offerings change, the projection task rebuilds the tool registry. Projections are always downstream of an event stream; they never mutate the source.
+
+**Projection task** - A `BackgroundTask` (per [ARCH-0015](decisions/ARCH-0015-task-supervisor-registry.md)) that subscribes to an aggregate's `changes()` stream and maintains a projection. Projection tasks follow three non-negotiable rules: subscribe before seed, lag-tolerant (full reconcile on `RecvError::Lagged`), shutdown-aware (select on cancellation token).
+
+**Finalize pipeline** - The private method every aggregate command calls after mutating state. It persists through the store port, records metrics, and emits the domain event. Ordering matters: persist first, meter second, emit third. A mutation that fails persistence does not fire an event.
+
+**Chirp** - A UDP announcement broadcast by a stone describing its current topology (stone identity, capabilities, services, health). Chirps are the mechanism by which peer stones learn about each other without central coordination. Emitted immediately on topology-changing mutations and periodically as a heartbeat.
+
+**Topology** - A stone's self-description at a moment in time: identity, address, capabilities, offerings, health, MAC, tags. Topology is built on demand from the aggregates that own each piece (Current, Offerings, Tool, Presence) and serialized into chirps, API responses, and mDNS TXT records.
+
+**Tool** - A generic view over a service (an offering instance) or a data source (a seed bank). Tools are published to a garden-wide registry so other stones can discover what's available without knowing about moss-specific types. The tool registry is the projection that `garden-rake list` and `garden-rake find` consume.
+
+**Tools beacon** - A UDP broadcast of tool deltas, announced alongside chirps so peer stones update their tool registries.
+
+**Strangler vine** - A migration technique where new code is introduced alongside old code, and old callers are migrated gradually rather than in a flag-day rewrite. [ARCH-0016](decisions/ARCH-0016-offerings-aggregate-domain.md) used a strangler vine (`ActiveGuard`) to keep 82 read sites compiling while the aggregate pattern was introduced. Strangler scaffolds are tracked in [scaffolding.md](scaffolding.md) with explicit removal triggers.
+
+**Scaffolding** - Intermediate-state code that exists only during an in-progress refactor. Every scaffold is tracked in [scaffolding.md](scaffolding.md) with an ID, a removal trigger book, and a removal action. Untracked scaffolds (`TODO: migrate later` comments with no entry) are forbidden.
+
+**Book** - A unit of work in the ARCH-0017 epic. Each book refactors one bounded context (or one coordinated group) and ships green to `dev` as a single reviewable PR-sized unit. Books follow a fixed six-chapter template (scope, extract, wire events, migrate call sites, delete old surface, verify). The epic has 21 books (Book 0 prologue + Books I–XX).
+
+**Chapter** - One commit inside a book. Chapters follow a fixed template: scope & ADR, extract the aggregate, wire events & projections, migrate call sites, delete old surface, verify & document.
+
+**Shippability rule** - The constraint that every book merges green to `dev` at its final chapter. No long-lived epic branch. No cross-book atomicity. The `dev` branch is always buildable and testable.
 
 ---
 

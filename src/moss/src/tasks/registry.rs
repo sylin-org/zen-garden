@@ -79,7 +79,7 @@ pub fn start_registry_loader(state: AppState) {
                 .unwrap_or(false)
             {
                 state
-                    .update_offering(&offering_id, false, |o| {
+                    .offerings.update(&offering_id, |o| {
                         o.status = garden_common::OfferingStatus::Stopped;
                         o.health = ServiceHealthStatus::Offline;
                         true
@@ -93,7 +93,7 @@ pub fn start_registry_loader(state: AppState) {
         }
 
         // Coalesce any duplicate offerings that accumulated from prior versions
-        let coalesced = state.coalesce_duplicate_offerings().await;
+        let coalesced = state.offerings.coalesce_duplicates().await;
         if coalesced > 0 {
             tracing::info!(coalesced, "Startup: removed duplicate offerings by FQN");
         }

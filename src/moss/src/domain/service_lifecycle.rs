@@ -66,7 +66,7 @@ pub async fn stop(state: &AppState, service_name: &str) -> Result<LifecycleOutco
         .context("Failed to stop container")?;
 
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             o.status = OfferingStatus::Stopped;
             true
         })
@@ -94,7 +94,7 @@ pub async fn cordon(state: &AppState, service_name: &str) -> Result<LifecycleOut
     let offering_id = find_managed(state, service_name).await?;
 
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             if o.status == OfferingStatus::Cordoned {
                 return false; // already cordoned
             }
@@ -116,7 +116,7 @@ pub async fn uncordon(state: &AppState, service_name: &str) -> Result<LifecycleO
     let offering_id = find_managed(state, service_name).await?;
 
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             if o.status != OfferingStatus::Cordoned {
                 return false; // not cordoned
             }
@@ -215,7 +215,7 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
     }
 
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             o.status = OfferingStatus::Running;
             true
         })
@@ -298,7 +298,7 @@ async fn remove_impl(
     }
 
     // Remove from registry (auto-persists)
-    state.remove_offering(&offering_id, true).await;
+    state.offerings.remove(&offering_id).await;
 
     // Emit domain event
     let event = if hard_delete {
@@ -425,7 +425,7 @@ async fn install_image_direct(
         updated_at: None,
         orchestration: None,
     };
-    state.upsert_offering(installing_offering, true).await;
+    state.offerings.upsert(installing_offering).await;
 
     let state = state.clone();
     let task_fqn = offering_fqn.clone();
@@ -464,7 +464,7 @@ async fn try_adopt_existing(state: &AppState, service_name: &str) -> Result<Opti
     )
     .await
     {
-        state.upsert_offering(adopted_offering, true).await;
+        state.offerings.upsert(adopted_offering).await;
         return Ok(Some(InstallOutcome::Adopted { service_name: service_name.to_string() }));
     }
 
@@ -562,7 +562,7 @@ async fn install_from_manifest(
         updated_at: None,
         orchestration: None,
     };
-    state.upsert_offering(installing_offering, true).await;
+    state.offerings.upsert(installing_offering).await;
 
     let state = state.clone();
     let task_offering = offering_type;
@@ -614,7 +614,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
 
     // Mark as Maintenance via gateway (syncs self_entry)
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             o.status = OfferingStatus::Maintenance;
             true
         })
@@ -633,7 +633,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
         Err(e) => {
             // Restore status on spec build failure
             state
-                .update_offering(&offering_id, true, |o| {
+                .offerings.update(&offering_id, |o| {
                     o.status = OfferingStatus::Running;
                     true
                 })
@@ -652,7 +652,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
         error!(error = ?e, service = %service_name, "Docker upgrade failed");
         // Restore status on Docker failure
         state
-            .update_offering(&offering_id, true, |o| {
+            .offerings.update(&offering_id, |o| {
                 o.status = OfferingStatus::Running;
                 true
             })
@@ -671,7 +671,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
     // Update status and version via gateway (syncs self_entry + persists)
     let nv = new_version.clone();
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             o.status = OfferingStatus::Running;
             o.version = nv;
             true

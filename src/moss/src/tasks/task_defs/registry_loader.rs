@@ -49,7 +49,7 @@ impl BackgroundTask for RegistryLoaderTask {
                     .unwrap_or(false)
                 {
                     state
-                        .update_offering(&offering_id, false, |o| {
+                        .offerings.update(&offering_id, |o| {
                             o.status = garden_common::OfferingStatus::Stopped;
                             o.health = ServiceHealthStatus::Offline;
                             true
@@ -62,7 +62,7 @@ impl BackgroundTask for RegistryLoaderTask {
                 state.sync_self_services(true).await;
             }
 
-            let coalesced = state.coalesce_duplicate_offerings().await;
+            let coalesced = state.offerings.coalesce_duplicates().await;
             if coalesced > 0 {
                 tracing::info!(coalesced, "Startup: removed duplicate offerings by FQN");
             }

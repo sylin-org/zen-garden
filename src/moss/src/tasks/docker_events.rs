@@ -234,7 +234,7 @@ async fn handle_container_event(
 
     // Update offerings registry (auto_chirp=true for immediate notification)
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             o.status = new_status;
             o.health = new_health.clone();
             true

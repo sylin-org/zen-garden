@@ -369,7 +369,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip) {
             // Guidance is detail-only (not in chirps), so no sync needed
             state
-                .update_offering(&offering_id, false, |o| {
+                .offerings.update(&offering_id, |o| {
                     if let Some(ref mut managed) = o.managed_data_mut() {
                         managed.guidance = Some(guidance);
                         updated += 1;
@@ -386,7 +386,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
             build_adopted_guidance(state, &name, &offering_type, port, static_ip)
         {
             state
-                .update_offering(&offering_id, false, |o| {
+                .offerings.update(&offering_id, |o| {
                     if let Some(ref mut adopted) = o.adopted_data_mut() {
                         adopted.guidance = Some(guidance);
                         updated += 1;
@@ -824,7 +824,7 @@ pub async fn install_service_task(
     let update_guidance = guidance.clone();
     let update_port_map = port_map.clone();
     let updated = state
-        .update_offering_by_name(offering, false, |o| {
+        .offerings.update_by_name(offering, |o| {
             o.status = OfferingStatus::Running;
             o.health = ServiceHealthStatus::Healthy;
             o.version = update_version;
@@ -880,7 +880,7 @@ pub async fn install_service_task(
             updated_at: None,
             orchestration: None,
         };
-        state.upsert_offering(unified, false).await;
+        state.offerings.upsert(unified).await;
         new_id
     };
 
@@ -1122,7 +1122,7 @@ pub async fn install_image_direct_task(
 
     // Step 6: Update registry entry
     state
-        .update_offering_by_name(service_name, false, |o| {
+        .offerings.update_by_name(service_name, |o| {
             o.status = OfferingStatus::Running;
             o.health = ServiceHealthStatus::Healthy;
             o.location.port = actual_port;
@@ -1434,8 +1434,8 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             orchestration: None,
         };
 
-        // Upsert via gateway (handles sync + persist + chirp)
-        state.upsert_offering(unified, true).await;
+        // Route through the Offerings aggregate — persist + chirp are automatic.
+        state.offerings.upsert(unified).await;
 
         // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
         state.event_bus.emit(OfferingEvent::deployed(
@@ -1502,8 +1502,8 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 /// Called when a service installation fails to clean up the placeholder entry
 /// that was created before the installation job started.
 async fn remove_installing_entry(state: &AppState, offering: &str) {
-    // Use remove_service (gateway) — handles sync + persist + chirp
-    state.remove_service(offering, true).await;
+    // Route through the Offerings aggregate — persist + chirp are automatic.
+    state.offerings.remove_by_name(offering).await;
     tracing::debug!(
         offering,
         "Removed Installing entry from offerings after failure"

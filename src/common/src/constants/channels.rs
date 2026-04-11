@@ -24,3 +24,7 @@ pub const SSE_DASHBOARD: usize = 256;
 
 /// Docker / network monitor reconnect events — low volume.
 pub const MONITOR_EVENT: usize = 100;
+
+/// Offerings aggregate mutation events (ARCH-0016) — low volume on
+/// well-behaved stones, bursty during bulk reconciliation.
+pub const OFFERINGS_EVENT: usize = 128;

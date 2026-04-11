@@ -13,7 +13,7 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{Orchestration, Security, Tool};
+use crate::domain::{Offerings, Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
@@ -63,30 +63,19 @@ pub struct AppState {
     /// Current domain — this stone's identity, local storage, topology, capabilities, metrics.
     pub current: Arc<crate::domain::Current>,
 
-    /// Active offerings registry (managed, borrowed, and detection-confirmed adopted).
+    /// Offerings aggregate (ARCH-0016) — owns the active pool and the
+    /// adopted-candidates pool as a single DDD aggregate.
     ///
-    /// Only offerings that are confirmed present belong here. Managed and
-    /// borrowed offerings enter on load (Docker manages their lifecycle).
-    /// Adopted offerings enter only after the auto-adoption task confirms
-    /// detection — never loaded directly from disk into this collection.
+    /// **Mutation** goes through methods on the aggregate
+    /// (`upsert`, `remove`, `promote`, `demote`, `update`, ...). Every
+    /// mutation persists and emits an `OfferingsChanged` event through the
+    /// aggregate's broadcast channel.
     ///
-    /// **Write access**: use gateway methods only (`update_offering`,
-    /// `update_offering_by_name`, `update_offerings_batch`, `upsert_offering`,
-    /// `remove_offering`, `remove_service`, `replace_offerings`).
-    /// Direct `.write()` is reserved for `app_state.rs` internals.
-    /// **Read access**: `.read()` is fine from anywhere.
-    pub offerings: Arc<RwLock<Vec<Offering>>>,
-
-    /// Adopted offering candidates — cold storage loaded from disk.
-    ///
-    /// Persisted configurations for adopted services. These are NOT active
-    /// — they don't appear in topology or API responses. The auto-adoption
-    /// task reads from here, runs detection, and on success moves the entry
-    /// to the active `offerings` pool via `promote_adopted()`.
-    ///
-    /// This preserves port/protocol/control configuration across restarts
-    /// so that re-adoption is instant when the service comes back.
-    pub adopted_candidates: Arc<RwLock<Vec<Offering>>>,
+    /// **Reads** continue to use `.read().await` during the strangler-vine
+    /// migration phase — `Offerings::read()` returns an `ActiveGuard` that
+    /// derefs to `&Vec<Offering>`. New code should prefer `snapshot()`,
+    /// `find_by_id()`, `with_active()`, or the other typed query methods.
+    pub offerings: Arc<Offerings>,
 
     /// Manifest registry - single source of truth for all manifests
     /// Contains both software (sw) and hardware (hw) manifests
@@ -170,6 +159,10 @@ impl axum::extract::FromRef<AppState> for Arc<crate::domain::Platform> {
 
 impl axum::extract::FromRef<AppState> for Arc<Tool> {
     fn from_ref(state: &AppState) -> Self { state.tool.clone() }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<Offerings> {
+    fn from_ref(state: &AppState) -> Self { state.offerings.clone() }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<Security> {
@@ -296,76 +289,6 @@ impl AppState {
         &self.current.stone.name
     }
 
-    /// Promote an adopted candidate to the active offerings pool.
-    ///
-    /// Called by the auto-adoption task after detection succeeds. Moves
-    /// the offering from `adopted_candidates` to `offerings`, making it
-    /// visible in topology and API responses.
-    ///
-    /// Returns true if the offering was found in candidates and promoted.
-    pub async fn promote_adopted(&self, offering_id: &str) -> bool {
-        let candidate = {
-            let mut candidates = self.adopted_candidates.write().await;
-            let idx = candidates.iter().position(|o| o.offering_id == offering_id);
-            idx.map(|i| candidates.remove(i))
-        };
-
-        if let Some(mut offering) = candidate {
-            offering.status = garden_common::OfferingStatus::Running;
-            offering.health = garden_common::ServiceHealthStatus::Healthy;
-            let name = offering.offering.clone();
-            self.offerings.write().await.push(offering);
-            tracing::info!(offering = %name, "Promoted adopted candidate to active pool");
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Demote an adopted offering back to candidates (detection failed).
-    ///
-    /// Moves the offering from `offerings` to `adopted_candidates`,
-    /// removing it from topology and API visibility.
-    pub async fn demote_adopted(&self, offering_id: &str) -> bool {
-        let offering = {
-            let mut offerings = self.offerings.write().await;
-            let idx = offerings.iter().position(|o| o.offering_id == offering_id && o.is_adopted());
-            idx.map(|i| offerings.remove(i))
-        };
-
-        if let Some(mut o) = offering {
-            o.status = garden_common::OfferingStatus::Stopped;
-            o.health = garden_common::ServiceHealthStatus::Offline;
-            let name = o.offering.clone();
-            self.adopted_candidates.write().await.push(o);
-            tracing::info!(offering = %name, "Demoted adopted offering back to candidates");
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Persist offerings to disk
-    ///
-    /// Saves BOTH active offerings AND adopted candidates so that
-    /// configuration (port, protocol, control) survives restarts.
-    pub(crate) async fn persist_offerings(&self) -> anyhow::Result<()> {
-        let active = self.offerings.read().await;
-        let candidates = self.adopted_candidates.read().await;
-        let mut all: Vec<Offering> = active.iter().cloned().collect();
-        all.extend(candidates.iter().cloned());
-        drop(active);
-        drop(candidates);
-        crate::infra::save_offerings(&all).await?;
-
-        // Offerings persistence is the canonical mutation boundary for offering state.
-        // Reconcile the tools projection immediately so automation consumers get
-        // deterministic updates without polling.
-        self.refresh_local_tools_projection().await;
-
-        Ok(())
-    }
-
     /// Reconcile local tools projection and publish resulting deltas.
     ///
     /// This is the single entry point for publishing local tool updates.
@@ -452,10 +375,14 @@ impl AppState {
         let capabilities = self.current.capabilities.read().await.clone();
         let tags = self.presence.notifications.compile();
 
-        // Build services from offerings
-        let offerings = self.offerings.read().await;
-        let services = garden_common::TopologyServiceEntry::from_offerings(&offerings);
-        drop(offerings);
+        // Build services from the active offerings pool. `with_active`
+        // bounds the lock scope to the closure — no guard escapes.
+        let services = self
+            .offerings
+            .with_active(|offerings| {
+                garden_common::TopologyServiceEntry::from_offerings(offerings)
+            })
+            .await;
 
         garden_common::TopologyEntry {
             stone_id: self.current.stone.id.clone(),
@@ -504,238 +431,62 @@ impl AppState {
     }
 
     // ========================================================================
-    // Offering Mutation Gateway
+    // Offering Accessors — thin delegates to the Offerings aggregate (ARCH-0016)
     // ========================================================================
+    //
+    // Mutation methods are gone — use `state.offerings.{upsert,remove,update,
+    // promote,demote,...}` directly. The aggregate owns the persist+emit
+    // invariant internally. See ARCH-0016.
 
-    /// Single offering mutation gateway.
-    ///
-    /// All offering mutations go through this method. The closure receives
-    /// `&mut Vec<Offering>` and returns `(R, bool)` — the result for the
-    /// caller, plus a `changed` flag. If changed, the post-mutation
-    /// invariant runs: sync_self_services + persist_offerings.
-    async fn mutate_offerings<F, R>(&self, auto_chirp: bool, mutator: F) -> R
-    where
-        F: FnOnce(&mut Vec<Offering>) -> (R, bool),
-    {
-        let (result, changed) = {
-            let mut offerings = self.offerings.write().await;
-            mutator(&mut offerings)
-        };
-        if changed {
-            self.sync_self_services(auto_chirp).await;
-            if let Err(e) = self.persist_offerings().await {
-                tracing::error!(error = ?e, "Failed to persist offerings");
-            }
-        }
-        result
-    }
-
-    /// Add or update a single offering.
-    ///
-    /// Dedup guard: matches by `offering_id` first, then by FQN (`name`).
-    pub async fn upsert_offering(&self, mut offering: Offering, auto_chirp: bool) {
-        offering.touch();
-        self.mutate_offerings(auto_chirp, |offerings| {
-            if let Some(pos) = offerings
-                .iter()
-                .position(|o| o.offering_id == offering.offering_id)
-            {
-                offerings[pos] = offering;
-            } else if let Some(pos) = offerings.iter().position(|o| o.name == offering.name) {
-                tracing::info!(
-                    name = %offering.name,
-                    old_id = %offerings[pos].offering_id,
-                    new_id = %offering.offering_id,
-                    "upsert_offering: FQN already exists, updating in place"
-                );
-                offerings[pos] = offering;
-            } else {
-                offerings.push(offering);
-            }
-            ((), true)
-        })
-        .await;
-    }
-
-    /// Remove an offering by ID.
-    pub async fn remove_offering(&self, offering_id: &str, auto_chirp: bool) {
-        self.mutate_offerings(auto_chirp, |offerings| {
-            let before = offerings.len();
-            offerings.retain(|o| o.offering_id != offering_id);
-            ((), offerings.len() != before)
-        })
-        .await;
-    }
-
-    /// Remove an offering by name (FQN).
-    pub async fn remove_service(&self, service_name: &str, auto_chirp: bool) {
-        self.mutate_offerings(auto_chirp, |offerings| {
-            let before = offerings.len();
-            offerings.retain(|o| !o.name.fqn_eq(service_name));
-            ((), offerings.len() != before)
-        })
-        .await;
-    }
-
-    /// Coalesce duplicate offerings by FQN, keeping the most recently updated.
-    ///
-    /// Returns the number of duplicates removed.
-    pub async fn coalesce_duplicate_offerings(&self) -> usize {
-        self.mutate_offerings(true, |offerings| {
-            let before = offerings.len();
-
-            let mut best: std::collections::HashMap<String, usize> =
-                std::collections::HashMap::new();
-            for (i, o) in offerings.iter().enumerate() {
-                let key = o.name.to_string();
-                let dominated = best.get(&key).is_some_and(|&prev| {
-                    let prev_ts = offerings[prev]
-                        .updated_at
-                        .unwrap_or(offerings[prev].registered_at);
-                    let cur_ts = o.updated_at.unwrap_or(o.registered_at);
-                    cur_ts <= prev_ts
-                });
-                if !dominated {
-                    best.insert(key, i);
-                }
-            }
-
-            let keep: std::collections::HashSet<usize> = best.into_values().collect();
-            let mut idx = 0usize;
-            offerings.retain(|_| {
-                let k = keep.contains(&idx);
-                idx += 1;
-                k
-            });
-
-            let removed = before - offerings.len();
-            if removed > 0 {
-                tracing::warn!(removed, "Coalesced duplicate offerings by FQN");
-            }
-            (removed, removed > 0)
-        })
-        .await
-    }
-
-    /// Replace entire offerings registry.
-    pub async fn replace_offerings(&self, new_offerings: Vec<Offering>, auto_chirp: bool) {
-        self.mutate_offerings(auto_chirp, |offerings| {
-            *offerings = new_offerings;
-            ((), true)
-        })
-        .await;
-    }
-
-    /// Update a single offering by ID via a closure.
-    ///
-    /// The closure receives `&mut Offering` and returns `true` if it made changes.
-    /// Pass `auto_chirp = true` for immediate broadcast, `false` to let the
-    /// periodic announcer pick it up.
-    pub async fn update_offering<F>(&self, offering_id: &str, auto_chirp: bool, mutator: F) -> bool
-    where
-        F: FnOnce(&mut Offering) -> bool,
-    {
-        self.mutate_offerings(auto_chirp, |offerings| {
-            let changed = offerings
-                .iter_mut()
-                .find(|o| o.offering_id == offering_id)
-                .map(mutator)
-                .unwrap_or(false);
-            (changed, changed)
-        })
-        .await
-    }
-
-    /// Update a single offering by name (FQN) via a closure.
-    pub async fn update_offering_by_name<F>(&self, name: &str, auto_chirp: bool, mutator: F) -> bool
-    where
-        F: FnOnce(&mut Offering) -> bool,
-    {
-        self.mutate_offerings(auto_chirp, |offerings| {
-            let changed = offerings
-                .iter_mut()
-                .find(|o| o.name.fqn_eq(name))
-                .map(mutator)
-                .unwrap_or(false);
-            (changed, changed)
-        })
-        .await
-    }
-
-    /// Batch-update offerings via a closure over the entire vec.
-    ///
-    /// The closure returns the count of offerings changed.
-    pub async fn update_offerings_batch<F>(&self, mutator: F, auto_chirp: bool) -> usize
-    where
-        F: FnOnce(&mut Vec<Offering>) -> usize,
-    {
-        self.mutate_offerings(auto_chirp, |offerings| {
-            let changed = mutator(offerings);
-            (changed, changed > 0)
-        })
-        .await
-    }
-
-    // ========================================================================
-    // Offering Accessors
-    // ========================================================================
-
-    /// Get all offerings
+    /// Snapshot of the active offerings pool.
     pub async fn get_offerings(&self) -> Vec<Offering> {
-        self.offerings.read().await.clone()
+        self.offerings.snapshot().await
     }
 
-    /// Get managed offerings only
+    /// Get managed offerings only.
     pub async fn get_managed_offerings(&self) -> Vec<Offering> {
         self.offerings
-            .read()
+            .with_active(|o| {
+                o.iter()
+                    .filter(|o| o.is_managed())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
             .await
-            .iter()
-            .filter(|o| o.is_managed())
-            .cloned()
-            .collect()
     }
 
-    /// Get adopted offerings only
+    /// Get adopted offerings only.
     pub async fn get_adopted_offerings(&self) -> Vec<Offering> {
         self.offerings
-            .read()
+            .with_active(|o| {
+                o.iter()
+                    .filter(|o| o.is_adopted())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
             .await
-            .iter()
-            .filter(|o| o.is_adopted())
-            .cloned()
-            .collect()
     }
 
-    /// Get borrowed offerings only
+    /// Get borrowed offerings only.
     pub async fn get_borrowed_offerings(&self) -> Vec<Offering> {
         self.offerings
-            .read()
+            .with_active(|o| {
+                o.iter()
+                    .filter(|o| o.is_borrowed())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
             .await
-            .iter()
-            .filter(|o| o.is_borrowed())
-            .cloned()
-            .collect()
     }
 
-    /// Find offering by instance name (FQN)
+    /// Find offering by instance name (FQN).
     pub async fn find_offering(&self, name: &str) -> Option<Offering> {
-        self.offerings
-            .read()
-            .await
-            .iter()
-            .find(|o| o.name.fqn_eq(name))
-            .cloned()
+        self.offerings.find_by_name(name).await
     }
 
-    /// Find offering by ID
+    /// Find offering by ID.
     pub async fn find_offering_by_id(&self, offering_id: &str) -> Option<Offering> {
-        self.offerings
-            .read()
-            .await
-            .iter()
-            .find(|o| o.offering_id == offering_id)
-            .cloned()
+        self.offerings.find_by_id(offering_id).await
     }
 
     /// Update stone health and immediately chirp

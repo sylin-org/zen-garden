@@ -80,7 +80,7 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
             Ok(Some(adopted_offering)) => {
                 // upsert_offering handles TOCTOU internally (idempotent insert)
                 tracing::info!(offering = %offering, "Reconciliation: adopting unregistered container");
-                state.upsert_offering(adopted_offering, false).await;
+                state.offerings.upsert(adopted_offering).await;
                 adopted.push(offering);
             }
             Ok(None) => {

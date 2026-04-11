@@ -245,7 +245,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                                 "adopted offering port changed"
                             );
                             state
-                                .update_offering(&offering_id, true, |o| {
+                                .offerings.update(&offering_id, |o| {
                                     o.location.port = p;
                                     true
                                 })
@@ -273,7 +273,8 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             "Connectivity checks failed for adopted offering"
                         );
                         state
-                            .update_offering(&offering_id, false, |o| {
+                            .offerings
+                            .update(&offering_id, |o| {
                                 o.health = ServiceHealthStatus::Degraded;
                                 true
                             })
@@ -287,7 +288,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                         offering = %offering_name,
                         "Adopted offering not detected, demoting to candidates"
                     );
-                    state.demote_adopted(&offering_id).await;
+                    state.offerings.demote(&offering_id).await;
                     state_changed = true;
 
                     state.console.emit(garden_common::console::ConsoleEvent::new(
@@ -301,11 +302,15 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
         // Phase 1B: Check adopted candidates — promote if detection succeeds
         let candidate_snapshot: Vec<(String, String, garden_common::OfferingLocation)> = {
-            let candidates = state.adopted_candidates.read().await;
-            candidates
-                .iter()
-                .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone()))
-                .collect()
+            state
+                .offerings
+                .with_candidates(|cands| {
+                    cands
+                        .iter()
+                        .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone()))
+                        .collect()
+                })
+                .await
         };
 
         for (offering_id, offering_name, location) in candidate_snapshot {
@@ -327,8 +332,12 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                                 new_port = p,
                                 "candidate offering port changed"
                             );
+                            // The offering is still a candidate at this
+                            // point — update in the candidate pool before
+                            // promoting.
                             state
-                                .update_offering(&offering_id, true, |o| {
+                                .offerings
+                                .update_candidate(&offering_id, |o| {
                                     o.location.port = p;
                                     true
                                 })
@@ -349,7 +358,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             }
                         });
 
-                    state.promote_adopted(&offering_id).await;
+                    state.offerings.promote(&offering_id).await;
                     state_changed = true;
 
                     state.console.emit(garden_common::console::ConsoleEvent::new(
@@ -365,7 +374,8 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                             "Connectivity checks failed for newly promoted offering"
                         );
                         state
-                            .update_offering(&offering_id, false, |o| {
+                            .offerings
+                            .update(&offering_id, |o| {
                                 o.health = ServiceHealthStatus::Degraded;
                                 true
                             })
@@ -526,7 +536,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     };
 
                     // Add to unified offerings registry
-                    state.upsert_offering(adopted_offering, true).await;
+                    state.offerings.upsert(adopted_offering).await;
                     state_changed = true;
 
                     // Emit console event

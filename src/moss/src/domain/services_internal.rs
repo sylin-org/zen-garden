@@ -158,7 +158,7 @@ impl ReconcileResult {
         let primary = self.primary_port;
         let new_port_map = self.port_map.clone();
         state
-            .update_offering(offering_id, false, |o| {
+            .offerings.update(offering_id, |o| {
                 if let Some(port) = primary {
                     o.location.port = port;
                 }

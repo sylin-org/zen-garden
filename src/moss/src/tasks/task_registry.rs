@@ -59,6 +59,7 @@ pub fn build_task_registry(config: TaskConfig, channels: TaskChannels) -> Vec<Bo
         Box::new(S3ListenerLifecycleTask),
         Box::new(StorageConsoleTask),
         Box::new(OfferingOrchestrationTask),
+        Box::new(OfferingsProjectionTask),
         Box::new(StorageOrchestrationTask),
         Box::new(StorageTickAggregatorTask),
         Box::new(StorageReplicationTask),

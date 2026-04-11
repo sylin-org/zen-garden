@@ -181,8 +181,11 @@ pub async fn build_test_state() -> AppState {
                 gpu: Arc::new(RwLock::new(None)),
             }),
         }),
-        offerings: Arc::new(RwLock::new(Vec::new())),
-        adopted_candidates: Arc::new(RwLock::new(Vec::new())),
+        offerings: Arc::new(domain::Offerings::new(
+            Vec::new(),
+            Vec::new(),
+            Arc::new(domain::FileOfferingStore),
+        )),
         manifest_registry,
         platform: Arc::new(domain::Platform {
             docker,

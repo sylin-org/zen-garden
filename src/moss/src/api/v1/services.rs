@@ -887,7 +887,7 @@ pub async fn discover_service_capabilities_v1(
     if !capabilities.is_empty() {
         let caps = capabilities.clone();
         state
-            .update_offering_by_name(&service_name, false, |o| {
+            .offerings.update_by_name(&service_name, |o| {
                 o.sub_capabilities = caps;
                 false // sub_capabilities are detail-only, don't trigger chirp sync
             })
@@ -963,22 +963,20 @@ pub async fn refresh_all_capabilities_v1(
         }
     }
 
-    // Persist updated capabilities via gateway (detail-only, no chirp sync)
+    // Persist updated capabilities through the Offerings aggregate.
     if !updates.is_empty() {
         state
-            .update_offerings_batch(
-                |offerings| {
-                    let mut count = 0;
-                    for (name, sub_caps) in updates {
-                        if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
-                            o.sub_capabilities = sub_caps;
-                            count += 1;
-                        }
+            .offerings
+            .update_batch(|offerings| {
+                let mut count = 0;
+                for (name, sub_caps) in updates {
+                    if let Some(o) = offerings.iter_mut().find(|o| o.name.to_string() == name) {
+                        o.sub_capabilities = sub_caps;
+                        count += 1;
                     }
-                    count
-                },
-                false,
-            )
+                }
+                count
+            })
             .await;
     }
 
@@ -1110,7 +1108,7 @@ pub async fn reassign_service_v1(
 
     // Step 3: Update offering in registry
     state
-        .update_offering(&offering_id, true, |o| {
+        .offerings.update(&offering_id, |o| {
             o.name = new_fqn.clone();
             true
         })
@@ -1125,7 +1123,7 @@ pub async fn reassign_service_v1(
     {
         tracing::error!(error = ?e, service = %new_name, "Failed to start container after rename");
         state
-            .update_offering(&offering_id, true, |o| {
+            .offerings.update(&offering_id, |o| {
                 o.status = OfferingStatus::Stopped;
                 true
             })

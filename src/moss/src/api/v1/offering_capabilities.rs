@@ -106,7 +106,7 @@ pub async fn list_offering_capabilities_v1(
 
         // Update in unified registry via gateway (detail-only, no chirp sync)
         state
-            .update_offering(&offering.offering_id, false, |o| {
+            .offerings.update(&offering.offering_id, |o| {
                 o.sub_capabilities = sub_caps;
                 false // sub_capabilities are detail-only
             })

@@ -138,7 +138,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     "Offering state changed"
                 );
                 state
-                    .update_offering(offering_id, false, |o| {
+                    .offerings.update(offering_id, |o| {
                         o.status = new_status;
                         o.health = new_health;
                         true
@@ -150,7 +150,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             // Resource metrics (detail-only, no chirp)
             if let Ok(resources) = state.platform.docker.get_container_stats(name).await {
                 state
-                    .update_offering(offering_id, false, |o| {
+                    .offerings.update(offering_id, |o| {
                         if let Some(ref mut managed) = o.managed_data_mut() {
                             managed.resources = Some(resources);
                         }
@@ -185,7 +185,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                                     "Port mismatch detected, updating registry"
                                 );
                                 state
-                                    .update_offering(offering_id, false, |o| {
+                                    .offerings.update(offering_id, |o| {
                                         o.location.port = actual_host_port;
                                         true
                                     })
@@ -221,7 +221,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                                 "Protocol mismatch detected, updating registry"
                             );
                             state
-                                .update_offering(offering_id, false, |o| {
+                                .offerings.update(offering_id, |o| {
                                     o.location.protocol = expected_protocol;
                                     true
                                 })
@@ -346,7 +346,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                         .await
                         {
                             Ok(Some(offering)) => {
-                                state.upsert_offering(offering, true).await;
+                                state.offerings.upsert(offering).await;
                                 state_changed = true;
                             }
                             Ok(None) => {

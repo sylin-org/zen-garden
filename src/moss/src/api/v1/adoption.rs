@@ -247,7 +247,7 @@ pub async fn adopt_offering_v1(
     };
 
     // Add to registry (gateway auto-persists)
-    state.upsert_offering(unified.clone(), true).await;
+    state.offerings.upsert(unified.clone()).await;
 
     let ctx = Suggestion::from_headers(&headers, "adopt_offering");
     let suggestions = generate_suggestions(&ctx);
@@ -308,7 +308,7 @@ pub async fn unadopt_offering_v1(
 
     match found {
         Some(to_remove) => {
-            state.remove_offering(&to_remove.offering_id, true).await;
+            state.offerings.remove(&to_remove.offering_id).await;
         }
         None => {
             return Err(not_found(
@@ -464,7 +464,7 @@ pub async fn borrow_service_v1(
     };
 
     // Add to registry (gateway auto-persists)
-    state.upsert_offering(unified.clone(), true).await;
+    state.offerings.upsert(unified.clone()).await;
 
     let ctx = Suggestion::from_headers(&headers, "borrow_service");
     let suggestions = generate_suggestions(&ctx);
@@ -498,7 +498,7 @@ pub async fn unborrow_service_v1(
 
     match found {
         Some(to_remove) => {
-            state.remove_offering(&to_remove.offering_id, true).await;
+            state.offerings.remove(&to_remove.offering_id).await;
         }
         None => {
             return Err(not_found(

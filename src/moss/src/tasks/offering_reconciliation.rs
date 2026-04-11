@@ -171,7 +171,7 @@ impl ReconciliationCoordinator {
                             "Reconciliation exhausted, marking as degraded"
                         );
                         state
-                            .update_offering(&offering_id, false, |o| {
+                            .offerings.update(&offering_id, |o| {
                                 o.status = OfferingStatus::Degraded;
                                 true
                             })
@@ -188,7 +188,7 @@ impl ReconciliationCoordinator {
             // Mark in-flight and set status to Installing (gate for next cycle)
             self.in_flight.lock().await.insert(name.clone());
             state
-                .update_offering(&offering_id, false, |o| {
+                .offerings.update(&offering_id, |o| {
                     o.status = OfferingStatus::Installing;
                     true
                 })
@@ -260,7 +260,7 @@ impl ReconciliationCoordinator {
 
                         // auto_chirp=true so the garden learns the offering is back
                         state
-                            .update_offering(&offering_id, true, |o| {
+                            .offerings.update(&offering_id, |o| {
                                 o.status = target_status;
                                 o.health = if target_status == OfferingStatus::Running {
                                     ServiceHealthStatus::Healthy
@@ -322,7 +322,7 @@ impl ReconciliationCoordinator {
                             .record_failure();
 
                         state
-                            .update_offering(&offering_id, true, |o| {
+                            .offerings.update(&offering_id, |o| {
                                 o.status = OfferingStatus::Stopped;
                                 o.health = ServiceHealthStatus::Offline;
                                 true

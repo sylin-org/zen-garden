@@ -79,8 +79,9 @@ pub use health::{
 pub use modes::{AggregatedDetectionResult, DetectionOrchestrator};
 pub use offerings::{
     current_capabilities_hash, ensure_offerings_index, get_compiled_offering, manifests_hash,
-    moss_version_string, rebuild_offerings_index, CompiledOffering, OfferingsFingerprint,
-    OfferingsIndex,
+    moss_version_string, rebuild_offerings_index, ActiveGuard, CandidatesGuard, ChangeKind,
+    CompiledOffering, FileOfferingStore, OfferingStore, Offerings, OfferingsChanged,
+    OfferingsFingerprint, OfferingsIndex,
 };
 pub use orchestration::{
     NourishmentOrchestration, NurturingOrchestration, Orchestration, StorageOrchestration,

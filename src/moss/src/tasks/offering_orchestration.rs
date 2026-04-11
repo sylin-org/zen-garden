@@ -545,7 +545,7 @@ async fn transition_role(
     // Transition via gateway — syncs self_entry + chirps
     let stone_id = state.current.stone.id.clone();
     state
-        .update_offering(offering_id, true, |o| {
+        .offerings.update(offering_id, |o| {
             let orch = o
                 .orchestration
                 .get_or_insert_with(OrchestrationState::default);
@@ -589,7 +589,7 @@ async fn update_primary_stone_id(
 ) -> Result<()> {
     let primary_id_owned = primary_id.to_string();
     state
-        .update_offering(offering_id, false, |o| {
+        .offerings.update(offering_id, |o| {
             if let Some(ref mut orch) = o.orchestration {
                 orch.primary_stone_id = Some(primary_id_owned);
                 true
@@ -649,7 +649,7 @@ async fn cleanup_independent_orchestration(state: &AppState) {
         }
     };
 
-    let cleaned = state.update_offerings_batch(|offerings| {
+    let cleaned = state.offerings.update_batch(|offerings| {
         let mut count = 0;
         for o in offerings.iter_mut() {
             if o.orchestration.is_some() && !elected_types.contains(&o.offering) {
@@ -664,7 +664,7 @@ async fn cleanup_independent_orchestration(state: &AppState) {
             }
         }
         count
-    }, true).await;
+    }).await;
 
     if cleaned > 0 {
         tracing::info!(
@@ -701,7 +701,7 @@ pub async fn assign_initial_role(state: &AppState, offering_id: &str, fqn: &str)
 
     // Set orchestration state via gateway (no event for initial assignment — deploy event suffices)
     state
-        .update_offering(offering_id, true, |o| {
+        .offerings.update(offering_id, |o| {
             o.orchestration = Some(OrchestrationState {
                 role: new_role,
                 primary_stone_id: primary_id,

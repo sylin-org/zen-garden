@@ -667,7 +667,7 @@ async fn execute_offering_update(
 ) -> anyhow::Result<()> {
     // Mark service as updating in registry via gateway (syncs self_entry + chirps)
     state
-        .update_offering_by_name(name, true, |o| {
+        .offerings.update_by_name(name, |o| {
             if o.is_managed() {
                 o.status = garden_common::OfferingStatus::Maintenance;
                 true
@@ -769,7 +769,7 @@ async fn execute_offering_update(
 
     // Mark service as running again via gateway (syncs self_entry + chirps)
     state
-        .update_offering_by_name(name, true, |o| {
+        .offerings.update_by_name(name, |o| {
             if o.is_managed() {
                 o.status = garden_common::OfferingStatus::Running;
                 true

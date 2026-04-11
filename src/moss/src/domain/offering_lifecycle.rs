@@ -10,9 +10,11 @@
 //!
 //! ## Usage
 //!
-//! Handlers and tasks call these functions instead of `state.offerings.read()` /
-//! `state.update_offering()` directly. The functions take `&AppState` because
-//! the offering registry lives there (ARCH-0004).
+//! Handlers and tasks call these functions instead of going through the
+//! `Offerings` aggregate directly when they want domain-event emission on
+//! top of registry mutation (e.g. `OfferingEvent::deployed`). For raw
+//! registry mutation without the extra lifecycle event, call
+//! `state.offerings.{upsert, remove, update, ...}` on the aggregate directly.
 
 use garden_common::{Offering, OfferingStatus};
 
@@ -91,18 +93,20 @@ pub async fn has_status(state: &AppState, name: &str, status: OfferingStatus) ->
 /// Insert or update an offering. Emits a domain event based on whether this
 /// is a new registration or an update to an existing one.
 pub async fn upsert(state: &AppState, offering: Offering) {
-    let is_new = {
-        let offerings = state.offerings.read().await;
-        !offerings
-            .iter()
-            .any(|o| o.offering_id == offering.offering_id)
-            && !offerings.iter().any(|o| o.name == offering.name)
-    };
+    let is_new = state
+        .offerings
+        .with_active(|offerings| {
+            !offerings
+                .iter()
+                .any(|o| o.offering_id == offering.offering_id)
+                && !offerings.iter().any(|o| o.name == offering.name)
+        })
+        .await;
 
     let offering_id = offering.offering_id.clone();
     let name = offering.name.to_string();
 
-    state.upsert_offering(offering, true).await;
+    state.offerings.upsert(offering).await;
 
     if is_new {
         state.event_bus.emit(OfferingEvent::deployed(
@@ -117,12 +121,12 @@ pub async fn upsert(state: &AppState, offering: Offering) {
 /// Insert or update an offering without emitting an event.
 /// Use for intermediate states (e.g., Installing placeholder before job starts).
 pub async fn upsert_quiet(state: &AppState, offering: Offering) {
-    state.upsert_offering(offering, true).await;
+    state.offerings.upsert(offering).await;
 }
 
 /// Remove an offering by ID. Emits `OfferingEvent::removed`.
 pub async fn remove(state: &AppState, offering_id: &str, name: &str) {
-    state.remove_offering(offering_id, true).await;
+    state.offerings.remove(offering_id).await;
 
     state.event_bus.emit(OfferingEvent::removed(
         offering_id,
@@ -134,7 +138,7 @@ pub async fn remove(state: &AppState, offering_id: &str, name: &str) {
 /// Remove an offering by name. Emits `OfferingEvent::removed`.
 pub async fn remove_by_name(state: &AppState, name: &str) {
     if let Some(offering_id) = id_for_name(state, name).await {
-        state.remove_service(name, true).await;
+        state.offerings.remove_by_name(name).await;
 
         state.event_bus.emit(OfferingEvent::removed(
             &offering_id,
@@ -150,7 +154,7 @@ pub async fn update<F>(state: &AppState, offering_id: &str, mutator: F) -> bool
 where
     F: FnOnce(&mut Offering) -> bool,
 {
-    state.update_offering(offering_id, true, mutator).await
+    state.offerings.update(offering_id, mutator).await
 }
 
 /// Update a single offering by name. Returns true if changed.
@@ -159,7 +163,7 @@ pub async fn update_by_name<F>(state: &AppState, name: &str, mutator: F) -> bool
 where
     F: FnOnce(&mut Offering) -> bool,
 {
-    state.update_offering_by_name(name, true, mutator).await
+    state.offerings.update_by_name(name, mutator).await
 }
 
 /// Batch-update offerings. Returns count of changed offerings.
@@ -167,7 +171,7 @@ pub async fn batch_update<F>(state: &AppState, mutator: F) -> usize
 where
     F: FnOnce(&mut Vec<Offering>) -> usize,
 {
-    state.update_offerings_batch(mutator, true).await
+    state.offerings.update_batch(mutator).await
 }
 
 // ============================================================================
@@ -177,7 +181,8 @@ where
 /// Transition an offering to Running status. Emits `OfferingEvent::started`.
 pub async fn mark_running(state: &AppState, offering_id: &str, name: &str) {
     let changed = state
-        .update_offering(offering_id, true, |o| {
+        .offerings
+        .update(offering_id, |o| {
             o.status = OfferingStatus::Running;
             true
         })
@@ -195,7 +200,8 @@ pub async fn mark_running(state: &AppState, offering_id: &str, name: &str) {
 /// Transition an offering to Stopped status. Emits `OfferingEvent::stopped`.
 pub async fn mark_stopped(state: &AppState, offering_id: &str, name: &str) {
     let changed = state
-        .update_offering(offering_id, true, |o| {
+        .offerings
+        .update(offering_id, |o| {
             o.status = OfferingStatus::Stopped;
             true
         })

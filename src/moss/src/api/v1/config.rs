@@ -234,7 +234,7 @@ pub async fn patch_config_v1(
     // Write patches to the offering via gateway (detail-only, no chirp sync)
     let patches = patches_after.clone();
     state
-        .update_offering_by_name(&service_name, false, |o| {
+        .offerings.update_by_name(&service_name, |o| {
             if o.is_managed()
                 && let Some(managed) = o.managed_data_mut() {
                     managed.config_patches = patches;
@@ -314,7 +314,7 @@ pub async fn delete_config_v1(
     // Write updated patches via gateway (detail-only, no chirp sync)
     let patches = patches_after.clone();
     state
-        .update_offering_by_name(&service_name, false, |o| {
+        .offerings.update_by_name(&service_name, |o| {
             if o.is_managed()
                 && let Some(managed) = o.managed_data_mut() {
                     managed.config_patches = patches;

@@ -766,27 +766,25 @@ async fn build_state(
         }
     }
 
-    // Phase 10.5: Load offerings from disk, split into active and candidates
+    // Phase 10.5: Construct the Offerings aggregate (ARCH-0016) from disk.
     //
-    // Managed and borrowed → active pool (Docker manages their lifecycle).
-    // Adopted → candidates pool (must pass detection before becoming active).
+    // Loaded offerings are split into two pools by `Offerings::split_loaded`:
+    //  - Managed and borrowed → active pool (Docker manages their lifecycle).
+    //  - Adopted → candidates pool (must pass detection before becoming active).
     //
-    // This prevents ghost services: an adopted offering that was persisted
-    // from a previous run only appears in topology after the auto-adoption
-    // task confirms it's actually running.
-    let (offerings, adopted_candidates) = match infra::load_offerings().await {
+    // The split prevents ghost services: an adopted offering persisted from a
+    // previous run only appears in topology after the auto-adoption task
+    // confirms it's actually running.
+    //
+    // The aggregate owns both pools privately and persists through an
+    // `OfferingStore` port — every mutation is persisted and publishes an
+    // `OfferingsChanged` event consumed by `OfferingsProjectionTask`.
+    let offering_store: Arc<dyn crate::domain::OfferingStore> =
+        Arc::new(crate::domain::FileOfferingStore);
+
+    let (active, candidates) = match offering_store.load().await {
         Ok(all) => {
-            let mut active: Vec<garden_common::Offering> = Vec::new();
-            let mut candidates: Vec<garden_common::Offering> = Vec::new();
-
-            for offering in all {
-                if offering.is_adopted() {
-                    candidates.push(offering);
-                } else {
-                    active.push(offering);
-                }
-            }
-
+            let (active, candidates) = crate::domain::Offerings::split_loaded(all);
             let managed = active.iter().filter(|o| o.is_managed()).count();
             let borrowed = active.iter().filter(|o| o.is_borrowed()).count();
             if !active.is_empty() || !candidates.is_empty() {
@@ -800,7 +798,6 @@ async fn build_state(
                     candidates.len(),
                 );
             }
-
             (active, candidates)
         }
         Err(e) => {
@@ -808,6 +805,12 @@ async fn build_state(
             (Vec::new(), Vec::new())
         }
     };
+
+    let offerings_aggregate = Arc::new(crate::domain::Offerings::new(
+        active,
+        candidates,
+        offering_store,
+    ));
 
     // Phase 11: Build AppState
     // Note: manifest_registry and infrastructure_handlers already created at Phase 1
@@ -872,8 +875,7 @@ async fn build_state(
                 gpu: Arc::new(RwLock::new(None)),
             }),
         }),
-        offerings: Arc::new(RwLock::new(offerings)),
-        adopted_candidates: Arc::new(RwLock::new(adopted_candidates)),
+        offerings: offerings_aggregate,
         manifest_registry: manifest_registry.clone(),
         platform: Arc::new(crate::domain::Platform {
             docker: docker.clone(),

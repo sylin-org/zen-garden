@@ -411,6 +411,57 @@ impl OllamaProvider {
     fn name_ref(&self) -> &ProviderName {
         &self.name
     }
+
+    /// Record a load failure from the dispatch path (M7 learning
+    /// loop). Bumps the model's `observed_vram_bytes` to at least
+    /// `required_bytes`, so the next matrix rebuild's fit filter
+    /// drops the model from any stone that can't host that much
+    /// VRAM. If the model is unknown (probably raced with a
+    /// rebuild), logs and returns — the next rebuild will pick
+    /// up a fresh measurement and eventually converge.
+    ///
+    /// This is the feedback loop that turns observed reality
+    /// into tighter filter constraints without the operator
+    /// ever having to intervene. Works hand-in-hand with M4's
+    /// /api/ps measurements: M4 is "it loaded, here's how big
+    /// it was"; M7 is "it failed to load here, here's how big
+    /// it would have needed to be".
+    async fn record_load_failure(
+        &self,
+        model: &str,
+        stone: &str,
+        required_bytes: u64,
+    ) {
+        let mut matrix = self.matrix.write().await;
+        let Some(info) = matrix.models.get_mut(model) else {
+            tracing::warn!(
+                model,
+                stone,
+                required_bytes,
+                "ollama load-failure learning: model absent from matrix"
+            );
+            return;
+        };
+        let prior = info.observed_vram_bytes.unwrap_or(0);
+        if required_bytes > prior {
+            info.observed_vram_bytes = Some(required_bytes);
+            tracing::info!(
+                model,
+                stone,
+                prior_mb = prior / 1_048_576,
+                new_mb = required_bytes / 1_048_576,
+                "ollama load-failure learning: revised observed_vram_bytes upward"
+            );
+        } else {
+            tracing::debug!(
+                model,
+                stone,
+                prior_mb = prior / 1_048_576,
+                failed_at_mb = required_bytes / 1_048_576,
+                "ollama load-failure learning: already know this model is at least this big"
+            );
+        }
+    }
 }
 
 /// Translate a [`SelectionError`] into the canonical [`ProviderError`]
@@ -605,6 +656,48 @@ fn parse_parameter_size(s: &str) -> Option<u64> {
     Some((n * mul as f64) as u64)
 }
 
+/// Parse Ollama's "requires more system memory" error body and
+/// return the required VRAM in bytes, if the format matches.
+///
+/// Typical error: `{"error":"model requires more system memory
+/// (54.0 GiB) than is available (48.4 GiB)"}`.
+///
+/// Returns the parsed required value converted to bytes. Units
+/// GiB / MiB / MB / GB are all accepted; fractional values are
+/// rounded up to the nearest whole byte (`54.0 GiB` → 57982058496).
+///
+/// Returns `None` if the body doesn't match the pattern.
+fn parse_ollama_oom_error(body: &str) -> Option<u64> {
+    // Find the "requires more system memory" anchor.
+    let anchor = body.find("requires more system memory")?;
+    let tail = &body[anchor..];
+
+    // Look for the first parenthesized value after the anchor —
+    // that's the "needs" value, not the "has" value.
+    let lparen = tail.find('(')?;
+    let after_lparen = &tail[lparen + 1..];
+    let rparen = after_lparen.find(')')?;
+    let value_str = after_lparen[..rparen].trim();
+
+    // Split "54.0 GiB" into ("54.0", "GiB").
+    let (num_str, unit) = match value_str.find(|c: char| c.is_ascii_alphabetic()) {
+        Some(i) => (value_str[..i].trim(), value_str[i..].trim()),
+        None => (value_str, ""),
+    };
+    let value: f64 = num_str.parse().ok()?;
+    let multiplier: u64 = match unit {
+        "GiB" => 1024 * 1024 * 1024,
+        "MiB" => 1024 * 1024,
+        "KiB" => 1024,
+        "GB" => 1_000_000_000,
+        "MB" => 1_000_000,
+        "KB" => 1_000,
+        "B" | "" => 1,
+        _ => return None,
+    };
+    Some((value * multiplier as f64).ceil() as u64)
+}
+
 /// Map a Resources claim error to a provider error. Used by the
 /// dispatch path (M5) when the pre-dispatch GPU-budget claim
 /// fails — the adapter has to surface a meaningful 5xx to the
@@ -738,21 +831,39 @@ impl Provider for OllamaProvider {
         let primitive = request.action.primitive;
         let outcome = match primitive {
             Primitive::TextChat => {
-                self.do_chat(request, &model, &endpoint, claim_guard).await?
+                self.do_chat(request, &model, &endpoint, claim_guard).await
             }
             Primitive::TextEmbed => {
                 let _g = claim_guard;
-                self.do_embed(request, &model, &endpoint).await?
+                self.do_embed(request, &model, &endpoint).await
             }
             Primitive::ImageAnalyze => {
                 let _g = claim_guard;
-                self.do_analyze(request, &model, &endpoint).await?
+                self.do_analyze(request, &model, &endpoint).await
             }
             other => {
                 return Err(ProviderError::Unsupported(format!(
                     "ollama does not serve {}",
                     other.dotted()
                 )));
+            }
+        };
+        // M7 learning loop: if the dispatch failed with an
+        // Ollama "requires more system memory" upstream error,
+        // record the true required VRAM on the matrix so the
+        // next rebuild's fit filter drops this model from every
+        // stone that can't host it. The learned value supersedes
+        // the /api/ps measured value only if it's larger.
+        let outcome = match outcome {
+            Ok(o) => o,
+            Err(e) => {
+                if let ProviderError::Upstream(body) = &e {
+                    if let Some(required_bytes) = parse_ollama_oom_error(body) {
+                        self.record_load_failure(&model, &stone, required_bytes)
+                            .await;
+                    }
+                }
+                return Err(e);
             }
         };
 
@@ -1937,5 +2048,61 @@ mod tests {
         // No models → no options (but auto descriptor still present)
         assert!(model_param.options.is_none());
         assert!(model_param.auto.is_some());
+    }
+
+    // ── M7: OOM error parser ───────────────────────────────────
+
+    #[test]
+    fn parse_ollama_oom_gib() {
+        let body = r#"{"error":"model requires more system memory (54.0 GiB) than is available (48.4 GiB)"}"#;
+        let bytes = parse_ollama_oom_error(body).unwrap();
+        // 54.0 GiB = 57982058496 bytes (exact)
+        assert_eq!(bytes, 54u64 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn parse_ollama_oom_fractional_gib() {
+        let body = r#"{"error":"model requires more system memory (7.5 GiB) than is available (6 GiB)"}"#;
+        let bytes = parse_ollama_oom_error(body).unwrap();
+        let expected = (7.5_f64 * (1024_f64 * 1024_f64 * 1024_f64)).ceil() as u64;
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn parse_ollama_oom_mib() {
+        let body = "model requires more system memory (512 MiB) than is available (256 MiB)";
+        let bytes = parse_ollama_oom_error(body).unwrap();
+        assert_eq!(bytes, 512u64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn parse_ollama_oom_decimal_gb_fallback() {
+        let body = "model requires more system memory (10 GB) than is available";
+        let bytes = parse_ollama_oom_error(body).unwrap();
+        assert_eq!(bytes, 10_000_000_000);
+    }
+
+    #[test]
+    fn parse_ollama_oom_returns_none_on_unrelated_error() {
+        assert!(parse_ollama_oom_error(r#"{"error":"connection refused"}"#).is_none());
+        assert!(parse_ollama_oom_error("").is_none());
+        assert!(parse_ollama_oom_error("completely unrelated text").is_none());
+    }
+
+    #[test]
+    fn parse_ollama_oom_returns_none_on_unknown_unit() {
+        let body = "requires more system memory (1 hogsheads)";
+        assert!(parse_ollama_oom_error(body).is_none());
+    }
+
+    #[test]
+    fn parse_ollama_oom_picks_first_value_needs_not_has() {
+        // Ollama's message has two parens — the filter should
+        // take the FIRST (needs), not the second (has).
+        let body = r#"{"error":"model requires more system memory (54.0 GiB) than is available (48.4 GiB)"}"#;
+        let bytes = parse_ollama_oom_error(body).unwrap();
+        // 54 * 1024^3, NOT 48.4 * 1024^3
+        assert_eq!(bytes, 54u64 * 1024 * 1024 * 1024);
+        assert_ne!(bytes, (48.4 * 1024.0_f64.powi(3)).ceil() as u64);
     }
 }

@@ -70,6 +70,7 @@ pub fn build(state: AppState) -> Router {
         )
         // Resources domain (ORCH-0030 §2 commit 4)
         .route("/v1/resources", get(resources::list_resources))
+        .route("/v1/resources/tiers", get(resources::get_tier_summary))
         .route(
             "/v1/resources/stones/{name}",
             get(resources::get_stone_resources),

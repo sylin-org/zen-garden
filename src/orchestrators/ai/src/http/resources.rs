@@ -63,3 +63,21 @@ pub async fn get_stone_pressure(
             .into_response(),
     }
 }
+
+/// `GET /v1/resources/tiers` — observability endpoint that
+/// buckets garden stones by largest-GPU VRAM capacity (4, 8, 12,
+/// 16, 24, 32, 48, 80, 96 GB plus a frontier bucket above 96).
+/// Feeds dashboards that want to render "resource pressure by
+/// tier" views or capacity-planning prompts like "your garden has
+/// no stones above the 16 GB tier — certain models will never be
+/// available".
+///
+/// Stones with no GPUs (or GPUs whose total VRAM is unknown)
+/// land in a bucket with `max_vram_gb: 0`.
+pub async fn get_tier_summary(State(state): State<AppState>) -> Response {
+    let tiers = state.resources.tier_summary().await;
+    let body = json!({
+        "tiers": tiers,
+    });
+    (StatusCode::OK, Json(body)).into_response()
+}

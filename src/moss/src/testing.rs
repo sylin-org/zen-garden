@@ -165,8 +165,8 @@ pub async fn build_test_state() -> AppState {
                 changed: storage_changed,
             }),
             topology: domain::current::Topology {
-                cache: topology_cache,
-                dirty: topology_dirty,
+                cache: topology_cache.clone(),
+                dirty: topology_dirty.clone(),
             },
             capabilities: Arc::new(RwLock::new(None)),
             hardware_topology: Arc::new(RwLock::new(None)),
@@ -204,6 +204,16 @@ pub async fn build_test_state() -> AppState {
         start_time: Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: Arc::new(ConsolePrinter::new(ConsoleMode::Silent)),
+        topology: Arc::new(
+            domain::topology::Topology::new(
+                topology_cache,
+                topology_dirty,
+                Arc::new(domain::topology::NoopChirpTransport),
+                Arc::new(domain::topology::FileTopologyStore),
+                test_metrics.clone(),
+            )
+            .await,
+        ),
         tool: Arc::new(
             domain::Tool::new(
                 test_metrics.clone(),

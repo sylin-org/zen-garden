@@ -119,6 +119,12 @@ pub struct AppState {
     /// Garden-wide tool registry and delta stream (ARCH-0004).
     pub tool: Arc<Tool>,
 
+    /// Garden topology — peer cache, chirp transport, persistence store
+    /// (ARCH-0020). Shares cache + dirty handles with `current.topology`
+    /// during the Book III strangler phase; Ch5 flips the sub-struct
+    /// out entirely.
+    pub topology: Arc<crate::domain::topology::Topology>,
+
     /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
     pub security: Arc<Security>,
 

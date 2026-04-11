@@ -894,7 +894,7 @@ async fn build_state(
             }),
         }),
         offerings: offerings_aggregate,
-        metrics: metrics_aggregate,
+        metrics: metrics_aggregate.clone(),
         manifest_registry: manifest_registry.clone(),
         platform: Arc::new(crate::domain::Platform {
             docker: docker.clone(),
@@ -910,6 +910,22 @@ async fn build_state(
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
         tool: tool.clone(),
+        topology: {
+            let chirp: Arc<dyn crate::domain::topology::ChirpTransport> =
+                Arc::new(crate::domain::topology::P2pChirpTransport);
+            let store: Arc<dyn crate::domain::topology::TopologyStore> =
+                Arc::new(crate::domain::topology::FileTopologyStore);
+            Arc::new(
+                crate::domain::topology::Topology::new(
+                    topology_cache.clone(),
+                    topology_dirty.clone(),
+                    chirp,
+                    store,
+                    metrics_aggregate.clone(),
+                )
+                .await,
+            )
+        },
         discovery: Arc::new(crate::domain::Discovery {
             mdns: mdns_handle.clone(),
             koi: koi_handle.clone(),

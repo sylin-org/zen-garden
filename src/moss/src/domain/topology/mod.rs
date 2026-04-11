@@ -24,6 +24,18 @@
 //!
 //! Uses atomic write (tmp + rename) via `garden_common::persistence::atomic_write_file`.
 
+pub mod aggregate;
+pub mod error;
+pub mod event;
+pub mod store;
+pub mod transport;
+
+pub use aggregate::Topology;
+pub use error::TopologyError;
+pub use event::{ChangeKind, TopologyChanged};
+pub use store::{FileTopologyStore, TopologyStore};
+pub use transport::{ChirpTransport, NoopChirpTransport, P2pChirpTransport};
+
 use chrono::{Duration, Utc};
 use garden_common::{StoneStatus, TopologyEntry};
 use std::collections::HashMap;

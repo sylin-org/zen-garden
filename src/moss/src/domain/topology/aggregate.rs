@@ -1,0 +1,204 @@
+//! `Topology` aggregate — DDD root of the Topology bounded context.
+//!
+//! Ch3 of ARCH-0020 (Book III of ARCH-0017). Wraps the existing
+//! [`TopologyCache`] and [`TopologyDirtyFlag`] handles (from
+//! [`super::mod`]) with a typed command/query surface, `Arc<Metrics>`
+//! integration, `TopologyChanged` event stream, and two injected
+//! ports: [`ChirpTransport`] and [`TopologyStore`].
+//!
+//! ## Strangler phase (Ch3–Ch5)
+//!
+//! The aggregate shares its cache + dirty-flag handles with the
+//! existing `current::Topology { cache, dirty }` sub-struct on
+//! AppState via `Arc` cloning. Both paths point at the same backing
+//! `RwLock<HashMap<String, TopologyEntry>>` and the same
+//! `AtomicBool`. The 42 existing `topology::free_fn(&cache, ...)`
+//! caller sites continue to compile unchanged; the aggregate's typed
+//! commands read and mutate the same storage via wrapper methods
+//! that delegate to the existing free functions in `super::mod`.
+//!
+//! Ch5 migrates callers to typed commands, deletes the free
+//! functions from `super::mod`, and marks the cache/dirty fields on
+//! the aggregate private. Ch5 also deletes the `current::Topology`
+//! sub-struct and promotes `state.topology` to a top-level AppState
+//! field.
+
+use super::event::{ChangeKind, TopologyChanged};
+use super::store::TopologyStore;
+use super::transport::ChirpTransport;
+use super::{TopologyCache, TopologyDirtyFlag};
+use crate::domain::Metrics;
+use garden_common::TopologyEntry;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::broadcast;
+
+/// Default capacity for the internal `TopologyChanged` broadcast channel.
+const CHANGES_CHANNEL_CAPACITY: usize = 512;
+
+/// `Topology` bounded context.
+///
+/// Private state: the shared `TopologyCache` + `TopologyDirtyFlag`
+/// handles (fields are `pub(crate)` during the strangler phase so
+/// existing `state.current.topology.cache` sites still compile).
+#[derive(Clone)]
+pub struct Topology {
+    /// Peer cache shared with the existing `current::Topology`
+    /// sub-struct during the strangler phase. Ch5 flips to private.
+    pub(crate) cache: TopologyCache,
+
+    /// Persistence dirty flag shared during the strangler phase.
+    pub(crate) dirty: TopologyDirtyFlag,
+
+    /// Injected chirp transport port.
+    #[allow(dead_code)] // Wired in Ch4
+    chirp: Arc<dyn ChirpTransport>,
+
+    /// Injected persistence port.
+    #[allow(dead_code)] // Wired in Ch5 (save path)
+    store: Arc<dyn TopologyStore>,
+
+    /// Metrics aggregate.
+    #[allow(dead_code)] // Wired in Ch3 events
+    metrics: Arc<Metrics>,
+
+    /// Internal domain event broadcast.
+    changes: broadcast::Sender<TopologyChanged>,
+}
+
+impl Topology {
+    /// Registered domain name for Metrics.
+    pub const NAME: &'static str = "topology";
+
+    /// Construct a new `Topology` aggregate.
+    ///
+    /// `cache` and `dirty` are passed in rather than created — during
+    /// the strangler phase the aggregate shares handles with the
+    /// existing `current::Topology` sub-struct. Ch5 flips to
+    /// constructor-owned state loaded from the store.
+    pub async fn new(
+        cache: TopologyCache,
+        dirty: TopologyDirtyFlag,
+        chirp: Arc<dyn ChirpTransport>,
+        store: Arc<dyn TopologyStore>,
+        metrics: Arc<Metrics>,
+    ) -> Self {
+        metrics
+            .register_domain(Self::NAME, ChangeKind::ALL_NAMES)
+            .await;
+
+        let (changes, _) = broadcast::channel(CHANGES_CHANNEL_CAPACITY);
+
+        Self {
+            cache,
+            dirty,
+            chirp,
+            store,
+            metrics,
+            changes,
+        }
+    }
+
+    /// Subscribe to the internal `TopologyChanged` domain event stream.
+    pub fn changes(&self) -> broadcast::Receiver<TopologyChanged> {
+        self.changes.subscribe()
+    }
+
+    // ── Queries ─────────────────────────────────────────────────────────
+
+    /// All stones (online + offline) in the cache.
+    pub async fn all_stones(&self) -> Vec<TopologyEntry> {
+        super::get_all_stones(&self.cache).await
+    }
+
+    /// Online stones only.
+    pub async fn online_stones(&self) -> Vec<TopologyEntry> {
+        super::get_online_stones(&self.cache).await
+    }
+
+    /// Look up a stone by id.
+    pub async fn get_by_id(&self, stone_id: &str) -> Option<TopologyEntry> {
+        super::get_stone_by_id(&self.cache, stone_id).await
+    }
+
+    /// Look up a stone by name.
+    pub async fn get_by_name(&self, stone_name: &str) -> Option<TopologyEntry> {
+        super::get_stone_by_name(&self.cache, stone_name).await
+    }
+
+    /// Total stones (online + offline).
+    pub async fn count(&self) -> usize {
+        super::count_stones(&self.cache).await
+    }
+
+    /// Online stones only.
+    pub async fn online_count(&self) -> usize {
+        super::count_online_stones(&self.cache).await
+    }
+
+    /// Whether the cache has unsaved mutations.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    // ── Commands ────────────────────────────────────────────────────────
+    //
+    // Ch3 wraps the existing free-function commands in `super::mod`
+    // behind typed methods that record metrics. The event emission
+    // for interesting transitions is a Ch5 concern — Ch3 only covers
+    // the `StoneForgotten` and `StoneDiscovered` cases via the simple
+    // lookup-then-call pattern below. Ch5 adds status-transition
+    // detection by comparing pre/post snapshots inside
+    // `upsert_from_chirp` and `maintain`.
+
+    /// Forget a stone by name (operator action).
+    pub async fn forget_stone(&self, stone_name: &str) -> Option<TopologyChanged> {
+        let started = Instant::now();
+        let removed = super::forget_stone_dirty(&self.cache, stone_name, &self.dirty).await;
+        self.metrics
+            .record_mutation_latency(Self::NAME, started.elapsed())
+            .await;
+        if removed {
+            let event = TopologyChanged::StoneForgotten {
+                stone_name: stone_name.to_string(),
+            };
+            self.emit(event.clone()).await;
+            Some(event)
+        } else {
+            None
+        }
+    }
+
+    /// Mark a stone offline by id (goodbye / explicit offline path).
+    pub async fn mark_stone_offline(&self, stone_id: &str) -> Option<TopologyChanged> {
+        let pre = super::get_stone_by_id(&self.cache, stone_id).await;
+        let started = Instant::now();
+        let changed = super::mark_stone_offline_dirty(&self.cache, stone_id, &self.dirty).await;
+        self.metrics
+            .record_mutation_latency(Self::NAME, started.elapsed())
+            .await;
+        if changed {
+            // Only fire the transition event if the stone was previously online.
+            if let Some(pre) = pre
+                && pre.status == garden_common::StoneStatus::Online
+            {
+                let event = TopologyChanged::StoneOffline {
+                    stone_id: stone_id.to_string(),
+                    stone_name: pre.stone_name,
+                };
+                self.emit(event.clone()).await;
+                return Some(event);
+            }
+        }
+        None
+    }
+
+    // ── Internals ───────────────────────────────────────────────────────
+
+    async fn emit(&self, event: TopologyChanged) {
+        self.metrics
+            .record_domain_event(Self::NAME, event.kind().name())
+            .await;
+        let _ = self.changes.send(event);
+    }
+}

@@ -21,8 +21,10 @@
 use super::event::{ChangeKind, OfferingsChanged};
 use super::guard::{ActiveGuard, CandidatesGuard};
 use super::store::OfferingStore;
+use crate::domain::Metrics;
 use garden_common::{Offering, OfferingStatus, ServiceHealthStatus};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{RwLock, broadcast};
 
 /// Internal state of the aggregate — active pool and adopted-candidates pool.
@@ -47,24 +49,38 @@ impl OfferingsState {
 pub struct Offerings {
     state: RwLock<OfferingsState>,
     store: Arc<dyn OfferingStore>,
+    metrics: Arc<Metrics>,
     changes: broadcast::Sender<OfferingsChanged>,
 }
 
 impl Offerings {
+    /// Stable domain name used when registering with Metrics.
+    pub const NAME: &'static str = "offerings";
+
     /// Construct an aggregate from a pre-loaded offering set.
     ///
     /// Called at bootstrap after `FileOfferingStore::load()` returns the
     /// persisted set. The loader splits by `is_adopted()` — adopted offerings
     /// go to candidates (pending detection), the rest go to active.
-    pub fn new(
+    ///
+    /// Registers `"offerings"` with the Metrics aggregate (ARCH-0018) so
+    /// every subsequent `finalize` can increment per-kind event counters
+    /// on the lock-free hot path.
+    pub async fn new(
         active: Vec<Offering>,
         candidates: Vec<Offering>,
         store: Arc<dyn OfferingStore>,
+        metrics: Arc<Metrics>,
     ) -> Self {
+        metrics
+            .register_domain(Self::NAME, ChangeKind::ALL_NAMES)
+            .await;
+
         let (changes, _) = broadcast::channel(garden_common::constants::channels::OFFERINGS_EVENT);
         Self {
             state: RwLock::new(OfferingsState { active, candidates }),
             store,
+            metrics,
             changes,
         }
     }
@@ -466,13 +482,21 @@ impl Offerings {
     // Finalize — persist + emit (private, called after every mutation)
     // ========================================================================
 
-    /// Persist the full merged set and emit an `OfferingsChanged` event.
+    /// Persist the full merged set, record metrics, and emit an
+    /// `OfferingsChanged` event.
     ///
     /// Called by every mutation method after the write lock has been released.
     /// A persistence failure is logged but does not suppress the event — the
     /// in-memory state already reflects the change, and the projection task
     /// must still see it to keep consumers coherent.
+    ///
+    /// Pipeline order (ARCH-0018): **persist → meter → emit**. Metrics
+    /// recording happens after persistence succeeds (or fails) so the
+    /// latency histogram captures the full cost of a mutation, including
+    /// the disk write.
     async fn finalize(&self, all: Vec<Offering>, kind: ChangeKind, affected: Vec<String>) {
+        let started = Instant::now();
+
         if let Err(e) = self.store.save(&all).await {
             tracing::error!(
                 kind = ?kind,
@@ -480,6 +504,16 @@ impl Offerings {
                 "Failed to persist offerings after mutation",
             );
         }
+
+        // Record metrics (ARCH-0018): latency from the start of finalize
+        // through the end of the persist call, plus a per-kind event count.
+        // Both are lock-free atomic increments on the hot path.
+        self.metrics
+            .record_mutation_latency(Self::NAME, started.elapsed())
+            .await;
+        self.metrics
+            .record_domain_event(Self::NAME, kind.name())
+            .await;
 
         let event = OfferingsChanged::new(kind, affected);
         // Send errors are ignored: broadcast::send returns Err only when

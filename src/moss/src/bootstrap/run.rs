@@ -809,18 +809,21 @@ async fn build_state(
         }
     };
 
-    let offerings_aggregate = Arc::new(crate::domain::Offerings::new(
-        active,
-        candidates,
-        offering_store,
-    ));
-
-    // Phase 10.75: Construct the Metrics aggregate (ARCH-0018). Must
-    // exist before any domain that will inject it for mutation-latency
-    // and event recording. Chapter 3 constructs it here but no context
-    // injects it yet — Chapter 4 retrofits Offerings to flow through
-    // Metrics from its finalize pipeline.
+    // Phase 10.75: Construct the Metrics aggregate (ARCH-0018) BEFORE the
+    // Offerings aggregate, so Offerings::new can register itself as a
+    // domain and flow mutation-latency + event recording through Metrics
+    // from its first mutation onward.
     let metrics_aggregate = Arc::new(crate::domain::Metrics::new());
+
+    let offerings_aggregate = Arc::new(
+        crate::domain::Offerings::new(
+            active,
+            candidates,
+            offering_store,
+            metrics_aggregate.clone(),
+        )
+        .await,
+    );
 
     // Phase 11: Build AppState
     // Note: manifest_registry and infrastructure_handlers already created at Phase 1

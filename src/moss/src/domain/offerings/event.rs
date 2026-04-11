@@ -41,6 +41,45 @@ impl ChangeKind {
     pub fn should_chirp(self) -> bool {
         true
     }
+
+    /// Stable `&'static str` name for this kind.
+    ///
+    /// Used as the key when recording per-kind event counts through
+    /// `Metrics::record_domain_event` (ARCH-0018). Keeping the names
+    /// as compile-time constants avoids allocation on the hot path.
+    ///
+    /// The returned names must exactly match the entries in
+    /// [`ALL_CHANGE_KINDS`] — every aggregate calling
+    /// `Metrics::register_domain("offerings", ChangeKind::ALL_NAMES)`
+    /// relies on this correspondence.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Upserted => "upserted",
+            Self::Removed => "removed",
+            Self::Updated => "updated",
+            Self::Promoted => "promoted",
+            Self::Demoted => "demoted",
+            Self::Replaced => "replaced",
+            Self::Coalesced => "coalesced",
+            Self::BatchUpdated => "batch-updated",
+        }
+    }
+
+    /// Every possible `ChangeKind` name, for bulk registration with
+    /// `Metrics::register_domain`. Keep this synchronized with the
+    /// `name()` method above — the pattern spec's registration flow
+    /// requires all possible kinds to be declared up front so the
+    /// per-kind counter map can be populated once and read lock-free.
+    pub const ALL_NAMES: &'static [&'static str] = &[
+        "upserted",
+        "removed",
+        "updated",
+        "promoted",
+        "demoted",
+        "replaced",
+        "coalesced",
+        "batch-updated",
+    ];
 }
 
 /// Event published by the Offerings aggregate on every mutation.

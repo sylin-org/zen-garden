@@ -255,13 +255,26 @@ impl TaskSupervisor {
             let states = states.clone();
             let span = tracing::info_span!("task", name);
 
+            // ARCH-0018: capture a handle to Metrics before `state` is
+            // consumed by the TaskContext move into the async block.
+            // The spawned future uses this handle to register + record
+            // lifecycle transitions through the Metrics aggregate.
+            let metrics = ctx.state.metrics.clone();
+
             join_set.spawn(tracing::Instrument::instrument(
                 async move {
+                    // ARCH-0018: register this task with Metrics on first
+                    // spawn so lifecycle transitions + subscriber lag can
+                    // be recorded through the aggregate. Idempotent on
+                    // the Metrics side.
+                    metrics.register_task(name).await;
+
                     // Mark running
                     {
                         let mut s = states.write().await;
                         s.insert(name, TaskState::Running);
                     }
+                    metrics.record_task_transition(name, "running").await;
 
                     tracing::info!("task starting");
 
@@ -290,6 +303,11 @@ impl TaskSupervisor {
                     }
 
                     // Record state
+                    let transition_label: &'static str = match &outcome {
+                        TaskOutcome::Completed => "completed",
+                        TaskOutcome::Cancelled => "cancelled",
+                        TaskOutcome::Failed { .. } => "failed",
+                    };
                     {
                         let mut s = states.write().await;
                         s.insert(
@@ -303,6 +321,7 @@ impl TaskSupervisor {
                             },
                         );
                     }
+                    metrics.record_task_transition(name, transition_label).await;
 
                     let _ = outcome_tx.send((name, outcome)).await;
                 },

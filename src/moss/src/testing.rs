@@ -151,6 +151,8 @@ pub async fn build_test_state() -> AppState {
 
     let infrastructure_handlers = Arc::new(domain::InfrastructureHandlerRegistry::new(Vec::new()));
 
+    let test_metrics = Arc::new(domain::Metrics::new());
+
     AppState {
         current: Arc::new(domain::Current {
             stone: Arc::new(domain::current::Stone {
@@ -178,12 +180,16 @@ pub async fn build_test_state() -> AppState {
                 gpu: Arc::new(RwLock::new(None)),
             }),
         }),
-        offerings: Arc::new(domain::Offerings::new(
-            Vec::new(),
-            Vec::new(),
-            Arc::new(domain::FileOfferingStore),
-        )),
-        metrics: Arc::new(domain::Metrics::new()),
+        metrics: test_metrics.clone(),
+        offerings: Arc::new(
+            domain::Offerings::new(
+                Vec::new(),
+                Vec::new(),
+                Arc::new(domain::FileOfferingStore),
+                test_metrics,
+            )
+            .await,
+        ),
         manifest_registry,
         platform: Arc::new(domain::Platform {
             docker,

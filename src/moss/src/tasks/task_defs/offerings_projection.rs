@@ -70,6 +70,11 @@ impl BackgroundTask for OfferingsProjectionTask {
                                 skipped,
                                 "offerings projection feed lagged — full reconcile",
                             );
+                            // ARCH-0018: record lag for observability.
+                            ctx.state
+                                .metrics
+                                .record_subscriber_lag("offerings-projection", skipped)
+                                .await;
                             ctx.state.refresh_local_tools_projection().await;
                             ctx.state.sync_self_services(true).await;
                         }

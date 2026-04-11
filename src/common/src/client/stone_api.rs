@@ -955,6 +955,41 @@ impl StoneInfoApi<'_> {
         self.api.get_raw("/api/v1/stone/resources").await
     }
 
+    /// Software observability snapshot (ARCH-0018).
+    ///
+    /// Returns the Metrics aggregate's full snapshot — per-domain
+    /// counters, mutation latency histograms, per-task timing and
+    /// subscriber-lag counters, and process-global totals.
+    ///
+    /// Untyped (`serde_json::Value`) for now. A future cross-crate
+    /// API realignment could introduce a typed `MetricsSnapshot`
+    /// shared between moss and rake.
+    pub async fn metrics_snapshot(&self) -> Result<serde_json::Value, StoneApiError> {
+        self.api.get("/api/v1/stone/metrics").await
+    }
+
+    /// Observability snapshot for a single domain. Returns the raw
+    /// `serde_json::Value` so callers can pluck specific counters
+    /// without a shared type.
+    pub async fn metrics_domain(&self, name: &str) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!(
+            "/api/v1/stone/metrics/domains/{}",
+            urlencoding::encode(name)
+        );
+        self.api.get(&path).await
+    }
+
+    /// Observability snapshot for a single task.
+    pub async fn metrics_task(&self, name: &str) -> Result<serde_json::Value, StoneApiError> {
+        let path = format!("/api/v1/stone/metrics/tasks/{}", urlencoding::encode(name));
+        self.api.get(&path).await
+    }
+
+    /// Live SSE stream of `MetricsChanged` transition events. Raw response.
+    pub async fn metrics_stream(&self) -> Result<reqwest::Response, StoneApiError> {
+        self.api.get_raw("/api/v1/stone/metrics/stream").await
+    }
+
     /// Pending updates.
     pub async fn updates(&self) -> Result<serde_json::Value, StoneApiError> {
         self.api.get("/api/v1/stone/updates").await

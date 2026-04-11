@@ -16,6 +16,7 @@ pub mod jobs;
 pub mod logs;
 pub mod maintenance;
 pub mod manifest;
+pub mod metrics;
 pub mod offering_capabilities;
 pub mod offering_volumes;
 pub mod offerings;

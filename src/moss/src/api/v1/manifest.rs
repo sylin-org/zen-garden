@@ -59,6 +59,66 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             ),
     );
 
+    // Metrics aggregate (ARCH-0018) — software observability
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/metrics", "observability")
+            .description("Full software observability snapshot — per-domain event counters, mutation latency histograms, per-task timing and lag counters, global totals")
+            .response_type("MetricsSnapshot")
+            .example(
+                "Get full snapshot",
+                "curl http://stone-01:7185/api/v1/stone/metrics",
+                r#"{"data": {"global": {"events_total": 42}, "domains": [...], "tasks": [...]}}"#,
+            ),
+    );
+
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/metrics/global", "observability")
+            .description("Process-wide counters: uptime, total events across all domains, total subscriber lag across all tasks")
+            .response_type("GlobalSnapshot"),
+    );
+
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/metrics/domains", "observability")
+            .description("All registered domains' observability data (event counters by kind, mutation latency histogram)")
+            .response_type("Array<DomainSnapshot>"),
+    );
+
+    endpoints.push(
+        EndpointSpec::new(
+            "GET",
+            "/api/v1/stone/metrics/domains/{name}",
+            "observability",
+        )
+        .description("One domain's observability data. 404 if the domain is not registered.")
+        .response_type("DomainSnapshot"),
+    );
+
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/metrics/tasks", "observability")
+            .description("All registered tasks' observability data (timing, event counts, subscriber lag). Complementary to /api/v1/stone/tasks which returns lifecycle state.")
+            .response_type("Array<TaskSnapshot>"),
+    );
+
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/metrics/tasks/{name}", "observability")
+            .description(
+                "One task's observability data. 404 if the task is not registered with Metrics.",
+            )
+            .response_type("TaskSnapshot"),
+    );
+
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/metrics/stream", "observability")
+            .description("Live SSE stream of interesting transitions (task state changes, subscriber lag detection, registration). Counter increments are NOT streamed — poll /metrics for current counter values.")
+            .response_type("text/event-stream"),
+    );
+
+    endpoints.push(
+        EndpointSpec::new("GET", "/api/v1/stone/tasks/{name}", "observability")
+            .description("Single background task lifecycle status (Waiting/Running/Completed/Failed). Complementary to /api/v1/stone/metrics/tasks/{name} which returns observability data.")
+            .response_type("TaskStatus"),
+    );
+
     // Offerings (Human Layer)
     endpoints.push(
         EndpointSpec::new("GET", "/api/v1/offerings", "offerings")
@@ -291,11 +351,26 @@ fn build_manifest(base_url: &str) -> ApiManifest {
         categories: vec![
             garden_common::api_manifest::ApiCategory {
                 name: "health".into(),
-                description: "Health checks and monitoring".into(),
+                description: "Health checks and hardware resource snapshots".into(),
                 endpoints: vec![
                     "/health".into(),
                     "/capabilities".into(),
                     "/resources".into(),
+                ],
+            },
+            garden_common::api_manifest::ApiCategory {
+                name: "observability".into(),
+                description: "Software observability — per-domain counters, per-task timing, mutation latency, subscriber lag (ARCH-0018)".into(),
+                endpoints: vec![
+                    "/api/v1/stone/metrics".into(),
+                    "/api/v1/stone/metrics/global".into(),
+                    "/api/v1/stone/metrics/domains".into(),
+                    "/api/v1/stone/metrics/domains/{name}".into(),
+                    "/api/v1/stone/metrics/tasks".into(),
+                    "/api/v1/stone/metrics/tasks/{name}".into(),
+                    "/api/v1/stone/metrics/stream".into(),
+                    "/api/v1/stone/tasks".into(),
+                    "/api/v1/stone/tasks/{name}".into(),
                 ],
             },
             garden_common::api_manifest::ApiCategory {

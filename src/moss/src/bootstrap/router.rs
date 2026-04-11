@@ -103,6 +103,33 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::resources::get_resources),
         )
         .route("/api/v1/stone/tasks", get(get_task_status))
+        .route("/api/v1/stone/tasks/{name}", get(get_task_status_single))
+        // ── Metrics aggregate (ARCH-0018) ────────────────────────────────
+        .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
+        .route(
+            "/api/v1/stone/metrics/global",
+            get(api::v1::metrics::get_metrics_global),
+        )
+        .route(
+            "/api/v1/stone/metrics/domains",
+            get(api::v1::metrics::get_metrics_domains),
+        )
+        .route(
+            "/api/v1/stone/metrics/domains/{name}",
+            get(api::v1::metrics::get_metrics_domain),
+        )
+        .route(
+            "/api/v1/stone/metrics/tasks",
+            get(api::v1::metrics::get_metrics_tasks),
+        )
+        .route(
+            "/api/v1/stone/metrics/tasks/{name}",
+            get(api::v1::metrics::get_metrics_task),
+        )
+        .route(
+            "/api/v1/stone/metrics/stream",
+            get(api::v1::metrics::stream_metrics),
+        )
         // ══════════════════════════════════════════════════════════════════
         // Read-only stone endpoints
         // ══════════════════════════════════════════════════════════════════
@@ -343,6 +370,33 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::resources::get_resources),
         )
         .route("/api/v1/stone/tasks", get(get_task_status))
+        .route("/api/v1/stone/tasks/{name}", get(get_task_status_single))
+        // ── Metrics aggregate (ARCH-0018) ────────────────────────────────
+        .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
+        .route(
+            "/api/v1/stone/metrics/global",
+            get(api::v1::metrics::get_metrics_global),
+        )
+        .route(
+            "/api/v1/stone/metrics/domains",
+            get(api::v1::metrics::get_metrics_domains),
+        )
+        .route(
+            "/api/v1/stone/metrics/domains/{name}",
+            get(api::v1::metrics::get_metrics_domain),
+        )
+        .route(
+            "/api/v1/stone/metrics/tasks",
+            get(api::v1::metrics::get_metrics_tasks),
+        )
+        .route(
+            "/api/v1/stone/metrics/tasks/{name}",
+            get(api::v1::metrics::get_metrics_task),
+        )
+        .route(
+            "/api/v1/stone/metrics/stream",
+            get(api::v1::metrics::stream_metrics),
+        )
         .route(
             "/api/v1/stone/upgrade",
             post(api::v1::stone::upgrade_stone_v1),
@@ -999,6 +1053,42 @@ async fn get_task_status(State(state): State<AppState>) -> axum::response::Respo
             axum::Json(crate::api::responses::ApiResponse::new(status)).into_response()
         }
         None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// GET /api/v1/stone/tasks/{name} — Single task lifecycle status.
+///
+/// Complementary to `/api/v1/stone/metrics/tasks/{name}` (ARCH-0018):
+/// - `/tasks/{name}` → lifecycle state (Waiting/Running/Completed)
+///   from `SupervisorHandle`
+/// - `/metrics/tasks/{name}` → observability data (timings, event
+///   counts, lag) from the Metrics aggregate
+///
+/// Consumers that want a unified view call both and join by name.
+async fn get_task_status_single(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let guard = state.task_supervisor.read().await;
+    let handle = match guard.as_ref() {
+        Some(h) => h,
+        None => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+
+    let status = handle.status().await;
+    match status.tasks.into_iter().find(|t| t.name == name) {
+        Some(task) => axum::Json(crate::api::responses::ApiResponse::new(task)).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({
+                "error": "TASK_NOT_FOUND",
+                "message": format!("Task '{}' is not registered with the supervisor", name),
+            })),
+        )
+            .into_response(),
     }
 }
 

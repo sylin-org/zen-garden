@@ -53,8 +53,12 @@ export default function ResultPanel({ result, streaming }: Props) {
     nested(output, "text.response") ??
     nested(output, "text.translated");
   if (typeof textResponse === "string") {
+    const reasoning = nested(output, "text.reasoning.content");
     return (
       <ResultFrame title="Response">
+        {typeof reasoning === "string" && reasoning.length > 0 && (
+          <ReasoningBlock content={reasoning} />
+        )}
         <Markdown content={textResponse} />
         {data._meta && <MetaFooter meta={data._meta} />}
       </ResultFrame>
@@ -145,6 +149,25 @@ function MetaBadge({ text }: { text: string }) {
     <span className="text-[10px] text-text-dimmer bg-surface-2 px-2 py-0.5 rounded">
       {text}
     </span>
+  );
+}
+
+/**
+ * Collapsible reasoning block — renders the reasoning model's
+ * chain-of-thought (from `text.reasoning.content`) above the final
+ * answer. Closed by default so the answer stays in focus; click to
+ * expand. Styled as subtle context, not a primary answer.
+ */
+function ReasoningBlock({ content }: { content: string }) {
+  return (
+    <details className="mb-4 border-l-2 border-accent/40 pl-3 text-text-dim">
+      <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-text-dimmer font-semibold select-none">
+        Reasoning
+      </summary>
+      <div className="text-[12px] mt-2 whitespace-pre-wrap font-mono">
+        {content}
+      </div>
+    </details>
   );
 }
 

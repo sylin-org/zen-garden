@@ -516,13 +516,14 @@ impl Provider for OllamaProvider {
         primitive: Primitive,
         model_hint: Option<&str>,
     ) -> Option<WorkspaceDescription> {
-        // Snapshot the matrix: supported primitives, healthy flag, and
-        // the list of loadable models that declare the tag for this
-        // primitive.
-        let (supported, has_healthy, mut model_names) = {
+        // Snapshot the matrix: supported primitives, the list of
+        // loadable models that declare the tag for this primitive,
+        // and the resolved model's capability tags. The capabilities
+        // feed the per-model overlay hook in base_parameters_for
+        // (e.g. the `thinking` toggle for reasoning models).
+        let (supported, mut model_names, resolved_caps) = {
             let matrix = self.matrix.read().await;
             let supported = matrix.supported_primitives();
-            let has_healthy = !matrix.healthy_instances().is_empty();
             let loadable = matrix.loadable_models();
             let tag = match primitive {
                 Primitive::TextChat => Some("completion"),
@@ -545,25 +546,33 @@ impl Provider for OllamaProvider {
                 }
                 None => Vec::new(),
             };
-            (supported, has_healthy, names)
+
+            // Resolve the model name: hint if available, else the
+            // first candidate. Then snapshot its capability tags so
+            // we can drop the lock before touching the builder.
+            let resolved_name: Option<String> = match model_hint {
+                Some(m) if names.iter().any(|n| n == m) => Some(m.to_string()),
+                Some(_) => None,
+                None => names.first().cloned(),
+            };
+            let caps: Vec<String> = resolved_name
+                .as_deref()
+                .and_then(|n| matrix.models.get(n))
+                .map(|m| m.capabilities.clone())
+                .unwrap_or_default();
+
+            // The hint was provided but no matching model exists.
+            if model_hint.is_some() && resolved_name.is_none() {
+                return None;
+            }
+            (supported, names, (resolved_name, caps))
         };
 
         if !supported.contains(&primitive) {
             return None;
         }
 
-        // Resolve the model hint: prefer the hint if we have it, else
-        // pick the first available model as the "recommended" default.
-        let resolved = match model_hint {
-            Some(m) => {
-                if model_names.iter().any(|n| n == m) {
-                    Some(m.to_string())
-                } else {
-                    return None;
-                }
-            }
-            None => model_names.first().cloned(),
-        };
+        let (resolved, capabilities) = resolved_caps;
 
         // Ensure deterministic order for options rendering.
         model_names.sort();
@@ -571,12 +580,14 @@ impl Provider for OllamaProvider {
         // Build fields directly — base params tailored to the
         // resolved model, plus the live-options model selector.
         // This is the ORCH-0038 hook point: base_parameters_for
-        // receives the resolved model and may append per-model
-        // overlay fields (e.g. reasoning-mode controls).
-        let mut fields = base_parameters_for(primitive, resolved.as_deref());
+        // receives the resolved model context and may append
+        // per-model overlay fields (e.g. reasoning-mode controls).
+        let ctx = resolved.as_deref().map(|name| ResolvedModelContext {
+            name,
+            capabilities: &capabilities,
+        });
+        let mut fields = base_parameters_for(primitive, ctx.as_ref());
         fields.push(build_model_selector(primitive, &model_names));
-
-        let _ = has_healthy; // currently only gates announcement enabled flag
 
         Some(WorkspaceDescription {
             resolved_model: resolved,
@@ -608,14 +619,30 @@ impl OllamaProvider {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // ORCH-0038 per-model overlay: reasoning models honor a
+        // `think: true` flag that asks them to emit chain-of-thought
+        // in a separate `message.thinking` field. Non-reasoning
+        // models ignore it. We only forward the flag when the form
+        // set it — omitting it preserves the model's default
+        // behavior.
+        let think = request
+            .payload
+            .pointer("/text/reasoning/think")
+            .and_then(|v| v.as_bool());
+
         let messages = build_chat_messages(&request.payload, false)?;
         let options = build_options(&request.payload);
-        let body = json!({
+        let mut body = json!({
             "model": model,
             "messages": messages,
             "options": options,
             "stream": stream_requested,
         });
+        if let Some(think) = think {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("think".into(), json!(think));
+            }
+        }
         let endpoint = format!("{}/api/chat", base.trim_end_matches('/'));
 
         if stream_requested {
@@ -637,6 +664,11 @@ impl OllamaProvider {
 
         let mut out = Output::new();
         out.set(&keys::text::RESPONSE, wire.message.content);
+        if let Some(thinking) = wire.message.thinking {
+            if !thinking.is_empty() {
+                out.set(&keys::text::REASONING, thinking);
+            }
+        }
         out.set(
             &keys::text::FINISH_REASON,
             wire.done_reason
@@ -690,6 +722,11 @@ impl OllamaProvider {
                                     if let Some(msg) = chunk.message {
                                         if !msg.content.is_empty() {
                                             out.set(&keys::text::RESPONSE, msg.content);
+                                        }
+                                        if let Some(t) = msg.thinking {
+                                            if !t.is_empty() {
+                                                out.set(&keys::text::REASONING, t);
+                                            }
                                         }
                                     }
                                     if chunk.done {
@@ -902,10 +939,11 @@ fn build_capability_announcement(
     let capabilities: Vec<AnnCapability> = primitives
         .into_iter()
         .map(|p| {
-            // Startup announcement: no resolved model yet.
-            // Live per-request resolution goes through
-            // Provider::describe_workspace, which passes the
-            // resolved model to these helpers.
+            // Startup announcement: no resolved model yet. The
+            // per-model overlays (e.g. reasoning-mode toggle) only
+            // appear on the live describe_workspace path, where the
+            // adapter looks up the resolved model's capabilities
+            // from the matrix.
             let mut params = base_parameters_for(p, None);
             params.push(build_model_selector(p, model_names));
 
@@ -1003,18 +1041,34 @@ fn ollama_examples_for(p: Primitive) -> Vec<Example> {
     }
 }
 
+/// Per-model context passed to `base_parameters_for`. Carries the
+/// resolved model name and the capability tags that model declares
+/// (harvested from Ollama's `/api/show` at matrix-build time). The
+/// helper inspects these to decide whether to append model-specific
+/// fields like the `thinking` toggle for reasoning models.
+pub(super) struct ResolvedModelContext<'a> {
+    pub name: &'a str,
+    pub capabilities: &'a [String],
+}
+
+impl<'a> ResolvedModelContext<'a> {
+    fn has_capability(&self, tag: &str) -> bool {
+        self.capabilities.iter().any(|c| c == tag)
+    }
+}
+
 /// Base form-schema parameters for Ollama's primitives.
 /// These are the fields the Try It form renders (excluding
 /// the model selector, which is added separately with live options).
 ///
-/// `resolved_model` is the concrete model the provider would use for
-/// this call. When `Some`, the function may append model-specific
-/// fields (e.g. a `thinking` toggle for reasoning models). When
-/// `None` (used at startup, before any model is resolved), the
-/// function returns the base field surface only.
+/// `resolved` is the concrete model the provider would use for this
+/// call, along with its capability tags. When `Some`, the function
+/// may append model-specific fields (e.g. a `thinking` toggle for
+/// reasoning models). When `None` (used at startup, before any model
+/// is resolved), the function returns the base field surface only.
 fn base_parameters_for(
     p: Primitive,
-    resolved_model: Option<&str>,
+    resolved: Option<&ResolvedModelContext<'_>>,
 ) -> Vec<crate::domain::capability_announcement::SkillParameter> {
     use crate::domain::capability_announcement::{ParameterType, ParameterWidget, SkillParameter};
 
@@ -1100,19 +1154,31 @@ fn base_parameters_for(
         _ => vec![],
     };
 
-    // Model-specific field overlays. This is the hook ORCH-0038
-    // reserves for per-model differentiation. Ollama doesn't yet
-    // surface any reasoning-model specific fields, but the hook
-    // is in place so adding one is a local change in this function.
+    // ── Per-model field overlays (ORCH-0038) ─────────────────────
     //
-    // Example (future): detect reasoning models and append a
-    // "reasoning depth" slider for TextChat.
-    //   if p == Primitive::TextChat
-    //       && resolved_model.is_some_and(is_reasoning_model)
-    //   {
-    //       params.push(reasoning_depth_field());
-    //   }
-    let _ = resolved_model;
+    // Ollama's reasoning models (deepseek-r1, qwq, magistral, ...)
+    // advertise a `thinking` capability tag in `/api/show`. When
+    // enabled via the request body's `think: true`, the model emits
+    // its chain-of-thought in a separate `message.thinking` field
+    // alongside the final answer. Surface this as a boolean toggle
+    // in the form so the user can opt in per-request.
+    if let Some(ctx) = resolved {
+        if p == Primitive::TextChat && ctx.has_capability("thinking") {
+            params.push(SkillParameter {
+                field: "text.reasoning.think".into(),
+                required: false,
+                label: Some("Show reasoning".into()),
+                description: Some(
+                    "Ask the model to emit its chain-of-thought before the final answer."
+                        .into(),
+                ),
+                default: Some(json!(false)),
+                field_type: Some(ParameterType::Boolean),
+                widget: Some(ParameterWidget::Toggle),
+                ..Default::default()
+            });
+        }
+    }
 
     params
 }
@@ -1253,6 +1319,12 @@ struct ChatResponse {
 struct ChatMessage {
     #[serde(default)]
     content: String,
+    /// Reasoning-model chain-of-thought. Populated when the request
+    /// asked `think: true` AND the model supports it. Absent
+    /// otherwise — we surface it under `text.reasoning` in the
+    /// output when present.
+    #[serde(default)]
+    thinking: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

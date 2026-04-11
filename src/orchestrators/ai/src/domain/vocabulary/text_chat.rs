@@ -95,6 +95,12 @@ pub fn vocabulary() -> Vocabulary {
                     field_type: FieldType::Boolean,
                     description: "Request streaming delivery of tokens.",
                 },
+                FieldSpec {
+                    path: text::REASONING_THINK,
+                    field_type: FieldType::Boolean,
+                    description:
+                        "Ask a reasoning-capable model to emit its chain-of-thought in a separate `text.reasoning.content` output field. Models without a thinking capability silently ignore this.",
+                },
             ],
             aliases: vec![
                 Alias {
@@ -162,6 +168,11 @@ pub fn vocabulary() -> Vocabulary {
                     path: text::RESPONSE,
                     field_type: FieldType::String,
                     description: "The assistant's reply text.",
+                },
+                FieldSpec {
+                    path: text::REASONING,
+                    field_type: FieldType::String,
+                    description: "Reasoning-model chain-of-thought, emitted separately from `text.response` when the caller asks for it via `text.reasoning.think` and the model supports it.",
                 },
                 FieldSpec {
                     path: text::FINISH_REASON,

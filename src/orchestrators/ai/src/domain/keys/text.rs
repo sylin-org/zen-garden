@@ -68,6 +68,15 @@ pub const RESULTS_MIN_SCORE: FieldPath = FieldPath::new("text.results.min_score"
 
 /// Primary text response.
 pub const RESPONSE: FieldPath = FieldPath::new("text.response");
+/// Reasoning-model chain-of-thought, emitted separately from the
+/// final response. Populated only when the caller asked for it
+/// (via [`REASONING_THINK`]) and the provider supports it.
+pub const REASONING: FieldPath = FieldPath::new("text.reasoning.content");
+/// Input flag asking a reasoning-capable model to emit its
+/// chain-of-thought in a separate `text.reasoning.content` output
+/// field. Providers without a "thinking" capability silently ignore
+/// this flag.
+pub const REASONING_THINK: FieldPath = FieldPath::new("text.reasoning.think");
 /// Why generation stopped.
 pub const FINISH_REASON: FieldPath = FieldPath::new("text.finish_reason");
 /// Tool calls the model wants to make.

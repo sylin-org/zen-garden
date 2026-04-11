@@ -1041,6 +1041,14 @@ Neither is a deviation from the pattern — they are known gaps that close as th
 
 Before opening a PR introducing a new bounded context, verify every box:
 
+**Planning:**
+
+- [ ] The book's Chapter 1 re-evaluated the epic plan against current code (per [ARCH-0017 Discovery Mandate](../decisions/ARCH-0017-ddd-monolith-epic.md#the-discovery-mandate)). If the plan needed changes, they were made before any code was written and logged in the ARCH-0017 revision history.
+- [ ] Material plan changes (scope, sequencing, context name, dependencies) were surfaced to the user for visibility.
+- [ ] [docs/reference/context-map.md](../reference/context-map.md) is updated with the context's target-state entry.
+
+**Structure:**
+
 - [ ] `domain/<context>/` directory exists with `mod.rs`, `aggregate.rs`, `event.rs`, `error.rs`, `port.rs`, `tests.rs`.
 - [ ] Aggregate struct has `state: RwLock<State>` with no `pub` qualifier.
 - [ ] Aggregate struct has `store: Arc<dyn <Context>Store>`, `metrics: Arc<Metrics>`, and `changes: broadcast::Sender<_>` — all private.

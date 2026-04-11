@@ -1,7 +1,7 @@
 ---
 audience: [developer, ai]
 doc_type: decision
-status: accepted
+status: accepted-living
 last_verified: 2026-04-11
 canonical: true
 ---
@@ -9,8 +9,17 @@ canonical: true
 # ARCH-0017: DDD Monolith Epic — Pattern-Enforced Bounded Contexts Across Moss
 
 **Date**: 2026-04-11
-**Status**: Accepted
+**Status**: Accepted — Living Document
 **Depends on**: [ARCH-0004](ARCH-0004-appstate-domain-context-extraction.md) (domain context extraction), [ARCH-0007](ARCH-0007-monomorphic-domain-traits.md) (monomorphic trait pattern), [ARCH-0015](ARCH-0015-task-supervisor-registry.md) (BackgroundTask registry), [ARCH-0016](ARCH-0016-offerings-aggregate-domain.md) (first domain aggregate)
+
+## Revision history
+
+Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **living plan** that evolves as the epic progresses. Every amendment is logged here with date, trigger, and scope. See [The Discovery Mandate](#the-discovery-mandate) for the rule that authorizes amendments.
+
+| Date | Change | Trigger |
+|------|--------|---------|
+| 2026-04-11 | Initial acceptance | Epic commits to 21-book arc |
+| 2026-04-11 | Added **Discovery Mandate** section; added re-evaluation step to Chapter 1 template; marked status as `accepted-living` | User directive: "As you navigate the repo, you'll discover new things. MANDATE: It's OK to backtrack, put on a specialist hat, and think 'What would a proper clean architecture look like?' and CHANGE the plan, the code, or both." |
 
 ## Context
 
@@ -228,6 +237,94 @@ architectural suffixes), it changes. Examples already anticipated:
 Renames happen inside the book that touches the file. Pure `git mv` with
 no content changes goes in its own commit (per code-standards §14) so
 `git log --follow` preserves history.
+
+### The Discovery Mandate
+
+The plan in this document is a **hypothesis**, not a contract. It was
+written before every line of moss was re-read with clean-architecture
+eyes. As each book opens, the author (human or AI) **re-evaluates the
+hypothesis against the actual code** and is expected — mandated — to
+change the plan when the code teaches them something the plan did not
+anticipate.
+
+**The mandate in one sentence:** If, while working on a book, you
+discover that the plan is wrong — that a context should split, merge,
+move, be renamed, or be approached differently — **stop, put on a clean
+architecture specialist hat, ask "what would the right shape actually
+look like?", and change the plan, the code, or both.**
+
+Concrete triggers that warrant a plan change:
+
+- **Discovered context** — a bounded context exists in the code that
+  the plan does not list, or the plan lists a context that does not
+  meaningfully exist in the code.
+- **Missed dependency** — Book N cannot start until Book M delivers
+  something the plan did not identify as a dependency.
+- **Scope error** — a single book turns out to be too large to ship
+  green and needs to split, or two books turn out to be entangled
+  and need to merge.
+- **Wrong abstraction** — a port the plan listed does not fit the
+  domain it serves, or a type the plan named is not actually the
+  aggregate root of its context.
+- **Pre-existing work** — the plan proposes building something that
+  already exists in a form close enough to keep rather than rewrite.
+- **Better name** — a name in the plan turns out to violate the
+  ubiquitous language, clash with an existing term, or mislead.
+- **Cascading rename** — renaming a type propagates further than the
+  plan anticipated and the new surface touches files the book did
+  not scope.
+- **Structural simplification** — two contexts could fold into one
+  without loss, or one context could split into two for clarity.
+
+### Rules for plan changes
+
+1. **Every plan change is documented in the revision history table at
+   the top of this ADR** with date, change, and trigger. An undocumented
+   plan change is a bug.
+2. **Material plan changes (adding/removing a book, changing sequencing,
+   changing scope > 20% for a book) are surfaced to the user in the
+   book's opening message** — not for approval (the user has committed
+   to full scope) but for visibility. The user can redirect if the
+   discovery was misjudged.
+3. **Minor plan changes (renaming a context, refining a port name,
+   moving a file inside a book) are documented in the book's own ADR**
+   and in the context map update, but do not require surfacing beyond
+   that.
+4. **The scaffolding tracker still applies.** If a plan change requires
+   a temporary shim, that shim is logged in
+   [scaffolding.md](../scaffolding.md) with a removal trigger.
+5. **Never silently deviate.** The failure mode ARCH-0017 exists to
+   prevent — plans that drift from reality without documentation —
+   applies equally to plan changes. A plan that quietly differs from
+   the live codebase is worse than a plan with tracked amendments.
+6. **Reverting a plan change is also a plan change.** If an amendment
+   turns out to be wrong, revert it in the same way: a new revision
+   history entry explaining what was tried and why it was reverted.
+
+### When NOT to change the plan
+
+- **Routine technical problems inside a chapter** — just solve them.
+  Compilation errors, test failures, refactoring nits, small naming
+  decisions: these are book-internal and do not touch the plan.
+- **Taste preferences** — "I'd organize this differently if I were
+  rewriting it" is not a plan change; the plan wins unless there is
+  a concrete structural reason.
+- **Scope creep disguised as discovery** — if a book tempts you to
+  "while I'm here, also refactor X that's not in this book," resist.
+  X gets its own book or its own chapter in a planned book.
+
+### Authority
+
+The author of a book (human or AI working with a human in the session)
+has authority to make minor plan changes. Material plan changes require
+user visibility but not approval. The user retains veto power at any
+point: if they redirect, the redirection becomes a new revision history
+entry reverting the change.
+
+This mandate exists because the alternative — a rigid plan enforced
+against discovered reality — is how moss got into its current state in
+the first place. ARCH-0017 explicitly chooses to prefer adaptation over
+rigidity.
 
 ## The Ubiquitous Language — Moss Glossary
 
@@ -720,6 +817,16 @@ Every book (except the Prologue) has the same six-chapter structure:
 
 ### Chapter 1 — Scope & ADR
 
+- **Re-evaluate the plan against the current code** (per [The
+  Discovery Mandate](#the-discovery-mandate)). Read the relevant
+  modules with clean-architecture eyes. Ask: is the plan for this
+  book still right? Is the context named correctly? Does it actually
+  hold what the plan says it holds? Does it have dependencies the
+  plan missed? Should it split, merge, or move?
+- **If the plan needs to change, change it now**, before writing any
+  code. Update the ARCH-0017 revision history. Update
+  [docs/reference/context-map.md](../reference/context-map.md).
+  Surface material changes to the user in the book's opening message.
 - Write the book's own ADR as `ARCH-NNNN-<book-name>.md`.
 - Define the bounded context's surface: state, events, ports, errors,
   commands, queries.
@@ -727,7 +834,8 @@ Every book (except the Prologue) has the same six-chapter structure:
   context.
 - Declare which existing call sites must migrate.
 - Declare removal triggers for any scaffolds introduced.
-- Commit: one ADR file.
+- Commit: one ADR file (possibly alongside a small plan-amendment
+  commit to ARCH-0017 if the discovery warrants it).
 
 ### Chapter 2 — Extract the aggregate
 

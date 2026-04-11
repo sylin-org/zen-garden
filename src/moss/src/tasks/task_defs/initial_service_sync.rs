@@ -29,7 +29,7 @@ impl BackgroundTask for InitialServiceSyncTask {
                 return TaskOutcome::Cancelled;
             }
 
-            ctx.state.sync_self_services(true).await;
+            crate::domain::topology::composition::sync_services(&ctx.state, true).await;
 
             ctx.ready.signal();
             TaskOutcome::Completed

@@ -63,7 +63,7 @@ impl BackgroundTask for RegistryLoaderTask {
                 }
             }
             if any_changed {
-                state.sync_self_services(true).await;
+                crate::domain::topology::composition::sync_services(state, true).await;
             }
 
             let coalesced = state.offerings.coalesce_duplicates().await;

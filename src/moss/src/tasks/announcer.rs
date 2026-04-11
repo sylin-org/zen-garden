@@ -63,7 +63,7 @@ pub(crate) async fn periodic_announcer_task(state: AppState, token: Cancellation
         }
 
         // Build the self topology entry on demand from source domains.
-        let entry = state.build_self_entry().await;
+        let entry = crate::domain::topology::composition::build_self_entry(&state).await;
 
         // Always chirp — peers rely on periodic chirps as heartbeats
         // to maintain online status in the topology cache.

@@ -398,7 +398,7 @@ pub async fn detect_capabilities_background(
     // Sync updated capabilities to self_entry so chirps carry fresh data.
     // This closes the gap where Phase 9.5 copies stale/skeleton capabilities
     // but background detection never pushes updates to self_entry.
-    state.sync_self_capabilities(true).await;
+    crate::domain::topology::composition::sync_capabilities(&state, true).await;
 
     // Write MOTD with complete hardware capabilities now that detection is done.
     #[cfg(target_os = "linux")]

@@ -62,9 +62,11 @@ impl BackgroundTask for OfferingsProjectionTask {
                                 "OfferingsChanged — refreshing projection",
                             );
                             crate::domain::tool::projection::reproject_and_publish(&ctx.state).await;
-                            ctx.state
-                                .sync_self_services(event.kind.should_chirp())
-                                .await;
+                            crate::domain::topology::composition::sync_services(
+                                &ctx.state,
+                                event.kind.should_chirp(),
+                            )
+                            .await;
                         }
                         Err(RecvError::Lagged(skipped)) => {
                             tracing::warn!(
@@ -77,7 +79,8 @@ impl BackgroundTask for OfferingsProjectionTask {
                                 .record_subscriber_lag("offerings-projection", skipped)
                                 .await;
                             crate::domain::tool::projection::reproject_and_publish(&ctx.state).await;
-                            ctx.state.sync_self_services(true).await;
+                            crate::domain::topology::composition::sync_services(&ctx.state, true)
+                                .await;
                         }
                         Err(RecvError::Closed) => {
                             tracing::info!("offerings projection feed closed");

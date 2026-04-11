@@ -25,6 +25,7 @@
 //! Uses atomic write (tmp + rename) via `garden_common::persistence::atomic_write_file`.
 
 pub mod aggregate;
+pub mod composition;
 pub mod error;
 pub mod event;
 pub mod store;

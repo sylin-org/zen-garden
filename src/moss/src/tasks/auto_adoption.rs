@@ -586,7 +586,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
         // Sync + chirp if we made changes (gateway methods auto-persist)
         if state_changed {
-            state.sync_self_services(true).await;
+            crate::domain::topology::composition::sync_services(&state, true).await;
         }
 
         tracing::debug!("Auto-adoption scan complete");

@@ -377,7 +377,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
 
         // ── Sync + chirp ───────────────────────────────────────────────
         if state_changed {
-            state.sync_self_services(true).await;
+            crate::domain::topology::composition::sync_services(&state, true).await;
         }
     }
 }

@@ -695,7 +695,8 @@ async fn build_state(
     };
 
     // Phase 4.5: Start mDNS lurk-listener (moved to Phase 11 after state creation)
-    // Note: IP change handler moved to Phase 11 to use AppState.announce_resolution_change()
+    // Note: IP change handler moved to Phase 11 and delegates to
+    // crate::domain::topology::composition::announce_resolution_change
 
     // Phase 6: Lantern registration — deferred to Phase 11.post2 (needs AppState for service list)
 
@@ -1093,7 +1094,8 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     let shutdown_callback: crate::bootstrap::server::ShutdownCallback = Box::new(move || {
         Box::pin(async move {
             // TOPO-0002: Flush topology to disk before shutdown
-            let self_entry = goodbye_state.build_self_entry().await;
+            let self_entry =
+                crate::domain::topology::composition::build_self_entry(&goodbye_state).await;
             crate::domain::topology::flush_topology(
                 &goodbye_state.current.topology.cache,
                 &goodbye_state.current.topology.dirty,

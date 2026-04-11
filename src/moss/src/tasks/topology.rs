@@ -23,7 +23,7 @@ pub fn start_topology_maintenance(state: crate::AppState, token: CancellationTok
                     break;
                 }
             }
-            let self_entry = state.build_self_entry().await;
+            let self_entry = crate::domain::topology::composition::build_self_entry(&state).await;
             let (marked, evicted) = crate::domain::topology::maintain_and_persist(
                 &state.current.topology.cache,
                 &state.current.topology.dirty,

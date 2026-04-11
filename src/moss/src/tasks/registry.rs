@@ -90,7 +90,7 @@ pub fn start_registry_loader(state: AppState) {
             }
         }
         if any_changed {
-            state.sync_self_services(true).await;
+            crate::domain::topology::composition::sync_services(&state, true).await;
         }
 
         // Coalesce any duplicate offerings that accumulated from prior versions

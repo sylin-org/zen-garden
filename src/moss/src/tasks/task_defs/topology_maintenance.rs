@@ -31,7 +31,8 @@ impl BackgroundTask for TopologyMaintenanceTask {
                     }
                 }
 
-                let self_entry = ctx.state.build_self_entry().await;
+                let self_entry =
+                    crate::domain::topology::composition::build_self_entry(&ctx.state).await;
                 let (marked, evicted) = crate::domain::topology::maintain_and_persist(
                     &ctx.state.current.topology.cache,
                     &ctx.state.current.topology.dirty,

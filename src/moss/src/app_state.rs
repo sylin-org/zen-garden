@@ -18,7 +18,7 @@ use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -333,75 +333,10 @@ impl AppState {
         &self.current.stone.name
     }
 
-    /// Build the self topology entry on demand from source domains.
-    ///
-    /// Replaces the mutable self_entry cache. Reads from:
-    /// - current.stone (identity)
-    /// - current.address (network)
-    /// - current.health (status)
-    /// - current.mac (MAC address)
-    /// - current.capabilities (hardware)
-    /// - offerings (local offerings -> TopologyServiceEntry)
-    /// - presence.notifications (tags)
-    pub async fn build_self_entry(&self) -> garden_common::TopologyEntry {
-        let address = self.current.address.read().await.clone();
-        let health = self.current.health.read().await.clone();
-        let mac = self.current.mac.read().await.clone();
-        let capabilities = self.current.capabilities.read().await.clone();
-        let tags = self.presence.notifications.compile();
-
-        // Build services from the active offerings pool. `with_active`
-        // bounds the lock scope to the closure — no guard escapes.
-        let services = self
-            .offerings
-            .with_active(garden_common::TopologyServiceEntry::from_offerings)
-            .await;
-
-        garden_common::TopologyEntry {
-            stone_id: self.current.stone.id.clone(),
-            stone_name: self.current.stone.name.clone(),
-            address,
-            moss_version: crate::version_string(),
-            mac,
-            health,
-            capabilities,
-            services,
-            status: garden_common::StoneStatus::Online,
-            discovered_at: chrono::Utc::now(),
-            last_seen: chrono::Utc::now(),
-            tags,
-            gateways: vec![], // TOOLS-0003: registry beacon is the single path
-        }
-    }
-
-    /// Sync services and optionally chirp.
-    ///
-    /// With `build_self_entry()` assembling the topology entry on demand,
-    /// this method only needs to trigger an immediate chirp when requested.
-    /// Called after any offerings modification.
-    pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
-        if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.build_self_entry().await;
-            if let Err(e) = self.topology.chirp(&entry).await {
-                tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
-            }
-        }
-    }
-
-    /// Chirp after capabilities change.
-    ///
-    /// With `build_self_entry()` reading capabilities from `current.capabilities`
-    /// directly, this method only needs to trigger a chirp so peers see the update.
-    pub(crate) async fn sync_self_capabilities(&self, auto_chirp: bool) {
-        tracing::info!("Capabilities updated — build_self_entry will read fresh data");
-
-        if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.build_self_entry().await;
-            if let Err(e) = self.topology.chirp(&entry).await {
-                tracing::warn!(error = ?e, "Failed to chirp after capabilities sync");
-            }
-        }
-    }
+    // Self-entry construction and chirp methods moved to the Topology
+    // aggregate in ARCH-0020 Book III. Composition helpers at
+    // `crate::domain::topology::composition::*` assemble `SelfEntryInputs`
+    // from AppState and delegate to the aggregate's typed commands.
 
     // ========================================================================
     // Offering Accessors — thin delegates to the Offerings aggregate (ARCH-0016)
@@ -462,83 +397,8 @@ impl AppState {
         self.offerings.find_by_id(offering_id).await
     }
 
-    /// Update stone health and immediately chirp
-    ///
-    /// Use this when stone-level status changes (not just services).
-    /// Examples: nourishing starts, nourishing completes, degraded → thriving.
-    ///
-    /// # Parameters
-    /// - `health`: New health status (use constants: STONE_THRIVING, STONE_NOURISHING, etc.)
-    /// - `auto_chirp`: If true, broadcasts updated state immediately (if network is ready)
-    pub async fn update_stone_health(&self, health: String, auto_chirp: bool) {
-        {
-            let mut h = self.current.health.write().await;
-            *h = health.clone();
-        }
-
-        tracing::debug!(health = %health, "Updated stone health");
-
-        if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
-            let entry = self.build_self_entry().await;
-            if let Err(e) = self.topology.chirp(&entry).await {
-                tracing::warn!(error = ?e, "Failed to chirp after health update");
-            }
-        }
-    }
-
-    /// Announce resolution change (IP/MAC changed)
-    ///
-    /// Called when the means to resolve this stone changes (IP address, MAC address).
-    /// This is different from service changes - resolution changes require:
-    /// 1. Update current.address and current.mac
-    /// 2. Re-register mDNS service (updates TXT records and triggers re-announcement)
-    /// 3. Send UDP chirp with updated topology entry
-    ///
-    /// For service-only changes (no resolution change), use `sync_self_services()` instead.
-    pub async fn announce_resolution_change(&self, new_ip: &str) {
-        let new_endpoint = format!("http://{}:{}", new_ip, self.current.api_port);
-
-        tracing::info!(
-            endpoint = %new_endpoint,
-            "Announcing resolution change (IP/MAC)"
-        );
-
-        // Get fresh MAC address (may have changed with network)
-        let (_, new_mac) = garden_common::infra::network::get_local_ip_and_mac();
-
-        // Update current.address and current.mac (source fields)
-        {
-            let old_tls_port = self.current.address.read().await.tls_port;
-            let new_ip: std::net::IpAddr = match new_ip.parse() {
-                Ok(ip) => ip,
-                Err(e) => {
-                    tracing::warn!(raw = %new_ip, error = %e, "Failed to parse new IP — skipping resolution change");
-                    return;
-                }
-            };
-            let mut new_addr = garden_common::PeerAddress::new(new_ip, self.current.api_port);
-            if let Some(tp) = old_tls_port {
-                new_addr = new_addr.with_tls(tp);
-            }
-            *self.current.address.write().await = new_addr;
-            *self.current.mac.write().await = new_mac.clone();
-        }
-
-        // Re-register mDNS with updated IP and MAC
-        if let Some(ref mdns) = self.discovery.mdns
-            && let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await
-        {
-            tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
-        }
-
-        // Immediately chirp the updated entry via UDP
-        let entry = self.build_self_entry().await;
-        if let Err(e) = self.topology.chirp(&entry).await {
-            tracing::warn!(error = ?e, "Failed to chirp after resolution change");
-        } else {
-            tracing::info!("Resolution change announced (mDNS + UDP chirp)");
-        }
-    }
+    // `update_stone_health` and `announce_resolution_change` moved to
+    // `crate::domain::topology::composition::*` per ARCH-0020 Book III.
 
     /// Recover incomplete ceremonies from previous run
     ///

@@ -888,7 +888,7 @@ pub async fn install_service_task(
     };
 
     // Sync + chirp so topology reflects the change immediately
-    state.sync_self_services(true).await;
+    crate::domain::topology::composition::sync_services(state, true).await;
 
     // Emit offering lifecycle event (triggers listeners: chirp debounce, SSE, timers)
     state.event_bus.emit(OfferingEvent::deployed(

@@ -454,12 +454,12 @@ pub async fn execute_stone(
     );
 
     // Mark stone as nourishing and chirp immediately
-    state
-        .update_stone_health(
-            garden_common::constants::STONE_NOURISHING.to_string(),
-            true, // auto_chirp = true
-        )
-        .await;
+    crate::domain::topology::composition::update_stone_health(
+        &state,
+        garden_common::constants::STONE_NOURISHING.to_string(),
+        true,
+    )
+    .await;
 
     // Create broadcast channel for status updates
     let (tx, _rx) = broadcast::channel::<String>(100);
@@ -622,7 +622,7 @@ async fn execute_updates_background(
     };
 
     // Update health and chirp
-    state.update_stone_health(health_status, true).await;
+    crate::domain::topology::composition::update_stone_health(&state, health_status, true).await;
 
     // Phase 3: Reboot immediately if firmware updates require it
     if needs_reboot {

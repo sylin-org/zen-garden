@@ -42,8 +42,14 @@ impl BackgroundTask for IpChangeHandlerTask {
                                 garden_common::infra::communications::p2p::reinit_senders().await;
                             }
 
-                            // Delegate all resolution change handling to AppState
-                            ctx.state.announce_resolution_change(&ip).await;
+                            // Delegate resolution change to the Topology
+                            // composition helper (updates current.address,
+                            // current.mac, re-registers mDNS, chirps).
+                            crate::domain::topology::composition::announce_resolution_change(
+                                &ctx.state,
+                                &ip,
+                            )
+                            .await;
                         }
                     }
                 }

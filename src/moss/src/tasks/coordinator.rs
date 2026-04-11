@@ -80,7 +80,8 @@ pub(crate) async fn start_background_tasks(
         let chirp_listener = Arc::new(infra::ChirpListener::new(Arc::new(move || {
             let state = state_for_chirp.clone();
             tokio::spawn(async move {
-                let topology_entry = state.build_self_entry().await;
+                let topology_entry =
+                    crate::domain::topology::composition::build_self_entry(&state).await;
                 if let Err(e) = state.topology.chirp(&topology_entry).await {
                     tracing::warn!(error = ?e, "Failed to chirp from event listener");
                 }
@@ -183,7 +184,7 @@ pub(crate) async fn start_background_tasks(
 
     // Phase 13: Initial announcement (announce ourselves)
     tracing::info!("Sending initial announcement...");
-    let entry = state.build_self_entry().await;
+    let entry = crate::domain::topology::composition::build_self_entry(&state).await;
     if let Err(e) = state.topology.chirp(&entry).await {
         tracing::warn!(error = ?e, "Initial announcement failed");
     }

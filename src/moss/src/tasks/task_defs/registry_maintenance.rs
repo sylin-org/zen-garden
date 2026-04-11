@@ -31,16 +31,11 @@ impl BackgroundTask for RegistryMaintenanceTask {
                     }
                 }
 
-                let reaped = ctx
-                    .state
-                    .tool
-                    .registry
-                    .write()
-                    .await
-                    .reap_expired_gateways();
-                if !reaped.is_empty() {
-                    let count = reaped.len();
-                    ctx.state.publish_tool_deltas(reaped, true).await;
+                let events = ctx.state.tool.reap_expired_gateways().await;
+                if !events.is_empty() {
+                    let count = events.iter().filter(|e| e.as_delta().is_some()).count();
+                    crate::domain::tool::projection::publish_events_for_state(&ctx.state, &events)
+                        .await;
                     tracing::debug!(count, "Reaped expired gateway entries");
                 }
             }

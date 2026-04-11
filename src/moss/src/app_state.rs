@@ -16,7 +16,6 @@
 use crate::domain::{Metrics, Offerings, Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
-use garden_common::tools::ToolDelta;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -328,75 +327,6 @@ impl AppState {
         &self.current.stone.name
     }
 
-    /// Reconcile local tools projection and publish resulting deltas.
-    ///
-    /// This is the single entry point for publishing local tool updates.
-    /// Writes to both the registry (TOOLS-0003) and the legacy tools_cache
-    /// until all read sites are migrated.
-    pub async fn refresh_local_tools_projection(&self) {
-        let projections = crate::domain::tool::projection::project_local_tools(self).await;
-
-        let deltas = {
-            let mut reg = self.tool.registry.write().await;
-            reg.reconcile_local(
-                &self.current.stone.id,
-                projections,
-                crate::domain::tool::registry::EntryOrigin::Local,
-            )
-        };
-
-        self.publish_tool_deltas(deltas, true).await;
-    }
-
-    /// Ingest remote tools beacon and publish resulting stream deltas locally.
-    pub async fn ingest_tools_beacon(&self, beacon: garden_common::tools::ToolsBeacon) {
-        let deltas = {
-            let mut reg = self.tool.registry.write().await;
-            reg.apply_remote_beacon(&beacon)
-        };
-
-        self.publish_tool_deltas(deltas, false).await;
-    }
-
-    /// Remove all projected tools for a stone (goodbye/offline path).
-    pub async fn remove_tools_for_stone(&self, stone_id: &str) {
-        let deltas = {
-            let mut reg = self.tool.registry.write().await;
-            reg.remove_stone(stone_id)
-        };
-
-        self.publish_tool_deltas(deltas, false).await;
-    }
-
-    /// Publish tool deltas to SSE subscribers and optionally broadcast a UDP
-    /// tools beacon so remote stones' registries get the update.
-    pub async fn publish_tool_deltas(&self, deltas: Vec<ToolDelta>, broadcast_beacon: bool) {
-        if deltas.is_empty() {
-            return;
-        }
-
-        for delta in &deltas {
-            let _ = self.tool.delta.send(delta.clone());
-        }
-
-        if broadcast_beacon {
-            let endpoint = self.current.address.read().await.http_base();
-            if endpoint.trim().is_empty() {
-                return;
-            }
-            if let Err(e) = crate::infra::broadcast_tools_beacon(
-                &self.current.stone.id,
-                &self.current.stone.name,
-                &endpoint,
-                deltas,
-            )
-            .await
-            {
-                tracing::warn!(error = %e, "Failed to broadcast tools beacon");
-            }
-        }
-    }
-
     /// Build the self topology entry on demand from source domains.
     ///
     /// Replaces the mutable self_entry cache. Reads from:
@@ -655,9 +585,12 @@ impl AppState {
 
         // Storage mutations affect the tools projection (seed-bank entries).
         // Refresh immediately so registry consumers see the change without polling.
-        // This also triggers an incremental tools beacon broadcast via
-        // `publish_tool_deltas`, so the garden learns about the change.
-        self.refresh_local_tools_projection().await;
+        // The helper re-projects, reconciles into the Tool aggregate, and
+        // publishes any wire deltas via the injected beacon transport so
+        // remote stones learn about the change. Storage will emit its own
+        // domain events in Book VIII; until then this imperative edge is
+        // the explicit coupling between the two bounded contexts.
+        crate::domain::tool::projection::reproject_and_publish(self).await;
 
         // Nudge orchestration so role resolution (Primary/Dormant) reacts
         // immediately to connect/disconnect/role changes (STORAGE-0018).

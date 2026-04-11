@@ -32,23 +32,23 @@ pub fn start_registry_maintenance(state: AppState, token: CancellationToken) {
                     break;
                 }
             }
-            let reaped = {
-                let mut reg = state.tool.registry.write().await;
-                reg.reap_expired_gateways()
-            };
-            if !reaped.is_empty() {
+            let events = state.tool.reap_expired_gateways().await;
+            if !events.is_empty() {
+                let reaped_deltas = events.iter().filter(|e| e.as_delta().is_some()).count();
                 tracing::info!(
-                    count = reaped.len(),
+                    count = reaped_deltas,
                     "Registry maintenance: reaped expired gateway entries"
                 );
-                for r in &reaped {
-                    tracing::info!(
-                        fqid = %r.fqid,
-                        "{} gateway expired (stale)",
-                        r.fqid,
-                    );
+                for event in &events {
+                    if let Some(delta) = event.as_delta() {
+                        tracing::info!(
+                            fqid = %delta.fqid,
+                            "{} gateway expired (stale)",
+                            delta.fqid,
+                        );
+                    }
                 }
-                state.publish_tool_deltas(reaped, true).await;
+                crate::domain::tool::projection::publish_events_for_state(&state, &events).await;
             }
         }
     });

@@ -403,8 +403,7 @@ async fn build_state(
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
         topology_cache.clone(),
         topology_dirty.clone(),
-        tool.delta.clone(),
-        tool.registry.clone(),
+        tool.clone(),
         current_address.clone(),
         console_printer.clone(),
         infrastructure_handlers.clone(),

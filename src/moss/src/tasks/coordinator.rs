@@ -328,9 +328,10 @@ pub(crate) async fn start_background_tasks(
         super::supervisor::TaskSupervisor::build(tasks, state.clone(), shutdown_token.clone())
             .expect("Invalid task dependency graph — startup aborted");
 
-    // Initialize tools projection from restored offerings + local seed-banks.
-    // This emits initial tool.upsert deltas and announces them garden-wide.
-    state.refresh_local_tools_projection().await;
+    // Note: the initial tools projection is now seeded by the
+    // `offerings-projection` background task at startup (before it
+    // signals ready). The coordinator no longer needs to call it
+    // explicitly here — that was a Book I-era leftover.
 
     (api_endpoint, supervisor)
 }

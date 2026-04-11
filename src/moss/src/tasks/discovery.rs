@@ -104,8 +104,7 @@ pub async fn start_discovery_listener(
     api_endpoint: String,
     topology_cache: TopologyCache,
     topology_dirty: TopologyDirtyFlag,
-    tools: tokio::sync::broadcast::Sender<garden_common::tools::ToolDelta>,
-    registry: crate::domain::GardenRegistry,
+    tool: Arc<crate::domain::Tool>,
     address: Arc<tokio::sync::RwLock<garden_common::PeerAddress>>,
     console: Arc<ConsolePrinter>,
     infrastructure_handlers: Arc<crate::domain::InfrastructureHandlerRegistry>,
@@ -192,7 +191,7 @@ pub async fn start_discovery_listener(
                         let local_stone_name = stone_name.clone();
                         let local_endpoint = api_endpoint.clone();
                         let local_address = address.clone();
-                        let local_registry = registry.clone();
+                        let local_tool = tool.clone();
                         let local_volumes = volumes.clone();
                         tokio::spawn(async move {
                             let resolved_endpoint = {
@@ -235,18 +234,22 @@ pub async fn start_discovery_listener(
                                 }
                             }
 
-                            // TOOLS-0003: Broadcast current local tools snapshot for new stone.
+                            // Broadcast current local tools snapshot for new stone.
+                            // Ch6 will add a typed `local_snapshot` query on
+                            // Tool; during Ch5 we use the field-level
+                            // strangler to reach the registry inner.
                             let snapshot_deltas = {
-                                let reg = local_registry.read().await;
+                                let reg = local_tool.registry.read().await;
                                 reg.local_snapshot_for_beacon(&local_stone_id)
                             };
-                            if let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
-                                &local_stone_id,
-                                &local_stone_name,
-                                &resolved_endpoint,
-                                snapshot_deltas,
-                            )
-                            .await
+                            if let Err(e) = local_tool
+                                .publish_snapshot(
+                                    &local_stone_id,
+                                    &local_stone_name,
+                                    &resolved_endpoint,
+                                    snapshot_deltas,
+                                )
+                                .await
                             {
                                 tracing::warn!(
                                     error = %e,
@@ -276,14 +279,12 @@ pub async fn start_discovery_listener(
                     mark_stone_offline_dirty(&topology_cache, &goodbye.stone_id, &topology_dirty)
                         .await;
 
-                    // TOOLS-0003: Remove all entries for offline stone from registry
-                    let removed = {
-                        let mut reg = registry.write().await;
-                        reg.remove_stone(&goodbye.stone_id)
-                    };
-                    for delta in &removed {
-                        let _ = tools.send(delta.clone());
-                    }
+                    // Remove all entries for offline stone via the Tool
+                    // aggregate. The aggregate emits wire deltas on its
+                    // delta_stream() internally; we do NOT re-publish them
+                    // over UDP (we don't rebroadcast events we learned
+                    // from others — the goodbye already reached peers).
+                    let _events = tool.remove_stone(&goodbye.stone_id).await;
                 }
                 garden_common::infra::communications::announcement_types::STORAGE_BEACON => {
                     // STORAGE-0003: Handle storage beacon from peer
@@ -331,36 +332,40 @@ pub async fn start_discovery_listener(
                         beacon.stone_name,
                     );
 
-                    // TOOLS-0003: Apply to unified registry
-                    let applied = {
-                        let mut reg = registry.write().await;
-                        reg.apply_remote_beacon(&beacon)
-                    };
-                    for delta in &applied {
-                        if let Some(tool) = &delta.tool {
-                            if tool.tool.category == garden_common::constants::CATEGORY_ORCHESTRATOR
-                            {
+                    // Apply the beacon via the Tool aggregate. The
+                    // aggregate emits wire deltas on its delta_stream()
+                    // internally; we do NOT re-publish them over UDP
+                    // (we don't rebroadcast events we received).
+                    let applied_events = tool.apply_remote_beacon(&beacon).await;
+                    for event in &applied_events {
+                        if let Some(delta) = event.as_delta() {
+                            if let Some(garden_tool) = &delta.tool {
+                                if garden_tool.tool.category
+                                    == garden_common::constants::CATEGORY_ORCHESTRATOR
+                                {
+                                    tracing::info!(
+                                        stone = %beacon.stone_name,
+                                        offering = %garden_tool.tool.tool_type,
+                                        fqid = %garden_tool.fqid,
+                                        "Stone {} announces {} gateway for {}",
+                                        beacon.stone_name,
+                                        garden_tool.fqid,
+                                        garden_tool.tool.tool_type,
+                                    );
+                                }
+                            } else if matches!(
+                                delta.kind,
+                                garden_common::tools::ToolDeltaKind::Remove
+                            ) {
                                 tracing::info!(
                                     stone = %beacon.stone_name,
-                                    offering = %tool.tool.tool_type,
-                                    fqid = %tool.fqid,
-                                    "Stone {} announces {} gateway for {}",
+                                    fqid = %delta.fqid,
+                                    "Stone {} announces FQN handler removal for {}",
                                     beacon.stone_name,
-                                    tool.fqid,
-                                    tool.tool.tool_type,
+                                    delta.fqid,
                                 );
                             }
-                        } else if matches!(delta.kind, garden_common::tools::ToolDeltaKind::Remove)
-                        {
-                            tracing::info!(
-                                stone = %beacon.stone_name,
-                                fqid = %delta.fqid,
-                                "Stone {} announces FQN handler removal for {}",
-                                beacon.stone_name,
-                                delta.fqid,
-                            );
                         }
-                        let _ = tools.send(delta.clone());
                     }
                 }
                 _ => {

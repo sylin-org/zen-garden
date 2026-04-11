@@ -1,15 +1,18 @@
-//! Tools projector — builds GardenTool snapshots from offerings and storage.
+//! Tools projector — builds GardenTool snapshots from offerings and
+//! storage, plus the helper functions that drive full "project →
+//! reconcile → publish" cycles.
 //!
 //! Reads `state.offerings` directly and calls `connection::resolve_connection()`
 //! for URI composition. No FoundService intermediate.
 //! Seed-banks are projected directly from the seed bank lifecycle objects.
 
+use super::event::ToolChanged;
 use crate::AppState;
 use crate::domain::connection;
 use crate::domain::storage::VolumeState;
 use garden_common::Offering;
 use garden_common::offerings::OfferingFqn;
-use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
+use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolDelta, ToolIdentity};
 use std::collections::BTreeSet;
 
 /// Project all local tools (offerings + seed-banks) as GardenTool instances.
@@ -220,6 +223,66 @@ fn volume_state_to_readiness(state: &VolumeState) -> (&'static str, bool) {
         VolumeState::Online => ("running", true),
         VolumeState::Degraded(_) => ("degraded", false),
         VolumeState::Offline => ("stopped", false),
+    }
+}
+
+// ── Reconciliation + publication helpers ────────────────────────────────
+//
+// These free functions compose the aggregate's typed commands with the
+// AppState-dependent projection step and the transport publish step.
+// The projection task calls `reproject_and_publish`; gateway handlers
+// and the reaper task call `publish_events_for_state` after their own
+// typed commands.
+//
+// Keeping these as free functions in the `projection` module (rather
+// than methods on `Tool`) preserves the aggregate's freedom from an
+// `AppState` back-reference per ARCH-0019.
+
+/// Reproject local tools from `AppState` and reconcile them into the
+/// Tool aggregate; publish any resulting wire deltas via the injected
+/// beacon transport. Best-effort — failures are logged as warnings.
+///
+/// Called by:
+/// - The `offerings-projection` background task on every `OfferingsChanged`.
+/// - The storage-mutation path in `app_state.rs` after a volume change.
+pub async fn reproject_and_publish(state: &AppState) {
+    let projections = project_local_tools(state).await;
+    let stone_id = state.current.stone.id.clone();
+    let events = state.tool.reconcile_local(&stone_id, projections).await;
+    publish_events_for_state(state, &events).await;
+}
+
+/// Publish wire deltas for the given domain events via the injected
+/// beacon transport. Batch events (`Reaped`, `BeaconApplied`,
+/// `StoneRemoved`) are filtered out by `ToolChanged::as_delta`; the
+/// per-entry `Upserted` / `Removed` events they accompany carry the
+/// wire delta and are the ones that fire.
+///
+/// Best-effort — failures are logged as warnings. Empty delta batches
+/// are skipped without calling the transport.
+pub async fn publish_events_for_state(state: &AppState, events: &[ToolChanged]) {
+    let deltas: Vec<ToolDelta> = events
+        .iter()
+        .filter_map(|e| e.as_delta().cloned())
+        .collect();
+    if deltas.is_empty() {
+        return;
+    }
+    let endpoint = state.current.address.read().await.http_base();
+    if endpoint.trim().is_empty() {
+        return;
+    }
+    if let Err(e) = state
+        .tool
+        .publish_incremental(
+            &state.current.stone.id,
+            &state.current.stone.name,
+            &endpoint,
+            deltas,
+        )
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to publish tools beacon");
     }
 }
 

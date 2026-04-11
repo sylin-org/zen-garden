@@ -7,7 +7,6 @@
 //! TTL. The registry reaper removes expired entries. No separate registry.
 
 use crate::AppState;
-use crate::domain::tool::registry::EntryOrigin;
 use axum::{
     Json,
     extract::{Path, State},
@@ -18,7 +17,7 @@ use garden_common::GatewayRegistration;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{GardenTool, ServiceInfo, Stone, ToolIdentity};
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Gateway TTL — entries expire if not refreshed within this period.
 const GATEWAY_TTL_SECS: u64 = 60;
@@ -155,21 +154,19 @@ pub async fn put_gateway(
         storage: None,
     };
 
-    let expires_at = Instant::now() + Duration::from_secs(GATEWAY_TTL_SECS);
+    let event = state
+        .tool
+        .register_gateway(tool, Duration::from_secs(GATEWAY_TTL_SECS))
+        .await;
 
-    let delta = {
-        let mut reg = state.tool.registry.write().await;
-        reg.upsert_with_expiry(tool, EntryOrigin::Gateway, Some(expires_at))
-    };
-
-    if let Some(delta) = delta {
+    if let Some(event) = event {
         tracing::info!(
             offering = %offering,
             fqn = %registration.fqn,
             "{} gateway entry committed",
             offering,
         );
-        state.publish_tool_deltas(vec![delta], true).await;
+        crate::domain::tool::projection::publish_events_for_state(&state, &[event]).await;
     } else {
         tracing::debug!(
             offering = %offering,
@@ -192,18 +189,18 @@ pub async fn delete_gateway(
     State(state): State<AppState>,
     Path(offering): Path<String>,
 ) -> StatusCode {
-    let delta = {
-        let mut reg = state.tool.registry.write().await;
-        reg.remove_gateway(&offering, &state.current.stone.id)
-    };
+    let event = state
+        .tool
+        .deregister_gateway(&offering, &state.current.stone.id)
+        .await;
 
-    if let Some(delta) = delta {
+    if let Some(event) = event {
         tracing::info!(
             offering = %offering,
             "{} gateway deregistered",
             offering,
         );
-        state.publish_tool_deltas(vec![delta], true).await;
+        crate::domain::tool::projection::publish_events_for_state(&state, &[event]).await;
     } else {
         tracing::debug!(offering = %offering, "Gateway not found for deregistration");
     }

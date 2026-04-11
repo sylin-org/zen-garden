@@ -1,13 +1,13 @@
 ---
 audience: developer
 doc_type: decision
-status: proposed
+status: accepted
 ---
 
 # ORCH-0031: Dashboard Architecture — Catalog-Driven SPA with SSE Spine
 
 **Date**: 2026-04-10
-**Status**: Proposed
+**Status**: Accepted
 **Deciders**: Leo
 **Related ADRs**:
 - ORCH-0028 (orchestrator core) — defines the vocabulary, Directory, Provider trait, dispatch pipeline the dashboard consumes

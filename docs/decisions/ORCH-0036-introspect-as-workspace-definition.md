@@ -12,6 +12,10 @@ status: accepted
 **Supersedes**: Catalog detail endpoints (`GET /v1/catalog/{mod}/{leaf}[/{skill}]`)
 **Amends**: ORCH-0031 (dashboard architecture), ORCH-0033 (request log),
 ORCH-0034 (provider metadata), ORCH-0035 (examples)
+**Amended by**: [ORCH-0038](ORCH-0038-context-aware-workspace-resolution.md) —
+live field resolution moved to `Provider::describe_workspace`.
+`Capability.parameters` is a startup hint, not the live source; the
+introspect handler no longer reads it directly.
 
 ---
 

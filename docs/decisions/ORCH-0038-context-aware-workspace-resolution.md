@@ -277,6 +277,96 @@ User selects "deepseek-r1:8b" from the Model dropdown
 
 ---
 
+## Realized architecture
+
+Documents the concrete shape the implementation converged on. The
+`Decision` section above is the contract; this section is the
+pattern every adapter follows so that future readers don't have to
+reverse-engineer it from nine providers.
+
+### The `*_base_parameters_for` helper pattern
+
+Every adapter that owns a per-primitive field surface exposes a
+helper with the signature:
+
+```rust
+fn <provider>_base_parameters_for(
+    primitive: Primitive,
+    resolved_model: Option<&str>,
+) -> Vec<SkillParameter>
+```
+
+Both the startup capability announcement **and** the live
+`describe_workspace` call build from this helper. The startup path
+passes `None` (no model resolved yet); the live path passes the
+resolved model so the helper may append model-specific fields.
+
+This is the ORCH-0038 hook point. When an adapter needs to add a
+model-specific field, the change is a local conditional inside the
+helper — nothing else moves. The `resolved_model` parameter is
+deliberately `Option<&str>` rather than a structured type so the
+conditional can be as simple as `model.starts_with("claude-4-")`
+or a capability-tag lookup against the adapter's own matrix.
+
+Ollama and Google ship with this pattern wired but no per-model
+conditionals yet — the hook is in place, the overlay is pending
+the first real use case (e.g. a reasoning-mode `thinking` toggle
+for deepseek-r1 / qwq / magistral in Ollama).
+
+### Simple-adapter pass-through is legitimate
+
+Seven adapters do not need a helper at all and implement
+`describe_workspace` by building from the same `build_capability_announcement`
+or `compute_capabilities` path their startup announcement uses,
+ignoring `model_hint` entirely:
+
+| Adapter | Why `model_hint` is ignored |
+|---|---|
+| LibreTranslate | No model concept (language pairs are not models) |
+| Docling | No model concept (fixed OCR engine) |
+| Kokoro | Single fixed model (`self.tts_model_id`) |
+| OpenedAI Speech | Single fixed model (`"tts-1"`) |
+| WhisperCpp | Single fixed model (`self.default_model`) |
+| Speaches | Validated against a static model list; no per-model field variance |
+| ComfyUI | Skill-based — models are per-skill, not per-primitive. Skills carry their own field declarations via `SkillDeclaration`. |
+
+This is **not** a shortcut and should not be "fixed" into a helper
+with a `resolved_model` parameter. The function of the parameter is
+per-model field overlay; when an adapter has no such overlay
+possible by construction, the parameter has no semantic meaning and
+adding it would be noise. Future readers: leave these as-is.
+
+### Handler contract details
+
+Two behaviors are not derivable from the `Decision` section above
+and are recorded here as part of the contract:
+
+**Payload injection.** When a provider returns a `resolved_model`,
+the introspect handler writes it to the payload at key `model`
+(after the `selectors.model` → `model` strip applied to all
+`selectors.*` fields). This lets the client round-trip the resolved
+model on the next call via `?model=` without having to inspect the
+form state — it is already in the payload the client echoes back.
+
+**Error contract.** When no provider can describe the workspace,
+the handler returns `HTTP 404` with a contextual message that
+reflects which hints were in play:
+
+| Case | Message |
+|---|---|
+| No hints, no candidates | `No provider serves \`{mod}.{leaf}\`.` |
+| `?provider=X` only, no match | `Provider \`X\` does not serve \`{mod}.{leaf}\`.` |
+| `?model=Y` only, no match | `No provider serves \`{mod}.{leaf}\` with model \`Y\`.` |
+| `?provider=X&model=Y`, no match | `Provider \`X\` does not serve \`{mod}.{leaf}\` with model \`Y\`.` |
+
+The provider-hint+model-hint case distinguishes "X doesn't serve
+this primitive at all" from "X serves it but not with that model"
+at the adapter level — the adapter returning `None` for a
+known-served primitive signals "I don't have that model" and the
+handler's fallthrough turns into the contextual 404 above.
+
+---
+
 ## Consequences
 
 ### Positive

@@ -1,13 +1,13 @@
 ---
 audience: developer
 doc_type: decision
-status: proposed
+status: accepted
 ---
 
 # ORCH-0033: Persistent Request Log + Adaptive Dashboard Layout
 
 **Date**: 2026-04-10
-**Status**: Proposed
+**Status**: Accepted
 **Deciders**: Leo
 **Amends**: ORCH-0031 (dashboard architecture), ORCH-0032 (sidebar + breadcrumb)
 **Related ADRs**:

@@ -183,6 +183,7 @@ pub async fn build_test_state() -> AppState {
             Vec::new(),
             Arc::new(domain::FileOfferingStore),
         )),
+        metrics: Arc::new(domain::Metrics::new()),
         manifest_registry,
         platform: Arc::new(domain::Platform {
             docker,

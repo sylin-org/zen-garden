@@ -34,6 +34,7 @@ pub mod health;
 pub mod image_types;
 pub mod infrastructure;
 pub mod maintenance;
+pub mod metrics;
 pub mod modes;
 pub mod naming;
 pub mod network;
@@ -75,6 +76,11 @@ pub use connectivity::{ConnectivityOrchestrator, ConnectivityOutcome, Connectivi
 pub use health::{
     build_disk_component, build_memory_component, check_disk_health, check_memory_health,
     determine_overall_status,
+};
+pub use metrics::{
+    DomainSnapshot as MetricsDomainSnapshot, GlobalSnapshot as MetricsGlobalSnapshot,
+    LatencySnapshot as MetricsLatencySnapshot, Metrics, MetricsChanged, MetricsError,
+    MetricsSnapshot, TaskSnapshot as MetricsTaskSnapshot,
 };
 pub use modes::{AggregatedDetectionResult, DetectionOrchestrator};
 pub use offerings::{

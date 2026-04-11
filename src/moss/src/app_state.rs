@@ -13,7 +13,7 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{Offerings, Orchestration, Security, Tool};
+use crate::domain::{Metrics, Offerings, Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
@@ -77,6 +77,14 @@ pub struct AppState {
     /// `find_by_id()`, `with_active()`, or the other typed query methods.
     pub offerings: Arc<Offerings>,
 
+    /// Metrics aggregate (ARCH-0018) — stone self-observation. Holds
+    /// per-domain counters, per-task observability data, and global
+    /// counters. Hot-path recording is lock-free via `Arc<DomainMetrics>`
+    /// clones and atomic counters. Other domain aggregates inject this
+    /// at construction and call `record_domain_event` /
+    /// `record_mutation_latency` from their `finalize` pipelines.
+    pub metrics: Arc<Metrics>,
+
     /// Manifest registry - single source of truth for all manifests
     /// Contains both software (sw) and hardware (hw) manifests
     pub manifest_registry: Arc<ManifestRegistry>,
@@ -124,10 +132,9 @@ pub struct AppState {
     /// Companion domain — registry of external companions (Cricket, Firefly, etc.)
     pub companion: Arc<crate::domain::Companion>,
 
-    // === Cached Metrics (updated by background tasks, read-only for endpoints) ===
-    // IMPORTANT: These caches exist to keep API endpoints fast (<10ms).
-    // Endpoints MUST NOT perform I/O - they read from these caches only.
-    // Background tasks are responsible for keeping caches fresh.
+    // === Cross-cutting infrastructure (updated by background tasks) ===
+    // API endpoints MUST NOT perform I/O — they read from caches only.
+    // Background tasks keep these state slices fresh.
     /// Log broadcast channel (for live SSE log streaming)
     pub log: tokio::sync::broadcast::Sender<String>,
 
@@ -170,6 +177,12 @@ impl axum::extract::FromRef<AppState> for Arc<Tool> {
 impl axum::extract::FromRef<AppState> for Arc<Offerings> {
     fn from_ref(state: &AppState) -> Self {
         state.offerings.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<Metrics> {
+    fn from_ref(state: &AppState) -> Self {
+        state.metrics.clone()
     }
 }
 

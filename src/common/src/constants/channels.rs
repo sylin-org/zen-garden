@@ -28,3 +28,10 @@ pub const MONITOR_EVENT: usize = 100;
 /// Offerings aggregate mutation events (ARCH-0016) — low volume on
 /// well-behaved stones, bursty during bulk reconciliation.
 pub const OFFERINGS_EVENT: usize = 128;
+
+/// Metrics aggregate interesting-transition events (ARCH-0018) — low
+/// volume. Counter increments do NOT fire events (would flood the
+/// channel under load); only task state changes, lag detection, and
+/// threshold crossings fire. 128 is ample headroom for the expected
+/// transition rate across all domains and tasks.
+pub const METRICS_EVENT: usize = 128;

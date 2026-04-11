@@ -28,9 +28,9 @@ use anyhow::{Context, Result, bail};
 use tokio::sync::broadcast;
 use tracing::{debug, error};
 
-use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
 use crate::domain::storage_service::{LocalStorage, ProxyTarget, StorageRoute};
+use crate::domain::tool::registry::GardenRegistry;
 use garden_common::storage::StorageTick;
 
 use super::{ContentStore, ObjectStore};

@@ -50,8 +50,8 @@ use cloud_filter::root::Session;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
+use crate::domain::tool::registry::GardenRegistry;
 use garden_common::console::ConsolePrinter;
 use garden_common::storage::{StorageChanged, StorageTick};
 use garden_common::tools::ToolDelta;

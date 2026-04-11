@@ -334,14 +334,14 @@ impl AppState {
     /// Writes to both the registry (TOOLS-0003) and the legacy tools_cache
     /// until all read sites are migrated.
     pub async fn refresh_local_tools_projection(&self) {
-        let projections = crate::domain::tools::projector::project_local_tools(self).await;
+        let projections = crate::domain::tool::projection::project_local_tools(self).await;
 
         let deltas = {
             let mut reg = self.tool.registry.write().await;
             reg.reconcile_local(
                 &self.current.stone.id,
                 projections,
-                crate::domain::garden_registry::EntryOrigin::Local,
+                crate::domain::tool::registry::EntryOrigin::Local,
             )
         };
 

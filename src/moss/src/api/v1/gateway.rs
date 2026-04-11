@@ -7,7 +7,7 @@
 //! TTL. The registry reaper removes expired entries. No separate registry.
 
 use crate::AppState;
-use crate::domain::garden_registry::EntryOrigin;
+use crate::domain::tool::registry::EntryOrigin;
 use axum::{
     Json,
     extract::{Path, State},

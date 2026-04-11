@@ -26,8 +26,8 @@ use tracing::{debug, info, warn};
 
 use tokio::sync::broadcast;
 
-use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
+use crate::domain::tool::registry::GardenRegistry;
 use crate::infra::storage::handle::StorageResolver;
 use garden_common::storage::{StorageChanged, StorageTick};
 

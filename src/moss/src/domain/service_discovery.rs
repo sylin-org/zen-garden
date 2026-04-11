@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use crate::domain::connection::ResolvedConnection;
-use crate::domain::garden_registry::ToolQuery;
+use crate::domain::tool::registry::ToolQuery;
 use garden_common::manifests::get_category_registry;
 use garden_common::tools::GardenTool;
 

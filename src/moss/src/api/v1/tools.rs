@@ -1,5 +1,5 @@
 use crate::domain::Tool;
-use crate::domain::tools::{ToolQuery, ToolsSnapshotPayload, stream_event_type_for_delta};
+use crate::domain::tool::{ToolQuery, ToolsSnapshotPayload, stream_event_type_for_delta};
 use crate::{AppState, bad_request};
 use axum::{
     Json,
@@ -246,7 +246,7 @@ fn extract_last_event_id(headers: &HeaderMap) -> Option<&str> {
 
 fn parse_resume_cursor(
     last_event_id: &str,
-    reg: &crate::domain::garden_registry::GardenRegistryInner,
+    reg: &crate::domain::tool::registry::GardenRegistryInner,
 ) -> u64 {
     if let Ok(parsed) = last_event_id.trim().parse::<u64>() {
         return parsed;

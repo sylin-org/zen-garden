@@ -1884,7 +1884,7 @@ pub async fn add_capability_task(
         .await
     {
         Ok(result) if result.success => {
-            if let Err(e) = crate::domain::tools::capability_orchestrator::record_capability_added(
+            if let Err(e) = crate::domain::tool::capability::record_capability_added(
                 state,
                 offering,
                 cap_type,

@@ -28,7 +28,6 @@ pub mod current;
 pub mod discovery;
 pub mod events;
 pub mod fitness;
-pub mod garden_registry;
 pub mod harvest;
 pub mod health;
 pub mod image_types;
@@ -61,7 +60,6 @@ pub mod storage;
 pub mod storage_service;
 pub mod task_registry;
 pub mod tool;
-pub mod tools;
 pub mod topology;
 pub mod traits;
 
@@ -113,9 +111,6 @@ pub use companion::Companion;
 pub use current::{Current, Stone as CurrentStone, Topology as CurrentTopology};
 pub use discovery::Discovery;
 pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent};
-pub use garden_registry::{
-    EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery, new_registry,
-};
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
     DockerRegistry, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
@@ -132,6 +127,8 @@ pub use platform::Platform;
 pub use pond::{PondMetadata, PondState, load_pond_metadata, save_pond_metadata};
 pub use presence::Presence;
 pub use security::{Pond, Security};
-pub use tool::Tool;
-pub use tools::{ToolsSnapshotPayload, stream_event_type_for_delta};
+pub use tool::{
+    EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, Tool, ToolQuery,
+    ToolsSnapshotPayload, new_registry, stream_event_type_for_delta,
+};
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

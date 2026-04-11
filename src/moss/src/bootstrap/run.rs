@@ -286,7 +286,7 @@ async fn build_state(
         garden_common::constants::channels::TOOL_DELTA,
     );
     let tool = Arc::new(crate::domain::Tool {
-        registry: crate::domain::garden_registry::new_registry(),
+        registry: crate::domain::tool::registry::new_registry(),
         delta: tool_delta,
     });
 

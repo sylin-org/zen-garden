@@ -32,9 +32,9 @@ use cloud_filter::utility::WriteAt;
 use tracing::{debug, info, warn};
 
 use crate::domain::cloud_drive::{DriveAction, classify_rename};
-use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
 use crate::domain::storage_service::StorageRoute;
+use crate::domain::tool::registry::GardenRegistry;
 use crate::infra::storage::handle::{self as router, FileEntry, StorageHandle, StorageResolver};
 use garden_common::storage::StorageTick;
 

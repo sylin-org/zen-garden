@@ -382,7 +382,7 @@ fn build_cutoff_cursor(cutoff_ms: u64) -> String {
 ///
 /// Returns `(stone_id, seed_bank_id, pin_id)` of the remote primary, if any.
 fn find_remote_primary_with_pin(
-    reg: &crate::domain::garden_registry::GardenRegistryInner,
+    reg: &crate::domain::tool::registry::GardenRegistryInner,
     name: &str,
     my_stone_id: &str,
 ) -> Option<(String, String, Option<String>)> {
@@ -414,7 +414,7 @@ fn find_remote_primary_with_pin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::garden_registry::{EntryOrigin, GardenRegistryInner};
+    use crate::domain::tool::registry::{EntryOrigin, GardenRegistryInner};
     use garden_common::tools::{GardenTool, ServiceInfo, Stone, StorageMetadata, ToolIdentity};
 
     // -- resolve_role ---------------------------------------------------------

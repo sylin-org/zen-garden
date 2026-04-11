@@ -24,8 +24,8 @@ use anyhow::{Context, Result};
 use garden_common::storage::StorageRole;
 use tracing::debug;
 
-use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
+use crate::domain::tool::registry::GardenRegistry;
 
 // ============================================================================
 // Route decision
@@ -277,8 +277,8 @@ pub async fn rename_replica_set(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::garden_registry::new_registry;
     use crate::domain::storage::{Management, Volume, VolumeState, new_volumes};
+    use crate::domain::tool::registry::new_registry;
     use garden_common::storage::{StorageRole, StorageVisibility};
     use std::path::PathBuf;
 

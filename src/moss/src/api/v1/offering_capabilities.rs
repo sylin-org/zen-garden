@@ -487,7 +487,7 @@ pub async fn remove_offering_capability_v1(
         })?;
 
     if result.success {
-        crate::domain::tools::capability_orchestrator::record_capability_removed(
+        crate::domain::tool::capability::record_capability_removed(
             &state,
             &service.name,
             cap_type,

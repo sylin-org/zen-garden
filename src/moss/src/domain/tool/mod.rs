@@ -1,19 +1,43 @@
-//! Tool domain — garden-wide tool registry and delta stream (ARCH-0004).
+//! Tool bounded context — garden-wide tool registry and delta stream.
 //!
-//! `state.tool.registry` is the single source of truth for all tools.
-//! Three origin types, each with its own lifecycle owner:
+//! Owns the `GardenTool` registry (offerings + storage + gateways +
+//! remote-announced tools) and the broadcast stream that fires on every
+//! registry mutation. Book II of ARCH-0017 extracts this into a proper
+//! DDD aggregate; Chapter 2 is the module consolidation step — the files
+//! that make up this concept now live in one place.
 //!
-//! - `Local` — projected from offerings + storage via `reconcile_local`.
-//! - `Gateway` — written directly by orchestrator registration, TTL-managed.
-//! - `Announced` — received from remote stones via beacon.
+//! ```text
+//! domain/tool/
+//! ├── mod.rs         — re-exports (this file)
+//! ├── registry.rs    — GardenRegistryInner, ToolQuery, EntryOrigin
+//! ├── projection.rs  — project_local_tools(&AppState) → Vec<GardenTool>
+//! ├── capability.rs  — record_capability_added/removed (offering mutations)
+//! └── sse.rs         — ToolsSnapshotPayload, stream_event_type_for_delta
+//! ```
+//!
+//! Later chapters collapse the aggregate shell (`Tool` struct below)
+//! into `aggregate.rs` with private state, typed commands, and typed
+//! queries. Ch2 keeps the existing `pub registry` field so call sites
+//! continue to compile.
 
-use crate::domain::garden_registry::GardenRegistry;
+pub mod capability;
+pub mod projection;
+pub mod registry;
+pub mod sse;
+
+pub use registry::{
+    EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery, new_registry,
+};
+pub use sse::{ToolsSnapshotPayload, stream_event_type_for_delta};
+
 use garden_common::tools::ToolDelta;
 use tokio::sync::broadcast;
 
 /// Garden-wide tool aggregate (`state.tool`).
 ///
-/// Holds all `GardenTool` entries from all stones: Local, Gateway, and Announced.
+/// Holds all `GardenTool` entries from all stones: Local, Gateway, and
+/// Announced. Ch3 replaces the `pub registry` field with a private
+/// `RwLock<ToolState>` and typed command/query methods.
 #[derive(Clone)]
 pub struct Tool {
     /// All tools from all stones in the garden.

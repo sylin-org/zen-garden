@@ -27,6 +27,7 @@ pub mod contextualizer;
 pub mod directory_subscriber;
 pub mod dispatcher;
 pub mod garden_discovery;
+pub mod garden_hardware;
 pub mod idempotency_store;
 pub mod instance_manager;
 pub mod job_store;

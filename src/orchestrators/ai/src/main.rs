@@ -206,7 +206,22 @@ async fn main() -> Result<()> {
     // stream. Adapters subscribe by FQN at construction; the
     // discovery service emits events when matching offerings come
     // up or down.
-    let discovery = GardenDiscovery::spawn(tended_stone, shutdown.clone());
+    let discovery = GardenDiscovery::spawn(tended_stone.clone(), shutdown.clone());
+
+    // ── Garden hardware puller (ORCH-0030 §2) ──────────────────
+    //
+    // Polls `/api/v1/garden/capabilities` on the tended Moss every
+    // 60s and folds each stone's Tier 1 hardware inventory into the
+    // Resources domain via `update_topology`. This is the load-
+    // bearing feed for cross-adapter GPU-VRAM accounting: once the
+    // Resources domain has per-stone totals, adapters can filter
+    // their catalogs against `stones_capable_of` and claim budget
+    // against real devices instead of flying blind.
+    let _hardware_puller = zen_garden_ai_orchestrator::services::garden_hardware::GardenHardwarePuller::spawn(
+        tended_stone,
+        resources.clone(),
+        shutdown.clone(),
+    );
 
     // ── Local providers ─────────────────────────────────────────
     //

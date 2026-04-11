@@ -588,11 +588,15 @@ impl Provider for OllamaProvider {
         });
         let mut fields = base_parameters_for(primitive, ctx.as_ref());
         fields.push(build_model_selector(primitive, &model_names));
+        let media_inputs = ollama_workspace_media_inputs_for(primitive, ctx.as_ref());
+        // `ctx` borrows `resolved` and `capabilities`; drop it before
+        // moving `resolved` into the returned struct.
+        drop(ctx);
 
         Some(WorkspaceDescription {
             resolved_model: resolved,
             fields,
-            media_inputs: ollama_media_inputs_for(primitive),
+            media_inputs,
             examples: ollama_examples_for(primitive),
         })
     }
@@ -893,26 +897,61 @@ impl OllamaProvider {
 
 // ── Media input declarations per primitive ───────────────────
 
-/// Per-primitive media input declarations Ollama publishes as part
-/// of its capability announcement. The MediaResolver reads these
-/// off the CapabilityDirectory and applies the declared delivery
-/// mode (Base64 inline, by-id pass-through, or staged transfer).
+/// Accepted image types for Ollama vision paths. Shared between
+/// `image.analyze` and the `text.chat` vision overlay so both surface
+/// the same media contract.
+const OLLAMA_IMAGE_TYPES: &[&str] =
+    &["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+fn ollama_image_source_input() -> CapabilityMediaInput {
+    CapabilityMediaInput::base64(
+        keys::image::SOURCE.as_str().to_string(),
+        OLLAMA_IMAGE_TYPES.iter().map(|s| s.to_string()).collect(),
+    )
+}
+
+/// The **superset** of media inputs Ollama might accept for a
+/// primitive, published in the startup capability announcement.
+/// The [`crate::services::media_resolver::MediaResolver`] reads
+/// this off the `CapabilityDirectory` and uses it to validate
+/// incoming media references — it must be permissive enough to
+/// accept any media that ANY Ollama model could need.
 ///
-/// `text.chat` and `text.embed` never carry media → empty list.
-/// `image.analyze` accepts one image at `image.source`, delivered
-/// as base64 because Ollama's `/api/chat` wire format embeds
-/// images inline in the messages array.
-fn ollama_media_inputs_for(primitive: Primitive) -> Vec<CapabilityMediaInput> {
+/// This is deliberately **wider** than what the UI form shows.
+/// The form surface is per-model and comes from
+/// `describe_workspace` via [`ollama_workspace_media_inputs_for`];
+/// the announcement covers the union so dispatches with a media
+/// reference pointed at a text.chat primitive aren't rejected for
+/// unknown fields when the caller knows the resolved model supports
+/// it.
+fn ollama_announcement_media_inputs_for(primitive: Primitive) -> Vec<CapabilityMediaInput> {
     match primitive {
-        Primitive::ImageAnalyze => vec![CapabilityMediaInput::base64(
-            keys::image::SOURCE.as_str().to_string(),
-            vec![
-                "image/png".to_string(),
-                "image/jpeg".to_string(),
-                "image/webp".to_string(),
-                "image/gif".to_string(),
-            ],
-        )],
+        Primitive::ImageAnalyze | Primitive::TextChat => {
+            vec![ollama_image_source_input()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Per-model media inputs surfaced on the live workspace form via
+/// `describe_workspace`. This is the **subset** of the superset
+/// above — only the slots that apply to the currently-resolved
+/// model. Non-vision chat models see no image slot; vision models
+/// do; `image.analyze` always does.
+///
+/// This is the ORCH-0038 hook on the media-inputs axis — analogous
+/// to `base_parameters_for` for form fields.
+fn ollama_workspace_media_inputs_for(
+    primitive: Primitive,
+    resolved: Option<&ResolvedModelContext<'_>>,
+) -> Vec<CapabilityMediaInput> {
+    match primitive {
+        Primitive::ImageAnalyze => vec![ollama_image_source_input()],
+        Primitive::TextChat
+            if resolved.is_some_and(|ctx| ctx.has_capability("vision")) =>
+        {
+            vec![ollama_image_source_input()]
+        }
         _ => Vec::new(),
     }
 }
@@ -950,7 +989,11 @@ fn build_capability_announcement(
             AnnCapability {
                 primitive: p,
                 priority: 0,
-                media_inputs: ollama_media_inputs_for(p),
+                // Startup announcement publishes the SUPERSET of
+                // accepted media so the resolver validates any
+                // reference a caller might include. The UI form's
+                // per-model subset comes from describe_workspace.
+                media_inputs: ollama_announcement_media_inputs_for(p),
                 parameters: params,
                 examples: ollama_examples_for(p),
             }
@@ -1214,7 +1257,23 @@ fn build_chat_messages(payload: &Value, _vision: bool) -> Result<Vec<Value>, Pro
         .pointer("/text/prompt/user")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ProviderError::Unsupported("text.prompt.user missing".to_string()))?;
-    messages.push(json!({"role": "user", "content": user}));
+
+    // Attach an image to the current user turn when the resolver
+    // has inlined `image.source` as base64 on the payload. This is
+    // the ORCH-0038 vision-model overlay path — the form surfaces
+    // `image.source` only when the resolved model has the `vision`
+    // capability, so reaching this branch means the model can
+    // accept images at `messages[].images[]` per Ollama's wire API.
+    let mut user_msg = json!({"role": "user", "content": user});
+    if let Some(image_b64) = payload
+        .pointer("/image/source/base64")
+        .and_then(|v| v.as_str())
+    {
+        if let Some(obj) = user_msg.as_object_mut() {
+            obj.insert("images".into(), json!([image_b64]));
+        }
+    }
+    messages.push(user_msg);
 
     Ok(messages)
 }

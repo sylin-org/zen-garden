@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use crate::domain::field_path::FieldPath;
-use crate::domain::keys::{text, usage};
+use crate::domain::keys::{image, text, usage};
 use crate::domain::primitive::Primitive;
 use crate::domain::vocabulary::{
     Alias, AliasCondition, FieldSpec, FieldType, IoSchema, SharedNamespace, Vocabulary,
@@ -100,6 +100,12 @@ pub fn vocabulary() -> Vocabulary {
                     field_type: FieldType::Boolean,
                     description:
                         "Ask a reasoning-capable model to emit its chain-of-thought in a separate `text.reasoning.content` output field. Models without a thinking capability silently ignore this.",
+                },
+                FieldSpec {
+                    path: image::SOURCE,
+                    field_type: FieldType::MediaRef,
+                    description:
+                        "Image attached to the current user turn. Only meaningful for multimodal (vision-capable) chat models; non-vision models ignore it. The form surfaces this slot via the ORCH-0038 per-model overlay when the resolved model declares a vision capability.",
                 },
             ],
             aliases: vec![

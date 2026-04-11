@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import type { WorkspaceSpec, FieldDescriptor, PersistedRequest } from "../../api/types";
-import { upload } from "../../api/client";
 import { useActiveRequestManager, useActiveRequest } from "../../contexts/ActiveRequestManager";
 import FieldRenderer from "./widgets/FieldRenderer";
 import FileWidget from "./widgets/FileWidget";
@@ -64,7 +63,13 @@ export default function WorkspaceForm({
     return structuredClone(spec.payload);
   });
 
-  const [files, setFiles] = useState<Record<string, File>>({});
+  // Tracks fields with an in-flight upload. Populated by FileWidget
+  // via onUploadStateChange. Send stays disabled while non-empty so
+  // the user can't dispatch a payload that references not-yet-
+  // uploaded attachments.
+  const [uploadsInFlight, setUploadsInFlight] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [userTouched, setUserTouched] = useState(!!sourceRequest);
   const [activeRequestId, setActiveRequestId] = useState<string | undefined>(undefined);
   // For dialogue: the request ID that serves as lineage parent for
@@ -128,6 +133,11 @@ export default function WorkspaceForm({
 
   const handleSubmit = useCallback(async () => {
     if (isSending) return;
+    // Gate on in-flight uploads — FileWidget uploads as soon as the
+    // user picks a file and writes `{media_id}` into the payload on
+    // success. If any upload is still pending, the payload isn't
+    // ready to dispatch yet.
+    if (uploadsInFlight.size > 0) return;
 
     // For dialogue: capture user message before clearing
     const userMessage = isDialogue
@@ -136,12 +146,10 @@ export default function WorkspaceForm({
 
     if (isDialogue && !userMessage) return;
 
-    // Upload files first
+    // Media references already live in the payload as
+    // `{media_id: "..."}` objects — FileWidget wrote them there on
+    // upload success. No at-submit upload step required.
     const payloadToSend = structuredClone(payload);
-    for (const [fieldPath, file] of Object.entries(files)) {
-      const result = await upload("/v1/media", file) as { media_id: string };
-      setNestedInObject(payloadToSend, fieldPath, { media_id: result.media_id });
-    }
 
     // Inject lineage parent if we have one (fork or continuation)
     if (lineageParent) {
@@ -183,7 +191,7 @@ export default function WorkspaceForm({
     });
 
     setActiveRequestId(reqId);
-  }, [isSending, payload, files, spec, isDialogue, dialogueKey, lineageParent, manager, onResult, onError]);
+  }, [isSending, uploadsInFlight, payload, spec, isDialogue, dialogueKey, lineageParent, manager, onResult, onError]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -232,13 +240,33 @@ export default function WorkspaceForm({
           ))}
 
           {mediaInputs.map((mi) => {
-            const miObj = mi as unknown as { field: string; accepted_types: string[]; delivery: "base64" | "by_id" | "transfer" };
+            const miObj = mi as unknown as {
+              field: string;
+              accepted_types: string[];
+              delivery: "base64" | "by_id" | "transfer";
+            };
+            const currentRef = getNestedValue(payload, miObj.field) as
+              | { media_id?: string }
+              | undefined;
             return (
               <FileWidget
                 key={miObj.field}
                 mediaInput={miObj}
-                selectedFile={files[miObj.field]}
-                onFileSelected={(file) => setFiles((prev) => ({ ...prev, [miObj.field]: file }))}
+                currentMediaId={currentRef?.media_id}
+                onMediaIdChange={(mediaId) => {
+                  setValue(
+                    miObj.field,
+                    mediaId ? { media_id: mediaId } : undefined,
+                  );
+                }}
+                onUploadStateChange={(inFlight) => {
+                  setUploadsInFlight((prev) => {
+                    const next = new Set(prev);
+                    if (inFlight) next.add(miObj.field);
+                    else next.delete(miObj.field);
+                    return next;
+                  });
+                }}
               />
             );
           })}
@@ -248,11 +276,20 @@ export default function WorkspaceForm({
         <div className="flex items-center gap-3 mt-4">
           <button
             onClick={handleSubmit}
-            disabled={isSending}
+            disabled={isSending || uploadsInFlight.size > 0}
+            title={
+              uploadsInFlight.size > 0
+                ? "Waiting for attachments to finish uploading…"
+                : undefined
+            }
             className="px-6 py-2 bg-accent hover:bg-accent-dim text-white text-[12px] font-semibold
                        rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSending ? "Sending" : "Send"}
+            {isSending
+              ? "Sending"
+              : uploadsInFlight.size > 0
+                ? "Uploading…"
+                : "Send"}
           </button>
           {elapsedText && (
             <span className="text-[11px] text-orange font-mono animate-pulse">{elapsedText}</span>
@@ -489,19 +526,6 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
   }
   current[parts[parts.length - 1]] = value;
   return result;
-}
-
-function setNestedInObject(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split(".");
-  let current: Record<string, unknown> = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i];
-    if (typeof current[key] !== "object" || current[key] === null) {
-      current[key] = {};
-    }
-    current = current[key] as Record<string, unknown>;
-  }
-  current[parts[parts.length - 1]] = value;
 }
 
 function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {

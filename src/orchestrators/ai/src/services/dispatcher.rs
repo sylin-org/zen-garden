@@ -372,9 +372,31 @@ impl Dispatcher {
         match &provider_result.outcome {
             ProviderOutcome::Sync(output) => {
                 // Sync: the result is in-hand. Mark the job done
-                // inline. No reservation is needed — media TTL of 24h
-                // is sufficient.
+                // inline, and pin any input media referenced by this
+                // request. Pinning on success promotes the media from
+                // its 24h transient TTL to a 30-day reservation bound
+                // to the completed job — this keeps the request log's
+                // historical references resolvable, otherwise the
+                // sweeper would strand them as dangling pointers the
+                // moment the TTL lapses.
                 let _ = self.job_store.complete(&job_id, output.clone()).await;
+
+                for media_ref in &outcome_request.media.referenced {
+                    let _ = self
+                        .media_store
+                        .reserve(
+                            &media_ref.id,
+                            MediaReservation {
+                                job_id: Some(job_id.clone()),
+                                reason: format!(
+                                    "bound to completed {} request {}",
+                                    outcome_request.action.dotted(),
+                                    outcome_request.id
+                                ),
+                            },
+                        )
+                        .await;
+                }
 
                 // ORCH-0033 + ORCH-0034: mark request as succeeded
                 // with output and provider resolution metadata.

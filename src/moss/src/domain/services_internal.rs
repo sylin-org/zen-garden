@@ -65,7 +65,7 @@ pub async fn build_spec_from_manifest(
                 // Fallback: use raw template (no hardware resolution).
                 // This path should rarely execute — the compiled index is
                 // always available in production.
-                if matches!(compiled, Err(_)) {
+                if compiled.is_err() {
                     tracing::warn!(
                         service = %service_name,
                         "Failed to read compiled offerings index, using raw manifest template"

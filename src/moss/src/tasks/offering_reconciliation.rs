@@ -250,14 +250,14 @@ impl ReconciliationCoordinator {
                     Ok(result) => {
                         result.apply_port_updates(&state, &offering_id).await;
 
-                        if target_status == OfferingStatus::Stopped {
-                            if let Err(e) = state.platform.docker.stop_service(&name, None).await {
-                                tracing::warn!(
-                                    offering = %name,
-                                    error = ?e,
-                                    "Failed to stop reconciled container (was stopped before wipe)"
-                                );
-                            }
+                        if target_status == OfferingStatus::Stopped
+                            && let Err(e) = state.platform.docker.stop_service(&name, None).await
+                        {
+                            tracing::warn!(
+                                offering = %name,
+                                error = ?e,
+                                "Failed to stop reconciled container (was stopped before wipe)"
+                            );
                         }
 
                         // auto_chirp=true so the garden learns the offering is back

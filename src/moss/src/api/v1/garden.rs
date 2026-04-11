@@ -460,7 +460,7 @@ pub async fn get_garden_capabilities_v1(
             if caps.stone_name.is_empty() {
                 caps.stone_name = peer.stone_name.clone();
             }
-            if caps.stone_id.as_deref().map_or(true, str::is_empty) {
+            if caps.stone_id.as_deref().is_none_or(str::is_empty) {
                 caps.stone_id = Some(peer.stone_id.clone());
             }
             results.push(FullCapabilities {

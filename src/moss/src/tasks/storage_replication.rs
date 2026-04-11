@@ -338,11 +338,6 @@ async fn sync_dormant_bank(
 }
 
 // ============================================================================
-// File download helper
-// ============================================================================
-
-/// Download a file from the Primary and write it to the local Dormant store.
-// ============================================================================
 // Full directory walk reconciliation (Phase 4e+)
 // ============================================================================
 
@@ -494,11 +489,11 @@ async fn walk_local_objects(
         let path = entry.path();
         if path.is_dir() {
             paths.extend(Box::pin(walk_local_objects(root, &path)).await);
-        } else if let Ok(rel) = path.strip_prefix(root) {
-            if let Some(s) = rel.to_str() {
-                // Normalize to forward slashes for cross-platform consistency
-                paths.insert(s.replace('\\', "/"));
-            }
+        } else if let Ok(rel) = path.strip_prefix(root)
+            && let Some(s) = rel.to_str()
+        {
+            // Normalize to forward slashes for cross-platform consistency
+            paths.insert(s.replace('\\', "/"));
         }
     }
     paths

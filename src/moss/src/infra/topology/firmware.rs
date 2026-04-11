@@ -143,29 +143,29 @@ fn detect_firmware_windows() -> Result<Vec<FirmwareComponent>> {
 
         if let Ok(disks) = wmi_con.query::<PhysicalDisk>() {
             for disk in disks {
-                if let Some(fw) = disk.firmware_version {
-                    if !fw.is_empty() {
-                        let media = match disk.media_type {
-                            Some(3) => "HDD",
-                            Some(4) => "SSD",
-                            _ => "Disk",
-                        };
-                        components.push(FirmwareComponent {
-                            component: media.to_string(),
-                            vendor: String::new(),
-                            version: fw,
-                            date: None,
-                            updatable: None,
-                            device_name: disk.friendly_name,
-                        });
-                    }
+                if let Some(fw) = disk.firmware_version
+                    && !fw.is_empty()
+                {
+                    let media = match disk.media_type {
+                        Some(3) => "HDD",
+                        Some(4) => "SSD",
+                        _ => "Disk",
+                    };
+                    components.push(FirmwareComponent {
+                        component: media.to_string(),
+                        vendor: String::new(),
+                        version: fw,
+                        date: None,
+                        updatable: None,
+                        device_name: disk.friendly_name,
+                    });
                 }
             }
         }
     }
 
     // GPU driver version via WMI
-    if let Ok(wmi_con) = wmi::COMLibrary::new().and_then(|lib| wmi::WMIConnection::new(lib)) {
+    if let Ok(wmi_con) = wmi::COMLibrary::new().and_then(wmi::WMIConnection::new) {
         #[derive(serde::Deserialize)]
         #[serde(rename = "Win32_VideoController")]
         #[serde(rename_all = "PascalCase")]
@@ -176,17 +176,17 @@ fn detect_firmware_windows() -> Result<Vec<FirmwareComponent>> {
 
         if let Ok(gpus) = wmi_con.query::<VideoController>() {
             for gpu in gpus {
-                if let Some(dv) = gpu.driver_version {
-                    if !dv.is_empty() {
-                        components.push(FirmwareComponent {
-                            component: "GPU".to_string(),
-                            vendor: String::new(),
-                            version: dv,
-                            date: None,
-                            updatable: None,
-                            device_name: gpu.name,
-                        });
-                    }
+                if let Some(dv) = gpu.driver_version
+                    && !dv.is_empty()
+                {
+                    components.push(FirmwareComponent {
+                        component: "GPU".to_string(),
+                        vendor: String::new(),
+                        version: dv,
+                        date: None,
+                        updatable: None,
+                        device_name: gpu.name,
+                    });
                 }
             }
         }

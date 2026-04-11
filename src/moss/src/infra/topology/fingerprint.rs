@@ -90,7 +90,7 @@ async fn enumerate_pci_ids_linux() -> anyhow::Result<Vec<String>> {
 #[cfg(target_os = "windows")]
 async fn enumerate_pci_ids_windows() -> anyhow::Result<Vec<String>> {
     // Registry reads are blocking — offload to a blocking thread.
-    tokio::task::spawn_blocking(|| enumerate_pci_ids_windows_blocking()).await?
+    tokio::task::spawn_blocking(enumerate_pci_ids_windows_blocking).await?
 }
 
 #[cfg(target_os = "windows")]
@@ -109,10 +109,11 @@ fn enumerate_pci_ids_windows_blocking() -> anyhow::Result<Vec<String>> {
         let vendor = extract_between(&name_upper, "VEN_", "&");
         let device = extract_between(&name_upper, "DEV_", "&");
 
-        if let (Some(v), Some(d)) = (vendor, device) {
-            if v.len() == 4 && d.len() == 4 {
-                ids.push(format!("{}:{}", v.to_lowercase(), d.to_lowercase()));
-            }
+        if let (Some(v), Some(d)) = (vendor, device)
+            && v.len() == 4
+            && d.len() == 4
+        {
+            ids.push(format!("{}:{}", v.to_lowercase(), d.to_lowercase()));
         }
     }
 

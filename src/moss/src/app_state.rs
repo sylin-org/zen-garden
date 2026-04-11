@@ -405,7 +405,7 @@ impl AppState {
         // bounds the lock scope to the closure — no guard escapes.
         let services = self
             .offerings
-            .with_active(|offerings| garden_common::TopologyServiceEntry::from_offerings(offerings))
+            .with_active(garden_common::TopologyServiceEntry::from_offerings)
             .await;
 
         garden_common::TopologyEntry {

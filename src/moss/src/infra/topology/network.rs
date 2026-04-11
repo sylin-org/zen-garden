@@ -154,7 +154,7 @@ fn detect_network_windows() -> Result<Vec<NetworkInterface>> {
     // PhysicalAdapter filters out Hyper-V, Docker, VPN virtual adapters.
     // Fields: Name (description), NetConnectionID (friendly name), Speed (bps),
     //         MACAddress ("AA:BB:CC:DD:EE:FF"), AdapterType ("Ethernet 802.3").
-    let wmi_con = wmi::COMLibrary::new().and_then(|lib| wmi::WMIConnection::new(lib))?;
+    let wmi_con = wmi::COMLibrary::new().and_then(wmi::WMIConnection::new)?;
 
     #[derive(serde::Deserialize)]
     #[serde(rename = "Win32_NetworkAdapter")]

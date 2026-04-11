@@ -32,23 +32,23 @@ pub async fn execute(
     let commit_image = policy.mode != CeremonyMode::Stateless;
 
     // Quiesceable: freeze data before harvest, resume after
-    if policy.mode == CeremonyMode::Quiesceable {
-        if let Some(ref quiesce) = policy.quiesce {
-            tracing::info!(offering, cmd = ?quiesce.exec, "Running quiesce command");
-            let (exit_code, output) = state
-                .platform
-                .docker
-                .exec_in_container(offering, &quiesce.exec, quiesce.timeout_seconds)
-                .await
-                .context("Failed to execute quiesce command")?;
+    if policy.mode == CeremonyMode::Quiesceable
+        && let Some(ref quiesce) = policy.quiesce
+    {
+        tracing::info!(offering, cmd = ?quiesce.exec, "Running quiesce command");
+        let (exit_code, output) = state
+            .platform
+            .docker
+            .exec_in_container(offering, &quiesce.exec, quiesce.timeout_seconds)
+            .await
+            .context("Failed to execute quiesce command")?;
 
-            if exit_code != 0 {
-                anyhow::bail!(
-                    "Quiesce command failed (exit {}): {}",
-                    exit_code,
-                    output.trim()
-                );
-            }
+        if exit_code != 0 {
+            anyhow::bail!(
+                "Quiesce command failed (exit {}): {}",
+                exit_code,
+                output.trim()
+            );
         }
     }
 
@@ -61,27 +61,27 @@ pub async fn execute(
         .await;
 
     // Quiesceable: always resume after harvest, even if harvest failed
-    if policy.mode == CeremonyMode::Quiesceable {
-        if let Some(ref resume) = policy.resume {
-            tracing::info!(offering, cmd = ?resume.exec, "Running resume command");
-            match state
-                .platform
-                .docker
-                .exec_in_container(offering, &resume.exec, resume.timeout_seconds)
-                .await
-            {
-                Ok((0, _)) => {}
-                Ok((code, output)) => {
-                    tracing::warn!(
-                        offering,
-                        exit_code = code,
-                        "Resume command returned non-zero: {}",
-                        output.trim()
-                    );
-                }
-                Err(e) => {
-                    tracing::error!(offering, error = %e, "Resume command failed — manual intervention may be needed");
-                }
+    if policy.mode == CeremonyMode::Quiesceable
+        && let Some(ref resume) = policy.resume
+    {
+        tracing::info!(offering, cmd = ?resume.exec, "Running resume command");
+        match state
+            .platform
+            .docker
+            .exec_in_container(offering, &resume.exec, resume.timeout_seconds)
+            .await
+        {
+            Ok((0, _)) => {}
+            Ok((code, output)) => {
+                tracing::warn!(
+                    offering,
+                    exit_code = code,
+                    "Resume command returned non-zero: {}",
+                    output.trim()
+                );
+            }
+            Err(e) => {
+                tracing::error!(offering, error = %e, "Resume command failed — manual intervention may be needed");
             }
         }
     }

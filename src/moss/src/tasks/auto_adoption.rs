@@ -246,23 +246,23 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             match outcome {
                 DetectOutcome::Detected { port } => {
                     // Update port if the pipeline discovered a different one
-                    if let Some(p) = port {
-                        if p != location.port {
-                            tracing::info!(
-                                offering = %offering_name,
-                                old_port = location.port,
-                                new_port = p,
-                                "adopted offering port changed"
-                            );
-                            state
-                                .offerings
-                                .update(&offering_id, |o| {
-                                    o.location.port = p;
-                                    true
-                                })
-                                .await;
-                            state_changed = true;
-                        }
+                    if let Some(p) = port
+                        && p != location.port
+                    {
+                        tracing::info!(
+                            offering = %offering_name,
+                            old_port = location.port,
+                            new_port = p,
+                            "adopted offering port changed"
+                        );
+                        state
+                            .offerings
+                            .update(&offering_id, |o| {
+                                o.location.port = p;
+                                true
+                            })
+                            .await;
+                        state_changed = true;
                     }
 
                     // Connectivity enforcement
@@ -349,26 +349,26 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             match outcome {
                 DetectOutcome::Detected { port } => {
                     // Update port if the pipeline discovered a different one
-                    if let Some(p) = port {
-                        if p != location.port {
-                            tracing::info!(
-                                offering = %offering_name,
-                                old_port = location.port,
-                                new_port = p,
-                                "candidate offering port changed"
-                            );
-                            // The offering is still a candidate at this
-                            // point — update in the candidate pool before
-                            // promoting.
-                            state
-                                .offerings
-                                .update_candidate(&offering_id, |o| {
-                                    o.location.port = p;
-                                    true
-                                })
-                                .await;
-                            // state_changed set below by promote
-                        }
+                    if let Some(p) = port
+                        && p != location.port
+                    {
+                        tracing::info!(
+                            offering = %offering_name,
+                            old_port = location.port,
+                            new_port = p,
+                            "candidate offering port changed"
+                        );
+                        // The offering is still a candidate at this
+                        // point — update in the candidate pool before
+                        // promoting.
+                        state
+                            .offerings
+                            .update_candidate(&offering_id, |o| {
+                                o.location.port = p;
+                                true
+                            })
+                            .await;
+                        // state_changed set below by promote
                     }
 
                     // Detected — promote to active pool

@@ -59,13 +59,12 @@ fn parse_identity(smbios: &smbioslib::SMBiosData) -> SystemIdentity {
         if let Some(product) = sys.product_name().ok() {
             identity.product = product;
         }
-        if let Some(serial) = sys.serial_number().ok() {
-            if !serial.is_empty()
-                && serial != "Default string"
-                && serial != "To Be Filled By O.E.M."
-            {
-                identity.serial = Some(serial);
-            }
+        if let Some(serial) = sys.serial_number().ok()
+            && !serial.is_empty()
+            && serial != "Default string"
+            && serial != "To Be Filled By O.E.M."
+        {
+            identity.serial = Some(serial);
         }
         if let Some(uuid) = sys.uuid() {
             let formatted = format!("{:?}", uuid);
@@ -77,18 +76,19 @@ fn parse_identity(smbios: &smbioslib::SMBiosData) -> SystemIdentity {
 
     // Type 2: Baseboard Information
     for board in smbios.collect::<smbioslib::SMBiosBaseboardInformation>() {
-        if let Some(mfr) = board.manufacturer().ok() {
-            if !mfr.is_empty() && mfr != "Default string" && mfr != "To Be Filled By O.E.M." {
-                identity.board_manufacturer = Some(mfr);
-            }
+        if let Some(mfr) = board.manufacturer().ok()
+            && !mfr.is_empty()
+            && mfr != "Default string"
+            && mfr != "To Be Filled By O.E.M."
+        {
+            identity.board_manufacturer = Some(mfr);
         }
-        if let Some(product) = board.product().ok() {
-            if !product.is_empty()
-                && product != "Default string"
-                && product != "To Be Filled By O.E.M."
-            {
-                identity.board_product = Some(product);
-            }
+        if let Some(product) = board.product().ok()
+            && !product.is_empty()
+            && product != "Default string"
+            && product != "To Be Filled By O.E.M."
+        {
+            identity.board_product = Some(product);
         }
     }
 
@@ -108,15 +108,13 @@ fn parse_identity(smbios: &smbioslib::SMBiosData) -> SystemIdentity {
             identity.chassis_type = Some(chassis_type_name(chassis_type.raw).to_string());
         }
         // Prefer chassis serial if system serial was empty
-        if identity.serial.is_none() {
-            if let Some(serial) = chassis.serial_number().ok() {
-                if !serial.is_empty()
-                    && serial != "Default string"
-                    && serial != "To Be Filled By O.E.M."
-                {
-                    identity.serial = Some(serial);
-                }
-            }
+        if identity.serial.is_none()
+            && let Some(serial) = chassis.serial_number().ok()
+            && !serial.is_empty()
+            && serial != "Default string"
+            && serial != "To Be Filled By O.E.M."
+        {
+            identity.serial = Some(serial);
         }
     }
 

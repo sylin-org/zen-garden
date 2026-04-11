@@ -1186,37 +1186,37 @@ fn get_offering_requirements(
     use crate::domain::constraints::Requirements;
 
     // Try to load from manifest first — parse DSL predicates to extract requirements
-    if let Some(offering) = state.manifest_registry.sw.get(name) {
-        if let Some(ref compat) = offering.compatibility {
-            let mut req = Requirements::new();
-            for rule in &compat.compatibility_rules {
-                for when_str in &rule.when {
-                    if let Ok(pred) = garden_common::compatibility::Predicate::parse(when_str) {
-                        use garden_common::compatibility::{Condition, Fact};
-                        match (&pred.fact, &pred.condition) {
-                            (Fact::CpuFeatures, Condition::Lacks(feats)) => {
-                                for f in feats {
-                                    req = req.require_cpu_feature(f);
-                                }
+    if let Some(offering) = state.manifest_registry.sw.get(name)
+        && let Some(ref compat) = offering.compatibility
+    {
+        let mut req = Requirements::new();
+        for rule in &compat.compatibility_rules {
+            for when_str in &rule.when {
+                if let Ok(pred) = garden_common::compatibility::Predicate::parse(when_str) {
+                    use garden_common::compatibility::{Condition, Fact};
+                    match (&pred.fact, &pred.condition) {
+                        (Fact::CpuFeatures, Condition::Lacks(feats)) => {
+                            for f in feats {
+                                req = req.require_cpu_feature(f);
                             }
-                            (Fact::RamTotalMb, Condition::Cmp { value, .. }) => {
-                                req = req.require_memory_mb(*value as u64);
-                            }
-                            (Fact::Architecture, Condition::In(archs)) => {
-                                for a in archs {
-                                    req = req.require_architecture(a);
-                                }
-                            }
-                            (Fact::Architecture, Condition::Is(arch)) => {
-                                req = req.require_architecture(arch);
-                            }
-                            _ => {}
                         }
+                        (Fact::RamTotalMb, Condition::Cmp { value, .. }) => {
+                            req = req.require_memory_mb(*value as u64);
+                        }
+                        (Fact::Architecture, Condition::In(archs)) => {
+                            for a in archs {
+                                req = req.require_architecture(a);
+                            }
+                        }
+                        (Fact::Architecture, Condition::Is(arch)) => {
+                            req = req.require_architecture(arch);
+                        }
+                        _ => {}
                     }
                 }
             }
-            return req;
         }
+        return req;
     }
 
     // Fallback: hardcoded rules for offerings without manifest metadata

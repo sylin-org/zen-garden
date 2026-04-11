@@ -31,7 +31,7 @@ pub async fn detect_pcie_devices() -> Result<Vec<PcieDevice>> {
 pub fn extract_thunderbolt_ports(pcie_devices: &[PcieDevice]) -> Vec<ThunderboltPort> {
     pcie_devices
         .iter()
-        .filter_map(|dev| thunderbolt_from_pcie(dev))
+        .filter_map(thunderbolt_from_pcie)
         .collect()
 }
 
@@ -242,7 +242,7 @@ fn detect_pcie_windows() -> Result<Vec<PcieDevice>> {
             let class = read_pci_class_from_registry(&dev_key_name).unwrap_or_else(|| {
                 device_name
                     .as_deref()
-                    .map(|n| guess_pci_class_from_name(n))
+                    .map(guess_pci_class_from_name)
                     .unwrap_or_else(|| "Unknown".to_string())
             });
 

@@ -49,10 +49,10 @@ pub async fn put_volume_file(
     let dest = std::path::Path::new(&host_path);
 
     // Create parent directories
-    if let Some(parent) = dest.parent() {
-        if let Err(e) = tokio::fs::create_dir_all(parent).await {
-            return internal_response(&format!("Failed to create directory: {e}"));
-        }
+    if let Some(parent) = dest.parent()
+        && let Err(e) = tokio::fs::create_dir_all(parent).await
+    {
+        return internal_response(&format!("Failed to create directory: {e}"));
     }
 
     let existed = tokio::fs::try_exists(&dest).await.unwrap_or(false);
@@ -346,6 +346,12 @@ fn walk_volume_dir<'a>(
 /// Resolve the host filesystem path for a volume file.
 ///
 /// Layout: `{volumes_dir}/{fqn_encoded}/{volume}/{path}`
+///
+/// Err variant carries an axum `Response` (≥128 bytes). This is standard
+/// for axum handlers that want to early-return a full HTTP response;
+/// boxing would obscure the shape with no runtime benefit. Accepted as
+/// pre-existing pattern.
+#[allow(clippy::result_large_err)]
 fn resolve_volume_path(fqn: &str, volume: &str, file_path: &str) -> Result<String, Response> {
     let offering_fqn = garden_common::offerings::OfferingFqn::parse(fqn).map_err(|e| {
         bad_request_response(

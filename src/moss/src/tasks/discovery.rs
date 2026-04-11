@@ -94,6 +94,10 @@ pub async fn lantern_registration_loop(
         }
     }
 }
+// 14 individual parameters rather than a config struct is pre-existing.
+// Collapsing into a struct would be mechanical but out of scope for
+// Chapter 2 / Book I. Flagged for the future bootstrap-cleanup book.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_discovery_listener(
     stone_id: String,
     stone_name: String,

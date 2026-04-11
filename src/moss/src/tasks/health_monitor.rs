@@ -244,13 +244,12 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         }
 
         // ── Phase 2: Auto-reconciliation (OFFER-0008) ──────────────────
-        if !confirmed_missing.is_empty() {
-            if reconciler
+        if !confirmed_missing.is_empty()
+            && reconciler
                 .process_missing_offerings(&state, &token, &confirmed_missing)
                 .await
-            {
-                state_changed = true;
-            }
+        {
+            state_changed = true;
         }
 
         // Prune backoff entries for offerings that no longer exist

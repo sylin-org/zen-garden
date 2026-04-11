@@ -185,26 +185,29 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         // clear the local pin so the winner is undisputed.
         if let Some(ref local_pid) = local_pin_id
             && new_role == StorageRole::Dormant
-                && let Some((_, _, Some(ref remote_pid))) = remote_primary
-                    && remote_pid > local_pid {
-                        info!(
-                            name = %name,
-                            local_pin = %local_pid,
-                            remote_pin = %remote_pid,
-                            "Auto-unpinning: remote pin_id is newer"
-                        );
-                        auto_unpin.push(name.clone());
-                    }
+            && let Some((_, _, Some(ref remote_pid))) = remote_primary
+            && remote_pid > local_pid
+        {
+            info!(
+                name = %name,
+                local_pin = %local_pid,
+                remote_pin = %remote_pid,
+                "Auto-unpinning: remote pin_id is newer"
+            );
+            auto_unpin.push(name.clone());
+        }
 
         if let Some((ref remote_stone_id, _, _)) = remote_primary
-            && current_role == StorageRole::Primary && new_role != current_role {
-                debug!(
-                    name = %name,
-                    remote_stone = %remote_stone_id,
-                    locally_pinned = local_pin_id.is_some(),
-                    "Role decision: yielding to remote"
-                );
-            }
+            && current_role == StorageRole::Primary
+            && new_role != current_role
+        {
+            debug!(
+                name = %name,
+                remote_stone = %remote_stone_id,
+                locally_pinned = local_pin_id.is_some(),
+                "Role decision: yielding to remote"
+            );
+        }
 
         new_roles.insert(name.clone(), new_role);
     }
@@ -234,9 +237,10 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
             if let Some(vol) = map
                 .values_mut()
                 .find(|v| v.management().is_some_and(|m| m.name == *name))
-                && let Some(mgmt) = vol.management_mut() {
-                    mgmt.role = *role;
-                }
+                && let Some(mgmt) = vol.management_mut()
+            {
+                mgmt.role = *role;
+            }
         }
     }
 

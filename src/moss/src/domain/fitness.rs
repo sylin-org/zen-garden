@@ -14,10 +14,10 @@
 //! we reuse that `CompiledCompatibility` result rather than reinventing
 //! constraint checking.
 
+use garden_common::Offering;
 use garden_common::constants::orchestration::{
     FITNESS_SCORE_MAX, FITNESS_SCORE_MIN, FITNESS_SCORE_PINNED,
 };
-use garden_common::Offering;
 
 use super::compatibility::CompiledCompatibility;
 use super::scoring;
@@ -52,9 +52,10 @@ pub fn compute_fitness_score(
 ) -> Option<i16> {
     // Pinned → always wins
     if let Some(ref orch) = offering.orchestration
-        && orch.pinned {
-            return Some(FITNESS_SCORE_PINNED);
-        }
+        && orch.pinned
+    {
+        return Some(FITNESS_SCORE_PINNED);
+    }
 
     // Use the existing per-stone compatibility evaluation for eligibility.
     // A "fail" decision means the stone cannot host this offering at all.
@@ -146,8 +147,8 @@ mod tests {
     use super::*;
     use crate::domain::compatibility::CompiledCompatibility;
     use crate::domain::resources_collection::NormalizedResources;
-    use garden_common::types::*;
     use garden_common::DiskType;
+    use garden_common::types::*;
 
     fn compat_pass() -> CompiledCompatibility {
         CompiledCompatibility {
@@ -638,10 +639,24 @@ mod tests {
     fn integration_identical_stones_deterministic_tiebreak() {
         let resources = make_resources(30, 20000, 32000);
 
-        let a =
-            simulate_stone("stone-a", "Alpha", false, &compat_pass(), Some(&resources), 2).unwrap();
-        let z =
-            simulate_stone("stone-z", "Zulu", false, &compat_pass(), Some(&resources), 2).unwrap();
+        let a = simulate_stone(
+            "stone-a",
+            "Alpha",
+            false,
+            &compat_pass(),
+            Some(&resources),
+            2,
+        )
+        .unwrap();
+        let z = simulate_stone(
+            "stone-z",
+            "Zulu",
+            false,
+            &compat_pass(),
+            Some(&resources),
+            2,
+        )
+        .unwrap();
 
         // Same conditions → same score
         assert_eq!(

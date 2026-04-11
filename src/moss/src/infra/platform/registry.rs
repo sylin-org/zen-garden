@@ -4,8 +4,8 @@
 //! `reg.exe` invocations with type-safe Rust calls.
 
 use anyhow::{Context, Result};
-use winreg::enums::*;
 use winreg::RegKey;
+use winreg::enums::*;
 
 // ── Read helpers ────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ pub fn delete_hklm_value(subkey: &str, value_name: &str) -> Result<()> {
 /// machine-scoped environment variable changes without a reboot.
 pub fn broadcast_environment_change() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
     };
 
     // "Environment\0" as a wide string

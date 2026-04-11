@@ -18,8 +18,8 @@ use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use garden_common::tools::ToolDelta;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -150,55 +150,81 @@ pub struct AppState {
 // what they need: `State(companion): State<Arc<Companion>>` instead of full AppState.
 
 impl axum::extract::FromRef<AppState> for Arc<crate::domain::Current> {
-    fn from_ref(state: &AppState) -> Self { state.current.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.current.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<crate::domain::Platform> {
-    fn from_ref(state: &AppState) -> Self { state.platform.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.platform.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<Tool> {
-    fn from_ref(state: &AppState) -> Self { state.tool.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.tool.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<Offerings> {
-    fn from_ref(state: &AppState) -> Self { state.offerings.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.offerings.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<Security> {
-    fn from_ref(state: &AppState) -> Self { state.security.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.security.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<crate::domain::Discovery> {
-    fn from_ref(state: &AppState) -> Self { state.discovery.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.discovery.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<crate::domain::Presence> {
-    fn from_ref(state: &AppState) -> Self { state.presence.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.presence.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<crate::domain::Companion> {
-    fn from_ref(state: &AppState) -> Self { state.companion.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.companion.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<Orchestration> {
-    fn from_ref(state: &AppState) -> Self { state.orchestration.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.orchestration.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<ManifestRegistry> {
-    fn from_ref(state: &AppState) -> Self { state.manifest_registry.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.manifest_registry.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for EventBus {
-    fn from_ref(state: &AppState) -> Self { state.event_bus.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.event_bus.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for CancellationToken {
-    fn from_ref(state: &AppState) -> Self { state.shutdown_token.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.shutdown_token.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<ConsolePrinter> {
-    fn from_ref(state: &AppState) -> Self { state.console.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.console.clone()
+    }
 }
 
 // ============================================================================
@@ -379,9 +405,7 @@ impl AppState {
         // bounds the lock scope to the closure — no guard escapes.
         let services = self
             .offerings
-            .with_active(|offerings| {
-                garden_common::TopologyServiceEntry::from_offerings(offerings)
-            })
+            .with_active(|offerings| garden_common::TopologyServiceEntry::from_offerings(offerings))
             .await;
 
         garden_common::TopologyEntry {
@@ -553,9 +577,10 @@ impl AppState {
 
         // Re-register mDNS with updated IP and MAC
         if let Some(ref mdns) = self.discovery.mdns
-            && let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await {
-                tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
-            }
+            && let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await
+        {
+            tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
+        }
 
         // Immediately chirp the updated entry via UDP
         let entry = self.build_self_entry().await;
@@ -636,5 +661,4 @@ impl AppState {
     ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged> {
         self.current.storage.changed.subscribe()
     }
-
 }

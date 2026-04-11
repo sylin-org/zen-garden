@@ -18,8 +18,8 @@
 
 use garden_common::{Offering, OfferingStatus};
 
-use crate::domain::events::OfferingEvent;
 use crate::AppState;
+use crate::domain::events::OfferingEvent;
 
 // ============================================================================
 // Queries (read-only — no persistence, no events)

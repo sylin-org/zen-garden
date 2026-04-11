@@ -50,7 +50,11 @@ pub fn get_local_resources() -> Result<NormalizedResources> {
         .cloned()
         .unwrap_or(DiskType::Unknown);
 
-    Ok(normalize_resources(&resources, &architecture, &storage_type))
+    Ok(normalize_resources(
+        &resources,
+        &architecture,
+        &storage_type,
+    ))
 }
 
 /// Fetch resources from remote stone via HTTP
@@ -58,7 +62,10 @@ pub fn get_local_resources() -> Result<NormalizedResources> {
 /// Uses the `/api/v1/stone/resources` endpoint for real-time data.
 /// Architecture is fetched from `/capabilities` since it's not in the
 /// resources snapshot.
-pub async fn fetch_stone_resources(endpoint: &str, timeout: Duration) -> Result<NormalizedResources> {
+pub async fn fetch_stone_resources(
+    endpoint: &str,
+    timeout: Duration,
+) -> Result<NormalizedResources> {
     let base = endpoint.trim_end_matches('/');
     let resources_url = format!("{}/api/v1/stone/resources", base);
 
@@ -70,7 +77,10 @@ pub async fn fetch_stone_resources(endpoint: &str, timeout: Duration) -> Result<
         .context("Failed to fetch /api/v1/stone/resources")?;
 
     if !response.status().is_success() {
-        anyhow::bail!("/api/v1/stone/resources returned error: {}", response.status());
+        anyhow::bail!(
+            "/api/v1/stone/resources returned error: {}",
+            response.status()
+        );
     }
 
     // Response is wrapped in ApiResponse
@@ -290,7 +300,10 @@ mod tests {
             }
             Err(e) => {
                 // Log but don't fail - test environments may have restricted access
-                println!("Local resources collection failed (may be expected in CI): {}", e);
+                println!(
+                    "Local resources collection failed (may be expected in CI): {}",
+                    e
+                );
             }
         }
     }

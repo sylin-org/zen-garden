@@ -9,10 +9,10 @@
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
+use crate::AppState;
 use crate::domain::adopt_offering_container;
 use crate::tasks::offering_reconciliation::ReconciliationCoordinator;
-use crate::AppState;
-use garden_common::notifications::{NotificationTag, NOTIF_SOURCE_OFFERINGS_DEGRADED};
+use garden_common::notifications::{NOTIF_SOURCE_OFFERINGS_DEGRADED, NotificationTag};
 use garden_common::{OfferingStatus, ServiceHealthStatus};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -86,49 +86,53 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 continue;
             }
 
-            let (new_status, new_health) =
-                match state.platform.docker.get_service_status(name).await {
-                    Ok(service_status) => {
-                        let health = state
-                            .platform
-                            .docker
-                            .get_service_health(name)
-                            .await
-                            .unwrap_or(ServiceHealthStatus::Offline);
-                        (OfferingStatus::from(service_status), health)
-                    }
-                    Err(e) => {
-                        let container_exists = state
-                            .platform
-                            .docker
-                            .zen_container_exists(name)
-                            .await
-                            .unwrap_or(false);
+            let (new_status, new_health) = match state
+                .platform
+                .docker
+                .get_service_status(name)
+                .await
+            {
+                Ok(service_status) => {
+                    let health = state
+                        .platform
+                        .docker
+                        .get_service_health(name)
+                        .await
+                        .unwrap_or(ServiceHealthStatus::Offline);
+                    (OfferingStatus::from(service_status), health)
+                }
+                Err(e) => {
+                    let container_exists = state
+                        .platform
+                        .docker
+                        .zen_container_exists(name)
+                        .await
+                        .unwrap_or(false);
 
-                        if !container_exists {
-                            confirmed_missing.insert(name.clone());
-                            if !reconciler.is_tracked_or_in_flight(name).await {
-                                tracing::info!(
-                                    offering = %name,
-                                    "Container missing, queuing for reconciliation"
-                                );
-                            } else {
-                                tracing::debug!(
-                                    offering = %name,
-                                    "Container still missing (reconciliation in progress or backed off)"
-                                );
-                            }
-                        } else {
-                            tracing::warn!(
+                    if !container_exists {
+                        confirmed_missing.insert(name.clone());
+                        if !reconciler.is_tracked_or_in_flight(name).await {
+                            tracing::info!(
                                 offering = %name,
-                                error = ?e,
-                                "Failed to get offering status, marking as offline"
+                                "Container missing, queuing for reconciliation"
+                            );
+                        } else {
+                            tracing::debug!(
+                                offering = %name,
+                                "Container still missing (reconciliation in progress or backed off)"
                             );
                         }
-
-                        (OfferingStatus::Stopped, ServiceHealthStatus::Offline)
+                    } else {
+                        tracing::warn!(
+                            offering = %name,
+                            error = ?e,
+                            "Failed to get offering status, marking as offline"
+                        );
                     }
-                };
+
+                    (OfferingStatus::Stopped, ServiceHealthStatus::Offline)
+                }
+            };
 
             if new_status != *old_status || new_health != *old_health {
                 tracing::info!(
@@ -138,7 +142,8 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     "Offering state changed"
                 );
                 state
-                    .offerings.update(offering_id, |o| {
+                    .offerings
+                    .update(offering_id, |o| {
                         o.status = new_status;
                         o.health = new_health;
                         true
@@ -150,7 +155,8 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             // Resource usage (detail-only, no chirp)
             if let Ok(resources) = state.platform.docker.get_container_stats(name).await {
                 state
-                    .offerings.update(offering_id, |o| {
+                    .offerings
+                    .update(offering_id, |o| {
                         if let Some(ref mut managed) = o.managed_data_mut() {
                             managed.resources = Some(resources);
                         }
@@ -161,74 +167,80 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
 
             // ── Port reconciliation ────────────────────────────────────
             if new_status == OfferingStatus::Running
-                && let Ok(docker_ports) = state.platform.docker.get_container_ports(name).await {
-                    let current_port = {
-                        let offerings = state.offerings.read().await;
-                        offerings
-                            .iter()
-                            .find(|o| o.offering_id == *offering_id)
-                            .map(|o| o.location.port)
-                    };
-                    if let Some(current_port) = current_port {
-                        let best_port = docker_ports
-                            .iter()
-                            .find(|(h, _)| *h == current_port)
-                            .or(docker_ports.first())
-                            .map(|(h, _)| *h);
+                && let Ok(docker_ports) = state.platform.docker.get_container_ports(name).await
+            {
+                let current_port = {
+                    let offerings = state.offerings.read().await;
+                    offerings
+                        .iter()
+                        .find(|o| o.offering_id == *offering_id)
+                        .map(|o| o.location.port)
+                };
+                if let Some(current_port) = current_port {
+                    let best_port = docker_ports
+                        .iter()
+                        .find(|(h, _)| *h == current_port)
+                        .or(docker_ports.first())
+                        .map(|(h, _)| *h);
 
-                        if let Some(actual_host_port) = best_port
-                            && current_port != actual_host_port {
-                                tracing::info!(
-                                    offering = %name,
-                                    registry_port = current_port,
-                                    docker_port = actual_host_port,
-                                    "Port mismatch detected, updating registry"
-                                );
-                                state
-                                    .offerings.update(offering_id, |o| {
-                                        o.location.port = actual_host_port;
-                                        true
-                                    })
-                                    .await;
-                                state_changed = true;
-                            }
+                    if let Some(actual_host_port) = best_port
+                        && current_port != actual_host_port
+                    {
+                        tracing::info!(
+                            offering = %name,
+                            registry_port = current_port,
+                            docker_port = actual_host_port,
+                            "Port mismatch detected, updating registry"
+                        );
+                        state
+                            .offerings
+                            .update(offering_id, |o| {
+                                o.location.port = actual_host_port;
+                                true
+                            })
+                            .await;
+                        state_changed = true;
                     }
                 }
+            }
 
             // ── Protocol reconciliation ────────────────────────────────
             if new_status == OfferingStatus::Running
-                && let Some(template) = state.manifest_registry.get_offering(name) {
-                    let expected_protocol =
-                        crate::domain::connection::infer_protocol_from_manifest_metadata(
-                            name,
-                            &template.category,
-                            template.connection.as_ref(),
-                        );
+                && let Some(template) = state.manifest_registry.get_offering(name)
+            {
+                let expected_protocol =
+                    crate::domain::connection::infer_protocol_from_manifest_metadata(
+                        name,
+                        &template.category,
+                        template.connection.as_ref(),
+                    );
 
-                    let current_protocol = {
-                        let offerings = state.offerings.read().await;
-                        offerings
-                            .iter()
-                            .find(|o| o.offering_id == *offering_id)
-                            .map(|o| o.location.protocol.clone())
-                    };
-                    if let Some(current_protocol) = current_protocol
-                        && current_protocol != expected_protocol {
-                            tracing::info!(
-                                offering = %name,
-                                old_protocol = %current_protocol,
-                                new_protocol = %expected_protocol,
-                                "Protocol mismatch detected, updating registry"
-                            );
-                            state
-                                .offerings.update(offering_id, |o| {
-                                    o.location.protocol = expected_protocol;
-                                    true
-                                })
-                                .await;
-                            state_changed = true;
-                        }
+                let current_protocol = {
+                    let offerings = state.offerings.read().await;
+                    offerings
+                        .iter()
+                        .find(|o| o.offering_id == *offering_id)
+                        .map(|o| o.location.protocol.clone())
+                };
+                if let Some(current_protocol) = current_protocol
+                    && current_protocol != expected_protocol
+                {
+                    tracing::info!(
+                        offering = %name,
+                        old_protocol = %current_protocol,
+                        new_protocol = %expected_protocol,
+                        "Protocol mismatch detected, updating registry"
+                    );
+                    state
+                        .offerings
+                        .update(offering_id, |o| {
+                            o.location.protocol = expected_protocol;
+                            true
+                        })
+                        .await;
+                    state_changed = true;
                 }
+            }
         }
 
         // ── Phase 2: Auto-reconciliation (OFFER-0008) ──────────────────

@@ -4,12 +4,12 @@
 //! for URI composition. No FoundService intermediate.
 //! Seed-banks are projected directly from the seed bank lifecycle objects.
 
+use crate::AppState;
 use crate::domain::connection;
 use crate::domain::storage::VolumeState;
-use crate::AppState;
+use garden_common::Offering;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{Capability, GardenTool, ServiceInfo, Stone, ToolIdentity};
-use garden_common::Offering;
 use std::collections::BTreeSet;
 
 /// Project all local tools (offerings + seed-banks) as GardenTool instances.
@@ -201,9 +201,10 @@ fn parse_fqn_for_fqid(name: &str, offering: &str) -> OfferingFqn {
     }
 
     if let Ok(fqn) = OfferingFqn::parse(&name_lower)
-        && fqn.offering == offering_lower {
-            return fqn;
-        }
+        && fqn.offering == offering_lower
+    {
+        return fqn;
+    }
 
     OfferingFqn::with_instance(&offering_lower, &name_lower).unwrap_or(OfferingFqn {
         source: None,

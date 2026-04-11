@@ -23,7 +23,7 @@ use garden_common::constants::{
     EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED, SSE_LEVEL_INFO,
 };
 use garden_common::infra::communications::announcement_types;
-use garden_common::presence::{event_types, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
+use garden_common::presence::{StoneHealthChangedPayload, StoneLoadUpdatedPayload, event_types};
 use serde::Serialize;
 use std::net::SocketAddr;
 use tokio::sync::broadcast;

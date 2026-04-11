@@ -5,9 +5,9 @@
 
 use axum::extract::State;
 
-use crate::domain::maintenance::{run_sweep, SweepRun};
+use crate::domain::maintenance::{SweepRun, run_sweep};
 use crate::infra::maintenance_store;
-use crate::{internal, AppState};
+use crate::{AppState, internal};
 
 /// GET /api/v1/stone/maintenance/history
 ///

@@ -752,9 +752,7 @@ impl Offering {
                     .map(|dev| {
                         let count = match &dev.count {
                             Some(serde_yml::Value::String(s)) if s == "all" => -1,
-                            Some(serde_yml::Value::Number(n)) => {
-                                n.as_i64().unwrap_or(1)
-                            }
+                            Some(serde_yml::Value::Number(n)) => n.as_i64().unwrap_or(1),
                             _ => -1, // default: all GPUs
                         };
                         GpuDeviceRequest {

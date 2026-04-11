@@ -31,11 +31,10 @@ impl BackgroundTask for MediaWatcherTask {
                     }
                 }
 
-                let snapshots = tokio::task::spawn_blocking(
-                    crate::infra::storage::platform::scan_media,
-                )
-                .await
-                .unwrap_or_default();
+                let snapshots =
+                    tokio::task::spawn_blocking(crate::infra::storage::platform::scan_media)
+                        .await
+                        .unwrap_or_default();
 
                 crate::domain::storage::reconcile_media(
                     &ctx.state.current.storage.media,

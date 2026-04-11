@@ -404,12 +404,12 @@ pub fn chassis_type_name(code: u8) -> &'static str {
         8 | 9 | 10 | 14 | 31 => "laptop",
         11 => "handheld",
         13 => "all-in-one",
-        15 | 16 => "mini-pc",           // space-saving, lunch-box
-        17 | 23 | 28 => "server",       // main server, rack mount, blade
-        24 => "sealed-case",            // many thin clients report this
+        15 | 16 => "mini-pc",     // space-saving, lunch-box
+        17 | 23 | 28 => "server", // main server, rack mount, blade
+        24 => "sealed-case",      // many thin clients report this
         30 => "tablet",
-        35 => "mini-pc",               // SMBIOS 3.1+: Mini PC
-        36 => "stick-pc",              // SMBIOS 3.1+: Stick PC
+        35 => "mini-pc",  // SMBIOS 3.1+: Mini PC
+        36 => "stick-pc", // SMBIOS 3.1+: Stick PC
         _ => "unknown",
     }
 }

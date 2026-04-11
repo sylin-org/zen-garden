@@ -60,7 +60,10 @@ fn parse_identity(smbios: &smbioslib::SMBiosData) -> SystemIdentity {
             identity.product = product;
         }
         if let Some(serial) = sys.serial_number().ok() {
-            if !serial.is_empty() && serial != "Default string" && serial != "To Be Filled By O.E.M." {
+            if !serial.is_empty()
+                && serial != "Default string"
+                && serial != "To Be Filled By O.E.M."
+            {
                 identity.serial = Some(serial);
             }
         }
@@ -80,7 +83,10 @@ fn parse_identity(smbios: &smbioslib::SMBiosData) -> SystemIdentity {
             }
         }
         if let Some(product) = board.product().ok() {
-            if !product.is_empty() && product != "Default string" && product != "To Be Filled By O.E.M." {
+            if !product.is_empty()
+                && product != "Default string"
+                && product != "To Be Filled By O.E.M."
+            {
                 identity.board_product = Some(product);
             }
         }
@@ -104,7 +110,10 @@ fn parse_identity(smbios: &smbioslib::SMBiosData) -> SystemIdentity {
         // Prefer chassis serial if system serial was empty
         if identity.serial.is_none() {
             if let Some(serial) = chassis.serial_number().ok() {
-                if !serial.is_empty() && serial != "Default string" && serial != "To Be Filled By O.E.M." {
+                if !serial.is_empty()
+                    && serial != "Default string"
+                    && serial != "To Be Filled By O.E.M."
+                {
                     identity.serial = Some(serial);
                 }
             }
@@ -129,12 +138,10 @@ fn parse_memory_slots(smbios: &smbioslib::SMBiosData) -> MemoryTopology {
         let size_mb = match device.size() {
             Some(smbioslib::MemorySize::Megabytes(mb)) => Some(mb as u64),
             Some(smbioslib::MemorySize::Kilobytes(kb)) => Some(kb as u64 / 1024),
-            Some(smbioslib::MemorySize::SeeExtendedSize) => {
-                match device.extended_size() {
-                    Some(smbioslib::MemorySizeExtended::Megabytes(mb)) => Some(mb as u64),
-                    _ => None,
-                }
-            }
+            Some(smbioslib::MemorySize::SeeExtendedSize) => match device.extended_size() {
+                Some(smbioslib::MemorySizeExtended::Megabytes(mb)) => Some(mb as u64),
+                _ => None,
+            },
             _ => None, // NotInstalled, Unknown, or absent
         };
 
@@ -142,14 +149,18 @@ fn parse_memory_slots(smbios: &smbioslib::SMBiosData) -> MemoryTopology {
 
         // Map MemoryDeviceType enum to human-readable string
         let memory_type = if populated {
-            device.memory_type().map(|t| memory_device_type_name(&t.value).to_string())
+            device
+                .memory_type()
+                .map(|t| memory_device_type_name(&t.value).to_string())
         } else {
             None
         };
 
         // Map MemoryFormFactor enum to human-readable string
         let form_factor = if populated {
-            device.form_factor().map(|f| memory_form_factor_name(&f.value).to_string())
+            device
+                .form_factor()
+                .map(|f| memory_form_factor_name(&f.value).to_string())
         } else {
             None
         };
@@ -160,16 +171,18 @@ fn parse_memory_slots(smbios: &smbioslib::SMBiosData) -> MemoryTopology {
                 device.configured_memory_speed(),
                 device.extended_configured_memory_speed(),
             )
-            .or_else(|| {
-                resolve_memory_speed(device.speed(), device.extended_speed())
-            })
+            .or_else(|| resolve_memory_speed(device.speed(), device.extended_speed()))
         } else {
             None
         };
 
-        let manufacturer = device.manufacturer().ok()
-            .filter(|m| !m.is_empty() && m != "Unknown" && m != "Not Specified"
-                && m != "Default string" && m != "To Be Filled By O.E.M.");
+        let manufacturer = device.manufacturer().ok().filter(|m| {
+            !m.is_empty()
+                && m != "Unknown"
+                && m != "Not Specified"
+                && m != "Default string"
+                && m != "To Be Filled By O.E.M."
+        });
 
         slots.push(MemorySlot {
             locator,
@@ -192,12 +205,10 @@ fn resolve_memory_speed(
 ) -> Option<u32> {
     match standard {
         Some(smbioslib::MemorySpeed::MTs(mts)) => Some(mts as u32),
-        Some(smbioslib::MemorySpeed::SeeExtendedSpeed) => {
-            match extended {
-                Some(smbioslib::MemorySpeedExtended::MTs(mts)) => Some(mts),
-                _ => None,
-            }
-        }
+        Some(smbioslib::MemorySpeed::SeeExtendedSpeed) => match extended {
+            Some(smbioslib::MemorySpeedExtended::MTs(mts)) => Some(mts),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -272,10 +283,7 @@ fn parse_m2_slots(smbios: &smbioslib::SMBiosData) -> Vec<M2Slot> {
 
     // Type 9: System Slots
     for slot in smbios.collect::<smbioslib::SMBiosSystemSlot>() {
-        let designation = slot
-            .slot_designation()
-            .ok()
-            .unwrap_or_default();
+        let designation = slot.slot_designation().ok().unwrap_or_default();
 
         // Filter for M.2 slots — look for M.2 in designation or slot type
         let designation_lower = designation.to_lowercase();

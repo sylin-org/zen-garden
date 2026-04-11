@@ -8,8 +8,8 @@ use std::fmt;
 use tokio::sync::broadcast;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 /// Tracing layer that sends formatted log lines to a broadcast channel
 pub struct LogBroadcastLayer {

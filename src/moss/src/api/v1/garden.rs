@@ -1,17 +1,17 @@
 use crate::api::responses::{GardenOverview, StoneInfo};
-use crate::api::suggestions::{generate_suggestions, Suggestion};
+use crate::api::suggestions::{Suggestion, generate_suggestions};
 use crate::domain::{
     placement::{PlacementRequest, PlacementResponse},
     topology,
 };
-use crate::{internal, not_found, AppState};
+use crate::{AppState, internal, not_found};
 use axum::{
+    Json,
     extract::{Path, State},
     http::HeaderMap,
-    Json,
 };
-use garden_common::resources::system as resources;
 use garden_common::TopologyEntry;
+use garden_common::resources::system as resources;
 use garden_common::{
     CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory,
     MemoryCapabilities, RuntimeInfo,
@@ -356,10 +356,7 @@ pub async fn inspect_garden_v1(
 
                 match result {
                     Ok(Ok(resp)) if resp.status().is_success() => {
-                        match resp
-                            .json::<CommonApiResponse<FullCapabilities>>()
-                            .await
-                        {
+                        match resp.json::<CommonApiResponse<FullCapabilities>>().await {
                             Ok(api_resp) => Ok(StoneInspection {
                                 name: stone_name,
                                 id: stone_id,

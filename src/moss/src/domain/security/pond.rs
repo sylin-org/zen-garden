@@ -2,8 +2,8 @@
 
 use super::ceremony::Ceremony;
 use crate::domain::PondState;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Pond domain context (`state.security.pond`).
 #[derive(Clone)]

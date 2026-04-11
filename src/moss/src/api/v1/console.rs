@@ -1,7 +1,7 @@
 use crate::bad_request;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use garden_common::api_utils::ApiErrorResponse;
-use garden_common::console::{ConsolePrinter, ConsoleMode};
+use garden_common::console::{ConsoleMode, ConsolePrinter};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -49,12 +49,11 @@ pub async fn set_console_mode_v1(
     console.set_mode(new_mode);
 
     // Emit mode change event
-    console
-        .emit(garden_common::console::ConsoleEvent::new(
-            garden_common::console::EventCategory::Ops,
-            garden_common::console::EventStatus::Active,
-            format!("Console mode: {} → {}", previous_mode, new_mode),
-        ));
+    console.emit(garden_common::console::ConsoleEvent::new(
+        garden_common::console::EventCategory::Ops,
+        garden_common::console::EventStatus::Active,
+        format!("Console mode: {} → {}", previous_mode, new_mode),
+    ));
 
     // Spawn timeout task if requested and not forever
     let timeout_opt = if request.timeout_minutes > 0 {
@@ -67,12 +66,11 @@ pub async fn set_console_mode_v1(
 
             // Revert to original mode
             console.set_mode(original_mode);
-            console
-                .emit(garden_common::console::ConsoleEvent::new(
-                    garden_common::console::EventCategory::Ops,
-                    garden_common::console::EventStatus::Active,
-                    format!("Console mode timeout: {} → {}", new_mode, original_mode),
-                ));
+            console.emit(garden_common::console::ConsoleEvent::new(
+                garden_common::console::EventCategory::Ops,
+                garden_common::console::EventStatus::Active,
+                format!("Console mode timeout: {} → {}", new_mode, original_mode),
+            ));
         });
 
         Some(timeout_minutes)
@@ -84,22 +82,20 @@ pub async fn set_console_mode_v1(
     let persisted = if request.persist {
         match persist_console_mode(new_mode).await {
             Ok(_) => {
-                console
-                    .emit(garden_common::console::ConsoleEvent::new(
-                        garden_common::console::EventCategory::Config,
-                        garden_common::console::EventStatus::Saving,
-                        format!("Console mode saved: {}", new_mode),
-                    ));
+                console.emit(garden_common::console::ConsoleEvent::new(
+                    garden_common::console::EventCategory::Config,
+                    garden_common::console::EventStatus::Saving,
+                    format!("Console mode saved: {}", new_mode),
+                ));
                 true
             }
             Err(e) => {
                 tracing::warn!(error = ?e, "Failed to persist console mode");
-                console
-                    .emit(garden_common::console::ConsoleEvent::new(
-                        garden_common::console::EventCategory::Config,
-                        garden_common::console::EventStatus::SaveError,
-                        format!("Failed to save console mode: {}", e),
-                    ));
+                console.emit(garden_common::console::ConsoleEvent::new(
+                    garden_common::console::EventCategory::Config,
+                    garden_common::console::EventStatus::SaveError,
+                    format!("Failed to save console mode: {}", e),
+                ));
                 false
             }
         }
@@ -133,9 +129,7 @@ pub async fn get_console_mode_v1(
 }
 
 /// Helper function to persist console mode to config file
-async fn persist_console_mode(
-    mode: ConsoleMode,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn persist_console_mode(mode: ConsoleMode) -> Result<(), Box<dyn std::error::Error>> {
     use std::path::PathBuf;
 
     let config_path = if cfg!(windows) {

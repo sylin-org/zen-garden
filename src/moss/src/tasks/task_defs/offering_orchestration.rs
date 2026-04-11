@@ -19,18 +19,20 @@ impl BackgroundTask for OfferingOrchestrationTask {
         &["catalog-builder"]
     }
 
-    fn run(self: Box<Self>, mut ctx: TaskContext) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
+    fn run(
+        self: Box<Self>,
+        mut ctx: TaskContext,
+    ) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
         Box::pin(async move {
             if !ctx.deps.wait().await {
                 return TaskOutcome::Cancelled;
             }
             ctx.ready.signal();
 
-            if let Err(e) =
-                crate::tasks::offering_orchestration::offering_orchestration_task(
-                    ctx.state, ctx.token,
-                )
-                .await
+            if let Err(e) = crate::tasks::offering_orchestration::offering_orchestration_task(
+                ctx.state, ctx.token,
+            )
+            .await
             {
                 tracing::error!(error = ?e, "Offering orchestration task failed");
                 return TaskOutcome::Failed {

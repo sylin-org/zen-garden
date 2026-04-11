@@ -4,7 +4,7 @@
 //! runs service matching + health probes against it for each offering.
 
 use super::inventory::SystemSnapshot;
-use super::matcher::{match_processes, ProcessSignature};
+use super::matcher::{ProcessSignature, match_processes};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -80,10 +80,7 @@ impl DetectionPipeline {
                 captured_at: Instant::now(),
             });
 
-        tracing::debug!(
-            processes = snapshot.len(),
-            "process snapshot refreshed"
-        );
+        tracing::debug!(processes = snapshot.len(), "process snapshot refreshed");
 
         *self.snapshot.write().await = Some(snapshot);
     }

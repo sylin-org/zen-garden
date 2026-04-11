@@ -11,11 +11,11 @@
 
 use crate::api::responses::ApiResponse;
 use crate::domain::Current;
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
-use garden_common::types::hardware_topology::{FullCapabilities, HardwareTopology};
 use garden_common::HardwareCapabilities;
+use garden_common::types::hardware_topology::{FullCapabilities, HardwareTopology};
 use std::sync::Arc;
 
 /// GET /api/v1/stone/capabilities — Full capabilities (Tier 1 + Tier 2).
@@ -59,9 +59,7 @@ pub async fn get_capabilities_topology(
 ///
 /// Invalidates the cached topology and kicks a full background re-probe.
 /// Returns 202 Accepted immediately — the probe runs asynchronously.
-pub async fn refresh_capabilities(
-    State(current): State<Arc<Current>>,
-) -> StatusCode {
+pub async fn refresh_capabilities(State(current): State<Arc<Current>>) -> StatusCode {
     // Clear cached topology to force re-probe
     {
         let mut guard = current.hardware_topology.write().await;
@@ -75,11 +73,7 @@ pub async fn refresh_capabilities(
         garden_common::console::ConsoleMode::Silent,
     ));
     tokio::spawn(async move {
-        crate::tasks::topology_probe::probe_now(
-            current_clone,
-            console,
-        )
-        .await;
+        crate::tasks::topology_probe::probe_now(current_clone, console).await;
     });
 
     StatusCode::ACCEPTED

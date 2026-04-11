@@ -21,4 +21,4 @@ mod facts;
 mod predicate;
 
 pub use facts::FactSource;
-pub use predicate::{check_all, CmpOp, Condition, Fact, FactType, Predicate, PredicateError};
+pub use predicate::{CmpOp, Condition, Fact, FactType, Predicate, PredicateError, check_all};

@@ -10,11 +10,11 @@
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
-use crate::domain::compatibility::{evaluate_compatibility, CompatibilityDecision};
+use crate::AppState;
+use crate::domain::compatibility::{CompatibilityDecision, evaluate_compatibility};
 use crate::domain::connection;
 use crate::domain::{ConnectivityOrchestrator, ConnectivityStatus, DetectionOrchestrator};
 use crate::infra::config::AdoptionConfig;
-use crate::AppState;
 use garden_common::detection::{DetectionPipeline, HealthCheck, PortConfig, ProcessSignature};
 use garden_common::{OfferingMode, ServiceHealthStatus};
 use std::time::Instant;
@@ -94,9 +94,7 @@ async fn detect_offering(
 
     // Legacy path: command-based detection
     match legacy_orchestrator.detect(manifest).await {
-        Ok(result) if result.detected && result.stable => {
-            DetectOutcome::Detected { port: None }
-        }
+        Ok(result) if result.detected && result.stable => DetectOutcome::Detected { port: None },
         Ok(result) if result.detected => {
             // Detected but not yet stable — treat as not detected for callers
             // that need stable results. Log for observability.
@@ -154,9 +152,9 @@ async fn detect_offering(
 /// ```
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
-    let detector = std::sync::Arc::new(
-        crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
-    );
+    let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
+        state.platform.docker.clone(),
+    ));
     let orchestrator = DetectionOrchestrator::new(detector.clone());
     let connectivity = ConnectivityOrchestrator::new(detector);
 
@@ -221,7 +219,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
             offerings
                 .iter()
                 .filter(|o| o.is_adopted())
-                .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone()))
+                .map(|o| {
+                    (
+                        o.offering_id.clone(),
+                        o.offering.clone(),
+                        o.location.clone(),
+                    )
+                })
                 .collect()
         };
 
@@ -231,7 +235,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                 None => continue,
             };
 
-            let outcome = detect_offering(manifest, &orchestrator, &process_pipeline, Some(location.port)).await;
+            let outcome = detect_offering(
+                manifest,
+                &orchestrator,
+                &process_pipeline,
+                Some(location.port),
+            )
+            .await;
 
             match outcome {
                 DetectOutcome::Detected { port } => {
@@ -245,7 +255,8 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                                 "adopted offering port changed"
                             );
                             state
-                                .offerings.update(&offering_id, |o| {
+                                .offerings
+                                .update(&offering_id, |o| {
                                     o.location.port = p;
                                     true
                                 })
@@ -291,11 +302,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     state.offerings.demote(&offering_id).await;
                     state_changed = true;
 
-                    state.console.emit(garden_common::console::ConsoleEvent::new(
-                        garden_common::console::EventCategory::Services,
-                        garden_common::console::EventStatus::Disconnected,
-                        format!("{} no longer detected", offering_name),
-                    ));
+                    state
+                        .console
+                        .emit(garden_common::console::ConsoleEvent::new(
+                            garden_common::console::EventCategory::Services,
+                            garden_common::console::EventStatus::Disconnected,
+                            format!("{} no longer detected", offering_name),
+                        ));
                 }
             }
         }
@@ -307,7 +320,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                 .with_candidates(|cands| {
                     cands
                         .iter()
-                        .map(|o| (o.offering_id.clone(), o.offering.clone(), o.location.clone()))
+                        .map(|o| {
+                            (
+                                o.offering_id.clone(),
+                                o.offering.clone(),
+                                o.location.clone(),
+                            )
+                        })
                         .collect()
                 })
                 .await
@@ -319,7 +338,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                 None => continue,
             };
 
-            let outcome = detect_offering(manifest, &orchestrator, &process_pipeline, Some(location.port)).await;
+            let outcome = detect_offering(
+                manifest,
+                &orchestrator,
+                &process_pipeline,
+                Some(location.port),
+            )
+            .await;
 
             match outcome {
                 DetectOutcome::Detected { port } => {
@@ -361,11 +386,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
                     state.offerings.promote(&offering_id).await;
                     state_changed = true;
 
-                    state.console.emit(garden_common::console::ConsoleEvent::new(
-                        garden_common::console::EventCategory::Services,
-                        garden_common::console::EventStatus::Healthy,
-                        format!("{} detected, now active", offering_name),
-                    ));
+                    state
+                        .console
+                        .emit(garden_common::console::ConsoleEvent::new(
+                            garden_common::console::EventCategory::Services,
+                            garden_common::console::EventStatus::Healthy,
+                            format!("{} detected, now active", offering_name),
+                        ));
 
                     if !connectivity_outcome.is_ok() {
                         tracing::warn!(

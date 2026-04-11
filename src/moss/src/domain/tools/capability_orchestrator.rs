@@ -50,7 +50,8 @@ async fn mutate_capability_set(
 
     // Mutate via gateway (detail-only, no chirp sync)
     let changed = state
-        .offerings.update_by_name(&resolved_name, |offering| {
+        .offerings
+        .update_by_name(&resolved_name, |offering| {
             let entry_index = offering
                 .sub_capabilities
                 .iter()

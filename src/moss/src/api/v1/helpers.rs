@@ -3,7 +3,7 @@
 //! These endpoints support capability discovery by providing JSON transformation
 //! without requiring external tools like jq.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

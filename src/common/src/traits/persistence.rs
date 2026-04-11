@@ -38,12 +38,16 @@ where
     /// Load data from storage
     ///
     /// Returns None if file doesn't exist, Error if corrupted
-    fn load(&self) -> impl std::future::Future<Output = Result<Option<T>, PersistenceError>> + Send;
+    fn load(&self)
+    -> impl std::future::Future<Output = Result<Option<T>, PersistenceError>> + Send;
 
     /// Save data to storage atomically
     ///
     /// Uses atomic file write pattern to prevent corruption
-    fn save(&self, data: &T) -> impl std::future::Future<Output = Result<(), PersistenceError>> + Send;
+    fn save(
+        &self,
+        data: &T,
+    ) -> impl std::future::Future<Output = Result<(), PersistenceError>> + Send;
 
     /// Delete storage file
     fn delete(&self) -> impl std::future::Future<Output = Result<(), PersistenceError>> + Send;

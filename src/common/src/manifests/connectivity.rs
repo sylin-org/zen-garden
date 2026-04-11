@@ -58,11 +58,7 @@ impl ConnectivityConfig {
     /// Get maximum enforcement attempts (default: 5, 0 = unlimited)
     pub fn max_attempts(&self) -> u32 {
         let value = self.max_attempts.unwrap_or(5);
-        if value == 0 {
-            u32::MAX
-        } else {
-            value
-        }
+        if value == 0 { u32::MAX } else { value }
     }
 }
 

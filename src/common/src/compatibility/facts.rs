@@ -24,15 +24,14 @@ const AI_RUNTIME_NAMES: &[&str] = &["cuda", "rocm", "directml", "openvino"];
 impl FactSource for crate::types::hardware::HardwareCapabilities {
     fn resolve_set(&self, fact: Fact) -> HashSet<String> {
         match fact {
-            Fact::AiRuntime => {
-                self.hardware
-                    .gpus
-                    .iter()
-                    .flat_map(|g| &g.capabilities)
-                    .filter(|c| AI_RUNTIME_NAMES.contains(&c.to_lowercase().as_str()))
-                    .map(|c| c.to_lowercase())
-                    .collect()
-            }
+            Fact::AiRuntime => self
+                .hardware
+                .gpus
+                .iter()
+                .flat_map(|g| &g.capabilities)
+                .filter(|c| AI_RUNTIME_NAMES.contains(&c.to_lowercase().as_str()))
+                .map(|c| c.to_lowercase())
+                .collect(),
             Fact::CpuFeatures => self
                 .hardware
                 .cpu
@@ -67,20 +66,14 @@ impl FactSource for crate::types::hardware::HardwareCapabilities {
         match fact {
             Fact::RamTotalMb => self.hardware.memory.total_mb as f64,
             Fact::GpuCount => self.hardware.gpus.len() as f64,
-            Fact::GpuVramTotalMb => {
-                self.hardware
-                    .gpus
-                    .iter()
-                    .filter_map(|g| g.vram_mb)
-                    .sum::<u64>() as f64
-            }
+            Fact::GpuVramTotalMb => self
+                .hardware
+                .gpus
+                .iter()
+                .filter_map(|g| g.vram_mb)
+                .sum::<u64>() as f64,
             Fact::GpuVramTotalGb => {
-                let mb: u64 = self
-                    .hardware
-                    .gpus
-                    .iter()
-                    .filter_map(|g| g.vram_mb)
-                    .sum();
+                let mb: u64 = self.hardware.gpus.iter().filter_map(|g| g.vram_mb).sum();
                 mb as f64 / 1024.0
             }
             _ => 0.0,

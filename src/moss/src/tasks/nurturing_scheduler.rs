@@ -14,8 +14,8 @@
 //! Uses the local StorageRegistry to find available seed banks and selects
 //! targets based on routing strategy. Implements failover if primary fails.
 
-use crate::domain::nurturing::{build_memories_manifest, NurturingResult, ReplicationResult};
 use crate::AppState;
+use crate::domain::nurturing::{NurturingResult, ReplicationResult, build_memories_manifest};
 use anyhow::{Context, Result};
 use garden_common::storage::{StorageInfo, StorageRole};
 use garden_common::types::Offering;
@@ -334,11 +334,7 @@ impl NurturingScheduler {
                     .values()
                     .find_map(|v| {
                         let m = v.management()?;
-                        if m.id == sb.id {
-                            Some(m.role)
-                        } else {
-                            None
-                        }
+                        if m.id == sb.id { Some(m.role) } else { None }
                     })
                     .unwrap_or(StorageRole::Primary);
                 if role == StorageRole::Dormant {

@@ -3,7 +3,7 @@
 //! Executes manifest-defined commands to discover, add, and remove capabilities.
 
 use crate::docker::zen_offering_container_name;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use garden_common::manifests::{
     CapabilityManifest, CapabilityTypeConfig, FieldMappings, ListOperationConfig, ModeCommands,
     OutputFormat,
@@ -935,9 +935,10 @@ impl CapabilityExecutor {
         let mut metadata = HashMap::new();
         for (key, path) in &fields.metadata {
             if let Ok(value) = self.extract_path(item, path)
-                && !value.is_null() {
-                    metadata.insert(key.clone(), value);
-                }
+                && !value.is_null()
+            {
+                metadata.insert(key.clone(), value);
+            }
         }
 
         Ok(CapabilityItem {

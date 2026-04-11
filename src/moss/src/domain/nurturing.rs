@@ -6,8 +6,8 @@
 
 // Re-export all shared types so existing `crate::domain::nurturing::X` paths keep working.
 pub use garden_common::nurturing::{
-    NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
-    RemoteNurturingIndex, RemoteSnapshot, ReplicationResult, DEFAULT_RETENTION_SLOTS,
+    DEFAULT_RETENTION_SLOTS, NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot,
+    OfferingSlots, RemoteNurturingIndex, RemoteSnapshot, ReplicationResult,
 };
 
 use crate::domain::harvest::HarvestManifest;

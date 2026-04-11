@@ -17,8 +17,8 @@ pub mod registry;
 pub mod validation;
 
 pub use category::{
-    get_category_registry, init_category_registry, load_categories, CategoryConfig,
-    CategoryRegistry,
+    CategoryConfig, CategoryRegistry, get_category_registry, init_category_registry,
+    load_categories,
 };
 
 // Detection and control types
@@ -39,13 +39,13 @@ pub use hw::{HwEntry, HwFrontmatter, HwManifests, RUNTIME_HW_MANIFESTS_DIR};
 pub use ports::{
     get_ports_catalog, init_ports_catalog, init_ports_catalog_from_str, load_ports_catalog,
 };
-pub use registry::{discover_subdirectories, ManifestRegistry, RUNTIME_MANIFESTS_DIR};
+pub use registry::{ManifestRegistry, RUNTIME_MANIFESTS_DIR, discover_subdirectories};
 
 // Unified Offering Model
 pub use offering::{
-    runtime_manifests_dir, AdoptedConfig, BorrowedConfig, ConfigFileMapping, GpuDeviceRequest,
-    ManageableEnv, ManagedConfig, NetworkRequirements, Offering, OfferingMetadata,
-    OfferingRegistry, ServiceTemplate, StaticIpPreference, TemplateInfo,
+    AdoptedConfig, BorrowedConfig, ConfigFileMapping, GpuDeviceRequest, ManageableEnv,
+    ManagedConfig, NetworkRequirements, Offering, OfferingMetadata, OfferingRegistry,
+    ServiceTemplate, StaticIpPreference, TemplateInfo, runtime_manifests_dir,
 };
 
 pub use connection::ConnectionProfile;

@@ -7,18 +7,16 @@
 //! - Tracks outcomes for every task
 //! - Provides status for the `/tasks` API endpoint
 
+use futures_util::FutureExt;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use futures_util::FutureExt;
-use tokio::sync::{mpsc, watch, RwLock};
+use tokio::sync::{RwLock, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::AppState;
 
-use super::task_trait::{
-    BackgroundTask, DependencyGate, ReadySignal, TaskContext, TaskOutcome,
-};
+use super::task_trait::{BackgroundTask, DependencyGate, ReadySignal, TaskContext, TaskOutcome};
 
 // ── Public types ────────────────────────────────────────────────────────
 
@@ -268,19 +266,19 @@ impl TaskSupervisor {
                     tracing::info!("task starting");
 
                     // Run with panic protection
-                    let outcome =
-                        match std::panic::AssertUnwindSafe(task.run(ctx))
-                            .catch_unwind()
-                            .await {
-                            Ok(outcome) => outcome,
-                            Err(panic_payload) => {
-                                let msg = panic_message(&panic_payload);
-                                tracing::error!(error = %msg, "task PANICKED");
-                                TaskOutcome::Failed {
-                                    error: format!("panic: {msg}"),
-                                }
+                    let outcome = match std::panic::AssertUnwindSafe(task.run(ctx))
+                        .catch_unwind()
+                        .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(panic_payload) => {
+                            let msg = panic_message(&panic_payload);
+                            tracing::error!(error = %msg, "task PANICKED");
+                            TaskOutcome::Failed {
+                                error: format!("panic: {msg}"),
                             }
-                        };
+                        }
+                    };
 
                     // Log outcome
                     match &outcome {

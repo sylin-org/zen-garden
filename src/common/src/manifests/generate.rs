@@ -430,9 +430,11 @@ mod tests {
         assert!(result.snippet_yaml.contains("image: nginx:latest"));
         assert!(result.snippet_yaml.contains("default: [80, 80]"));
         assert!(result.snippet_yaml.contains("port1: [443, 443]"));
-        assert!(result
-            .snippet_yaml
-            .contains("nginx-usr-share-nginx-html:/usr/share/nginx/html"));
+        assert!(
+            result
+                .snippet_yaml
+                .contains("nginx-usr-share-nginx-html:/usr/share/nginx/html")
+        );
         assert!(result.snippet_yaml.contains("NGINX_VERSION=1.27.0"));
         // PATH= should be filtered
         assert!(!result.snippet_yaml.contains("PATH=/usr/local/sbin"));

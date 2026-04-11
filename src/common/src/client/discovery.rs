@@ -9,8 +9,8 @@
 //! - Thread-safe via `Arc<Mutex>`
 //! - Automatic expiration
 
-use std::sync::LazyLock;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

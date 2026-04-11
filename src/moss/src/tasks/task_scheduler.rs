@@ -12,8 +12,8 @@
 //! 4. Results are recorded and next run is scheduled
 //! 5. Tasks are unregistered when offering is removed
 
-use crate::infra::TaskStore;
 use crate::AppState;
+use crate::infra::TaskStore;
 use anyhow::Result;
 use garden_common::{ScheduledTask, TaskResult};
 use std::time::Duration;
@@ -213,9 +213,10 @@ pub async fn task_scheduler_loop(
 
     // Run initial check if catchup is enabled
     if config.catchup_on_start
-        && let Err(e) = run_scheduler_iteration(&state).await {
-            tracing::error!(error = ?e, "Failed to run initial task check");
-        }
+        && let Err(e) = run_scheduler_iteration(&state).await
+    {
+        tracing::error!(error = ?e, "Failed to run initial task check");
+    }
 
     let mut interval = tokio::time::interval(config.check_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

@@ -24,7 +24,10 @@ impl BackgroundTask for AutoAdoptionTask {
         &["docker-events"]
     }
 
-    fn run(self: Box<Self>, mut ctx: TaskContext) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
+    fn run(
+        self: Box<Self>,
+        mut ctx: TaskContext,
+    ) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
         let config = self.config;
 
         Box::pin(async move {

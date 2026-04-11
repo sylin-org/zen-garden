@@ -5,10 +5,10 @@
 //! via the unified pulse channel (domain-only, translated to presence vocabulary).
 
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
-    Json,
 };
 use chrono::Timelike;
 use futures_util::stream::Stream;
@@ -16,13 +16,13 @@ use serde::Deserialize;
 use std::convert::Infallible;
 use tokio_stream::StreamExt;
 
-use crate::domain::traits::CompanionOps;
-use crate::domain::StoneEvent;
-use crate::infra::PulseEvent;
 use crate::AppState;
+use crate::domain::StoneEvent;
+use crate::domain::traits::CompanionOps;
+use crate::infra::PulseEvent;
 use garden_common::presence::{
-    event_types, ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StoneState,
-    StoragePresence,
+    ClientNotification, EventFilter, OfferingState, PresenceSnapshot, StoneState, StoragePresence,
+    event_types,
 };
 
 #[derive(Debug, Deserialize)]

@@ -31,8 +31,8 @@
 //! }
 //! ```
 
-use crate::manifests::{HwManifests, Offering, OfferingRegistry};
 use crate::OfferingMode;
+use crate::manifests::{HwManifests, Offering, OfferingRegistry};
 use anyhow::{Context, Result};
 use std::path::Path;
 

@@ -27,11 +27,11 @@
 //! since each listener is bound to a specific local storage).
 
 use axum::{
+    Router,
     extract::{Path, Query, State},
     http::HeaderMap,
     response::Response,
     routing::get,
-    Router,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -306,10 +306,7 @@ fn build_s3_router(state: AppState, replica_set_name: String) -> Router {
 
     Router::new()
         .route("/", get(s3_list_buckets))
-        .route(
-            "/{bucket}",
-            get(s3_list_objects).put(s3_create_bucket),
-        )
+        .route("/{bucket}", get(s3_list_objects).put(s3_create_bucket))
         .route(
             "/{bucket}/{*key}",
             get(s3_get_object)
@@ -337,10 +334,7 @@ struct S3ListenerState {
 // to the existing s3_gateway functions with the storage pre-selected.
 // This avoids code duplication — the core logic lives in s3_gateway.
 
-async fn s3_list_buckets(
-    State(s3): State<S3ListenerState>,
-    headers: HeaderMap,
-) -> Response {
+async fn s3_list_buckets(State(s3): State<S3ListenerState>, headers: HeaderMap) -> Response {
     use crate::api::v1::s3_gateway;
     let mut headers = headers;
     // replica_set_name is already passed via SeedBankSelector query param below;
@@ -350,7 +344,9 @@ async fn s3_list_buckets(
     }
     s3_gateway::list_buckets(
         axum::extract::State(s3.app_state),
-        Query(s3_gateway::SeedBankSelector { seed_bank: Some(s3.replica_set_name) }),
+        Query(s3_gateway::SeedBankSelector {
+            seed_bank: Some(s3.replica_set_name),
+        }),
         headers,
     )
     .await

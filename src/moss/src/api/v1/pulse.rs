@@ -5,7 +5,7 @@
 
 use axum::{
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::sse::{Event, KeepAlive, Sse},
     response::{Html, IntoResponse},
 };
@@ -13,8 +13,8 @@ use futures_util::stream::Stream;
 use std::convert::Infallible;
 use tokio_stream::StreamExt;
 
-use crate::infra::PulseEvent;
 use crate::AppState;
+use crate::infra::PulseEvent;
 
 const PULSE_HTML: &str = include_str!("../../../assets/pulse.html");
 

@@ -62,7 +62,8 @@ pub struct Current {
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,
 
     /// Hardware topology cache — Tier 2 (background probe, delta-cached, ARCH-0014).
-    pub hardware_topology: Arc<RwLock<Option<garden_common::types::hardware_topology::HardwareTopology>>>,
+    pub hardware_topology:
+        Arc<RwLock<Option<garden_common::types::hardware_topology::HardwareTopology>>>,
 
     /// This stone's network address (updated on IP change).
     pub address: Arc<RwLock<PeerAddress>>,

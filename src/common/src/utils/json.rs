@@ -3,7 +3,7 @@
 //! Helpers for JSON serialization/deserialization with consistent error handling.
 
 use anyhow::{Context, Result};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 /// Parse JSON string with context
 pub fn parse<T: DeserializeOwned>(json: &str) -> Result<T> {

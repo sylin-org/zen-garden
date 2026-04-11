@@ -90,14 +90,13 @@ async fn enumerate_pci_ids_linux() -> anyhow::Result<Vec<String>> {
 #[cfg(target_os = "windows")]
 async fn enumerate_pci_ids_windows() -> anyhow::Result<Vec<String>> {
     // Registry reads are blocking — offload to a blocking thread.
-    tokio::task::spawn_blocking(|| enumerate_pci_ids_windows_blocking())
-        .await?
+    tokio::task::spawn_blocking(|| enumerate_pci_ids_windows_blocking()).await?
 }
 
 #[cfg(target_os = "windows")]
 fn enumerate_pci_ids_windows_blocking() -> anyhow::Result<Vec<String>> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let pci_key = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Enum\PCI")?;

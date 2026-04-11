@@ -6,10 +6,10 @@
 //! does not block the others.
 
 pub mod fingerprint;
-pub mod smbios;
-pub mod pcie;
 pub mod firmware;
 pub mod network;
+pub mod pcie;
+pub mod smbios;
 pub mod usb;
 
 use anyhow::Result;
@@ -43,7 +43,9 @@ pub async fn probe_full_topology(fingerprint: String) -> Result<HardwareTopology
                 "probe_full_topology: [1/5] SMBIOS complete"
             );
         }
-        Err(e) => tracing::warn!(error = %e, "probe_full_topology: [1/5] SMBIOS FAILED — continuing"),
+        Err(e) => {
+            tracing::warn!(error = %e, "probe_full_topology: [1/5] SMBIOS FAILED — continuing")
+        }
     }
 
     // PCIe devices — link speed, width, generation
@@ -72,7 +74,9 @@ pub async fn probe_full_topology(fingerprint: String) -> Result<HardwareTopology
                 "probe_full_topology: [3/5] Firmware complete"
             );
         }
-        Err(e) => tracing::warn!(error = %e, "probe_full_topology: [3/5] Firmware FAILED — continuing"),
+        Err(e) => {
+            tracing::warn!(error = %e, "probe_full_topology: [3/5] Firmware FAILED — continuing")
+        }
     }
 
     // Network interfaces
@@ -85,7 +89,9 @@ pub async fn probe_full_topology(fingerprint: String) -> Result<HardwareTopology
                 "probe_full_topology: [4/5] Network complete"
             );
         }
-        Err(e) => tracing::warn!(error = %e, "probe_full_topology: [4/5] Network FAILED — continuing"),
+        Err(e) => {
+            tracing::warn!(error = %e, "probe_full_topology: [4/5] Network FAILED — continuing")
+        }
     }
 
     // USB summary

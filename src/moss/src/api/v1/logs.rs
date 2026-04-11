@@ -8,11 +8,11 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
 };
 use std::convert::Infallible;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
-use crate::internal;
 use crate::AppState;
+use crate::internal;
 
 /// Query parameters for GET /api/v1/stone/logs
 #[derive(Debug, serde::Deserialize)]

@@ -16,14 +16,14 @@
 //!
 //! When pond is not active, HTTP :7185 → `configure()` (all routes, backwards compatible).
 
-use crate::{api, AppState};
+use crate::{AppState, api};
 use axum::{
+    Router,
     extract::State,
     http::header::HeaderValue,
     middleware::{self, Next},
     response::Response,
     routing::{any, delete, get, head, patch, post, put},
-    Router,
 };
 use garden_common::constants::headers::{HEADER_STONE_ID, HEADER_STONE_NAME};
 use tower_http::trace::TraceLayer;
@@ -98,7 +98,10 @@ pub fn configure_public(state: AppState) -> Router {
             "/api/v1/stone/capabilities/refresh",
             post(api::v1::capabilities::refresh_capabilities),
         )
-        .route("/api/v1/stone/resources", get(api::v1::resources::get_resources))
+        .route(
+            "/api/v1/stone/resources",
+            get(api::v1::resources::get_resources),
+        )
         .route("/api/v1/stone/tasks", get(get_task_status))
         // ══════════════════════════════════════════════════════════════════
         // Read-only stone endpoints
@@ -335,7 +338,10 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/capabilities/refresh",
             post(api::v1::capabilities::refresh_capabilities),
         )
-        .route("/api/v1/stone/resources", get(api::v1::resources::get_resources))
+        .route(
+            "/api/v1/stone/resources",
+            get(api::v1::resources::get_resources),
+        )
         .route("/api/v1/stone/tasks", get(get_task_status))
         .route(
             "/api/v1/stone/upgrade",
@@ -863,8 +869,7 @@ pub fn configure(state: AppState) -> Router {
         .route("/api/v1/storage/s3", get(api::v1::s3_gateway::list_buckets))
         .route(
             "/api/v1/storage/s3/{bucket}",
-            get(api::v1::s3_gateway::list_objects)
-                .put(api::v1::s3_gateway::create_bucket),
+            get(api::v1::s3_gateway::list_objects).put(api::v1::s3_gateway::create_bucket),
         )
         .route(
             "/api/v1/storage/s3/{bucket}/{*key}",
@@ -983,9 +988,7 @@ pub fn configure(state: AppState) -> Router {
 // ── Task supervisor status (ARCH-0015) ──────────────────────────────────
 
 /// GET /api/v1/stone/tasks — Background task status.
-async fn get_task_status(
-    State(state): State<AppState>,
-) -> axum::response::Response {
+async fn get_task_status(State(state): State<AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 

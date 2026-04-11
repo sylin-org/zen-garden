@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 // Re-export domain value types so existing `use crate::infra::image_inspect::*`
 // callers outside domain continue to compile.
 pub use crate::domain::image_types::{
-    description_from_labels, title_from_labels, ImageHealthcheck, ImageInspection,
+    ImageHealthcheck, ImageInspection, description_from_labels, title_from_labels,
 };
 
 /// Pull an image (if not present) and inspect its OCI config.
@@ -55,10 +55,7 @@ pub async fn inspect_image(docker: &Client, image_ref: &str) -> Result<ImageInsp
         .unwrap_or_default();
 
     // Extract volume mount points
-    let volumes = config
-        .volumes
-        .clone()
-        .unwrap_or_default();
+    let volumes = config.volumes.clone().unwrap_or_default();
 
     // Extract environment variables
     let environment = config.env.clone().unwrap_or_default();

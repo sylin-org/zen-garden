@@ -18,7 +18,6 @@ pub mod infra;
 pub mod jobs;
 pub mod manifests;
 pub mod mdns;
-pub mod resources;
 pub mod notifications;
 pub mod nourishment;
 pub mod nurturing;
@@ -26,6 +25,7 @@ pub mod offerings;
 pub mod persistence;
 pub mod platform_runtime;
 pub mod presence;
+pub mod resources;
 pub mod responses;
 pub mod stone;
 pub mod storage;
@@ -101,7 +101,6 @@ pub use types::{
     MemoryCapabilities,
     MemoryResources,
     NetworkResources,
-    ResourcesSnapshot,
     // Offering
     Offering,
     OfferingGuidance,
@@ -126,6 +125,7 @@ pub use types::{
     ResolveRequest,
     ResolveResponse,
     ResolveServiceInfo,
+    ResourcesSnapshot,
     RuntimeInfo,
     ScheduledTask,
     ServiceHealthStatus,

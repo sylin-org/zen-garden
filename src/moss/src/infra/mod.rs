@@ -52,8 +52,8 @@ pub mod shell_integration;
 pub mod stone_client;
 pub mod storage;
 pub mod task_store;
-pub mod topology;
 pub mod tools;
+pub mod topology;
 #[cfg(target_os = "windows")]
 pub mod update_transaction;
 
@@ -65,14 +65,14 @@ pub use config::{AdoptionConfig, MossConfig, NetworkConfig, StaticIpPoolConfig};
 pub use container::ContainerRuntime;
 pub use docker_config_adapter::OsDockerConfig;
 pub use embedded::{
+    AssetSource, EmbeddedCompanions, EmbeddedManifests, EmbeddedSeeds, ManifestSource,
     extract_seeds, list_all_manifests, load_embedded_adopted_offerings,
-    load_sw_manifests_with_overlay, manifest_exists, read_manifest_overlay, AssetSource,
-    EmbeddedCompanions, EmbeddedManifests, EmbeddedSeeds, ManifestSource,
+    load_sw_manifests_with_overlay, manifest_exists, read_manifest_overlay,
 };
-pub use event_bus::{spawn_listener, EventBus, EventListener};
+pub use event_bus::{EventBus, EventListener, spawn_listener};
 pub use filesystem::FileSystem;
 pub use garden_common::infra::archive::{
-    calculate_checksum, create_archive, extract_archive, verify_checksum, ArchiveInfo, Archiver,
+    ArchiveInfo, Archiver, calculate_checksum, create_archive, extract_archive, verify_checksum,
 };
 pub use garden_common::infra::network::get_local_ip;
 pub use garden_common::infra::platform::{is_running_from_removable_media, shutdown_signal};
@@ -86,22 +86,22 @@ pub use hardware_id::{load_cached_stone_name, save_stone_name_cache};
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
 pub use harvest_store::HarvestStore;
 pub use listeners::{
-    spawn_transport_tap, ChirpListener, DomainPulse, PulseDomainBridge, PulseEvent, TimerListener,
-    TransportPulse,
+    ChirpListener, DomainPulse, PulseDomainBridge, PulseEvent, TimerListener, TransportPulse,
+    spawn_transport_tap,
 };
-pub use manifests::{runtime_manifests_dir, RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR};
 pub use manifests::{
     AdoptedConfig, BorrowedConfig, HwEntry, HwManifests, ManagedConfig, ManifestRegistry, Offering,
     OfferingMetadata, OfferingRegistry,
 };
+pub use manifests::{RUNTIME_HW_MANIFESTS_DIR, RUNTIME_MANIFESTS_DIR, runtime_manifests_dir};
 pub use network::{
-    apply_static_from_pool, detect_platform, load_network_state, probe_ip_conflict, revert_to_dhcp,
-    save_network_state, select_ip_from_pool, NetworkPlatform, ProbeConfig, StaticIpApply,
+    NetworkPlatform, ProbeConfig, StaticIpApply, apply_static_from_pool, detect_platform,
+    load_network_state, probe_ip_conflict, revert_to_dhcp, save_network_state, select_ip_from_pool,
 };
 pub use nurturing_store::NurturingStore;
 pub use persistence::{
-    load_offerings, load_offerings_cache, load_or_generate_stone_id, save_offerings,
-    save_offerings_cache, OsOfferingsCache,
+    OsOfferingsCache, load_offerings, load_offerings_cache, load_or_generate_stone_id,
+    save_offerings, save_offerings_cache,
 };
 pub use process::{
     check_moss_processes_exist, kill_existing_moss_processes, kill_existing_moss_processes_graceful,

@@ -29,12 +29,12 @@ pub use volume::{DiskResources, Management, PinState, Volume, VolumeState};
 
 // Collection types and operations
 pub use collection::{
-    find_by_id, find_by_name, initial_scan, list_candidates, list_managed, name_id_pairs,
-    new_volumes, observe_all, pins_snapshot, reconcile, roles_snapshot, Volumes,
+    Volumes, find_by_id, find_by_name, initial_scan, list_candidates, list_managed, name_id_pairs,
+    new_volumes, observe_all, pins_snapshot, reconcile, roles_snapshot,
 };
 
 // Medium types
-pub use medium::{new_media, reconcile_media, Media, Medium};
+pub use medium::{Media, Medium, new_media, reconcile_media};
 
 // Bank
 pub use bank::StorageBank;
@@ -44,8 +44,8 @@ pub use analysis::{analyze_device, is_allowed_mount, validate_manifest};
 
 // Health
 pub use health::{
-    assess_storage_health, is_mount_readonly, validate_seed_bank_layout, SeedBankHealth,
-    StorageHealth,
+    SeedBankHealth, StorageHealth, assess_storage_health, is_mount_readonly,
+    validate_seed_bank_layout,
 };
 
 // Automount

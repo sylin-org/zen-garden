@@ -5,11 +5,11 @@
 //! Path validation prevents access into `.zen-garden/`.
 
 use axum::{
+    Json,
     body::Bytes,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::Response,
-    Json,
 };
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use garden_common::constants::storage::share;
@@ -17,12 +17,12 @@ use garden_common::storage::StorageRole;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::AppState;
 use crate::domain::storage_service::StorageRoute;
 use crate::infra::storage::handle::{FileEntry, RouterError, StorageHandle, StorageResolver};
-use crate::AppState;
 
 use super::{
-    err, error_response_raw, has_path_traversal, is_proxied, DirectoryEntry, DirectoryListResponse,
+    DirectoryEntry, DirectoryListResponse, err, error_response_raw, has_path_traversal, is_proxied,
 };
 
 // ============================================================================
@@ -189,13 +189,14 @@ async fn check_proxy_loop_guard(
 ) -> Result<(), Response> {
     if is_proxied(headers)
         && let Some(local) = StorageRoute::find_local(name, &state.current.storage.volumes).await
-            && local.role != StorageRole::Primary {
-                return Err(error_response_raw(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "PROXY_LOOP",
-                    "Proxied request reached a non-primary stone",
-                ));
-            }
+        && local.role != StorageRole::Primary
+    {
+        return Err(error_response_raw(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "PROXY_LOOP",
+            "Proxied request reached a non-primary stone",
+        ));
+    }
     Ok(())
 }
 
@@ -277,7 +278,7 @@ async fn get_file_v1_inner(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NO_STORAGE",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -292,12 +293,13 @@ async fn get_file_v1_inner(
 
     // Check if path points to a directory
     if let Ok(meta) = handle.metadata(path).await
-        && meta.is_dir {
-            return match list_recursive(&handle, path, depth).await {
-                Ok(entries) => dir_list_response(path, entries),
-                Err(e) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string()),
-            };
-        }
+        && meta.is_dir
+    {
+        return match list_recursive(&handle, path, depth).await {
+            Ok(entries) => dir_list_response(path, entries),
+            Err(e) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", &e.to_string()),
+        };
+    }
 
     // File read — streaming response (A11j)
     let size = match handle.file_size(path).await {
@@ -367,13 +369,14 @@ pub async fn put_file_v1(
 
     if is_proxied(&headers)
         && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
-            && local.role != StorageRole::Primary {
-                return Err(err(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "PROXY_LOOP",
-                    "Proxied request reached a non-primary stone",
-                ));
-            }
+        && local.role != StorageRole::Primary
+    {
+        return Err(err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "PROXY_LOOP",
+            "Proxied request reached a non-primary stone",
+        ));
+    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -429,13 +432,14 @@ pub async fn delete_file_v1(
 
     if is_proxied(&headers)
         && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
-            && local.role != StorageRole::Primary {
-                return Err(err(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "PROXY_LOOP",
-                    "Proxied request reached a non-primary stone",
-                ));
-            }
+        && local.role != StorageRole::Primary
+    {
+        return Err(err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "PROXY_LOOP",
+            "Proxied request reached a non-primary stone",
+        ));
+    }
 
     let resolver = StorageResolver {
         volumes: &state.current.storage.volumes,
@@ -509,7 +513,7 @@ pub async fn head_file_v1(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NO_STORAGE",
                 &e.to_string(),
-            )
+            );
         }
     };
 

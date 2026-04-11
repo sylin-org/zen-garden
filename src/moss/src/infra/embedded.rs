@@ -143,10 +143,11 @@ pub fn read_manifest_overlay(manifests_dir: &Path, relative_path: &str) -> Optio
 
     // 1. Check filesystem first
     if fs_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&fs_path) {
-            debug!(path = %relative_path, source = "filesystem", "Loaded manifest");
-            return Some(content);
-        }
+        && let Ok(content) = std::fs::read_to_string(&fs_path)
+    {
+        debug!(path = %relative_path, source = "filesystem", "Loaded manifest");
+        return Some(content);
+    }
 
     // 2. Fall back to embedded
     if let Some(content) = EmbeddedManifests::get_string(relative_path) {
@@ -190,16 +191,17 @@ pub fn list_all_manifests(manifests_dir: &Path) -> Vec<ManifestSource> {
             .filter_map(|e| e.ok())
         {
             if entry.file_type().is_file()
-                && let Ok(relative) = entry.path().strip_prefix(manifests_dir) {
-                    let relative_str = relative.to_string_lossy().replace('\\', "/");
-                    manifests.insert(
-                        relative_str.clone(),
-                        ManifestSource {
-                            path: relative_str,
-                            source: AssetSource::Filesystem,
-                        },
-                    );
-                }
+                && let Ok(relative) = entry.path().strip_prefix(manifests_dir)
+            {
+                let relative_str = relative.to_string_lossy().replace('\\', "/");
+                manifests.insert(
+                    relative_str.clone(),
+                    ManifestSource {
+                        path: relative_str,
+                        source: AssetSource::Filesystem,
+                    },
+                );
+            }
         }
     }
 

@@ -7,7 +7,7 @@
 //! - Initialization progress
 
 use crate::AppState;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use garden_common::{ComponentHealth, DaemonHealthStatus, HealthCheck};
 use std::collections::HashMap;
 

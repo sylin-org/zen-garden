@@ -158,7 +158,8 @@ impl ReconcileResult {
         let primary = self.primary_port;
         let new_port_map = self.port_map.clone();
         state
-            .offerings.update(offering_id, |o| {
+            .offerings
+            .update(offering_id, |o| {
                 if let Some(port) = primary {
                     o.location.port = port;
                 }
@@ -241,10 +242,7 @@ pub async fn reconcile_offering(
             .iter()
             .zip(spec.ports.iter())
             .map(|(name, &(effective_host, container))| {
-                let host = stored_port_map
-                    .get(name)
-                    .copied()
-                    .unwrap_or(effective_host);
+                let host = stored_port_map.get(name).copied().unwrap_or(effective_host);
                 (host, container)
             })
             .collect();
@@ -312,11 +310,7 @@ fn resolve_port_name_keys(state: &AppState, fqn: &OfferingFqn) -> Vec<String> {
     if template.ports.contains_key("default") {
         keys.push("default".to_string());
     }
-    let mut others: Vec<_> = template
-        .ports
-        .keys()
-        .filter(|k| *k != "default")
-        .collect();
+    let mut others: Vec<_> = template.ports.keys().filter(|k| *k != "default").collect();
     others.sort();
     keys.extend(others.into_iter().cloned());
     keys

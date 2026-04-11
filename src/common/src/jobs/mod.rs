@@ -13,5 +13,5 @@ pub mod types;
 
 pub use manager::Jobs;
 pub use persistence::JsonJobPersistence;
-pub use retry::{retry_simple, retry_with_policy, RetryPolicy};
+pub use retry::{RetryPolicy, retry_simple, retry_with_policy};
 pub use types::{Job, JobId, JobInput, JobOutput, JobStatus};

@@ -82,7 +82,9 @@ impl Client {
     /// Returns a stream of `EventMessage` filtered to container-type events
     /// with actions: start, stop, die, kill, destroy, health_status.
     /// The caller drives the stream and handles reconnection on error.
-    pub fn container_events(&self) -> impl Stream<Item = Result<EventMessage, bollard::errors::Error>> {
+    pub fn container_events(
+        &self,
+    ) -> impl Stream<Item = Result<EventMessage, bollard::errors::Error>> {
         let filters = HashMap::from([
             ("type".to_string(), vec!["container".to_string()]),
             (

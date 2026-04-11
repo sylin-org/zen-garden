@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use garden_common::storage::{
-    short_id_from_guid, StorageAccess, StorageAnnouncement, StorageChanged, StorageInfo,
-    StorageManifest, StorageRole, StorageSummary, StorageVisibility, DEFAULT_REPLICA_SET_DISPLAY,
+    DEFAULT_REPLICA_SET_DISPLAY, StorageAccess, StorageAnnouncement, StorageChanged, StorageInfo,
+    StorageManifest, StorageRole, StorageSummary, StorageVisibility, short_id_from_guid,
 };
 use tracing::{debug, info, warn};
 
@@ -207,9 +207,7 @@ impl Volume {
     }
 
     pub fn is_pinned(&self) -> bool {
-        self.management
-            .as_ref()
-            .is_some_and(|m| m.pin.is_some())
+        self.management.as_ref().is_some_and(|m| m.pin.is_some())
     }
 
     pub fn pin_id(&self) -> Option<&str> {
@@ -689,7 +687,10 @@ mod tests {
             ..DeviceHealth::healthy()
         };
         let events = vol.observe(
-            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+            Some(DiskResources {
+                capacity_bytes: 64_000_000_000,
+                used_bytes: 0,
+            }),
             health,
         );
 
@@ -721,11 +722,16 @@ mod tests {
             ..DeviceHealth::healthy()
         };
         let events = vol.observe(
-            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+            Some(DiskResources {
+                capacity_bytes: 64_000_000_000,
+                used_bytes: 0,
+            }),
             health,
         );
 
-        assert!(matches!(vol.state(), VolumeState::Degraded(reason) if reason == "filesystem read-only"));
+        assert!(
+            matches!(vol.state(), VolumeState::Degraded(reason) if reason == "filesystem read-only")
+        );
         // Online → Degraded is still "online" per is_online(), so no Reclassified event
         assert!(events.is_empty());
     }
@@ -735,7 +741,10 @@ mod tests {
         let mut vol = online_volume();
 
         let events = vol.observe(
-            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 2_000_000 }),
+            Some(DiskResources {
+                capacity_bytes: 64_000_000_000,
+                used_bytes: 2_000_000,
+            }),
             DeviceHealth::healthy(),
         );
 
@@ -765,14 +774,23 @@ mod tests {
 
         // Degrade with read-only
         vol.observe(
-            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
-            DeviceHealth { read_only: true, ..DeviceHealth::healthy() },
+            Some(DiskResources {
+                capacity_bytes: 64_000_000_000,
+                used_bytes: 0,
+            }),
+            DeviceHealth {
+                read_only: true,
+                ..DeviceHealth::healthy()
+            },
         );
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));
 
         // Recover — filesystem is now read-write again
         let events = vol.observe(
-            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+            Some(DiskResources {
+                capacity_bytes: 64_000_000_000,
+                used_bytes: 0,
+            }),
             DeviceHealth::healthy(),
         );
         assert_eq!(*vol.state(), VolumeState::Online);

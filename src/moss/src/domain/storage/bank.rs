@@ -84,9 +84,7 @@ impl<S: ManagementStoreOps + 'static> StorageBank<S> {
                 let stale_key = map
                     .iter()
                     .find(|(k, v)| {
-                        *k != &snap.path
-                            && v.manifest_id()
-                                .is_some_and(|id| id == manifest_id)
+                        *k != &snap.path && v.manifest_id().is_some_and(|id| id == manifest_id)
                     })
                     .map(|(k, _)| k.clone());
 

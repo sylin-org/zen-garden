@@ -6,17 +6,17 @@
 //! Writes go directly to `tool.registry` with `EntryOrigin::Gateway` and a
 //! TTL. The registry reaper removes expired entries. No separate registry.
 
-use crate::domain::garden_registry::EntryOrigin;
 use crate::AppState;
+use crate::domain::garden_registry::EntryOrigin;
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use chrono::Utc;
+use garden_common::GatewayRegistration;
 use garden_common::offerings::OfferingFqn;
 use garden_common::tools::{GardenTool, ServiceInfo, Stone, ToolIdentity};
-use garden_common::GatewayRegistration;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 

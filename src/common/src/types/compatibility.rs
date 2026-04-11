@@ -39,7 +39,11 @@ pub struct CompatibilityRule {
     pub warn_only: bool,
     /// If true, evaluation continues to subsequent rules after this warning.
     /// Only meaningful when `warn_only` is true.
-    #[serde(default, rename = "continue", skip_serializing_if = "std::ops::Not::not")]
+    #[serde(
+        default,
+        rename = "continue",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub continue_eval: bool,
 }
 

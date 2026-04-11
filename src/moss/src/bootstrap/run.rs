@@ -6,7 +6,19 @@
 use super::config::DaemonConfig;
 #[cfg(target_os = "linux")]
 use crate::run_first_boot_initialization;
+use crate::tasks::discovery::start_discovery_listener;
 use crate::{
+    AppState,
+    DockerConfig,
+    // Docker monitoring
+    DockerMonitor,
+    DockerMonitorConfig,
+    Job,
+    JobStatus,
+    // Network monitoring
+    Network,
+    NetworkConfig,
+    ServerConfig,
     bind_server,
     bootstrap::tls,
     connect_docker,
@@ -21,19 +33,7 @@ use crate::{
     router,
     run_server,
     version_string,
-    AppState,
-    DockerConfig,
-    // Docker monitoring
-    DockerMonitor,
-    DockerMonitorConfig,
-    Job,
-    JobStatus,
-    // Network monitoring
-    Network,
-    NetworkConfig,
-    ServerConfig,
 };
-use crate::tasks::discovery::start_discovery_listener;
 use garden_common::console;
 use garden_common::offerings::OfferingFqn;
 use std::collections::HashMap;
@@ -78,7 +78,7 @@ pub async fn run(
     // The hardware detection task will overwrite with full info once it completes.
     #[cfg(target_os = "linux")]
     {
-        use garden_common::console::{write_motd, BankSummary, MotdInfo, StorageSetSummary};
+        use garden_common::console::{BankSummary, MotdInfo, StorageSetSummary, write_motd};
         use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
 
         let caps = state.current.capabilities.read().await.clone();
@@ -92,7 +92,11 @@ pub async fn run(
             Some(c) => {
                 let cores = Some(c.hardware.cpu.cores);
                 let ram = Some(c.hardware.memory.total_mb);
-                let first_gpu = c.hardware.gpus.first().map(|g| (g.model.clone(), g.vram_mb));
+                let first_gpu = c
+                    .hardware
+                    .gpus
+                    .first()
+                    .map(|g| (g.model.clone(), g.vram_mb));
                 (cores, ram, first_gpu)
             }
             None => (None, None, None),
@@ -552,7 +556,9 @@ async fn build_state(
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start Koi embedded: {}", e))?;
 
-        tracing::info!("Koi embedded started (mDNS + certmesh + HTTP + DNS + UDP + dashboard + browser active)");
+        tracing::info!(
+            "Koi embedded started (mDNS + certmesh + HTTP + DNS + UDP + dashboard + browser active)"
+        );
         Arc::new(handle)
     };
 
@@ -566,42 +572,36 @@ async fn build_state(
     // We just read the status and seed the application state.
     let pond_state = crate::domain::PondState::new();
     if let Ok(cm) = koi_handle.certmesh()
-        && let Ok(core) = cm.core() {
-            let status = core.certmesh_status().await;
-            if status.ca_initialized && !status.ca_locked {
-                pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
-                pond_state.seed_enrolled(true);
-                tracing::info!("Pond active â€” CA initialized and unlocked");
+        && let Ok(core) = cm.core()
+    {
+        let status = core.certmesh_status().await;
+        if status.ca_initialized && !status.ca_locked {
+            pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
+            pond_state.seed_enrolled(true);
+            tracing::info!("Pond active â€” CA initialized and unlocked");
 
-                // Register _certmesh._tcp mDNS so Rake clients can discover us
-                crate::mdns::register_certmesh_service(
-                    &koi_handle,
-                    garden_common::constants::MOSS_HTTP,
-                )
-                .await;
-            } else if status.ca_initialized {
-                // CA is initialized but still locked â€” no auto-unlock key
-                // existed, or decryption failed.  Report available methods.
-                let slot_table_path = koi_certmesh::CertmeshPaths::default().slot_table_path();
-                if slot_table_path.exists() {
-                    if let Ok(table) = koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
-                        let methods = table.available_methods();
-                        if methods.contains(&"totp") {
-                            tracing::info!(
-                                "Pond CA locked â€” unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
-                            );
-                        } else if methods.contains(&"fido2") {
-                            tracing::info!(
-                                "Pond CA locked â€” unlock with security key via pond UI"
-                            );
-                        } else {
-                            tracing::info!(
-                                "Pond CA locked â€” run 'garden-rake pond unlock' with passphrase"
-                            );
-                        }
+            // Register _certmesh._tcp mDNS so Rake clients can discover us
+            crate::mdns::register_certmesh_service(
+                &koi_handle,
+                garden_common::constants::MOSS_HTTP,
+            )
+            .await;
+        } else if status.ca_initialized {
+            // CA is initialized but still locked â€” no auto-unlock key
+            // existed, or decryption failed.  Report available methods.
+            let slot_table_path = koi_certmesh::CertmeshPaths::default().slot_table_path();
+            if slot_table_path.exists() {
+                if let Ok(table) = koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
+                    let methods = table.available_methods();
+                    if methods.contains(&"totp") {
+                        tracing::info!(
+                            "Pond CA locked â€” unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
+                        );
+                    } else if methods.contains(&"fido2") {
+                        tracing::info!("Pond CA locked â€” unlock with security key via pond UI");
                     } else {
                         tracing::info!(
-                            "Pond CA exists but is locked â€” run 'garden-rake pond unlock'"
+                            "Pond CA locked â€” run 'garden-rake pond unlock' with passphrase"
                         );
                     }
                 } else {
@@ -609,8 +609,11 @@ async fn build_state(
                         "Pond CA exists but is locked â€” run 'garden-rake pond unlock'"
                     );
                 }
+            } else {
+                tracing::info!("Pond CA exists but is locked â€” run 'garden-rake pond unlock'");
             }
         }
+    }
     // Enrolled member fallback: check for enrollment certs on disk
     if !pond_active.load(std::sync::atomic::Ordering::Relaxed) {
         let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
@@ -817,12 +820,14 @@ async fn build_state(
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
-    let harvest_ops = Arc::new(
-        crate::infra::harvest::OsHarvestOps::new(docker.clone(), Arc::clone(&harvest_store)),
-    );
-    let nurturing_store = Arc::new(
-        infra::NurturingStore::new(infra::HarvestStore::default_store(), docker.clone()),
-    );
+    let harvest_ops = Arc::new(crate::infra::harvest::OsHarvestOps::new(
+        docker.clone(),
+        Arc::clone(&harvest_store),
+    ));
+    let nurturing_store = Arc::new(infra::NurturingStore::new(
+        infra::HarvestStore::default_store(),
+        docker.clone(),
+    ));
 
     // Storage and orchestration channels (ARCH-0004)
     let (storage_tick_raw, _) = tokio::sync::broadcast::channel::<
@@ -930,9 +935,9 @@ async fn build_state(
                 },
                 nudge: orchestration_nudge.clone(),
                 rescan: volume_rescan.clone(),
-                s3_listeners: Arc::new(
-                    crate::infra::storage::S3Listeners::new(shutdown_token.clone()),
-                ),
+                s3_listeners: Arc::new(crate::infra::storage::S3Listeners::new(
+                    shutdown_token.clone(),
+                )),
             },
             nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
                 harvest_ops: Arc::clone(&harvest_ops),
@@ -1236,7 +1241,9 @@ fn start_first_boot_task(
                     tracing::info!(attempt, "Retrying first boot initialization");
                     tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs)).await;
 
-                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port).await {
+                    match run_first_boot_initialization(&*runtime, &init_stone_name, init_port)
+                        .await
+                    {
                         Ok(new_name) => {
                             if let Err(e) = console::mark_first_run_complete().await {
                                 tracing::error!(error = ?e, "Failed to mark first-run complete");
@@ -1507,66 +1514,66 @@ pub(crate) async fn activate_pond_security(
     let cert_path = certs_dir.join("cert.pem");
 
     // --- Chirp signing ---
-    if key_path.exists() && cert_path.exists()
+    if key_path.exists()
+        && cert_path.exists()
         && let Ok(key_pem) = std::fs::read_to_string(&key_path)
-            && let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem) {
-                use base64::Engine;
-                match keypair.public_key_pem() {
-                    Ok(public_key_pem) => {
-                        let _ = garden_common::infra::communications::p2p::set_envelope_enricher(
-                            Box::new(move |announcement| {
-                                if let Ok(data_bytes) = serde_json::to_vec(&announcement.data) {
-                                    let sig =
-                                        koi_crypto::signing::sign_bytes(&keypair, &data_bytes);
-                                    announcement.signature = Some(
-                                        base64::engine::general_purpose::STANDARD.encode(&sig),
-                                    );
-                                    announcement.sender_cert = Some(public_key_pem.clone());
-                                }
-                            }),
-                        );
-                        tracing::info!("Chirp signing enabled");
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = ?e, "Failed to extract public key PEM, chirp signing disabled");
-                    }
-                }
+        && let Ok(keypair) = koi_crypto::keys::ca_keypair_from_pem(&key_pem)
+    {
+        use base64::Engine;
+        match keypair.public_key_pem() {
+            Ok(public_key_pem) => {
+                let _ = garden_common::infra::communications::p2p::set_envelope_enricher(Box::new(
+                    move |announcement| {
+                        if let Ok(data_bytes) = serde_json::to_vec(&announcement.data) {
+                            let sig = koi_crypto::signing::sign_bytes(&keypair, &data_bytes);
+                            announcement.signature =
+                                Some(base64::engine::general_purpose::STANDARD.encode(&sig));
+                            announcement.sender_cert = Some(public_key_pem.clone());
+                        }
+                    },
+                ));
+                tracing::info!("Chirp signing enabled");
             }
+            Err(e) => {
+                tracing::warn!(error = ?e, "Failed to extract public key PEM, chirp signing disabled");
+            }
+        }
+    }
 
     // --- Chirp verification ---
     let ca_cert_path = koi_certmesh::CertmeshPaths::default().ca_cert_path();
     if ca_cert_path.exists()
-        && let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path) {
-            let _ = garden_common::infra::communications::p2p::set_envelope_verifier(Box::new(
-                move |announcement| {
-                    use base64::Engine;
+        && let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path)
+    {
+        let _ = garden_common::infra::communications::p2p::set_envelope_verifier(Box::new(
+            move |announcement| {
+                use base64::Engine;
 
-                    let (sig_b64, _sender_cert) = match (
-                        announcement.signature.as_deref(),
-                        announcement.sender_cert.as_deref(),
-                    ) {
-                        (Some(s), Some(c)) => (s, c),
-                        _ => return true, // Accept unsigned during transition
-                    };
+                let (sig_b64, _sender_cert) = match (
+                    announcement.signature.as_deref(),
+                    announcement.sender_cert.as_deref(),
+                ) {
+                    (Some(s), Some(c)) => (s, c),
+                    _ => return true, // Accept unsigned during transition
+                };
 
-                    let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(sig_b64)
-                    {
-                        Ok(b) => b,
-                        Err(_) => return false,
-                    };
+                let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(sig_b64) {
+                    Ok(b) => b,
+                    Err(_) => return false,
+                };
 
-                    let data_bytes = match serde_json::to_vec(&announcement.data) {
-                        Ok(b) => b,
-                        Err(_) => return false,
-                    };
+                let data_bytes = match serde_json::to_vec(&announcement.data) {
+                    Ok(b) => b,
+                    Err(_) => return false,
+                };
 
-                    let sender_cert_pem = announcement.sender_cert.as_deref().unwrap_or_default();
+                let sender_cert_pem = announcement.sender_cert.as_deref().unwrap_or_default();
 
-                    koi_crypto::signing::verify_signature(sender_cert_pem, &data_bytes, &sig_bytes)
-                },
-            ));
-            tracing::info!("Chirp verification enabled");
-        }
+                koi_crypto::signing::verify_signature(sender_cert_pem, &data_bytes, &sig_bytes)
+            },
+        ));
+        tracing::info!("Chirp verification enabled");
+    }
 
     // --- HTTPS listener ---
     if state
@@ -1654,7 +1661,9 @@ fn ensure_modern_unit_file() {
         if path.exists() {
             match std::fs::remove_file(path) {
                 Ok(()) => tracing::info!(path = path_str, "Removed legacy script"),
-                Err(e) => tracing::warn!(path = path_str, error = %e, "Could not remove legacy script"),
+                Err(e) => {
+                    tracing::warn!(path = path_str, error = %e, "Could not remove legacy script")
+                }
             }
         }
     }

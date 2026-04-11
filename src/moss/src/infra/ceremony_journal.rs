@@ -187,10 +187,11 @@ impl CeremonyJournal {
             let path = entry.path();
             if let Ok(json) = tokio::fs::read_to_string(&path).await
                 && let Ok(ceremony) = serde_json::from_str::<Ceremony>(&json)
-                    && ceremony.completed_at.map(|t| t < cutoff).unwrap_or(false) {
-                        tokio::fs::remove_file(&path).await?;
-                        pruned += 1;
-                    }
+                && ceremony.completed_at.map(|t| t < cutoff).unwrap_or(false)
+            {
+                tokio::fs::remove_file(&path).await?;
+                pruned += 1;
+            }
         }
 
         if pruned > 0 {

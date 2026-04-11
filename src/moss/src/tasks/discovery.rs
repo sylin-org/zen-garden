@@ -11,10 +11,10 @@ use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventS
 use garden_common::infra::communications::p2p;
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::topology::{
-    mark_stone_offline_dirty, upsert_from_chirp_dirty, TopologyCache, TopologyDirtyFlag,
-};
 use crate::AppState;
+use crate::domain::topology::{
+    TopologyCache, TopologyDirtyFlag, mark_stone_offline_dirty, upsert_from_chirp_dirty,
+};
 
 /// Lantern registration loop - registers this stone with Lantern every 45 seconds
 ///

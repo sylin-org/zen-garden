@@ -5,8 +5,8 @@
 //! Koi handles service registration, lease management, and browse internally.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use garden_common::constants::MDNS_SERVICE_TYPE;
 use garden_common::infra::koi_client::DiscoveredStone;
@@ -440,10 +440,9 @@ pub fn extract_stone_from_record(record: &koi_embedded::ServiceRecord) -> Option
     let https_port = txt.get("https_port").and_then(|v| v.parse::<u16>().ok());
 
     let mut address = garden_common::PeerAddress::new(ip.parse().ok()?, port);
-    if pond_active
-        && let Some(tp) = https_port {
-            address = address.with_tls(tp);
-        }
+    if pond_active && let Some(tp) = https_port {
+        address = address.with_tls(tp);
+    }
 
     Some(DiscoveredStone {
         stone_id: txt.get("stone_id").cloned(),

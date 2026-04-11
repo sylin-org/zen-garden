@@ -44,9 +44,7 @@ fn execute_via_shell(command: &str) -> std::io::Result<std::process::Output> {
     }
 
     // Everything else: cmd /C
-    Command::new("cmd")
-        .args(["/C", trimmed])
-        .output()
+    Command::new("cmd").args(["/C", trimmed]).output()
 }
 
 /// Extract the PowerShell -Command argument from a command string like:
@@ -84,9 +82,7 @@ fn extract_powershell_command(command: &str) -> Option<String> {
 
 #[cfg(not(windows))]
 fn execute_via_shell(command: &str) -> std::io::Result<std::process::Output> {
-    Command::new("sh")
-        .args(["-c", command])
-        .output()
+    Command::new("sh").args(["-c", command]).output()
 }
 
 /// Detect service by executing a command

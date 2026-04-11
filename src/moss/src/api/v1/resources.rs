@@ -17,8 +17,10 @@
 
 use crate::api::responses::ApiResponse;
 use crate::domain::Current;
-use axum::{extract::State, Json};
-use garden_common::{CpuResources, DiskResources, MemoryResources, ResourcesSnapshot, StoneResources};
+use axum::{Json, extract::State};
+use garden_common::{
+    CpuResources, DiskResources, MemoryResources, ResourcesSnapshot, StoneResources,
+};
 use std::sync::Arc;
 
 /// GET /api/v1/stone/resources — Real-time hardware resource snapshot
@@ -29,7 +31,9 @@ use std::sync::Arc;
 ///
 /// # Fallback Behavior
 /// If collection has not yet run, returns a fallback response with zero values.
-pub async fn get_resources(State(current): State<Arc<Current>>) -> Json<ApiResponse<ResourcesSnapshot>> {
+pub async fn get_resources(
+    State(current): State<Arc<Current>>,
+) -> Json<ApiResponse<ResourcesSnapshot>> {
     let resources = {
         let resources_guard = current.resources.system.read().await;
         resources_guard

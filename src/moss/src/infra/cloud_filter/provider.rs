@@ -26,12 +26,12 @@
 use std::path::PathBuf;
 
 use cloud_filter::error::{CResult, CloudErrorKind};
-use cloud_filter::filter::{info, ticket, Filter, Request};
+use cloud_filter::filter::{Filter, Request, info, ticket};
 use cloud_filter::placeholder_file::PlaceholderFile;
 use cloud_filter::utility::WriteAt;
 use tracing::{debug, info, warn};
 
-use crate::domain::cloud_drive::{classify_rename, DriveAction};
+use crate::domain::cloud_drive::{DriveAction, classify_rename};
 use crate::domain::garden_registry::GardenRegistry;
 use crate::domain::storage::Volumes;
 use crate::domain::storage_service::StorageRoute;

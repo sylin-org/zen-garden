@@ -77,11 +77,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, mpsc, Mutex, OnceCell, RwLock};
+use tokio::sync::{Mutex, OnceCell, RwLock, broadcast, mpsc};
 use tokio::time::Instant;
 
-use crate::utils::ids::generate_guidv7;
 use crate::UdpAnnouncement;
+use crate::utils::ids::generate_guidv7;
 
 // ===== Configuration =====
 

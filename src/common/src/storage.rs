@@ -12,9 +12,9 @@
 //!
 //! FQN convention: empty name = default set ("storage"), named = "storage::{name}".
 
+use crate::OfferingMode;
 use crate::manifests::Offering as OfferingManifest;
 use crate::types::Offering;
-use crate::OfferingMode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

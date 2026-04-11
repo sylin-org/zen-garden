@@ -3,8 +3,8 @@
 //! Backs up the offering's state (container image + volumes) so we can
 //! roll back if the update fails.
 
-use crate::domain::traits::HarvestOps;
 use crate::AppState;
+use crate::domain::traits::HarvestOps;
 use anyhow::{Context, Result};
 use garden_common::manifests::{CeremonyMode, CeremonyPolicy};
 

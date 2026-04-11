@@ -3,7 +3,7 @@
 //! Common utilities for HTTP API handlers including error response creation.
 
 use crate::AppState;
-use axum::{http::StatusCode, Json};
+use axum::{Json, http::StatusCode};
 use garden_common::api_utils::ApiErrorResponse;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;

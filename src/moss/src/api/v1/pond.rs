@@ -12,14 +12,14 @@
 //! - All cert lifecycle managed by certmesh (issue, renew, revoke)
 
 use crate::{
-    bad_gateway, bad_request, conflict, error_response, forbidden, internal, not_found,
-    unavailable, AppState,
+    AppState, bad_gateway, bad_request, conflict, error_response, forbidden, internal, not_found,
+    unavailable,
 };
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::Html,
-    Json,
 };
 use garden_common::api_utils::ApiErrorResponse;
 use serde::{Deserialize, Serialize};
@@ -290,7 +290,12 @@ async fn refresh_pond_active(state: &AppState) {
 /// Delegates to domain function. Kept as a thin wrapper so existing callers
 /// in this module continue to work without a path change.
 async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone: Option<String>) {
-    crate::domain::security::pond_lifecycle::notify_enrollment_changed(state, enrolled, cornerstone).await;
+    crate::domain::security::pond_lifecycle::notify_enrollment_changed(
+        state,
+        enrolled,
+        cornerstone,
+    )
+    .await;
 }
 
 // ============================================================================
@@ -568,7 +573,7 @@ async fn proxy_enrollment(
             return Err(bad_gateway(
                 "MISSING_CERT_DATA",
                 "Cornerstone did not return certificate material".to_string(),
-            ))
+            ));
         }
     };
 
@@ -775,7 +780,7 @@ pub async fn pond_invite_v1(
             return Err(internal(
                 "UNEXPECTED_AUTH_METHOD",
                 "Expected TOTP auth setup but got a different method.",
-            ))
+            ));
         }
     };
 
@@ -1262,7 +1267,9 @@ async fn execute_pond_init_from_ceremony(
                                                             {
                                                                 tracing::error!(error = %e, "Failed to save slot table after adding TOTP slot");
                                                             } else {
-                                                                tracing::info!("TOTP unlock slot registered — pond can be unlocked with authenticator code");
+                                                                tracing::info!(
+                                                                    "TOTP unlock slot registered — pond can be unlocked with authenticator code"
+                                                                );
                                                             }
                                                         }
                                                         Err(e) => {
@@ -1275,7 +1282,9 @@ async fn execute_pond_init_from_ceremony(
                                                 }
                                             }
                                         } else {
-                                            tracing::error!("Token type is TOTP but _unlock_totp_secret is missing from ceremony bag");
+                                            tracing::error!(
+                                                "Token type is TOTP but _unlock_totp_secret is missing from ceremony bag"
+                                            );
                                         }
                                     }
                                     "fido2" => {
@@ -1295,7 +1304,9 @@ async fn execute_pond_init_from_ceremony(
                                                 .unwrap_or("localhost");
 
                                             if credential_id.is_empty() || public_key.is_empty() {
-                                                tracing::error!("FIDO2 credential data incomplete — skipping slot creation");
+                                                tracing::error!(
+                                                    "FIDO2 credential data incomplete — skipping slot creation"
+                                                );
                                             } else {
                                                 use base64::Engine;
                                                 let b64 = base64::engine::general_purpose::STANDARD;
@@ -1315,7 +1326,9 @@ async fn execute_pond_init_from_ceremony(
                                                         {
                                                             tracing::error!(error = %e, "Failed to save slot table after adding FIDO2 slot");
                                                         } else {
-                                                            tracing::info!("FIDO2 unlock slot registered — pond can be unlocked with security key");
+                                                            tracing::info!(
+                                                                "FIDO2 unlock slot registered — pond can be unlocked with security key"
+                                                            );
                                                         }
                                                     }
                                                     Err(e) => {
@@ -1324,7 +1337,9 @@ async fn execute_pond_init_from_ceremony(
                                                 }
                                             }
                                         } else {
-                                            tracing::error!("Token type is FIDO2 but _fido2_registered is missing from ceremony bag");
+                                            tracing::error!(
+                                                "Token type is FIDO2 but _fido2_registered is missing from ceremony bag"
+                                            );
                                         }
                                     }
                                     other => {
@@ -1524,11 +1539,12 @@ pub async fn pond_enroll_client_v1(
 
     // Update the member's role to Client in the roster
     if let Ok(handle) = state.discovery.koi.certmesh()
-        && let Ok(core) = handle.core() {
-            let _ = core
-                .set_member_role(&payload.hostname, koi_certmesh::roster::MemberRole::Client)
-                .await;
-        }
+        && let Ok(core) = handle.core()
+    {
+        let _ = core
+            .set_member_role(&payload.hostname, koi_certmesh::roster::MemberRole::Client)
+            .await;
+    }
 
     // Determine cert expiry from roster
     let cert_expires = {

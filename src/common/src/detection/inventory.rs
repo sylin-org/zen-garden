@@ -60,16 +60,13 @@ impl SystemSnapshot {
 
                 // Prefer platform-specific command line (WMI on Windows)
                 // Fall back to sysinfo (works on Linux)
-                let cmdline = cmdline_map
-                    .get(&pid_u32)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        proc.cmd()
-                            .iter()
-                            .map(|s| s.to_string_lossy())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    });
+                let cmdline = cmdline_map.get(&pid_u32).cloned().unwrap_or_else(|| {
+                    proc.cmd()
+                        .iter()
+                        .map(|s| s.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                });
 
                 ProcessInfo {
                     pid: pid_u32,
@@ -197,7 +194,7 @@ fn build_cmdline_map() -> HashMap<u32, String> {
 
 /// Build a map of PID → listening TCP ports using netstat2.
 fn build_port_map() -> HashMap<u32, Vec<u16>> {
-    use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
+    use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, get_sockets_info};
 
     let mut map: HashMap<u32, Vec<u16>> = HashMap::new();
 
@@ -264,27 +261,107 @@ mod live_tests {
         pipeline.refresh().await;
 
         let services = vec![
-            ("Ollama", ProcessSignature { executable: "ollama".into(), cmdline_contains: Some("serve".into()), ..Default::default() },
-             Some(HealthCheck { path: "/".into(), expected_status: 200, response_contains: Some("Ollama".into()) }),
-             PortConfig { default: 11434, range: None, remember: false }),
-            ("Speech", ProcessSignature { executable: "python".into(), cmdline_contains: Some("speech.py".into()), ..Default::default() },
-             Some(HealthCheck { path: "/health".into(), expected_status: 200, response_contains: Some("status".into()) }),
-             PortConfig { default: 8000, range: Some((8000, 8010)), remember: true }),
-            ("Infinity", ProcessSignature { executable: "python".into(), cmdline_contains: Some("start.py".into()), ..Default::default() },
-             Some(HealthCheck { path: "/health".into(), expected_status: 200, response_contains: Some("unix".into()) }),
-             PortConfig { default: 7997, range: Some((7990, 8000)), remember: true }),
-            ("Whisper", ProcessSignature { executable: "whisper-server".into(), cmdline_contains: None, ..Default::default() },
-             Some(HealthCheck { path: "/health".into(), expected_status: 200, response_contains: Some("status".into()) }),
-             PortConfig { default: 8000, range: Some((8000, 8010)), remember: true }),
-            ("ComfyUI", ProcessSignature { executable: "python".into(), cmdline_contains: Some("main.py".into()), ..Default::default() },
-             Some(HealthCheck { path: "/system_stats".into(), expected_status: 200, response_contains: Some("system".into()) }),
-             PortConfig { default: 8188, range: None, remember: false }),
+            (
+                "Ollama",
+                ProcessSignature {
+                    executable: "ollama".into(),
+                    cmdline_contains: Some("serve".into()),
+                    ..Default::default()
+                },
+                Some(HealthCheck {
+                    path: "/".into(),
+                    expected_status: 200,
+                    response_contains: Some("Ollama".into()),
+                }),
+                PortConfig {
+                    default: 11434,
+                    range: None,
+                    remember: false,
+                },
+            ),
+            (
+                "Speech",
+                ProcessSignature {
+                    executable: "python".into(),
+                    cmdline_contains: Some("speech.py".into()),
+                    ..Default::default()
+                },
+                Some(HealthCheck {
+                    path: "/health".into(),
+                    expected_status: 200,
+                    response_contains: Some("status".into()),
+                }),
+                PortConfig {
+                    default: 8000,
+                    range: Some((8000, 8010)),
+                    remember: true,
+                },
+            ),
+            (
+                "Infinity",
+                ProcessSignature {
+                    executable: "python".into(),
+                    cmdline_contains: Some("start.py".into()),
+                    ..Default::default()
+                },
+                Some(HealthCheck {
+                    path: "/health".into(),
+                    expected_status: 200,
+                    response_contains: Some("unix".into()),
+                }),
+                PortConfig {
+                    default: 7997,
+                    range: Some((7990, 8000)),
+                    remember: true,
+                },
+            ),
+            (
+                "Whisper",
+                ProcessSignature {
+                    executable: "whisper-server".into(),
+                    cmdline_contains: None,
+                    ..Default::default()
+                },
+                Some(HealthCheck {
+                    path: "/health".into(),
+                    expected_status: 200,
+                    response_contains: Some("status".into()),
+                }),
+                PortConfig {
+                    default: 8000,
+                    range: Some((8000, 8010)),
+                    remember: true,
+                },
+            ),
+            (
+                "ComfyUI",
+                ProcessSignature {
+                    executable: "python".into(),
+                    cmdline_contains: Some("main.py".into()),
+                    ..Default::default()
+                },
+                Some(HealthCheck {
+                    path: "/system_stats".into(),
+                    expected_status: 200,
+                    response_contains: Some("system".into()),
+                }),
+                PortConfig {
+                    default: 8188,
+                    range: None,
+                    remember: false,
+                },
+            ),
         ];
 
         for (name, sig, health, ports) in &services {
             let result = pipeline.detect(sig, health.as_ref(), ports, None).await;
-            println!("{name:10}: detected={:<5} port={:<10} pid={:<10} — {}",
-                result.detected, format!("{:?}", result.port), format!("{:?}", result.pid), result.details);
+            println!(
+                "{name:10}: detected={:<5} port={:<10} pid={:<10} — {}",
+                result.detected,
+                format!("{:?}", result.port),
+                format!("{:?}", result.pid),
+                result.details
+            );
         }
     }
 }

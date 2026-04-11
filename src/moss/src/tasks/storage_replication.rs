@@ -28,8 +28,8 @@
 //! ```
 
 use anyhow::Result;
-use garden_common::storage::{ChangelogOp, ChangesResponse, StorageRole};
 use garden_common::PeerAddress;
+use garden_common::storage::{ChangelogOp, ChangesResponse, StorageRole};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -360,10 +360,7 @@ async fn full_sync_dormant_bank(
     mount_path: &std::path::Path,
 ) -> Result<()> {
     // 1. Fetch remote listing (all objects, recursive)
-    let listing_path = format!(
-        "/api/v1/garden/storage/{}/fs?depth=all",
-        name
-    );
+    let listing_path = format!("/api/v1/garden/storage/{}/fs?depth=all", name);
 
     let resp = state
         .security
@@ -390,7 +387,11 @@ async fn full_sync_dormant_bank(
         .get("data")
         .and_then(|d| d.get("entries"))
         .cloned()
-        .unwrap_or_else(|| body.get("entries").cloned().unwrap_or(serde_json::Value::Array(vec![])));
+        .unwrap_or_else(|| {
+            body.get("entries")
+                .cloned()
+                .unwrap_or(serde_json::Value::Array(vec![]))
+        });
 
     let remote_files: std::collections::HashSet<String> = collect_remote_paths(&entries_value, "");
 
@@ -454,7 +455,10 @@ async fn full_sync_dormant_bank(
 }
 
 /// Recursively collect file paths from a garden storage directory listing.
-fn collect_remote_paths(entries: &serde_json::Value, prefix: &str) -> std::collections::HashSet<String> {
+fn collect_remote_paths(
+    entries: &serde_json::Value,
+    prefix: &str,
+) -> std::collections::HashSet<String> {
     let mut paths = std::collections::HashSet::new();
     if let Some(arr) = entries.as_array() {
         for entry in arr {

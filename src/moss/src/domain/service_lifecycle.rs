@@ -22,8 +22,8 @@ use anyhow::{Context, Result};
 use garden_common::OfferingStatus;
 use tracing::{error, info, warn};
 
-use crate::domain::events::OfferingEvent;
 use crate::AppState;
+use crate::domain::events::OfferingEvent;
 
 /// Result of a service lifecycle operation — carries metadata for the handler to format.
 #[derive(Debug)]
@@ -66,7 +66,8 @@ pub async fn stop(state: &AppState, service_name: &str) -> Result<LifecycleOutco
         .context("Failed to stop container")?;
 
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             o.status = OfferingStatus::Stopped;
             true
         })
@@ -94,7 +95,8 @@ pub async fn cordon(state: &AppState, service_name: &str) -> Result<LifecycleOut
     let offering_id = find_managed(state, service_name).await?;
 
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             if o.status == OfferingStatus::Cordoned {
                 return false; // already cordoned
             }
@@ -116,7 +118,8 @@ pub async fn uncordon(state: &AppState, service_name: &str) -> Result<LifecycleO
     let offering_id = find_managed(state, service_name).await?;
 
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             if o.status != OfferingStatus::Cordoned {
                 return false; // not cordoned
             }
@@ -174,10 +177,9 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
 
         // Self-heal: reconcile from manifest, preserving ports + volumes (OFFER-0008)
         info!(service = %service_name, "Container missing for registered offering, reconciling");
-        let result =
-            crate::domain::services_internal::reconcile_offering(state, service_name)
-                .await
-                .context("Container is missing and reconciliation failed")?;
+        let result = crate::domain::services_internal::reconcile_offering(state, service_name)
+            .await
+            .context("Container is missing and reconciliation failed")?;
 
         result.apply_port_updates(state, &offering_id).await;
 
@@ -197,13 +199,13 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
         if needs_compose
             && let Err(e) =
                 crate::domain::services_internal::compose_on_start(state, service_name).await
-            {
-                warn!(
-                    service = %service_name,
-                    error = ?e,
-                    "Compose-on-start failed, falling back to normal start"
-                );
-            }
+        {
+            warn!(
+                service = %service_name,
+                error = ?e,
+                "Compose-on-start failed, falling back to normal start"
+            );
+        }
 
         // Start the container
         state
@@ -215,7 +217,8 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
     }
 
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             o.status = OfferingStatus::Running;
             true
         })
@@ -383,8 +386,16 @@ async fn install_image_direct(
         .clone()
         .unwrap_or_else(|| offering_fqn.offering.clone());
 
-    if crate::domain::offering_lifecycle::has_status(state, service_name, OfferingStatus::Maintenance).await {
-        return Ok(InstallOutcome::Maintenance { service_name: service_name.to_string() });
+    if crate::domain::offering_lifecycle::has_status(
+        state,
+        service_name,
+        OfferingStatus::Maintenance,
+    )
+    .await
+    {
+        return Ok(InstallOutcome::Maintenance {
+            service_name: service_name.to_string(),
+        });
     }
 
     let job_id = uuid::Uuid::now_v7().to_string();
@@ -404,7 +415,11 @@ async fn install_image_direct(
         name: offering_fqn.clone(),
         offering: offering_type.clone(),
         category: String::new(),
-        version: image_ref.rsplit_once(':').map(|(_, tag)| tag).unwrap_or("latest").to_string(),
+        version: image_ref
+            .rsplit_once(':')
+            .map(|(_, tag)| tag)
+            .unwrap_or("latest")
+            .to_string(),
         status: OfferingStatus::Installing,
         health: ServiceHealthStatus::Offline,
         sub_capabilities: Vec::new(),
@@ -433,7 +448,14 @@ async fn install_image_direct(
     let task_job_id = job_id.clone();
     let task_svc_name = service_name.to_string();
     tokio::spawn(async move {
-        crate::install_image_direct_task(&state, &task_job_id, &task_fqn, &task_image, &task_svc_name).await;
+        crate::install_image_direct_task(
+            &state,
+            &task_job_id,
+            &task_fqn,
+            &task_image,
+            &task_svc_name,
+        )
+        .await;
         tracing::debug!(fqn = %task_fqn, "Image-direct install task completed");
     });
 
@@ -444,8 +466,17 @@ async fn install_image_direct(
 }
 
 /// Self-heal: adopt an orphaned zen-offering-* container not in the registry.
-async fn try_adopt_existing(state: &AppState, service_name: &str) -> Result<Option<InstallOutcome>> {
-    if !state.platform.docker.zen_container_exists(service_name).await.unwrap_or(false) {
+async fn try_adopt_existing(
+    state: &AppState,
+    service_name: &str,
+) -> Result<Option<InstallOutcome>> {
+    if !state
+        .platform
+        .docker
+        .zen_container_exists(service_name)
+        .await
+        .unwrap_or(false)
+    {
         return Ok(None);
     }
 
@@ -465,7 +496,9 @@ async fn try_adopt_existing(state: &AppState, service_name: &str) -> Result<Opti
     .await
     {
         state.offerings.upsert(adopted_offering).await;
-        return Ok(Some(InstallOutcome::Adopted { service_name: service_name.to_string() }));
+        return Ok(Some(InstallOutcome::Adopted {
+            service_name: service_name.to_string(),
+        }));
     }
 
     Ok(None)
@@ -494,27 +527,36 @@ async fn install_from_manifest(
     .ok_or_else(|| anyhow::anyhow!("Unknown offering: {}", offering_type))?;
 
     if compiled.compatibility.decision == garden_common::constants::COMPAT_FAIL {
-        let reason = compiled.compatibility.reason.unwrap_or_else(|| "Unknown reason".to_string());
+        let reason = compiled
+            .compatibility
+            .reason
+            .unwrap_or_else(|| "Unknown reason".to_string());
         anyhow::bail!("Offering is incompatible with this stone: {}", reason);
     }
 
     // Compatibility fallback renaming
     if offering_fqn.instance.is_none()
         && let Some(ref fallback_name) = compiled.compatibility.fallback_name
-            && let Ok(adjusted) =
-                garden_common::offerings::OfferingFqn::with_instance(&offering_type, fallback_name)
-            {
-                tracing::info!(
-                    original = %service_name,
-                    adjusted = %adjusted.fqn(),
-                    reason = ?compiled.compatibility.reason,
-                    "Compatibility fallback renamed offering instance"
-                );
-                service_name = adjusted.fqn();
-                *offering_fqn = adjusted;
-            }
+        && let Ok(adjusted) =
+            garden_common::offerings::OfferingFqn::with_instance(&offering_type, fallback_name)
+    {
+        tracing::info!(
+            original = %service_name,
+            adjusted = %adjusted.fqn(),
+            reason = ?compiled.compatibility.reason,
+            "Compatibility fallback renamed offering instance"
+        );
+        service_name = adjusted.fqn();
+        *offering_fqn = adjusted;
+    }
 
-    if crate::domain::offering_lifecycle::has_status(state, &service_name, OfferingStatus::Maintenance).await {
+    if crate::domain::offering_lifecycle::has_status(
+        state,
+        &service_name,
+        OfferingStatus::Maintenance,
+    )
+    .await
+    {
         return Ok(InstallOutcome::Maintenance { service_name });
     }
 
@@ -534,14 +576,22 @@ async fn install_from_manifest(
     let offering_protocol = crate::domain::connection::infer_protocol_from_manifest_metadata(
         &offering_type,
         &compiled.category,
-        state.manifest_registry.get_offering(&offering_type).and_then(|entry| entry.connection.as_ref()),
+        state
+            .manifest_registry
+            .get_offering(&offering_type)
+            .and_then(|entry| entry.connection.as_ref()),
     );
     let installing_offering = Offering {
         offering_id: generate_guidv7(),
         name: offering_fqn.clone(),
         offering: offering_type.clone(),
         category: compiled.category.clone(),
-        version: compiled.image.split(':').next_back().unwrap_or("latest").into(),
+        version: compiled
+            .image
+            .split(':')
+            .next_back()
+            .unwrap_or("latest")
+            .into(),
         status: OfferingStatus::Installing,
         health: ServiceHealthStatus::Offline,
         sub_capabilities: Vec::new(),
@@ -614,7 +664,8 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
 
     // Mark as Maintenance via gateway (syncs self_entry)
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             o.status = OfferingStatus::Maintenance;
             true
         })
@@ -623,17 +674,15 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
     // Build container spec via CompiledOffering (hardware-resolved image,
     // device_requests, etc.) + config patches. Falls back to raw template
     // only if the compiled index is unavailable.
-    let spec = match crate::domain::services_internal::build_spec_from_manifest(
-        state,
-        service_name,
-    )
-    .await
+    let spec = match crate::domain::services_internal::build_spec_from_manifest(state, service_name)
+        .await
     {
         Ok(s) => s,
         Err(e) => {
             // Restore status on spec build failure
             state
-                .offerings.update(&offering_id, |o| {
+                .offerings
+                .update(&offering_id, |o| {
                     o.status = OfferingStatus::Running;
                     true
                 })
@@ -652,7 +701,8 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
         error!(error = ?e, service = %service_name, "Docker upgrade failed");
         // Restore status on Docker failure
         state
-            .offerings.update(&offering_id, |o| {
+            .offerings
+            .update(&offering_id, |o| {
                 o.status = OfferingStatus::Running;
                 true
             })
@@ -671,7 +721,8 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
     // Update status and version via gateway (syncs self_entry + persists)
     let nv = new_version.clone();
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             o.status = OfferingStatus::Running;
             o.version = nv;
             true

@@ -4,13 +4,13 @@
 //! Supports listing, adding, and removing capabilities like models, extensions, etc.
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use garden_common::{
-    api_utils::ApiErrorResponse, offerings::OfferingFqn, CapabilityCollection, Offering,
-    OfferingMode, OfferingStatus, Ports, ServiceInfo, ServiceStatus,
+    CapabilityCollection, Offering, OfferingMode, OfferingStatus, Ports, ServiceInfo,
+    ServiceStatus, api_utils::ApiErrorResponse, offerings::OfferingFqn,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -18,9 +18,9 @@ use std::collections::HashSet;
 use urlencoding::encode;
 
 use crate::api::responses::ApiResponse;
-use crate::domain::{get_offering_port, topology, CapabilityExecutor};
+use crate::domain::{CapabilityExecutor, get_offering_port, topology};
 use crate::infra::manifests::get_capability_manifest;
-use crate::{bad_gateway, bad_request, conflict, internal, not_found, not_implemented, AppState};
+use crate::{AppState, bad_gateway, bad_request, conflict, internal, not_found, not_implemented};
 
 /// Response for capability listing
 #[derive(Debug, Serialize, Deserialize)]
@@ -106,7 +106,8 @@ pub async fn list_offering_capabilities_v1(
 
         // Update in unified registry via gateway (detail-only, no chirp sync)
         state
-            .offerings.update(&offering.offering_id, |o| {
+            .offerings
+            .update(&offering.offering_id, |o| {
                 o.sub_capabilities = sub_caps;
                 false // sub_capabilities are detail-only
             })

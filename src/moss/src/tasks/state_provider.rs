@@ -3,7 +3,7 @@
 use crate::app_state::AppState;
 use crate::domain::fitness;
 use crate::version_string;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 

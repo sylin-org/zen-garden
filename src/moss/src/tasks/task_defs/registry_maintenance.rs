@@ -31,7 +31,13 @@ impl BackgroundTask for RegistryMaintenanceTask {
                     }
                 }
 
-                let reaped = ctx.state.tool.registry.write().await.reap_expired_gateways();
+                let reaped = ctx
+                    .state
+                    .tool
+                    .registry
+                    .write()
+                    .await
+                    .reap_expired_gateways();
                 if !reaped.is_empty() {
                     let count = reaped.len();
                     ctx.state.publish_tool_deltas(reaped, true).await;

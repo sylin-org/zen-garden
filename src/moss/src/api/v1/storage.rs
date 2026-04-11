@@ -30,26 +30,26 @@
 //! See docs/decisions/STORAGE-0010-unified-storage-add-command.md
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::constants::paths;
 use garden_common::storage::{
-    AddStorageRequest, AddStorageResponse, CandidatesResponse, DeviceState, MediumAction,
-    MediumInfo, MediumPartitionInfo, RenameStorageRequest, SetRolesRequest, SetVisibilityRequest,
-    StorageDetectedInfo, StorageInfo, StorageManifest, StorageVisibility,
-    DEFAULT_REPLICA_SET_DISPLAY,
+    AddStorageRequest, AddStorageResponse, CandidatesResponse, DEFAULT_REPLICA_SET_DISPLAY,
+    DeviceState, MediumAction, MediumInfo, MediumPartitionInfo, RenameStorageRequest,
+    SetRolesRequest, SetVisibilityRequest, StorageDetectedInfo, StorageInfo, StorageManifest,
+    StorageVisibility,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 use crate::domain::storage::analyze_device;
-use crate::infra::storage::{layout, ContentStore, OsPlatform};
+use crate::infra::storage::{ContentStore, OsPlatform, layout};
 use crate::infra::{DomainPulse, PulseEvent};
-use crate::{error_response, AppState};
+use crate::{AppState, error_response};
 use garden_common::presence::event_types;
 
 // ============================================================================
@@ -487,10 +487,7 @@ pub async fn rename_bank_v1(
     let mount_paths: Vec<String> = {
         let map = state.current.storage.volumes.read().await;
         map.values()
-            .filter(|v| {
-                v.management()
-                    .is_some_and(|m| m.display_name() == name)
-            })
+            .filter(|v| v.management().is_some_and(|m| m.display_name() == name))
             .map(|v| v.mount_path().to_string_lossy().to_string())
             .collect()
     };
@@ -522,9 +519,7 @@ pub async fn rename_bank_v1(
         let mut rsid = String::new();
         let mut all_events = Vec::new();
         for vol in map.values_mut() {
-            let matches = vol
-                .management()
-                .is_some_and(|m| m.display_name() == name);
+            let matches = vol.management().is_some_and(|m| m.display_name() == name);
             if matches {
                 if let Some(mgmt) = vol.management() {
                     rsid = mgmt.replica_set_id.clone();
@@ -1794,9 +1789,10 @@ pub async fn stream_storage_v1(
             Ok(tick) => {
                 // If a filter is set, only emit ticks for that seed bank
                 if let Some(ref name) = filter_name
-                    && tick.storage != *name {
-                        return None;
-                    }
+                    && tick.storage != *name
+                {
+                    return None;
+                }
                 let json = serde_json::to_string(&tick).unwrap_or_default();
                 Some(Event::default().event("storage.tick").data(json))
             }
@@ -1838,9 +1834,12 @@ pub async fn stream_storage_v1(
 /// on a specific storage.
 ///
 /// Response: `{ "ports": { "storage": 23454, "prod": 23455 } }`
-pub async fn s3_port_catalog(
-    State(state): State<AppState>,
-) -> axum::Json<serde_json::Value> {
-    let catalog = state.orchestration.storage.s3_listeners.port_catalog().await;
+pub async fn s3_port_catalog(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
+    let catalog = state
+        .orchestration
+        .storage
+        .s3_listeners
+        .port_catalog()
+        .await;
     axum::Json(serde_json::json!({ "ports": catalog }))
 }

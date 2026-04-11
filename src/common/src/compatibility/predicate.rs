@@ -244,10 +244,7 @@ impl Predicate {
                 if !next.eq_ignore_ascii_case("IN") {
                     return Err(PredicateError {
                         input: input.to_string(),
-                        message: format!(
-                            "Unknown operator 'NOT {}'. Did you mean 'NOT IN'?",
-                            next
-                        ),
+                        message: format!("Unknown operator 'NOT {}'. Did you mean 'NOT IN'?", next),
                         position: Some(op_pos),
                     });
                 }
@@ -1157,7 +1154,11 @@ mod tests {
             let p = Predicate::parse(input).unwrap();
             let displayed = p.to_string();
             let reparsed = Predicate::parse(&displayed).unwrap();
-            assert_eq!(p, reparsed, "Roundtrip failed: '{}' → '{}'", input, displayed);
+            assert_eq!(
+                p, reparsed,
+                "Roundtrip failed: '{}' → '{}'",
+                input, displayed
+            );
         }
     }
 
@@ -1429,7 +1430,10 @@ mod tests {
         let p = Predicate::parse("host.ram.total.mb > 4096").unwrap();
         assert_eq!(
             p.condition,
-            Condition::Cmp { op: CmpOp::Gt, value: 4096.0 }
+            Condition::Cmp {
+                op: CmpOp::Gt,
+                value: 4096.0
+            }
         );
     }
 
@@ -1438,7 +1442,10 @@ mod tests {
         let p = Predicate::parse("host.gpu.vram.total.mb <= 8192").unwrap();
         assert_eq!(
             p.condition,
-            Condition::Cmp { op: CmpOp::Lte, value: 8192.0 }
+            Condition::Cmp {
+                op: CmpOp::Lte,
+                value: 8192.0
+            }
         );
     }
 
@@ -1760,9 +1767,7 @@ mod tests {
     #[test]
     fn check_all_comfyui_cpu_fallback() {
         // ComfyUI no-gpu-use-cpu rule
-        let predicates = vec![
-            Predicate::parse("host.ai.runtime LACKS cuda").unwrap(),
-        ];
+        let predicates = vec![Predicate::parse("host.ai.runtime LACKS cuda").unwrap()];
         let no_gpu = TestFacts::default();
         assert!(check_all(&predicates, &no_gpu));
 
@@ -1776,9 +1781,7 @@ mod tests {
 
     #[test]
     fn check_all_mongodb_celeron_fallback() {
-        let predicates = vec![
-            Predicate::parse("host.cpu.pattern HAS j4105,j3455,j3160").unwrap(),
-        ];
+        let predicates = vec![Predicate::parse("host.cpu.pattern HAS j4105,j3455,j3160").unwrap()];
         let celeron = TestFacts {
             cpu_patterns: HashSet::from(["j4105".into()]),
             ..Default::default()
@@ -1826,9 +1829,7 @@ mod tests {
 
     #[test]
     fn check_all_pihole_windows_reject() {
-        let predicates = vec![
-            Predicate::parse("host.os.family NOT IN (linux,macos)").unwrap(),
-        ];
+        let predicates = vec![Predicate::parse("host.os.family NOT IN (linux,macos)").unwrap()];
         let windows = TestFacts {
             os_family: Some("windows".into()),
             ..Default::default()
@@ -1844,9 +1845,7 @@ mod tests {
 
     #[test]
     fn check_all_ollama_cpu_gpu_present_reject() {
-        let predicates = vec![
-            Predicate::parse("host.gpu IS present").unwrap(),
-        ];
+        let predicates = vec![Predicate::parse("host.gpu IS present").unwrap()];
         let gpu_stone = TestFacts {
             gpu_present: true,
             ..Default::default()
@@ -1921,7 +1920,12 @@ mod tests {
         ];
         for input in predicates {
             let result = Predicate::parse(input);
-            assert!(result.is_ok(), "Failed to parse '{}': {}", input, result.unwrap_err());
+            assert!(
+                result.is_ok(),
+                "Failed to parse '{}': {}",
+                input,
+                result.unwrap_err()
+            );
         }
     }
 
@@ -1930,21 +1934,41 @@ mod tests {
     #[test]
     fn error_suggests_valid_operators() {
         let err = Predicate::parse("host.ai.runtime CONTAINS cuda").unwrap_err();
-        assert!(err.message.contains("HAS"), "Should suggest HAS: {}", err.message);
-        assert!(err.message.contains("LACKS"), "Should suggest LACKS: {}", err.message);
+        assert!(
+            err.message.contains("HAS"),
+            "Should suggest HAS: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("LACKS"),
+            "Should suggest LACKS: {}",
+            err.message
+        );
     }
 
     #[test]
     fn error_suggests_valid_facts() {
         let err = Predicate::parse("host.ai.gpu_type HAS nvidia").unwrap_err();
-        assert!(err.message.contains("host.ai.runtime"), "Should suggest host.ai.runtime: {}", err.message);
+        assert!(
+            err.message.contains("host.ai.runtime"),
+            "Should suggest host.ai.runtime: {}",
+            err.message
+        );
     }
 
     #[test]
     fn error_type_mismatch_shows_valid_ops() {
         let err = Predicate::parse("host.ram.total.mb HAS 4096").unwrap_err();
-        assert!(err.message.contains(">="), "Should suggest >=: {}", err.message);
-        assert!(err.message.contains("<"), "Should suggest <: {}", err.message);
+        assert!(
+            err.message.contains(">="),
+            "Should suggest >=: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("<"),
+            "Should suggest <: {}",
+            err.message
+        );
     }
 
     #[test]

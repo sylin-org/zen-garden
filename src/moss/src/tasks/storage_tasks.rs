@@ -66,18 +66,19 @@ pub(crate) async fn arm_s3_for_all_primaries(state: &AppState) {
     let volumes = state.current.storage.volumes.read().await;
     for vol in volumes.values() {
         if let Some(mgmt) = vol.management()
-            && mgmt.role == garden_common::storage::StorageRole::Primary {
-                let name = mgmt.display_name().to_string();
-                let storage_id = mgmt.id.clone();
-                let s3 = &state.orchestration.storage.s3_listeners;
-                if let Some(port) = s3.arm(&name, &storage_id, state.clone()).await {
-                    tracing::debug!(
-                        replica_set = %name,
-                        port,
-                        "S3 listener armed for primary storage"
-                    );
-                }
+            && mgmt.role == garden_common::storage::StorageRole::Primary
+        {
+            let name = mgmt.display_name().to_string();
+            let storage_id = mgmt.id.clone();
+            let s3 = &state.orchestration.storage.s3_listeners;
+            if let Some(port) = s3.arm(&name, &storage_id, state.clone()).await {
+                tracing::debug!(
+                    replica_set = %name,
+                    port,
+                    "S3 listener armed for primary storage"
+                );
             }
+        }
     }
 }
 

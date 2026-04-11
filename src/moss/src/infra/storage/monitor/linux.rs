@@ -168,7 +168,8 @@ fn run_udev_watcher(
 
                     // Try to build a snapshot and measure usage before emitting
                     if let Some(snap) = build_snapshot_for_device(&devnode) {
-                        let disk_snapshot = resources_for_device(&snap.mount_path, snap.capacity_bytes);
+                        let disk_snapshot =
+                            resources_for_device(&snap.mount_path, snap.capacity_bytes);
                         let event = PhysicalStorageEvent::Connected {
                             device_path: snap.path.clone(),
                             mount_path: PathBuf::from(&snap.mount_path),

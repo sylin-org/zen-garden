@@ -45,11 +45,11 @@ pub use snapshots::{
 };
 
 use axum::{
+    Json,
     body::Bytes,
     extract::State,
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::Response,
-    Json,
 };
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::storage::StorageRole;
@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::domain::storage_service::{ProxyTarget, StorageRoute};
-use crate::{error_response, AppState};
+use crate::{AppState, error_response};
 
 // ============================================================================
 // Constants
@@ -414,7 +414,11 @@ pub async fn discover_v1(
     // Build S3 connection block for the primary instance
     let s3 = build_s3_connection(&name, &instances, &state).await;
 
-    crate::api::ok(StorageDiscovery { name, instances, s3 })
+    crate::api::ok(StorageDiscovery {
+        name,
+        instances,
+        s3,
+    })
 }
 
 /// Build S3 connection details for a replica set's primary instance.
@@ -440,8 +444,15 @@ async fn build_s3_connection(
         return None;
     }
 
-    let catalog = state.orchestration.storage.s3_listeners.port_catalog().await;
-    let port = catalog.get(replica_set).copied()
+    let catalog = state
+        .orchestration
+        .storage
+        .s3_listeners
+        .port_catalog()
+        .await;
+    let port = catalog
+        .get(replica_set)
+        .copied()
         .or_else(|| catalog.values().next().copied())?;
 
     // Build endpoint from the primary's stone endpoint host + S3 port
@@ -467,7 +478,11 @@ fn extract_host(endpoint: &str) -> Option<String> {
         .or_else(|| endpoint.strip_prefix("http://"))
         .unwrap_or(endpoint);
     let host = stripped.split(':').next()?;
-    if host.is_empty() { None } else { Some(host.to_string()) }
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
 }
 
 /// Generate deterministic S3 credentials for a replica set.

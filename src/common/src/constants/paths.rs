@@ -35,9 +35,7 @@ pub fn data_dir() -> String {
             // Resolve .zen-garden relative to CWD so the path is absolute.
             // Docker bind mounts reject relative paths on Windows.
             let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            base.join(".zen-garden")
-                .to_string_lossy()
-                .into_owned()
+            base.join(".zen-garden").to_string_lossy().into_owned()
         }
         #[cfg(target_os = "linux")]
         {
@@ -255,7 +253,9 @@ pub const STORAGE_OBJECTS_META_DIR: &str = ".zen-garden/meta";
 
 /// Legacy S3 object storage directory (pre-STORAGE-0016).
 /// Retained for reference only — no longer used for new writes.
-#[deprecated(note = "STORAGE-0016: S3 objects now live at mount root, not under .zen-garden/storage/")]
+#[deprecated(
+    note = "STORAGE-0016: S3 objects now live at mount root, not under .zen-garden/storage/"
+)]
 pub const STORAGE_OBJECTS_DIR: &str = ".zen-garden/storage";
 
 /// Last-known-good directory for resilience snapshots

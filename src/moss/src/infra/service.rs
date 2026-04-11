@@ -299,48 +299,49 @@ pub async fn finalize_service_update() -> anyhow::Result<()> {
     // This handles tools that were replaced by embedded functionality (e.g., koi → koi-embedded).
     let staging_tools_dir = staging_bin_dir.join("tools");
     if staging_tools_dir.exists()
-        && let Ok(entries) = std::fs::read_dir(&staging_tools_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let marker_path = entry.path();
-                if marker_path
-                    .extension()
-                    .map(|e| e == "retired")
-                    .unwrap_or(false)
-                {
-                    let tool_name = marker_path
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    log_update(&format!("Retiring external tool: {}", tool_name));
-                    println!("  Retiring tool: {} (replaced by embedded)", tool_name);
+        && let Ok(entries) = std::fs::read_dir(&staging_tools_dir)
+    {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let marker_path = entry.path();
+            if marker_path
+                .extension()
+                .map(|e| e == "retired")
+                .unwrap_or(false)
+            {
+                let tool_name = marker_path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                log_update(&format!("Retiring external tool: {}", tool_name));
+                println!("  Retiring tool: {} (replaced by embedded)", tool_name);
 
-                    // Delete the installed binary
-                    let installed_exe = existing_tools_dir.join(format!("{}.exe", tool_name));
-                    if installed_exe.exists() {
-                        match std::fs::remove_file(&installed_exe) {
-                            Ok(_) => {
-                                log_update(&format!(
-                                    "Removed retired tool binary: {:?}",
-                                    installed_exe
-                                ));
-                                println!("  ✓ {} removed", tool_name);
-                            }
-                            Err(e) => {
-                                log_update(&format!(
-                                    "Failed to remove retired tool {}: {}",
-                                    tool_name, e
-                                ));
-                                eprintln!("  ⚠ {} removal failed: {}", tool_name, e);
-                            }
+                // Delete the installed binary
+                let installed_exe = existing_tools_dir.join(format!("{}.exe", tool_name));
+                if installed_exe.exists() {
+                    match std::fs::remove_file(&installed_exe) {
+                        Ok(_) => {
+                            log_update(&format!(
+                                "Removed retired tool binary: {:?}",
+                                installed_exe
+                            ));
+                            println!("  ✓ {} removed", tool_name);
+                        }
+                        Err(e) => {
+                            log_update(&format!(
+                                "Failed to remove retired tool {}: {}",
+                                tool_name, e
+                            ));
+                            eprintln!("  ⚠ {} removal failed: {}", tool_name, e);
                         }
                     }
-
-                    // Remove the marker itself so it doesn't linger
-                    let _ = std::fs::remove_file(&marker_path);
                 }
+
+                // Remove the marker itself so it doesn't linger
+                let _ = std::fs::remove_file(&marker_path);
             }
         }
+    }
 
     // Copy all staged binaries to install directory
     println!("Installing staged binaries...");

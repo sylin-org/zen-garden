@@ -27,8 +27,8 @@
 use chrono::{Duration, Utc};
 use garden_common::{StoneStatus, TopologyEntry};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 /// Maximum number of offline stones to track
@@ -252,11 +252,12 @@ pub async fn maintain_and_persist(
 
     // Flush to disk if dirty
     if dirty.swap(false, Ordering::Relaxed)
-        && let Err(e) = persist_topology(cache, self_entry).await {
-            tracing::warn!(error = %e, "Failed to persist topology to disk");
-            // Re-dirty so next cycle retries
-            mark_dirty(dirty);
-        }
+        && let Err(e) = persist_topology(cache, self_entry).await
+    {
+        tracing::warn!(error = %e, "Failed to persist topology to disk");
+        // Re-dirty so next cycle retries
+        mark_dirty(dirty);
+    }
 
     (marked, evicted)
 }
@@ -274,18 +275,19 @@ pub async fn prune_stale_stones(cache: &TopologyCache, _stale_threshold_minutes:
 pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
     let mut map = cache.write().await;
     if let Some(entry) = map.get_mut(stone_id)
-        && entry.status != StoneStatus::Offline {
-            entry.status = StoneStatus::Offline;
-            // Set health to dormant so UI (observe) renders consistently.
-            // The last-known health is no longer meaningful once the stone
-            // stops responding — "dormant" is the garden metaphor for sleeping.
-            entry.health = garden_common::constants::VITALITY_DORMANT.to_string();
-            tracing::info!(
-                stone_name = %entry.stone_name,
-                "Stone marked offline (goodbye received)"
-            );
-            return true;
-        }
+        && entry.status != StoneStatus::Offline
+    {
+        entry.status = StoneStatus::Offline;
+        // Set health to dormant so UI (observe) renders consistently.
+        // The last-known health is no longer meaningful once the stone
+        // stops responding — "dormant" is the garden metaphor for sleeping.
+        entry.health = garden_common::constants::VITALITY_DORMANT.to_string();
+        tracing::info!(
+            stone_name = %entry.stone_name,
+            "Stone marked offline (goodbye received)"
+        );
+        return true;
+    }
     false
 }
 

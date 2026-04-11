@@ -223,10 +223,11 @@ mod deployment_tests {
 
         assert!(temp.path().join("bin/garden-moss").exists());
         assert!(temp.path().join("bin/garden-rake").exists());
-        assert!(temp
-            .path()
-            .join("bin/companions/cricket/garden-cricket")
-            .exists());
+        assert!(
+            temp.path()
+                .join("bin/companions/cricket/garden-cricket")
+                .exists()
+        );
         assert!(temp.path().join("package.json").exists());
     }
 

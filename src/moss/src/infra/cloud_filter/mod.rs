@@ -739,12 +739,13 @@ async fn scan_existing_placeholders(sync_root_path: &Path) -> HashSet<String> {
 
     while let Ok(Some(entry)) = dir.next_entry().await {
         if let Ok(ft) = entry.file_type().await
-            && ft.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if !garden_common::constants::storage::share::is_blocked_name(&name) {
-                    names.insert(name);
-                }
+            && ft.is_dir()
+        {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !garden_common::constants::storage::share::is_blocked_name(&name) {
+                names.insert(name);
             }
+        }
     }
 
     names

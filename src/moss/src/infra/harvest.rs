@@ -273,7 +273,14 @@ impl HarvestOps for OsHarvestOps {
         source_stone: &str,
         commit_image: bool,
     ) -> Result<HarvestManifest> {
-        create_harvest(&self.docker, &self.store, offering, source_stone, commit_image).await
+        create_harvest(
+            &self.docker,
+            &self.store,
+            offering,
+            source_stone,
+            commit_image,
+        )
+        .await
     }
 
     async fn restore_harvest(&self, harvest_id: &str) -> Result<()> {

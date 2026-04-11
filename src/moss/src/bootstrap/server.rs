@@ -5,11 +5,11 @@
 
 use crate::infra::companions::CompanionRegistry;
 use axum::Router;
+use garden_common::PlatformRuntime;
 use garden_common::console::{
     BootBannerInfo, ConsoleEvent, ConsolePrinter, EventCategory, EventStatus, ShutdownBannerInfo,
 };
 use garden_common::infra::platform::shutdown_signal;
-use garden_common::PlatformRuntime;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;

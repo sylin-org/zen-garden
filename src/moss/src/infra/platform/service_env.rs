@@ -313,11 +313,7 @@ async fn read_var(_service_name: &str, var_name: &str) -> Option<String> {
     }
 
     let val = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if val.is_empty() {
-        None
-    } else {
-        Some(val)
-    }
+    if val.is_empty() { None } else { Some(val) }
 }
 
 #[cfg(target_os = "macos")]

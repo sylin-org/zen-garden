@@ -8,9 +8,9 @@
 //! Jobs track progress, completion, and failures across multiple offerings.
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use std::collections::HashMap;
 

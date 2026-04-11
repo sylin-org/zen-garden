@@ -13,7 +13,7 @@
 
 use axum::body::Body;
 use axum::extract::{Path, Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -230,14 +230,10 @@ pub async fn list_volume_files(
     match tokio::fs::metadata(&root).await {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => {
-            return not_found_response(&format!(
-                "Volume root is not a directory: {fqn}/{volume}"
-            ));
+            return not_found_response(&format!("Volume root is not a directory: {fqn}/{volume}"));
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return not_found_response(&format!(
-                "Volume not provisioned: {fqn}/{volume}"
-            ));
+            return not_found_response(&format!("Volume not provisioned: {fqn}/{volume}"));
         }
         Err(e) => {
             return internal_response(&format!("Failed to stat volume root: {e}"));
@@ -352,7 +348,10 @@ fn walk_volume_dir<'a>(
 /// Layout: `{volumes_dir}/{fqn_encoded}/{volume}/{path}`
 fn resolve_volume_path(fqn: &str, volume: &str, file_path: &str) -> Result<String, Response> {
     let offering_fqn = garden_common::offerings::OfferingFqn::parse(fqn).map_err(|e| {
-        bad_request_response("INVALID_FQN", &format!("Invalid offering FQN '{}': {}", fqn, e))
+        bad_request_response(
+            "INVALID_FQN",
+            &format!("Invalid offering FQN '{}': {}", fqn, e),
+        )
     })?;
 
     let encoded = offering_fqn.encoded_for_container();
@@ -368,7 +367,13 @@ fn has_path_traversal(path: &str) -> bool {
 
 /// Infer MIME type from file extension.
 fn mime_from_extension(path: &str) -> &'static str {
-    match path.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+    match path
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "pth" | "pt" | "bin" | "safetensors" => "application/octet-stream",
         "json" => "application/json",
         "yaml" | "yml" => "text/yaml",

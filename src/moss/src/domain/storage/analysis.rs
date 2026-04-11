@@ -77,10 +77,11 @@ pub fn analyze_device(
         eligible = false;
         ineligible_reason = Some("Device is not removable".to_string());
     } else if let Some(ref mount) = mount_path
-        && !is_allowed_mount(mount) {
-            eligible = false;
-            ineligible_reason = Some(format!("Mount path {} is not in allowed location", mount));
-        }
+        && !is_allowed_mount(mount)
+    {
+        eligible = false;
+        ineligible_reason = Some(format!("Mount path {} is not in allowed location", mount));
+    }
 
     if !state.is_eligible() && ineligible_reason.is_none() {
         ineligible_reason = Some(format!("Device state is {}", state));

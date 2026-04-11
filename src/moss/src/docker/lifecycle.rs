@@ -1,18 +1,17 @@
 use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, ContainerCreateResponse, HostConfig, PortBinding};
 use bollard::query_parameters::{
-    CreateContainerOptions, InspectContainerOptions, KillContainerOptions,
-    RemoveContainerOptions, RestartContainerOptions, StartContainerOptions,
-    StopContainerOptions,
+    CreateContainerOptions, InspectContainerOptions, KillContainerOptions, RemoveContainerOptions,
+    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use garden_common::console::{self, ConsolePrinter};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::Client;
 use super::naming::zen_offering_container_name;
 use super::port::check_and_remediate_ports;
 use super::spec::ContainerSpec;
-use super::Client;
 
 impl Client {
     /// Stop a service container
@@ -157,8 +156,9 @@ impl Client {
         self.pull_image(&spec.image, console).await?;
 
         // Build and start the container
-        let (config, _binds_port_bindings) =
-            self.build_container_config(name, spec, &resolved_ports).await?;
+        let (config, _binds_port_bindings) = self
+            .build_container_config(name, spec, &resolved_ports)
+            .await?;
 
         // Create container
         let response: ContainerCreateResponse = self
@@ -350,7 +350,13 @@ impl Client {
         let container_name = zen_offering_container_name(name)?;
         tracing::info!(service = %name, "Restarting container");
         self.docker
-            .restart_container(&container_name, Some(RestartContainerOptions { t: Some(10), signal: None }))
+            .restart_container(
+                &container_name,
+                Some(RestartContainerOptions {
+                    t: Some(10),
+                    signal: None,
+                }),
+            )
             .await
             .context("Failed to restart container")?;
         tracing::info!(service = %name, "Container restarted successfully");
@@ -571,8 +577,7 @@ impl Client {
                 }
                 // 404 Not Found — container is gone (expected path)
                 Err(bollard::errors::Error::DockerResponseServerError {
-                    status_code: 404,
-                    ..
+                    status_code: 404, ..
                 }) => return Ok(()),
                 // Transient error (network, socket) — retry rather than
                 // assuming the container is gone (OFFER-0008).

@@ -24,7 +24,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use tokio::sync::broadcast;
 use tracing::{debug, error};
 
@@ -116,9 +116,10 @@ impl From<anyhow::Error> for RouterError {
 fn classify_error(e: anyhow::Error, context: &str) -> RouterError {
     // Walk the error chain for an io::ErrorKind::NotFound
     if let Some(io_err) = e.chain().find_map(|c| c.downcast_ref::<std::io::Error>())
-        && io_err.kind() == std::io::ErrorKind::NotFound {
-            return RouterError::NotFound(context.to_string());
-        }
+        && io_err.kind() == std::io::ErrorKind::NotFound
+    {
+        return RouterError::NotFound(context.to_string());
+    }
     RouterError::Other(e)
 }
 

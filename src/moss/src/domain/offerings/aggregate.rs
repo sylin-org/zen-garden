@@ -23,7 +23,7 @@ use super::guard::{ActiveGuard, CandidatesGuard};
 use super::store::OfferingStore;
 use garden_common::{Offering, OfferingStatus, ServiceHealthStatus};
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 /// Internal state of the aggregate — active pool and adopted-candidates pool.
 ///
@@ -56,10 +56,12 @@ impl Offerings {
     /// Called at bootstrap after `FileOfferingStore::load()` returns the
     /// persisted set. The loader splits by `is_adopted()` — adopted offerings
     /// go to candidates (pending detection), the rest go to active.
-    pub fn new(active: Vec<Offering>, candidates: Vec<Offering>, store: Arc<dyn OfferingStore>) -> Self {
-        let (changes, _) = broadcast::channel(
-            garden_common::constants::channels::OFFERINGS_EVENT,
-        );
+    pub fn new(
+        active: Vec<Offering>,
+        candidates: Vec<Offering>,
+        store: Arc<dyn OfferingStore>,
+    ) -> Self {
+        let (changes, _) = broadcast::channel(garden_common::constants::channels::OFFERINGS_EVENT);
         Self {
             state: RwLock::new(OfferingsState { active, candidates }),
             store,
@@ -109,12 +111,16 @@ impl Offerings {
     /// `state.offerings.read().await.iter()...` compile unchanged.
     /// New code should prefer `snapshot()`, `find_by_id()`, or `with_active()`.
     pub async fn read(&self) -> ActiveGuard<'_> {
-        ActiveGuard { inner: self.state.read().await }
+        ActiveGuard {
+            inner: self.state.read().await,
+        }
     }
 
     /// Read guard for the adopted-candidates pool.
     pub async fn read_candidates(&self) -> CandidatesGuard<'_> {
-        CandidatesGuard { inner: self.state.read().await }
+        CandidatesGuard {
+            inner: self.state.read().await,
+        }
     }
 
     /// Clone of the active offerings pool.
@@ -222,12 +228,8 @@ impl Offerings {
             st.snapshot_all()
         };
 
-        self.finalize(
-            all,
-            ChangeKind::Removed,
-            vec![offering_id.to_string()],
-        )
-        .await;
+        self.finalize(all, ChangeKind::Removed, vec![offering_id.to_string()])
+            .await;
         true
     }
 
@@ -274,12 +276,8 @@ impl Offerings {
             st.snapshot_all()
         };
 
-        self.finalize(
-            all,
-            ChangeKind::Updated,
-            vec![offering_id.to_string()],
-        )
-        .await;
+        self.finalize(all, ChangeKind::Updated, vec![offering_id.to_string()])
+            .await;
         true
     }
 
@@ -303,12 +301,8 @@ impl Offerings {
             st.snapshot_all()
         };
 
-        self.finalize(
-            all,
-            ChangeKind::Updated,
-            vec![offering_id.to_string()],
-        )
-        .await;
+        self.finalize(all, ChangeKind::Updated, vec![offering_id.to_string()])
+            .await;
         true
     }
 
@@ -329,7 +323,8 @@ impl Offerings {
             (st.snapshot_all(), id)
         };
 
-        self.finalize(all, ChangeKind::Updated, vec![offering_id]).await;
+        self.finalize(all, ChangeKind::Updated, vec![offering_id])
+            .await;
         true
     }
 
@@ -348,7 +343,8 @@ impl Offerings {
             (count, st.snapshot_all())
         };
 
-        self.finalize(all, ChangeKind::BatchUpdated, Vec::new()).await;
+        self.finalize(all, ChangeKind::BatchUpdated, Vec::new())
+            .await;
         count
     }
 
@@ -432,12 +428,8 @@ impl Offerings {
             st.snapshot_all()
         };
 
-        self.finalize(
-            all,
-            ChangeKind::Promoted,
-            vec![offering_id.to_string()],
-        )
-        .await;
+        self.finalize(all, ChangeKind::Promoted, vec![offering_id.to_string()])
+            .await;
         true
     }
 
@@ -465,12 +457,8 @@ impl Offerings {
             st.snapshot_all()
         };
 
-        self.finalize(
-            all,
-            ChangeKind::Demoted,
-            vec![offering_id.to_string()],
-        )
-        .await;
+        self.finalize(all, ChangeKind::Demoted, vec![offering_id.to_string()])
+            .await;
         true
     }
 

@@ -559,9 +559,10 @@ impl ContentStore {
 
         // Ensure .zen-garden/ exists
         if let Some(parent) = changelog_path.parent()
-            && !parent.exists() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
+            && !parent.exists()
+        {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
 
         // Serialize + newline
         let line = match serde_json::to_string(entry) {
@@ -697,22 +698,24 @@ impl ContentStore {
         // newer than that cursor, the requested history has been compacted away.
         // Signal full_sync_required so the Dormant reconciles from scratch.
         if let Some(requested) = since
-            && !requested.is_empty() {
-                let all = self.read_changelog().await?;
-                if let Some(oldest) = all.first()
-                    && requested < oldest.c.as_str() {
-                        warn!(
-                            requested_cursor = %requested,
-                            oldest_cursor = %oldest.c,
-                            "Requested cursor predates oldest changelog entry — full sync required"
-                        );
-                        return Ok(ChangesResponse {
-                            cursor: all.last().map(|e| e.c.clone()).unwrap_or_default(),
-                            changes: Vec::new(),
-                            full_sync_required: true,
-                        });
-                    }
+            && !requested.is_empty()
+        {
+            let all = self.read_changelog().await?;
+            if let Some(oldest) = all.first()
+                && requested < oldest.c.as_str()
+            {
+                warn!(
+                    requested_cursor = %requested,
+                    oldest_cursor = %oldest.c,
+                    "Requested cursor predates oldest changelog entry — full sync required"
+                );
+                return Ok(ChangesResponse {
+                    cursor: all.last().map(|e| e.c.clone()).unwrap_or_default(),
+                    changes: Vec::new(),
+                    full_sync_required: true,
+                });
             }
+        }
 
         let cursor = raw
             .last()
@@ -984,9 +987,10 @@ impl ContentStore {
         // Build changelog JSONL in memory, then append in one write
         let changelog_path = self.mount_root.join(CHANGELOG_REL);
         if let Some(parent) = changelog_path.parent()
-            && !parent.exists() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
+            && !parent.exists()
+        {
+            tokio::fs::create_dir_all(parent).await?;
+        }
 
         let mut buf = String::new();
         for entry in &entries {
@@ -1043,9 +1047,10 @@ fn walk_content_files(root: &Path) -> Result<Vec<ChangelogEntry>> {
 
             // Skip the dotfolder and the visible symlink
             if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && (name == ".zen-garden" || name == "Zen Garden") {
-                    continue;
-                }
+                && (name == ".zen-garden" || name == "Zen Garden")
+            {
+                continue;
+            }
 
             let ft = match entry.file_type() {
                 Ok(ft) => ft,

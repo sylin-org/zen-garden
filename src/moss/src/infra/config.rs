@@ -130,9 +130,10 @@ impl AdoptionConfig {
         // Check for USB/removable media deployment
         if let Ok(exe_path) = std::env::current_exe()
             && let Ok(is_removable) = crate::infra::is_running_from_removable_media(&exe_path)
-                && is_removable {
-                    return false; // USB Moss: self-contained, no auto-adoption
-                }
+            && is_removable
+        {
+            return false; // USB Moss: self-contained, no auto-adoption
+        }
 
         // Regular deployment: enable auto-adoption by default
         true
@@ -159,9 +160,10 @@ impl AdoptionConfig {
 
         for pattern in &self.exclude {
             if let Ok(re) = Regex::new(pattern)
-                && re.is_match(offering) {
-                    return true;
-                }
+                && re.is_match(offering)
+            {
+                return true;
+            }
         }
         false
     }
@@ -303,11 +305,7 @@ impl StaticIpPoolConfig {
     pub fn pool_size(&self) -> u32 {
         let start: u32 = self.pool_start.into();
         let end: u32 = self.pool_end.into();
-        if end >= start {
-            end - start + 1
-        } else {
-            0
-        }
+        if end >= start { end - start + 1 } else { 0 }
     }
 
     /// Check if an IP is within the pool range

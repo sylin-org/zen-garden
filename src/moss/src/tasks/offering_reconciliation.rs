@@ -11,8 +11,8 @@
 //! and calls `process_missing_offerings()` each cycle with the set of
 //! offerings whose containers are confirmed missing.
 
-use crate::domain::events::OfferingEvent;
 use crate::AppState;
+use crate::domain::events::OfferingEvent;
 use garden_common::console::{self, EventCategory, EventStatus};
 use garden_common::{OfferingStatus, ServiceHealthStatus};
 use std::collections::{HashMap, HashSet};
@@ -171,7 +171,8 @@ impl ReconciliationCoordinator {
                             "Reconciliation exhausted, marking as degraded"
                         );
                         state
-                            .offerings.update(&offering_id, |o| {
+                            .offerings
+                            .update(&offering_id, |o| {
                                 o.status = OfferingStatus::Degraded;
                                 true
                             })
@@ -188,7 +189,8 @@ impl ReconciliationCoordinator {
             // Mark in-flight and set status to Installing (gate for next cycle)
             self.in_flight.lock().await.insert(name.clone());
             state
-                .offerings.update(&offering_id, |o| {
+                .offerings
+                .update(&offering_id, |o| {
                     o.status = OfferingStatus::Installing;
                     true
                 })
@@ -226,7 +228,9 @@ impl ReconciliationCoordinator {
 
                 // Emit console event for tty1 visibility (OFFER-0008)
                 {
-                    let attempts = backoff.lock().await
+                    let attempts = backoff
+                        .lock()
+                        .await
                         .get(&name)
                         .map(|t| t.attempts + 1)
                         .unwrap_or(1);
@@ -247,9 +251,7 @@ impl ReconciliationCoordinator {
                         result.apply_port_updates(&state, &offering_id).await;
 
                         if target_status == OfferingStatus::Stopped {
-                            if let Err(e) =
-                                state.platform.docker.stop_service(&name, None).await
-                            {
+                            if let Err(e) = state.platform.docker.stop_service(&name, None).await {
                                 tracing::warn!(
                                     offering = %name,
                                     error = ?e,
@@ -260,7 +262,8 @@ impl ReconciliationCoordinator {
 
                         // auto_chirp=true so the garden learns the offering is back
                         state
-                            .offerings.update(&offering_id, |o| {
+                            .offerings
+                            .update(&offering_id, |o| {
                                 o.status = target_status;
                                 o.health = if target_status == OfferingStatus::Running {
                                     ServiceHealthStatus::Healthy
@@ -322,7 +325,8 @@ impl ReconciliationCoordinator {
                             .record_failure();
 
                         state
-                            .offerings.update(&offering_id, |o| {
+                            .offerings
+                            .update(&offering_id, |o| {
                                 o.status = OfferingStatus::Stopped;
                                 o.health = ServiceHealthStatus::Offline;
                                 true
@@ -418,8 +422,7 @@ mod tests {
             let elapsed = tracker.next_eligible - base;
             let actual_secs = elapsed.as_secs();
             assert!(
-                actual_secs >= expected_secs.saturating_sub(1)
-                    && actual_secs <= expected_secs + 1,
+                actual_secs >= expected_secs.saturating_sub(1) && actual_secs <= expected_secs + 1,
                 "attempt {}: expected ~{}s, got {}s",
                 i + 1,
                 expected_secs,

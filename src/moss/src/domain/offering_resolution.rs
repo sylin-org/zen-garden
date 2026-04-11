@@ -9,7 +9,7 @@
 
 use crate::docker::ContainerSpec;
 use crate::domain::image_types::{
-    description_from_labels, title_from_labels, ImageHealthcheck, ImageInspection,
+    ImageHealthcheck, ImageInspection, description_from_labels, title_from_labels,
 };
 use garden_common::offerings::OfferingFqn;
 use serde::Serialize;

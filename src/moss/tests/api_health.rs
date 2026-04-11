@@ -11,12 +11,7 @@ use tower::ServiceExt;
 /// Helper: send a GET request and return (status, body_string).
 async fn get(app: axum::Router, uri: &str) -> (StatusCode, String) {
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
     let status = response.status();
@@ -56,7 +51,14 @@ async fn health_response_contains_expected_fields() {
     // Structural fields that must always be present in the JSON wire format.
     // Note: uptime_seconds, docker_available, disk_space_ok, memory_ok are
     // `#[serde(skip_serializing)]` (legacy) and do NOT appear in the JSON.
-    for field in ["status", "version", "timestamp", "components", "os", "architecture"] {
+    for field in [
+        "status",
+        "version",
+        "timestamp",
+        "components",
+        "os",
+        "architecture",
+    ] {
         assert!(
             json.get(field).is_some(),
             "missing field `{field}` in health response"
@@ -64,7 +66,9 @@ async fn health_response_contains_expected_fields() {
     }
 
     // Components must include docker, disk, memory, initialization.
-    let components = json["components"].as_object().expect("components is object");
+    let components = json["components"]
+        .as_object()
+        .expect("components is object");
     for comp in ["docker", "disk", "memory", "initialization"] {
         assert!(
             components.contains_key(comp),
@@ -109,7 +113,10 @@ async fn list_offerings_empty() {
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     // With empty offerings, expect an array (possibly empty) or an object with an array.
     // The exact shape depends on the handler — verify it is valid JSON.
-    assert!(json.is_array() || json.is_object(), "unexpected offerings shape: {json}");
+    assert!(
+        json.is_array() || json.is_object(),
+        "unexpected offerings shape: {json}"
+    );
 }
 
 // ── 404 ─────────────────────────────────────────────────────────────────────

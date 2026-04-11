@@ -15,16 +15,16 @@
 //! See: docs/decisions/API-0002-admin-hierarchy.md
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use serde_json::json;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::Current;
 use crate::AppState;
+use crate::domain::Current;
 
 // ============================================================================
 // Moss Operations - Daemon lifecycle
@@ -39,7 +39,9 @@ use crate::AppState;
 ///
 /// # Returns
 /// - 200 OK: Shutdown initiated successfully
-pub async fn moss_shutdown(State(shutdown_token): State<CancellationToken>) -> (StatusCode, Json<serde_json::Value>) {
+pub async fn moss_shutdown(
+    State(shutdown_token): State<CancellationToken>,
+) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!("Admin moss shutdown requested");
     shutdown_token.cancel();
 
@@ -69,8 +71,8 @@ pub async fn moss_shutdown(State(shutdown_token): State<CancellationToken>) -> (
 /// - 409 CONFLICT: Service already exists
 /// - 500 INTERNAL_SERVER_ERROR: Installation failed
 #[cfg(target_os = "windows")]
-pub async fn moss_take_root(
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+pub async fn moss_take_root()
+-> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -140,16 +142,17 @@ pub async fn moss_take_root(
     let check_output = Command::new("sc").args(["query", "ZenGardenMoss"]).output();
 
     if let Ok(output) = check_output
-        && output.status.success() {
-            tracing::warn!("Service already exists");
-            return Err((
-                StatusCode::CONFLICT,
-                Json(json!({
-                    "success": false,
-                    "error": "Service already installed. Remove with: sc delete ZenGardenMoss"
-                })),
-            ));
-        }
+        && output.status.success()
+    {
+        tracing::warn!("Service already exists");
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "success": false,
+                "error": "Service already installed. Remove with: sc delete ZenGardenMoss"
+            })),
+        ));
+    }
 
     // Create service with proper sc.exe syntax (requires space after =)
     let bin_path = format!("binPath= {}", exe_path_str);
@@ -240,8 +243,8 @@ pub async fn moss_take_root(
 
 /// POST /api/v1/admin/moss/take-root - Not supported on Linux/Mac
 #[cfg(not(target_os = "windows"))]
-pub async fn moss_take_root(
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+pub async fn moss_take_root()
+-> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     Err((
         StatusCode::BAD_REQUEST,
         Json(json!({
@@ -398,8 +401,7 @@ pub async fn stone_wake(
 
     // Look up stone in topology cache (includes offline stones)
     let stone =
-        crate::domain::topology::get_stone_by_name(&current.topology.cache, &stone_name)
-            .await;
+        crate::domain::topology::get_stone_by_name(&current.topology.cache, &stone_name).await;
 
     match stone {
         None => {

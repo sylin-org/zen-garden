@@ -161,8 +161,5 @@ pub trait BackgroundTask: Send + 'static {
     ///
     /// The boxed future allows each task struct to carry unique state
     /// (channels, config) that gets moved into the async block.
-    fn run(
-        self: Box<Self>,
-        ctx: TaskContext,
-    ) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>>;
+    fn run(self: Box<Self>, ctx: TaskContext) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>>;
 }

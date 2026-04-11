@@ -7,8 +7,8 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::domain::adopt_offering_container;
 use crate::AppState;
+use crate::domain::adopt_offering_container;
 use garden_common::console;
 
 /// Reconcile container state with the registry

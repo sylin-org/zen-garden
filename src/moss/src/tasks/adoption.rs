@@ -3,7 +3,7 @@
 //! Thin wrappers that check configuration and spawn the auto-adoption
 //! background task from `auto_adoption`.
 
-use crate::{auto_adoption_task, infra, AppState};
+use crate::{AppState, auto_adoption_task, infra};
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use tokio_util::sync::CancellationToken;
 

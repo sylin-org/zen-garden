@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
-use bollard::query_parameters::{InspectContainerOptions, ListContainersOptions, StatsOptions};
 use bollard::models::HealthStatusEnum;
+use bollard::query_parameters::{InspectContainerOptions, ListContainersOptions, StatsOptions};
 use futures_util::stream::TryStreamExt;
 use garden_common::constants::OFFERING_CONTAINER_PREFIX;
 use garden_common::{ServiceHealthStatus, ServiceStatus};
 use std::collections::HashMap;
 
+use super::Client;
 use super::naming::{decode_zen_offering_container_name, zen_offering_container_name};
 use super::spec::ContainerSpec;
-use super::Client;
 
 impl Client {
     pub(super) async fn container_exists(&self, name: &str) -> Result<bool> {
@@ -113,16 +113,15 @@ impl Client {
 
         // Check Docker health check status if available
         if let Some(health) = state.health
-            && let Some(status) = health.status {
-                return Ok(match status {
-                    HealthStatusEnum::HEALTHY => ServiceHealthStatus::Healthy,
-                    HealthStatusEnum::UNHEALTHY => ServiceHealthStatus::Degraded,
-                    HealthStatusEnum::STARTING => ServiceHealthStatus::Degraded,
-                    HealthStatusEnum::NONE | HealthStatusEnum::EMPTY => {
-                        ServiceHealthStatus::Healthy
-                    }
-                });
-            }
+            && let Some(status) = health.status
+        {
+            return Ok(match status {
+                HealthStatusEnum::HEALTHY => ServiceHealthStatus::Healthy,
+                HealthStatusEnum::UNHEALTHY => ServiceHealthStatus::Degraded,
+                HealthStatusEnum::STARTING => ServiceHealthStatus::Degraded,
+                HealthStatusEnum::NONE | HealthStatusEnum::EMPTY => ServiceHealthStatus::Healthy,
+            });
+        }
 
         // If no health check configured, assume healthy if running
         Ok(ServiceHealthStatus::Healthy)
@@ -188,7 +187,10 @@ impl Client {
                     .to_string();
 
                 let image = c.image.unwrap_or_default();
-                let state = c.state.map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
+                let state = c
+                    .state
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
 
                 if !name.is_empty() {
                     Some(crate::infra::detection::container_inspect::ContainerInfo {
@@ -227,21 +229,51 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("No stats available for container"))?;
 
         // Calculate CPU percentage
-        let cpu_total = stats.cpu_stats.as_ref().and_then(|c| c.cpu_usage.as_ref()).map(|u| u.total_usage.unwrap_or(0)).unwrap_or(0);
-        let precpu_total = stats.precpu_stats.as_ref().and_then(|c| c.cpu_usage.as_ref()).map(|u| u.total_usage.unwrap_or(0)).unwrap_or(0);
+        let cpu_total = stats
+            .cpu_stats
+            .as_ref()
+            .and_then(|c| c.cpu_usage.as_ref())
+            .map(|u| u.total_usage.unwrap_or(0))
+            .unwrap_or(0);
+        let precpu_total = stats
+            .precpu_stats
+            .as_ref()
+            .and_then(|c| c.cpu_usage.as_ref())
+            .map(|u| u.total_usage.unwrap_or(0))
+            .unwrap_or(0);
         let cpu_delta = cpu_total as f64 - precpu_total as f64;
-        let system_delta = stats.cpu_stats.as_ref().and_then(|c| c.system_cpu_usage).unwrap_or(0) as f64
-            - stats.precpu_stats.as_ref().and_then(|c| c.system_cpu_usage).unwrap_or(0) as f64;
+        let system_delta = stats
+            .cpu_stats
+            .as_ref()
+            .and_then(|c| c.system_cpu_usage)
+            .unwrap_or(0) as f64
+            - stats
+                .precpu_stats
+                .as_ref()
+                .and_then(|c| c.system_cpu_usage)
+                .unwrap_or(0) as f64;
         let cpu_percent = if system_delta > 0.0 && cpu_delta > 0.0 {
-            let num_cpus = stats.cpu_stats.as_ref().and_then(|c| c.online_cpus).unwrap_or(1) as f64;
+            let num_cpus = stats
+                .cpu_stats
+                .as_ref()
+                .and_then(|c| c.online_cpus)
+                .unwrap_or(1) as f64;
             (cpu_delta / system_delta) * num_cpus * 100.0
         } else {
             0.0
         };
 
         // Memory usage
-        let memory_bytes = stats.memory_stats.as_ref().and_then(|m| m.usage).unwrap_or(0);
-        let memory_limit = stats.memory_stats.as_ref().and_then(|m| m.limit).unwrap_or(0);
+        let memory_bytes = stats
+            .memory_stats
+            .as_ref()
+            .and_then(|m| m.usage)
+            .unwrap_or(0);
+        let memory_limit = stats
+            .memory_stats
+            .as_ref()
+            .and_then(|m| m.limit)
+            .unwrap_or(0);
         let memory_percent = if memory_limit > 0 {
             (memory_bytes as f64 / memory_limit as f64 * 100.0) as f32
         } else {
@@ -251,7 +283,10 @@ impl Client {
         // Network I/O
         let (network_rx_bytes, network_tx_bytes) = if let Some(networks) = stats.networks {
             networks.values().fold((0u64, 0u64), |(rx, tx), net| {
-                (rx + net.rx_bytes.unwrap_or(0), tx + net.tx_bytes.unwrap_or(0))
+                (
+                    rx + net.rx_bytes.unwrap_or(0),
+                    tx + net.tx_bytes.unwrap_or(0),
+                )
             })
         } else {
             (0, 0)
@@ -314,14 +349,15 @@ impl Client {
             .context("Failed to inspect container")?;
 
         if let Some(state) = inspect.state
-            && let Some(started_at) = state.started_at {
-                // Parse ISO 8601 timestamp
-                if let Ok(started) = chrono::DateTime::parse_from_rfc3339(&started_at) {
-                    let now = chrono::Utc::now();
-                    let duration = now.signed_duration_since(started);
-                    return Ok(duration.num_seconds().max(0) as u64);
-                }
+            && let Some(started_at) = state.started_at
+        {
+            // Parse ISO 8601 timestamp
+            if let Ok(started) = chrono::DateTime::parse_from_rfc3339(&started_at) {
+                let now = chrono::Utc::now();
+                let duration = now.signed_duration_since(started);
+                return Ok(duration.num_seconds().max(0) as u64);
             }
+        }
 
         Ok(0)
     }
@@ -411,31 +447,32 @@ impl Client {
         // Ports: parse from host_config.port_bindings
         let mut ports = Vec::new();
         if let Some(ref host_config) = info.host_config
-            && let Some(ref bindings) = host_config.port_bindings {
-                for (container_port_key, host_bindings) in bindings {
-                    let container_port: u16 = container_port_key
-                        .split('/')
-                        .next()
-                        .and_then(|p| p.parse().ok())
-                        .unwrap_or(0);
-                    if container_port == 0 {
-                        continue;
-                    }
+            && let Some(ref bindings) = host_config.port_bindings
+        {
+            for (container_port_key, host_bindings) in bindings {
+                let container_port: u16 = container_port_key
+                    .split('/')
+                    .next()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(0);
+                if container_port == 0 {
+                    continue;
+                }
 
-                    if let Some(hb_list) = host_bindings {
-                        for hb in hb_list {
-                            let host_port: u16 = hb
-                                .host_port
-                                .as_deref()
-                                .and_then(|p| p.parse().ok())
-                                .unwrap_or(0);
-                            if host_port > 0 {
-                                ports.push((host_port, container_port));
-                            }
+                if let Some(hb_list) = host_bindings {
+                    for hb in hb_list {
+                        let host_port: u16 = hb
+                            .host_port
+                            .as_deref()
+                            .and_then(|p| p.parse().ok())
+                            .unwrap_or(0);
+                        if host_port > 0 {
+                            ports.push((host_port, container_port));
                         }
                     }
                 }
             }
+        }
 
         // Volumes: from mounts, excluding auto-injected mounts:
         // - Topology mount (TOPO-0002)
@@ -547,30 +584,31 @@ impl Client {
 
         let mut ports = Vec::new();
         if let Some(ref host_config) = info.host_config
-            && let Some(ref bindings) = host_config.port_bindings {
-                for (container_port_key, host_bindings) in bindings {
-                    let container_port: u16 = container_port_key
-                        .split('/')
-                        .next()
-                        .and_then(|p| p.parse().ok())
-                        .unwrap_or(0);
-                    if container_port == 0 {
-                        continue;
-                    }
-                    if let Some(hb_list) = host_bindings {
-                        for hb in hb_list {
-                            let host_port: u16 = hb
-                                .host_port
-                                .as_deref()
-                                .and_then(|p| p.parse().ok())
-                                .unwrap_or(0);
-                            if host_port > 0 {
-                                ports.push((host_port, container_port));
-                            }
+            && let Some(ref bindings) = host_config.port_bindings
+        {
+            for (container_port_key, host_bindings) in bindings {
+                let container_port: u16 = container_port_key
+                    .split('/')
+                    .next()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(0);
+                if container_port == 0 {
+                    continue;
+                }
+                if let Some(hb_list) = host_bindings {
+                    for hb in hb_list {
+                        let host_port: u16 = hb
+                            .host_port
+                            .as_deref()
+                            .and_then(|p| p.parse().ok())
+                            .unwrap_or(0);
+                        if host_port > 0 {
+                            ports.push((host_port, container_port));
                         }
                     }
                 }
             }
+        }
         Ok(ports)
     }
 }

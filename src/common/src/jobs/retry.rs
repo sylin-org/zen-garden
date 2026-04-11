@@ -141,8 +141,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_with_policy_success() {
-        use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
 
         let call_count = Arc::new(AtomicU32::new(0));
         let policy = RetryPolicy::fixed(3, Duration::from_millis(10));
@@ -167,8 +167,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_with_policy_exhausted() {
-        use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
 
         let call_count = Arc::new(AtomicU32::new(0));
         let policy = RetryPolicy::fixed(3, Duration::from_millis(10));

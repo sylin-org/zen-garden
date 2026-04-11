@@ -278,7 +278,7 @@ pub async fn rename_replica_set(
 mod tests {
     use super::*;
     use crate::domain::garden_registry::new_registry;
-    use crate::domain::storage::{new_volumes, Management, Volume, VolumeState};
+    use crate::domain::storage::{Management, Volume, VolumeState, new_volumes};
     use garden_common::storage::{StorageRole, StorageVisibility};
     use std::path::PathBuf;
 
@@ -394,9 +394,11 @@ mod tests {
     async fn test_resolve_local_returns_none_for_missing() {
         let volumes = new_volumes();
 
-        assert!(StorageRoute::find_local("missing", &volumes)
-            .await
-            .is_none());
+        assert!(
+            StorageRoute::find_local("missing", &volumes)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -414,9 +416,11 @@ mod tests {
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "data");
 
-        assert!(StorageRoute::find_local_by_id("id-999", &volumes)
-            .await
-            .is_none());
+        assert!(
+            StorageRoute::find_local_by_id("id-999", &volumes)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]

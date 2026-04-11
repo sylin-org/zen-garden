@@ -1,6 +1,6 @@
 //! Election API endpoints - distributed election protocol testing
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use garden_common::election::{ElectionType, ScoreMechanism};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -16,16 +16,16 @@ use crate::api::v1::events::{
 use crate::domain::events::OfferingEvent;
 use crate::domain::network::NetworkMode;
 use crate::domain::{connection, get_compiled_offering};
+use crate::infra::TaskStore;
 use crate::infra::config::MossConfig;
 use crate::infra::network::{apply_static_from_pool, load_network_state};
-use crate::infra::TaskStore;
 use crate::{AppState, JobStatus};
 use garden_common::console;
-use garden_common::templates::{render_template, Template};
+use garden_common::templates::{Template, render_template};
 use garden_common::utils::ids::generate_guidv7;
 use garden_common::{
-    offerings::OfferingFqn, ManagedData, Offering, OfferingGuidance, OfferingLocation,
-    OfferingModeData, OfferingStatus, ServiceHealthStatus,
+    ManagedData, Offering, OfferingGuidance, OfferingLocation, OfferingModeData, OfferingStatus,
+    ServiceHealthStatus, offerings::OfferingFqn,
 };
 
 /// Substitute template variables in guidance markdown
@@ -369,7 +369,8 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         if let Some(guidance) = build_guidance(state, &name, &offering_type, &ports, static_ip) {
             // Guidance is detail-only (not in chirps), so no sync needed
             state
-                .offerings.update(&offering_id, |o| {
+                .offerings
+                .update(&offering_id, |o| {
                     if let Some(ref mut managed) = o.managed_data_mut() {
                         managed.guidance = Some(guidance);
                         updated += 1;
@@ -386,7 +387,8 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
             build_adopted_guidance(state, &name, &offering_type, port, static_ip)
         {
             state
-                .offerings.update(&offering_id, |o| {
+                .offerings
+                .update(&offering_id, |o| {
                     if let Some(ref mut adopted) = o.adopted_data_mut() {
                         adopted.guidance = Some(guidance);
                         updated += 1;
@@ -824,7 +826,8 @@ pub async fn install_service_task(
     let update_guidance = guidance.clone();
     let update_port_map = port_map.clone();
     let updated = state
-        .offerings.update_by_name(offering, |o| {
+        .offerings
+        .update_by_name(offering, |o| {
             o.status = OfferingStatus::Running;
             o.health = ServiceHealthStatus::Healthy;
             o.version = update_version;
@@ -900,13 +903,13 @@ pub async fn install_service_task(
         && let Err(e) =
             crate::tasks::offering_orchestration::assign_initial_role(state, &offering_id, offering)
                 .await
-        {
-            tracing::warn!(
-                offering = %offering,
-                error = ?e,
-                "Failed to assign initial orchestration role (non-fatal)"
-            );
-        }
+    {
+        tracing::warn!(
+            offering = %offering,
+            error = ?e,
+            "Failed to assign initial orchestration role (non-fatal)"
+        );
+    }
 
     // Register scheduled tasks from manifest
     if !compiled.tasks.is_empty() {
@@ -1034,23 +1037,23 @@ pub async fn install_image_direct_task(
         if let Some(idx) = idx_guard.as_ref()
             && let Some(alt) =
                 offering_resolution::check_curated_collision(image_ref, &idx.offerings)
-            {
-                tracing::info!(
-                    image_ref,
-                    curated = %alt.offering_name,
-                    "Curated manifest available for this image family"
-                );
-                emit_job_progress(
-                    state,
-                    "warning",
-                    format!(
-                        "A curated manifest '{}' exists for this image. Consider using it for health checks and guidance.",
-                        alt.offering_name
-                    ),
-                    job_id,
-                    service_name,
-                );
-            }
+        {
+            tracing::info!(
+                image_ref,
+                curated = %alt.offering_name,
+                "Curated manifest available for this image family"
+            );
+            emit_job_progress(
+                state,
+                "warning",
+                format!(
+                    "A curated manifest '{}' exists for this image. Consider using it for health checks and guidance.",
+                    alt.offering_name
+                ),
+                job_id,
+                service_name,
+            );
+        }
     }
 
     // Step 4: Build ContainerSpec and deploy
@@ -1122,7 +1125,8 @@ pub async fn install_image_direct_task(
 
     // Step 6: Update registry entry
     state
-        .offerings.update_by_name(service_name, |o| {
+        .offerings
+        .update_by_name(service_name, |o| {
             o.status = OfferingStatus::Running;
             o.health = ServiceHealthStatus::Healthy;
             o.location.port = actual_port;

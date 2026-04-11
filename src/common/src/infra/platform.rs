@@ -101,7 +101,7 @@ pub fn is_running_from_removable_media(_exe_path: &std::path::Path) -> anyhow::R
 pub async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let mut sigterm =
             signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");

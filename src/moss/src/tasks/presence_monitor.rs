@@ -5,8 +5,8 @@
 use std::time::Duration;
 use tokio::time::interval;
 
-use crate::domain::StoneEvent;
 use crate::AppState;
+use crate::domain::StoneEvent;
 
 /// GPU activity threshold — above this percentage, gpu_active = true (FIREFLY-0003)
 const GPU_ACTIVE_THRESHOLD: f64 = 10.0;

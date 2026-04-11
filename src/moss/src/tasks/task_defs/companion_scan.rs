@@ -19,7 +19,13 @@ impl BackgroundTask for CompanionScanTask {
             ctx.ready.signal();
 
             let endpoint = format!("http://127.0.0.1:{}", garden_common::constants::MOSS_HTTP);
-            match ctx.state.companion.registry.scan_and_autostart(&endpoint).await {
+            match ctx
+                .state
+                .companion
+                .registry
+                .scan_and_autostart(&endpoint)
+                .await
+            {
                 Ok((registered, started)) => {
                     tracing::info!(
                         registered = registered,

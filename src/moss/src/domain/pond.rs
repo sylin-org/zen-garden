@@ -12,8 +12,8 @@
 //! Consumers (HTTPS listener, chirp signing, mDNS) subscribe to the EventBus
 //! for `DomainEvent::Pond(PondEvent::EnrollmentChanged)` and react accordingly.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 /// Shared pond enrollment state.

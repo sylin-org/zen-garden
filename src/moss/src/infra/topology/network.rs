@@ -74,10 +74,7 @@ fn detect_network_linux() -> Result<Vec<NetworkInterface>> {
         // PCIe address from device symlink
         let pcie_address = std::fs::read_link(path.join("device"))
             .ok()
-            .and_then(|link| {
-                link.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-            })
+            .and_then(|link| link.file_name().map(|n| n.to_string_lossy().to_string()))
             .filter(|addr| addr.contains(':'));
 
         interfaces.push(NetworkInterface {
@@ -157,8 +154,7 @@ fn detect_network_windows() -> Result<Vec<NetworkInterface>> {
     // PhysicalAdapter filters out Hyper-V, Docker, VPN virtual adapters.
     // Fields: Name (description), NetConnectionID (friendly name), Speed (bps),
     //         MACAddress ("AA:BB:CC:DD:EE:FF"), AdapterType ("Ethernet 802.3").
-    let wmi_con = wmi::COMLibrary::new()
-        .and_then(|lib| wmi::WMIConnection::new(lib))?;
+    let wmi_con = wmi::COMLibrary::new().and_then(|lib| wmi::WMIConnection::new(lib))?;
 
     #[derive(serde::Deserialize)]
     #[serde(rename = "Win32_NetworkAdapter")]

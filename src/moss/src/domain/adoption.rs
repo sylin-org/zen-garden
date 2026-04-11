@@ -7,10 +7,10 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::docker::Client;
-use crate::domain::compatibility::{evaluate_compatibility, CompatibilityDecision};
-use crate::domain::connection;
 use crate::AppState;
+use crate::docker::Client;
+use crate::domain::compatibility::{CompatibilityDecision, evaluate_compatibility};
+use crate::domain::connection;
 use garden_common::manifests::ManifestRegistry;
 use garden_common::offerings::OfferingFqn;
 use garden_common::utils::ids::generate_guidv7;

@@ -10,8 +10,8 @@
 //!
 //! All names follow the pattern `{entity}-{adjective}-{noun}`.
 
-use rand::prelude::IndexedRandom;
 use rand::SeedableRng;
+use rand::prelude::IndexedRandom;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Pond naming — water, reflection, depth, stillness, aquatic life

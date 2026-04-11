@@ -6,10 +6,10 @@
 //! See: docs/decisions/PORTRAIT-0001-stone-landing-page.md
 
 use axum::{
-    extract::State,
-    http::{header, StatusCode},
-    response::{Html, IntoResponse},
     Json,
+    extract::State,
+    http::{StatusCode, header},
+    response::{Html, IntoResponse},
 };
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
@@ -18,9 +18,9 @@ use std::hash::{Hash, Hasher};
 use garden_common::storage::StorageRole;
 
 use crate::app_state::AppState;
-use crate::domain::traits::CompanionOps;
 use crate::cli;
 use crate::domain::topology;
+use crate::domain::traits::CompanionOps;
 
 /// Embedded HTML template (baked into binary at compile time)
 const PORTRAIT_HTML: &str = include_str!("../../../assets/portrait.html");

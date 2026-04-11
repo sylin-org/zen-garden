@@ -71,10 +71,7 @@ pub struct Sweep<'a> {
 // ============================================================================
 
 /// Run all sweepers sequentially, collect results
-pub async fn run_sweep(
-    state: &AppState,
-    task_persistence: &crate::infra::TaskStore,
-) -> SweepRun {
+pub async fn run_sweep(state: &AppState, task_persistence: &crate::infra::TaskStore) -> SweepRun {
     let ctx = Sweep {
         state,
         task_persistence,

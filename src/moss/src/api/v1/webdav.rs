@@ -29,16 +29,16 @@
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{header, Method, StatusCode},
+    http::{Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use dav_server::{fakels::FakeLs, localfs::LocalFs, DavHandler};
+use dav_server::{DavHandler, fakels::FakeLs, localfs::LocalFs};
 use futures_util::StreamExt;
 use garden_common::storage::ChangelogEntry;
 use tracing::{debug, warn};
 
-use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
+use crate::infra::storage::handle::StorageResolver;
 
 use super::garden_storage::HEADER_ZEN_PROXIED;
 
@@ -120,13 +120,14 @@ pub async fn handle_webdav(State(state): State<AppState>, request: Request) -> R
                 &state.current.storage.volumes,
             )
             .await
-                && local.role != garden_common::storage::StorageRole::Primary {
-                    return (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "Proxied request reached a non-primary stone",
-                    )
-                        .into_response();
-                }
+                && local.role != garden_common::storage::StorageRole::Primary
+            {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Proxied request reached a non-primary stone",
+                )
+                    .into_response();
+            }
         }
 
         serve_local(&handle, storage_name, &method, &rel_path, request).await
@@ -162,10 +163,12 @@ async fn serve_local(
     let status = response.status();
 
     // Record changelog for successful mutations
-    if is_write_method(method) && status.is_success()
-        && let Some(content_store) = handle.content_store_for_write() {
-            record_changelog(&content_store, method, rel_path).await;
-        }
+    if is_write_method(method)
+        && status.is_success()
+        && let Some(content_store) = handle.content_store_for_write()
+    {
+        record_changelog(&content_store, method, rel_path).await;
+    }
 
     if status.is_success() {
         debug!(
@@ -317,11 +320,7 @@ fn extract_storage_name(uri_path: &str) -> Option<&str> {
         .strip_prefix("/dav/")
         .unwrap_or(uri_path.strip_prefix("/dav").unwrap_or(""));
     let name = trimmed.split('/').next().unwrap_or("");
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// Extract the relative path after `/dav/{name}/`.

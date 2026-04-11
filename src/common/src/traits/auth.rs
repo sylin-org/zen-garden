@@ -46,7 +46,10 @@ pub trait AuthProvider: Send + Sync {
     ///
     /// For NoAuth: Returns default context
     /// For JwtAuth: Validates JWT, extracts claims
-    fn authenticate(&self, auth_header: Option<&str>) -> impl std::future::Future<Output = Result<Auth, AuthError>> + Send;
+    fn authenticate(
+        &self,
+        auth_header: Option<&str>,
+    ) -> impl std::future::Future<Output = Result<Auth, AuthError>> + Send;
 
     /// Check if a context has admin permissions
     ///

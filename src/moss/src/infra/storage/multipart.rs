@@ -60,16 +60,13 @@ impl MultipartStore {
     }
 
     fn part_path(&self, upload_id: &str, part_number: u16) -> Result<PathBuf> {
-        Ok(self.upload_dir(upload_id)?.join(format!("{:05}", part_number)))
+        Ok(self
+            .upload_dir(upload_id)?
+            .join(format!("{:05}", part_number)))
     }
 
     /// Initiate a new multipart upload. Returns the upload ID.
-    pub async fn initiate(
-        &self,
-        bucket: &str,
-        key: &str,
-        content_type: &str,
-    ) -> Result<String> {
+    pub async fn initiate(&self, bucket: &str, key: &str, content_type: &str) -> Result<String> {
         let upload_id = uuid::Uuid::now_v7().to_string();
         let upload = MultipartUpload {
             upload_id: upload_id.clone(),
@@ -169,9 +166,7 @@ impl MultipartStore {
             // Large object: streaming assembly via temp file
             use tokio::io::AsyncWriteExt;
 
-            let tmp_path = self
-                .upload_dir(upload_id)?
-                .join("_assembled");
+            let tmp_path = self.upload_dir(upload_id)?.join("_assembled");
 
             let mut out = tokio::fs::File::create(&tmp_path)
                 .await
@@ -235,10 +230,11 @@ impl MultipartStore {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let upload_id = entry.file_name().to_string_lossy().to_string();
             if let Ok(upload) = self.load_manifest(&upload_id).await
-                && upload.created_at < cutoff {
-                    warn!(upload_id = %upload_id, created = %upload.created_at, "GC: removing expired multipart upload");
-                    let _ = self.abort(&upload_id).await;
-                }
+                && upload.created_at < cutoff
+            {
+                warn!(upload_id = %upload_id, created = %upload.created_at, "GC: removing expired multipart upload");
+                let _ = self.abort(&upload_id).await;
+            }
         }
     }
 
@@ -274,7 +270,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = MultipartStore::new(tmp.path());
 
-        let id = store.initiate("bucket", "key.dat", "application/octet-stream").await.unwrap();
+        let id = store
+            .initiate("bucket", "key.dat", "application/octet-stream")
+            .await
+            .unwrap();
         assert!(!id.is_empty());
         assert!(store.manifest_path(&id).unwrap().exists());
     }
@@ -340,7 +339,10 @@ mod tests {
         let result = store.upload_part("../../../etc/passwd", 1, b"data").await;
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("Invalid upload ID"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid upload ID"),
             "Should reject path traversal"
         );
     }

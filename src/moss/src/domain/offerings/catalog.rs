@@ -7,12 +7,12 @@
 //!
 //! Composed with compatibility module for rule evaluation.
 
-use crate::domain::compatibility::{compile_compatibility, CompiledCompatibility};
+use crate::domain::compatibility::{CompiledCompatibility, compile_compatibility};
 use crate::domain::traits::OfferingsCachePersistence;
 use anyhow::Result;
+use garden_common::TaskDefinition;
 use garden_common::manifests::ManifestRegistry;
 use garden_common::manifests::NetworkRequirements;
-use garden_common::TaskDefinition;
 
 /// Compiled offering ready for API consumption
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -244,19 +244,18 @@ pub async fn ensure_offerings_index(
     let cached_caps_ref = cached_caps.as_ref();
 
     // Try disk cache first (best-effort)
-    if !force_rebuild
-        && let Some(on_disk) = cache.load_cache().await? {
-            let current = OfferingsFingerprint {
-                moss_version: moss_version_string(),
-                capabilities_hash: current_capabilities_hash(cached_caps_ref),
-                templates_hash: manifests_hash(&state.manifest_registry)?,
-            };
+    if !force_rebuild && let Some(on_disk) = cache.load_cache().await? {
+        let current = OfferingsFingerprint {
+            moss_version: moss_version_string(),
+            capabilities_hash: current_capabilities_hash(cached_caps_ref),
+            templates_hash: manifests_hash(&state.manifest_registry)?,
+        };
 
-            if on_disk.fingerprint == current {
-                *state.offerings_index.write().await = Some(on_disk);
-                return Ok(());
-            }
+        if on_disk.fingerprint == current {
+            *state.offerings_index.write().await = Some(on_disk);
+            return Ok(());
         }
+    }
 
     let rebuilt = rebuild_offerings_index(&state.manifest_registry, cached_caps_ref)?;
     cache.save_cache(&rebuilt).await?;

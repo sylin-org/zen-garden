@@ -55,25 +55,21 @@ pub use domain::{
 
 // Re-export tasks for background execution
 pub use tasks::{
-    auto_adoption_task,
-    detect_capabilities_background,
-    health_monitor_task,
-    install_batch_task,
-    install_image_direct_task,
-    install_service_task,
-    lantern_registration_loop,
-    DockerEvent,
-    DockerMonitor,
-    DockerMonitorConfig,
-    Network,
-    NetworkConfig,
-    NetworkEvent,
+    DockerEvent, DockerMonitor, DockerMonitorConfig, Network, NetworkConfig, NetworkEvent,
+    auto_adoption_task, detect_capabilities_background, health_monitor_task, install_batch_task,
+    install_image_direct_task, install_service_task, lantern_registration_loop,
 };
 
 // Re-export bootstrap utilities
 #[cfg(target_os = "windows")]
 pub use bootstrap::ensure_windows_stone_name_config;
 pub use bootstrap::{
+    // Configuration
+    DaemonConfig,
+    // Startup utilities
+    DockerConfig,
+    PreInstallManifest,
+    ServerConfig,
     bind_server,
     connect_docker,
     init_capabilities,
@@ -84,13 +80,7 @@ pub use bootstrap::{
     run_daemon,
     run_first_boot_initialization,
     run_server,
-    // Configuration
-    DaemonConfig,
-    // Startup utilities
-    DockerConfig,
-    PreInstallManifest,
-    ServerConfig,
 };
 
 // Re-export CLI utilities
-pub use cli::{parse as parse_cli, version_string, Cli, Commands};
+pub use cli::{Cli, Commands, parse as parse_cli, version_string};

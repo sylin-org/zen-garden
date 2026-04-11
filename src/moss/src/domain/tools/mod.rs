@@ -12,4 +12,4 @@ pub mod events;
 pub mod projector;
 
 pub use crate::domain::garden_registry::ToolQuery;
-pub use events::{stream_event_type_for_delta, ToolsSnapshotPayload};
+pub use events::{ToolsSnapshotPayload, stream_event_type_for_delta};

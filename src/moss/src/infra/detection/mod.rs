@@ -6,7 +6,7 @@
 pub mod container_inspect;
 
 // Re-export common detection methods
-pub use garden_common::detection::{detect_by_command, detect_by_http_probe, DetectionResult};
+pub use garden_common::detection::{DetectionResult, detect_by_command, detect_by_http_probe};
 
 // Moss-specific detection (requires Docker)
-pub use container_inspect::{detect_by_container_inspect, ContainerDetector};
+pub use container_inspect::{ContainerDetector, detect_by_container_inspect};

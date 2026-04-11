@@ -3,7 +3,7 @@
 //! GET /api/v1/manifest - Returns complete API manifest
 
 use crate::domain::Current;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use garden_common::api_manifest::{ApiManifest, EndpointSpec};
 use std::sync::Arc;
 
@@ -12,10 +12,7 @@ pub async fn get_api_manifest_v1(
     State(current): State<Arc<Current>>,
 ) -> Result<Json<ApiManifest>, StatusCode> {
     // Build base URL from stone name and API port
-    let base_url = format!(
-        "http://{}:{}",
-        current.stone.name, current.api_port
-    );
+    let base_url = format!("http://{}:{}", current.stone.name, current.api_port);
 
     // Generate manifest from registry
     let manifest = build_manifest(&base_url);
@@ -295,7 +292,11 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             garden_common::api_manifest::ApiCategory {
                 name: "health".into(),
                 description: "Health checks and monitoring".into(),
-                endpoints: vec!["/health".into(), "/capabilities".into(), "/resources".into()],
+                endpoints: vec![
+                    "/health".into(),
+                    "/capabilities".into(),
+                    "/resources".into(),
+                ],
             },
             garden_common::api_manifest::ApiCategory {
                 name: "offerings".into(),
@@ -334,7 +335,10 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             garden_common::api_manifest::ApiCategory {
                 name: "events".into(),
                 description: "Event streams and job tracking".into(),
-                endpoints: vec!["/api/v1/stone/presence/stream".into(), "/api/v1/jobs/:job_id".into()],
+                endpoints: vec![
+                    "/api/v1/stone/presence/stream".into(),
+                    "/api/v1/jobs/:job_id".into(),
+                ],
             },
             garden_common::api_manifest::ApiCategory {
                 name: "admin".into(),

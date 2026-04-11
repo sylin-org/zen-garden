@@ -80,14 +80,15 @@ pub async fn detect_by_container_inspect(
 
         // Check image pattern if specified
         if let Some(ref image_re) = image_re
-            && !image_re.is_match(&container.image) {
-                tracing::debug!(
-                    container = %container_name,
-                    image = %container.image,
-                    "Container name matches but image doesn't"
-                );
-                continue;
-            }
+            && !image_re.is_match(&container.image)
+        {
+            tracing::debug!(
+                container = %container_name,
+                image = %container.image,
+                "Container name matches but image doesn't"
+            );
+            continue;
+        }
 
         // Check if container is running
         let is_running = container.state.to_lowercase() == "running";

@@ -11,7 +11,7 @@ use garden_moss::infra::kill_existing_moss_processes_graceful;
 use garden_moss::infra::{
     cleanup_after_service_update, cleanup_updater_process, finalize_service_update,
 };
-use garden_moss::{init_tracing, run_daemon, Cli, Commands, DaemonConfig};
+use garden_moss::{Cli, Commands, DaemonConfig, init_tracing, run_daemon};
 
 /// Check if Moss is installed as a system service.
 /// Linux: systemd unit file exists. Windows: SCM entry exists.

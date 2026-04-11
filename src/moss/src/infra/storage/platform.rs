@@ -1177,7 +1177,11 @@ mod linux {
             }
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
-                anyhow::bail!("Failed to delete stale device {}: {}", device_path, stderr.trim());
+                anyhow::bail!(
+                    "Failed to delete stale device {}: {}",
+                    device_path,
+                    stderr.trim()
+                );
             }
             Err(e) => {
                 anyhow::bail!("Failed to run device delete for {}: {}", device_path, e);
@@ -1672,7 +1676,7 @@ $disks | ConvertTo-Json -Depth 3 -Compress
             responsive,
             read_only: false, // TODO: GetVolumeInformationW FILE_READ_ONLY_VOLUME check
             stale_reference: false, // Windows cleans up device references
-            io_errors: 0, // TODO: WMI Win32_DiskDrive.Status
+            io_errors: 0,     // TODO: WMI Win32_DiskDrive.Status
         }
     }
 }

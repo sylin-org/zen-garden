@@ -3,9 +3,9 @@
 //! Spawns the main registration loop and (if using dynamic IP) an IP change
 //! handler that triggers immediate re-registration when the network IP changes.
 
-use crate::tasks::network_monitor::{Network, NetworkEvent};
-use crate::lantern_registration_loop;
 use crate::AppState;
+use crate::lantern_registration_loop;
+use crate::tasks::network_monitor::{Network, NetworkEvent};
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use tokio_util::sync::CancellationToken;
 
@@ -96,7 +96,12 @@ pub async fn start_lantern_registration(
                             services: vec![],
                         };
 
-                        match crate::http::HTTP.post(&register_url).json(&request).send().await {
+                        match crate::http::HTTP
+                            .post(&register_url)
+                            .json(&request)
+                            .send()
+                            .await
+                        {
                             Ok(resp) if resp.status().is_success() => {
                                 tracing::info!("Re-registered with Lantern after IP change");
                             }
@@ -125,7 +130,12 @@ pub async fn start_lantern_registration(
                             services: vec![],
                         };
 
-                        match crate::http::HTTP.post(&register_url).json(&request).send().await {
+                        match crate::http::HTTP
+                            .post(&register_url)
+                            .json(&request)
+                            .send()
+                            .await
+                        {
                             Ok(resp) if resp.status().is_success() => {
                                 tracing::info!("Re-registered with Lantern after reconnect");
                             }

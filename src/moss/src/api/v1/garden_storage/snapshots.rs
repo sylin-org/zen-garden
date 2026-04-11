@@ -3,13 +3,13 @@
 //! Read-only access to nurturing backups for external orchestrators.
 //! Storage name comes from the URL path — no header-based selection.
 
-use super::audit::{log_access, AuditAccessEntry};
+use super::audit::{AuditAccessEntry, log_access};
 use axum::{
+    Json,
     body::Bytes,
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::Response,
-    Json,
 };
 use garden_common::api_utils::ApiResponse;
 use garden_common::constants::headers::{HEADER_REQUESTING_STONE_ID, HEADER_REQUESTING_STONE_NAME};
@@ -17,10 +17,10 @@ use garden_common::constants::paths;
 use garden_common::storage::MemoriesOfferingManifest;
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::domain::nurturing::{RemoteNurturingIndex, RemoteSnapshot};
 use crate::domain::storage_service::ProxyTarget;
 use crate::infra::storage::handle::StorageResolver;
-use crate::AppState;
 
 use super::{err, error_response_raw, has_path_traversal};
 
@@ -542,7 +542,7 @@ pub async fn download_snapshot_v1(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NO_STORAGE",
                 &e.to_string(),
-            )
+            );
         }
     };
 

@@ -110,8 +110,7 @@ fn detect_pcie_linux() -> Result<Vec<PcieDevice>> {
 
         let class = pci_class_name(class_code >> 8);
 
-        let vendor_name = pci_ids::Vendor::from_id(vendor_id as u16)
-            .map(|v| v.name().to_string());
+        let vendor_name = pci_ids::Vendor::from_id(vendor_id as u16).map(|v| v.name().to_string());
         let device_name = pci_ids::Device::from_vid_pid(vendor_id as u16, device_id as u16)
             .map(|d| d.name().to_string());
 
@@ -151,7 +150,9 @@ fn read_sysfs_u8(path: &std::path::Path) -> Option<u8> {
 
 #[cfg(target_os = "linux")]
 fn read_sysfs_string(path: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Parse PCIe generation from sysfs speed string.
@@ -177,8 +178,8 @@ fn parse_pcie_gen_from_speed(speed: &str) -> u8 {
 
 #[cfg(target_os = "windows")]
 fn detect_pcie_windows() -> Result<Vec<PcieDevice>> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let pci_key = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Enum\PCI")?;
@@ -224,13 +225,11 @@ fn detect_pcie_windows() -> Result<Vec<PcieDevice>> {
 
             // Parse BDF from LocationInformation.
             // Format: "@System32\drivers\pci.sys,...;(bus,device,function)"
-            let location = parse_bdf_from_location(&raw_location)
-                .unwrap_or(raw_location);
+            let location = parse_bdf_from_location(&raw_location).unwrap_or(raw_location);
 
-            let vendor_name = pci_ids::Vendor::from_id(vendor_id)
-                .map(|v| v.name().to_string());
-            let device_name = pci_ids::Device::from_vid_pid(vendor_id, device_id)
-                .map(|d| d.name().to_string());
+            let vendor_name = pci_ids::Vendor::from_id(vendor_id).map(|v| v.name().to_string());
+            let device_name =
+                pci_ids::Device::from_vid_pid(vendor_id, device_id).map(|d| d.name().to_string());
 
             // Link speed/width from DEVPKEY_PciDevice_* via cfgmgr32.
             let (max_width, cur_width, max_gen, cur_gen) =
@@ -240,13 +239,12 @@ fn detect_pcie_windows() -> Result<Vec<PcieDevice>> {
             let effective_width = if cur_width > 0 { cur_width } else { max_width };
 
             // PCI class: try reading from registry, fall back to name heuristic
-            let class = read_pci_class_from_registry(&dev_key_name)
-                .unwrap_or_else(|| {
-                    device_name
-                        .as_deref()
-                        .map(|n| guess_pci_class_from_name(n))
-                        .unwrap_or_else(|| "Unknown".to_string())
-                });
+            let class = read_pci_class_from_registry(&dev_key_name).unwrap_or_else(|| {
+                device_name
+                    .as_deref()
+                    .map(|n| guess_pci_class_from_name(n))
+                    .unwrap_or_else(|| "Unknown".to_string())
+            });
 
             devices.push(PcieDevice {
                 address: location,
@@ -277,7 +275,7 @@ fn detect_pcie_windows() -> Result<Vec<PcieDevice>> {
 #[cfg(target_os = "windows")]
 fn query_pcie_link_properties_win(dev_key: &str) -> Option<(u8, u8, u8, u8)> {
     use windows::Win32::Devices::DeviceAndDriverInstallation::{
-        CM_Locate_DevNodeW, CM_LOCATE_DEVNODE_NORMAL, CR_SUCCESS,
+        CM_LOCATE_DEVNODE_NORMAL, CM_Locate_DevNodeW, CR_SUCCESS,
     };
     use windows::Win32::Devices::Properties::DEVPROPKEY;
     use windows::core::GUID;
@@ -286,16 +284,31 @@ fn query_pcie_link_properties_win(dev_key: &str) -> Option<(u8, u8, u8, u8)> {
     // GUID: {3AB22E31-8264-4B4E-9AF5-A8D2D8E33E62}
     let pci_guid = GUID::from_u128(0x3AB22E31_8264_4B4E_9AF5_A8D2D8E33E62);
 
-    let devpkey_max_link_speed = DEVPROPKEY { fmtid: pci_guid, pid: 8 };
-    let devpkey_current_link_speed = DEVPROPKEY { fmtid: pci_guid, pid: 9 };
-    let devpkey_max_link_width = DEVPROPKEY { fmtid: pci_guid, pid: 10 };
-    let devpkey_current_link_width = DEVPROPKEY { fmtid: pci_guid, pid: 11 };
+    let devpkey_max_link_speed = DEVPROPKEY {
+        fmtid: pci_guid,
+        pid: 8,
+    };
+    let devpkey_current_link_speed = DEVPROPKEY {
+        fmtid: pci_guid,
+        pid: 9,
+    };
+    let devpkey_max_link_width = DEVPROPKEY {
+        fmtid: pci_guid,
+        pid: 10,
+    };
+    let devpkey_current_link_width = DEVPROPKEY {
+        fmtid: pci_guid,
+        pid: 11,
+    };
 
     // Find the first device instance under this registry key
     let instance_id = find_first_instance_id(dev_key)?;
 
     // Locate the device node
-    let instance_wide: Vec<u16> = instance_id.encode_utf16().chain(std::iter::once(0)).collect();
+    let instance_wide: Vec<u16> = instance_id
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let mut dev_inst: u32 = 0;
 
     // SAFETY: instance_wide is null-terminated, dev_inst is a valid output pointer.
@@ -368,8 +381,8 @@ fn read_devnode_u32(
 /// CompatibleIDs contain entries like `PCI\CC_0300` (base class 03 = VGA).
 #[cfg(target_os = "windows")]
 fn read_pci_class_from_registry(dev_key: &str) -> Option<String> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let full_path = format!(r"SYSTEM\CurrentControlSet\Enum\PCI\{}", dev_key);
@@ -430,8 +443,8 @@ fn pci_base_class_name(class: u8) -> &'static str {
 /// We need the full instance path: `PCI\VEN_XXXX&DEV_XXXX&...\{instance}`
 #[cfg(target_os = "windows")]
 fn find_first_instance_id(dev_key: &str) -> Option<String> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let full_path = format!(r"SYSTEM\CurrentControlSet\Enum\PCI\{}", dev_key);

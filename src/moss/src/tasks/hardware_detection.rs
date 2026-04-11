@@ -8,9 +8,9 @@
 //! This non-blocking approach allows the daemon to start serving requests
 //! while GPU detection completes in the background.
 
+use crate::AppState;
 use crate::domain::ensure_offerings_index;
 use crate::infra::save_capabilities_cache;
-use crate::AppState;
 use garden_common::console;
 use garden_common::resources::system as resources;
 use garden_common::{
@@ -84,8 +84,9 @@ fn build_ai_capabilities_summary(
     let mut total_vram_mb: u64 = 0;
     let mut gpu_count: usize = 0;
 
-    let ai_runtime_names: HashSet<&str> =
-        ["cuda", "rocm", "directml", "openvino"].into_iter().collect();
+    let ai_runtime_names: HashSet<&str> = ["cuda", "rocm", "directml", "openvino"]
+        .into_iter()
+        .collect();
 
     for gpu in gpus {
         // Derive runtimes from capabilities
@@ -402,7 +403,7 @@ pub async fn detect_capabilities_background(
     // Write MOTD with complete hardware capabilities now that detection is done.
     #[cfg(target_os = "linux")]
     {
-        use garden_common::console::{write_motd, BankSummary, MotdInfo, StorageSetSummary};
+        use garden_common::console::{BankSummary, MotdInfo, StorageSetSummary, write_motd};
         use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
 
         let caps = state.current.capabilities.read().await.clone();
@@ -416,7 +417,11 @@ pub async fn detect_capabilities_background(
             Some(c) => {
                 let cores = Some(c.hardware.cpu.cores);
                 let ram = Some(c.hardware.memory.total_mb);
-                let first_gpu = c.hardware.gpus.first().map(|g| (g.model.clone(), g.vram_mb));
+                let first_gpu = c
+                    .hardware
+                    .gpus
+                    .first()
+                    .map(|g| (g.model.clone(), g.vram_mb));
                 (cores, ram, first_gpu)
             }
             None => (None, None, None),

@@ -132,7 +132,7 @@ mod tests {
     use super::*;
     use crate::domain::events::{OfferingEvent, StoneEvent, StorageEvent};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     struct CountingListener {
         count: AtomicUsize,

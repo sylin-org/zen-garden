@@ -6,13 +6,13 @@ use crate::domain::Companion;
 use crate::domain::traits::CompanionOps;
 use crate::{internal, not_found};
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
-use std::sync::Arc;
 use garden_common::command_manifest::{CommandManifest, CommandResponse, CompanionCommandRequest};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Summary of a registered Companion
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,7 +193,12 @@ async fn execute_companion_command_local(
     // Forward command to Companion's command server
     let url = format!("http://127.0.0.1:{}/command", port);
 
-    match crate::http::COMPANION.post(&url).json(&request).send().await {
+    match crate::http::COMPANION
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+    {
         Ok(resp) => {
             let status = resp.status();
             match resp.json::<CommandResponse>().await {
@@ -381,11 +386,7 @@ pub async fn stop_companion(
     State(companion): State<Arc<Companion>>,
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionLifecycleResponse> {
-    match companion
-        .registry
-        .stop_and_disable(&companion_id)
-        .await
-    {
+    match companion.registry.stop_and_disable(&companion_id).await {
         Ok(()) => crate::api::ok(CompanionLifecycleResponse {
             companion_id: companion_id.clone(),
             running: false,

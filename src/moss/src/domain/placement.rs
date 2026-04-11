@@ -7,10 +7,10 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::time::Duration;
 
-use crate::domain::{
-    compatibility, resources_collection, scoring, services, topology, CompiledOffering,
-};
 use crate::AppState;
+use crate::domain::{
+    CompiledOffering, compatibility, resources_collection, scoring, services, topology,
+};
 use garden_common::TopologyEntry;
 
 /// Placement request from client
@@ -112,7 +112,8 @@ pub async fn recommend_placement(
     let timeout = Duration::from_secs(3);
     let endpoints: Vec<String> = peer_stones.iter().map(|s| s.address.http_base()).collect();
 
-    let resources_results = resources_collection::fetch_resources_batch(endpoints.clone(), timeout).await;
+    let resources_results =
+        resources_collection::fetch_resources_batch(endpoints.clone(), timeout).await;
     let offerings_results = fetch_offerings_batch(endpoints, timeout).await;
 
     // 4. Score each peer stone with full compatibility checking
@@ -259,8 +260,8 @@ async fn score_local_stone(
     state: &AppState,
 ) -> Result<PlacementRecommendation> {
     // Get local resources (zero latency)
-    let local_resources = resources_collection::get_local_resources()
-        .context("Failed to collect local resources")?;
+    let local_resources =
+        resources_collection::get_local_resources().context("Failed to collect local resources")?;
 
     // Get local service count
     let service_count = services::get_local_service_count(state).await.unwrap_or(0);

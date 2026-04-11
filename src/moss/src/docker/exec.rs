@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use super::Client;
 use super::naming::zen_offering_container_name;
 use super::spec::LogLine;
-use super::Client;
 
 impl Client {
     /// Pull a Docker image from registry
@@ -52,14 +52,15 @@ impl Client {
                 Ok(Some(Ok(info))) => {
                     if let Some(status) = info.status {
                         if let Some(console) = console
-                            && let Some(detail) = &info.progress_detail {
-                                let progress = format!("{:?}", detail);
-                                console.emit(console::ConsoleEvent::new(
-                                    console::EventCategory::Services,
-                                    console::EventStatus::PullProgress,
-                                    format!("{} -> {}", image, progress),
-                                ));
-                            }
+                            && let Some(detail) = &info.progress_detail
+                        {
+                            let progress = format!("{:?}", detail);
+                            console.emit(console::ConsoleEvent::new(
+                                console::EventCategory::Services,
+                                console::EventStatus::PullProgress,
+                                format!("{} -> {}", image, progress),
+                            ));
+                        }
                         tracing::debug!(image = %image, status = %status, "Pull progress");
                     }
                 }
@@ -354,17 +355,19 @@ impl Client {
 
             // Skip the container we're about to redeploy
             if let Some(exclude) = exclude_container
-                && name == exclude {
-                    continue;
-                }
+                && name == exclude
+            {
+                continue;
+            }
 
             // Extract port bindings from the container summary's ports field
             if let Some(ports) = container.ports {
                 for port in ports {
                     if let Some(public_port) = port.public_port
-                        && public_port > 0 {
-                            occupied.insert(public_port, name.clone());
-                        }
+                        && public_port > 0
+                    {
+                        occupied.insert(public_port, name.clone());
+                    }
                 }
             }
         }
@@ -444,7 +447,9 @@ impl Client {
         let mut filters: HashMap<String, Vec<String>> = HashMap::new();
         filters.insert("dangling".to_string(), vec!["true".to_string()]);
 
-        let options = Some(PruneImagesOptions { filters: Some(filters) });
+        let options = Some(PruneImagesOptions {
+            filters: Some(filters),
+        });
         let response = self
             .docker
             .prune_images(options)

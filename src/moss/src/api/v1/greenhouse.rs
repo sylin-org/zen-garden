@@ -15,17 +15,17 @@
 //! - `POST /api/v1/stone/greenhouse/generate`    — generate manifest from inspection
 
 use axum::{
-    extract::{Query, State},
-    http::{header, StatusCode},
-    response::{Html, IntoResponse},
     Json,
+    extract::{Query, State},
+    http::{StatusCode, header},
+    response::{Html, IntoResponse},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::infra::embedded::EmbeddedManifests;
-use crate::{bad_request, internal, not_found, AppState};
+use crate::{AppState, bad_request, internal, not_found};
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::manifests::{generate, runtime_manifests_dir, validation};
 
@@ -254,41 +254,42 @@ pub async fn get_catalog(
     let mut runtime_categories: HashMap<String, String> = HashMap::new();
 
     if sw_dir.exists()
-        && let Ok(categories) = tokio::fs::read_dir(&sw_dir).await {
-            let mut cats = categories;
-            while let Ok(Some(cat_entry)) = cats.next_entry().await {
-                let cat_path = cat_entry.path();
-                if !cat_path.is_dir() {
-                    continue;
-                }
-                let cat_name = cat_entry.file_name().to_string_lossy().to_string();
+        && let Ok(categories) = tokio::fs::read_dir(&sw_dir).await
+    {
+        let mut cats = categories;
+        while let Ok(Some(cat_entry)) = cats.next_entry().await {
+            let cat_path = cat_entry.path();
+            if !cat_path.is_dir() {
+                continue;
+            }
+            let cat_name = cat_entry.file_name().to_string_lossy().to_string();
 
-                if let Ok(files) = tokio::fs::read_dir(&cat_path).await {
-                    let mut fs = files;
-                    while let Ok(Some(file_entry)) = fs.next_entry().await {
-                        let fname = file_entry.file_name().to_string_lossy().to_string();
-                        if fname == "category.json" {
-                            continue;
-                        }
-                        for &(suffix, file_type, ext) in FILE_SUFFIXES {
-                            if let Some(name) = fname.strip_suffix(suffix) {
-                                if name.is_empty() {
-                                    continue;
-                                }
-                                runtime_files
-                                    .entry(name.to_string())
-                                    .or_default()
-                                    .push((file_type.to_string(), ext.to_string()));
-                                runtime_categories
-                                    .entry(name.to_string())
-                                    .or_insert(cat_name.clone());
-                                break;
+            if let Ok(files) = tokio::fs::read_dir(&cat_path).await {
+                let mut fs = files;
+                while let Ok(Some(file_entry)) = fs.next_entry().await {
+                    let fname = file_entry.file_name().to_string_lossy().to_string();
+                    if fname == "category.json" {
+                        continue;
+                    }
+                    for &(suffix, file_type, ext) in FILE_SUFFIXES {
+                        if let Some(name) = fname.strip_suffix(suffix) {
+                            if name.is_empty() {
+                                continue;
                             }
+                            runtime_files
+                                .entry(name.to_string())
+                                .or_default()
+                                .push((file_type.to_string(), ext.to_string()));
+                            runtime_categories
+                                .entry(name.to_string())
+                                .or_insert(cat_name.clone());
+                            break;
                         }
                     }
                 }
             }
         }
+    }
 
     // 3. Get installed offerings from AppState
     let (installed_names, installed_running) = {
@@ -524,33 +525,35 @@ fn offering_category_dir(offering: &str) -> String {
         let parts: Vec<&str> = path_str.split('/').collect();
         if parts.len() >= 3
             && let Some(filename) = parts.last()
-                && filename.starts_with(offering) {
-                    return parts[1].to_string();
-                }
+            && filename.starts_with(offering)
+        {
+            return parts[1].to_string();
+        }
     }
     // Fallback: check runtime dir
     let rt_dir = PathBuf::from(runtime_manifests_dir()).join("sw");
     if rt_dir.exists()
-        && let Ok(entries) = std::fs::read_dir(&rt_dir) {
-            for entry in entries.flatten() {
-                let cat_path = entry.path();
-                if !cat_path.is_dir() {
-                    continue;
-                }
-                if let Ok(files) = std::fs::read_dir(&cat_path) {
-                    for file in files.flatten() {
-                        let fname = file.file_name().to_string_lossy().to_string();
-                        if fname.starts_with(offering) {
-                            return cat_path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string();
-                        }
+        && let Ok(entries) = std::fs::read_dir(&rt_dir)
+    {
+        for entry in entries.flatten() {
+            let cat_path = entry.path();
+            if !cat_path.is_dir() {
+                continue;
+            }
+            if let Ok(files) = std::fs::read_dir(&cat_path) {
+                for file in files.flatten() {
+                    let fname = file.file_name().to_string_lossy().to_string();
+                    if fname.starts_with(offering) {
+                        return cat_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
                     }
                 }
             }
         }
+    }
     "custom".to_string()
 }
 
@@ -582,13 +585,14 @@ pub async fn get_file(
 
     // Fall back to embedded
     if let Some(embedded_path) = find_embedded_path(&params.offering, suffix)
-        && let Some(content) = EmbeddedManifests::get_string(&embedded_path) {
-            return Ok((
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                content,
-            ));
-        }
+        && let Some(content) = EmbeddedManifests::get_string(&embedded_path)
+    {
+        return Ok((
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            content,
+        ));
+    }
 
     Err(not_found(
         "FILE_NOT_FOUND",

@@ -258,7 +258,7 @@ mod tests {
         // This should return false for an external IP not bound locally
         // (unless the test machine happens to have this IP)
         let ip: Ipv4Addr = "203.0.113.1".parse().unwrap(); // TEST-NET-3
-                                                           // Don't assert on this - it depends on local machine config
+        // Don't assert on this - it depends on local machine config
         let _ = is_ip_bound_locally(ip);
     }
 }

@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use reqwest;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
 
 /// Type alias for backward compatibility.

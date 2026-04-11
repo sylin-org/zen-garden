@@ -6,7 +6,7 @@
 //!
 //! Pure domain logic — no I/O, no Docker, fully testable.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use garden_common::manifests::offering::ServiceTemplate;
 use garden_common::types::ConfigPatch;
 

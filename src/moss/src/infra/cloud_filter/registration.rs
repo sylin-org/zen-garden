@@ -176,7 +176,7 @@ fn icon_resource() -> String {
 /// Check if the current process is running elevated (admin).
 pub fn is_elevated() -> bool {
     use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TokenElevation};
 
     // SAFETY: `-4isize as HANDLE` is the well-known pseudo-handle for the current process token
     // (GetCurrentProcessToken). `elevation` is a stack-allocated TOKEN_ELEVATION valid for the

@@ -1,6 +1,6 @@
 use crate::{
-    format_bytes, format_uptime, CpuResources, DiskResources, DiskType, GpuInfo,
-    InterfaceResources, MemoryResources, NetworkResources, StoneResources, StorageResources,
+    CpuResources, DiskResources, DiskType, GpuInfo, InterfaceResources, MemoryResources,
+    NetworkResources, StoneResources, StorageResources, format_bytes, format_uptime,
 };
 use anyhow::{Context, Result};
 #[cfg(target_os = "linux")]
@@ -746,7 +746,6 @@ fn detect_nvidia_gpus() -> Result<Vec<GpuInfo>> {
                     model,
                     vram_mb,
                     capabilities,
-
                 })
             } else {
                 None
@@ -779,7 +778,6 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
                     model,
                     vram_mb: None, // Would need additional query
                     capabilities,
-
                 })
             })
             .collect();
@@ -813,7 +811,6 @@ fn detect_amd_gpus() -> Result<Vec<GpuInfo>> {
                         model,
                         vram_mb: None,
                         capabilities: vec!["vulkan".to_string()], // Unknown without rocm-smi
-    
                     }
                 })
                 .collect();
@@ -849,7 +846,6 @@ fn detect_intel_gpus() -> Result<Vec<GpuInfo>> {
                         model,
                         vram_mb: None,
                         capabilities: vec!["vulkan".to_string()],
-    
                     }
                 })
                 .collect();
@@ -980,7 +976,6 @@ fn detect_windows_gpus() -> Result<Vec<GpuInfo>> {
                     model: name,
                     vram_mb,
                     capabilities,
-
                 })
             })
             .collect();
@@ -1092,7 +1087,7 @@ fn get_vram_from_dxgi() -> std::collections::HashMap<String, u64> {
     use std::collections::HashMap;
     use std::mem::MaybeUninit;
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory, IDXGIFactory, DXGI_ADAPTER_DESC, DXGI_ERROR_NOT_FOUND,
+        CreateDXGIFactory, DXGI_ADAPTER_DESC, DXGI_ERROR_NOT_FOUND, IDXGIFactory,
     };
 
     let mut vram_map = HashMap::new();

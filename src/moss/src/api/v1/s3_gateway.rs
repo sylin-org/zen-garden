@@ -34,7 +34,7 @@
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::Response,
 };
 use serde::Deserialize;
@@ -42,8 +42,8 @@ use tracing::{debug, warn};
 
 use super::s3_xml::{self, to_s3_xml};
 
-use crate::infra::storage::handle::StorageResolver;
 use crate::AppState;
+use crate::infra::storage::handle::StorageResolver;
 use garden_common::constants::headers::HEADER_SEED_BANK;
 use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
 
@@ -158,34 +158,48 @@ enum ConditionalResult {
 /// 2. If-Unmodified-Since → 412 if modified after date
 /// 3. If-None-Match → 304 if ETag matches
 /// 4. If-Modified-Since → 304 if not modified since date
-fn evaluate_conditionals(headers: &HeaderMap, etag: &str, last_modified: &str) -> ConditionalResult {
+fn evaluate_conditionals(
+    headers: &HeaderMap,
+    etag: &str,
+    last_modified: &str,
+) -> ConditionalResult {
     // If-Match: proceed only if ETag matches
     if let Some(val) = headers.get(header::IF_MATCH).and_then(|v| v.to_str().ok())
-        && !etag_matches(val, etag) {
-            return ConditionalResult::PreconditionFailed;
-        }
+        && !etag_matches(val, etag)
+    {
+        return ConditionalResult::PreconditionFailed;
+    }
 
     // If-Unmodified-Since: proceed only if not modified after date
-    if let Some(val) = headers.get(header::IF_UNMODIFIED_SINCE).and_then(|v| v.to_str().ok())
+    if let Some(val) = headers
+        .get(header::IF_UNMODIFIED_SINCE)
+        .and_then(|v| v.to_str().ok())
         && let Ok(since) = chrono::DateTime::parse_from_rfc2822(val)
-            && let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified)
-                && modified > since {
-                    return ConditionalResult::PreconditionFailed;
-                }
+        && let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified)
+        && modified > since
+    {
+        return ConditionalResult::PreconditionFailed;
+    }
 
     // If-None-Match: 304 if ETag matches
-    if let Some(val) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok())
-        && etag_matches(val, etag) {
-            return ConditionalResult::NotModified;
-        }
+    if let Some(val) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        && etag_matches(val, etag)
+    {
+        return ConditionalResult::NotModified;
+    }
 
     // If-Modified-Since: 304 if not modified since date
-    if let Some(val) = headers.get(header::IF_MODIFIED_SINCE).and_then(|v| v.to_str().ok())
+    if let Some(val) = headers
+        .get(header::IF_MODIFIED_SINCE)
+        .and_then(|v| v.to_str().ok())
         && let Ok(since) = chrono::DateTime::parse_from_rfc2822(val)
-            && let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified)
-                && modified <= since {
-                    return ConditionalResult::NotModified;
-                }
+        && let Ok(modified) = chrono::DateTime::parse_from_rfc3339(last_modified)
+        && modified <= since
+    {
+        return ConditionalResult::NotModified;
+    }
 
     ConditionalResult::Proceed
 }
@@ -209,9 +223,10 @@ fn extract_custom_metadata(headers: &HeaderMap) -> std::collections::HashMap<Str
     for (name, value) in headers.iter() {
         let key = name.as_str();
         if let Some(stripped) = key.strip_prefix("x-amz-meta-")
-            && let Ok(val) = value.to_str() {
-                meta.insert(stripped.to_string(), val.to_string());
-            }
+            && let Ok(val) = value.to_str()
+        {
+            meta.insert(stripped.to_string(), val.to_string());
+        }
     }
     meta
 }
@@ -234,7 +249,9 @@ async fn check_presign_token(
     for pair in query_string.split('&') {
         if let Some((k, v)) = pair.split_once('=') {
             match k {
-                "X-Moss-Token" => token = Some(urlencoding::decode(v).unwrap_or_default().to_string()),
+                "X-Moss-Token" => {
+                    token = Some(urlencoding::decode(v).unwrap_or_default().to_string())
+                }
                 "X-Moss-Expires" => expires = v.parse().ok(),
                 _ => {}
             }
@@ -249,7 +266,9 @@ async fn check_presign_token(
 
     // Token present — MUST validate
     let secret = super::s3_presign::derive_presign_secret(state).await;
-    match super::s3_presign::validate_presign_token(&secret, method, bucket, key, &token, expires_ts) {
+    match super::s3_presign::validate_presign_token(
+        &secret, method, bucket, key, &token, expires_ts,
+    ) {
         Ok(()) => None, // Valid
         Err(reason) => {
             warn!(bucket = %bucket, key = %key, reason, "Presigned token validation failed");
@@ -378,13 +397,25 @@ pub async fn put_object(
 
     // Detect multipart UploadPart: PUT with partNumber + uploadId
     if query.part_number.is_some() && query.upload_id.is_some() {
-        return upload_part(State(state), Path((bucket.clone(), key.to_string())), Query(query), headers, body).await;
+        return upload_part(
+            State(state),
+            Path((bucket.clone(), key.to_string())),
+            Query(query),
+            headers,
+            body,
+        )
+        .await;
     }
 
-    let selector = SeedBankSelector { seed_bank: query.seed_bank };
+    let selector = SeedBankSelector {
+        seed_bank: query.seed_bank,
+    };
 
     // Detect CopyObject: PUT with x-amz-copy-source header
-    if let Some(copy_source) = headers.get(HEADER_COPY_SOURCE).and_then(|v| v.to_str().ok()) {
+    if let Some(copy_source) = headers
+        .get(HEADER_COPY_SOURCE)
+        .and_then(|v| v.to_str().ok())
+    {
         return copy_object(&state, &bucket, key, copy_source, &headers, &selector).await;
     }
 
@@ -405,7 +436,7 @@ pub async fn put_object(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -416,7 +447,10 @@ pub async fn put_object(
             .unwrap_or("application/octet-stream");
 
         let custom_meta = extract_custom_metadata(&headers);
-        match store.put_object_with_metadata(&bucket, key, content_type, &body, custom_meta).await {
+        match store
+            .put_object_with_metadata(&bucket, key, content_type, &body, custom_meta)
+            .await
+        {
             Ok(result) => {
                 debug!(storage = %handle.storage_name(), bucket = %bucket, key = %key, size = body.len(), "PUT object success");
                 Response::builder()
@@ -435,7 +469,9 @@ pub async fn put_object(
             }
         }
     } else {
-        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
+        let target = handle
+            .proxy_target()
+            .expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -480,7 +516,15 @@ pub async fn get_object(
     }
 
     // Validate presigned token if present
-    if let Some(resp) = check_presign_token(&state, "GET", &bucket, key, raw_query.as_deref().unwrap_or("")).await {
+    if let Some(resp) = check_presign_token(
+        &state,
+        "GET",
+        &bucket,
+        key,
+        raw_query.as_deref().unwrap_or(""),
+    )
+    .await
+    {
         return resp;
     }
 
@@ -501,7 +545,7 @@ pub async fn get_object(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -545,7 +589,9 @@ pub async fn get_object(
             match store.head_object(&bucket, key).await {
                 Ok(Some(meta)) => {
                     let total_size = meta.size;
-                    let end = range_end.unwrap_or(total_size.saturating_sub(1)).min(total_size.saturating_sub(1));
+                    let end = range_end
+                        .unwrap_or(total_size.saturating_sub(1))
+                        .min(total_size.saturating_sub(1));
                     let start = range_start.min(end);
                     let length = end - start + 1;
 
@@ -558,22 +604,41 @@ pub async fn get_object(
                                 .header(header::CONTENT_LENGTH, data.len())
                                 .header(header::ETAG, &meta.etag)
                                 .header(header::LAST_MODIFIED, &meta.last_modified)
-                                .header("Content-Range", format!("bytes {}-{}/{}", start, end, total_size))
+                                .header(
+                                    "Content-Range",
+                                    format!("bytes {}-{}/{}", start, end, total_size),
+                                )
                                 .header(header::ACCEPT_RANGES, "bytes")
                                 .body(data.into())
                                 .unwrap()
                         }
-                        Ok(None) => xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &format!("Key '{}' not found", key)),
+                        Ok(None) => xml_error(
+                            StatusCode::NOT_FOUND,
+                            "NoSuchKey",
+                            &format!("Key '{}' not found", key),
+                        ),
                         Err(e) => {
                             warn!(error = %e, "GET object range failed");
-                            xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                            xml_error(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "InternalError",
+                                &e.to_string(),
+                            )
                         }
                     }
                 }
-                Ok(None) => xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &format!("Key '{}' not found", key)),
+                Ok(None) => xml_error(
+                    StatusCode::NOT_FOUND,
+                    "NoSuchKey",
+                    &format!("Key '{}' not found", key),
+                ),
                 Err(e) => {
                     warn!(error = %e, "GET object head for range failed");
-                    xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string())
+                    xml_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
                 }
             }
         } else {
@@ -611,7 +676,9 @@ pub async fn get_object(
             }
         }
     } else {
-        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
+        let target = handle
+            .proxy_target()
+            .expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -655,7 +722,15 @@ pub async fn head_object(
     }
 
     // Validate presigned token if present
-    if let Some(resp) = check_presign_token(&state, "HEAD", &bucket, key, raw_query.as_deref().unwrap_or("")).await {
+    if let Some(resp) = check_presign_token(
+        &state,
+        "HEAD",
+        &bucket,
+        key,
+        raw_query.as_deref().unwrap_or(""),
+    )
+    .await
+    {
         return resp;
     }
 
@@ -675,7 +750,7 @@ pub async fn head_object(
             return Response::builder()
                 .status(StatusCode::SERVICE_UNAVAILABLE)
                 .body("".into())
-                .unwrap()
+                .unwrap();
         }
     };
 
@@ -723,17 +798,16 @@ pub async fn head_object(
                 }
                 build_response(builder, "")
             }
-            Ok(None) => build_response(
-                Response::builder().status(StatusCode::NOT_FOUND),
-                "",
-            ),
+            Ok(None) => build_response(Response::builder().status(StatusCode::NOT_FOUND), ""),
             Err(_) => build_response(
                 Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR),
                 "",
             ),
         }
     } else {
-        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
+        let target = handle
+            .proxy_target()
+            .expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -780,11 +854,15 @@ pub async fn delete_object(
 
     // Detect multipart abort: DELETE with uploadId
     if let Some(upload_id) = &query.upload_id {
-        let selector = SeedBankSelector { seed_bank: query.seed_bank.clone() };
+        let selector = SeedBankSelector {
+            seed_bank: query.seed_bank.clone(),
+        };
         return abort_multipart_upload(&state, &bucket, key, upload_id, &headers, &selector).await;
     }
 
-    let selector = SeedBankSelector { seed_bank: query.seed_bank };
+    let selector = SeedBankSelector {
+        seed_bank: query.seed_bank,
+    };
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
@@ -802,7 +880,7 @@ pub async fn delete_object(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -825,7 +903,9 @@ pub async fn delete_object(
             }
         }
     } else {
-        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
+        let target = handle
+            .proxy_target()
+            .expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -869,7 +949,7 @@ pub async fn list_buckets(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -894,7 +974,9 @@ pub async fn list_buckets(
             }
         }
     } else {
-        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
+        let target = handle
+            .proxy_target()
+            .expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -969,7 +1051,7 @@ pub async fn list_objects(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -1044,7 +1126,9 @@ pub async fn list_objects(
             }
         }
     } else {
-        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
+        let target = handle
+            .proxy_target()
+            .expect("invariant: handle is either local or remote; local path returned None");
         let mut query_params = Vec::new();
         if is_v2 {
             query_params.push(("list-type".to_string(), "2".to_string()));
@@ -1117,7 +1201,7 @@ pub async fn create_bucket(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -1141,7 +1225,9 @@ pub async fn create_bucket(
             }
         }
     } else {
-        let target = handle.proxy_target().expect("invariant: handle is either local or remote; local path returned None");
+        let target = handle
+            .proxy_target()
+            .expect("invariant: handle is either local or remote; local path returned None");
         let mut query = Vec::new();
         if selected != DEFAULT_REPLICA_SET_DISPLAY {
             query.push(("seed-bank".to_string(), selected));
@@ -1190,12 +1276,24 @@ pub async fn initiate_multipart_upload(
 
     let handle = match resolver.for_write(&selected).await {
         Ok(h) => h,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            );
+        }
     };
 
     let mount_path = match handle.mount_path() {
         Some(p) => p.to_path_buf(),
-        None => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NotLocal", "Multipart uploads require local storage"),
+        None => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotLocal",
+                "Multipart uploads require local storage",
+            );
+        }
     };
 
     let content_type = headers
@@ -1217,7 +1315,11 @@ pub async fn initiate_multipart_upload(
                 .body(xml.into())
                 .unwrap()
         }
-        Err(e) => xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -1245,14 +1347,22 @@ pub async fn upload_part(
 ) -> Response {
     let (upload_id, part_number) = match (&query.upload_id, query.part_number) {
         (Some(id), Some(pn)) => (id.clone(), pn),
-        _ => return xml_error(StatusCode::BAD_REQUEST, "InvalidArgument", "uploadId and partNumber required"),
+        _ => {
+            return xml_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidArgument",
+                "uploadId and partNumber required",
+            );
+        }
     };
 
     if let Some(resp) = validate_bucket(&bucket) {
         return resp;
     }
 
-    let selector = SeedBankSelector { seed_bank: query.seed_bank.clone() };
+    let selector = SeedBankSelector {
+        seed_bank: query.seed_bank.clone(),
+    };
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
@@ -1265,24 +1375,38 @@ pub async fn upload_part(
 
     let handle = match resolver.for_write(&selected).await {
         Ok(h) => h,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            );
+        }
     };
 
     let mount_path = match handle.mount_path() {
         Some(p) => p.to_path_buf(),
-        None => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NotLocal", "Multipart uploads require local storage"),
+        None => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotLocal",
+                "Multipart uploads require local storage",
+            );
+        }
     };
 
     let mp = crate::infra::storage::multipart::MultipartStore::new(&mount_path);
     match mp.upload_part(&upload_id, part_number, &body).await {
-        Ok(etag) => {
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::ETAG, &etag)
-                .body("".into())
-                .unwrap()
-        }
-        Err(e) => xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Ok(etag) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::ETAG, &etag)
+            .body("".into())
+            .unwrap(),
+        Err(e) => xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -1294,7 +1418,7 @@ pub async fn upload_part(
 pub struct CompleteMultipartQuery {
     #[serde(rename = "uploadId")]
     pub upload_id: Option<String>,
-    pub uploads: Option<String>,  // presence of "uploads" = initiate, not complete
+    pub uploads: Option<String>, // presence of "uploads" = initiate, not complete
     #[serde(rename = "seed-bank")]
     pub seed_bank: Option<String>,
 }
@@ -1312,7 +1436,9 @@ pub async fn complete_or_initiate_multipart(
         return initiate_multipart_upload(
             State(state),
             Path((bucket, key)),
-            Query(SeedBankSelector { seed_bank: query.seed_bank }),
+            Query(SeedBankSelector {
+                seed_bank: query.seed_bank,
+            }),
             headers,
         )
         .await;
@@ -1320,7 +1446,13 @@ pub async fn complete_or_initiate_multipart(
 
     let upload_id = match &query.upload_id {
         Some(id) => id.clone(),
-        None => return xml_error(StatusCode::BAD_REQUEST, "InvalidArgument", "uploadId required"),
+        None => {
+            return xml_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidArgument",
+                "uploadId required",
+            );
+        }
     };
 
     if let Some(resp) = validate_bucket(&bucket) {
@@ -1328,7 +1460,9 @@ pub async fn complete_or_initiate_multipart(
     }
     // key from path is validated at entry; completion uses upload.key from manifest
 
-    let selector = SeedBankSelector { seed_bank: query.seed_bank.clone() };
+    let selector = SeedBankSelector {
+        seed_bank: query.seed_bank.clone(),
+    };
     let selected = get_storage_name(&headers, &selector)
         .unwrap_or_else(|| DEFAULT_REPLICA_SET_DISPLAY.to_string());
 
@@ -1341,38 +1475,85 @@ pub async fn complete_or_initiate_multipart(
 
     let handle = match resolver.for_write(&selected).await {
         Ok(h) => h,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            );
+        }
     };
 
     let mount_path = match handle.mount_path() {
         Some(p) => p.to_path_buf(),
-        None => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NotLocal", "Multipart uploads require local storage"),
+        None => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotLocal",
+                "Multipart uploads require local storage",
+            );
+        }
     };
 
     // Parse part list from XML body
     let body_str = String::from_utf8_lossy(&body);
-    let part_numbers = match s3_xml::from_s3_xml::<s3_xml::CompleteMultipartUploadRequest>(&body_str) {
-        Ok(req) => req.parts.into_iter().map(|p| p.part_number).collect::<Vec<_>>(),
-        Err(_) => return xml_error(StatusCode::BAD_REQUEST, "MalformedXML", "Could not parse CompleteMultipartUpload XML"),
-    };
+    let part_numbers =
+        match s3_xml::from_s3_xml::<s3_xml::CompleteMultipartUploadRequest>(&body_str) {
+            Ok(req) => req
+                .parts
+                .into_iter()
+                .map(|p| p.part_number)
+                .collect::<Vec<_>>(),
+            Err(_) => {
+                return xml_error(
+                    StatusCode::BAD_REQUEST,
+                    "MalformedXML",
+                    "Could not parse CompleteMultipartUpload XML",
+                );
+            }
+        };
 
     if part_numbers.is_empty() {
-        return xml_error(StatusCode::BAD_REQUEST, "MalformedXML", "No parts specified");
+        return xml_error(
+            StatusCode::BAD_REQUEST,
+            "MalformedXML",
+            "No parts specified",
+        );
     }
 
     let mp = crate::infra::storage::multipart::MultipartStore::new(&mount_path);
     let (assembled, upload) = match mp.complete(&upload_id, &part_numbers).await {
         Ok(result) => result,
-        Err(e) => return xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+            );
+        }
     };
 
     // Write the assembled object through the normal put path (enters changelog)
     let store = match handle.object_store_for_write() {
         Some(s) => s,
-        None => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NotLocal", "Storage not writable"),
+        None => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotLocal",
+                "Storage not writable",
+            );
+        }
     };
 
-    match store.put_object(&upload.bucket, &upload.key, &upload.content_type, &assembled).await {
+    match store
+        .put_object(
+            &upload.bucket,
+            &upload.key,
+            &upload.content_type,
+            &assembled,
+        )
+        .await
+    {
         Ok(result) => {
             // Clean up multipart staging
             let _ = mp.cleanup(&upload_id).await;
@@ -1388,7 +1569,11 @@ pub async fn complete_or_initiate_multipart(
                 .body(xml.into())
                 .unwrap()
         }
-        Err(e) => xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -1417,12 +1602,24 @@ pub async fn abort_multipart_upload(
 
     let handle = match resolver.for_write(&selected).await {
         Ok(h) => h,
-        Err(e) => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NoSeedBank", &e.to_string()),
+        Err(e) => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NoSeedBank",
+                &e.to_string(),
+            );
+        }
     };
 
     let mount_path = match handle.mount_path() {
         Some(p) => p.to_path_buf(),
-        None => return xml_error(StatusCode::SERVICE_UNAVAILABLE, "NotLocal", "Multipart uploads require local storage"),
+        None => {
+            return xml_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotLocal",
+                "Multipart uploads require local storage",
+            );
+        }
     };
 
     let mp = crate::infra::storage::multipart::MultipartStore::new(&mount_path);
@@ -1431,7 +1628,11 @@ pub async fn abort_multipart_upload(
             .status(StatusCode::NO_CONTENT)
             .body("".into())
             .unwrap(),
-        Err(e) => xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -1462,7 +1663,7 @@ pub async fn copy_object(
                 StatusCode::BAD_REQUEST,
                 "InvalidArgument",
                 "x-amz-copy-source must be /{bucket}/{key}",
-            )
+            );
         }
     };
 
@@ -1492,7 +1693,7 @@ pub async fn copy_object(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -1500,9 +1701,9 @@ pub async fn copy_object(
         Some(s) => s,
         None => {
             // Remote storage — proxy the entire COPY to the Primary stone
-            let target = read_handle.proxy_target().expect(
-                "invariant: handle is either local or remote; local path returned None",
-            );
+            let target = read_handle
+                .proxy_target()
+                .expect("invariant: handle is either local or remote; local path returned None");
             let mut query = Vec::new();
             if selected != DEFAULT_REPLICA_SET_DISPLAY {
                 query.push(("seed-bank".to_string(), selected));
@@ -1529,7 +1730,7 @@ pub async fn copy_object(
                     "Source key '{}' not found in bucket '{}'",
                     src_key, src_bucket
                 ),
-            )
+            );
         }
         Err(e) => {
             warn!(error = %e, "COPY source read failed");
@@ -1549,7 +1750,7 @@ pub async fn copy_object(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "NoSeedBank",
                 &e.to_string(),
-            )
+            );
         }
     };
 
@@ -1698,10 +1899,7 @@ mod tests {
     #[test]
     fn test_list_all_buckets_includes_names() {
         let now = chrono::Utc::now();
-        let buckets = vec![
-            ("photos".to_string(), now),
-            ("backups".to_string(), now),
-        ];
+        let buckets = vec![("photos".to_string(), now), ("backups".to_string(), now)];
         let xml = to_s3_xml(&s3_xml::ListAllMyBucketsResult::new(&buckets));
         assert!(xml.contains("<Name>photos</Name>"));
         assert!(xml.contains("<Name>backups</Name>"));
@@ -1732,7 +1930,12 @@ mod tests {
             next_marker: None,
         };
         let xml = to_s3_xml(&s3_xml::ListBucketResult::from_list_result(
-            "test-bucket", "", "", 1000, "", &result,
+            "test-bucket",
+            "",
+            "",
+            1000,
+            "",
+            &result,
         ));
         assert!(xml.contains("<Name>test-bucket</Name>"));
         assert!(xml.contains("<IsTruncated>false</IsTruncated>"));
@@ -1910,7 +2113,13 @@ mod tests {
             next_marker: Some("last-key".to_string()),
         };
         let xml = to_s3_xml(&s3_xml::ListBucketResultV2::from_list_result(
-            "b", "", "", Some("input-token"), 10, "", &result,
+            "b",
+            "",
+            "",
+            Some("input-token"),
+            10,
+            "",
+            &result,
         ));
         assert!(xml.contains("<ContinuationToken>input-token</ContinuationToken>"));
         assert!(xml.contains("<IsTruncated>true</IsTruncated>"));
@@ -1931,7 +2140,13 @@ mod tests {
             next_marker: None,
         };
         let xml = to_s3_xml(&s3_xml::ListBucketResultV2::from_list_result(
-            "b", "", "start-key", None, 1000, "", &result,
+            "b",
+            "",
+            "start-key",
+            None,
+            1000,
+            "",
+            &result,
         ));
         assert!(xml.contains("<StartAfter>start-key</StartAfter>"));
     }
@@ -1959,7 +2174,10 @@ mod tests {
             last_modified: "2026-03-18T12:00:00Z".to_string(),
         });
         assert!(xml.contains("<CopyObjectResult>"));
-        assert!(xml.contains("<ETag>\"abc123\"</ETag>") || xml.contains("<ETag>&quot;abc123&quot;</ETag>"));
+        assert!(
+            xml.contains("<ETag>\"abc123\"</ETag>")
+                || xml.contains("<ETag>&quot;abc123&quot;</ETag>")
+        );
         assert!(xml.contains("<LastModified>2026-03-18T12:00:00Z</LastModified>"));
     }
 

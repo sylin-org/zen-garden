@@ -103,10 +103,7 @@ fn migrate_legacy() -> anyhow::Result<()> {
                 if unit_file_needs_regeneration(&current) {
                     let new_contents = super::linux::generate_unit_file();
                     std::fs::write(unit_path, &new_contents).with_context(|| {
-                        format!(
-                            "failed to regenerate unit file at {}",
-                            unit_path.display()
-                        )
+                        format!("failed to regenerate unit file at {}", unit_path.display())
                     })?;
                     println!("[pre-start] Regenerated systemd unit file (legacy migration).");
                     changed = true;
@@ -330,16 +327,14 @@ fn replace_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
             )
         })?;
         // Copy new file to original path (new inode — no ETXTBSY).
-        let result = std::fs::copy(src, dest).with_context(|| {
-            format!("failed to copy {} -> {}", src.display(), dest.display())
-        });
+        let result = std::fs::copy(src, dest)
+            .with_context(|| format!("failed to copy {} -> {}", src.display(), dest.display()));
         // Best-effort cleanup — old inode stays alive until the process exits.
         let _ = std::fs::remove_file(&backup);
         result?;
     } else {
-        std::fs::copy(src, dest).with_context(|| {
-            format!("failed to copy {} -> {}", src.display(), dest.display())
-        })?;
+        std::fs::copy(src, dest)
+            .with_context(|| format!("failed to copy {} -> {}", src.display(), dest.display()))?;
     }
     Ok(())
 }

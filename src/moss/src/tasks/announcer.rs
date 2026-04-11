@@ -15,7 +15,7 @@
 
 use crate::AppState;
 use std::sync::atomic::Ordering;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tokio_util::sync::CancellationToken;
 
 /// Start periodic announcement task
@@ -88,9 +88,9 @@ pub(crate) async fn periodic_announcer_task(state: AppState, token: Cancellation
                     snapshot_deltas,
                 )
                 .await
-                {
-                    tracing::warn!(error = %e, "Failed to broadcast periodic tools snapshot beacon");
-                }
+            {
+                tracing::warn!(error = %e, "Failed to broadcast periodic tools snapshot beacon");
+            }
         }
     }
 }

@@ -34,7 +34,6 @@ pub mod health;
 pub mod image_types;
 pub mod infrastructure;
 pub mod maintenance;
-pub mod resources_collection;
 pub mod modes;
 pub mod naming;
 pub mod network;
@@ -49,6 +48,7 @@ pub mod pond;
 pub mod presence;
 pub mod reconciliation;
 pub mod registry;
+pub mod resources_collection;
 pub mod scoring;
 pub mod security;
 pub mod service_discovery;
@@ -64,12 +64,12 @@ pub mod tools;
 pub mod topology;
 pub mod traits;
 
-pub use adoption::{adopt_existing_containers, adopt_offering_container, AdoptionResult};
-pub use cloud_drive::{classify_rename, DriveAction};
+pub use adoption::{AdoptionResult, adopt_existing_containers, adopt_offering_container};
+pub use cloud_drive::{DriveAction, classify_rename};
 // compatibility: use crate::domain::compatibility::{...} directly
 pub use connection::{
-    build_hostname, default_template, extract_ip, infer_protocol, resolve_connection, resolve_uris,
-    ResolvedConnection,
+    ResolvedConnection, build_hostname, default_template, extract_ip, infer_protocol,
+    resolve_connection, resolve_uris,
 };
 pub use connectivity::{ConnectivityOrchestrator, ConnectivityOutcome, ConnectivityStatus};
 pub use health::{
@@ -78,37 +78,37 @@ pub use health::{
 };
 pub use modes::{AggregatedDetectionResult, DetectionOrchestrator};
 pub use offerings::{
-    current_capabilities_hash, ensure_offerings_index, get_compiled_offering, manifests_hash,
-    moss_version_string, rebuild_offerings_index, ActiveGuard, CandidatesGuard, ChangeKind,
-    CompiledOffering, FileOfferingStore, OfferingStore, Offerings, OfferingsChanged,
-    OfferingsFingerprint, OfferingsIndex,
+    ActiveGuard, CandidatesGuard, ChangeKind, CompiledOffering, FileOfferingStore, OfferingStore,
+    Offerings, OfferingsChanged, OfferingsFingerprint, OfferingsIndex, current_capabilities_hash,
+    ensure_offerings_index, get_compiled_offering, manifests_hash, moss_version_string,
+    rebuild_offerings_index,
 };
 pub use orchestration::{
     NourishmentOrchestration, NurturingOrchestration, Orchestration, StorageOrchestration,
 };
-pub use reconciliation::{reconcile_services, ReconciliationResult};
+pub use reconciliation::{ReconciliationResult, reconcile_services};
 pub use registry::Registry;
 pub use service_discovery::{
-    find_services, get_offering_port, list_all_local_services, FoundService,
-    ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef,
+    FoundService, ServiceDiscoveryResponse, ServiceSearchCriteria, StoneRef, find_services,
+    get_offering_port, list_all_local_services,
 };
 pub use storage::{
-    new_media, new_volumes, Management, Media, Medium, Storage, StorageBank, Volume, VolumeState,
-    Volumes,
+    Management, Media, Medium, Storage, StorageBank, Volume, VolumeState, Volumes, new_media,
+    new_volumes,
 };
 pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};
 // Re-export TopologyEntry from common (now shared type)
 pub use capabilities::{CapabilityExecutor, CapabilityMutationResult, Executor};
 pub use ceremony::{
-    execute_nourish_offering, Ceremony, CeremonyId, CeremonyInitiator, CeremonyOptions,
-    CeremonyRegistry, CeremonyState, CeremonyType, Phase, PhaseState,
+    Ceremony, CeremonyId, CeremonyInitiator, CeremonyOptions, CeremonyRegistry, CeremonyState,
+    CeremonyType, Phase, PhaseState, execute_nourish_offering,
 };
 pub use companion::Companion;
 pub use current::{Current, Stone as CurrentStone, Topology as CurrentTopology};
 pub use discovery::Discovery;
 pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent};
 pub use garden_registry::{
-    new_registry, EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery,
+    EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, ToolQuery, new_registry,
 };
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
@@ -119,13 +119,13 @@ pub use network::{
     StaticIpRelease, StaticIpRequest, StaticIpSeverity, StaticIpState,
 };
 pub use nurturing::{
-    snapshot_from_harvest, NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot,
-    OfferingSlots,
+    NurturingIndex, NurturingResult, NurturingSlot, NurturingSnapshot, OfferingSlots,
+    snapshot_from_harvest,
 };
 pub use platform::Platform;
-pub use pond::{load_pond_metadata, save_pond_metadata, PondMetadata, PondState};
+pub use pond::{PondMetadata, PondState, load_pond_metadata, save_pond_metadata};
 pub use presence::Presence;
 pub use security::{Pond, Security};
 pub use tool::Tool;
-pub use tools::{stream_event_type_for_delta, ToolsSnapshotPayload};
+pub use tools::{ToolsSnapshotPayload, stream_event_type_for_delta};
 // Categories are now data-driven via garden_common::manifests::get_category_registry()

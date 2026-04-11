@@ -12,10 +12,10 @@
 //! URL format: `http://host:port/{bucket}/{key}?X-Moss-Token={token}&X-Moss-Expires={ts}`
 
 use axum::{
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
@@ -67,7 +67,12 @@ pub async fn generate_presigned_url(
 
     // Determine the S3 endpoint for the URL
     let s3_port = {
-        let catalog = state.orchestration.storage.s3_listeners.port_catalog().await;
+        let catalog = state
+            .orchestration
+            .storage
+            .s3_listeners
+            .port_catalog()
+            .await;
         catalog.values().next().copied()
     };
 
@@ -146,14 +151,16 @@ pub fn validate_presign_token(
 pub(crate) async fn resolve_key_material(state: &AppState) -> String {
     if state.security.pond.active.load(Ordering::Relaxed)
         && let Ok(handle) = state.discovery.koi.certmesh()
-            && let Ok(core) = handle.core() {
-                let status = core.certmesh_status().await;
-                if let Some(ref fp) = status.ca_fingerprint
-                    && !fp.is_empty() {
-                        debug!("Key material: pond CA fingerprint (garden-scoped)");
-                        return fp.clone();
-                    }
-            }
+        && let Ok(core) = handle.core()
+    {
+        let status = core.certmesh_status().await;
+        if let Some(ref fp) = status.ca_fingerprint
+            && !fp.is_empty()
+        {
+            debug!("Key material: pond CA fingerprint (garden-scoped)");
+            return fp.clone();
+        }
+    }
 
     debug!("Key material: stone_id (stone-scoped)");
     state.current.stone.id.clone()
@@ -181,7 +188,13 @@ fn derive_secret_from_material(material: &str) -> Vec<u8> {
 
 /// Compute the HMAC token for a presigned URL
 fn compute_token(secret: &[u8], method: &str, bucket: &str, key: &str, expires_ts: i64) -> String {
-    let message = format!("{}\n{}/{}\n{}", method.to_uppercase(), bucket, key, expires_ts);
+    let message = format!(
+        "{}\n{}/{}\n{}",
+        method.to_uppercase(),
+        bucket,
+        key,
+        expires_ts
+    );
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC key length");
     mac.update(message.as_bytes());
     let result = mac.finalize();

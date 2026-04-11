@@ -5,8 +5,8 @@ pub mod matcher;
 pub mod pipeline;
 
 // Re-export commonly used types
-pub use command::{detect_by_command, DetectionResult};
+pub use command::{DetectionResult, detect_by_command};
 pub use http_probe::detect_by_http_probe;
 pub use inventory::{ProcessInfo, SystemSnapshot};
-pub use matcher::{match_processes, ProcessMatch, ProcessSignature};
+pub use matcher::{ProcessMatch, ProcessSignature, match_processes};
 pub use pipeline::{DetectionPipeline, HealthCheck, PipelineResult, PortConfig};

@@ -5,7 +5,7 @@
 
 use super::DomainEvent;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 /// Event handler callback type
 pub type EventHandler = Arc<dyn Fn(DomainEvent) + Send + Sync>;
@@ -123,7 +123,7 @@ mod tests {
     use crate::events::ServiceEvent;
     use chrono::Utc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     #[tokio::test]
     async fn test_event_bus_publish_subscribe() {

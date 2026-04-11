@@ -27,7 +27,10 @@ impl BackgroundTask for StorageLifecycleTask {
         &["volume-monitor"]
     }
 
-    fn run(self: Box<Self>, mut ctx: TaskContext) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
+    fn run(
+        self: Box<Self>,
+        mut ctx: TaskContext,
+    ) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
         Box::pin(async move {
             if !ctx.deps.wait().await {
                 return TaskOutcome::Cancelled;

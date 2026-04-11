@@ -19,21 +19,21 @@ pub mod announcer;
 pub mod auto_adoption;
 pub mod coordinator;
 pub mod discovery;
-pub mod docker_events;
 pub mod discovery_handler;
 pub mod docker;
+pub mod docker_events;
 pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;
 pub mod lantern;
-pub mod resources_collector;
 pub mod network_monitor;
 pub mod nurturing_scheduler;
 pub mod offering_orchestration;
 pub mod offering_reconciliation;
 pub mod presence_monitor;
 pub mod registry;
+pub mod resources_collector;
 pub mod state_provider;
 pub mod storage_orchestration;
 pub mod storage_replication;
@@ -49,7 +49,6 @@ pub mod topology_probe;
 
 pub use announcer::start_periodic_announcer;
 pub use auto_adoption::auto_adoption_task;
-pub use lantern::start_lantern_registration;
 pub use discovery::lantern_registration_loop;
 pub use docker::{Config as DockerMonitorConfig, Event as DockerEvent, Monitor as DockerMonitor};
 pub use docker_events::docker_events_task;
@@ -59,12 +58,13 @@ pub use job_executors::{
     add_capability_task, backfill_missing_guidance, build_adopted_guidance, build_guidance,
     install_batch_task, install_image_direct_task, install_service_task, refresh_capabilities_task,
 };
-pub use resources_collector::run_resources_collector;
+pub use lantern::start_lantern_registration;
 pub use network_monitor::{Network, NetworkConfig, NetworkEvent};
 pub use nurturing_scheduler::{
-    trigger_all_nurturing, trigger_nurturing, NurturingScheduler, NurturingWorkflowConfig,
-    NurturingWorkflowResult, ReplicationAttempt, RoutingStrategy,
+    NurturingScheduler, NurturingWorkflowConfig, NurturingWorkflowResult, ReplicationAttempt,
+    RoutingStrategy, trigger_all_nurturing, trigger_nurturing,
 };
+pub use resources_collector::run_resources_collector;
 pub use task_scheduler::{
-    backfill_missing_tasks, run_scheduler_iteration, start_task_scheduler, TaskSchedulerConfig,
+    TaskSchedulerConfig, backfill_missing_tasks, run_scheduler_iteration, start_task_scheduler,
 };

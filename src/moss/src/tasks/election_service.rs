@@ -14,8 +14,8 @@
 use anyhow::Result;
 use garden_common::constants::orchestration::{FITNESS_HARD_CAP_MS, FITNESS_QUIET_TIMEOUT_MS};
 use garden_common::election::{
-    calculate_election_delay, matches_criteria, ElectionCandidate, ElectionRequest, ElectionResult,
-    ElectionType, ElectionWinner, ScoreMechanism,
+    ElectionCandidate, ElectionRequest, ElectionResult, ElectionType, ElectionWinner,
+    ScoreMechanism, calculate_election_delay, matches_criteria,
 };
 use garden_common::infra::communications::announcement_types;
 use serde_json::Value;
@@ -386,14 +386,15 @@ impl Elections {
 
         let mut pending = self.pending.write().await;
         if let Some(mut election) = pending.remove(&result.election_id)
-            && let Some(handle) = election.timer_handle.take() {
-                handle.abort();
-                tracing::info!(
-                    election_id = %result.election_id,
-                    winner_id = %result.winner_id,
-                    "Cancelled our candidacy timer (election won by another)"
-                );
-            }
+            && let Some(handle) = election.timer_handle.take()
+        {
+            handle.abort();
+            tracing::info!(
+                election_id = %result.election_id,
+                winner_id = %result.winner_id,
+                "Cancelled our candidacy timer (election won by another)"
+            );
+        }
 
         Ok(())
     }

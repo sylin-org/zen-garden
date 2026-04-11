@@ -19,10 +19,7 @@ impl BackgroundTask for TaskSchedulerTask {
         Box::pin(async move {
             ctx.ready.signal();
 
-            let handle = crate::tasks::task_scheduler::start_task_scheduler(
-                ctx.state,
-                ctx.token,
-            );
+            let handle = crate::tasks::task_scheduler::start_task_scheduler(ctx.state, ctx.token);
 
             // start_task_scheduler returns a JoinHandle — await it so we stay alive
             // until shutdown or the scheduler exits.

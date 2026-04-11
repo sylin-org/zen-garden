@@ -79,8 +79,8 @@ fn normalize_offering_identity(offering: &mut garden_common::Offering) -> bool {
 mod normalize_tests {
     use super::*;
     use garden_common::{
-        offerings::OfferingFqn, AdoptedControlLevel, AdoptedData, Offering, OfferingLocation,
-        OfferingModeData, OfferingStatus, ServiceHealthStatus,
+        AdoptedControlLevel, AdoptedData, Offering, OfferingLocation, OfferingModeData,
+        OfferingStatus, ServiceHealthStatus, offerings::OfferingFqn,
     };
 
     fn sample_offering(name: &str, offering_type: &str) -> Offering {

@@ -23,10 +23,10 @@
 use crate::docker::Client;
 use crate::domain::harvest::HarvestManifest;
 use crate::domain::nurturing::{
-    snapshot_from_harvest, NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots,
-    RemoteNurturingIndex, RemoteSnapshot, ReplicationResult,
+    NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots, RemoteNurturingIndex,
+    RemoteSnapshot, ReplicationResult, snapshot_from_harvest,
 };
-use crate::infra::{create_harvest, HarvestStore};
+use crate::infra::{HarvestStore, create_harvest};
 use anyhow::{Context, Result};
 use garden_common::constants::paths;
 use garden_common::storage::MemoriesOfferingManifest;

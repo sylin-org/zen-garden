@@ -15,8 +15,8 @@
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
-use winreg::enums::*;
 use winreg::RegKey;
+use winreg::enums::*;
 
 // ============================================================================
 // Constants

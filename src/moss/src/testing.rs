@@ -27,12 +27,12 @@ use crate::bootstrap::router;
 use crate::domain;
 use crate::infra;
 use axum::Router;
-use garden_common::console::{ConsolePrinter, ConsoleMode};
 use garden_common::PeerAddress;
+use garden_common::console::{ConsoleMode, ConsolePrinter};
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -80,9 +80,8 @@ pub async fn build_test_state() -> AppState {
 
     // Docker client: attempt connection. If Docker is not available the
     // client is still valid — only health checks and container ops will fail.
-    let docker = Arc::new(
-        crate::docker::Client::new().expect("Docker client construction should not fail"),
-    );
+    let docker =
+        Arc::new(crate::docker::Client::new().expect("Docker client construction should not fail"));
 
     // Koi handle: all capabilities disabled — no mDNS, DNS, certmesh, proxy, HTTP.
     let koi_handle = Arc::new(
@@ -145,14 +144,12 @@ pub async fn build_test_state() -> AppState {
     });
 
     let topology_cache: domain::topology::TopologyCache = Arc::new(RwLock::new(HashMap::new()));
-    let topology_dirty: domain::topology::TopologyDirtyFlag =
-        Arc::new(AtomicBool::new(false));
+    let topology_dirty: domain::topology::TopologyDirtyFlag = Arc::new(AtomicBool::new(false));
 
     let loopback: IpAddr = "127.0.0.1".parse().unwrap();
     let current_address = Arc::new(RwLock::new(PeerAddress::new(loopback, 7185)));
 
-    let infrastructure_handlers =
-        Arc::new(domain::InfrastructureHandlerRegistry::new(Vec::new()));
+    let infrastructure_handlers = Arc::new(domain::InfrastructureHandlerRegistry::new(Vec::new()));
 
     AppState {
         current: Arc::new(domain::Current {

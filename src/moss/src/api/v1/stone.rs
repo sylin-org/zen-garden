@@ -16,11 +16,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::domain::compatibility::validate_binary_architecture;
 use crate::AppState;
+use crate::domain::compatibility::validate_binary_architecture;
 use garden_common::{
-    constants::{MOSS_BINARY, RAKE_BINARY},
     HardwareCapabilities, Offering,
+    constants::{MOSS_BINARY, RAKE_BINARY},
 };
 
 // ============================================================================
@@ -688,7 +688,11 @@ pub async fn deploy_stone_v1(
                             OpenOptions::new().create(true).append(true).open(&log_path)
                         {
                             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                            let _ = writeln!(file, "[{}] API deploy_stone_v1: WARNING - Failed to stop companion {}: {}", timestamp, id, e);
+                            let _ = writeln!(
+                                file,
+                                "[{}] API deploy_stone_v1: WARNING - Failed to stop companion {}: {}",
+                                timestamp, id, e
+                            );
                         }
                     }
                 }

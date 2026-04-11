@@ -50,10 +50,7 @@ impl ListAllMyBucketsResult {
                     .iter()
                     .map(|(name, created)| BucketEntry {
                         name: name.clone(),
-                        creation_date: created.to_rfc3339_opts(
-                            chrono::SecondsFormat::Millis,
-                            true,
-                        ),
+                        creation_date: created.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                     })
                     .collect(),
             },
@@ -124,13 +121,15 @@ impl ListBucketResult {
             max_keys,
             delimiter: delimiter.to_string(),
             is_truncated: result.is_truncated,
-            contents: result.contents.iter().map(S3Object::from_metadata).collect(),
+            contents: result
+                .contents
+                .iter()
+                .map(S3Object::from_metadata)
+                .collect(),
             common_prefixes: result
                 .common_prefixes
                 .iter()
-                .map(|p| CommonPrefix {
-                    prefix: p.clone(),
-                })
+                .map(|p| CommonPrefix { prefix: p.clone() })
                 .collect(),
         }
     }
@@ -154,10 +153,7 @@ pub struct ListBucketResultV2 {
     pub start_after: String,
     #[serde(rename = "Delimiter", skip_serializing_if = "String::is_empty")]
     pub delimiter: String,
-    #[serde(
-        rename = "ContinuationToken",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "ContinuationToken", skip_serializing_if = "Option::is_none")]
     pub continuation_token: Option<String>,
     #[serde(rename = "IsTruncated")]
     pub is_truncated: bool,
@@ -185,9 +181,10 @@ impl ListBucketResultV2 {
         use base64::Engine;
 
         let next_continuation_token = if result.is_truncated {
-            result.next_marker.as_ref().map(|marker| {
-                base64::engine::general_purpose::STANDARD.encode(marker)
-            })
+            result
+                .next_marker
+                .as_ref()
+                .map(|marker| base64::engine::general_purpose::STANDARD.encode(marker))
         } else {
             None
         };
@@ -203,13 +200,15 @@ impl ListBucketResultV2 {
             continuation_token: continuation_token.map(|s| s.to_string()),
             is_truncated: result.is_truncated,
             next_continuation_token,
-            contents: result.contents.iter().map(S3Object::from_metadata).collect(),
+            contents: result
+                .contents
+                .iter()
+                .map(S3Object::from_metadata)
+                .collect(),
             common_prefixes: result
                 .common_prefixes
                 .iter()
-                .map(|p| CommonPrefix {
-                    prefix: p.clone(),
-                })
+                .map(|p| CommonPrefix { prefix: p.clone() })
                 .collect(),
         }
     }

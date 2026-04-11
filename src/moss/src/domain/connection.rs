@@ -3,7 +3,7 @@
 //! Provides reusable functions for resolving service connection URIs.
 //! Supports hostname-first resolution with IP fallback for resilience.
 
-use garden_common::manifests::{get_category_registry, ConnectionProfile};
+use garden_common::manifests::{ConnectionProfile, get_category_registry};
 
 // Re-export from garden-common (canonical definition)
 pub use garden_common::discovery::ResolvedConnection;
@@ -107,24 +107,28 @@ pub fn infer_protocol_from_manifest_metadata(
 ) -> String {
     if let Some(conn) = connection {
         if let Some(protocol) = conn.protocol.as_deref()
-            && !protocol.trim().is_empty() {
-                return protocol.trim().to_string();
-            }
+            && !protocol.trim().is_empty()
+        {
+            return protocol.trim().to_string();
+        }
         if let Some(template) = conn.uri_template.as_deref()
-            && let Some(protocol) = protocol_from_template(template) {
-                return protocol;
-            }
+            && let Some(protocol) = protocol_from_template(template)
+        {
+            return protocol;
+        }
     }
 
     if let Some(category_conn) = get_category_registry().connection(category) {
         if let Some(protocol) = category_conn.protocol.as_deref()
-            && !protocol.trim().is_empty() {
-                return protocol.trim().to_string();
-            }
+            && !protocol.trim().is_empty()
+        {
+            return protocol.trim().to_string();
+        }
         if let Some(template) = category_conn.uri_template.as_deref()
-            && let Some(protocol) = protocol_from_template(template) {
-                return protocol;
-            }
+            && let Some(protocol) = protocol_from_template(template)
+        {
+            return protocol;
+        }
     }
 
     "http".to_string()
@@ -137,15 +141,17 @@ pub fn select_uri_template(
 ) -> Option<String> {
     if let Some(conn) = connection
         && let Some(template) = conn.uri_template.as_deref()
-            && !template.trim().is_empty() {
-                return Some(template.to_string());
-            }
+        && !template.trim().is_empty()
+    {
+        return Some(template.to_string());
+    }
 
     if let Some(category_conn) = get_category_registry().connection(category)
         && let Some(template) = category_conn.uri_template.as_deref()
-            && !template.trim().is_empty() {
-                return Some(template.to_string());
-            }
+        && !template.trim().is_empty()
+    {
+        return Some(template.to_string());
+    }
 
     None
 }

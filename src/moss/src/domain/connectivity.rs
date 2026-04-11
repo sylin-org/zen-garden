@@ -5,19 +5,19 @@
 
 use anyhow::{Context, Result};
 use dashmap::DashMap;
+use garden_common::OfferingLocation;
 use garden_common::infra::network::get_local_ip_and_mac;
 use garden_common::manifests::{
     CommandDetection, DetectionConfig, DetectionMethod, DetectionRule, HttpProbeDetection,
     Offering as OfferingManifest,
 };
-use garden_common::templates::{render_template, Template};
-use garden_common::OfferingLocation;
+use garden_common::templates::{Template, render_template};
 use regex::Regex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::domain::traits::ServiceDetector;
-use garden_common::detection::{detect_by_http_probe, DetectionResult};
+use garden_common::detection::{DetectionResult, detect_by_http_probe};
 
 /// Connectivity orchestration with caching and enforcement cooldowns
 pub struct ConnectivityOrchestrator<D: ServiceDetector = crate::infra::detection::ContainerDetector>
@@ -237,12 +237,13 @@ impl<D: ServiceDetector> ConnectivityOrchestrator<D> {
         for (idx, rule) in rules.checks.iter().enumerate() {
             let cache_key = format!("{}:{}:{}", offering, context.os, idx);
             if let Some(cached) = self.cache.get(&cache_key)
-                && cached.cached_at.elapsed() < cached.ttl {
-                    if !cached.ok {
-                        return Ok(CheckResult::failed(cached.details.clone()));
-                    }
-                    continue;
+                && cached.cached_at.elapsed() < cached.ttl
+            {
+                if !cached.ok {
+                    return Ok(CheckResult::failed(cached.details.clone()));
                 }
+                continue;
+            }
 
             let result = self.execute_check(rule, context).await?;
 

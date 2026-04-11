@@ -253,11 +253,7 @@ impl RegisteredCompanion {
 
     /// Get the process ID if running
     pub fn pid(&self) -> Option<u32> {
-        if self.is_running() {
-            self.pid
-        } else {
-            None
-        }
+        if self.is_running() { self.pid } else { None }
     }
 
     /// Get the assigned command port (always available once registered)
@@ -539,10 +535,11 @@ impl CompanionRegistry {
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
         if c.is_running()
-            && let Some(pid) = c.pid {
-                info!(companion = %id, pid = pid, "Companion already running");
-                return Ok(pid);
-            }
+            && let Some(pid) = c.pid
+        {
+            info!(companion = %id, pid = pid, "Companion already running");
+            return Ok(pid);
+        }
 
         // Port was assigned during registration
         let port = c
@@ -792,24 +789,25 @@ impl CompanionRegistry {
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
         if let Some(pid) = c.pid
-            && is_process_alive(pid) {
-                info!(companion = %id, pid = pid, "Stopping Companion");
+            && is_process_alive(pid)
+        {
+            info!(companion = %id, pid = pid, "Stopping Companion");
 
-                // Try graceful shutdown first via process handle
-                if let Some(ref mut child) = c.process {
-                    if let Err(e) = child.kill().await {
-                        warn!(companion = %id, error = %e, "Failed to kill Companion via handle, trying by PID");
-                        kill_process_by_pid(pid);
-                    }
-                    // Reap the process to prevent zombie
-                    let _ = child.wait().await;
-                } else {
-                    // No handle, kill by PID
+            // Try graceful shutdown first via process handle
+            if let Some(ref mut child) = c.process {
+                if let Err(e) = child.kill().await {
+                    warn!(companion = %id, error = %e, "Failed to kill Companion via handle, trying by PID");
                     kill_process_by_pid(pid);
                 }
-
-                info!(companion = %id, "Companion stopped");
+                // Reap the process to prevent zombie
+                let _ = child.wait().await;
+            } else {
+                // No handle, kill by PID
+                kill_process_by_pid(pid);
             }
+
+            info!(companion = %id, "Companion stopped");
+        }
 
         c.process = None;
         c.pid = None;
@@ -835,10 +833,11 @@ impl CompanionRegistry {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
             if let Some(pid) = c.pid
-                && is_process_alive(pid) {
-                    info!(companion = %id, pid = pid, "Sending SIGTERM to Companion");
-                    sigterm_process_by_pid(pid);
-                }
+                && is_process_alive(pid)
+            {
+                info!(companion = %id, pid = pid, "Sending SIGTERM to Companion");
+                sigterm_process_by_pid(pid);
+            }
         }
     }
 
@@ -850,10 +849,11 @@ impl CompanionRegistry {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
             if let Some(pid) = c.pid
-                && is_process_alive(pid) {
-                    warn!(companion = %id, pid = pid, "Companion still alive after drain, sending SIGKILL");
-                    kill_process_by_pid(pid);
-                }
+                && is_process_alive(pid)
+            {
+                warn!(companion = %id, pid = pid, "Companion still alive after drain, sending SIGKILL");
+                kill_process_by_pid(pid);
+            }
         }
     }
 

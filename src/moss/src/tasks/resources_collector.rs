@@ -23,10 +23,10 @@ use tokio::time::interval;
 
 use crate::AppState;
 use garden_common::constants::timeouts::{resources_disk_interval, resources_fast_interval};
+use garden_common::notifications::{NOTIF_SOURCE_CANDIDATES, NotificationTag};
 use garden_common::resources::system::{
     get_fast_resources, get_gpu_utilization, get_network_resources, get_storage_resources,
 };
-use garden_common::notifications::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
 
 /// Run the system resources collector with dual intervals.
 ///

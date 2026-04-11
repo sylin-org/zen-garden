@@ -8,8 +8,8 @@ pub use ceremony::Ceremony;
 pub use pond::Pond;
 
 use crate::domain::traits::PondClient;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Security domain context (`state.security`).
 ///

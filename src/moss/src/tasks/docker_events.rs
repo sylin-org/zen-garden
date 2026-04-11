@@ -20,9 +20,9 @@
 //! - Topology mount checks
 //! - Self-heal adoption of orphaned containers
 
+use crate::AppState;
 use crate::docker::decode_zen_offering_container_name;
 use crate::domain::events::OfferingEvent;
-use crate::AppState;
 use bollard::models::EventMessageTypeEnum;
 use futures_util::StreamExt;
 use garden_common::constants::OFFERING_CONTAINER_PREFIX;
@@ -110,10 +110,7 @@ pub async fn docker_events_task(state: AppState, token: CancellationToken) {
 /// Extracts the container name from the event actor attributes, checks
 /// whether it is a managed zen-offering container, and updates the
 /// offering status and emits domain events accordingly.
-async fn handle_container_event(
-    state: &AppState,
-    event: &bollard::models::EventMessage,
-) {
+async fn handle_container_event(state: &AppState, event: &bollard::models::EventMessage) {
     // Only process container events (filter should already ensure this)
     if event.typ != Some(EventMessageTypeEnum::CONTAINER) {
         return;
@@ -234,7 +231,8 @@ async fn handle_container_event(
 
     // Update offerings registry (auto_chirp=true for immediate notification)
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             o.status = new_status;
             o.health = new_health.clone();
             true

@@ -11,11 +11,11 @@
 //! - `DELETE /api/v1/stone/services/{service}/config?owner=..` — remove a patch
 
 use crate::domain::config_compose;
-use crate::{bad_request, conflict, internal, not_found, AppState};
+use crate::{AppState, bad_request, conflict, internal, not_found};
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use garden_common::{
     api_utils::ApiErrorResponse, manifests::offering::ServiceTemplate, offerings::OfferingFqn,
@@ -154,7 +154,12 @@ pub async fn patch_config_v1(
         }
         let has_traversal = std::path::Path::new(host_path.as_str())
             .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_)));
+            .any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                )
+            });
         if has_traversal {
             return Err(bad_request(
                 "INVALID_VOLUME_PATH",
@@ -234,11 +239,13 @@ pub async fn patch_config_v1(
     // Write patches to the offering via gateway (detail-only, no chirp sync)
     let patches = patches_after.clone();
     state
-        .offerings.update_by_name(&service_name, |o| {
+        .offerings
+        .update_by_name(&service_name, |o| {
             if o.is_managed()
-                && let Some(managed) = o.managed_data_mut() {
-                    managed.config_patches = patches;
-                }
+                && let Some(managed) = o.managed_data_mut()
+            {
+                managed.config_patches = patches;
+            }
             false // config patches are detail-only, don't trigger sync
         })
         .await;
@@ -314,11 +321,13 @@ pub async fn delete_config_v1(
     // Write updated patches via gateway (detail-only, no chirp sync)
     let patches = patches_after.clone();
     state
-        .offerings.update_by_name(&service_name, |o| {
+        .offerings
+        .update_by_name(&service_name, |o| {
             if o.is_managed()
-                && let Some(managed) = o.managed_data_mut() {
-                    managed.config_patches = patches;
-                }
+                && let Some(managed) = o.managed_data_mut()
+            {
+                managed.config_patches = patches;
+            }
             false // config patches are detail-only, don't trigger sync
         })
         .await;

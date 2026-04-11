@@ -1,11 +1,11 @@
-use crate::domain::tools::{stream_event_type_for_delta, ToolQuery, ToolsSnapshotPayload};
 use crate::domain::Tool;
-use crate::{bad_request, AppState};
+use crate::domain::tools::{ToolQuery, ToolsSnapshotPayload, stream_event_type_for_delta};
+use crate::{AppState, bad_request};
 use axum::{
+    Json,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::sse::{Event, KeepAlive, Sse},
-    Json,
 };
 use futures_util::stream::{self, Stream, StreamExt};
 use garden_common::api_utils::ApiErrorResponse;
@@ -85,9 +85,10 @@ pub async fn stream_garden_tools_v1(
     let (snapshot_cursor, snapshot_tools, replay) = {
         let reg = state.tool.registry.read().await;
         if resume_cursor == 0
-            && let Some(last_event_id) = extract_last_event_id(&headers) {
-                resume_cursor = parse_resume_cursor(last_event_id, &reg);
-            }
+            && let Some(last_event_id) = extract_last_event_id(&headers)
+        {
+            resume_cursor = parse_resume_cursor(last_event_id, &reg);
+        }
 
         let (cursor, tools) = reg.snapshot(&filter);
         let replay = if resume_cursor > 0 {

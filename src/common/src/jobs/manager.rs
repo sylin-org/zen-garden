@@ -294,7 +294,7 @@ pub enum JobManagerError {
 mod tests {
     use super::*;
     use crate::traits::job_executor::JobResult;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::future::Future;
     use std::pin::Pin;
     use tempfile::TempDir;

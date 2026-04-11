@@ -8,8 +8,8 @@
 //! No I/O here — reads directly from `HardwareCapabilities` via `FactSource`.
 
 use anyhow::Result;
-use garden_common::compatibility::{FactSource, Predicate};
 use garden_common::HardwareCapabilities;
+use garden_common::compatibility::{FactSource, Predicate};
 
 /// Result of compatibility evaluation
 #[derive(Debug, Clone)]
@@ -290,7 +290,12 @@ mod tests {
         }
     }
 
-    fn gpu(vendor: &str, model: &str, vram_mb: u64, capabilities: Vec<&str>) -> garden_common::GpuInfo {
+    fn gpu(
+        vendor: &str,
+        model: &str,
+        vram_mb: u64,
+        capabilities: Vec<&str>,
+    ) -> garden_common::GpuInfo {
         garden_common::GpuInfo {
             vendor: vendor.to_string(),
             model: model.to_string(),
@@ -300,17 +305,36 @@ mod tests {
     }
 
     fn rocm_host() -> HardwareCapabilities {
-        make_caps("x86_64", "linux", Some("AMD Ryzen 9"), vec!["avx2", "sse4_2"], 32768,
-            vec![gpu("AMD", "RX 7900 XTX", 24576, vec!["rocm", "vulkan"])])
+        make_caps(
+            "x86_64",
+            "linux",
+            Some("AMD Ryzen 9"),
+            vec!["avx2", "sse4_2"],
+            32768,
+            vec![gpu("AMD", "RX 7900 XTX", 24576, vec!["rocm", "vulkan"])],
+        )
     }
 
     fn nvidia_host() -> HardwareCapabilities {
-        make_caps("x86_64", "linux", None, vec!["avx2"], 16384,
-            vec![gpu("NVIDIA", "RTX 3060 Ti", 8192, vec!["cuda", "vulkan"])])
+        make_caps(
+            "x86_64",
+            "linux",
+            None,
+            vec!["avx2"],
+            16384,
+            vec![gpu("NVIDIA", "RTX 3060 Ti", 8192, vec!["cuda", "vulkan"])],
+        )
     }
 
     fn cpu_only_host() -> HardwareCapabilities {
-        make_caps("x86_64", "linux", Some("Intel Celeron J4105"), vec!["sse4_2"], 8192, vec![])
+        make_caps(
+            "x86_64",
+            "linux",
+            Some("Intel Celeron J4105"),
+            vec!["sse4_2"],
+            8192,
+            vec![],
+        )
     }
 
     fn comfyui_rules() -> garden_common::CompatibilityRules {

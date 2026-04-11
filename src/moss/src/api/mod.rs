@@ -2,7 +2,7 @@ pub mod responses;
 pub mod suggestions;
 pub mod v1;
 
-use axum::{http::StatusCode, Json};
+use axum::{Json, http::StatusCode};
 use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 
 /// Standard return type for API handlers that return data + optional suggestions.

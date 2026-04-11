@@ -136,11 +136,7 @@ pub fn build_storage_dir_placeholder(name: &str, avail: &StorageAvailability) ->
         .metadata(Metadata::directory().created(now).written(now).size(0))
         .blob(blob);
 
-    if avail.online {
-        ph.mark_in_sync()
-    } else {
-        ph
-    }
+    if avail.online { ph.mark_in_sync() } else { ph }
 }
 
 /// Build a `PlaceholderFile` for a **file or sub-directory inside a storage**.

@@ -324,20 +324,21 @@ impl ObjectStore {
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             if entry.path().is_dir()
-                && let Some(name) = entry.file_name().to_str() {
-                    // Skip dotfolders (.zen-garden, .Trash, etc.)
-                    if name.starts_with('.') {
-                        continue;
-                    }
-                    let created = entry
-                        .metadata()
-                        .await
-                        .ok()
-                        .and_then(|m| m.created().ok())
-                        .map(chrono::DateTime::<chrono::Utc>::from)
-                        .unwrap_or_else(chrono::Utc::now);
-                    buckets.push((name.to_string(), created));
+                && let Some(name) = entry.file_name().to_str()
+            {
+                // Skip dotfolders (.zen-garden, .Trash, etc.)
+                if name.starts_with('.') {
+                    continue;
                 }
+                let created = entry
+                    .metadata()
+                    .await
+                    .ok()
+                    .and_then(|m| m.created().ok())
+                    .map(chrono::DateTime::<chrono::Utc>::from)
+                    .unwrap_or_else(chrono::Utc::now);
+                buckets.push((name.to_string(), created));
+            }
         }
 
         buckets.sort_by(|a, b| a.0.cmp(&b.0));
@@ -598,10 +599,11 @@ mod tests {
         // Object file at mount root
         assert!(tmp.path().join("test-bucket/hello.txt").exists());
         // Sidecar under .zen-garden/meta
-        assert!(tmp
-            .path()
-            .join(".zen-garden/meta/test-bucket/hello.txt.json")
-            .exists());
+        assert!(
+            tmp.path()
+                .join(".zen-garden/meta/test-bucket/hello.txt.json")
+                .exists()
+        );
 
         // GET
         let (data, meta) = store
@@ -627,11 +629,13 @@ mod tests {
             .delete_object("test-bucket", "hello.txt")
             .await
             .unwrap();
-        assert!(store
-            .get_object("test-bucket", "hello.txt")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .get_object("test-bucket", "hello.txt")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -658,11 +662,13 @@ mod tests {
     async fn get_object_range_not_found() {
         let tmp = tempfile::tempdir().unwrap();
         let store = ObjectStore::new(tmp.path());
-        assert!(store
-            .get_object_range("b", "missing.txt", 0, 10)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .get_object_range("b", "missing.txt", 0, 10)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

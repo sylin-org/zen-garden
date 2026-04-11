@@ -7,7 +7,7 @@
 //! then hands off to the task registry and supervisor for all long-running
 //! background tasks.
 
-use crate::{infra, mdns, AppState};
+use crate::{AppState, infra, mdns};
 use garden_common::console::{ConsoleEvent, EventCategory, EventStatus};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -57,9 +57,8 @@ pub(crate) async fn start_background_tasks(
     {
         let volumes = state.current.storage.volumes.clone();
         let platform: Arc<OsPlatform> = Arc::new(OsPlatform);
-        let make_store = |path: PathBuf| -> Arc<ContentStore> {
-            Arc::new(ContentStore::new(path, None))
-        };
+        let make_store =
+            |path: PathBuf| -> Arc<ContentStore> { Arc::new(ContentStore::new(path, None)) };
         crate::domain::storage::initial_scan(&volumes, platform, &make_store).await;
     }
 
@@ -220,17 +219,14 @@ pub(crate) async fn start_background_tasks(
     let bank = crate::domain::StorageBank::new(
         state.current.storage.volumes.clone(),
         state.current.storage.changed.clone(),
-        |path: PathBuf| -> Arc<ContentStore> {
-            Arc::new(ContentStore::new(path, None))
-        },
+        |path: PathBuf| -> Arc<ContentStore> { Arc::new(ContentStore::new(path, None)) },
     );
     crate::infra::storage::monitor::build_monitor().start(vol_tx, monitor_token.clone());
 
     // mDNS lurk listener (passive topology discovery)
-    let mdns_lurk_rx =
-        mdns::start_mdns_lurk_listener(koi_handle.clone(), stone_name.clone())
-            .await
-            .ok();
+    let mdns_lurk_rx = mdns::start_mdns_lurk_listener(koi_handle.clone(), stone_name.clone())
+        .await
+        .ok();
     if mdns_lurk_rx.is_some() {
         console_printer.emit(console::ConsoleEvent::new(
             console::EventCategory::Discovery,
@@ -289,10 +285,7 @@ pub(crate) async fn start_background_tasks(
     // Build task config, channels, registry, and supervisor
     // ====================================================================
 
-    let adoption_config = config
-        .as_ref()
-        .map(|c| c.adoption())
-        .unwrap_or_default();
+    let adoption_config = config.as_ref().map(|c| c.adoption()).unwrap_or_default();
 
     if adoption_config.is_enabled() {
         tracing::info!("Auto-adoption enabled, starting adoption background task");
@@ -331,12 +324,9 @@ pub(crate) async fn start_background_tasks(
 
     let tasks = super::task_registry::build_task_registry(task_config, channels);
 
-    let supervisor = super::supervisor::TaskSupervisor::build(
-        tasks,
-        state.clone(),
-        shutdown_token.clone(),
-    )
-    .expect("Invalid task dependency graph — startup aborted");
+    let supervisor =
+        super::supervisor::TaskSupervisor::build(tasks, state.clone(), shutdown_token.clone())
+            .expect("Invalid task dependency graph — startup aborted");
 
     // Initialize tools projection from restored offerings + local seed-banks.
     // This emits initial tool.upsert deltas and announces them garden-wide.

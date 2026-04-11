@@ -338,8 +338,8 @@ async fn generate_unique_name_from_dictionary(
     adjectives: &[&str],
     nouns: &[&str],
 ) -> Result<String> {
-    use rand::prelude::IndexedRandom;
     use rand::SeedableRng;
+    use rand::prelude::IndexedRandom;
     // Use StdRng which is Send-safe for background tasks
     let mut rng = rand::rngs::StdRng::from_os_rng();
 
@@ -728,7 +728,7 @@ pub async fn update_moss_config(runtime: &dyn PlatformRuntime, new_name: &str) -
                 "Failed to read {}: {}",
                 crate::constants::MOSS_CONFIG,
                 e
-            ))
+            ));
         }
     };
 

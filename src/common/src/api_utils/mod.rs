@@ -11,10 +11,11 @@ pub mod responses;
 pub mod sanitize;
 pub mod sse;
 
-pub use errors::{bad_request, error_response, internal_error, not_found, ApiErrorResponse};
+pub use errors::{ApiErrorResponse, bad_request, error_response, internal_error, not_found};
 pub use responses::ApiResponse;
 pub use sanitize::{
-    is_suspicious, sanitize_fqn_input, sanitize_name, sanitize_path_segment, sanitize_query,
-    sanitize_tag, validate_name, SanitizeResult, MAX_NAME_LENGTH, MAX_QUERY_LENGTH, MAX_TAG_LENGTH,
+    MAX_NAME_LENGTH, MAX_QUERY_LENGTH, MAX_TAG_LENGTH, SanitizeResult, is_suspicious,
+    sanitize_fqn_input, sanitize_name, sanitize_path_segment, sanitize_query, sanitize_tag,
+    validate_name,
 };
-pub use sse::{sse_stream, SseEvent};
+pub use sse::{SseEvent, sse_stream};

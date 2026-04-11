@@ -13,7 +13,7 @@ use garden_common::constants::{
     EVENT_DEPLOYED, EVENT_DESTROYED, EVENT_HEALTH_CHANGED, EVENT_REMOVED, EVENT_RENAMED,
     EVENT_ROLE_CHANGED, EVENT_STARTED, EVENT_STOPPED, EVENT_UPDATED,
 };
-use garden_common::{presence::event_types, OfferingRole};
+use garden_common::{OfferingRole, presence::event_types};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

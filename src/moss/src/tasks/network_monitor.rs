@@ -13,10 +13,10 @@
 //! Phase 2 will add netlink event subscription for instant detection on Linux,
 //! with polling as fallback for non-Linux or when netlink unavailable.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 /// Default retry interval when disconnected (no valid LAN IP)
 pub const DEFAULT_DISCONNECT_RETRY_SECS: u64 = 5;

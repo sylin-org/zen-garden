@@ -25,7 +25,8 @@ pub struct TaskChannels {
     pub notifications: std::sync::Arc<garden_common::notifications::NotificationRegistry>,
     pub monitor_token: tokio_util::sync::CancellationToken,
     pub watcher_set: crate::infra::storage::StorageWatcherSet,
-    pub mdns_lurk_rx: Option<tokio::sync::broadcast::Receiver<garden_common::infra::koi_client::DiscoveredStone>>,
+    pub mdns_lurk_rx:
+        Option<tokio::sync::broadcast::Receiver<garden_common::infra::koi_client::DiscoveredStone>>,
     pub self_stone_name: String,
 }
 
@@ -34,7 +35,10 @@ pub struct TaskChannels {
 /// Every background task is listed here. No second path, no duplication.
 /// Conditional tasks are gated by `config` flags; tasks with owned state
 /// consume the corresponding field from `channels`.
-pub fn build_task_registry(config: TaskConfig, channels: TaskChannels) -> Vec<Box<dyn BackgroundTask>> {
+pub fn build_task_registry(
+    config: TaskConfig,
+    channels: TaskChannels,
+) -> Vec<Box<dyn BackgroundTask>> {
     let mut tasks: Vec<Box<dyn BackgroundTask>> = vec![
         // ── Always-on unit-struct tasks ─────────────────────────────────
         Box::new(ElectionListenerTask),

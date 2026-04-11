@@ -6,9 +6,9 @@
 
 use crate::api::responses::ApiResponse;
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use garden_common::offerings::{
     OfferingFqn, OfferingSearchResponse, OfferingSearchResult, TaxonomyDictionary,
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::infra::embedded::EmbeddedManifests;
-use crate::{bad_request, error_response, internal, unavailable, AppState};
+use crate::{AppState, bad_request, error_response, internal, unavailable};
 
 /// Query parameters for filtering offerings
 #[derive(Debug, Deserialize)]
@@ -109,26 +109,27 @@ pub async fn list_offerings_v1(
 
     // Add available offerings (not yet installed) - only if catalog loaded
     if query.state.as_deref() != Some("installed")
-        && let Some(offerings_index) = offerings_index {
-            for offering in &offerings_index.offerings {
-                if !installed.contains_key(&offering.name) {
-                    offerings.push(OfferingView {
-                        name: offering.name.clone(),
-                        state: "available".to_string(),
-                        category: offering.category.clone(),
-                        description: offering.description.clone(),
-                        tags: offering.tags.clone(),
-                        image: offering.image.clone(),
-                        compatibility: Some(CompatibilityView {
-                            decision: offering.compatibility.decision.to_string(),
-                            reason: offering.compatibility.reason.clone(),
-                        }),
-                        health: None,
-                        uptime: None,
-                    });
-                }
+        && let Some(offerings_index) = offerings_index
+    {
+        for offering in &offerings_index.offerings {
+            if !installed.contains_key(&offering.name) {
+                offerings.push(OfferingView {
+                    name: offering.name.clone(),
+                    state: "available".to_string(),
+                    category: offering.category.clone(),
+                    description: offering.description.clone(),
+                    tags: offering.tags.clone(),
+                    image: offering.image.clone(),
+                    compatibility: Some(CompatibilityView {
+                        decision: offering.compatibility.decision.to_string(),
+                        reason: offering.compatibility.reason.clone(),
+                    }),
+                    health: None,
+                    uptime: None,
+                });
             }
         }
+    }
 
     let suggestions = if catalog_building {
         Some(vec![
@@ -272,8 +273,8 @@ pub async fn plant_offering_v1(
     (StatusCode, Json<serde_json::Value>),
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
-    use axum::http::HeaderMap;
     use crate::api::responses::CreateServiceRequest;
+    use axum::http::HeaderMap;
 
     tracing::info!(offering = %payload.name, "Planting offering (simplified)");
 
@@ -386,7 +387,7 @@ pub async fn refresh_catalog_v1(
 // Helper functions
 
 fn simplify_health(status: &garden_common::OfferingStatus) -> String {
-    use garden_common::{constants, OfferingStatus};
+    use garden_common::{OfferingStatus, constants};
     match status {
         OfferingStatus::Running | OfferingStatus::Cordoned => constants::HEALTH_HEALTHY.to_string(),
         OfferingStatus::Stopped | OfferingStatus::Unknown => {
@@ -590,17 +591,19 @@ fn load_taxonomy_dictionary() -> TaxonomyDictionary {
 
     if fs_path.exists()
         && let Ok(content) = std::fs::read_to_string(&fs_path)
-            && let Ok(dict) = serde_yml::from_str::<TaxonomyDictionary>(&content) {
-                tracing::debug!("Loaded taxonomy dictionary from filesystem: {:?}", fs_path);
-                return dict;
-            }
+        && let Ok(dict) = serde_yml::from_str::<TaxonomyDictionary>(&content)
+    {
+        tracing::debug!("Loaded taxonomy dictionary from filesystem: {:?}", fs_path);
+        return dict;
+    }
 
     // Fall back to embedded
     if let Some(content) = EmbeddedManifests::get_string("taxonomy.dictionary.yaml")
-        && let Ok(dict) = serde_yml::from_str::<TaxonomyDictionary>(&content) {
-            tracing::debug!("Loaded taxonomy dictionary from embedded assets");
-            return dict;
-        }
+        && let Ok(dict) = serde_yml::from_str::<TaxonomyDictionary>(&content)
+    {
+        tracing::debug!("Loaded taxonomy dictionary from embedded assets");
+        return dict;
+    }
 
     tracing::warn!("Failed to load taxonomy dictionary, using empty");
     TaxonomyDictionary::default()

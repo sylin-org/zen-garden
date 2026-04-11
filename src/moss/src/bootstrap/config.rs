@@ -10,7 +10,7 @@
 
 use crate::{cli::Cli, infra::MossConfig};
 use garden_common::console;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Merged daemon configuration from all sources
 #[derive(Clone)]
@@ -122,13 +122,14 @@ async fn resolve_stone_name(cli: &Cli, config: &Option<MossConfig>) -> anyhow::R
 
     // Warn if env and hostname mismatch
     if let (Some(env_name), Some(sys_name)) = (&env_stone_name, &system_hostname)
-        && env_name != sys_name {
-            tracing::warn!(
-                env_stone_name = %env_name,
-                system_hostname = %sys_name,
-                "STONE_NAME env does not match system hostname; preferring hostname (fix systemd unit to remove Environment=STONE_NAME)"
-            );
-        }
+        && env_name != sys_name
+    {
+        tracing::warn!(
+            env_stone_name = %env_name,
+            system_hostname = %sys_name,
+            "STONE_NAME env does not match system hostname; preferring hostname (fix systemd unit to remove Environment=STONE_NAME)"
+        );
+    }
 
     let stone_name = explicit_cli_stone_name
         .or_else(|| config.as_ref().and_then(|c| c.stone_name.clone()))
@@ -237,13 +238,14 @@ pub async fn ensure_windows_stone_name_config() {
     if hardware_id_path.exists() {
         // Not first boot but no cached name - check config and cache it
         if let Some(config) = MossConfig::load()
-            && let Some(name) = config.stone_name {
-                eprintln!("[stone-name] Caching name from config: {}", name);
-                if let Err(e) = save_stone_name_cache(&name).await {
-                    eprintln!("[stone-name] Warning: Failed to cache name: {}", e);
-                }
-                return;
+            && let Some(name) = config.stone_name
+        {
+            eprintln!("[stone-name] Caching name from config: {}", name);
+            if let Err(e) = save_stone_name_cache(&name).await {
+                eprintln!("[stone-name] Warning: Failed to cache name: {}", e);
             }
+            return;
+        }
         // No name in config either - this is a problem, but don't generate new name
         eprintln!("[stone-name] Warning: No cached name and no config name found");
         return;
@@ -251,14 +253,15 @@ pub async fn ensure_windows_stone_name_config() {
 
     // Check if config already has a stone_name
     if let Some(config) = MossConfig::load()
-        && let Some(name) = config.stone_name {
-            // Config has a name - cache it
-            eprintln!("[stone-name] Caching existing config name: {}", name);
-            if let Err(e) = save_stone_name_cache(&name).await {
-                eprintln!("[stone-name] Warning: Failed to cache name: {}", e);
-            }
-            return;
+        && let Some(name) = config.stone_name
+    {
+        // Config has a name - cache it
+        eprintln!("[stone-name] Caching existing config name: {}", name);
+        if let Err(e) = save_stone_name_cache(&name).await {
+            eprintln!("[stone-name] Warning: Failed to cache name: {}", e);
         }
+        return;
+    }
 
     // First boot and no stone_name anywhere - generate one now
     eprintln!("[first-boot] Generating stone name for Windows...");

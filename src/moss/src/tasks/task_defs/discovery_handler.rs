@@ -21,9 +21,7 @@ impl BackgroundTask for DiscoveryHandlerTask {
             ctx.ready.signal();
 
             let state = Arc::new(ctx.state);
-            if let Err(e) =
-                crate::tasks::discovery_handler::start_discovery_handler(state).await
-            {
+            if let Err(e) = crate::tasks::discovery_handler::start_discovery_handler(state).await {
                 tracing::error!(error = ?e, "Discovery handler failed");
             }
 

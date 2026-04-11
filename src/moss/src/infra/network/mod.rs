@@ -29,11 +29,11 @@ use crate::infra::StaticIpPoolConfig;
 use std::net::Ipv4Addr;
 
 // Re-exports
-pub use probe::{probe_ip_conflict, ProbeConfig};
+pub use probe::{ProbeConfig, probe_ip_conflict};
 pub use state::{load_network_state, save_network_state};
 
 #[cfg(target_os = "linux")]
-pub use linux::{detect_linux_platform, LinuxNetplan, LinuxNetwork};
+pub use linux::{LinuxNetplan, LinuxNetwork, detect_linux_platform};
 
 /// Platform-specific network configuration trait
 ///
@@ -47,17 +47,13 @@ pub trait NetworkPlatform: Send + Sync {
     fn apply_static<'a>(
         &'a self,
         config: &'a StaticIpApply,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send + 'a>,
-    >;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send + 'a>>;
 
     /// Revert to DHCP
     fn apply_dhcp<'a>(
         &'a self,
         interface: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send + 'a>,
-    >;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send + 'a>>;
 
     /// Check if platform is available and properly configured
     fn is_available(&self) -> bool;

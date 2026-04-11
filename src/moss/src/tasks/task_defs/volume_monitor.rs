@@ -18,10 +18,11 @@ use crate::infra::storage::monitor::PhysicalStorageEvent;
 use crate::infra::storage::{ContentStore, OsPlatform};
 use crate::tasks::task_trait::{BackgroundTask, TaskContext, TaskOutcome};
 
-use garden_common::notifications::{NotificationTag, NOTIF_SOURCE_CANDIDATES};
+use garden_common::notifications::{NOTIF_SOURCE_CANDIDATES, NotificationTag};
 
 /// Volumes type alias matching `domain::storage::collection::Volumes`.
-type Volumes = Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::domain::storage::Volume>>>;
+type Volumes =
+    Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::domain::storage::Volume>>>;
 
 pub struct VolumeMonitorTask {
     pub vol_rx: tokio::sync::mpsc::Receiver<PhysicalStorageEvent>,

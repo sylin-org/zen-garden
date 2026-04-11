@@ -70,7 +70,10 @@ pub fn detect_linux_platform() -> Option<Box<dyn NetworkPlatform>> {
 
     tracing::warn!(
         "No supported Linux network stack detected. Checked: ifupdown ({}/{}), netplan ({}), nmcli ({})",
-        IFUP_BINARY, IFDOWN_BINARY, NETPLAN_BINARY, NMCLI_BINARY
+        IFUP_BINARY,
+        IFDOWN_BINARY,
+        NETPLAN_BINARY,
+        NMCLI_BINARY
     );
     None
 }
@@ -114,9 +117,7 @@ impl NetworkPlatform for LinuxIfupdown {
                 .args(["cp", temp_path, IFUPDOWN_CONFIG_FILE])
                 .output()
                 .await
-                .map_err(|e| {
-                    NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e))
-                })?;
+                .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e)))?;
 
             let _ = tokio::fs::remove_file(temp_path).await;
 
@@ -144,9 +145,7 @@ impl NetworkPlatform for LinuxIfupdown {
                 .args(["ip", "addr", "add", &addr_cidr, "dev", &config.interface])
                 .output()
                 .await
-                .map_err(|e| {
-                    NetworkError::ApplyFailed(format!("Failed to add address: {}", e))
-                })?;
+                .map_err(|e| NetworkError::ApplyFailed(format!("Failed to add address: {}", e)))?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -225,10 +224,7 @@ impl NetworkPlatform for LinuxIfupdown {
                     )));
                 }
 
-                tracing::debug!(
-                    path = IFUPDOWN_CONFIG_FILE,
-                    "Removed static IP config file"
-                );
+                tracing::debug!(path = IFUPDOWN_CONFIG_FILE, "Removed static IP config file");
             }
 
             // Step 2: Remove only the specific static IP we added (not the DHCP address)
@@ -329,9 +325,7 @@ impl NetworkPlatform for LinuxNetplan {
                 .args(["cp", temp_path, NETPLAN_CONFIG_PATH])
                 .output()
                 .await
-                .map_err(|e| {
-                    NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e))
-                })?;
+                .map_err(|e| NetworkError::ApplyFailed(format!("Failed to run sudo cp: {}", e)))?;
 
             // Clean up temp file
             let _ = tokio::fs::remove_file(temp_path).await;

@@ -11,7 +11,7 @@ mod pulse;
 mod timer;
 
 pub use chirp::ChirpListener;
-pub use pulse::{spawn_transport_tap, DomainPulse, PulseDomainBridge, PulseEvent, TransportPulse};
+pub use pulse::{DomainPulse, PulseDomainBridge, PulseEvent, TransportPulse, spawn_transport_tap};
 pub use timer::{TimerAction, TimerExecutor, TimerListener};
 
 /// Listener names for logging/debugging (used by EventListener::name())

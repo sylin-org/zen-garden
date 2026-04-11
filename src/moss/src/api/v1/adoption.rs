@@ -6,13 +6,13 @@
 //! - List adopted/borrowed offerings
 //! - Remove adopted/borrowed offerings
 
-use crate::api::suggestions::{generate_suggestions, Suggestion};
-use crate::domain::{connection, ConnectivityOrchestrator, ConnectivityStatus};
-use crate::{bad_request, conflict, internal, not_found, AppState};
+use crate::api::suggestions::{Suggestion, generate_suggestions};
+use crate::domain::{ConnectivityOrchestrator, ConnectivityStatus, connection};
+use crate::{AppState, bad_request, conflict, internal, not_found};
 use axum::{
+    Json,
     extract::{Path, State},
     http::HeaderMap,
-    Json,
 };
 use garden_common::offerings::OfferingFqn;
 use garden_common::utils::ids::generate_guidv7;
@@ -135,9 +135,9 @@ pub async fn adopt_offering_v1(
     }
 
     // Detect offering
-    let detector = std::sync::Arc::new(
-        crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
-    );
+    let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
+        state.platform.docker.clone(),
+    ));
     let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
     let detection_result = orchestrator
         .detect(offering_def)
@@ -173,9 +173,9 @@ pub async fn adopt_offering_v1(
         },
     };
 
-    let detector = std::sync::Arc::new(
-        crate::infra::detection::ContainerDetector::new(state.platform.docker.clone()),
-    );
+    let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
+        state.platform.docker.clone(),
+    ));
     let connectivity = ConnectivityOrchestrator::new(detector);
     let connectivity_outcome = connectivity
         .ensure_connectivity(offering_def, Some(&location), &state.current.stone.name)

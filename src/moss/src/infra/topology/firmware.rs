@@ -77,9 +77,7 @@ fn detect_firmware_linux() -> Result<Vec<FirmwareComponent>> {
                         let updatable = device
                             .get("Flags")
                             .and_then(|f| f.as_array())
-                            .map(|flags| {
-                                flags.iter().any(|f| f.as_str() == Some("updatable"))
-                            });
+                            .map(|flags| flags.iter().any(|f| f.as_str() == Some("updatable")));
                         let device_name = device
                             .get("Name")
                             .and_then(|n| n.as_str())
@@ -131,7 +129,9 @@ fn detect_firmware_windows() -> Result<Vec<FirmwareComponent>> {
     }
 
     // SSD firmware via WMI MSFT_PhysicalDisk
-    if let Ok(wmi_con) = wmi::COMLibrary::new().and_then(|lib| wmi::WMIConnection::with_namespace_path(r"root\Microsoft\Windows\Storage", lib)) {
+    if let Ok(wmi_con) = wmi::COMLibrary::new().and_then(|lib| {
+        wmi::WMIConnection::with_namespace_path(r"root\Microsoft\Windows\Storage", lib)
+    }) {
         #[derive(serde::Deserialize)]
         #[serde(rename = "MSFT_PhysicalDisk")]
         #[serde(rename_all = "PascalCase")]

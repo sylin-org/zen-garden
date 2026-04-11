@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use garden_common::constants::paths;
 use garden_common::storage::{ChangelogEntry, ChangelogOp, StorageTick};
 use notify::{EventKind, RecursiveMode, Watcher};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -309,9 +309,10 @@ async fn flush_changelog_batch(
 
     // Ensure directory exists
     if let Some(parent) = changelog_path.parent()
-        && !parent.exists() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
+        && !parent.exists()
+    {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
 
     let mut creates = 0u32;
     let mut modifies = 0u32;

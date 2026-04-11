@@ -23,18 +23,18 @@ pub use compatibility::*;
 pub use discovery::*;
 pub use error::*;
 pub use hardware::*;
+pub use hardware_topology::*;
 pub use health::*;
 pub use lantern::*;
 pub use offering::*;
 pub use orchestration::*;
+pub use peer_address::*;
 pub use pond::*;
 pub use ports_catalog::*;
 pub use profile::*;
 pub use service::*;
-pub use peer_address::*;
 pub use task::*;
 pub use topology::*;
-pub use hardware_topology::*;
 
 #[cfg(test)]
 mod tests {

@@ -107,7 +107,12 @@ mod tests {
     use super::*;
     use crate::types::hardware::*;
 
-    fn minimal_hw(memory_mb: u64, cores: usize, arch: &str, gpus: Vec<GpuInfo>) -> HardwareCapabilities {
+    fn minimal_hw(
+        memory_mb: u64,
+        cores: usize,
+        arch: &str,
+        gpus: Vec<GpuInfo>,
+    ) -> HardwareCapabilities {
         HardwareCapabilities {
             stone_id: None,
             stone_name: "test".to_string(),
@@ -119,7 +124,9 @@ mod tests {
                     architecture: arch.to_string(),
                     features: None,
                 },
-                memory: MemoryCapabilities { total_mb: memory_mb },
+                memory: MemoryCapabilities {
+                    total_mb: memory_mb,
+                },
                 gpus,
                 disk: None,
                 swap_mb: None,

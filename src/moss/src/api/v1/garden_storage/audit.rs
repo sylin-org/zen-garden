@@ -32,10 +32,11 @@ pub struct AuditAccessEntry {
 pub async fn log_access(entry: &AuditAccessEntry) {
     let path = garden_common::constants::paths::audit_log_path();
     if let Some(parent) = std::path::Path::new(&path).parent()
-        && let Err(e) = tokio::fs::create_dir_all(parent).await {
-            tracing::warn!(path = %path, error = ?e, "Failed to create audit log directory");
-            return;
-        }
+        && let Err(e) = tokio::fs::create_dir_all(parent).await
+    {
+        tracing::warn!(path = %path, error = ?e, "Failed to create audit log directory");
+        return;
+    }
 
     let line = match serde_json::to_string(entry) {
         Ok(json) => format!("{}\n", json),

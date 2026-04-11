@@ -7,7 +7,7 @@
 //! No `#[cfg]` above the injection point in `bootstrap/run.rs`.
 
 use crate::console::{
-    ribbon_art, BootBannerInfo, ShutdownBannerInfo, UpdateBannerInfo, RIBBON_DIVIDER,
+    BootBannerInfo, RIBBON_DIVIDER, ShutdownBannerInfo, UpdateBannerInfo, ribbon_art,
 };
 
 /// Cross-cutting platform concerns: console output and system lifecycle signals.

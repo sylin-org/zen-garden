@@ -38,16 +38,10 @@ pub struct PondInitResult {
 ///
 /// Accepts pond-vocabulary names ("just-me", "my-team", "my-organization")
 /// and shorthand numeric codes ("1", "2", "3").
-pub fn parse_trust_profile(
-    input: Option<&str>,
-) -> Result<koi_certmesh::profiles::TrustProfile> {
+pub fn parse_trust_profile(input: Option<&str>) -> Result<koi_certmesh::profiles::TrustProfile> {
     match input {
-        Some("just-me") | Some("1") | None => {
-            Ok(koi_certmesh::profiles::TrustProfile::JustMe)
-        }
-        Some("my-team") | Some("2") => {
-            Ok(koi_certmesh::profiles::TrustProfile::MyTeam)
-        }
+        Some("just-me") | Some("1") | None => Ok(koi_certmesh::profiles::TrustProfile::JustMe),
+        Some("my-team") | Some("2") => Ok(koi_certmesh::profiles::TrustProfile::MyTeam),
         Some("my-organization") | Some("3") => {
             Ok(koi_certmesh::profiles::TrustProfile::MyOrganization)
         }
@@ -94,8 +88,7 @@ pub async fn init(
         totp_secret_hex: None,
     };
 
-    let body = serde_json::to_vec(&create_req)
-        .context("Failed to serialize certmesh request")?;
+    let body = serde_json::to_vec(&create_req).context("Failed to serialize certmesh request")?;
 
     // Invoke certmesh via in-process HTTP (tower::Service)
     let http_req = axum::http::Request::builder()
@@ -123,8 +116,7 @@ pub async fn init(
     }
 
     let create_resp: koi_certmesh::protocol::CreateCaResponse =
-        serde_json::from_slice(&resp_bytes)
-            .context("Failed to parse certmesh response")?;
+        serde_json::from_slice(&resp_bytes).context("Failed to parse certmesh response")?;
 
     // Extract TOTP URI from auth setup
     let totp_uri = match &create_resp.auth_setup {
@@ -137,10 +129,9 @@ pub async fn init(
 
     // Auto-unlock: the trust profile determines whether the passphrase is
     // saved for automatic unlock on reboot (single source of truth).
-    if let Err(e) = koi_certmesh::CertmeshCore::configure_auto_unlock_for_profile(
-        profile,
-        &input.passphrase,
-    ) {
+    if let Err(e) =
+        koi_certmesh::CertmeshCore::configure_auto_unlock_for_profile(profile, &input.passphrase)
+    {
         tracing::warn!(
             error = %e,
             "Failed to configure auto-unlock (pond will require manual unlock on reboot)"
@@ -151,12 +142,7 @@ pub async fn init(
     let pond_name = resolve_pond_name(input.name.as_deref());
 
     // Persist pond metadata and update state
-    state
-        .security
-        .pond
-        .state
-        .set_name(pond_name.clone())
-        .await;
+    state.security.pond.state.set_name(pond_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(pond_name.clone()),
     };
@@ -177,7 +163,10 @@ pub async fn init(
 
     Ok(PondInitResult {
         cornerstone: state.current.stone.name.clone(),
-        keystone_path: koi_certmesh::CertmeshPaths::default().ca_dir().display().to_string(),
+        keystone_path: koi_certmesh::CertmeshPaths::default()
+            .ca_dir()
+            .display()
+            .to_string(),
         totp_uri,
         ca_fingerprint: create_resp.ca_fingerprint,
         pond_name,
@@ -214,11 +203,7 @@ pub async fn refresh_pond_active(state: &AppState) {
     {
         let status = core.certmesh_status().await;
         if status.ca_initialized && !status.ca_locked {
-            state
-                .security
-                .pond
-                .active
-                .store(true, Ordering::Relaxed);
+            state.security.pond.active.store(true, Ordering::Relaxed);
             return;
         }
     }
@@ -229,11 +214,7 @@ pub async fn refresh_pond_active(state: &AppState) {
         .join("certs")
         .join(&state.current.stone.name);
     if certs_dir.join("cert.pem").exists() && certs_dir.join("key.pem").exists() {
-        state
-            .security
-            .pond
-            .active
-            .store(true, Ordering::Relaxed);
+        state.security.pond.active.store(true, Ordering::Relaxed);
     }
 }
 

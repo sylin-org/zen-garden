@@ -42,8 +42,10 @@ pub trait DiscoveryProvider: Send + Sync {
     ///
     /// Sends broadcast on port 3999, waits for responses.
     /// Returns all discovered stones within timeout.
-    fn discover_all(&self, timeout: Duration)
-        -> impl std::future::Future<Output = Result<Vec<DiscoveryResult>, DiscoveryError>> + Send;
+    fn discover_all(
+        &self,
+        timeout: Duration,
+    ) -> impl std::future::Future<Output = Result<Vec<DiscoveryResult>, DiscoveryError>> + Send;
 
     /// Find a specific stone by name
     ///
@@ -52,7 +54,10 @@ pub trait DiscoveryProvider: Send + Sync {
     /// 2. Try UDP broadcast to find stone by name
     /// 3. Check tended stone from config
     /// 4. Check GARDEN_STONE environment variable
-    fn find_stone(&self, stone_name: &str) -> impl std::future::Future<Output = Result<DiscoveryResult, DiscoveryError>> + Send;
+    fn find_stone(
+        &self,
+        stone_name: &str,
+    ) -> impl std::future::Future<Output = Result<DiscoveryResult, DiscoveryError>> + Send;
 
     /// Resolve stone endpoint using priority chain
     ///

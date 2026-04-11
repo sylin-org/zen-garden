@@ -8,7 +8,6 @@ use std::sync::OnceLock;
 
 // Re-export the unified offering types from common
 pub use garden_common::manifests::{
-    runtime_manifests_dir,
     AdoptedConfig,
     BorrowedConfig,
     // Capability manifests
@@ -23,10 +22,11 @@ pub use garden_common::manifests::{
     Offering,
     OfferingMetadata,
     OfferingRegistry,
-    ServiceTemplate,
-    TemplateInfo,
     RUNTIME_HW_MANIFESTS_DIR,
     RUNTIME_MANIFESTS_DIR,
+    ServiceTemplate,
+    TemplateInfo,
+    runtime_manifests_dir,
 };
 
 use crate::infra::EmbeddedManifests;
@@ -48,25 +48,26 @@ pub fn load_capability_manifests() -> &'static HashMap<String, CapabilityManifes
         // Scan embedded manifests for *.capabilities.yaml files
         for file_path in EmbeddedManifests::list_files() {
             if file_path.ends_with(".capabilities.yaml")
-                && let Some(content) = EmbeddedManifests::get_string(&file_path) {
-                    match CapabilityManifest::from_yaml(&content) {
-                        Ok(manifest) => {
-                            tracing::debug!(
-                                offering = %manifest.offering,
-                                path = %file_path,
-                                "Loaded capability manifest"
-                            );
-                            registry.insert(manifest.offering.clone(), manifest);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                path = %file_path,
-                                error = ?e,
-                                "Failed to parse capability manifest"
-                            );
-                        }
+                && let Some(content) = EmbeddedManifests::get_string(&file_path)
+            {
+                match CapabilityManifest::from_yaml(&content) {
+                    Ok(manifest) => {
+                        tracing::debug!(
+                            offering = %manifest.offering,
+                            path = %file_path,
+                            "Loaded capability manifest"
+                        );
+                        registry.insert(manifest.offering.clone(), manifest);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %file_path,
+                            error = ?e,
+                            "Failed to parse capability manifest"
+                        );
                     }
                 }
+            }
         }
 
         tracing::info!(count = registry.len(), "Loaded capability manifests");

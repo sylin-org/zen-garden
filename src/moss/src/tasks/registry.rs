@@ -6,9 +6,9 @@
 
 use crate::tasks::backfill_missing_guidance;
 use crate::tasks::task_scheduler::backfill_missing_tasks;
-use crate::{adopt_existing_containers, ensure_offerings_index, AppState};
-use garden_common::console::{ConsoleEvent, EventCategory, EventStatus};
+use crate::{AppState, adopt_existing_containers, ensure_offerings_index};
 use garden_common::ServiceHealthStatus;
+use garden_common::console::{ConsoleEvent, EventCategory, EventStatus};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -79,7 +79,8 @@ pub fn start_registry_loader(state: AppState) {
                 .unwrap_or(false)
             {
                 state
-                    .offerings.update(&offering_id, |o| {
+                    .offerings
+                    .update(&offering_id, |o| {
                         o.status = garden_common::OfferingStatus::Stopped;
                         o.health = ServiceHealthStatus::Offline;
                         true

@@ -129,8 +129,8 @@ pub fn sse_stream(
 pub fn heartbeat_stream(
     interval: std::time::Duration,
 ) -> impl futures::Stream<Item = Result<SseEvent, std::io::Error>> {
-    use tokio_stream::wrappers::IntervalStream;
     use tokio_stream::StreamExt;
+    use tokio_stream::wrappers::IntervalStream;
 
     IntervalStream::new(tokio::time::interval(interval)).map(|_| Ok(SseEvent::new(":heartbeat\n")))
 }

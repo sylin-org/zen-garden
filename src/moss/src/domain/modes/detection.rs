@@ -9,7 +9,7 @@
 use crate::domain::traits::ServiceDetector;
 use anyhow::{Context, Result};
 use dashmap::DashMap;
-use garden_common::detection::{detect_by_command, detect_by_http_probe, DetectionResult};
+use garden_common::detection::{DetectionResult, detect_by_command, detect_by_http_probe};
 use garden_common::manifests::{DetectionMethod, DetectionRule, Offering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -86,22 +86,23 @@ impl<D: ServiceDetector> DetectionOrchestrator<D> {
 
             // Check cache first
             if let Some(cached) = self.cache.get(&cache_key)
-                && cached.cached_at.elapsed() < cached.ttl {
-                    tracing::debug!(
-                        offering = %offering.name,
-                        method = ?rule.method,
-                        "Using cached detection result"
-                    );
+                && cached.cached_at.elapsed() < cached.ttl
+            {
+                tracing::debug!(
+                    offering = %offering.name,
+                    method = ?rule.method,
+                    "Using cached detection result"
+                );
 
-                    let stable = self.check_stability(&offering.name, cached.result.detected, rule);
-                    return Ok(AggregatedDetectionResult {
-                        detected: cached.result.detected,
-                        stable,
-                        version: cached.result.version.clone(),
-                        methods_tried,
-                        details: cached.result.details.clone(),
-                    });
-                }
+                let stable = self.check_stability(&offering.name, cached.result.detected, rule);
+                return Ok(AggregatedDetectionResult {
+                    detected: cached.result.detected,
+                    stable,
+                    version: cached.result.version.clone(),
+                    methods_tried,
+                    details: cached.result.details.clone(),
+                });
+            }
 
             // Execute detection
             let result = self.execute_detection(&offering.name, rule).await?;

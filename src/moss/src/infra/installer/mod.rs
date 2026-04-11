@@ -34,8 +34,7 @@ const WINDOWS_SERVICE_NAME: &str = "ZenGardenMoss";
 #[cfg(target_os = "windows")]
 const WINDOWS_DISPLAY_NAME: &str = "Zen Garden Moss";
 #[cfg(target_os = "windows")]
-const WINDOWS_SERVICE_DESCRIPTION: &str =
-    "Zen Garden stone orchestration daemon \u{2014} manages container services, \
+const WINDOWS_SERVICE_DESCRIPTION: &str = "Zen Garden stone orchestration daemon \u{2014} manages container services, \
      storage, and companions";
 
 /// Firewall rule-name prefix (shared between install-time and runtime rules).
@@ -484,9 +483,10 @@ fn resolve_work_directory(exe_path: &Path, exe_dir: &Path) -> anyhow::Result<(Pa
 fn cleanup_removable_temp(temp_dir: &Path) -> anyhow::Result<()> {
     // Only clean up directories we created (prefixed with zen-garden-install-)
     if let Some(name) = temp_dir.file_name().and_then(|n| n.to_str())
-        && name.starts_with("zen-garden-install-") {
-            std::fs::remove_dir_all(temp_dir)?;
-        }
+        && name.starts_with("zen-garden-install-")
+    {
+        std::fs::remove_dir_all(temp_dir)?;
+    }
     Ok(())
 }
 
@@ -591,10 +591,11 @@ fn start_and_verify() -> anyhow::Result<()> {
     for _ in 0..10 {
         std::thread::sleep(std::time::Duration::from_secs(1));
         if let Ok(response) = ureq_get(&health_url)
-            && response {
-                healthy = true;
-                break;
-            }
+            && response
+        {
+            healthy = true;
+            break;
+        }
     }
 
     if healthy {

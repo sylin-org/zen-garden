@@ -26,8 +26,8 @@
 //! - Cricket audio companion
 //! - CLI progress monitoring
 
-use crate::domain::events::JobEvent;
 use crate::AppState;
+use crate::domain::events::JobEvent;
 
 /// Emit a job progress event via the unified EventBus
 ///

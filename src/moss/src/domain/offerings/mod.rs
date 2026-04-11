@@ -22,9 +22,9 @@ pub mod store;
 
 // Catalog types — preserve the previous `domain::offerings::*` surface.
 pub use catalog::{
-    current_capabilities_hash, ensure_offerings_index, get_compiled_offering, manifests_hash,
-    moss_version_string, rebuild_offerings_index, CompiledOffering, OfferingsFingerprint,
-    OfferingsIndex,
+    CompiledOffering, OfferingsFingerprint, OfferingsIndex, current_capabilities_hash,
+    ensure_offerings_index, get_compiled_offering, manifests_hash, moss_version_string,
+    rebuild_offerings_index,
 };
 
 // Aggregate types.

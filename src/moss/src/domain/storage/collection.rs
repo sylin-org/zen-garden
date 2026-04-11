@@ -77,8 +77,7 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
                 let stale_key = map
                     .iter()
                     .find(|(k, v)| {
-                        *k != &snap.path
-                            && v.manifest_id().is_some_and(|id| id == manifest_id)
+                        *k != &snap.path && v.manifest_id().is_some_and(|id| id == manifest_id)
                     })
                     .map(|(k, _)| k.clone());
 
@@ -244,10 +243,7 @@ pub async fn list_candidates(volumes: &Volumes) -> Vec<Volume> {
 pub async fn find_by_name(volumes: &Volumes, name: &str) -> Option<Volume> {
     let map = volumes.read().await;
     map.values()
-        .find(|v| {
-            v.management()
-                .is_some_and(|m| m.name == name)
-        })
+        .find(|v| v.management().is_some_and(|m| m.name == name))
         .cloned()
 }
 
@@ -284,10 +280,7 @@ pub async fn pins_snapshot(volumes: &Volumes) -> HashMap<String, String> {
 pub async fn name_id_pairs(volumes: &Volumes) -> Vec<(String, String)> {
     let map = volumes.read().await;
     map.values()
-        .filter_map(|v| {
-            v.management()
-                .map(|m| (m.name.clone(), m.id.clone()))
-        })
+        .filter_map(|v| v.management().map(|m| (m.name.clone(), m.id.clone())))
         .collect()
 }
 
@@ -450,7 +443,10 @@ mod tests {
         vol.disconnect();
 
         let events = vol.observe(
-            Some(DiskResources { capacity_bytes: 100, used_bytes: 50 }),
+            Some(DiskResources {
+                capacity_bytes: 100,
+                used_bytes: 50,
+            }),
             super::super::platform_types::DeviceHealth::healthy(),
         );
         assert!(events.is_empty());
@@ -461,12 +457,12 @@ mod tests {
     fn observe_none_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskResources { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
+        vol.connect(DiskResources {
+            capacity_bytes: 100,
+            used_bytes: 0,
+        }); // bring Online first
 
-        let _events = vol.observe(
-            None,
-            super::super::platform_types::DeviceHealth::healthy(),
-        );
+        let _events = vol.observe(None, super::super::platform_types::DeviceHealth::healthy());
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));
     }
 
@@ -474,10 +470,16 @@ mod tests {
     fn observe_zero_capacity_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskResources { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
+        vol.connect(DiskResources {
+            capacity_bytes: 100,
+            used_bytes: 0,
+        }); // bring Online first
 
         let _events = vol.observe(
-            Some(DiskResources { capacity_bytes: 0, used_bytes: 0 }),
+            Some(DiskResources {
+                capacity_bytes: 0,
+                used_bytes: 0,
+            }),
             super::super::platform_types::DeviceHealth::healthy(),
         );
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));

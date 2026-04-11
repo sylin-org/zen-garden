@@ -152,7 +152,9 @@ async fn remediate_port_with_handler(port: u16, handler: &PortConflictHandler) -
             // Platform handler specified remap - this is unusual but supported
             anyhow::bail!(
                 "Port {} has platform-specific remap rule (range {}-{}), but remap should be handled at resolution level",
-                port, range_start, range_end
+                port,
+                range_start,
+                range_end
             );
         }
         PortRemediation::Manual { message } => {

@@ -42,11 +42,11 @@ const PROBE_VERSION: u32 = 4;
 /// 2. Compute PCI fingerprint (~2ms Linux, ~10ms Windows).
 /// 3. If fingerprint AND probe version both match cache → done.
 /// 4. Otherwise → full probe, update cache.
-pub async fn restore_or_probe(
-    current: Arc<Current>,
-    console: Arc<console::ConsolePrinter>,
-) {
-    tracing::info!(probe_version = PROBE_VERSION, "Topology probe: restore_or_probe starting");
+pub async fn restore_or_probe(current: Arc<Current>, console: Arc<console::ConsolePrinter>) {
+    tracing::info!(
+        probe_version = PROBE_VERSION,
+        "Topology probe: restore_or_probe starting"
+    );
 
     // Step 1: Load cache and serve immediately (stale-while-revalidate)
     let cached = load_topology_cache().await;
@@ -118,11 +118,11 @@ pub async fn restore_or_probe(
 ///
 /// Called from `POST /capabilities/refresh`. No fingerprint check,
 /// no version check — just probe and replace.
-pub async fn probe_now(
-    current: Arc<Current>,
-    console: Arc<console::ConsolePrinter>,
-) {
-    tracing::info!(probe_version = PROBE_VERSION, "Topology probe: probe_now starting (forced)");
+pub async fn probe_now(current: Arc<Current>, console: Arc<console::ConsolePrinter>) {
+    tracing::info!(
+        probe_version = PROBE_VERSION,
+        "Topology probe: probe_now starting (forced)"
+    );
     let fingerprint = crate::infra::topology::fingerprint::compute_fingerprint().await;
     tracing::info!(
         fingerprint = &fingerprint[..16.min(fingerprint.len())],

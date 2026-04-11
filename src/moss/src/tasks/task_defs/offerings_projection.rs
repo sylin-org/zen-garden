@@ -33,10 +33,7 @@ impl BackgroundTask for OfferingsProjectionTask {
         &[]
     }
 
-    fn run(
-        self: Box<Self>,
-        ctx: TaskContext,
-    ) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
+    fn run(self: Box<Self>, ctx: TaskContext) -> Pin<Box<dyn Future<Output = TaskOutcome> + Send>> {
         Box::pin(async move {
             // Subscribe BEFORE the initial refresh so no events are missed
             // in the window between seeding the projection and entering the

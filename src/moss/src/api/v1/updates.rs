@@ -14,22 +14,22 @@
 //! - GET  /api/v1/stone/nourishment/stream/:job_id - SSE status stream
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
-    Json,
 };
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
-use crate::api::responses::ApiResponse;
 use crate::AppState;
+use crate::api::responses::ApiResponse;
+use garden_common::HardwareCapabilities;
 use garden_common::console::{self, EventCategory, EventStatus};
 use garden_common::nourishment::*;
-use garden_common::HardwareCapabilities;
 
 // ============================================================================
 // Endpoint: GET /api/v1/stone/nourishment
@@ -143,10 +143,7 @@ async fn query_stone_nourishment(
     endpoint: &str,
     stone_name: &str,
 ) -> Option<NourishmentCheckResponse> {
-    let url = format!(
-        "{}/api/v1/stone/updates",
-        endpoint.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/stone/updates", endpoint.trim_end_matches('/'));
 
     match client.get(&url).send().await {
         Ok(resp) if resp.status().is_success() => {
@@ -207,15 +204,20 @@ pub async fn execute_garden(
     for task in check_tasks {
         if let Ok((stone_name, endpoint, Some(check_response))) = task.await {
             // Check if this stone has updates matching the scope
-            let has_matching_updates = check_response.updates.available.iter().any(|update: &Update| {
-                matches!(
-                    (&request.scope, update),
-                    (UpdateScope::All, _)
-                        | (UpdateScope::Offerings, Update::Offering { .. })
-                        | (UpdateScope::Firmware, Update::Firmware { .. })
-                        | (UpdateScope::Moss, Update::Moss { .. })
-                )
-            });
+            let has_matching_updates =
+                check_response
+                    .updates
+                    .available
+                    .iter()
+                    .any(|update: &Update| {
+                        matches!(
+                            (&request.scope, update),
+                            (UpdateScope::All, _)
+                                | (UpdateScope::Offerings, Update::Offering { .. })
+                                | (UpdateScope::Firmware, Update::Firmware { .. })
+                                | (UpdateScope::Moss, Update::Moss { .. })
+                        )
+                    });
 
             if has_matching_updates {
                 affected_stones.push((stone_name, endpoint));
@@ -575,10 +577,7 @@ async fn execute_updates_background(
                     if requires_reboot {
                         needs_reboot = true;
                         tracing::info!(job_id = %job_id, device = %device_id, "Firmware updated (reboot required)");
-                        let _ = tx.send(format!(
-                            "    ✓ {} updated (reboot required)",
-                            device_id
-                        ));
+                        let _ = tx.send(format!("    ✓ {} updated (reboot required)", device_id));
                     } else {
                         tracing::info!(job_id = %job_id, device = %device_id, "Firmware updated successfully");
                         let _ = tx.send(format!("    ✓ {} updated successfully", device_id));
@@ -667,7 +666,8 @@ async fn execute_offering_update(
 ) -> anyhow::Result<()> {
     // Mark service as updating in registry via gateway (syncs self_entry + chirps)
     state
-        .offerings.update_by_name(name, |o| {
+        .offerings
+        .update_by_name(name, |o| {
             if o.is_managed() {
                 o.status = garden_common::OfferingStatus::Maintenance;
                 true
@@ -734,8 +734,7 @@ async fn execute_offering_update(
 
     // Build spec via CompiledOffering (hardware-resolved) + config patches,
     // then override the image with the target upgrade image.
-    let mut spec =
-        crate::domain::services_internal::build_spec_from_manifest(state, name).await?;
+    let mut spec = crate::domain::services_internal::build_spec_from_manifest(state, name).await?;
     spec.image = target_image.clone();
 
     state
@@ -769,7 +768,8 @@ async fn execute_offering_update(
 
     // Mark service as running again via gateway (syncs self_entry + chirps)
     state
-        .offerings.update_by_name(name, |o| {
+        .offerings
+        .update_by_name(name, |o| {
             if o.is_managed() {
                 o.status = garden_common::OfferingStatus::Running;
                 true
@@ -863,7 +863,7 @@ async fn check_offering_updates(
 ) -> anyhow::Result<Vec<Result<Update, BlockedUpdate>>> {
     use crate::domain::constraints::check_constraints;
     use crate::infra::registry_client::{
-        find_newer_version, get_image_digest, query_image_tags, RegistryConfig,
+        RegistryConfig, find_newer_version, get_image_digest, query_image_tags,
     };
 
     let offerings = state.offerings.read().await;
@@ -919,10 +919,11 @@ async fn check_offering_updates(
                 }
                 let tag_image = format!("{}:{}", base_image, tag);
                 if let Ok(tag_digest) = get_image_digest(&tag_image, &config).await
-                    && tag_digest != current_digest {
-                        found_newer = Some(tag.clone());
-                        break;
-                    }
+                    && tag_digest != current_digest
+                {
+                    found_newer = Some(tag.clone());
+                    break;
+                }
             }
             found_newer
         } else {
@@ -1047,45 +1048,46 @@ async fn check_firmware_updates(
         };
 
         // Apply manifest constraints only to tested (manifest-matched) devices
-        if is_manifest_device
-            && let Some(firmware_cfg) = manifest_config {
-                // Check AC power requirement
-                if firmware_cfg.requires_ac_power.unwrap_or(false) && !is_on_ac_power().await {
+        if is_manifest_device && let Some(firmware_cfg) = manifest_config {
+            // Check AC power requirement
+            if firmware_cfg.requires_ac_power.unwrap_or(false) && !is_on_ac_power().await {
+                results.push(Err(BlockedUpdate {
+                    update,
+                    reason:
+                        "Firmware update requires AC power. Please plug in the power Companion."
+                            .to_string(),
+                }));
+                continue;
+            }
+
+            // Check version constraints
+            if let Some(ref versions) = firmware_cfg.versions {
+                // Warn if trying to go below minimum
+                if let Some(ref minimum) = versions.minimum
+                    && version_less_than(&fw.available_version, minimum)
+                {
                     results.push(Err(BlockedUpdate {
                         update,
-                        reason:
-                            "Firmware update requires AC power. Please plug in the power Companion."
-                                .to_string(),
+                        reason: format!(
+                            "Available version {} is below minimum required version {}",
+                            fw.available_version, minimum
+                        ),
                     }));
                     continue;
                 }
 
-                // Check version constraints
-                if let Some(ref versions) = firmware_cfg.versions {
-                    // Warn if trying to go below minimum
-                    if let Some(ref minimum) = versions.minimum
-                        && version_less_than(&fw.available_version, minimum) {
-                            results.push(Err(BlockedUpdate {
-                                update,
-                                reason: format!(
-                                    "Available version {} is below minimum required version {}",
-                                    fw.available_version, minimum
-                                ),
-                            }));
-                            continue;
-                        }
-
-                    // Log version context
-                    if let Some(ref recommended) = versions.recommended
-                        && version_less_than(&fw.available_version, recommended) {
-                            tracing::info!(
-                                available = %fw.available_version,
-                                recommended = %recommended,
-                                "Update available but not yet at recommended version"
-                            );
-                        }
+                // Log version context
+                if let Some(ref recommended) = versions.recommended
+                    && version_less_than(&fw.available_version, recommended)
+                {
+                    tracing::info!(
+                        available = %fw.available_version,
+                        recommended = %recommended,
+                        "Update available but not yet at recommended version"
+                    );
                 }
             }
+        }
 
         results.push(Ok(update));
     }

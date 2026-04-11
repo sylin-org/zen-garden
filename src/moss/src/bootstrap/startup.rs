@@ -9,8 +9,8 @@
 
 use crate::docker::Client;
 use crate::infra;
-use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::PlatformRuntime;
+use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use garden_common::{
     CpuCapabilities, DetectionStatus, HardwareCapabilities, HardwareInventory, MemoryCapabilities,
     RuntimeInfo,

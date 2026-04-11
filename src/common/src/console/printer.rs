@@ -219,9 +219,7 @@ impl ConsolePrinter {
         if matches!(event.category, EventCategory::Services)
             && matches!(
                 event.status,
-                EventStatus::Reconciling
-                    | EventStatus::Reconciled
-                    | EventStatus::ReconcileError
+                EventStatus::Reconciling | EventStatus::Reconciled | EventStatus::ReconcileError
             )
         {
             return true;

@@ -1,21 +1,21 @@
 use crate::api::responses::{ApiResponse, CreateServiceRequest, ServiceActionResponse};
-use crate::api::suggestions::{generate_suggestions, Suggestion};
+use crate::api::suggestions::{Suggestion, generate_suggestions};
 use crate::domain::events::OfferingEvent;
 use crate::domain::service_lifecycle;
-use crate::{bad_request, conflict, internal, not_found, AppState};
-use std::sync::Arc;
+use crate::{AppState, bad_request, conflict, internal, not_found};
 use axum::{
+    Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    Json,
 };
 use garden_common::{
+    Offering, OfferingStatus, Ports, ServiceInfo, ServiceStatus,
     api_utils::{
-        is_suspicious, sanitize_fqn_input, sanitize_query, sanitize_tag, ApiErrorResponse,
+        ApiErrorResponse, is_suspicious, sanitize_fqn_input, sanitize_query, sanitize_tag,
     },
     offerings::OfferingFqn,
-    Offering, OfferingStatus, Ports, ServiceInfo, ServiceStatus,
 };
+use std::sync::Arc;
 
 /// Convert Offering to ServiceInfo for API responses
 fn offering_to_service_info(o: &Offering) -> ServiceInfo {
@@ -137,7 +137,7 @@ pub async fn find_services_v1(
     Json<ApiResponse<crate::domain::ServiceDiscoveryResponse>>,
     (StatusCode, Json<ApiErrorResponse>),
 > {
-    use crate::domain::{find_services, list_all_local_services, ServiceSearchCriteria};
+    use crate::domain::{ServiceSearchCriteria, find_services, list_all_local_services};
 
     tracing::debug!(
         q = ?query.q,
@@ -150,13 +150,14 @@ pub async fn find_services_v1(
 
     // Sanitize and validate inputs - reject suspicious patterns
     if let Some(ref q) = query.q
-        && is_suspicious(q) {
-            tracing::warn!(query = %q, "Suspicious query pattern detected");
-            return Err(bad_request(
-                "INVALID_QUERY",
-                "Query contains invalid patterns".to_string(),
-            ));
-        }
+        && is_suspicious(q)
+    {
+        tracing::warn!(query = %q, "Suspicious query pattern detected");
+        return Err(bad_request(
+            "INVALID_QUERY",
+            "Query contains invalid patterns".to_string(),
+        ));
+    }
 
     let response = if query.has_search_params() {
         // Search mode: filter/search across garden
@@ -362,14 +363,8 @@ pub async fn nourish_service_v1(
         .map_err(|e| lifecycle_error("NOURISH_FAILED", &e))?;
 
     let (status, message) = match outcome {
-        NourishOutcome::Maintenance => (
-            "maintenance",
-            "Service under maintenance, retry later",
-        ),
-        NourishOutcome::Upgraded => (
-            "upgraded",
-            "Service upgraded successfully",
-        ),
+        NourishOutcome::Maintenance => ("maintenance", "Service under maintenance, retry later"),
+        NourishOutcome::Upgraded => ("upgraded", "Service upgraded successfully"),
     };
 
     let ctx = Suggestion::from_headers(&headers, "nourish_service");
@@ -482,15 +477,12 @@ pub async fn get_manifest_v1(
     })?;
     let offering_type = offering_fqn.offering.clone();
 
-    let entry = manifest_registry
-        .sw
-        .get(&offering_type)
-        .ok_or_else(|| {
-            not_found(
-                "MANIFEST_NOT_FOUND",
-                format!("Manifest for '{}' not found", offering_type),
-            )
-        })?;
+    let entry = manifest_registry.sw.get(&offering_type).ok_or_else(|| {
+        not_found(
+            "MANIFEST_NOT_FOUND",
+            format!("Manifest for '{}' not found", offering_type),
+        )
+    })?;
 
     let yaml = entry
         .managed
@@ -887,7 +879,8 @@ pub async fn discover_service_capabilities_v1(
     if !capabilities.is_empty() {
         let caps = capabilities.clone();
         state
-            .offerings.update_by_name(&service_name, |o| {
+            .offerings
+            .update_by_name(&service_name, |o| {
                 o.sub_capabilities = caps;
                 false // sub_capabilities are detail-only, don't trigger chirp sync
             })
@@ -1108,7 +1101,8 @@ pub async fn reassign_service_v1(
 
     // Step 3: Update offering in registry
     state
-        .offerings.update(&offering_id, |o| {
+        .offerings
+        .update(&offering_id, |o| {
             o.name = new_fqn.clone();
             true
         })
@@ -1123,7 +1117,8 @@ pub async fn reassign_service_v1(
     {
         tracing::error!(error = ?e, service = %new_name, "Failed to start container after rename");
         state
-            .offerings.update(&offering_id, |o| {
+            .offerings
+            .update(&offering_id, |o| {
                 o.status = OfferingStatus::Stopped;
                 true
             })

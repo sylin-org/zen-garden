@@ -297,6 +297,8 @@ async fn main() -> Result<()> {
         provisioning.clone(),
         discovery.clone(),
         events.clone(),
+        resources.clone(),
+        preferences.clone(),
         shutdown.clone(),
     )
     .await;

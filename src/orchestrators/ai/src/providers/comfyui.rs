@@ -196,6 +196,19 @@ pub struct ComfyUiProvider {
     /// healthy instances and are NOT published — the dispatcher
     /// routes around them via `CapabilityDirectory`.
     ready_instances: Arc<tokio::sync::RwLock<HashMap<Moniker, Vec<String>>>>,
+    /// URL → stone_name map sourced from garden discovery events.
+    /// Needed by the M6 fit filter and dispatch-time claim so the
+    /// Resources domain's `StoneName` keys can be correlated with
+    /// the concrete ComfyUI instance URLs the adapter stores
+    /// everywhere else.
+    instance_stones: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    /// Cross-adapter resource domain — consulted at matrix-build
+    /// time to filter skills whose VRAM requirement exceeds
+    /// every garden stone, and claimed against on dispatch.
+    resources: Arc<crate::domain::resources::Resources>,
+    /// Preferences store. Read for `orchestrator.strict_fit`
+    /// setting at every readiness refresh (ORCH-0038).
+    preferences: Arc<crate::domain::preferences::Preferences>,
 }
 
 impl ComfyUiProvider {
@@ -211,6 +224,8 @@ impl ComfyUiProvider {
         provisioning: Arc<ProvisioningQueue>,
         discovery: Arc<GardenDiscovery>,
         events: Arc<EventBus>,
+        resources: Arc<crate::domain::resources::Resources>,
+        preferences: Arc<crate::domain::preferences::Preferences>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let name = ProviderName::new(keys::providers::COMFYUI);
@@ -251,6 +266,9 @@ impl ComfyUiProvider {
             cache_paths,
             instance_inventories: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             ready_instances: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            instance_stones: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            resources,
+            preferences,
         });
 
         // Publish the initial snapshot. No instances and no
@@ -417,6 +435,13 @@ impl ComfyUiProvider {
             }
             ready
         };
+        // Step 3b: apply the ORCH-0038 fit filter. Drop any skill
+        // whose declared `vram_mb` exceeds the capacity of every
+        // stone in the garden that could otherwise host it. This
+        // is ComfyUI's counterpart to Ollama's M3 matrix filter
+        // (M6) and uses the same Resources query path.
+        let new_ready = self.apply_fit_filter(new_ready).await;
+
         let ready_skill_count = new_ready.len();
         {
             let mut ready = self.ready_instances.write().await;
@@ -432,6 +457,84 @@ impl ComfyUiProvider {
 
         // Step 4: republish the (newly filtered) capability set.
         self.publish_capabilities().await;
+    }
+
+    /// Apply the ORCH-0038 fit filter to a freshly-computed
+    /// `ready_instances` map. For each skill, ask the Resources
+    /// domain which stones could host a workload of the skill's
+    /// declared `vram_mb`, intersect with the stones that host
+    /// its ready instances, and drop skills with empty
+    /// intersections.
+    ///
+    /// Gated by the `orchestrator.strict_fit` preference
+    /// (default true). When false, the filter is a no-op and
+    /// every skill that passed the dependency-readiness check is
+    /// published as-is.
+    async fn apply_fit_filter(
+        &self,
+        mut ready: HashMap<Moniker, Vec<String>>,
+    ) -> HashMap<Moniker, Vec<String>> {
+        use crate::domain::resources::{StoneName, Workload};
+
+        let strict = self
+            .preferences
+            .get_setting_bool("orchestrator.strict_fit", true)
+            .await;
+        if !strict {
+            return ready;
+        }
+
+        let skills_map = self.skills.read().await;
+        let instance_stones = self.instance_stones.read().await;
+
+        // Collect (moniker, required_mb, instance_stones) up front
+        // to avoid holding locks across the Resources query (which
+        // takes its own lock).
+        let mut queries: Vec<(Moniker, u64, std::collections::HashSet<StoneName>)> = Vec::new();
+        for (moniker, instances) in ready.iter() {
+            let Some(skill) = skills_map.get(moniker) else {
+                continue;
+            };
+            if skill.vram_mb == 0 {
+                // Unknown VRAM → permissive. Matches old-
+                // orchestrator intent and Ollama's M3 behavior.
+                continue;
+            }
+            let stones: std::collections::HashSet<StoneName> = instances
+                .iter()
+                .filter_map(|url| instance_stones.get(url).cloned())
+                .map(StoneName::new)
+                .collect();
+            queries.push((moniker.clone(), skill.vram_mb, stones));
+        }
+        drop(skills_map);
+        drop(instance_stones);
+
+        let mut dropped: Vec<(Moniker, u64)> = Vec::new();
+        for (moniker, required_mb, skill_stones) in queries {
+            let workload = Workload::any_gpu(Some(required_mb));
+            let capable = self.resources.stones_capable_of(&workload).await;
+            if skill_stones.intersection(&capable).next().is_none() {
+                dropped.push((moniker.clone(), required_mb));
+                ready.remove(&moniker);
+            }
+        }
+
+        if !dropped.is_empty() {
+            tracing::info!(
+                count = dropped.len(),
+                "comfyui fit filter dropped skills (no stone in garden has enough VRAM)"
+            );
+            for (moniker, required_mb) in &dropped {
+                tracing::debug!(
+                    skill = %moniker,
+                    required_mb,
+                    "comfyui fit filter: dropped"
+                );
+            }
+        }
+
+        ready
     }
 
     /// Pick one ready instance for the given skill. Returns
@@ -601,6 +704,26 @@ impl ComfyUiProvider {
     }
 }
 
+/// Map a Resources claim error to a provider error. Same rationale
+/// as Ollama's helper in `providers/ollama.rs`: capacity-related
+/// errors become `Overloaded` (retry-friendly), stack mismatches
+/// become `Unsupported`, bookkeeping errors become `Internal`.
+fn comfyui_claim_error_to_provider_error(
+    err: crate::domain::resources::ClaimError,
+) -> ProviderError {
+    use crate::domain::resources::ClaimError;
+    match err {
+        ClaimError::NoFittingDevice { .. }
+        | ClaimError::InsufficientVram { .. }
+        | ClaimError::InsufficientMemory { .. }
+        | ClaimError::DeviceExclusivelyHeld { .. } => ProviderError::Overloaded(err.to_string()),
+        ClaimError::UnsupportedComputeStack { .. } => ProviderError::Unsupported(err.to_string()),
+        ClaimError::SizeMismatchMode { .. }
+        | ClaimError::UnknownStone(_)
+        | ClaimError::UnknownDevice { .. } => ProviderError::Internal(err.to_string()),
+    }
+}
+
 fn spawn_subscriber(
     provider: Arc<ComfyUiProvider>,
     discovery: Arc<GardenDiscovery>,
@@ -619,6 +742,18 @@ fn spawn_subscriber(
                         instances.iter().map(|i| i.url.clone()).collect();
                     pool.set(&event.fqn, urls);
                     let merged = pool.flatten();
+
+                    // Update the url → stone_name map from the
+                    // discovery event so M6's fit filter and M6's
+                    // dispatch-time claim can correlate instance
+                    // URLs with Resources-domain StoneName keys.
+                    {
+                        let mut stones = provider.instance_stones.write().await;
+                        for inst in &instances {
+                            stones.insert(inst.url.clone(), inst.stone_name.clone());
+                        }
+                    }
+
                     provider.apply_merged(merged.clone()).await;
 
                     // ORCH-0030 R2 M5 inventory-first pipeline:
@@ -765,6 +900,56 @@ impl Provider for ComfyUiProvider {
         // `Unreachable` otherwise.
         let instance = self.pick_ready_instance(&skill_moniker).await?;
         let instance = instance.trim_end_matches('/').to_string();
+
+        // ── 2b. Claim GPU budget on the picked stone (M6) ─────
+        //
+        // Place a hard sized claim on the Resources domain for
+        // this skill's declared VRAM requirement. The guard lives
+        // on the stack for the entire dispatch — upload, queue,
+        // poll, and result retrieval — and drops on return (or
+        // error unwind), releasing the budget.
+        //
+        // Cross-adapter benefit: an Ollama model currently loaded
+        // on the same stone's GPU contributes to committed_mb,
+        // and this claim fails with Overloaded if the combined
+        // footprint would exceed the device.
+        let stone_name = {
+            let stones = self.instance_stones.read().await;
+            stones.get(&instance).cloned()
+        };
+        let _claim_guard = if let Some(stone_name_str) = stone_name {
+            use crate::domain::resources::{
+                ClaimHolder, ClaimKind, StoneName, Workload,
+            };
+            let workload = Workload::any_gpu(if skill.vram_mb == 0 {
+                None
+            } else {
+                Some(skill.vram_mb)
+            });
+            let holder = ClaimHolder::new("comfyui", &instance);
+            Some(
+                self.resources
+                    .claim_best_gpu_on(
+                        holder,
+                        &StoneName::new(stone_name_str),
+                        &workload,
+                        ClaimKind::Hard,
+                    )
+                    .await
+                    .map_err(comfyui_claim_error_to_provider_error)?,
+            )
+        } else {
+            // No stone mapping for this instance — discovery
+            // event hasn't populated it yet. Rare (happens only
+            // when an instance races discovery → fit filter →
+            // dispatch). Skip the claim; the dispatch proceeds
+            // without cross-adapter accounting for this request.
+            tracing::warn!(
+                instance = %instance,
+                "comfyui dispatch: no stone mapping; skipping Resources claim"
+            );
+            None
+        };
 
         // ── 3. Pick the workflow variant ──────────────────────
         let variant_name = request

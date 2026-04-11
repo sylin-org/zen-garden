@@ -159,9 +159,16 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### Metrics
 
-- **Status:** Absent — no metrics aggregate; per-task and per-domain observability is either missing or in ad-hoc `AtomicU64` counters
+- **Status:** Absent — no metrics aggregate; per-task and per-domain observability does not exist. The existing `/api/v1/stone/metrics` endpoint is **misnamed** — it returns hardware resources (CPU, memory, disk, network, uptime), not domain observability. Book I renames the existing surface to `Resources` and introduces a new `Metrics` aggregate for actual observability.
 - **Target source:** `src/moss/src/domain/metrics/`
-- **Book:** I
+- **Book:** I (per [ARCH-0018](../decisions/ARCH-0018-metrics-aggregate.md))
+- **Note on naming collision:** Book I's first code chapter renames `MetricsSnapshot` → `ResourcesSnapshot`, `api/v1/metrics.rs` → `api/v1/resources.rs`, `domain/metrics_collection.rs` → `domain/resources/collection.rs`, `/api/v1/stone/metrics` → `/api/v1/stone/resources`. This frees "metrics" for the new aggregate.
+
+#### Resources (incidentally extracted by Book I)
+
+- **Status:** Partial — exists today scattered across `api/v1/metrics.rs`, `domain/metrics_collection.rs`, `garden_common::MetricsSnapshot`, and the `/api/v1/stone/metrics` path. Book I consolidates and renames.
+- **Target source:** `src/moss/src/domain/resources/`
+- **Book:** I (as a rename, not a new aggregate — Resources is a simple facade over `Current::Metrics` today, not a candidate for full DDD treatment in this epic)
 
 #### Topology
 
@@ -252,7 +259,8 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | Context | Owns | Emits | Ports | Book |
 |---------|------|-------|-------|------|
 | **Offerings** | active + adopted-candidate pools | `OfferingsChanged` | `OfferingStore` | ARCH-0016 + audited in Books I, XVIII |
-| **Metrics** | per-domain counters, per-task metrics, global metrics | `MetricsChanged` (interesting transitions only) | none | I |
+| **Metrics** | per-domain counters, per-task metrics (timing, event counts, lag), global metrics | `MetricsChanged` (interesting transitions only — not counter increments) | none (in-memory only, counters reset on restart) | I |
+| **Resources** *(incidental rename in Book I)* | hardware resource snapshot facade over `Current::Metrics::system/network/gpu` | none | none | I |
 | **Tool** | garden-wide tool registry, delta stream | `ToolChanged`, `ToolBeaconEmitted` | `ToolsBeaconTransport` | II |
 | **Topology** | self-entry cache, chirp schedule | `TopologyChanged`, `ChirpEmitted` | `ChirpTransport`, `MdnsTransport` | III |
 | **Jobs** | active jobs, job history | `JobsChanged` | (in-memory only) | IV |

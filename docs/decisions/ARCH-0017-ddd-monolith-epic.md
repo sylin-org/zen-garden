@@ -20,6 +20,7 @@ Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **livin
 |------|--------|---------|
 | 2026-04-11 | Initial acceptance | Epic commits to 21-book arc |
 | 2026-04-11 | Added **Discovery Mandate** section; added re-evaluation step to Chapter 1 template; marked status as `accepted-living` | User directive: "As you navigate the repo, you'll discover new things. MANDATE: It's OK to backtrack, put on a specialist hat, and think 'What would a proper clean architecture look like?' and CHANGE the plan, the code, or both." |
+| 2026-04-11 | **Book I scope revised** per Discovery Mandate. Material plan changes: (1) Existing `/api/v1/stone/metrics` endpoint (and `MetricsSnapshot` type, `metrics_collection` module, `StoneInfoApi::metrics()` client, manifest entry) is renamed to `/api/v1/stone/resources` — the existing content was always hardware resources, never observability metrics. This frees the "metrics" name for the new aggregate. (2) The new `Metrics` aggregate is **complementary to, not duplicative of,** `SupervisorHandle` from ARCH-0015 — the supervisor owns task *lifecycle state* (Waiting/Running/Completed); Metrics owns task *observability data* (timings, event counts, lag). `/api/v1/stone/tasks` and `/api/v1/stone/metrics/tasks/{name}` become separate endpoints with correlated data. (3) URL surface expands to four sibling top-level paths — `/capabilities` (static), `/resources` (dynamic hardware), `/tasks` (lifecycle), `/metrics` (observability) — with sub-paths inside `/metrics` for slices (`/global`, `/domains`, `/domains/{name}`, `/tasks`, `/tasks/{name}`, `/stream` for SSE). (4) Prometheus exporter explicitly out of Book I scope; deferred to a post-epic adapter (`?format=prometheus` or a separate `/prometheus` path can layer on later). (5) Minor improvement: singular `/api/v1/stone/tasks/{name}` endpoint added alongside the plural. Book I size estimate revised from ~1,500 to ~2,000 lines. See `ARCH-0018-metrics-aggregate.md` for full detail. | Chapter 1 re-evaluation of Book I surfaced name collision with existing hardware-resource endpoint and opportunity to split task lifecycle (supervisor) from task observability (metrics); user confirmed all four URL questions. |
 
 ## Context
 
@@ -918,47 +919,85 @@ references. Produces no Rust code.
 
 ### Book I — Metrics
 
+> **Scope revised 2026-04-11** per Discovery Mandate. See [ARCH-0018](ARCH-0018-metrics-aggregate.md) for full detail; key points summarized below.
+
 **Scope:** First concrete aggregate. Validates the pattern. Every
 subsequent book injects `Arc<Metrics>` at construction from day one.
+Also renames the existing hardware-resource endpoint (`/metrics` →
+`/resources`) that was squatting on the "metrics" name.
 
-**Bounded context:** `Metrics`
+**Bounded context:** `Metrics` (new — domain observability)
+**Incidentally renamed:** existing hardware-resource surface →
+`Resources` (was `MetricsSnapshot`/`metrics_collection`/`/api/v1/stone/metrics`)
 
 **Deliverables:**
-- `domain/metrics/` module with aggregate, event, error, state
+- **Rename** existing hardware-resource types, modules, paths, and
+  manifest entries from "metrics" to "resources": `MetricsSnapshot` →
+  `ResourcesSnapshot`, `api/v1/metrics.rs` → `api/v1/resources.rs`,
+  `domain/metrics_collection.rs` → `domain/resources/collection.rs`,
+  `StoneInfoApi::metrics()` → `StoneInfoApi::resources()`,
+  `fetch_stone_metrics()` → `fetch_stone_resources()`,
+  `/api/v1/stone/metrics` → `/api/v1/stone/resources`, manifest entry
+  updated (and corrected — it falsely claimed Prometheus format).
+- `domain/metrics/` module with aggregate, event, error, state, tests
 - `MetricsState` holding per-domain, per-task, and global metrics as
   `Arc<DomainMetrics>` / `Arc<TaskMetrics>` with atomic internals for
   lock-free hot-path recording
+- **No `Store` port** — Metrics is in-memory only; counters reset on
+  restart (Prometheus-standard behavior)
 - Command methods: `register_domain`, `register_task`,
   `record_domain_event`, `record_mutation_latency`,
   `record_task_transition`, `record_subscriber_lag`
-- Read methods: `snapshot`, `domain`, `task`, `global`
+- Read methods: `snapshot`, `global`, `domain(name)`, `domains()`,
+  `task(name)`, `tasks()`
 - Event methods: `changes()` returning only interesting transitions
   (task state changes, lag, threshold crossings — not counter
   increments)
-- `/api/v1/stone/metrics` endpoint returning `snapshot()`
-- Integration into `/api/v1/stone/tasks` endpoint (existing) to expose
-  task metrics
+- **URL surface** (four sibling top-level paths):
+  - `/api/v1/stone/capabilities` — existing, unchanged (static hardware)
+  - `/api/v1/stone/resources` — **renamed** from `/metrics` (dynamic hardware)
+  - `/api/v1/stone/tasks` — existing, returns `SupervisorStatus`
+  - `/api/v1/stone/tasks/{name}` — **new** (minor improvement) singular lookup
+  - `/api/v1/stone/metrics` — **new** full observability snapshot
+  - `/api/v1/stone/metrics/global` — **new** process-wide counters
+  - `/api/v1/stone/metrics/domains` — **new** all domain observability
+  - `/api/v1/stone/metrics/domains/{name}` — **new** single domain
+  - `/api/v1/stone/metrics/tasks` — **new** all task observability
+    (complementary to `/tasks`; metrics timings/event counts, not
+    lifecycle state)
+  - `/api/v1/stone/metrics/tasks/{name}` — **new** single task observability
+  - `/api/v1/stone/metrics/stream` — **new** SSE of `MetricsChanged`
+- **Complementary to SupervisorHandle, not duplicative.** The supervisor
+  keeps owning task lifecycle state (Waiting/Running/Completed); Metrics
+  owns timing + event counts. Consumers that want unified view call both
+  and join by task name.
 - Full test scaffold per the pattern spec
 - `Arc<Metrics>` field on `AppState`, constructed at bootstrap
 - `FromRef<AppState> for Arc<Metrics>`
 - Retrofit ARCH-0016's `Offerings` to inject `Arc<Metrics>` and call
   `record_domain_event` / `record_mutation_latency` in `finalize` —
-  this is a concrete scaffold-removal action: no new scaffolds added,
-  one scaffold implicitly removed (the hypothetical `NoopMetrics`
-  never has to exist).
+  no `NoopMetrics` shim exists at any point.
+- **Out of scope:** Prometheus exporter. Deferred to a post-epic
+  adapter (either `?format=prometheus` query param on `/metrics` or
+  a separate `/prometheus` path). Book I ships JSON only.
 
 **Dependencies:** Book 0
 
 **Exit criteria:**
-- `rg 'Atomic(U64|I64|Usize)' src/moss/src/tasks/task_defs/` outside of
-  metrics-specific code returns 0 matches (no scattered counters)
+- `rg '/api/v1/stone/metrics' src/moss/src/` returns matches only in
+  the NEW Metrics handlers (old `/metrics` path is gone, renamed to
+  `/resources`)
+- `rg 'MetricsSnapshot' src/` returns 0 matches — the old type is
+  renamed to `ResourcesSnapshot`
 - `rg 'record_domain_event' src/moss/src/domain/offerings/` returns at
   least 1 match (Offerings is retrofitted)
-- `/api/v1/stone/metrics` returns valid JSON with at least the
+- `/api/v1/stone/metrics` returns a JSON snapshot with at least the
   `offerings` domain registered
+- `/api/v1/stone/resources` returns the hardware snapshot
+- `garden-moss` builds, tests pass, clippy clean
 - All six chapter commits land green
 
-**Estimated size:** ~1500 lines
+**Estimated size:** ~2000 lines (up from original ~1500 due to rename scope)
 
 ### Book II — Tool
 

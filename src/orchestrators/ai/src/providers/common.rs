@@ -68,6 +68,18 @@ impl InstancePool {
     }
 }
 
+/// An instance known to an adapter through garden discovery — the
+/// URL the adapter will probe plus the stone identity it belongs
+/// to. Adapters that care about stone-level bookkeeping (e.g. the
+/// Ollama fit filter in ORCH-0038, which needs to correlate each
+/// instance with a `StoneName` in the Resources domain) should
+/// store this instead of bare URLs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceBinding {
+    pub url: String,
+    pub stone_name: String,
+}
+
 /// Per-FQN URL bookkeeping used by adapters that subscribe to
 /// multiple FQNs.
 ///
@@ -77,9 +89,22 @@ impl InstancePool {
 /// uses this map to remember the latest set per FQN, then calls
 /// [`PerFqnInstances::flatten`] to produce the deduplicated merged
 /// URL list it pushes into its [`InstancePool`].
+///
+/// Adapters that need the stone identity for each URL — not just
+/// the URL — should use [`PerFqnInstances::set_bindings`] and
+/// [`PerFqnInstances::flatten_bindings`] instead. The two shapes
+/// coexist so adapters can opt into name-aware bookkeeping without
+/// the shared type forcing the rewrite on everyone.
 #[derive(Debug, Default)]
 pub struct PerFqnInstances {
+    /// URL-only per-FQN state. Populated by `set`, read by
+    /// `flatten`. Adapters using the name-aware `set_bindings`
+    /// store to `bindings` instead, and this map stays empty.
     inner: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
+    /// Name-aware per-FQN state. Populated by `set_bindings`,
+    /// read by `flatten_bindings`. Kept separate from `inner` so
+    /// the two APIs never cross-talk.
+    bindings: std::sync::Mutex<std::collections::HashMap<String, Vec<InstanceBinding>>>,
 }
 
 impl PerFqnInstances {
@@ -107,6 +132,35 @@ impl PerFqnInstances {
             for url in urls {
                 if seen.insert(url.clone()) {
                     out.push(url.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Replace the entry for `fqn` with a name-aware binding list.
+    /// Empty list removes the entry entirely. Adapters that need
+    /// stone identity per URL call this instead of [`Self::set`].
+    pub fn set_bindings(&self, fqn: &str, bindings: Vec<InstanceBinding>) {
+        let mut b = self.bindings.lock().expect("PerFqnInstances bindings lock");
+        if bindings.is_empty() {
+            b.remove(fqn);
+        } else {
+            b.insert(fqn.to_string(), bindings);
+        }
+    }
+
+    /// Flatten the per-FQN bindings into a deduplicated merged list.
+    /// Dedup is by URL: if two FQNs report the same URL, only the
+    /// first binding's stone_name survives.
+    pub fn flatten_bindings(&self) -> Vec<InstanceBinding> {
+        let b = self.bindings.lock().expect("PerFqnInstances bindings lock");
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for list in b.values() {
+            for binding in list {
+                if seen.insert(binding.url.clone()) {
+                    out.push(binding.clone());
                 }
             }
         }

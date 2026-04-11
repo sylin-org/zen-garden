@@ -78,7 +78,18 @@ pub fn build(state: AppState) -> Router {
             "/v1/resources/stones/{name}/pressure",
             get(resources::get_stone_pressure),
         )
-        // Preferences (ORCH-0030 §8 commit 12)
+        // Preferences (ORCH-0030 §8) — field defaults + settings.
+        // Settings routes come first so `/settings` doesn't get
+        // captured by the `{key}` wildcard on the field-defaults
+        // DELETE route.
+        .route(
+            "/v1/preferences/settings",
+            get(preferences::get_settings).put(preferences::put_settings),
+        )
+        .route(
+            "/v1/preferences/settings/{key}",
+            delete(preferences::delete_setting),
+        )
         .route(
             "/v1/preferences",
             get(preferences::get_preferences).put(preferences::put_preferences),

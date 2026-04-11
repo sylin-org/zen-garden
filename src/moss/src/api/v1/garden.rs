@@ -445,13 +445,27 @@ pub async fn get_garden_capabilities_v1(
         topology: self_topology,
     });
 
-    // Peers — Tier 1 from topology cache, Tier 2 = None
+    // Peers — Tier 1 from topology cache, Tier 2 = None.
+    //
+    // The cached `HardwareCapabilities` may have been populated from
+    // a chirp or probe that didn't carry the peer's stone_name, so
+    // `caps.stone_name` can be empty even though the topology entry
+    // has the name. Overlay the topology entry's stone_name /
+    // stone_id onto the caps before returning so downstream
+    // consumers (e.g. the AI orchestrator's Resources domain
+    // keyed by stone name) get a non-colliding identity per stone.
     let peers = topology::get_all_stones(&state.current.topology.cache).await;
     for peer in peers {
         if peer.stone_id == state.current.stone.id {
             continue;
         }
-        if let Some(caps) = peer.capabilities {
+        if let Some(mut caps) = peer.capabilities {
+            if caps.stone_name.is_empty() {
+                caps.stone_name = peer.stone_name.clone();
+            }
+            if caps.stone_id.as_deref().map_or(true, str::is_empty) {
+                caps.stone_id = Some(peer.stone_id.clone());
+            }
             results.push(FullCapabilities {
                 core: caps,
                 topology: None,

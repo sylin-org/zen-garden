@@ -71,6 +71,13 @@ pub struct OllamaProvider {
     matrix: Arc<RwLock<OllamaCapabilityMatrix>>,
     http: Client,
     events: Arc<EventBus>,
+    /// Cross-adapter resource domain — consulted at matrix-build
+    /// time to filter models that no stone can host.
+    resources: Arc<crate::domain::resources::Resources>,
+    /// Preferences store. Read at matrix-build time for the
+    /// `orchestrator.strict_fit` setting (ORCH-0038). Default
+    /// `true` when the setting is unset.
+    preferences: Arc<crate::domain::preferences::Preferences>,
 }
 
 impl OllamaProvider {
@@ -78,6 +85,8 @@ impl OllamaProvider {
         _config: OllamaConfig,
         discovery: Arc<GardenDiscovery>,
         events: Arc<EventBus>,
+        resources: Arc<crate::domain::resources::Resources>,
+        preferences: Arc<crate::domain::preferences::Preferences>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let name = ProviderName::new(keys::providers::OLLAMA);
@@ -86,6 +95,8 @@ impl OllamaProvider {
             matrix: Arc::new(RwLock::new(OllamaCapabilityMatrix::new())),
             http: build_http_client(),
             events,
+            resources,
+            preferences,
         });
         spawn_subscriber(provider.clone(), discovery, shutdown);
         provider
@@ -120,35 +131,48 @@ impl OllamaProvider {
         publish_capability_announcement(&self.events, &announcement).await;
     }
 
-    /// Rebuild the matrix from the given URL list. Probes every URL
-    /// for `/api/tags`, `/api/ps`, and per-model `/api/show`
-    /// metadata, marks each instance Healthy / Unhealthy, and
-    /// publishes the resulting capability announcement.
-    async fn rebuild_matrix(&self, urls: Vec<String>) {
+    /// Rebuild the matrix from the given binding list. Probes
+    /// every URL for `/api/tags`, `/api/ps`, and per-model
+    /// `/api/show` metadata, marks each instance Healthy /
+    /// Unhealthy, and publishes the resulting capability
+    /// announcement.
+    ///
+    /// Each binding carries the stone_name from garden discovery
+    /// so the probed `InstanceEntry` is stamped with the real
+    /// identity Moss knows — matching the `StoneName` keys the
+    /// Resources domain uses for the ORCH-0038 fit filter.
+    async fn rebuild_matrix(&self, bindings: Vec<crate::providers::common::InstanceBinding>) {
         let mut new_matrix = OllamaCapabilityMatrix::new();
 
         // Probe every instance in parallel for its model list and
-        // loaded models.
-        let probe_futs = urls.into_iter().map(|url| {
+        // loaded models. Each probe is stamped with the
+        // discovery-provided stone_name, not one derived from the
+        // URL.
+        let probe_futs = bindings.into_iter().map(|binding| {
             let http = self.http.clone();
-            async move { probe_instance(&http, &url).await }
+            async move { probe_instance(&http, &binding.url, &binding.stone_name).await }
         });
-        let instance_probes: Vec<Option<InstanceEntry>> =
+        let instance_probes: Vec<Option<InstanceProbe>> =
             futures_util::future::join_all(probe_futs).await;
+
+        // Union of model disk sizes across all probed instances.
+        // Different instances should report the same size for the
+        // same model name (it's the GGUF file's on-disk size); we
+        // take the first observation.
+        let mut sizes_by_model: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
 
         // Build the instance map. Unhealthy probes (None) become
         // `InstanceHealth::Unhealthy` entries so the adapter still
         // knows about them but the selector will filter them out.
-        for (idx, maybe) in instance_probes.into_iter().enumerate() {
-            match maybe {
-                Some(entry) => {
-                    new_matrix.instances.insert(entry.endpoint.clone(), entry);
+        for maybe in instance_probes.into_iter() {
+            if let Some(probe) = maybe {
+                for (name, size) in probe.sizes_by_model {
+                    sizes_by_model.entry(name).or_insert(size);
                 }
-                None => {
-                    let _ = idx; // placeholder — we do not have the
-                                 // URL at this point for unhealthy
-                                 // entries; they simply don't appear.
-                }
+                new_matrix
+                    .instances
+                    .insert(probe.entry.endpoint.clone(), probe.entry);
             }
         }
 
@@ -178,10 +202,28 @@ impl OllamaProvider {
         let enriched: Vec<(String, Option<ModelInfo>)> =
             futures_util::future::join_all(enrich_futs).await;
         for (model, info) in enriched {
-            if let Some(info) = info {
+            if let Some(mut info) = info {
+                // Backfill disk size from /api/tags union — the
+                // fit filter uses this as a lower bound on
+                // required VRAM for cold models.
+                if let Some(&size) = sizes_by_model.get(&model) {
+                    info.size_bytes = size;
+                }
                 new_matrix.models.insert(model, info);
             }
         }
+
+        // ORCH-0038 fit filter (M3): drop any model whose required
+        // VRAM exceeds the largest GPU in the garden. Consults the
+        // Resources domain for per-stone GPU topology (populated by
+        // the garden_hardware puller in M1) and removes models that
+        // have no possible host.
+        //
+        // The filter internally checks the `orchestrator.strict_fit`
+        // preference (default true). Operators who want to see
+        // every installed model — regardless of whether it can
+        // run — can flip the setting via the preferences API.
+        self.apply_fit_filter(&mut new_matrix).await;
 
         // Swap the new matrix in and publish the announcement.
         {
@@ -189,6 +231,115 @@ impl OllamaProvider {
             *m = new_matrix;
         }
         self.publish_capabilities().await;
+    }
+
+    /// Apply the ORCH-0038 fit filter to a freshly-built matrix.
+    /// Removes any model whose required VRAM exceeds the largest
+    /// GPU in the garden on any stone that hosts it.
+    ///
+    /// Walked per model rather than per stone because the question
+    /// is "does any stone I could route this to have the capacity"
+    /// — not "does this specific stone have capacity". A model
+    /// survives the filter if at least one healthy instance that
+    /// hosts it lives on a stone that could host its workload
+    /// according to `Resources::stones_capable_of`.
+    ///
+    /// Unknown required VRAM (`required_vram_bytes() == 0`) is
+    /// treated permissively — the workload passes unless the stone
+    /// explicitly fails. Matches the old-orchestrator intent of
+    /// not blocking on absence of evidence; the learning loop (M7)
+    /// tightens this over time.
+    async fn apply_fit_filter(
+        &self,
+        matrix: &mut OllamaCapabilityMatrix,
+    ) {
+        use crate::domain::resources::{StoneName, Workload};
+
+        // Preferences gate: when `orchestrator.strict_fit` is
+        // explicitly false, the filter is a no-op. Default is
+        // true — surfacing unhostable models is a lie by omission.
+        let strict = self
+            .preferences
+            .get_setting_bool("orchestrator.strict_fit", true)
+            .await;
+        if !strict {
+            return;
+        }
+
+        // Build a map from model name → set of stone names that
+        // host it, walking the healthy instances.
+        let mut hosts: std::collections::HashMap<String, std::collections::HashSet<StoneName>> =
+            std::collections::HashMap::new();
+        for inst in matrix.instances.values() {
+            if !inst.is_routable() {
+                continue;
+            }
+            let stone = StoneName::new(&inst.stone_name);
+            for model in &inst.models_available {
+                hosts
+                    .entry(model.clone())
+                    .or_default()
+                    .insert(stone.clone());
+            }
+        }
+
+        // Walk every model in the matrix. For each model, ask the
+        // Resources domain which stones could host its workload.
+        // Intersect with the instances that actually have the
+        // model on disk; if the intersection is empty, drop it.
+        let all_model_names: Vec<String> = matrix.models.keys().cloned().collect();
+        let mut dropped: Vec<(String, u64)> = Vec::new();
+        for name in all_model_names {
+            let required = matrix
+                .models
+                .get(&name)
+                .map(|m| m.required_vram_bytes())
+                .unwrap_or(0);
+
+            // Unknown required VRAM → permissive. Matches old
+            // orchestrator intent. The learning loop (M7) tightens
+            // this by recording actual load outcomes.
+            if required == 0 {
+                continue;
+            }
+
+            // Required VRAM in MB for the Resources domain query.
+            // Round up: a 7_000_000_001-byte model needs at least
+            // 6676 MB, not 6675.
+            let required_mb = required.div_ceil(1024 * 1024);
+
+            // Ollama is stack-agnostic: llama.cpp picks the best
+            // backend for the GPU at runtime (CUDA, ROCm, Vulkan,
+            // Metal, CPU). Any device with a declared stack is a
+            // valid target — we only care about the VRAM budget.
+            let workload = Workload::any_gpu(Some(required_mb));
+            let capable = self.resources.stones_capable_of(&workload).await;
+
+            let available_hosts = hosts.get(&name).cloned().unwrap_or_default();
+            let intersection_empty = available_hosts
+                .intersection(&capable)
+                .next()
+                .is_none();
+
+            if intersection_empty {
+                dropped.push((name.clone(), required));
+                matrix.models.remove(&name);
+            }
+        }
+
+        if !dropped.is_empty() {
+            tracing::info!(
+                count = dropped.len(),
+                "ollama fit filter dropped models (no stone in garden has enough VRAM)"
+            );
+            for (name, required) in &dropped {
+                tracing::debug!(
+                    model = %name,
+                    required_mb = required / 1_048_576,
+                    "ollama fit filter: dropped"
+                );
+            }
+        }
     }
 
     /// Resolve the caller's model selector against the current
@@ -259,10 +410,25 @@ fn selection_error_to_provider_error(err: SelectionError) -> ProviderError {
 /// models. Returns `None` if any call fails — the adapter treats that
 /// as "unreachable right now" and the instance simply doesn't appear
 /// in the matrix until the next probe.
-async fn probe_instance(http: &Client, base: &str) -> Option<InstanceEntry> {
+/// Probe result for one instance: the `InstanceEntry` itself plus a
+/// side-channel map of `model_name → disk_size_bytes` extracted
+/// from the same `/api/tags` response. The caller unions these
+/// maps across instances to populate `ModelInfo.size_bytes` during
+/// matrix enrichment — needed by the M3 fit filter as a lower
+/// bound on required VRAM.
+struct InstanceProbe {
+    entry: InstanceEntry,
+    sizes_by_model: std::collections::HashMap<String, u64>,
+}
+
+async fn probe_instance(
+    http: &Client,
+    base: &str,
+    stone_name: &str,
+) -> Option<InstanceProbe> {
     let base_trim = base.trim_end_matches('/').to_string();
 
-    // `/api/tags` — installed models
+    // `/api/tags` — installed models (with on-disk sizes)
     let tags_url = format!("{}/api/tags", base_trim);
     let tags_resp = http
         .get(&tags_url)
@@ -273,8 +439,14 @@ async fn probe_instance(http: &Client, base: &str) -> Option<InstanceEntry> {
         .error_for_status()
         .ok()?;
     let tags: TagsResponse = tags_resp.json().await.ok()?;
+
     let models_available: Vec<String> =
         tags.models.iter().map(|m| m.name.clone()).collect();
+    let sizes_by_model: std::collections::HashMap<String, u64> = tags
+        .models
+        .iter()
+        .map(|m| (m.name.clone(), m.size))
+        .collect();
 
     // `/api/ps` — currently-loaded models. Optional — a brand-new
     // instance may not have anything loaded and returns an empty list.
@@ -292,23 +464,16 @@ async fn probe_instance(http: &Client, base: &str) -> Option<InstanceEntry> {
         Err(_) => Vec::new(),
     };
 
-    // Stone name: extract from the URL. Everything between `//` and
-    // the first `:` (port) — good enough for display purposes.
-    let stone_name = base_trim
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .split(':')
-        .next()
-        .unwrap_or("unknown")
-        .to_string();
-
-    Some(InstanceEntry {
-        endpoint: base_trim,
-        stone_name,
-        health: InstanceHealth::Healthy,
-        models_available,
-        models_loaded,
-        queue_depth: 0,
+    Some(InstanceProbe {
+        entry: InstanceEntry {
+            endpoint: base_trim,
+            stone_name: stone_name.to_string(),
+            health: InstanceHealth::Healthy,
+            models_available,
+            models_loaded,
+            queue_depth: 0,
+        },
+        sizes_by_model,
     })
 }
 
@@ -358,9 +523,13 @@ async fn enrich_model(http: &Client, endpoint: &str, model: &str) -> Option<Mode
         capabilities,
         parameter_count,
         context_length,
-        size_bytes: 0, // /api/show doesn't report it; /api/tags does
-                       // but we don't carry the number through here —
-                       // scoring doesn't use it.
+        // `size_bytes` populated by the caller after this returns
+        // — /api/show doesn't report it, /api/tags does. The fit
+        // filter (M3) needs it as a conservative lower bound on
+        // required VRAM until M4's /api/ps probe captures the
+        // measured value.
+        size_bytes: 0,
+        observed_vram_bytes: None,
     })
 }
 
@@ -389,6 +558,7 @@ fn spawn_subscriber(
     discovery: Arc<GardenDiscovery>,
     shutdown: CancellationToken,
 ) {
+    use crate::providers::common::InstanceBinding;
     tokio::spawn(async move {
         let pool = PerFqnInstances::new();
         let mut rx = discovery.subscribe(FQNS).await;
@@ -397,10 +567,21 @@ fn spawn_subscriber(
                 _ = shutdown.cancelled() => break,
                 event = rx.recv() => {
                     let Some(event) = event else { break };
-                    let urls: Vec<String> =
-                        event.instances.into_iter().map(|i| i.url).collect();
-                    pool.set(&event.fqn, urls);
-                    provider.rebuild_matrix(pool.flatten()).await;
+                    // Keep the stone_name from discovery alongside
+                    // each URL. Deriving stone identity from the
+                    // URL (IP/hostname) doesn't match the Resources
+                    // domain's `StoneName` keys — the ORCH-0038 fit
+                    // filter would always miss.
+                    let bindings: Vec<InstanceBinding> = event
+                        .instances
+                        .into_iter()
+                        .map(|i| InstanceBinding {
+                            url: i.url,
+                            stone_name: i.stone_name,
+                        })
+                        .collect();
+                    pool.set_bindings(&event.fqn, bindings);
+                    provider.rebuild_matrix(pool.flatten_bindings()).await;
                 }
             }
         }

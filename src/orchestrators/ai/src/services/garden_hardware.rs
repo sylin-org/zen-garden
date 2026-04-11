@@ -188,9 +188,31 @@ impl GardenHardwarePuller {
         let count = stones.len();
         let mut total_gpus = 0usize;
         let mut total_vram_mb: u64 = 0;
+        let mut skipped_no_identity: usize = 0;
 
         for caps in stones {
-            let stone_name = StoneName::new(caps.core.stone_name.clone());
+            // Resolve stone identity: prefer stone_name, fall back
+            // to stone_id. If neither is populated, skip — we
+            // refuse to hallucinate identity because the
+            // Resources domain is keyed by StoneName and
+            // colliding multiple nameless stones into a single
+            // key silently destroys data.
+            //
+            // A stone reaching this branch indicates a Moss bug
+            // where the cached peer capabilities are missing both
+            // stone_name and stone_id. Log it loud so the
+            // operator can investigate.
+            let raw_name = caps.core.stone_name.trim();
+            let raw_id = caps.core.stone_id.as_deref().map(str::trim).unwrap_or("");
+            let identity = if !raw_name.is_empty() {
+                raw_name.to_string()
+            } else if !raw_id.is_empty() {
+                raw_id.to_string()
+            } else {
+                skipped_no_identity += 1;
+                continue;
+            };
+            let stone_name = StoneName::new(identity);
             let topology = map_to_topology(&caps);
 
             total_gpus += topology.gpus.len();
@@ -210,6 +232,14 @@ impl GardenHardwarePuller {
             self.resources
                 .update_topology(stone_name, topology)
                 .await;
+        }
+
+        if skipped_no_identity > 0 {
+            tracing::warn!(
+                skipped = skipped_no_identity,
+                "garden capabilities: skipped stones with neither stone_name nor stone_id; \
+                 upstream Moss may be returning sparse peer capabilities"
+            );
         }
 
         // INFO so the milestone is observable at default log level.

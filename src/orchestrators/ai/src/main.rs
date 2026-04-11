@@ -200,6 +200,18 @@ async fn main() -> Result<()> {
         .context("resolve tended stone")?;
     tracing::info!(stone = %tended_stone, "tending stone");
 
+    // ── Preferences (ORCH-0030 §8) ──────────────────────────────
+    //
+    // Loaded early because adapters consume it at construction for
+    // runtime-tunable settings (e.g. `orchestrator.strict_fit`, the
+    // ORCH-0038 VRAM fit filter). Operators toggle these through
+    // the preferences API rather than environment variables.
+    let preferences = zen_garden_ai_orchestrator::domain::preferences::Preferences::load(
+        &data_dir,
+        events.clone(),
+    )
+    .await;
+
     // ── Garden discovery (event-driven pub/sub) ────────────────
     //
     // Spawn the SSE consumer that watches the garden's tools
@@ -237,6 +249,8 @@ async fn main() -> Result<()> {
         OllamaConfig::default(),
         discovery.clone(),
         events.clone(),
+        resources.clone(),
+        preferences.clone(),
         shutdown.clone(),
     );
     let libretranslate = LibreTranslateProvider::new(
@@ -333,13 +347,6 @@ async fn main() -> Result<()> {
         vocabularies.clone(),
         events.clone(),
     );
-
-    // ── Preferences (ORCH-0030 §8) ──────────────────────────────
-    let preferences = zen_garden_ai_orchestrator::domain::preferences::Preferences::load(
-        &data_dir,
-        events.clone(),
-    )
-    .await;
 
     // ── Shared AppState ─────────────────────────────────────────
     let state = AppState {

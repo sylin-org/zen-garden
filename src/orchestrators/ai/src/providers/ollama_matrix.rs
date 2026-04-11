@@ -173,6 +173,20 @@ pub struct ModelInfo {
 
     /// Disk size in bytes from `/api/tags`.
     pub size_bytes: u64,
+
+    /// Maximum VRAM footprint ever observed for this model, in
+    /// bytes. Populated from `/api/ps`'s `size_vram` field
+    /// whenever the model is currently loaded on any instance
+    /// (M4). `None` until the first observation — at which point
+    /// the fit filter tightens from `size_bytes` (disk, a lower
+    /// bound) to the measured value.
+    ///
+    /// The learning loop (M7) may revise this upward on a load
+    /// failure — "model requires more system memory" responses
+    /// bump this past the failing stone's total VRAM so the
+    /// matrix rebuilt filters the model off that stone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_vram_bytes: Option<u64>,
 }
 
 impl ModelInfo {
@@ -183,6 +197,7 @@ impl ModelInfo {
             parameter_count: None,
             context_length: None,
             size_bytes,
+            observed_vram_bytes: None,
         }
     }
 
@@ -212,6 +227,20 @@ impl ModelInfo {
     /// Whether this model declares the given Ollama capability tag.
     pub fn has_capability(&self, tag: &str) -> bool {
         self.capabilities.iter().any(|c| c == tag)
+    }
+
+    /// Best available estimate of the model's required VRAM in
+    /// bytes for fit-filter purposes. Prefers the measured value
+    /// from `/api/ps` when known; falls back to disk `size_bytes`
+    /// as a conservative lower bound (loaded footprint is always
+    /// at least as big as the GGUF file on disk).
+    ///
+    /// Returns 0 if neither signal is available — the caller
+    /// interprets this as "unknown" and the fit filter treats
+    /// unknown workloads permissively (matches old-orchestrator
+    /// intent: don't block on absence of evidence).
+    pub fn required_vram_bytes(&self) -> u64 {
+        self.observed_vram_bytes.unwrap_or(self.size_bytes)
     }
 }
 
@@ -808,6 +837,7 @@ mod tests {
             parameter_count: params,
             context_length: ctx,
             size_bytes: 4_000_000_000,
+            observed_vram_bytes: None,
         }
     }
 

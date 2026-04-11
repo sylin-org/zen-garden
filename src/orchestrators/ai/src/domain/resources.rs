@@ -245,19 +245,42 @@ pub struct Claim {
 /// `required_vram_mb: None` means "unknown" — the adapter couldn't
 /// measure it yet. Matches the permissive-on-unknown intent: a
 /// stone with **any** routable GPU on the right stack is
-/// considered a match for an unknown-sized workload. The learning
-/// loop (M7) tightens this later by observing actual loads.
+/// considered a match for an unknown-sized workload.
+///
+/// `required_stack` is `Option<ComputeStack>`:
+///
+/// - `Some(stack)` — strict: the device must declare that specific
+///   stack. Used by adapters like ComfyUI that run a single
+///   compute backend (CUDA on NVIDIA, ROCm on AMD with a custom
+///   build) and don't transparently switch.
+/// - `None` — any-GPU: any device with at least one compute stack
+///   declared matches. Used by adapters like Ollama whose runtime
+///   (llama.cpp) has multiple backends (CUDA, ROCm, Vulkan,
+///   Metal, CPU) and picks whatever the GPU exposes.
 #[derive(Debug, Clone)]
 pub struct Workload {
     pub required_vram_mb: Option<u64>,
-    pub required_stack: ComputeStack,
+    pub required_stack: Option<ComputeStack>,
 }
 
 impl Workload {
+    /// Strict-stack GPU workload. The fit filter rejects any
+    /// device that doesn't declare the exact `required_stack`.
     pub fn gpu(required_vram_mb: Option<u64>, required_stack: ComputeStack) -> Self {
         Self {
             required_vram_mb,
-            required_stack,
+            required_stack: Some(required_stack),
+        }
+    }
+
+    /// Any-GPU workload: any device with at least one compute
+    /// stack declared matches. Use for adapters whose runtime is
+    /// stack-agnostic (Ollama, LLM servers with multi-backend
+    /// llama.cpp, …).
+    pub fn any_gpu(required_vram_mb: Option<u64>) -> Self {
+        Self {
+            required_vram_mb,
+            required_stack: None,
         }
     }
 }
@@ -1030,10 +1053,25 @@ fn derive_mode(
 /// ever drift, this function is the bug. Any change to `claim()`'s
 /// accounting rules must land here too.
 fn gpu_can_host(gpu: &GpuDevice, claims: &HashMap<String, Claim>, workload: &Workload) -> bool {
-    // 1. Compute-stack capability filter. A device that doesn't
-    //    support the requested stack is never a match.
-    if !gpu.compute_stack.contains(&workload.required_stack) {
-        return false;
+    // 1. Compute-stack capability filter.
+    //
+    // - Strict (`Some(stack)`): the device must declare that
+    //   specific stack. Matches `claim()`'s UnsupportedComputeStack
+    //   rule.
+    // - Any-GPU (`None`): the device must have at least one stack
+    //   declared — otherwise it's CPU-only from the Resources
+    //   domain's perspective and not a valid GPU target.
+    match workload.required_stack {
+        Some(stack) => {
+            if !gpu.compute_stack.contains(&stack) {
+                return false;
+            }
+        }
+        None => {
+            if gpu.compute_stack.is_empty() {
+                return false;
+            }
+        }
     }
 
     // 2. Current claims on this specific device.

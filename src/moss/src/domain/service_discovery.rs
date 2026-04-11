@@ -232,11 +232,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
         ..Default::default()
     };
 
-    let tools = {
-        let reg = state.tool.registry.read().await;
-        let (_, tools) = reg.snapshot(&query);
-        tools
-    };
+    let (_, tools) = state.tool.snapshot(&query).await;
 
     let services: Vec<FoundService> = tools
         .into_iter()
@@ -267,11 +263,7 @@ pub async fn find_services(
     let query = criteria_to_tool_query(criteria);
 
     // Single registry query — all origins (Local, Gateway, Announced)
-    let tools = {
-        let reg = state.tool.registry.read().await;
-        let (_, tools) = reg.snapshot(&query);
-        tools
-    };
+    let (_, tools) = state.tool.snapshot(&query).await;
 
     // Convert GardenTool -> FoundService, applying fine-grained filters
     let mut all_services: Vec<FoundService> = tools

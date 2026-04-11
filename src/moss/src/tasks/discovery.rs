@@ -235,13 +235,8 @@ pub async fn start_discovery_listener(
                             }
 
                             // Broadcast current local tools snapshot for new stone.
-                            // Ch6 will add a typed `local_snapshot` query on
-                            // Tool; during Ch5 we use the field-level
-                            // strangler to reach the registry inner.
-                            let snapshot_deltas = {
-                                let reg = local_tool.registry.read().await;
-                                reg.local_snapshot_for_beacon(&local_stone_id)
-                            };
+                            let snapshot_deltas =
+                                local_tool.local_snapshot_for_beacon(&local_stone_id).await;
                             if let Err(e) = local_tool
                                 .publish_snapshot(
                                     &local_stone_id,

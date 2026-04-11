@@ -195,13 +195,13 @@ pub async fn storage_overview_v1(
     let total_capacity: u64 = local_banks.iter().map(|b| b.capacity_bytes).sum();
     let total_used: u64 = local_banks.iter().map(|b| b.used_bytes).sum();
 
-    // Get garden-wide view from unified registry
-    let reg = state.tool.registry.read().await;
+    // Get garden-wide view from the Tool aggregate's registry.
+    let storage_entries = state.tool.storage_entries().await;
     let local_roles = crate::domain::storage::roles_snapshot(&state.current.storage.volumes).await;
     let local_pins = crate::domain::storage::pins_snapshot(&state.current.storage.volumes).await;
     let mut garden_banks = Vec::new();
 
-    for entry in reg.storage_entries() {
+    for entry in storage_entries.iter() {
         let is_local = entry.tool.stone.id == state.current.stone.id;
         let sm = entry.tool.storage.as_ref();
 

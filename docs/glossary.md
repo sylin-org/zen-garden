@@ -255,6 +255,18 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Observability vs lifecycle (tasks)** - Two complementary surfaces. `/api/v1/stone/tasks/{name}` returns task **lifecycle state** (Waiting/Running/Completed/Failed) from `SupervisorHandle`. `/api/v1/stone/metrics/tasks/{name}` returns **observability data** (timing, event counts, subscriber lag) from the Metrics aggregate. Consumers that want unified status join the two by task name.
 
+### Tool aggregate terms (Book II / ARCH-0019)
+
+**Tool (bounded context)** - The aggregate owning the garden-wide registry of `GardenTool` entries (offerings + seed-banks + gateway registrations + remote-announced tools from peer stones) on a single stone. Typed commands (`upsert`, `register_gateway`, `deregister_gateway`, `reap_expired_gateways`, `reconcile_local`, `apply_remote_beacon`, `remove_stone`) own the write path; typed queries return owned values without leaking references across the lock boundary. See `/api/v1/stone/tools/{fqid}` and `/api/v1/garden/tools`.
+
+**Dual event streams (Tool)** - The Tool aggregate exposes two parallel broadcast streams from the same command gateway: `changes()` carries the internal `ToolChanged` domain event (origin, cursor, batch counts) for in-process subscribers; `delta_stream()` carries the wire-format `ToolDelta` consumed by SSE and UDP beacon subscribers. Every command feeds both streams atomically. Documented deviation — `ToolDelta` is an existing consumer-facing contract that cannot be collapsed into `ToolChanged` without breaking rake, garden dashboards, and peer-stone beacon receivers.
+
+**`ToolsBeaconTransport`** - The port injected into the Tool aggregate for publishing UDP tools beacons. Production adapter `P2pBeaconTransport` wraps `garden_common::infra::communications::p2p::send_announcement`; test adapter `NoopBeaconTransport` drops deltas. Replaces direct `crate::infra::tools::*` imports from the aggregate per code-standards §15 (domain never imports infra).
+
+**Ephemeral aggregate** - A DDD aggregate that has no `Store` port because its state is rebuilt on every startup from other domains' state plus runtime sources (remote beacons, TTL reaping). Metrics, Resources, and Tool all fit this pattern. No `save` after mutation, no `load` on boot, no persistence invariants to maintain. Documented as the first-class pattern deviation in `docs/specs/domain-aggregates.md` (added in Book II Ch6). Contrast with persistent aggregates like Offerings, which own an `OfferingStore` port and call `store.save(...)` from `finalize` after every mutation.
+
+**Field-level strangler** - A migration shortcut used inside Book II (ARCH-0019 Ch3 refinement of the original ActiveGuard plan). The aggregate exposes its state as a `pub(crate)` field temporarily so legacy `state.tool.registry.read().await` call sites compile unchanged while typed methods grow alongside. Ch6 migrates the 14 API/domain/task read sites to typed methods; the field remains `pub(crate)` for the 25 infra-layer `{registry: &state.tool.registry, ...}` struct-field sites (`StorageResolver`, `StorageHandle`, cloud filter adapters) that legitimately need a raw registry handle as an infrastructure dependency. Net effect: the API/domain/task layer boundary is clean — no direct registry access — while the infra layer retains the handle as documented implementation surface.
+
 ---
 
 ## Quick Reference

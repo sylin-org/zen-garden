@@ -147,7 +147,6 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     }
 
     let my_stone_id = &state.current.stone.id;
-    let reg = state.tool.registry.read().await;
 
     let mut new_roles = std::collections::HashMap::new();
     let mut any_changed = false;
@@ -157,7 +156,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
         let local_pin_id = current_pins.get(name).cloned();
 
         // Find remote beacons that have this name as Primary
-        let remote_primary = find_remote_primary_with_pin(&reg, name, my_stone_id);
+        let remote_primary = find_remote_primary_with_pin(&state.tool, name, my_stone_id).await;
 
         let current_role = current_roles
             .get(name)
@@ -211,8 +210,6 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
         new_roles.insert(name.clone(), new_role);
     }
-
-    drop(reg);
 
     // Apply auto-unpin and role updates via unified Volumes
     {
@@ -381,12 +378,26 @@ fn build_cutoff_cursor(cutoff_ms: u64) -> String {
 /// Find the first remote stone claiming Primary for a given seed bank name.
 ///
 /// Returns `(stone_id, seed_bank_id, pin_id)` of the remote primary, if any.
-fn find_remote_primary_with_pin(
-    reg: &crate::domain::tool::registry::GardenRegistryInner,
+async fn find_remote_primary_with_pin(
+    tool: &crate::domain::Tool,
     name: &str,
     my_stone_id: &str,
 ) -> Option<(String, String, Option<String>)> {
-    for entry in reg.storage_by_name(name) {
+    let entries = tool.storage_by_name(name).await;
+    find_remote_primary_in(entries.iter(), my_stone_id)
+}
+
+/// Pure matching helper — extracted so the unit tests below can
+/// exercise the filter logic against a `GardenRegistryInner` directly
+/// without building a full `Tool` aggregate plus tokio runtime.
+fn find_remote_primary_in<'a, I>(
+    entries: I,
+    my_stone_id: &str,
+) -> Option<(String, String, Option<String>)>
+where
+    I: IntoIterator<Item = &'a crate::domain::RegistryEntry>,
+{
+    for entry in entries {
         if entry.tool.stone.id == my_stone_id {
             continue;
         }
@@ -643,7 +654,9 @@ mod tests {
     #[test]
     fn test_find_remote_primary_returns_none_when_empty() {
         let reg = GardenRegistryInner::default();
-        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
+        assert!(
+            find_remote_primary_in(reg.storage_by_name("mybank").into_iter(), "stone-1").is_none()
+        );
     }
 
     #[test]
@@ -651,7 +664,9 @@ mod tests {
         let mut reg = GardenRegistryInner::default();
         let tool = make_storage_tool("stone-1", "sb-1", "mybank", StorageRole::Primary, None);
         reg.upsert(tool, EntryOrigin::Local);
-        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
+        assert!(
+            find_remote_primary_in(reg.storage_by_name("mybank").into_iter(), "stone-1").is_none()
+        );
     }
 
     #[test]
@@ -667,7 +682,7 @@ mod tests {
             },
         );
 
-        let result = find_remote_primary_with_pin(&reg, "mybank", "stone-1");
+        let result = find_remote_primary_in(reg.storage_by_name("mybank").into_iter(), "stone-1");
         assert!(result.is_some());
         let (stone_id, sb_id, pin_id) = result.unwrap();
         assert_eq!(stone_id, "stone-2");
@@ -687,7 +702,7 @@ mod tests {
             },
         );
 
-        let result = find_remote_primary_with_pin(&reg, "mybank", "stone-1");
+        let result = find_remote_primary_in(reg.storage_by_name("mybank").into_iter(), "stone-1");
         assert!(result.is_some());
         assert_eq!(result.unwrap().2.as_deref(), Some(pid));
     }
@@ -703,7 +718,9 @@ mod tests {
             },
         );
 
-        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
+        assert!(
+            find_remote_primary_in(reg.storage_by_name("mybank").into_iter(), "stone-1").is_none()
+        );
     }
 
     #[test]
@@ -717,6 +734,8 @@ mod tests {
             },
         );
 
-        assert!(find_remote_primary_with_pin(&reg, "mybank", "stone-1").is_none());
+        assert!(
+            find_remote_primary_in(reg.storage_by_name("mybank").into_iter(), "stone-1").is_none()
+        );
     }
 }

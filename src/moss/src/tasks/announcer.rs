@@ -75,19 +75,21 @@ pub(crate) async fn periodic_announcer_task(state: AppState, token: Cancellation
         // Every other tick (~60s): broadcast a snapshot tools beacon so
         // remote registries can reconcile stale announced entries.
         if tick_count.is_multiple_of(2) {
-            let snapshot_deltas = {
-                let reg = state.tool.registry.read().await;
-                reg.local_snapshot_for_beacon(&state.current.stone.id)
-            };
+            let snapshot_deltas = state
+                .tool
+                .local_snapshot_for_beacon(&state.current.stone.id)
+                .await;
             let endpoint = state.current.address.read().await.http_base();
             if !endpoint.trim().is_empty()
-                && let Err(e) = crate::infra::broadcast_tools_snapshot_beacon(
-                    &state.current.stone.id,
-                    &state.current.stone.name,
-                    &endpoint,
-                    snapshot_deltas,
-                )
-                .await
+                && let Err(e) = state
+                    .tool
+                    .publish_snapshot(
+                        &state.current.stone.id,
+                        &state.current.stone.name,
+                        &endpoint,
+                        snapshot_deltas,
+                    )
+                    .await
             {
                 tracing::warn!(error = %e, "Failed to broadcast periodic tools snapshot beacon");
             }

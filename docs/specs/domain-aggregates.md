@@ -1076,6 +1076,57 @@ Before opening a PR introducing a new bounded context, verify every box:
 
 ---
 
+## Documented deviations
+
+The pattern below is the default shape. Three deviations are documented as first-class variants rather than special cases in individual ADRs:
+
+### Ephemeral aggregates (no Store port)
+
+Some aggregates have no persistence — their state is rebuilt from other domains plus runtime sources on every startup, and no saved invariant survives a process restart. These aggregates are defined as **ephemeral**:
+
+- **No `Store` port** on the aggregate.
+- **No `load` on construction**.
+- **No `save` in `finalize`** — the `finalize` step only records metrics and emits events.
+- **Same typed-command, typed-query, `changes()` broadcast shape** as persistent aggregates otherwise.
+
+Current instances:
+
+| Aggregate | Rebuilt from | Book |
+|-----------|--------------|------|
+| **Metrics** | counters start at zero; state is observation data, not domain truth | I (ARCH-0018) |
+| **Resources** | `Current::Resources` hardware snapshots read from the OS on demand | I (rename only) |
+| **Tool** | `Offerings::changes()` projection + storage volumes + remote beacons + gateway TTL reaping | II (ARCH-0019) |
+
+**When to use**: the aggregate's state is **observation** (metrics, resources) or **cache** (tool registry rebuilt from source-of-truth domains + runtime events). Persistence would duplicate state that already has an authoritative source elsewhere.
+
+**When NOT to use**: the aggregate owns domain truth that must survive restart (offerings, pond, harvests, nurturing). Those stay with `Store` ports.
+
+### Dual event streams (internal + wire format)
+
+Most aggregates expose a single `changes()` stream carrying a domain event type. Some — notably `Tool` — expose **two parallel streams** from the same command gateway:
+
+- `changes()` → internal `XxxChanged` domain event (rich metadata, process-local subscribers).
+- `delta_stream()` (or equivalent) → wire-format event type that predates the aggregate extraction and cannot be collapsed without breaking external consumers.
+
+Both streams are fed atomically from every command. The wire format is a pre-existing consumer-facing contract (SSE clients, UDP beacon receivers, peer stones); the domain event is the refactor's richer shape that will never leave the process.
+
+**When to use**: an existing wire format is already consumed by clients that the book is not migrating. Keep both; document the deviation in the ADR.
+
+**When NOT to use**: greenfield aggregates that own their own wire format. Emit one event type.
+
+### Owned-value queries (no borrowed references across locks)
+
+Query methods on an aggregate with `RwLock`-protected state cannot return references into the inner state because the lock guard drops at the method boundary. Two shapes are possible:
+
+1. Return owned clones (`Vec<Offering>`, `Option<RegistryEntry>`). Simple. Clone cost per call.
+2. Provide a `with_active<F, R>(&self, f: F) -> R` closure method that holds the guard for the closure's duration.
+
+The pattern default is **owned clones** — they are simpler at the call site, and the clone cost is dwarfed by the lock-acquire cost for all but the hottest paths. Hot-path callers get dedicated typed methods that return already-filtered results (`Tool::storage_primary`, `Tool::find_s3_gateways`) rather than iterating a cloned `Vec`.
+
+**When to use closure-style queries**: proven hot-path performance regressions. Never by default.
+
+---
+
 ## References
 
 - [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) — the epic this pattern serves

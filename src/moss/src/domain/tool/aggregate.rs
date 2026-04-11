@@ -308,6 +308,17 @@ impl Tool {
         self.registry.read().await.handled_offerings()
     }
 
+    /// Build a wire-format snapshot of this stone's local (`Local`-origin)
+    /// entries for a `ToolsBeacon` broadcast. Used by the periodic
+    /// announcer and the discovery join path to publish authoritative
+    /// tool state to remote peers.
+    pub async fn local_snapshot_for_beacon(&self, stone_id: &str) -> Vec<ToolDelta> {
+        self.registry
+            .read()
+            .await
+            .local_snapshot_for_beacon(stone_id)
+    }
+
     // ── Commands ────────────────────────────────────────────────────────
 
     /// Upsert a single entry with an optional TTL.

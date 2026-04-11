@@ -301,9 +301,8 @@ pub async fn list_storages_v1(
         }
     }
 
-    // Remote storages from registry beacons
-    let reg = state.tool.registry.read().await;
-    for storage_entry in reg.storage_entries() {
+    // Remote storages from the Tool aggregate's registry.
+    for storage_entry in state.tool.storage_entries().await {
         if storage_entry.tool.stone.id == state.current.stone.id {
             continue; // Already counted above
         }
@@ -377,9 +376,8 @@ pub async fn discover_v1(
         });
     }
 
-    // Add remote instances from registry beacons
-    let reg = state.tool.registry.read().await;
-    for entry in reg.storage_by_name(&name) {
+    // Add remote instances from the Tool aggregate's registry.
+    for entry in state.tool.storage_by_name(&name).await {
         if entry.tool.stone.id == state.current.stone.id {
             continue;
         }

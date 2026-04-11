@@ -165,14 +165,15 @@ async fn sync_dormant_bank(
     mount_path: &std::path::Path,
 ) -> Result<()> {
     // 1. Resolve the Primary stone + endpoint from registry
-    let (_primary_stone_id, primary_endpoint, _primary_bank_id) = {
-        let reg = state.tool.registry.read().await;
-        match reg.route_to_primary(name, &state.current.stone.id) {
-            Some(route) => route,
-            None => {
-                debug!(name = %name, "No remote Primary found for seed bank — skipping sync");
-                return Ok(());
-            }
+    let (_primary_stone_id, primary_endpoint, _primary_bank_id) = match state
+        .tool
+        .route_to_primary(name, &state.current.stone.id)
+        .await
+    {
+        Some(route) => route,
+        None => {
+            debug!(name = %name, "No remote Primary found for seed bank — skipping sync");
+            return Ok(());
         }
     };
 

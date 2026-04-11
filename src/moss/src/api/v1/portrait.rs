@@ -609,8 +609,7 @@ pub async fn get_portrait_data(
     // === Horizon (visible stones) ===
     let horizon = {
         let visible_stones = topology::get_all_stones(&state.current.topology.cache).await;
-        let reg = state.tool.registry.read().await;
-        let storage_by_stone = reg.storage_grouped_by_stone();
+        let storage_by_stone = state.tool.storage_grouped_by_stone().await;
         let stones: Vec<HorizonStone> = visible_stones
             .iter()
             .filter(|entry| entry.stone_id != state.current.stone.id) // Exclude self

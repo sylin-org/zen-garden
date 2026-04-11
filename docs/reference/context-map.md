@@ -169,13 +169,18 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 #### Tool
 
-- **Status:** Partial — holds `registry: GardenRegistry` and `delta: broadcast::Sender<ToolDelta>` as direct fields; no aggregate methods
-- **Owns:** garden-wide tool registry, tool delta stream
-- **Emits:** `ToolDelta` via direct `broadcast::Sender` (raw, not wrapped in an event type)
-- **Subscribes:** Tool projection is refreshed imperatively by AppState methods today
-- **Ports:** none (direct `infra::tools::beacon` imports)
-- **Source:** `src/moss/src/domain/tool/`
-- **Book:** II (primary extraction)
+- **Status:** Full — DDD aggregate with typed commands, typed queries, dual event streams, Metrics injection, and a `ToolsBeaconTransport` port. ARCH-0019 (Book II of ARCH-0017) — completed 2026-04-11.
+- **Owns:** garden-wide tool registry (local projections + gateway registrations + remote-announced tools), cursor sequence, delta history
+- **Commands (write):** `upsert`, `register_gateway`, `deregister_gateway`, `reap_expired_gateways`, `reconcile_local`, `apply_remote_beacon`, `remove_stone`
+- **Queries (read):** `snapshot`, `deltas_since`, `get`, `current_cursor`, `cursor_for_event_id`, `storage_entries`, `storage_by_name`, `storage_primary`, `storage_by_id`, `storage_grouped_by_stone`, `storage_count`, `storage_stone_count`, `stone_endpoint`, `find_s3_gateways`, `route_to_primary`, `handles_offering`, `handled_offerings`, `local_snapshot_for_beacon`
+- **Emits:** `ToolChanged` domain event via `changes()`, wire `ToolDelta` via `delta_stream()` — dual streams documented as a deviation (the wire format is an existing consumer-facing contract that cannot be collapsed)
+- **Subscribes:** `OfferingsChanged` (via `offerings-projection` task) for local reconciliation
+- **Ports:** `ToolsBeaconTransport` — UDP beacon publishing. Production adapter: `infra::tools::P2pBeaconTransport`. Test adapter: `NoopBeaconTransport`.
+- **Metrics:** domain `tool` registered with five kinds (upserted, removed, reaped, beacon-applied, stone-removed) using the register-with-kinds pattern for a lock-free hot path
+- **Persistence:** none — ephemeral aggregate (rebuilt on startup from offerings + storage + remote beacons + TTL)
+- **Singular endpoint:** `GET /api/v1/stone/tools/{fqid}` added in Ch6
+- **Source:** `src/moss/src/domain/tool/` (aggregate, registry, event, error, transport, projection, capability, sse, tests — one concept per file per code-standards §14)
+- **Book:** II — ARCH-0019 closed 2026-04-11
 
 ### Absent contexts (scattered across AppState or other modules)
 
@@ -272,7 +277,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Offerings** ✅ | active + adopted-candidate pools | `OfferingsChanged` | `OfferingStore` | ARCH-0016 + Book I (Metrics injection); Book XVIII (strangler removal) |
 | **Metrics** ✅ | per-domain counters, per-task metrics (timing, event counts, lag), global metrics, 9-bucket latency histogram | `MetricsChanged` (interesting transitions only — not counter increments) | none (in-memory only, counters reset on restart) | I (ARCH-0018) — **COMPLETE** |
 | **Resources** ✅ *(renamed in Book I Chapter 2)* | hardware resource snapshot facade over `Current::Resources::system/network/gpu` | none | none | I (as rename only) |
-| **Tool** | garden-wide tool registry, delta stream | `ToolChanged`, `ToolBeaconEmitted` | `ToolsBeaconTransport` | II |
+| **Tool** ✅ | garden-wide tool registry (Local + Gateway + Announced origins), typed commands, dual event streams | `ToolChanged` (internal), `ToolDelta` (wire format, existing contract) | `ToolsBeaconTransport` | II (ARCH-0019) — **COMPLETE** |
 | **Topology** | self-entry cache, chirp schedule | `TopologyChanged`, `ChirpEmitted` | `ChirpTransport`, `MdnsTransport` | III |
 | **Jobs** | active jobs, job history | `JobsChanged` | (in-memory only) | IV |
 | **Catalog** | manifest registry, compiled offerings index | `CatalogChanged` | `ManifestSource`, `CatalogCache` | V |

@@ -246,6 +246,10 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::tools::stream_garden_tools_v1),
         )
         .route(
+            "/api/v1/stone/tools/{fqid}",
+            get(api::v1::tools::get_tool_v1),
+        )
+        .route(
             "/api/v1/garden/updates",
             get(api::v1::updates::check_garden),
         )
@@ -905,6 +909,10 @@ pub fn configure(state: AppState) -> Router {
         .route(
             "/api/v1/garden/tools/stream",
             get(api::v1::tools::stream_garden_tools_v1),
+        )
+        .route(
+            "/api/v1/stone/tools/{fqid}",
+            get(api::v1::tools::get_tool_v1),
         )
         // Garden nourishment (updates across ALL stones)
         .route(

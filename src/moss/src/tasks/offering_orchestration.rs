@@ -278,10 +278,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
     // ORCH-0008: collect offering types covered by any active gateway in the garden.
     // A registered gateway suppresses elections for that offering type.
-    let gateway_handled: std::collections::HashSet<String> = {
-        let reg = state.tool.registry.read().await;
-        reg.handled_offerings()
-    };
+    let gateway_handled: std::collections::HashSet<String> = state.tool.handled_offerings().await;
 
     let offerings = state.get_offerings().await;
 

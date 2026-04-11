@@ -108,11 +108,8 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
 
             // ORCH-0008: if a registered gateway handles this offering type,
             // this stone is ineligible — the gateway owns the lifecycle.
-            {
-                let reg = self.state.tool.registry.read().await;
-                if reg.handles_offering(&offering.offering) {
-                    return None;
-                }
+            if self.state.tool.handles_offering(&offering.offering).await {
+                return None;
             }
 
             // Look up the per-stone compatibility evaluation from the

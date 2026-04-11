@@ -44,6 +44,35 @@ pub struct ToolsSnapshotResponse {
     pub replay: Vec<ToolDelta>,
 }
 
+/// `GET /api/v1/stone/tools/{fqid}` — single-tool lookup by fqid
+/// across any origin (Local, Gateway, Announced). Returns 404 if no
+/// registry entry matches the given fqid on any stone.
+///
+/// Added in Book II Ch6 (ARCH-0019) as the first singular tool
+/// endpoint. Uses the `snapshot` query with an fqid filter and takes
+/// the first match — `ToolQuery::matches_tool` honours the exact-fqid
+/// matching semantics.
+pub async fn get_tool_v1(
+    State(tool): State<Arc<Tool>>,
+    axum::extract::Path(fqid): axum::extract::Path<String>,
+) -> Result<Json<GardenTool>, (StatusCode, Json<ApiErrorResponse>)> {
+    let query = ToolQuery {
+        fqid: Some(fqid.clone()),
+        ..Default::default()
+    };
+    let (_, mut tools) = tool.snapshot(&query).await;
+    match tools.pop() {
+        Some(t) => Ok(Json(t)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResponse::new(
+                "TOOL_NOT_FOUND",
+                format!("No tool registered with fqid '{}'", fqid),
+            )),
+        )),
+    }
+}
+
 pub async fn list_garden_tools_v1(
     State(tool): State<Arc<Tool>>,
     Query(query): Query<ToolsQueryParams>,
@@ -51,15 +80,11 @@ pub async fn list_garden_tools_v1(
     let filter = parse_query(&query)?;
     let since = query.since.unwrap_or(0);
 
-    let (cursor, tools, replay) = {
-        let reg = tool.registry.read().await;
-        let (cursor, tools) = reg.snapshot(&filter);
-        let replay = if since > 0 {
-            reg.deltas_since(since, &filter)
-        } else {
-            Vec::new()
-        };
-        (cursor, tools, replay)
+    let (cursor, tools) = tool.snapshot(&filter).await;
+    let replay = if since > 0 {
+        tool.deltas_since(since, &filter).await
+    } else {
+        Vec::new()
     };
 
     crate::api::ok(ToolsSnapshotResponse {
@@ -82,21 +107,25 @@ pub async fn stream_garden_tools_v1(
     let token = state.shutdown_token.child_token();
     let rx = state.tool.delta_stream();
 
-    let (snapshot_cursor, snapshot_tools, replay) = {
-        let reg = state.tool.registry.read().await;
-        if resume_cursor == 0
-            && let Some(last_event_id) = extract_last_event_id(&headers)
-        {
-            resume_cursor = parse_resume_cursor(last_event_id, &reg);
-        }
-
-        let (cursor, tools) = reg.snapshot(&filter);
-        let replay = if resume_cursor > 0 {
-            reg.deltas_since(resume_cursor, &filter)
+    if resume_cursor == 0
+        && let Some(last_event_id) = extract_last_event_id(&headers)
+    {
+        resume_cursor = if let Ok(parsed) = last_event_id.trim().parse::<u64>() {
+            parsed
         } else {
-            Vec::new()
+            state
+                .tool
+                .cursor_for_event_id(last_event_id)
+                .await
+                .unwrap_or(0)
         };
-        (cursor, tools, replay)
+    }
+
+    let (snapshot_cursor, snapshot_tools) = state.tool.snapshot(&filter).await;
+    let replay = if resume_cursor > 0 {
+        state.tool.deltas_since(resume_cursor, &filter).await
+    } else {
+        Vec::new()
     };
 
     let snapshot_payload = ToolsSnapshotPayload {
@@ -242,16 +271,6 @@ fn parse_capability_selectors(
 
 fn extract_last_event_id(headers: &HeaderMap) -> Option<&str> {
     headers.get("last-event-id").and_then(|h| h.to_str().ok())
-}
-
-fn parse_resume_cursor(
-    last_event_id: &str,
-    reg: &crate::domain::tool::registry::GardenRegistryInner,
-) -> u64 {
-    if let Ok(parsed) = last_event_id.trim().parse::<u64>() {
-        return parsed;
-    }
-    reg.cursor_for_event_id(last_event_id).unwrap_or(0)
 }
 
 fn delta_to_event(delta: &ToolDelta, filter: &ToolQuery) -> Option<Event> {

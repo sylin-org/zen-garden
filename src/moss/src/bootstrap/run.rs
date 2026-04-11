@@ -500,7 +500,15 @@ async fn build_state(
             None,
         )
         .await;
-        if let Err(e) = crate::announcement::announce(&entry).await {
+        // Pre-AppState bootstrap phase: construct a local transport
+        // instead of going through the Topology aggregate, which
+        // doesn't exist yet at this point in the bootstrap sequence.
+        let pre_state_chirp = crate::domain::topology::P2pChirpTransport;
+        if let Err(e) =
+            <crate::domain::topology::P2pChirpTransport as crate::domain::topology::ChirpTransport>
+                ::chirp(&pre_state_chirp, &entry)
+                .await
+        {
             tracing::warn!(error = ?e, "Failed to auto-chirp after network config");
         } else {
             tracing::debug!("Auto-chirp sent after network configuration");
@@ -767,7 +775,13 @@ async fn build_state(
             Some(&capabilities),
         )
         .await;
-        if let Err(e) = crate::announcement::announce(&entry).await {
+        // Pre-AppState: construct a local transport instance.
+        let pre_state_chirp = crate::domain::topology::P2pChirpTransport;
+        if let Err(e) =
+            <crate::domain::topology::P2pChirpTransport as crate::domain::topology::ChirpTransport>
+                ::chirp(&pre_state_chirp, &entry)
+                .await
+        {
             tracing::warn!(error = ?e, "Failed to auto-chirp after capabilities update");
         } else {
             tracing::debug!("Auto-chirp sent after capabilities detection");

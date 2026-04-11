@@ -382,7 +382,7 @@ impl AppState {
     pub(crate) async fn sync_self_services(&self, auto_chirp: bool) {
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
             let entry = self.build_self_entry().await;
-            if let Err(e) = crate::announcement::announce(&entry).await {
+            if let Err(e) = self.topology.chirp(&entry).await {
                 tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
             }
         }
@@ -397,7 +397,7 @@ impl AppState {
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
             let entry = self.build_self_entry().await;
-            if let Err(e) = crate::announcement::announce(&entry).await {
+            if let Err(e) = self.topology.chirp(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after capabilities sync");
             }
         }
@@ -480,7 +480,7 @@ impl AppState {
 
         if auto_chirp && self.subsystems.network.ready.load(Ordering::Relaxed) {
             let entry = self.build_self_entry().await;
-            if let Err(e) = crate::announcement::announce(&entry).await {
+            if let Err(e) = self.topology.chirp(&entry).await {
                 tracing::warn!(error = ?e, "Failed to chirp after health update");
             }
         }
@@ -533,7 +533,7 @@ impl AppState {
 
         // Immediately chirp the updated entry via UDP
         let entry = self.build_self_entry().await;
-        if let Err(e) = crate::announcement::announce(&entry).await {
+        if let Err(e) = self.topology.chirp(&entry).await {
             tracing::warn!(error = ?e, "Failed to chirp after resolution change");
         } else {
             tracing::info!("Resolution change announced (mDNS + UDP chirp)");

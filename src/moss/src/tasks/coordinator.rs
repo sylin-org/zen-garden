@@ -81,7 +81,7 @@ pub(crate) async fn start_background_tasks(
             let state = state_for_chirp.clone();
             tokio::spawn(async move {
                 let topology_entry = state.build_self_entry().await;
-                if let Err(e) = crate::announcement::announce(&topology_entry).await {
+                if let Err(e) = state.topology.chirp(&topology_entry).await {
                     tracing::warn!(error = ?e, "Failed to chirp from event listener");
                 }
             });
@@ -184,7 +184,7 @@ pub(crate) async fn start_background_tasks(
     // Phase 13: Initial announcement (announce ourselves)
     tracing::info!("Sending initial announcement...");
     let entry = state.build_self_entry().await;
-    if let Err(e) = crate::announcement::announce(&entry).await {
+    if let Err(e) = state.topology.chirp(&entry).await {
         tracing::warn!(error = ?e, "Initial announcement failed");
     }
 

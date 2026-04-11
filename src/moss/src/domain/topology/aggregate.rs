@@ -51,7 +51,6 @@ pub struct Topology {
     pub(crate) dirty: TopologyDirtyFlag,
 
     /// Injected chirp transport port.
-    #[allow(dead_code)] // Wired in Ch4
     chirp: Arc<dyn ChirpTransport>,
 
     /// Injected persistence port.
@@ -102,6 +101,27 @@ impl Topology {
     /// Subscribe to the internal `TopologyChanged` domain event stream.
     pub fn changes(&self) -> broadcast::Receiver<TopologyChanged> {
         self.changes.subscribe()
+    }
+
+    /// Broadcast a chirp via the injected transport.
+    ///
+    /// Emits a `SelfEntryChirped` event and records mutation latency
+    /// on success. Failures are propagated to the caller — most
+    /// consumers log and continue.
+    pub async fn chirp(&self, entry: &TopologyEntry) -> anyhow::Result<()> {
+        let started = Instant::now();
+        let result = self.chirp.chirp(entry).await;
+        self.metrics
+            .record_mutation_latency(Self::NAME, started.elapsed())
+            .await;
+        if result.is_ok() {
+            let event = TopologyChanged::SelfEntryChirped {
+                stone_id: entry.stone_id.clone(),
+                stone_name: entry.stone_name.clone(),
+            };
+            self.emit(event).await;
+        }
+        result
     }
 
     // ── Queries ─────────────────────────────────────────────────────────

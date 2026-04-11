@@ -67,7 +67,7 @@ pub(crate) async fn periodic_announcer_task(state: AppState, token: Cancellation
 
         // Always chirp — peers rely on periodic chirps as heartbeats
         // to maintain online status in the topology cache.
-        match crate::announcement::announce(&entry).await {
+        match state.topology.chirp(&entry).await {
             Ok(()) => tracing::trace!("Periodic chirp sent"),
             Err(e) => tracing::warn!(error = ?e, "Periodic announcement failed"),
         }

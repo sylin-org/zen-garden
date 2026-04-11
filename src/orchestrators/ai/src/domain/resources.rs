@@ -44,7 +44,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -58,7 +58,7 @@ use crate::domain::events::EventBus;
 // ── Identity ──────────────────────────────────────────────────
 
 /// Stone identity. Mirrors the moss-side stone naming convention.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct StoneName(String);
 
 impl StoneName {
@@ -233,6 +233,53 @@ pub struct Claim {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// Read-only workload description for the fit queries
+/// ([`Resources::could_host`], [`Resources::stones_capable_of`]).
+///
+/// This is intentionally narrower than [`ResourceRequest`] — it
+/// doesn't name a specific stone or device, because the query's
+/// job is to *find* stones that could serve. A workload captures
+/// only the intrinsic requirements: how much VRAM and which
+/// compute stack.
+///
+/// `required_vram_mb: None` means "unknown" — the adapter couldn't
+/// measure it yet. Matches the permissive-on-unknown intent: a
+/// stone with **any** routable GPU on the right stack is
+/// considered a match for an unknown-sized workload. The learning
+/// loop (M7) tightens this later by observing actual loads.
+#[derive(Debug, Clone)]
+pub struct Workload {
+    pub required_vram_mb: Option<u64>,
+    pub required_stack: ComputeStack,
+}
+
+impl Workload {
+    pub fn gpu(required_vram_mb: Option<u64>, required_stack: ComputeStack) -> Self {
+        Self {
+            required_vram_mb,
+            required_stack,
+        }
+    }
+}
+
+/// A tier summary bucket produced by [`Resources::tier_summary`].
+/// Stones are grouped by their largest-GPU VRAM capacity. Stones
+/// with no GPUs or unknown totals land in the bucket with
+/// `max_vram_gb: 0`.
+#[derive(Debug, Clone, Serialize)]
+pub struct TierBucket {
+    /// The bucket's ceiling in GB (4, 8, 12, 16, 24, 32, 48, 80,
+    /// 96, …). `0` means "no GPU" / "unknown".
+    pub max_vram_gb: u64,
+    /// Stone names sorted ascending for stable output.
+    pub stones: Vec<StoneName>,
+    /// Sum of per-GPU totals across every stone in this bucket,
+    /// in MB. Skips GPUs with unknown totals.
+    pub total_vram_mb: u64,
+    /// Sum of currently-committed VRAM across the bucket, in MB.
+    pub committed_mb: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResourceRequest {
@@ -390,6 +437,110 @@ impl Resources {
         let state = self.state.lock().await;
         let st = state.stones.get(stone)?;
         Some(build_pressure(st))
+    }
+
+    // ── Read-only fit queries (M2) ────────────────────────────
+
+    /// Dry-run fit check: would `workload` successfully claim on
+    /// **any** GPU of the named stone right now, given the stone's
+    /// topology and the current live claim set? Does not mutate
+    /// state. Used by adapters that want to know "can this stone
+    /// host this workload" without going through `claim()`.
+    ///
+    /// Semantics:
+    ///
+    /// - **Unknown stone** → `false`. We can't host what we can't
+    ///   see.
+    /// - **Required VRAM = 0** → `true` if any GPU exists on the
+    ///   stone and supports the required stack. Workloads that
+    ///   don't care about VRAM still need a compatible device.
+    /// - **Required stack mismatch on all GPUs** → `false`. A CUDA
+    ///   workload on a ROCm-only stone is never hostable.
+    /// - **At least one GPU satisfies stack AND has enough free
+    ///   VRAM after subtracting current hard claims and headroom**
+    ///   → `true`. This mirrors `claim()`'s sized-claim accounting
+    ///   rule exactly.
+    /// - **GPU with unknown total VRAM** is treated as hostable only
+    ///   if no current claim exists on it (would degrade to
+    ///   exclusive in `claim()`).
+    pub async fn could_host(&self, stone: &StoneName, workload: &Workload) -> bool {
+        let state = self.state.lock().await;
+        let Some(st) = state.stones.get(stone) else {
+            return false;
+        };
+        st.gpus
+            .iter()
+            .any(|gpu| gpu_can_host(gpu, &st.claims, workload))
+    }
+
+    /// Cross-garden query: which stones could host a workload of
+    /// this shape **right now**? Walks every known stone and
+    /// applies [`Resources::could_host`] internally. Returns the
+    /// set of matching stone names.
+    ///
+    /// The adapter calls this at matrix-build time to filter its
+    /// catalog: any workload (Ollama model, ComfyUI skill, …)
+    /// whose return value is empty gets dropped from the catalog
+    /// entirely so operators never see entries that cannot
+    /// physically run.
+    pub async fn stones_capable_of(&self, workload: &Workload) -> HashSet<StoneName> {
+        let state = self.state.lock().await;
+        state
+            .stones
+            .iter()
+            .filter_map(|(name, st)| {
+                if st.gpus.iter().any(|gpu| gpu_can_host(gpu, &st.claims, workload)) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Bucket every known stone by its largest GPU's VRAM capacity
+    /// into hardware tiers. Pure observability — does not feed
+    /// routing decisions. Consumed by dashboards and capacity-
+    /// planning displays.
+    ///
+    /// Stones with no GPUs (or no GPU with a known total) land in
+    /// a dedicated `None` bucket, distinct from the numeric
+    /// buckets.
+    ///
+    /// Bucket boundaries are the conventional GPU VRAM classes:
+    /// 4, 8, 12, 16, 24, 32, 48, 80, 96 GB. A stone with a 20 GB
+    /// GPU lands in the 24 GB bucket (rounded up to the nearest
+    /// boundary ≥ its actual capacity).
+    pub async fn tier_summary(&self) -> Vec<TierBucket> {
+        let state = self.state.lock().await;
+        let mut by_tier: HashMap<Option<u64>, TierBucket> = HashMap::new();
+
+        for (name, st) in state.stones.iter() {
+            let max_gpu_mb: Option<u64> =
+                st.gpus.iter().filter_map(|g| g.total_vram_mb).max();
+            let bucket_key = max_gpu_mb.map(tier_bucket_for);
+
+            let bucket = by_tier.entry(bucket_key).or_insert(TierBucket {
+                max_vram_gb: bucket_key.unwrap_or(0),
+                stones: Vec::new(),
+                total_vram_mb: 0,
+                committed_mb: 0,
+            });
+            bucket.stones.push(name.clone());
+            bucket.total_vram_mb += st
+                .gpus
+                .iter()
+                .filter_map(|g| g.total_vram_mb)
+                .sum::<u64>();
+            bucket.committed_mb += st.gpus.iter().map(|g| g.committed_mb).sum::<u64>();
+        }
+
+        let mut result: Vec<TierBucket> = by_tier.into_values().collect();
+        result.sort_by_key(|t| t.max_vram_gb);
+        for bucket in &mut result {
+            bucket.stones.sort();
+        }
+        result
     }
 
     /// Update topology for a stone. Adds the stone if absent;
@@ -870,6 +1021,83 @@ fn derive_mode(
     }
 }
 
+/// Dry-run version of [`Resources::claim`]'s sized-claim accounting,
+/// applied to a single GPU device. Returns `true` if a workload
+/// with the given shape would successfully claim on this device
+/// right now.
+///
+/// This mirrors the fit logic in `claim()` exactly — if the two
+/// ever drift, this function is the bug. Any change to `claim()`'s
+/// accounting rules must land here too.
+fn gpu_can_host(gpu: &GpuDevice, claims: &HashMap<String, Claim>, workload: &Workload) -> bool {
+    // 1. Compute-stack capability filter. A device that doesn't
+    //    support the requested stack is never a match.
+    if !gpu.compute_stack.contains(&workload.required_stack) {
+        return false;
+    }
+
+    // 2. Current claims on this specific device.
+    let existing: Vec<&Claim> = claims
+        .values()
+        .filter(|c| matches!(&c.request, ResourceRequest::Gpu { device, .. } if *device == gpu.index))
+        .collect();
+
+    // 3. An unsized claim on the device would block any further
+    //    claim (matches claim()'s DeviceExclusivelyHeld rule).
+    let any_unsized = existing.iter().any(|c| matches!(
+        &c.request,
+        ResourceRequest::Gpu { vram_mb: None, .. }
+    ));
+    if any_unsized {
+        return false;
+    }
+
+    match (workload.required_vram_mb, gpu.total_vram_mb) {
+        // Unsized workload, any existing sized claim → would
+        // degrade to exclusive, blocked (claim() path).
+        (None, _) => existing.is_empty(),
+
+        // Sized workload, unknown total → claim() degrades to
+        // exclusive: hostable only if nothing else is on the
+        // device.
+        (Some(_), None) => existing.is_empty(),
+
+        // Sized workload, known total → full accounting check.
+        (Some(req_mb), Some(total)) => {
+            let hard_committed: u64 = existing
+                .iter()
+                .filter(|c| matches!(c.kind, ClaimKind::Hard))
+                .filter_map(|c| match &c.request {
+                    ResourceRequest::Gpu { vram_mb: Some(mb), .. } => Some(*mb),
+                    _ => None,
+                })
+                .sum();
+            let projected = hard_committed
+                .saturating_add(req_mb)
+                .saturating_add(gpu.headroom_mb);
+            projected <= total
+        }
+    }
+}
+
+/// Round a GPU's VRAM in MB up to the nearest conventional tier
+/// ceiling in GB. Used by [`Resources::tier_summary`]. The tiers
+/// match the cards operators actually buy — commodity consumer
+/// (8/12/16/24), workstation (32/48), data-center (80/96). A
+/// card above the top tier lands in its own "frontier" bucket.
+fn tier_bucket_for(max_gpu_mb: u64) -> u64 {
+    const TIERS_GB: &[u64] = &[4, 8, 12, 16, 24, 32, 48, 80, 96];
+    let max_gb = max_gpu_mb / 1024;
+    for &t in TIERS_GB {
+        if max_gb <= t {
+            return t;
+        }
+    }
+    // Frontier: round up to the next 16 GB boundary to keep buckets
+    // stable for super-rare hardware.
+    ((max_gb + 15) / 16) * 16
+}
+
 // ── Tests ─────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1299,5 +1527,203 @@ mod tests {
         // 24576 - 8192 - 512 headroom = 15872
         assert_eq!(pressure.gpus[0].available_mb, Some(15872));
         assert_eq!(pressure.gpus[0].vendor, GpuVendor::Nvidia);
+    }
+
+    // ── M2: fit queries ────────────────────────────────────────
+
+    async fn garden_with_three_stones() -> Arc<Resources> {
+        let bus = EventBus::new();
+        let r = Resources::new(bus);
+        // stone-alpha: 24 GB NVIDIA
+        r.update_topology(
+            StoneName::new("stone-alpha"),
+            StoneTopology {
+                gpus: vec![nvidia_24g(0)],
+                memory_total_mb: Some(32768),
+            },
+        )
+        .await;
+        // stone-beta: 16 GB AMD
+        r.update_topology(
+            StoneName::new("stone-beta"),
+            StoneTopology {
+                gpus: vec![amd_16g(0)],
+                memory_total_mb: Some(16384),
+            },
+        )
+        .await;
+        // stone-gamma: CPU only
+        r.update_topology(
+            StoneName::new("stone-gamma"),
+            StoneTopology {
+                gpus: vec![],
+                memory_total_mb: Some(8192),
+            },
+        )
+        .await;
+        r
+    }
+
+    #[tokio::test]
+    async fn could_host_unknown_stone_returns_false() {
+        let r = garden_with_three_stones().await;
+        let fit = r
+            .could_host(
+                &StoneName::new("stone-nonexistent"),
+                &Workload::gpu(Some(4096), ComputeStack::Cuda),
+            )
+            .await;
+        assert!(!fit);
+    }
+
+    #[tokio::test]
+    async fn could_host_small_cuda_workload_on_nvidia() {
+        let r = garden_with_three_stones().await;
+        assert!(
+            r.could_host(
+                &StoneName::new("stone-alpha"),
+                &Workload::gpu(Some(8192), ComputeStack::Cuda),
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn could_host_rejects_cuda_on_rocm_stone() {
+        let r = garden_with_three_stones().await;
+        assert!(
+            !r.could_host(
+                &StoneName::new("stone-beta"),
+                &Workload::gpu(Some(4096), ComputeStack::Cuda),
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn could_host_rejects_oversized_workload() {
+        let r = garden_with_three_stones().await;
+        // 24 GB GPU with 512 MB headroom → max 24064 MB workload
+        assert!(
+            !r.could_host(
+                &StoneName::new("stone-alpha"),
+                &Workload::gpu(Some(25000), ComputeStack::Cuda),
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn could_host_cpu_only_stone_false_for_any_gpu_workload() {
+        let r = garden_with_three_stones().await;
+        assert!(
+            !r.could_host(
+                &StoneName::new("stone-gamma"),
+                &Workload::gpu(Some(512), ComputeStack::Cuda),
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn could_host_accounts_for_existing_claims() {
+        let r = garden_with_three_stones().await;
+        let _g = r
+            .claim(
+                ClaimHolder::new("ollama", "stone-alpha"),
+                ResourceRequest::Gpu {
+                    stone: StoneName::new("stone-alpha"),
+                    device: 0,
+                    vram_mb: Some(20000),
+                    required_stack: ComputeStack::Cuda,
+                },
+                ClaimKind::Hard,
+            )
+            .await
+            .unwrap();
+        // 24576 total - 20000 committed - 512 headroom = 4064 free;
+        // a 5000 MB workload should not fit.
+        assert!(
+            !r.could_host(
+                &StoneName::new("stone-alpha"),
+                &Workload::gpu(Some(5000), ComputeStack::Cuda),
+            )
+            .await
+        );
+        // But a 3000 MB one does.
+        assert!(
+            r.could_host(
+                &StoneName::new("stone-alpha"),
+                &Workload::gpu(Some(3000), ComputeStack::Cuda),
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn stones_capable_of_returns_cuda_subset() {
+        let r = garden_with_three_stones().await;
+        let capable = r
+            .stones_capable_of(&Workload::gpu(Some(4096), ComputeStack::Cuda))
+            .await;
+        assert_eq!(capable.len(), 1);
+        assert!(capable.contains(&StoneName::new("stone-alpha")));
+    }
+
+    #[tokio::test]
+    async fn stones_capable_of_returns_rocm_subset() {
+        let r = garden_with_three_stones().await;
+        let capable = r
+            .stones_capable_of(&Workload::gpu(Some(4096), ComputeStack::Rocm))
+            .await;
+        assert_eq!(capable.len(), 1);
+        assert!(capable.contains(&StoneName::new("stone-beta")));
+    }
+
+    #[tokio::test]
+    async fn stones_capable_of_empty_when_nothing_fits() {
+        let r = garden_with_three_stones().await;
+        let capable = r
+            .stones_capable_of(&Workload::gpu(Some(100_000), ComputeStack::Cuda))
+            .await;
+        assert!(capable.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tier_summary_buckets_stones_by_max_gpu() {
+        let r = garden_with_three_stones().await;
+        let tiers = r.tier_summary().await;
+
+        // Buckets: 0 (stone-gamma, CPU only), 16 (stone-beta),
+        //          24 (stone-alpha). Sorted ascending.
+        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers[0].max_vram_gb, 0);
+        assert_eq!(tiers[0].stones, vec![StoneName::new("stone-gamma")]);
+
+        assert_eq!(tiers[1].max_vram_gb, 16);
+        assert_eq!(tiers[1].stones, vec![StoneName::new("stone-beta")]);
+        assert_eq!(tiers[1].total_vram_mb, 16384);
+
+        assert_eq!(tiers[2].max_vram_gb, 24);
+        assert_eq!(tiers[2].stones, vec![StoneName::new("stone-alpha")]);
+        assert_eq!(tiers[2].total_vram_mb, 24576);
+    }
+
+    #[test]
+    fn tier_bucket_boundaries() {
+        // 24 GB fits the 24 bucket, 20 GB rounds up to 24.
+        assert_eq!(tier_bucket_for(24576), 24);
+        assert_eq!(tier_bucket_for(20000), 24);
+        // 8 GB fits 8, 6 GB rounds up to 8.
+        assert_eq!(tier_bucket_for(8192), 8);
+        assert_eq!(tier_bucket_for(6144), 8);
+        // Under 4 GB rounds up to 4.
+        assert_eq!(tier_bucket_for(2048), 4);
+        // Data-center sizes.
+        assert_eq!(tier_bucket_for(81920), 80);
+        assert_eq!(tier_bucket_for(98304), 96);
+        // Frontier (above 96 GB) rounds up to the next 16 GB step.
+        assert_eq!(tier_bucket_for(128 * 1024), 128);
+        assert_eq!(tier_bucket_for(140 * 1024), 144);
     }
 }

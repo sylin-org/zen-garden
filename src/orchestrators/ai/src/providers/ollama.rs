@@ -1481,7 +1481,14 @@ mod tests {
     }
 
     #[test]
-    fn announcement_text_primitives_carry_no_media_inputs() {
+    fn announcement_text_chat_superset_includes_image_source() {
+        // Post-ORCH-0038 vision overlay: text.chat advertises
+        // image.source in its announcement as part of the
+        // SUPERSET (so the media resolver accepts the field).
+        // The per-model subset shown in the UI form comes from
+        // describe_workspace only when the resolved model has
+        // the `vision` capability tag. text.embed still has no
+        // media inputs.
         let ann = build_capability_announcement(
             &provider_name(),
             vec![Primitive::TextChat, Primitive::TextEmbed],
@@ -1489,9 +1496,20 @@ mod tests {
             &[],
         );
         assert_eq!(ann.capabilities.len(), 2);
-        for cap in &ann.capabilities {
-            assert!(cap.media_inputs.is_empty(), "{:?} should have no media", cap.primitive);
-        }
+        let chat = ann
+            .capabilities
+            .iter()
+            .find(|c| c.primitive == Primitive::TextChat)
+            .expect("text.chat capability");
+        assert_eq!(chat.media_inputs.len(), 1);
+        assert_eq!(chat.media_inputs[0].field, "image.source");
+
+        let embed = ann
+            .capabilities
+            .iter()
+            .find(|c| c.primitive == Primitive::TextEmbed)
+            .expect("text.embed capability");
+        assert!(embed.media_inputs.is_empty());
     }
 
     #[test]

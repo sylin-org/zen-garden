@@ -1108,7 +1108,7 @@ mod tests {
             serde_json::json!("How are you?")
         );
         assert_eq!(
-            normalized["text"]["prompt"]["previous"],
+            normalized["text"]["prompt"]["history"],
             serde_json::json!([{"user": "Hi", "assistant": "Hello"}])
         );
     }

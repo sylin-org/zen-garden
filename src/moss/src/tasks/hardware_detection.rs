@@ -12,7 +12,7 @@ use crate::domain::ensure_offerings_index;
 use crate::infra::save_capabilities_cache;
 use crate::AppState;
 use garden_common::console;
-use garden_common::metrics::system as metrics;
+use garden_common::resources::system as resources;
 use garden_common::{
     AiCapabilitiesSummary, CpuCapabilities, DetectionStatus, DiskCapabilities, GpuInfo,
     HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo,
@@ -194,7 +194,7 @@ pub async fn detect_capabilities_background(
         "[CAPABILITY DETECTION] Detecting CPU features".to_string(),
     ));
 
-    let (cpu_model, cpu_features, architecture) = match metrics::get_cpu_info() {
+    let (cpu_model, cpu_features, architecture) = match resources::get_cpu_info() {
         Ok(result) => result,
         Err(e) => {
             tracing::error!(error = ?e, "Failed to get CPU info");
@@ -206,7 +206,7 @@ pub async fn detect_capabilities_background(
         }
     };
 
-    let resources = metrics::collect_stone_resources().ok();
+    let resources = resources::collect_stone_resources().ok();
     let cpu_cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
     let total_memory_mb = resources
         .as_ref()
@@ -325,7 +325,7 @@ pub async fn detect_capabilities_background(
         "[CAPABILITY DETECTION] Detecting GPUs (DXDiag, 2-6 sec)".to_string(),
     ));
 
-    let gpus = metrics::detect_gpus();
+    let gpus = resources::detect_gpus();
     let gpu_count = gpus.len();
     tracing::info!(gpu_count = gpus.len(), "GPU detection complete");
     console.emit(console::ConsoleEvent::new(
@@ -335,11 +335,11 @@ pub async fn detect_capabilities_background(
     ));
 
     // === PHASE 3: OS, Kernel, Swap Detection ===
-    // Note: Storage inventory moved to live metrics (METRICS-0001)
+    // Note: Storage inventory moved to live resources (METRICS-0001)
     tracing::info!("Detecting system information...");
-    let os_version = metrics::detect_os_version();
-    let kernel_version = metrics::detect_kernel_version();
-    let swap_mb = metrics::detect_swap();
+    let os_version = resources::detect_os_version();
+    let kernel_version = resources::detect_kernel_version();
+    let swap_mb = resources::detect_swap();
     tracing::info!("System information detection complete");
 
     // Update complete capabilities incrementally (update GPU + system info fields)
@@ -358,7 +358,7 @@ pub async fn detect_capabilities_background(
             true, // detection_complete = true
         ));
 
-        // Update swap (storage moved to live metrics)
+        // Update swap (storage moved to live resources)
         caps.hardware.swap_mb = swap_mb;
 
         // Update runtime info with OS version and kernel

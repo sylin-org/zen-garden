@@ -5,7 +5,7 @@
 //! - Updates offerings registry with current status/health
 //! - Delegates auto-reconciliation of missing containers (OFFER-0008)
 //! - Adopts unregistered zen-offering containers (self-heal)
-//! - Updates resource metrics (CPU, memory)
+//! - Updates resource usage (CPU, memory)
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 /// # What It Does
 /// 1. Polls all registered services for status/health
 /// 2. Updates registry when status/health changes
-/// 3. Fetches container resource metrics (CPU, memory)
+/// 3. Fetches container resource usage (CPU, memory)
 /// 4. Delegates reconciliation of missing containers to `ReconciliationCoordinator`
 /// 5. Discovers unregistered zen-offering containers
 /// 6. Adopts discovered containers if they match templates (self-heal)
@@ -147,7 +147,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 state_changed = true;
             }
 
-            // Resource metrics (detail-only, no chirp)
+            // Resource usage (detail-only, no chirp)
             if let Ok(resources) = state.platform.docker.get_container_stats(name).await {
                 state
                     .offerings.update(offering_id, |o| {

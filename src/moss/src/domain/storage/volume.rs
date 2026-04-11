@@ -7,10 +7,10 @@
 //! ## State Machine
 //!
 //! ```text
-//!              connect(metrics)
+//!              connect(disk_snapshot)
 //!    Offline ──────────────────→ Online
 //!       ↑                         ↑ ↓
-//!       │ disconnect()            │ │ observe_metrics()
+//!       │ disconnect()            │ │ observe()
 //!       │                         │ ↓
 //!       ←──────────────────── Degraded
 //!              disconnect()
@@ -64,13 +64,13 @@ impl std::fmt::Display for VolumeState {
 }
 
 // ============================================================================
-// Disk metrics — OS measurement passed into Volume methods
+// Disk snapshot — OS measurement passed into Volume methods
 // ============================================================================
 
 /// Measured disk usage from the OS. Passed into Volume state machine methods.
 /// Volume decides what to do with the information.
 #[derive(Debug, Clone, Copy)]
-pub struct DiskMetrics {
+pub struct DiskResources {
     pub capacity_bytes: u64,
     pub used_bytes: u64,
 }
@@ -305,12 +305,13 @@ impl Volume {
 
 impl Volume {
     /// Device appeared or reappeared. Transitions Offline → Online.
-    /// If already Online/Degraded, updates metrics silently (no event).
-    pub fn connect(&mut self, metrics: DiskMetrics) -> Vec<StorageChanged> {
+    /// If already Online/Degraded, updates the disk snapshot silently
+    /// (no event).
+    pub fn connect(&mut self, disk_snapshot: DiskResources) -> Vec<StorageChanged> {
         let was_offline = self.state == VolumeState::Offline;
 
-        self.capacity_bytes = metrics.capacity_bytes;
-        self.used_bytes = metrics.used_bytes;
+        self.capacity_bytes = disk_snapshot.capacity_bytes;
+        self.used_bytes = disk_snapshot.used_bytes;
         self.state = VolumeState::Online;
 
         if was_offline && self.is_managed() {
@@ -347,13 +348,14 @@ impl Volume {
         }
     }
 
-    /// Periodic health observation. Accepts measured disk metrics (or None
-    /// if the measurement failed) and device health signals. May transition
-    /// Online ↔ Degraded, or force-disconnect stale/unresponsive devices.
-    /// Never touches Offline volumes — only `connect()` can resurrect.
-    pub fn observe_metrics(
+    /// Periodic health observation. Accepts a measured disk snapshot (or
+    /// None if the measurement failed) and device health signals. May
+    /// transition Online ↔ Degraded, or force-disconnect stale/unresponsive
+    /// devices. Never touches Offline volumes — only `connect()` can
+    /// resurrect.
+    pub fn observe(
         &mut self,
-        metrics: Option<DiskMetrics>,
+        disk_snapshot: Option<DiskResources>,
         health: DeviceHealth,
     ) -> Vec<StorageChanged> {
         if self.state == VolumeState::Offline {
@@ -377,7 +379,7 @@ impl Volume {
         if health.read_only {
             self.state = VolumeState::Degraded("filesystem read-only".into());
         } else {
-            match metrics {
+            match disk_snapshot {
                 Some(m) if m.capacity_bytes == 0 => {
                     self.state = VolumeState::Degraded("zero capacity".into());
                 }
@@ -668,7 +670,7 @@ mod tests {
             removable: true,
         };
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskMetrics {
+        vol.connect(DiskResources {
             capacity_bytes: 64_000_000_000,
             used_bytes: 1_000_000,
         });
@@ -686,8 +688,8 @@ mod tests {
             stale_reference: true,
             ..DeviceHealth::healthy()
         };
-        let events = vol.observe_metrics(
-            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+        let events = vol.observe(
+            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
             health,
         );
 
@@ -704,7 +706,7 @@ mod tests {
             responsive: false,
             ..DeviceHealth::healthy()
         };
-        let events = vol.observe_metrics(None, health);
+        let events = vol.observe(None, health);
 
         assert_eq!(*vol.state(), VolumeState::Offline);
         assert!(events.is_empty()); // unmanaged
@@ -718,8 +720,8 @@ mod tests {
             read_only: true,
             ..DeviceHealth::healthy()
         };
-        let events = vol.observe_metrics(
-            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+        let events = vol.observe(
+            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
             health,
         );
 
@@ -732,8 +734,8 @@ mod tests {
     fn healthy_device_stays_online() {
         let mut vol = online_volume();
 
-        let events = vol.observe_metrics(
-            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 2_000_000 }),
+        let events = vol.observe(
+            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 2_000_000 }),
             DeviceHealth::healthy(),
         );
 
@@ -751,7 +753,7 @@ mod tests {
             stale_reference: true,
             ..DeviceHealth::healthy()
         };
-        let events = vol.observe_metrics(None, health);
+        let events = vol.observe(None, health);
 
         assert_eq!(*vol.state(), VolumeState::Offline);
         assert!(events.is_empty());
@@ -762,15 +764,15 @@ mod tests {
         let mut vol = online_volume();
 
         // Degrade with read-only
-        vol.observe_metrics(
-            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+        vol.observe(
+            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
             DeviceHealth { read_only: true, ..DeviceHealth::healthy() },
         );
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));
 
         // Recover — filesystem is now read-write again
-        let events = vol.observe_metrics(
-            Some(DiskMetrics { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
+        let events = vol.observe(
+            Some(DiskResources { capacity_bytes: 64_000_000_000, used_bytes: 0 }),
             DeviceHealth::healthy(),
         );
         assert_eq!(*vol.state(), VolumeState::Online);

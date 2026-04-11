@@ -18,7 +18,7 @@ pub mod infra;
 pub mod jobs;
 pub mod manifests;
 pub mod mdns;
-pub mod metrics;
+pub mod resources;
 pub mod notifications;
 pub mod nourishment;
 pub mod nurturing;
@@ -69,7 +69,7 @@ pub use types::{
     // Orchestration
     CoordinationMode,
     CpuCapabilities,
-    CpuMetrics,
+    CpuResources,
     // Health
     DaemonHealthStatus,
     DetectionStatus,
@@ -77,7 +77,7 @@ pub use types::{
     DiscoveryRequest,
     DiscoveryResponse,
     DiskCapabilities,
-    DiskMetrics,
+    DiskResources,
     DiskType,
     ErrorDetails,
     FallbackConfig,
@@ -92,16 +92,16 @@ pub use types::{
     HealthCheck,
     HealthMethod,
     HealthcheckPattern,
-    InterfaceMetrics,
+    InterfaceResources,
     KeystoneRequest,
     LanternServiceState,
     LanternStoneState,
     LanternTopology,
     ManagedData,
     MemoryCapabilities,
-    MemoryMetrics,
-    MetricsSnapshot,
-    NetworkMetrics,
+    MemoryResources,
+    NetworkResources,
+    ResourcesSnapshot,
     // Offering
     Offering,
     OfferingGuidance,
@@ -137,7 +137,7 @@ pub use types::{
     StoneInviteResponse,
     StoneResources,
     StoneStatus,
-    StorageMetrics,
+    StorageResources,
     SubCapability,
     // Task
     TaskCategory,

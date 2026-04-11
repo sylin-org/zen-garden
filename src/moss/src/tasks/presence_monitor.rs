@@ -1,4 +1,4 @@
-//! Stone metrics monitoring for presence protocol
+//! Stone resources monitoring for presence protocol
 //!
 //! Emits StoneEvent::LoadUpdated and StoneEvent::HealthChanged via EventBus.
 
@@ -14,7 +14,7 @@ const GPU_ACTIVE_THRESHOLD: f64 = 10.0;
 /// Run load monitoring task (every 5s)
 ///
 /// Emits StoneEvent::LoadUpdated via EventBus for presence stream.
-/// FIREFLY-0003: Now includes disk, I/O, GPU, and network metrics.
+/// FIREFLY-0003: Now includes disk, I/O, GPU, and network resources.
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
 pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::CancellationToken) {
     let mut interval = interval(Duration::from_secs(5));
@@ -28,9 +28,9 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
             }
         }
 
-        // Get real system metrics from shared cache
+        // Get real system resources from shared cache
         let (cpu_percent, memory_percent, disk_percent) = {
-            let resources = state.current.metrics.system.read().await;
+            let resources = state.current.resources.system.read().await;
             if let Some(ref res) = *resources {
                 let primary_disk = res
                     .storage
@@ -51,14 +51,14 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
 
         // FIREFLY-0003: Get GPU utilization from cache
         let gpu_percent = {
-            let gpu = state.current.metrics.gpu.read().await;
+            let gpu = state.current.resources.gpu.read().await;
             gpu.unwrap_or(0.0) as f64
         };
         let gpu_active = gpu_percent > GPU_ACTIVE_THRESHOLD;
 
         // FIREFLY-0003: Get network rates from cache
         let (net_rx, net_tx) = {
-            let network = state.current.metrics.network.read().await;
+            let network = state.current.resources.network.read().await;
             network
                 .as_ref()
                 .map(|n| {
@@ -90,7 +90,7 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
 
 /// Run health monitor task (every 30s)
 ///
-/// Computes stone health from metrics and emits StoneEvent::HealthChanged when status changes.
+/// Computes stone health from resources and emits StoneEvent::HealthChanged when status changes.
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
 pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::CancellationToken) {
     let mut interval = interval(Duration::from_secs(30));
@@ -105,9 +105,9 @@ pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::C
             }
         }
 
-        // Get real metrics from shared cache
+        // Get real resources from shared cache
         let (cpu, memory) = {
-            let resources = state.current.metrics.system.read().await;
+            let resources = state.current.resources.system.read().await;
             if let Some(ref res) = *resources {
                 (res.cpu.usage_percent as f64, res.memory.used_percent as f64)
             } else {

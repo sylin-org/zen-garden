@@ -1,15 +1,18 @@
-//! Metrics collection and normalization for stone resources
+//! Resource collection and normalization for stone placement scoring.
 //!
-//! Reusable functions for fetching resource metrics from local and remote stones.
-//! Provides normalized data structures for consistent scoring and comparison.
+//! Reusable functions for fetching resource snapshots from local and
+//! remote stones. Provides normalized data structures for consistent
+//! scoring and comparison. Renamed from `metrics_collection.rs` in
+//! ARCH-0018 Book I Chapter 2 — "metrics" is now reserved for software
+//! observability (see `domain::metrics`).
 
 use anyhow::{Context, Result};
 use garden_common::{DiskType, StoneResources};
 use std::time::Duration;
 
-/// Normalized stone metrics for placement evaluation
+/// Normalized stone resources for placement evaluation
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StoneMetrics {
+pub struct NormalizedResources {
     pub memory_free_mb: u64,
     pub memory_total_mb: u64,
     pub cpu_load_percent: u8,
@@ -19,15 +22,15 @@ pub struct StoneMetrics {
     pub architecture: String,
 }
 
-/// Get metrics for tended stone (zero latency, no HTTP)
+/// Get resources for tended stone (zero latency, no HTTP)
 ///
 /// This is optimized for local evaluation - no network overhead.
-pub fn get_local_metrics() -> Result<StoneMetrics> {
-    let resources = garden_common::metrics::system::collect_stone_resources()
+pub fn get_local_resources() -> Result<NormalizedResources> {
+    let resources = garden_common::resources::system::collect_stone_resources()
         .context("Failed to collect local stone resources")?;
 
     let (_, _, architecture) =
-        garden_common::metrics::system::get_cpu_info().unwrap_or_else(|_| {
+        garden_common::resources::system::get_cpu_info().unwrap_or_else(|_| {
             (
                 "Unknown".to_string(),
                 vec![],
@@ -47,26 +50,27 @@ pub fn get_local_metrics() -> Result<StoneMetrics> {
         .cloned()
         .unwrap_or(DiskType::Unknown);
 
-    Ok(normalize_metrics(&resources, &architecture, &storage_type))
+    Ok(normalize_resources(&resources, &architecture, &storage_type))
 }
 
-/// Fetch metrics from remote stone via HTTP
+/// Fetch resources from remote stone via HTTP
 ///
-/// Uses the `/metrics` endpoint for real-time data.
-/// Architecture is fetched from `/capabilities` since it's not in metrics.
-pub async fn fetch_stone_metrics(endpoint: &str, timeout: Duration) -> Result<StoneMetrics> {
+/// Uses the `/api/v1/stone/resources` endpoint for real-time data.
+/// Architecture is fetched from `/capabilities` since it's not in the
+/// resources snapshot.
+pub async fn fetch_stone_resources(endpoint: &str, timeout: Duration) -> Result<NormalizedResources> {
     let base = endpoint.trim_end_matches('/');
-    let metrics_url = format!("{}/metrics", base);
+    let resources_url = format!("{}/api/v1/stone/resources", base);
 
     let response = crate::http::HTTP
-        .get(&metrics_url)
+        .get(&resources_url)
         .timeout(timeout)
         .send()
         .await
-        .context("Failed to fetch /metrics")?;
+        .context("Failed to fetch /api/v1/stone/resources")?;
 
     if !response.status().is_success() {
-        anyhow::bail!("/metrics returned error: {}", response.status());
+        anyhow::bail!("/api/v1/stone/resources returned error: {}", response.status());
     }
 
     // Response is wrapped in ApiResponse
@@ -75,27 +79,27 @@ pub async fn fetch_stone_metrics(endpoint: &str, timeout: Duration) -> Result<St
         data: T,
     }
 
-    let api_response: ApiResponse<garden_common::MetricsSnapshot> = response
+    let api_response: ApiResponse<garden_common::ResourcesSnapshot> = response
         .json()
         .await
-        .context("Failed to parse /metrics response")?;
+        .context("Failed to parse /api/v1/stone/resources response")?;
 
     let snapshot = api_response.data;
 
-    // Architecture from /capabilities (not in metrics)
+    // Architecture from /capabilities (not in resources snapshot)
     let architecture = fetch_architecture(&crate::http::HTTP, base)
         .await
         .unwrap_or_else(|_| std::env::consts::ARCH.to_string());
 
-    // MetricsSnapshot uses old disk field for backward compat
-    let storage_type = DiskType::Unknown; // Type not available in MetricsSnapshot
+    // ResourcesSnapshot uses old disk field for backward compat
+    let storage_type = DiskType::Unknown; // Type not available in ResourcesSnapshot
 
     let (storage_free_gb, storage_total_gb) = (
         snapshot.disk.available_bytes / 1024 / 1024 / 1024,
         snapshot.disk.total_bytes / 1024 / 1024 / 1024,
     );
 
-    Ok(StoneMetrics {
+    Ok(NormalizedResources {
         memory_free_mb: snapshot.memory.available_bytes / 1024 / 1024,
         memory_total_mb: snapshot.memory.total_bytes / 1024 / 1024,
         cpu_load_percent: snapshot.cpu.usage_percent as u8,
@@ -119,33 +123,33 @@ async fn fetch_architecture(client: &reqwest::Client, base: &str) -> Result<Stri
     Ok(caps.hardware.cpu.architecture)
 }
 
-/// Fetch metrics from multiple stones in parallel
+/// Fetch resources from multiple stones in parallel
 ///
 /// Returns results in same order as input endpoints.
 /// Failed fetches return Error variants.
-pub async fn fetch_metrics_batch(
+pub async fn fetch_resources_batch(
     endpoints: Vec<String>,
     timeout: Duration,
-) -> Vec<Result<StoneMetrics>> {
+) -> Vec<Result<NormalizedResources>> {
     let futures: Vec<_> = endpoints
         .into_iter()
         .map(|endpoint| {
             let ep = endpoint.clone();
-            async move { fetch_stone_metrics(&ep, timeout).await }
+            async move { fetch_stone_resources(&ep, timeout).await }
         })
         .collect();
 
     futures_util::future::join_all(futures).await
 }
 
-/// Normalize StoneResources to StoneMetrics
+/// Normalize StoneResources to NormalizedResources
 ///
-/// Pure function for converting internal resource format to placement metrics.
-pub fn normalize_metrics(
+/// Pure function for converting internal resource format to normalized placement form.
+pub fn normalize_resources(
     resources: &StoneResources,
     architecture: &str,
     storage_type: &DiskType,
-) -> StoneMetrics {
+) -> NormalizedResources {
     // Find primary storage mount
     let primary = resources
         .storage
@@ -157,7 +161,7 @@ pub fn normalize_metrics(
         .map(|s| (s.available_gb, s.total_gb))
         .unwrap_or((0, 0));
 
-    StoneMetrics {
+    NormalizedResources {
         memory_free_mb: resources.memory.available_bytes / 1024 / 1024,
         memory_total_mb: resources.memory.total_bytes / 1024 / 1024,
         cpu_load_percent: resources.cpu.usage_percent as u8,
@@ -171,16 +175,16 @@ pub fn normalize_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use garden_common::{CpuMetrics, DiskType, MemoryMetrics, StorageMetrics};
+    use garden_common::{CpuResources, DiskType, MemoryResources, StorageResources};
 
     fn make_test_resources() -> StoneResources {
         StoneResources {
-            cpu: CpuMetrics {
+            cpu: CpuResources {
                 cores: 8,
                 usage_percent: 25.0,
                 usage_friendly: "25%".to_string(),
             },
-            memory: MemoryMetrics {
+            memory: MemoryResources {
                 total_bytes: 32 * 1024 * 1024 * 1024,     // 32 GB
                 used_bytes: 16 * 1024 * 1024 * 1024,      // 16 GB used
                 available_bytes: 16 * 1024 * 1024 * 1024, // 16 GB free
@@ -189,7 +193,7 @@ mod tests {
                 used_friendly: "16 GB".to_string(),
                 available_friendly: "16 GB".to_string(),
             },
-            storage: vec![StorageMetrics {
+            storage: vec![StorageResources {
                 identifier: "sda".to_string(),
                 mount_point: "/".to_string(),
                 total_gb: 500,
@@ -206,28 +210,28 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_metrics() {
+    fn test_normalize_resources() {
         let resources = make_test_resources();
-        let metrics = normalize_metrics(&resources, "x86_64", &DiskType::NVMe);
+        let normalized = normalize_resources(&resources, "x86_64", &DiskType::NVMe);
 
-        assert_eq!(metrics.memory_total_mb, 32768); // 32 GB in MB
-        assert_eq!(metrics.memory_free_mb, 16384); // 16 GB in MB
-        assert_eq!(metrics.cpu_load_percent, 25);
-        assert_eq!(metrics.storage_total_gb, 500);
-        assert_eq!(metrics.storage_free_gb, 250);
-        assert_eq!(metrics.architecture, "x86_64");
-        assert!(matches!(metrics.storage_type, DiskType::NVMe));
+        assert_eq!(normalized.memory_total_mb, 32768); // 32 GB in MB
+        assert_eq!(normalized.memory_free_mb, 16384); // 16 GB in MB
+        assert_eq!(normalized.cpu_load_percent, 25);
+        assert_eq!(normalized.storage_total_gb, 500);
+        assert_eq!(normalized.storage_free_gb, 250);
+        assert_eq!(normalized.architecture, "x86_64");
+        assert!(matches!(normalized.storage_type, DiskType::NVMe));
     }
 
     #[test]
-    fn test_normalize_metrics_with_different_storage() {
+    fn test_normalize_resources_with_different_storage() {
         let resources = StoneResources {
-            cpu: CpuMetrics {
+            cpu: CpuResources {
                 cores: 4,
                 usage_percent: 50.0,
                 usage_friendly: "50%".to_string(),
             },
-            memory: MemoryMetrics {
+            memory: MemoryResources {
                 total_bytes: 8 * 1024 * 1024 * 1024,
                 used_bytes: 6 * 1024 * 1024 * 1024,
                 available_bytes: 2 * 1024 * 1024 * 1024,
@@ -236,7 +240,7 @@ mod tests {
                 used_friendly: "6 GB".to_string(),
                 available_friendly: "2 GB".to_string(),
             },
-            storage: vec![StorageMetrics {
+            storage: vec![StorageResources {
                 identifier: "nvme0n1".to_string(),
                 mount_point: "/data".to_string(),
                 total_gb: 1000,
@@ -251,42 +255,42 @@ mod tests {
             cpu_temperature: Some(65.0),
         };
 
-        let metrics = normalize_metrics(&resources, "aarch64", &DiskType::HDD);
+        let normalized = normalize_resources(&resources, "aarch64", &DiskType::HDD);
 
-        assert_eq!(metrics.memory_total_mb, 8192);
-        assert_eq!(metrics.memory_free_mb, 2048);
-        assert_eq!(metrics.cpu_load_percent, 50);
-        assert_eq!(metrics.storage_total_gb, 1000);
-        assert_eq!(metrics.storage_free_gb, 100);
-        assert_eq!(metrics.architecture, "aarch64");
-        assert!(matches!(metrics.storage_type, DiskType::HDD));
+        assert_eq!(normalized.memory_total_mb, 8192);
+        assert_eq!(normalized.memory_free_mb, 2048);
+        assert_eq!(normalized.cpu_load_percent, 50);
+        assert_eq!(normalized.storage_total_gb, 1000);
+        assert_eq!(normalized.storage_free_gb, 100);
+        assert_eq!(normalized.architecture, "aarch64");
+        assert!(matches!(normalized.storage_type, DiskType::HDD));
     }
 
     #[test]
-    fn test_local_metrics_returns_normalized_data() {
+    fn test_local_resources_returns_normalized_data() {
         // This test validates the function executes without panicking
         // Actual values depend on the system
-        let result = get_local_metrics();
+        let result = get_local_resources();
 
         // Should succeed on any system with sysinfo
         match result {
-            Ok(metrics) => {
+            Ok(normalized) => {
                 assert!(
-                    metrics.memory_total_mb > 0,
+                    normalized.memory_total_mb > 0,
                     "Should have non-zero total memory"
                 );
                 assert!(
-                    metrics.cpu_load_percent <= 100,
+                    normalized.cpu_load_percent <= 100,
                     "CPU load should be <= 100%"
                 );
                 assert!(
-                    !metrics.architecture.is_empty(),
+                    !normalized.architecture.is_empty(),
                     "Architecture should not be empty"
                 );
             }
             Err(e) => {
                 // Log but don't fail - test environments may have restricted access
-                println!("Local metrics failed (may be expected in CI): {}", e);
+                println!("Local resources collection failed (may be expected in CI): {}", e);
             }
         }
     }

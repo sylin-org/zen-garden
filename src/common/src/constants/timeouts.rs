@@ -114,13 +114,19 @@ pub fn poll_interval_30s() -> Duration {
     env_duration_secs("GARDEN_POLL_INTERVAL_30S", 30)
 }
 
-/// Fast metrics collection interval (CPU, memory, uptime) - default 5s
-pub fn metrics_fast_interval() -> Duration {
+/// Fast resources collection interval (CPU, memory, uptime) - default 5s.
+///
+/// Environment variable name kept as `GARDEN_METRICS_FAST_INTERVAL_SECS`
+/// for backwards compatibility with existing deployment configurations.
+pub fn resources_fast_interval() -> Duration {
     env_duration_secs("GARDEN_METRICS_FAST_INTERVAL_SECS", 5)
 }
 
-/// Disk metrics collection interval (slower filesystem stats) - default 30s
-pub fn metrics_disk_interval() -> Duration {
+/// Disk resources collection interval (slower filesystem stats) - default 30s.
+///
+/// Environment variable name kept as `GARDEN_METRICS_DISK_INTERVAL_SECS`
+/// for backwards compatibility with existing deployment configurations.
+pub fn resources_disk_interval() -> Duration {
     env_duration_secs("GARDEN_METRICS_DISK_INTERVAL_SECS", 30)
 }
 

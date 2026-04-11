@@ -1,4 +1,7 @@
-//! Hardware and resource types — system metrics, GPU info, capabilities.
+//! Hardware and resource types — dynamic resource snapshots, GPU info,
+//! static capabilities. The word "metrics" in moss refers to software
+//! observability (see `domain::metrics`) — hardware state lives here
+//! under "resources".
 
 use serde::{Deserialize, Serialize};
 
@@ -11,12 +14,11 @@ pub enum DiskType {
     Unknown,
 }
 
-/// Storage metrics (live data, collected every 30s)
+/// Per-disk storage resources (live data, collected every 30s).
 ///
-/// Replaces separate static inventory + dynamic usage approach.
 /// Contains both device info and current usage in one structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageMetrics {
+pub struct StorageResources {
     pub identifier: String,  // e.g., "sda", "nvme0n1", "C:"
     pub mount_point: String, // e.g., "/", "/data", "C:\"
     pub total_gb: u64,
@@ -40,15 +42,15 @@ pub struct GpuInfo {
     pub capabilities: Vec<String>,
 }
 
-/// Live system resources (collected every 5s for CPU/memory, 30s for storage)
+/// Live stone resources (collected every 5s for CPU/memory, 30s for storage).
 ///
-/// This is the single source of truth for runtime metrics.
+/// This is the single source of truth for runtime resource snapshots.
 /// Storage inventory included here due to semi-dynamic nature (hot-swap, mounts).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoneResources {
-    pub cpu: CpuMetrics,
-    pub memory: MemoryMetrics,
-    pub storage: Vec<StorageMetrics>, // All mounted disks with live usage
+    pub cpu: CpuResources,
+    pub memory: MemoryResources,
+    pub storage: Vec<StorageResources>, // All mounted disks with live usage
     pub uptime_seconds: u64,
     pub uptime_friendly: String,
     /// CPU package temperature in degrees Celsius.
@@ -59,14 +61,14 @@ pub struct StoneResources {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CpuMetrics {
+pub struct CpuResources {
     pub cores: usize,
     pub usage_percent: f32,
     pub usage_friendly: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryMetrics {
+pub struct MemoryResources {
     pub total_bytes: u64,
     pub used_bytes: u64,
     pub available_bytes: u64,
@@ -77,7 +79,7 @@ pub struct MemoryMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiskMetrics {
+pub struct DiskResources {
     pub total_bytes: u64,
     pub used_bytes: u64,
     pub available_bytes: u64,
@@ -219,21 +221,21 @@ pub struct RuntimeInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetricsSnapshot {
+pub struct ResourcesSnapshot {
     pub timestamp: String,
-    pub cpu: CpuMetrics,
-    pub memory: MemoryMetrics,
-    pub disk: DiskMetrics,
+    pub cpu: CpuResources,
+    pub memory: MemoryResources,
+    pub disk: DiskResources,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub network: Option<NetworkMetrics>,
+    pub network: Option<NetworkResources>,
     pub uptime_seconds: u64,
 }
 
-/// Network metrics for all interfaces
+/// Network resources for all interfaces
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkMetrics {
+pub struct NetworkResources {
     /// Per-interface statistics
-    pub interfaces: Vec<InterfaceMetrics>,
+    pub interfaces: Vec<InterfaceResources>,
     /// Total bytes received across all interfaces
     pub total_rx_bytes: u64,
     /// Total bytes transmitted across all interfaces
@@ -249,9 +251,9 @@ pub struct NetworkMetrics {
     pub total_tx_friendly: String,
 }
 
-/// Per-interface network statistics
+/// Per-interface network resources
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InterfaceMetrics {
+pub struct InterfaceResources {
     /// Interface name (e.g., "eth0", "wlan0", "Ethernet")
     pub name: String,
     /// Total bytes received since boot

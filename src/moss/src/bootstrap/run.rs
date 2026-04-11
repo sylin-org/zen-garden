@@ -869,7 +869,7 @@ async fn build_state(
             health: current_health.clone(),
             mac: current_mac.clone(),
             api_port: port,
-            metrics: Arc::new(crate::domain::current::Metrics {
+            resources: Arc::new(crate::domain::current::Resources {
                 system: Arc::new(RwLock::new(None)),
                 network: Arc::new(RwLock::new(None)),
                 gpu: Arc::new(RwLock::new(None)),

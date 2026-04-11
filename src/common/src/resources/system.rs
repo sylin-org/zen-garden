@@ -1,6 +1,6 @@
 use crate::{
-    format_bytes, format_uptime, CpuMetrics, DiskMetrics, DiskType, GpuInfo,
-    InterfaceMetrics, MemoryMetrics, NetworkMetrics, StoneResources, StorageMetrics,
+    format_bytes, format_uptime, CpuResources, DiskResources, DiskType, GpuInfo,
+    InterfaceResources, MemoryResources, NetworkResources, StoneResources, StorageResources,
 };
 use anyhow::{Context, Result};
 #[cfg(target_os = "linux")]
@@ -133,24 +133,24 @@ fn get_cpu_info_windows() -> Result<(String, Vec<String>, String)> {
     Ok((model_name, features, architecture))
 }
 
-/// Collect fast metrics (CPU, memory, uptime)
+/// Collect fast resources (CPU, memory, uptime)
 ///
 /// Fast collection suitable for high-frequency polling (5s intervals).
 /// Only accesses in-memory kernel structures, no I/O.
-pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
+pub fn get_fast_resources() -> Result<(CpuResources, MemoryResources, u64, String)> {
     let mut system = System::new();
     system.refresh_cpu_all();
     system.refresh_memory();
 
-    // CPU metrics
+    // CPU resources
     let usage_percent = system.global_cpu_usage();
-    let cpu = CpuMetrics {
+    let cpu = CpuResources {
         cores: system.cpus().len(),
         usage_percent,
         usage_friendly: format!("{:.1}%", usage_percent),
     };
 
-    // Memory metrics
+    // Memory resources
     let total_bytes = system.total_memory();
     let used_bytes = system.used_memory();
     let available_bytes = system.available_memory();
@@ -159,7 +159,7 @@ pub fn get_fast_metrics() -> Result<(CpuMetrics, MemoryMetrics, u64, String)> {
     } else {
         0.0
     };
-    let memory = MemoryMetrics {
+    let memory = MemoryResources {
         total_bytes,
         used_bytes,
         available_bytes,
@@ -200,12 +200,12 @@ pub fn get_cpu_temperature() -> Option<f32> {
         .and_then(|c| c.temperature())
 }
 
-/// Collect storage metrics for all mounted disks (slower, involves filesystem stat calls)
+/// Collect storage resources for all mounted disks (slower, involves filesystem stat calls)
 ///
 /// Suitable for lower-frequency polling (30s intervals).
 /// Performs stat syscalls on mount points which may be slow on network mounts.
 /// Returns complete storage inventory with live usage data.
-pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
+pub fn get_storage_resources() -> Result<Vec<StorageResources>> {
     let disks = sysinfo::Disks::new_with_refreshed_list();
 
     let mut storage = Vec::new();
@@ -238,7 +238,7 @@ pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
             mount_point.clone()
         };
 
-        storage.push(StorageMetrics {
+        storage.push(StorageResources {
             identifier,
             mount_point,
             total_gb: total / 1024 / 1024 / 1024,
@@ -257,11 +257,11 @@ pub fn get_storage_metrics() -> Result<Vec<StorageMetrics>> {
     Ok(storage)
 }
 
-/// Collect network metrics for all interfaces
+/// Collect network resources for all interfaces
 ///
 /// Returns aggregate and per-interface statistics. For rate calculation,
 /// call this function twice with a delay and compute the delta.
-pub fn get_network_metrics() -> NetworkMetrics {
+pub fn get_network_resources() -> NetworkResources {
     let networks = Networks::new_with_refreshed_list();
 
     let mut interfaces = Vec::new();
@@ -280,7 +280,7 @@ pub fn get_network_metrics() -> NetworkMetrics {
         total_rx = total_rx.saturating_add(rx_bytes);
         total_tx = total_tx.saturating_add(tx_bytes);
 
-        interfaces.push(InterfaceMetrics {
+        interfaces.push(InterfaceResources {
             name: name.clone(),
             rx_bytes,
             tx_bytes,
@@ -292,7 +292,7 @@ pub fn get_network_metrics() -> NetworkMetrics {
     // Sort by name for consistent ordering
     interfaces.sort_by(|a, b| a.name.cmp(&b.name));
 
-    NetworkMetrics {
+    NetworkResources {
         interfaces,
         total_rx_bytes: total_rx,
         total_tx_bytes: total_tx,
@@ -305,13 +305,13 @@ pub fn get_network_metrics() -> NetworkMetrics {
 
 /// Calculate network rate by comparing two snapshots
 ///
-/// Takes the previous metrics, elapsed time in seconds, and returns updated metrics
+/// Takes the previous resources, elapsed time in seconds, and returns updated resources
 /// with bytes_per_sec filled in.
 pub fn calculate_network_rate(
-    current: &NetworkMetrics,
-    previous: &NetworkMetrics,
+    current: &NetworkResources,
+    previous: &NetworkResources,
     elapsed_secs: f64,
-) -> NetworkMetrics {
+) -> NetworkResources {
     if elapsed_secs <= 0.0 {
         return current.clone();
     }
@@ -326,7 +326,7 @@ pub fn calculate_network_rate(
     let rx_per_sec = (rx_delta as f64 / elapsed_secs) as u64;
     let tx_per_sec = (tx_delta as f64 / elapsed_secs) as u64;
 
-    NetworkMetrics {
+    NetworkResources {
         interfaces: current.interfaces.clone(),
         total_rx_bytes: current.total_rx_bytes,
         total_tx_bytes: current.total_tx_bytes,
@@ -337,13 +337,13 @@ pub fn calculate_network_rate(
     }
 }
 
-/// Collect all host-level resource metrics (combined fast + slow)
+/// Collect all host-level resources (combined fast + slow)
 ///
 /// Use this for one-shot collection. For continuous monitoring, prefer
-/// separate `get_fast_metrics()` and `get_storage_metrics()` at different intervals.
+/// separate `get_fast_resources()` and `get_storage_resources()` at different intervals.
 pub fn collect_stone_resources() -> Result<StoneResources> {
-    let (cpu, memory, uptime_seconds, uptime_friendly) = get_fast_metrics()?;
-    let storage = get_storage_metrics()?;
+    let (cpu, memory, uptime_seconds, uptime_friendly) = get_fast_resources()?;
+    let storage = get_storage_resources()?;
     let cpu_temperature = get_cpu_temperature();
 
     Ok(StoneResources {
@@ -367,15 +367,15 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
     system.refresh_cpu_all();
     system.refresh_memory();
 
-    // CPU metrics
+    // CPU resources
     let usage_percent = system.global_cpu_usage();
-    let cpu = CpuMetrics {
+    let cpu = CpuResources {
         cores: system.cpus().len(),
         usage_percent,
         usage_friendly: format!("{:.1}%", usage_percent),
     };
 
-    // Memory metrics
+    // Memory resources
     let total_bytes = system.total_memory();
     let used_bytes = system.used_memory();
     let available_bytes = system.available_memory();
@@ -384,7 +384,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
     } else {
         0.0
     };
-    let memory = MemoryMetrics {
+    let memory = MemoryResources {
         total_bytes,
         used_bytes,
         available_bytes,
@@ -394,7 +394,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
         available_friendly: format_bytes(available_bytes),
     };
 
-    // Disk metrics - focus on root filesystem or /var/lib/zen-garden if available
+    // Disk resources - focus on root filesystem or /var/lib/zen-garden if available
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let _disk = disks
         .iter()
@@ -412,7 +412,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
             } else {
                 0.0
             };
-            DiskMetrics {
+            DiskResources {
                 total_bytes: total,
                 used_bytes: used,
                 available_bytes: available,
@@ -432,7 +432,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
     Ok(StoneResources {
         cpu,
         memory,
-        storage: vec![], // Legacy function - use get_storage_metrics() instead
+        storage: vec![], // Legacy function - use get_storage_resources() instead
         uptime_seconds,
         uptime_friendly,
         cpu_temperature: get_cpu_temperature(),
@@ -601,7 +601,7 @@ fn detect_via_sysfs(mount_point: &str) -> Option<String> {
 /// - AMD: `/sys/class/drm/card*/device/gpu_busy_percent` or `rocm-smi --showuse`
 /// - Intel: `/sys/class/drm/card*/gt_cur_freq_mhz` (heuristic)
 ///
-/// Called on the fast metrics interval (5s). The shell-out is fast (~10ms).
+/// Called on the fast resources interval (5s). The shell-out is fast (~10ms).
 pub fn get_gpu_utilization() -> Option<f32> {
     // Try NVIDIA first (most common for AI workloads)
     if let Some(pct) = query_nvidia_utilization() {

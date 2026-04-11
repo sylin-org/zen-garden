@@ -140,8 +140,8 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
                 }
             });
 
-            // Collect normalised metrics for resource scoring
-            let metrics = crate::domain::metrics_collection::get_local_metrics().ok();
+            // Collect normalised resources for placement scoring
+            let resources = crate::domain::resources_collection::get_local_resources().ok();
 
             let offering_count = self.state.offerings.read().await.len();
 
@@ -149,7 +149,7 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             let score = fitness::compute_fitness_score(
                 &offering,
                 &compat,
-                metrics.as_ref(),
+                resources.as_ref(),
                 offering_count,
             )?;
 

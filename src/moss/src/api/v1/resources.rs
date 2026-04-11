@@ -1,43 +1,50 @@
-//! System metrics API endpoint
+//! System resources API endpoint
 //!
-//! Provides real-time system resource metrics including:
+//! Provides real-time hardware resource snapshots including:
 //! - CPU usage and core count
 //! - Memory usage (total, used, available)
 //! - Disk usage (total, used, available)
+//! - Network throughput
 //! - System uptime
 //!
-//! Metrics are collected on-demand from the system.
-//! If collection fails, a fallback with zero values is returned.
+//! Renamed from `metrics.rs` in ARCH-0018 Book I Chapter 2 — "metrics"
+//! is now reserved for software observability (see `api::v1::metrics`,
+//! coming in Chapter 5).
+//!
+//! Resources are collected by the `resources-collector` background task
+//! (5s fast tick for CPU/memory, 30s slow tick for disk).
+//! If collection has not yet run, a fallback with zero values is returned.
 
 use crate::api::responses::ApiResponse;
 use crate::domain::Current;
 use axum::{extract::State, Json};
-use garden_common::{CpuMetrics, DiskMetrics, MemoryMetrics, MetricsSnapshot, StoneResources};
+use garden_common::{CpuResources, DiskResources, MemoryResources, ResourcesSnapshot, StoneResources};
 use std::sync::Arc;
 
-/// GET /metrics - Real-time system resource metrics
+/// GET /api/v1/stone/resources — Real-time hardware resource snapshot
 ///
-/// Returns current CPU, memory, disk usage and system uptime from cached metrics.
-/// Metrics are collected every 5s (CPU/memory) and 30s (disk) by background task.
+/// Returns current CPU, memory, disk, network, and uptime from the cached
+/// snapshot maintained by the `resources-collector` background task.
+/// Fast tick: 5s (CPU/memory/network). Slow tick: 30s (disk).
 ///
 /// # Fallback Behavior
-/// If metrics not yet collected, returns a fallback response with zero values.
-pub async fn get_metrics(State(current): State<Arc<Current>>) -> Json<ApiResponse<MetricsSnapshot>> {
+/// If collection has not yet run, returns a fallback response with zero values.
+pub async fn get_resources(State(current): State<Arc<Current>>) -> Json<ApiResponse<ResourcesSnapshot>> {
     let resources = {
-        let resources_guard = current.metrics.system.read().await;
+        let resources_guard = current.resources.system.read().await;
         resources_guard
             .as_ref()
             .cloned()
             .unwrap_or_else(create_fallback_resources)
     };
 
-    // Convert primary storage mount to DiskMetrics for backward compatibility
+    // Convert primary storage mount to DiskResources for backward compatibility
     let disk = resources
         .storage
         .iter()
         .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
         .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb))
-        .map(|s| DiskMetrics {
+        .map(|s| DiskResources {
             total_bytes: s.total_gb * 1024 * 1024 * 1024,
             used_bytes: s.used_gb * 1024 * 1024 * 1024,
             available_bytes: s.available_gb * 1024 * 1024 * 1024,
@@ -52,7 +59,7 @@ pub async fn get_metrics(State(current): State<Arc<Current>>) -> Json<ApiRespons
                 .storage
                 .first()
                 .cloned()
-                .map(|s| DiskMetrics {
+                .map(|s| DiskResources {
                     total_bytes: s.total_gb * 1024 * 1024 * 1024,
                     used_bytes: s.used_gb * 1024 * 1024 * 1024,
                     available_bytes: s.available_gb * 1024 * 1024 * 1024,
@@ -62,7 +69,7 @@ pub async fn get_metrics(State(current): State<Arc<Current>>) -> Json<ApiRespons
                     used_friendly: String::new(),
                     available_friendly: String::new(),
                 })
-                .unwrap_or_else(|| DiskMetrics {
+                .unwrap_or_else(|| DiskResources {
                     total_bytes: 0,
                     used_bytes: 0,
                     available_bytes: 0,
@@ -74,9 +81,9 @@ pub async fn get_metrics(State(current): State<Arc<Current>>) -> Json<ApiRespons
                 })
         });
 
-    let network = current.metrics.network.read().await.clone();
+    let network = current.resources.network.read().await.clone();
 
-    let snapshot = MetricsSnapshot {
+    let snapshot = ResourcesSnapshot {
         timestamp: chrono::Utc::now().to_rfc3339(),
         cpu: resources.cpu,
         memory: resources.memory,
@@ -88,17 +95,18 @@ pub async fn get_metrics(State(current): State<Arc<Current>>) -> Json<ApiRespons
     Json(ApiResponse::new(snapshot))
 }
 
-/// Create fallback resource metrics with zero values
+/// Create fallback resource snapshot with zero values.
 ///
-/// Used when metrics not yet collected to ensure endpoint always returns valid data.
+/// Used when collection has not yet run to ensure the endpoint always
+/// returns valid data.
 fn create_fallback_resources() -> StoneResources {
     StoneResources {
-        cpu: CpuMetrics {
+        cpu: CpuResources {
             cores: 1,
             usage_percent: 0.0,
             usage_friendly: "0%".to_string(),
         },
-        memory: MemoryMetrics {
+        memory: MemoryResources {
             total_bytes: 0,
             used_bytes: 0,
             available_bytes: 0,

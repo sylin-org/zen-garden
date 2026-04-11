@@ -10,7 +10,7 @@ use axum::{
     http::HeaderMap,
     Json,
 };
-use garden_common::metrics::system as metrics;
+use garden_common::resources::system as resources;
 use garden_common::TopologyEntry;
 use garden_common::{
     CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareCapabilities, HardwareInventory,
@@ -31,13 +31,13 @@ pub async fn get_garden_v1(
     let mut healthy_stones: u32 = 0;
     let mut degraded_stones: u32 = 0;
 
-    // Get live metrics for local stone
-    let (cpu_usage, memory_usage) = match metrics::get_fast_metrics() {
+    // Get live resources for local stone
+    let (cpu_usage, memory_usage) = match resources::get_fast_resources() {
         Ok((cpu, mem, _, _)) => (cpu.usage_percent, mem.used_percent),
         Err(_) => (0.0, 0.0),
     };
 
-    // Add self first with live metrics
+    // Add self first with live resources
     let self_info = topology_entry_to_stone_info_with_metrics(&self_entry, cpu_usage, memory_usage);
     total_services += self_info.services_count;
     if self_info.health == garden_common::constants::HEALTH_HEALTHY
@@ -80,12 +80,12 @@ pub async fn get_garden_v1(
     crate::api::ok_maybe(overview, suggestions)
 }
 
-/// Convert TopologyEntry to StoneInfo for garden overview (peers - no live metrics)
+/// Convert TopologyEntry to StoneInfo for garden overview (peers - no live resources)
 fn topology_entry_to_stone_info(entry: &TopologyEntry) -> StoneInfo {
     topology_entry_to_stone_info_with_metrics(entry, 0.0, 0.0)
 }
 
-/// Convert TopologyEntry to StoneInfo with live metrics (for local stone)
+/// Convert TopologyEntry to StoneInfo with live resources (for local stone)
 fn topology_entry_to_stone_info_with_metrics(
     entry: &TopologyEntry,
     cpu_usage: f32,
@@ -164,7 +164,7 @@ pub async fn recommend_placement_v1(
 }
 // Helper function to build consolidated capabilities (based on main.rs capabilities handler)
 async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
-    let (cpu_model, cpu_features, architecture) = metrics::get_cpu_info().unwrap_or_else(|_| {
+    let (cpu_model, cpu_features, architecture) = resources::get_cpu_info().unwrap_or_else(|_| {
         (
             "Unknown".to_string(),
             vec![],
@@ -172,13 +172,13 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
         )
     });
 
-    let resources = metrics::collect_stone_resources().ok();
+    let resources = resources::collect_stone_resources().ok();
     let total_memory_mb = resources
         .as_ref()
         .map(|r| r.memory.total_bytes / 1024 / 1024)
         .unwrap_or(0);
 
-    let gpus = metrics::detect_gpus();
+    let gpus = resources::detect_gpus();
 
     let disk = resources.as_ref().map(|r| DiskCapabilities {
         total_gb: r
@@ -203,9 +203,9 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
 
     let cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
 
-    let os_version = metrics::detect_os_version();
-    let kernel_version = metrics::detect_kernel_version();
-    let swap_mb = metrics::detect_swap();
+    let os_version = resources::detect_os_version();
+    let kernel_version = resources::detect_kernel_version();
+    let swap_mb = resources::detect_swap();
     let docker_version = state.platform.docker.get_docker_version().await.ok();
 
     HardwareCapabilities {

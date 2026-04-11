@@ -98,7 +98,7 @@ pub fn configure_public(state: AppState) -> Router {
             "/api/v1/stone/capabilities/refresh",
             post(api::v1::capabilities::refresh_capabilities),
         )
-        .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
+        .route("/api/v1/stone/resources", get(api::v1::resources::get_resources))
         .route("/api/v1/stone/tasks", get(get_task_status))
         // ══════════════════════════════════════════════════════════════════
         // Read-only stone endpoints
@@ -335,7 +335,7 @@ pub fn configure(state: AppState) -> Router {
             "/api/v1/stone/capabilities/refresh",
             post(api::v1::capabilities::refresh_capabilities),
         )
-        .route("/api/v1/stone/metrics", get(api::v1::metrics::get_metrics))
+        .route("/api/v1/stone/resources", get(api::v1::resources::get_resources))
         .route("/api/v1/stone/tasks", get(get_task_status))
         .route(
             "/api/v1/stone/upgrade",

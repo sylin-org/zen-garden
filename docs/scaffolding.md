@@ -199,6 +199,54 @@ check:
 
 ---
 
+## Deferred renames — wire-format preserved
+
+A third category exists for renames that **were not performed** during the epic because the affected surface is part of an external wire contract (JSON response body, UDP payload, SSE event shape) consumed by another crate or another process. Renaming these would break Rake, orchestrators, or external dashboards.
+
+Each entry here is a **deliberate non-rename**. It is not a scaffold (no temporary code exists) and not a scaffold removal (nothing was deleted). It is a note that a better internal name was left alone, and a commitment to revisit when a coordinated API realignment can be done across moss, rake, and consumers.
+
+**Rule:** entries here do not block the epic. They do not run through `check-scaffolding.sh`. They exist as a searchable, durable record that survives the epic and feeds into a future "API realignment" effort.
+
+### deferred-placement-metrics: `PlacementMetrics` struct and `.metrics` field
+
+```yaml
+id: deferred-placement-metrics
+kind: deferred-rename
+introduced_in: ARCH-0018 Book I Chapter 2
+revisit_when: Post-moss-epic API realignment
+```
+
+**What would have been renamed:**
+
+- `moss::domain::placement::PlacementMetrics` (struct) → `PlacementResources`
+- `moss::domain::placement::PlacementRecommendation.metrics` (field) → `resources`
+
+**Why it was not renamed:**
+
+Both symbols are part of the JSON response body of `POST /api/v1/offerings/place` (and equivalent placement endpoints). `garden-rake` has its own `PlacementRecommendation` struct at [src/rake/src/commands/offering/mod.rs:61](../src/rake/src/commands/offering/mod.rs) with a matching `metrics: PlacementMetrics` field that deserializes the response. Renaming moss's Rust field to `resources` would change the wire format from `{"metrics": {...}}` to `{"resources": {...}}` and break Rake deserialization.
+
+Per [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md), external API contracts (REST endpoints, UDP wire format, JSON schemas) stay stable throughout the epic. Internal Rust APIs are rewritten freely, but the serialized names on public HTTP responses are not internal.
+
+An alternative — `#[serde(rename = "metrics")]` on a renamed Rust field — is technically available. It was rejected for Chapter 2 because it introduces a mild Rust/JSON naming asymmetry that is only worth paying for as part of a coordinated cross-crate realignment, not inside a rename chapter of a rename book.
+
+**What the revisit looks like:**
+
+A future "API realignment" project (post-moss-epic) renames the wire shape in lockstep across moss, rake, the typed `StoneApi` client, any orchestrator consumers of the placement endpoint, and any external dashboards. That project:
+
+1. Audits every consumer of `/api/v1/offerings/place` (and related endpoints).
+2. Chooses a versioning strategy: either a new endpoint path, an `Accept: application/vnd.garden.v2+json` header, or a coordinated breaking change with a deprecation window.
+3. Renames moss's Rust symbols (`PlacementMetrics` → `PlacementResources`, `.metrics` → `.resources`) and updates the serde-facing names in lockstep with every consumer.
+4. Removes this entry from the deferred-renames section.
+
+The revisit is **not in scope** for any ARCH-0017 book. It is a separate effort that depends on the moss refactor being complete (so it has a clean baseline to realign against).
+
+**Other searchable markers:**
+
+- `rg 'pub struct PlacementMetrics' src/moss/src/`
+- `rg 'pub metrics: PlacementMetrics' src/moss/src/`
+
+---
+
 ## References
 
 - [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) — the epic this tracker serves

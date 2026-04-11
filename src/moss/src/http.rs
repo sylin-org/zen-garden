@@ -10,7 +10,7 @@ use std::time::Duration;
 
 /// General-purpose HTTP client with 30-second timeout.
 ///
-/// Use for stone-to-stone API calls, lantern registration, metrics
+/// Use for stone-to-stone API calls, lantern registration, resources
 /// fetching, and any request that doesn't need special TLS config.
 pub static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()

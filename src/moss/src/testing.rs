@@ -56,7 +56,7 @@ impl garden_common::PlatformRuntime for NoopRuntime {
 ///
 /// The returned state contains:
 /// - A synthetic stone identity (`test-stone-id` / `stone-test`)
-/// - Empty offerings, capabilities, topology, and metrics
+/// - Empty offerings, capabilities, topology, and resources
 /// - Noop console, event bus, pulse, log, subsystems
 /// - A Koi handle with all capabilities disabled (no network I/O)
 /// - A Docker client connected to the local daemon (health may fail — that is fine)
@@ -175,7 +175,7 @@ pub async fn build_test_state() -> AppState {
             health: Arc::new(RwLock::new("thriving".to_string())),
             mac: Arc::new(RwLock::new(None)),
             api_port: 7185,
-            metrics: Arc::new(domain::current::Metrics {
+            resources: Arc::new(domain::current::Resources {
                 system: Arc::new(RwLock::new(None)),
                 network: Arc::new(RwLock::new(None)),
                 gpu: Arc::new(RwLock::new(None)),

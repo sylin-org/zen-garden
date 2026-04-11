@@ -27,7 +27,7 @@ pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;
 pub mod lantern;
-pub mod metrics_collector;
+pub mod resources_collector;
 pub mod network_monitor;
 pub mod nurturing_scheduler;
 pub mod offering_orchestration;
@@ -59,7 +59,7 @@ pub use job_executors::{
     add_capability_task, backfill_missing_guidance, build_adopted_guidance, build_guidance,
     install_batch_task, install_image_direct_task, install_service_task, refresh_capabilities_task,
 };
-pub use metrics_collector::run_metrics_collector;
+pub use resources_collector::run_resources_collector;
 pub use network_monitor::{Network, NetworkConfig, NetworkEvent};
 pub use nurturing_scheduler::{
     trigger_all_nurturing, trigger_nurturing, NurturingScheduler, NurturingWorkflowConfig,

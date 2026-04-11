@@ -519,6 +519,17 @@ Six commits, one per chapter:
 
 Each commit lands green to `dev`. No cross-chapter atomicity. Book I is complete when Chapter 6 commits.
 
+## Deferred renames
+
+One rename that Chapter 2 would have done inside the "metrics → resources" consolidation is deliberately deferred because it crosses an external wire-format boundary:
+
+- `moss::domain::placement::PlacementMetrics` (struct) → would be `PlacementResources`
+- `moss::domain::placement::PlacementRecommendation.metrics` (field) → would be `resources`
+
+Both are part of the JSON response body of the placement endpoint and consumed by Rake's own `PlacementRecommendation` struct at [src/rake/src/commands/offering/mod.rs:61](../../src/rake/src/commands/offering/mod.rs). Renaming the moss Rust symbols would change the wire shape from `{"metrics": {...}}` to `{"resources": {...}}` and break Rake deserialization. Per ARCH-0017, external API contracts stay stable throughout the epic.
+
+This case is tracked in [scaffolding.md → Deferred renames → `deferred-placement-metrics`](../scaffolding.md#deferred-placement-metrics-placementmetrics-struct-and-metrics-field) and will be revisited in a post-moss-epic API realignment that renames the wire shape in lockstep across moss, Rake, the typed `StoneApi` client, and any other consumers.
+
 ## Out of scope
 
 - **Prometheus exporter.** Deferred to a future book or post-epic adapter.

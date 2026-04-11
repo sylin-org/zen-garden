@@ -180,7 +180,7 @@ pub struct MediumSnapshot {
 /// Platform-agnostic device health snapshot (STORAGE-0018).
 ///
 /// Produced by `StoragePlatform::probe_device_health()`, consumed by
-/// `Volume::observe_metrics()`. All fields are OS facts — the domain
+/// `Volume::observe()`. All fields are OS facts — the domain
 /// decides what they mean.
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceHealth {

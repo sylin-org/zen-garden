@@ -1,6 +1,6 @@
 //! Placement recommendation orchestration
 //!
-//! Coordinates topology discovery, metrics collection, compatibility checking,
+//! Coordinates topology discovery, resource collection, compatibility checking,
 //! and scoring to recommend optimal stone placement for offerings.
 
 use anyhow::{Context, Result};
@@ -8,7 +8,7 @@ use chrono::Utc;
 use std::time::Duration;
 
 use crate::domain::{
-    compatibility, metrics_collection, scoring, services, topology, CompiledOffering,
+    compatibility, resources_collection, scoring, services, topology, CompiledOffering,
 };
 use crate::AppState;
 use garden_common::TopologyEntry;
@@ -79,7 +79,7 @@ pub struct ScoreBreakdown {
 /// Main orchestration function that:
 /// 1. Evaluates tended stone (zero latency)
 /// 2. Discovers peer stones from topology cache
-/// 3. Fetches metrics AND offerings from all stones in parallel
+/// 3. Fetches resources AND offerings from all stones in parallel
 /// 4. Scores each stone using multi-factor algorithm with full compatibility
 /// 5. Returns top N recommendations sorted by score
 pub async fn recommend_placement(
@@ -108,11 +108,11 @@ pub async fn recommend_placement(
         peer_stones.len()
     );
 
-    // 3. Fetch metrics AND offerings from peers in parallel (with timeout)
+    // 3. Fetch resources AND offerings from peers in parallel (with timeout)
     let timeout = Duration::from_secs(3);
     let endpoints: Vec<String> = peer_stones.iter().map(|s| s.address.http_base()).collect();
 
-    let metrics_results = metrics_collection::fetch_metrics_batch(endpoints.clone(), timeout).await;
+    let resources_results = resources_collection::fetch_resources_batch(endpoints.clone(), timeout).await;
     let offerings_results = fetch_offerings_batch(endpoints, timeout).await;
 
     // 4. Score each peer stone with full compatibility checking
@@ -120,16 +120,16 @@ pub async fn recommend_placement(
 
     // Track exclusion reasons for summary
     let mut excluded_no_offering = 0usize;
-    let mut excluded_metrics_failed = 0usize;
+    let mut excluded_resources_failed = 0usize;
     let mut excluded_offerings_failed = 0usize;
 
-    for ((stone, metrics_result), offerings_result) in peer_stones
+    for ((stone, resources_result), offerings_result) in peer_stones
         .iter()
-        .zip(metrics_results.iter())
+        .zip(resources_results.iter())
         .zip(offerings_results.iter())
     {
-        match (metrics_result, offerings_result) {
-            (Ok(metrics), Ok(offerings)) => {
+        match (resources_result, offerings_result) {
+            (Ok(stone_resources), Ok(offerings)) => {
                 // Find the offering on remote stone
                 match offerings.iter().find(|o| o.name == request.offering) {
                     Some(remote_offering) => {
@@ -137,7 +137,7 @@ pub async fn recommend_placement(
                             stone,
                             &request.offering,
                             remote_offering,
-                            metrics,
+                            stone_resources,
                             state,
                         )
                         .await
@@ -163,11 +163,11 @@ pub async fn recommend_placement(
                 }
             }
             (Err(e), _) => {
-                excluded_metrics_failed += 1;
+                excluded_resources_failed += 1;
                 tracing::warn!(
                     stone_id = %stone.stone_id,
                     error = ?e,
-                    "Failed to fetch metrics from stone"
+                    "Failed to fetch resources from stone"
                 );
             }
             (_, Err(e)) => {
@@ -184,7 +184,7 @@ pub async fn recommend_placement(
     // Build exclusion summary
     let exclusion_summary = build_exclusion_summary(
         excluded_no_offering,
-        excluded_metrics_failed,
+        excluded_resources_failed,
         excluded_offerings_failed,
     );
 
@@ -224,10 +224,10 @@ pub async fn recommend_placement(
 /// Build human-readable exclusion summary
 fn build_exclusion_summary(
     no_offering: usize,
-    metrics_failed: usize,
+    resources_failed: usize,
     offerings_failed: usize,
 ) -> Option<String> {
-    let total = no_offering + metrics_failed + offerings_failed;
+    let total = no_offering + resources_failed + offerings_failed;
     if total == 0 {
         return None;
     }
@@ -236,8 +236,8 @@ fn build_exclusion_summary(
     if no_offering > 0 {
         reasons.push(format!("{} offering not available", no_offering));
     }
-    if metrics_failed > 0 {
-        reasons.push(format!("{} unreachable", metrics_failed));
+    if resources_failed > 0 {
+        reasons.push(format!("{} unreachable", resources_failed));
     }
     if offerings_failed > 0 {
         reasons.push(format!("{} offerings fetch failed", offerings_failed));
@@ -258,9 +258,9 @@ async fn score_local_stone(
     offering: &CompiledOffering,
     state: &AppState,
 ) -> Result<PlacementRecommendation> {
-    // Get local metrics (zero latency)
-    let metrics =
-        metrics_collection::get_local_metrics().context("Failed to collect local metrics")?;
+    // Get local resources (zero latency)
+    let local_resources = resources_collection::get_local_resources()
+        .context("Failed to collect local resources")?;
 
     // Get local service count
     let service_count = services::get_local_service_count(state).await.unwrap_or(0);
@@ -292,11 +292,13 @@ async fn score_local_stone(
 
     // Calculate scores using reusable functions
     let compat_score = scoring::calculate_compatibility_penalty(&compat_decision);
-    let memory_score =
-        scoring::score_memory_headroom(metrics.memory_free_mb, metrics.memory_total_mb);
-    let cpu_score = scoring::score_cpu_availability(metrics.cpu_load_percent);
-    let storage_capacity_score = scoring::score_storage_capacity(metrics.storage_free_gb);
-    let storage_type_score = scoring::score_storage_type(&metrics.storage_type);
+    let memory_score = scoring::score_memory_headroom(
+        local_resources.memory_free_mb,
+        local_resources.memory_total_mb,
+    );
+    let cpu_score = scoring::score_cpu_availability(local_resources.cpu_load_percent);
+    let storage_capacity_score = scoring::score_storage_capacity(local_resources.storage_free_gb);
+    let storage_type_score = scoring::score_storage_type(&local_resources.storage_type);
     let distribution_score = scoring::calculate_distribution_penalty(service_count);
     let tended_bonus = 3; // Small bonus for local stone
 
@@ -314,13 +316,15 @@ async fn score_local_stone(
         score: total_score,
         is_local: true,
         compatibility: compat_str.to_string(),
+        // Note: `metrics` (wire-format field name) is a deferred rename —
+        // see docs/scaffolding.md § Deferred renames.
         metrics: PlacementMetrics {
-            memory_free_mb: metrics.memory_free_mb,
-            memory_total_mb: metrics.memory_total_mb,
-            cpu_load_percent: metrics.cpu_load_percent,
-            storage_free_gb: metrics.storage_free_gb,
-            storage_total_gb: metrics.storage_total_gb,
-            storage_type: format!("{:?}", metrics.storage_type),
+            memory_free_mb: local_resources.memory_free_mb,
+            memory_total_mb: local_resources.memory_total_mb,
+            cpu_load_percent: local_resources.cpu_load_percent,
+            storage_free_gb: local_resources.storage_free_gb,
+            storage_total_gb: local_resources.storage_total_gb,
+            storage_type: format!("{:?}", local_resources.storage_type),
         },
         services_count: service_count,
         breakdown: ScoreBreakdown {
@@ -340,7 +344,7 @@ async fn score_remote_stone(
     stone: &TopologyEntry,
     _offering_id: &str,
     offering: &CompiledOffering,
-    metrics: &metrics_collection::StoneMetrics,
+    stone_resources: &resources_collection::NormalizedResources,
     _state: &AppState,
 ) -> Result<PlacementRecommendation> {
     // Get remote service count (with timeout)
@@ -376,11 +380,13 @@ async fn score_remote_stone(
 
     // Calculate scores
     let compat_score = scoring::calculate_compatibility_penalty(&compat_decision);
-    let memory_score =
-        scoring::score_memory_headroom(metrics.memory_free_mb, metrics.memory_total_mb);
-    let cpu_score = scoring::score_cpu_availability(metrics.cpu_load_percent);
-    let storage_capacity_score = scoring::score_storage_capacity(metrics.storage_free_gb);
-    let storage_type_score = scoring::score_storage_type(&metrics.storage_type);
+    let memory_score = scoring::score_memory_headroom(
+        stone_resources.memory_free_mb,
+        stone_resources.memory_total_mb,
+    );
+    let cpu_score = scoring::score_cpu_availability(stone_resources.cpu_load_percent);
+    let storage_capacity_score = scoring::score_storage_capacity(stone_resources.storage_free_gb);
+    let storage_type_score = scoring::score_storage_type(&stone_resources.storage_type);
     let distribution_score = scoring::calculate_distribution_penalty(service_count);
     let tended_bonus = 0; // No bonus for remote stones
 
@@ -398,13 +404,15 @@ async fn score_remote_stone(
         score: total_score,
         is_local: false,
         compatibility: compat_str.to_string(),
+        // Note: `metrics` (wire-format field name) is a deferred rename —
+        // see docs/scaffolding.md § Deferred renames.
         metrics: PlacementMetrics {
-            memory_free_mb: metrics.memory_free_mb,
-            memory_total_mb: metrics.memory_total_mb,
-            cpu_load_percent: metrics.cpu_load_percent,
-            storage_free_gb: metrics.storage_free_gb,
-            storage_total_gb: metrics.storage_total_gb,
-            storage_type: format!("{:?}", metrics.storage_type),
+            memory_free_mb: stone_resources.memory_free_mb,
+            memory_total_mb: stone_resources.memory_total_mb,
+            cpu_load_percent: stone_resources.cpu_load_percent,
+            storage_free_gb: stone_resources.storage_free_gb,
+            storage_total_gb: stone_resources.storage_total_gb,
+            storage_type: format!("{:?}", stone_resources.storage_type),
         },
         services_count: service_count,
         breakdown: ScoreBreakdown {

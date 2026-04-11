@@ -205,7 +205,7 @@ impl Client {
         Ok(infos)
     }
 
-    /// Get resource metrics for a specific container
+    /// Get resource usage for a specific container
     pub async fn get_container_stats(
         &self,
         name: &str,
@@ -239,7 +239,7 @@ impl Client {
             0.0
         };
 
-        // Memory metrics
+        // Memory usage
         let memory_bytes = stats.memory_stats.as_ref().and_then(|m| m.usage).unwrap_or(0);
         let memory_limit = stats.memory_stats.as_ref().and_then(|m| m.limit).unwrap_or(0);
         let memory_percent = if memory_limit > 0 {

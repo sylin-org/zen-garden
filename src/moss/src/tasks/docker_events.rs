@@ -14,7 +14,7 @@
 //! ## Relationship to Health Monitor
 //! This task **supplements** the health monitor (does not replace it).
 //! The health monitor continues running as a safety net for:
-//! - Resource metrics (CPU, memory)
+//! - Resource usage (CPU, memory)
 //! - Port reconciliation
 //! - Protocol reconciliation
 //! - Topology mount checks

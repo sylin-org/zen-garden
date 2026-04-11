@@ -25,7 +25,7 @@ pub mod volume;
 // ── Re-exports for backward compatibility ──────────────────────────────
 
 // Volume types
-pub use volume::{DiskMetrics, Management, PinState, Volume, VolumeState};
+pub use volume::{DiskResources, Management, PinState, Volume, VolumeState};
 
 // Collection types and operations
 pub use collection::{

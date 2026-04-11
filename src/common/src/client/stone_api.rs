@@ -979,9 +979,14 @@ impl StoneInfoApi<'_> {
         self.api.get_raw("/health").await
     }
 
-    /// Prometheus metrics. Returns raw response.
-    pub async fn metrics(&self) -> Result<reqwest::Response, StoneApiError> {
-        self.api.get_raw("/api/v1/stone/metrics").await
+    /// Stone hardware resource snapshot (CPU, memory, disk, network, uptime).
+    /// Returns raw response — the endpoint returns JSON (`ResourcesSnapshot`).
+    ///
+    /// Renamed from `metrics()` in ARCH-0018 Book I Chapter 2. The old
+    /// name collided with software observability metrics (see
+    /// `metrics_snapshot()` for that).
+    pub async fn resources(&self) -> Result<reqwest::Response, StoneApiError> {
+        self.api.get_raw("/api/v1/stone/resources").await
     }
 
     /// Pending updates.

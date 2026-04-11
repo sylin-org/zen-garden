@@ -3,7 +3,7 @@
 //! `state.current.*` = writable stores owned by this stone.
 //! `state.*`         = garden-wide aggregates (local + remote peers).
 
-use garden_common::{HardwareCapabilities, NetworkMetrics, PeerAddress, StoneResources};
+use garden_common::{HardwareCapabilities, NetworkResources, PeerAddress, StoneResources};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -18,15 +18,18 @@ pub struct Stone {
     pub name: String,
 }
 
-/// Runtime metrics — updated by background metrics_collector task.
+/// Runtime hardware resources — updated by background resources_collector task.
+///
 /// Individual locks: GPU queries are slow (spawn_blocking), disk ticks
-/// do partial updates of system_resources.storage.
+/// do partial updates of system storage. Renamed from `Metrics` in
+/// ARCH-0018 Book I Chapter 2 — "metrics" is now reserved for software
+/// observability (see `domain::metrics`).
 #[derive(Clone)]
-pub struct Metrics {
+pub struct Resources {
     /// CPU, memory, disk, uptime (updated every 5s fast tick + 30s disk tick)
     pub system: Arc<RwLock<Option<StoneResources>>>,
     /// Network RX/TX bytes and rates (updated every 5s)
-    pub network: Arc<RwLock<Option<NetworkMetrics>>>,
+    pub network: Arc<RwLock<Option<NetworkResources>>>,
     /// GPU utilization percentage (updated every 5s via spawn_blocking)
     pub gpu: Arc<RwLock<Option<f32>>>,
 }
@@ -43,7 +46,7 @@ pub struct Topology {
 /// Current domain context (`state.current`).
 ///
 /// Groups all state that describes *this* stone — its identity, local storage,
-/// topology view, hardware capabilities, and runtime metrics.
+/// topology view, hardware capabilities, and runtime resource snapshots.
 #[derive(Clone)]
 pub struct Current {
     /// This stone's identity (id and name).
@@ -71,6 +74,6 @@ pub struct Current {
     /// API port for constructing endpoint URLs.
     pub api_port: u16,
 
-    /// Runtime metrics (system, network, GPU) — updated by metrics_collector task.
-    pub metrics: Arc<Metrics>,
+    /// Runtime hardware resources (system, network, GPU) — updated by resources_collector task.
+    pub resources: Arc<Resources>,
 }

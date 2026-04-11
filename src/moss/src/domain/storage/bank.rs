@@ -10,7 +10,7 @@ use tracing::{debug, info};
 
 use crate::domain::traits::ManagementStoreOps;
 
-use super::volume::DiskMetrics;
+use super::volume::DiskResources;
 use super::{Volume, VolumeSnapshot, Volumes};
 
 /// Domain bridge for physical storage events.
@@ -60,7 +60,7 @@ impl<S: ManagementStoreOps + 'static> StorageBank<S> {
             capacity_bytes,
             removable,
         };
-        let metrics = DiskMetrics {
+        let disk_snapshot = DiskResources {
             capacity_bytes,
             used_bytes,
         };
@@ -98,7 +98,7 @@ impl<S: ManagementStoreOps + 'static> StorageBank<S> {
                     info!(path = %snap.path, name = %name, "Managed volume appeared");
                 }
 
-                let events = vol.connect(metrics);
+                let events = vol.connect(disk_snapshot);
                 map.insert(snap.path, vol);
                 self.emit(events);
             } else {
@@ -109,7 +109,7 @@ impl<S: ManagementStoreOps + 'static> StorageBank<S> {
             // Re-appeared — inform the Volume, let it decide.
             if let Some(vol) = map.get_mut(&snap.path) {
                 vol.update_os_metadata(mount_path, snap.label.clone());
-                let events = vol.connect(metrics);
+                let events = vol.connect(disk_snapshot);
                 if !events.is_empty() {
                     info!(path = %snap.path, name = %vol.display_name(), "Volume came back online");
                 }

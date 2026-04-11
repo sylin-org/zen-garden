@@ -6,9 +6,9 @@
 
 use std::path::PathBuf;
 
-/// Disk metrics measured at detection time.
+/// Disk resources measured at detection time.
 #[derive(Debug, Clone, Copy)]
-pub struct StorageMetrics {
+pub struct StorageResources {
     pub capacity_bytes: u64,
     pub used_bytes: u64,
     pub available_bytes: u64,

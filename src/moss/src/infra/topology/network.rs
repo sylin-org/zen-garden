@@ -1,7 +1,7 @@
 //! Network interface detection (ARCH-0014).
 //!
 //! Captures static hardware properties: interface type, link speed, MAC,
-//! firmware version. Distinct from `InterfaceMetrics` (live throughput).
+//! firmware version. Distinct from `InterfaceResources` (live throughput).
 //!
 //! - Linux: sysfs `/sys/class/net/*/` + `ethtool`
 //! - Windows: `GetAdaptersAddresses` + WMI for speed/firmware

@@ -60,7 +60,7 @@ pub use garden_common::{
 /// All fields are wrapped in Arc for cheap cloning across tasks.
 #[derive(Clone)]
 pub struct AppState {
-    /// Current domain — this stone's identity, local storage, topology, capabilities, metrics.
+    /// Current domain — this stone's identity, local storage, topology, capabilities, resources.
     pub current: Arc<crate::domain::Current>,
 
     /// Offerings aggregate (ARCH-0016) — owns the active pool and the

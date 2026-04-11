@@ -145,9 +145,9 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     // Compute stone state
     let uptime = state.start_time.elapsed().as_secs();
 
-    // Get real metrics from system monitor (fallback to zeros if not yet collected)
+    // Get real resources from system monitor (fallback to zeros if not yet collected)
     let (cpu_percent, memory_percent, disk_percent) = {
-        let resources = state.current.metrics.system.read().await;
+        let resources = state.current.resources.system.read().await;
         if let Some(ref res) = *resources {
             // Use primary mount point (root or largest disk) for summary disk %
             let primary_disk_percent = res
@@ -170,14 +170,14 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
 
     // FIREFLY-0003: GPU utilization
     let gpu_percent = {
-        let gpu = state.current.metrics.gpu.read().await;
+        let gpu = state.current.resources.gpu.read().await;
         gpu.unwrap_or(0.0) as f64
     };
     let gpu_active = gpu_percent > 10.0;
 
     // FIREFLY-0003: Network rates
     let (net_rx, net_tx) = {
-        let network = state.current.metrics.network.read().await;
+        let network = state.current.resources.network.read().await;
         network
             .as_ref()
             .map(|n| {
@@ -250,7 +250,7 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
     }
 }
 
-/// Compute stone health from metrics
+/// Compute stone health from resources
 fn compute_health(cpu: f64, memory: f64) -> String {
     if cpu > 95.0 || memory > 95.0 {
         garden_common::constants::VITALITY_WILTING.to_string()

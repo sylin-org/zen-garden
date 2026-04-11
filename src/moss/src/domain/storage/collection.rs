@@ -16,7 +16,7 @@ use crate::domain::traits::{ManagementStoreOps, StoragePlatform};
 use super::platform_types::VolumeSnapshot;
 #[cfg(test)]
 use super::volume::VolumeState;
-use super::volume::{DiskMetrics, Volume};
+use super::volume::{DiskResources, Volume};
 
 /// The unified volume collection — keyed by device path.
 pub type Volumes = Arc<RwLock<HashMap<String, Volume>>>;
@@ -48,14 +48,14 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
 
     // Update existing and add new
     for snap in snapshots {
-        let metrics = DiskMetrics {
+        let disk_snapshot = DiskResources {
             capacity_bytes: snap.capacity_bytes,
             used_bytes: 0, // reconcile doesn't measure usage — health tick does
         };
 
         if let Some(vol) = map.get_mut(&snap.path) {
             vol.update_os_metadata(PathBuf::from(&snap.mount_path), snap.label.clone());
-            events.extend(vol.connect(metrics));
+            events.extend(vol.connect(disk_snapshot));
 
             // Re-classify unmanaged volumes — they may have gained a manifest.
             if !vol.is_managed() {
@@ -94,7 +94,7 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
             }
 
             // Transition Offline → Online and capture Connected event
-            events.extend(vol.connect(metrics));
+            events.extend(vol.connect(disk_snapshot));
             map.insert(snap.path.clone(), vol);
         }
     }
@@ -121,8 +121,8 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
 
 /// Observe health on all volumes. Returns events for any state changes.
 ///
-/// Reads disk metrics and device health via the platform adapter, then
-/// informs each Volume. Offline volumes are skipped by `observe_metrics()`.
+/// Reads disk snapshots and device health via the platform adapter, then
+/// informs each Volume. Offline volumes are skipped by `observe()`.
 /// Stale removable devices are cleaned up automatically (STORAGE-0018).
 pub async fn observe_all(
     volumes: &Volumes,
@@ -143,11 +143,11 @@ pub async fn observe_all(
         // Probe device health (STORAGE-0018).
         let health = platform.probe_device_health(&device_path, &mount_str);
 
-        let metrics = platform.disk_usage(&mount_str).map(|usage| DiskMetrics {
+        let disk_snapshot = platform.disk_usage(&mount_str).map(|usage| DiskResources {
             capacity_bytes: usage.total(),
             used_bytes: usage.used_bytes,
         });
-        events.extend(vol.observe_metrics(metrics, health));
+        events.extend(vol.observe(disk_snapshot, health));
 
         // Track stale removable devices for cleanup after releasing the lock.
         if health.stale_reference && vol.removable() {
@@ -400,7 +400,7 @@ mod tests {
         // Force offline first
         let _ = vol.disconnect();
 
-        let events = vol.connect(DiskMetrics {
+        let events = vol.connect(DiskResources {
             capacity_bytes: 64_000_000_000,
             used_bytes: 1_000_000,
         });
@@ -413,7 +413,7 @@ mod tests {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
 
-        let events = vol.connect(DiskMetrics {
+        let events = vol.connect(DiskResources {
             capacity_bytes: 100,
             used_bytes: 50,
         });
@@ -444,13 +444,13 @@ mod tests {
     }
 
     #[test]
-    fn observe_metrics_offline_is_noop() {
+    fn observe_offline_is_noop() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
         vol.disconnect();
 
-        let events = vol.observe_metrics(
-            Some(DiskMetrics { capacity_bytes: 100, used_bytes: 50 }),
+        let events = vol.observe(
+            Some(DiskResources { capacity_bytes: 100, used_bytes: 50 }),
             super::super::platform_types::DeviceHealth::healthy(),
         );
         assert!(events.is_empty());
@@ -458,12 +458,12 @@ mod tests {
     }
 
     #[test]
-    fn observe_metrics_none_degrades() {
+    fn observe_none_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskMetrics { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
+        vol.connect(DiskResources { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
 
-        let _events = vol.observe_metrics(
+        let _events = vol.observe(
             None,
             super::super::platform_types::DeviceHealth::healthy(),
         );
@@ -471,13 +471,13 @@ mod tests {
     }
 
     #[test]
-    fn observe_metrics_zero_capacity_degrades() {
+    fn observe_zero_capacity_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskMetrics { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
+        vol.connect(DiskResources { capacity_bytes: 100, used_bytes: 0 }); // bring Online first
 
-        let _events = vol.observe_metrics(
-            Some(DiskMetrics { capacity_bytes: 0, used_bytes: 0 }),
+        let _events = vol.observe(
+            Some(DiskResources { capacity_bytes: 0, used_bytes: 0 }),
             super::super::platform_types::DeviceHealth::healthy(),
         );
         assert!(matches!(vol.state(), VolumeState::Degraded(_)));

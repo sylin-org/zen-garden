@@ -42,12 +42,12 @@ use super::scoring;
 /// # Arguments
 /// * `offering` - The offering instance being evaluated
 /// * `compatibility` - Pre-computed per-stone compatibility evaluation
-/// * `metrics` - Optional normalised stone metrics for resource scoring
+/// * `resources` - Optional normalised stone resources for placement scoring
 /// * `offering_count` - Number of offerings currently on this stone
 pub fn compute_fitness_score(
     offering: &Offering,
     compatibility: &CompiledCompatibility,
-    metrics: Option<&crate::domain::metrics_collection::StoneMetrics>,
+    resources: Option<&crate::domain::resources_collection::NormalizedResources>,
     offering_count: usize,
 ) -> Option<i16> {
     // Pinned → always wins
@@ -69,15 +69,15 @@ pub fn compute_fitness_score(
     // Start with compatibility penalty (Pass=0, Warning=-50, Fallback=-15)
     let compat_penalty = scoring::calculate_compatibility_penalty(&compat_decision);
 
-    // Compute resource-based score from normalised metrics
-    let (resource_score, capacity_score) = if let Some(m) = metrics {
+    // Compute resource-based score from normalised resources
+    let (resource_score, capacity_score) = if let Some(m) = resources {
         let mem = scoring::score_memory_headroom(m.memory_free_mb, m.memory_total_mb);
         let cpu = scoring::score_cpu_availability(m.cpu_load_percent);
         let storage_cap = scoring::score_storage_capacity(m.storage_free_gb);
         let storage_hw = scoring::score_storage_type(&m.storage_type);
         (mem + cpu, storage_cap + storage_hw)
     } else {
-        // No metrics yet — conservative mid-range estimate
+        // No resources yet — conservative mid-range estimate
         (20, 10)
     };
 
@@ -145,7 +145,7 @@ fn compatibility_decision_from_compiled(
 mod tests {
     use super::*;
     use crate::domain::compatibility::CompiledCompatibility;
-    use crate::domain::metrics_collection::StoneMetrics;
+    use crate::domain::resources_collection::NormalizedResources;
     use garden_common::types::*;
     use garden_common::DiskType;
 
@@ -193,8 +193,8 @@ mod tests {
         }
     }
 
-    fn make_metrics(cpu_load: u8, mem_free_mb: u64, mem_total_mb: u64) -> StoneMetrics {
-        StoneMetrics {
+    fn make_resources(cpu_load: u8, mem_free_mb: u64, mem_total_mb: u64) -> NormalizedResources {
+        NormalizedResources {
             memory_free_mb: mem_free_mb,
             memory_total_mb: mem_total_mb,
             cpu_load_percent: cpu_load,
@@ -311,8 +311,8 @@ mod tests {
     #[test]
     fn test_healthy_idle_stone_scores_high() {
         let offering = make_offering(false);
-        let metrics = make_metrics(10, 28000, 32000); // 10% CPU, 28GB free / 32GB
-        let result = compute_fitness_score(&offering, &compat_pass(), Some(&metrics), 1);
+        let resources = make_resources(10, 28000, 32000); // 10% CPU, 28GB free / 32GB
+        let result = compute_fitness_score(&offering, &compat_pass(), Some(&resources), 1);
         let score = result.unwrap();
         // memory: ~18/20, cpu: 18/20, storage cap: 15, storage hw: 10, health: 15, dist: -3
         // positive ≈ 73, scaled ≈ 876
@@ -322,8 +322,8 @@ mod tests {
     #[test]
     fn test_busy_stone_scores_lower() {
         let offering = make_offering(false);
-        let metrics = make_metrics(80, 5000, 32000); // 80% CPU, 5GB free / 32GB
-        let result = compute_fitness_score(&offering, &compat_pass(), Some(&metrics), 5);
+        let resources = make_resources(80, 5000, 32000); // 80% CPU, 5GB free / 32GB
+        let result = compute_fitness_score(&offering, &compat_pass(), Some(&resources), 5);
         let score = result.unwrap();
         // memory: ~3/20, cpu: 4/20, storage cap: 15, storage hw: 10, health: 15, dist: -15
         // positive ≈ 32, scaled ≈ 384
@@ -335,7 +335,7 @@ mod tests {
         let offering = make_offering(false);
         let result = compute_fitness_score(&offering, &compat_pass(), None, 0);
         let score = result.unwrap();
-        // No metrics → resource=20, capacity=10; health: 15, dist: 0
+        // No resources → resource=20, capacity=10; health: 15, dist: 0
         // positive: 45, scaled: 540
         assert!(
             score > 300 && score < 800,
@@ -347,8 +347,8 @@ mod tests {
     #[test]
     fn test_score_clamped_to_valid_range() {
         let offering = make_offering(false);
-        let metrics = make_metrics(0, 32000, 32000); // fully idle
-        let result = compute_fitness_score(&offering, &compat_pass(), Some(&metrics), 0);
+        let resources = make_resources(0, 32000, 32000); // fully idle
+        let result = compute_fitness_score(&offering, &compat_pass(), Some(&resources), 0);
         let score = result.unwrap();
         assert!(
             score >= FITNESS_SCORE_MIN && score <= FITNESS_SCORE_MAX,
@@ -362,12 +362,12 @@ mod tests {
     #[test]
     fn test_many_offerings_penalty() {
         let offering = make_offering(false);
-        let metrics = make_metrics(30, 20000, 32000);
+        let resources = make_resources(30, 20000, 32000);
 
         let score_few =
-            compute_fitness_score(&offering, &compat_pass(), Some(&metrics), 1).unwrap();
+            compute_fitness_score(&offering, &compat_pass(), Some(&resources), 1).unwrap();
         let score_many =
-            compute_fitness_score(&offering, &compat_pass(), Some(&metrics), 20).unwrap();
+            compute_fitness_score(&offering, &compat_pass(), Some(&resources), 20).unwrap();
 
         assert!(
             score_few > score_many,
@@ -380,12 +380,12 @@ mod tests {
     #[test]
     fn test_warning_compat_reduces_score() {
         let offering = make_offering(false);
-        let metrics = make_metrics(30, 20000, 32000);
+        let resources = make_resources(30, 20000, 32000);
 
         let score_pass =
-            compute_fitness_score(&offering, &compat_pass(), Some(&metrics), 1).unwrap();
+            compute_fitness_score(&offering, &compat_pass(), Some(&resources), 1).unwrap();
         let score_warn =
-            compute_fitness_score(&offering, &compat_warning("low VRAM"), Some(&metrics), 1)
+            compute_fitness_score(&offering, &compat_warning("low VRAM"), Some(&resources), 1)
                 .unwrap();
 
         assert!(
@@ -399,12 +399,12 @@ mod tests {
     #[test]
     fn test_fallback_compat_reduces_score() {
         let offering = make_offering(false);
-        let metrics = make_metrics(30, 20000, 32000);
+        let resources = make_resources(30, 20000, 32000);
 
         let score_pass =
-            compute_fitness_score(&offering, &compat_pass(), Some(&metrics), 1).unwrap();
+            compute_fitness_score(&offering, &compat_pass(), Some(&resources), 1).unwrap();
         let score_fallback =
-            compute_fitness_score(&offering, &compat_fallback("no AVX"), Some(&metrics), 1)
+            compute_fitness_score(&offering, &compat_fallback("no AVX"), Some(&resources), 1)
                 .unwrap();
 
         assert!(
@@ -419,13 +419,13 @@ mod tests {
     fn test_warning_worse_than_fallback() {
         // Warning (-50) is a bigger penalty than Fallback (-15)
         let offering = make_offering(false);
-        let metrics = make_metrics(30, 20000, 32000);
+        let resources = make_resources(30, 20000, 32000);
 
         let score_warn =
-            compute_fitness_score(&offering, &compat_warning("degraded"), Some(&metrics), 1)
+            compute_fitness_score(&offering, &compat_warning("degraded"), Some(&resources), 1)
                 .unwrap();
         let score_fallback =
-            compute_fitness_score(&offering, &compat_fallback("no AVX"), Some(&metrics), 1)
+            compute_fitness_score(&offering, &compat_fallback("no AVX"), Some(&resources), 1)
                 .unwrap();
 
         assert!(
@@ -452,11 +452,11 @@ mod tests {
         stone_name: &str,
         pinned: bool,
         compat: &CompiledCompatibility,
-        metrics: Option<&StoneMetrics>,
+        resources: Option<&NormalizedResources>,
         offering_count: usize,
     ) -> Option<ElectionCandidate> {
         let offering = make_offering(pinned);
-        let score = compute_fitness_score(&offering, compat, metrics, offering_count)?;
+        let score = compute_fitness_score(&offering, compat, resources, offering_count)?;
         let pin_timestamp = offering
             .orchestration
             .as_ref()
@@ -472,8 +472,8 @@ mod tests {
 
     #[test]
     fn integration_idle_stone_beats_busy_stone() {
-        let idle_metrics = make_metrics(10, 28000, 32000);
-        let busy_metrics = make_metrics(85, 4000, 32000);
+        let idle_metrics = make_resources(10, 28000, 32000);
+        let busy_metrics = make_resources(85, 4000, 32000);
 
         let idle = simulate_stone(
             "stone-idle",
@@ -506,8 +506,8 @@ mod tests {
 
     #[test]
     fn integration_pinned_beats_better_hardware() {
-        let great_metrics = make_metrics(5, 30000, 32000);
-        let mediocre_metrics = make_metrics(50, 16000, 32000);
+        let great_metrics = make_resources(5, 30000, 32000);
+        let mediocre_metrics = make_resources(50, 16000, 32000);
 
         let great = simulate_stone(
             "stone-great",
@@ -550,14 +550,14 @@ mod tests {
 
     #[test]
     fn integration_compat_warning_loses_to_pass() {
-        let metrics = make_metrics(30, 20000, 32000);
+        let resources = make_resources(30, 20000, 32000);
 
         let pass = simulate_stone(
             "stone-pass",
             "Pass",
             false,
             &compat_pass(),
-            Some(&metrics),
+            Some(&resources),
             2,
         )
         .unwrap();
@@ -566,7 +566,7 @@ mod tests {
             "Warn",
             false,
             &compat_warning("low VRAM"),
-            Some(&metrics),
+            Some(&resources),
             2,
         )
         .unwrap();
@@ -586,7 +586,7 @@ mod tests {
             "Alpha",
             false,
             &compat_pass(),
-            Some(&make_metrics(15, 25000, 32000)),
+            Some(&make_resources(15, 25000, 32000)),
             2,
         )
         .unwrap();
@@ -597,7 +597,7 @@ mod tests {
             "Bravo",
             false,
             &compat_fallback("no AVX"),
-            Some(&make_metrics(40, 15000, 32000)),
+            Some(&make_resources(40, 15000, 32000)),
             3,
         )
         .unwrap();
@@ -608,7 +608,7 @@ mod tests {
             "Charlie",
             false,
             &compat_fail("unsupported arch"),
-            Some(&make_metrics(5, 30000, 32000)),
+            Some(&make_resources(5, 30000, 32000)),
             1,
         );
 
@@ -636,12 +636,12 @@ mod tests {
 
     #[test]
     fn integration_identical_stones_deterministic_tiebreak() {
-        let metrics = make_metrics(30, 20000, 32000);
+        let resources = make_resources(30, 20000, 32000);
 
         let a =
-            simulate_stone("stone-a", "Alpha", false, &compat_pass(), Some(&metrics), 2).unwrap();
+            simulate_stone("stone-a", "Alpha", false, &compat_pass(), Some(&resources), 2).unwrap();
         let z =
-            simulate_stone("stone-z", "Zulu", false, &compat_pass(), Some(&metrics), 2).unwrap();
+            simulate_stone("stone-z", "Zulu", false, &compat_pass(), Some(&resources), 2).unwrap();
 
         // Same conditions → same score
         assert_eq!(

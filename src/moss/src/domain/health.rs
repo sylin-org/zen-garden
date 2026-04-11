@@ -5,7 +5,7 @@
 //! - Overall system status determination
 //! - Health check thresholds and rules
 //!
-//! No I/O here - delegates to metrics and docker modules.
+//! No I/O here - delegates to resources and docker modules.
 
 use garden_common::{ComponentHealth, HealthCheck};
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 /// - < 10% available: WARN
 /// - >= 10% available: PASS
 pub fn check_disk_health() -> HealthCheck {
-    match garden_common::metrics::system::collect_stone_resources() {
+    match garden_common::resources::system::collect_stone_resources() {
         Ok(resources) => {
             // Find primary storage mount
             let primary = resources
@@ -64,7 +64,7 @@ pub fn check_disk_health() -> HealthCheck {
 /// - > 90% used: WARN
 /// - <= 90% used: PASS
 pub fn check_memory_health() -> HealthCheck {
-    match garden_common::metrics::system::collect_stone_resources() {
+    match garden_common::resources::system::collect_stone_resources() {
         Ok(resources) => {
             if resources.memory.used_percent > 90.0 {
                 HealthCheck {
@@ -90,7 +90,7 @@ pub fn check_memory_health() -> HealthCheck {
     }
 }
 
-/// Build disk component health with detailed metrics
+/// Build disk component health with detailed resource data
 ///
 /// Thresholds:
 /// - > 95% used: unhealthy
@@ -99,7 +99,7 @@ pub fn check_memory_health() -> HealthCheck {
 pub fn build_disk_component() -> ComponentHealth {
     let mut details = HashMap::new();
 
-    match garden_common::metrics::system::collect_stone_resources() {
+    match garden_common::resources::system::collect_stone_resources() {
         Ok(resources) => {
             // Use primary mount point (root or largest)
             let primary = resources
@@ -142,14 +142,14 @@ pub fn build_disk_component() -> ComponentHealth {
         Err(_) => {
             details.insert(
                 "error".to_string(),
-                serde_json::json!("Unable to collect disk metrics"),
+                serde_json::json!("Unable to collect disk resources"),
             );
             ComponentHealth::unhealthy(details)
         }
     }
 }
 
-/// Build memory component health with detailed metrics
+/// Build memory component health with detailed resource data
 ///
 /// Thresholds:
 /// - > 95% used: unhealthy
@@ -158,7 +158,7 @@ pub fn build_disk_component() -> ComponentHealth {
 pub fn build_memory_component() -> ComponentHealth {
     let mut details = HashMap::new();
 
-    match garden_common::metrics::system::collect_stone_resources() {
+    match garden_common::resources::system::collect_stone_resources() {
         Ok(resources) => {
             let total_gb = resources.memory.total_bytes as f64 / 1_073_741_824.0;
             let available_gb = resources.memory.available_bytes as f64 / 1_073_741_824.0;
@@ -189,7 +189,7 @@ pub fn build_memory_component() -> ComponentHealth {
         Err(_) => {
             details.insert(
                 "error".to_string(),
-                serde_json::json!("Unable to collect memory metrics"),
+                serde_json::json!("Unable to collect memory resources"),
             );
             ComponentHealth::unhealthy(details)
         }

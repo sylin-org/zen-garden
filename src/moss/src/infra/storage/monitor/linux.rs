@@ -4,7 +4,7 @@
 //! Fallback: polling task (10s) diffs scan_volumes() against known set.
 //! Both paths measure disk_usage() BEFORE sending Connected events.
 
-use super::{PhysicalStorageEvent, StorageMetrics, VolumeMonitor};
+use super::{PhysicalStorageEvent, StorageResources, VolumeMonitor};
 use crate::infra::storage::platform;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -102,10 +102,10 @@ fn measure_usage(mount_path: &str, capacity_bytes: u64) -> (u64, u64) {
     }
 }
 
-/// Build a StorageMetrics from disk_usage, falling back to zeros.
-fn metrics_for_device(mount_path: &str, capacity_bytes: u64) -> StorageMetrics {
+/// Build a StorageResources from disk_usage, falling back to zeros.
+fn resources_for_device(mount_path: &str, capacity_bytes: u64) -> StorageResources {
     let (used_bytes, available_bytes) = measure_usage(mount_path, capacity_bytes);
-    StorageMetrics {
+    StorageResources {
         capacity_bytes,
         used_bytes,
         available_bytes,
@@ -168,13 +168,13 @@ fn run_udev_watcher(
 
                     // Try to build a snapshot and measure usage before emitting
                     if let Some(snap) = build_snapshot_for_device(&devnode) {
-                        let metrics = metrics_for_device(&snap.mount_path, snap.capacity_bytes);
+                        let disk_snapshot = resources_for_device(&snap.mount_path, snap.capacity_bytes);
                         let event = PhysicalStorageEvent::Connected {
                             device_path: snap.path.clone(),
                             mount_path: PathBuf::from(&snap.mount_path),
                             label: snap.label,
-                            capacity_bytes: metrics.capacity_bytes,
-                            used_bytes: metrics.used_bytes,
+                            capacity_bytes: disk_snapshot.capacity_bytes,
+                            used_bytes: disk_snapshot.used_bytes,
                             removable: snap.removable,
                         };
                         let _ = tx.blocking_send(event);

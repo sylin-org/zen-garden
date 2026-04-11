@@ -224,7 +224,7 @@ pub struct UsbDevice {
 
 /// A network interface with hardware details.
 ///
-/// Distinct from `InterfaceMetrics` (live throughput counters).
+/// Distinct from `InterfaceResources` (live throughput counters).
 /// This captures static hardware properties: type, speed, MAC, firmware.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkInterface {

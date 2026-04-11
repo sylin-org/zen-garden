@@ -34,7 +34,7 @@ pub mod health;
 pub mod image_types;
 pub mod infrastructure;
 pub mod maintenance;
-pub mod metrics_collection;
+pub mod resources_collection;
 pub mod modes;
 pub mod naming;
 pub mod network;

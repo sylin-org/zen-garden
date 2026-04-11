@@ -52,13 +52,13 @@ fn build_manifest(base_url: &str) -> ApiManifest {
     );
 
     endpoints.push(
-        EndpointSpec::new("GET", "/metrics", "health")
-            .description("Prometheus metrics")
-            .response_type("text/plain")
+        EndpointSpec::new("GET", "/resources", "health")
+            .description("Stone hardware resource snapshot — CPU, memory, disk, network, uptime")
+            .response_type("ResourcesSnapshot")
             .example(
-                "Get metrics",
-                "curl http://stone-01:7185/metrics",
-                "# HELP moss_uptime_seconds Moss uptime\nmoss_uptime_seconds 3600",
+                "Get resources",
+                "curl http://stone-01:7185/api/v1/stone/resources",
+                r#"{"data": {"cpu": {"cores": 8, "usage_percent": 42.0}, "memory": {"total_bytes": 16000000000}}}"#,
             ),
     );
 
@@ -295,7 +295,7 @@ fn build_manifest(base_url: &str) -> ApiManifest {
             garden_common::api_manifest::ApiCategory {
                 name: "health".into(),
                 description: "Health checks and monitoring".into(),
-                endpoints: vec!["/health".into(), "/capabilities".into(), "/metrics".into()],
+                endpoints: vec!["/health".into(), "/capabilities".into(), "/resources".into()],
             },
             garden_common::api_manifest::ApiCategory {
                 name: "offerings".into(),

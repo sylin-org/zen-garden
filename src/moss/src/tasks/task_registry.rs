@@ -43,7 +43,7 @@ pub fn build_task_registry(config: TaskConfig, channels: TaskChannels) -> Vec<Bo
         Box::new(TopologyProbeTask),
         Box::new(RegistryLoaderTask),
         Box::new(CatalogBuilderTask),
-        Box::new(MetricsCollectorTask),
+        Box::new(ResourcesCollectorTask),
         Box::new(CompanionScanTask),
         Box::new(PresenceLoadMonitorTask),
         Box::new(PresenceHealthMonitorTask),

@@ -404,7 +404,7 @@ pub enum StoneEvent {
         timestamp: DateTime<Utc>,
     },
 
-    /// Stone load/metrics updated
+    /// Stone load/resources updated
     LoadUpdated {
         stone_name: String,
         cpu_percent: f64,

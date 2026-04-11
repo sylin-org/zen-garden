@@ -185,8 +185,8 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
 
     tracing::info!("Starting hardware detection");
 
-    // Fast detection: CPU and memory using metrics module
-    let (cpu_model, cpu_features, architecture) = garden_common::metrics::system::get_cpu_info()
+    // Fast detection: CPU and memory using resources module
+    let (cpu_model, cpu_features, architecture) = garden_common::resources::system::get_cpu_info()
         .unwrap_or_else(|_| {
             (
                 "Unknown".to_string(),
@@ -195,7 +195,7 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
             )
         });
 
-    let resources = garden_common::metrics::system::collect_stone_resources().ok();
+    let resources = garden_common::resources::system::collect_stone_resources().ok();
     let cpu_cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
     let total_memory_mb = resources
         .as_ref()
@@ -225,12 +225,12 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
 
     // Slow detection: GPUs
     tracing::debug!("Detecting GPUs (may take a few seconds)...");
-    let gpus = garden_common::metrics::system::detect_gpus();
+    let gpus = garden_common::resources::system::detect_gpus();
 
     // Additional system info
-    let os_version = garden_common::metrics::system::detect_os_version();
-    let kernel_version = garden_common::metrics::system::detect_kernel_version();
-    let swap_mb = garden_common::metrics::system::detect_swap();
+    let os_version = garden_common::resources::system::detect_os_version();
+    let kernel_version = garden_common::resources::system::detect_kernel_version();
+    let swap_mb = garden_common::resources::system::detect_swap();
 
     // DMI/SMBIOS system identity (for hw manifest matching)
     let system_manufacturer = detect_system_manufacturer();

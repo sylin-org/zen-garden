@@ -52,14 +52,14 @@ pub struct PortraitIdentity {
     pub model: Option<String>,
 }
 
-/// CPU metrics for foundation
+/// CPU resources for foundation
 #[derive(Debug, Clone, Serialize)]
 pub struct FoundationCpu {
     pub cores: usize,
     pub percent: f32,
 }
 
-/// Memory metrics for foundation
+/// Memory resources for foundation
 #[derive(Debug, Clone, Serialize)]
 pub struct FoundationMemory {
     pub total_gb: f32,
@@ -67,7 +67,7 @@ pub struct FoundationMemory {
     pub percent: f32,
 }
 
-/// Disk metrics for foundation
+/// Disk resources for foundation
 #[derive(Debug, Clone, Serialize)]
 pub struct FoundationDisk {
     pub total_gb: u64,
@@ -75,7 +75,7 @@ pub struct FoundationDisk {
     pub percent: f32,
 }
 
-/// Network metrics for foundation
+/// Network resources for foundation
 #[derive(Debug, Clone, Serialize)]
 pub struct FoundationNetwork {
     /// Total bytes received across all interfaces
@@ -88,7 +88,7 @@ pub struct FoundationNetwork {
     pub tx_friendly: String,
 }
 
-/// Foundation metrics section
+/// Foundation resources section
 #[derive(Debug, Clone, Serialize)]
 pub struct PortraitFoundation {
     pub cpu: FoundationCpu,
@@ -363,10 +363,10 @@ pub async fn get_portrait_page() -> impl IntoResponse {
 /// GET /api/v1/stone/portrait
 ///
 /// Returns JSON data for the portrait SPA.
-/// Aggregates identity, foundation metrics, offerings, adapters, and topology.
+/// Aggregates identity, foundation resources, offerings, adapters, and topology.
 ///
 /// PERF: This endpoint MUST only read from cached AppState data - NO I/O operations.
-/// All metrics are collected by background tasks and cached in AppState.
+/// All resources are collected by background tasks and cached in AppState.
 /// Target latency: <10ms. Any I/O here will cause latency regression.
 pub async fn get_portrait_data(
     State(state): State<AppState>,
@@ -386,7 +386,7 @@ pub async fn get_portrait_data(
 
     // Get uptime from resources
     let uptime = {
-        let resources = state.current.metrics.system.read().await;
+        let resources = state.current.resources.system.read().await;
         resources
             .as_ref()
             .map(|r| r.uptime_friendly.clone())
@@ -435,13 +435,13 @@ pub async fn get_portrait_data(
     };
 
     // === Foundation (system resources) ===
-    // NOTE: All metrics read from cache - no I/O allowed here
+    // NOTE: All resources read from cache - no I/O allowed here
     let foundation = {
-        let resources = state.current.metrics.system.read().await;
+        let resources = state.current.resources.system.read().await;
 
-        // Read network metrics from cache (populated by health_monitor task)
+        // Read network resources from cache (populated by health_monitor task)
         let network = {
-            let cached = state.current.metrics.network.read().await;
+            let cached = state.current.resources.network.read().await;
             cached.as_ref().map(|m| FoundationNetwork {
                 rx_bytes: m.total_rx_bytes,
                 tx_bytes: m.total_tx_bytes,
@@ -486,7 +486,7 @@ pub async fn get_portrait_data(
                 network,
             }
         } else {
-            // No metrics yet - return placeholder
+            // No resources yet - return placeholder
             PortraitFoundation {
                 cpu: FoundationCpu {
                     cores: 0,

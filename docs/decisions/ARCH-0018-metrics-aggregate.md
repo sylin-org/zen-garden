@@ -4,6 +4,7 @@ doc_type: decision
 status: accepted
 last_verified: 2026-04-11
 canonical: true
+completed: 2026-04-11
 ---
 
 # ARCH-0018: Metrics Aggregate — Book I of ARCH-0017

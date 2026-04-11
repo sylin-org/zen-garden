@@ -51,13 +51,37 @@ As of 2026-04-11, after [ARCH-0016](../decisions/ARCH-0016-offerings-aggregate-d
 
 #### Offerings
 
-- **Status:** Full (ARCH-0016, with two known gaps closed later in the epic: typed errors, `Arc<Metrics>` injection)
+- **Status:** Full. ARCH-0016 introduced the aggregate; Book I Chapter 4 retrofitted it to inject `Arc<Metrics>` and record mutation latency + per-kind event counts through the `finalize` pipeline.
 - **Owns:** active offerings pool, adopted-candidates pool
-- **Emits:** `OfferingsChanged { kind, affected, timestamp }` with 8 `ChangeKind` variants (Upserted, Removed, Updated, Promoted, Demoted, Replaced, Coalesced, BatchUpdated)
+- **Emits:** `OfferingsChanged { kind, affected, timestamp }` with 8 `ChangeKind` variants (Upserted, Removed, Updated, Promoted, Demoted, Replaced, Coalesced, BatchUpdated). Each variant has a stable `name()` for Metrics per-kind counter lookup and a `ChangeKind::ALL_NAMES` constant for registration.
 - **Subscribes:** none (root of the service pipeline)
 - **Ports:** `OfferingStore` → `FileOfferingStore`
+- **Cross-cutting:** `Arc<Metrics>` injected at construction (ARCH-0018)
 - **Source:** `src/moss/src/domain/offerings/`
-- **Book:** ARCH-0016 (pre-epic); audited in Book I (typed errors + metrics) and Book XVIII (strangler removal)
+- **Remaining gap:** still one — typed errors. Mutation methods return `bool` / `()` rather than `Result<_, OfferingsError>`. A later cleanup book will audit this. Tracked implicitly in the pattern spec checklist.
+- **Book:** ARCH-0016 (pre-epic); Book I retrofitted for Metrics injection; Book XVIII closes the strangler vine; typed errors are outstanding debt.
+
+#### Metrics
+
+- **Status:** Full. ARCH-0018 Book I Chapters 3–5 introduced the aggregate, wired it into Offerings + task supervisor + projection task, and exposed the HTTP read surface.
+- **Owns:** per-domain counters + per-kind events, per-task observability (timing, event counts, subscriber lag), global process-wide counters, latency histogram with 9 fixed buckets (1ms–5s + `+Inf`)
+- **Emits:** `MetricsChanged` enum with 5 transition variants (DomainRegistered, TaskRegistered, TaskReady, TaskStateChanged, SubscriberLagDetected). Counter increments deliberately do NOT fire events — only interesting transitions. Consumers poll `/api/v1/stone/metrics` for counter values.
+- **Subscribes:** none (Metrics is a pure observer; other contexts push data into it via the mutation API)
+- **Ports:** none (in-memory only; counters reset on process restart per ARCH-0018 documented deviation — standard Prometheus-style behavior)
+- **Source:** `src/moss/src/domain/metrics/`
+- **Three documented deviations from the pattern spec** (justified in ARCH-0018): no `Store` port, infallible mutations (return `()` not `Result`), no `affected` field on events
+- **HTTP surface:** `/api/v1/stone/metrics` (snapshot), `/metrics/global`, `/metrics/domains`, `/metrics/domains/{name}`, `/metrics/tasks`, `/metrics/tasks/{name}`, `/metrics/stream` (SSE)
+- **Book:** ARCH-0018 (Book I of ARCH-0017) — **COMPLETE**
+
+#### Resources (incidentally extracted by Book I Chapter 2)
+
+- **Status:** Full-but-thin. Book I Chapter 2 renamed the existing hardware-resource surface from "metrics" to "resources" across `garden-common`, `garden-moss`, and the typed client. Not a new aggregate — Resources is a simple facade over `Current::Resources` (the runtime hardware snapshot updated by the `resources-collector` background task).
+- **Owns:** CPU/memory/disk/network snapshot behind `Current::Resources` (system/network/GPU fields each under their own `Arc<RwLock<Option<...>>>`)
+- **Emits:** none (pure dynamic snapshot, polled via `/api/v1/stone/resources`)
+- **Subscribes:** OS events through `resources-collector` task
+- **Ports:** none (direct `garden_common::resources::system` calls; a future Book could abstract this but it's low priority)
+- **Source:** `src/common/src/resources/system.rs`, `src/moss/src/api/v1/resources.rs`, `src/moss/src/domain/resources_collection.rs`, `src/moss/src/tasks/resources_collector.rs`
+- **Book:** I (as a rename, not a new aggregate)
 
 ### Partial contexts (exist but do not enforce the pattern)
 
@@ -157,19 +181,6 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 These contexts do not exist as modules. Their state lives as raw fields on `AppState` or as free-function modules.
 
-#### Metrics
-
-- **Status:** Absent — no metrics aggregate; per-task and per-domain observability does not exist. The existing `/api/v1/stone/metrics` endpoint is **misnamed** — it returns hardware resources (CPU, memory, disk, network, uptime), not domain observability. Book I renames the existing surface to `Resources` and introduces a new `Metrics` aggregate for actual observability.
-- **Target source:** `src/moss/src/domain/metrics/`
-- **Book:** I (per [ARCH-0018](../decisions/ARCH-0018-metrics-aggregate.md))
-- **Note on naming collision:** Book I's first code chapter renames `MetricsSnapshot` → `ResourcesSnapshot`, `api/v1/metrics.rs` → `api/v1/resources.rs`, `domain/metrics_collection.rs` → `domain/resources/collection.rs`, `/api/v1/stone/metrics` → `/api/v1/stone/resources`. This frees "metrics" for the new aggregate.
-
-#### Resources (incidentally extracted by Book I)
-
-- **Status:** Partial — exists today scattered across `api/v1/metrics.rs`, `domain/metrics_collection.rs`, `garden_common::MetricsSnapshot`, and the `/api/v1/stone/metrics` path. Book I consolidates and renames.
-- **Target source:** `src/moss/src/domain/resources/`
-- **Book:** I (as a rename, not a new aggregate — Resources is a simple facade over `Current::Metrics` today, not a candidate for full DDD treatment in this epic)
-
 #### Topology
 
 - **Status:** Absent — responsibilities scattered across `AppState::build_self_entry`, `AppState::sync_self_services`, `AppState::sync_self_capabilities`, `AppState::update_stone_health`, `AppState::announce_resolution_change`
@@ -258,9 +269,9 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 
 | Context | Owns | Emits | Ports | Book |
 |---------|------|-------|-------|------|
-| **Offerings** | active + adopted-candidate pools | `OfferingsChanged` | `OfferingStore` | ARCH-0016 + audited in Books I, XVIII |
-| **Metrics** | per-domain counters, per-task metrics (timing, event counts, lag), global metrics | `MetricsChanged` (interesting transitions only — not counter increments) | none (in-memory only, counters reset on restart) | I |
-| **Resources** *(incidental rename in Book I)* | hardware resource snapshot facade over `Current::Metrics::system/network/gpu` | none | none | I |
+| **Offerings** ✅ | active + adopted-candidate pools | `OfferingsChanged` | `OfferingStore` | ARCH-0016 + Book I (Metrics injection); Book XVIII (strangler removal) |
+| **Metrics** ✅ | per-domain counters, per-task metrics (timing, event counts, lag), global metrics, 9-bucket latency histogram | `MetricsChanged` (interesting transitions only — not counter increments) | none (in-memory only, counters reset on restart) | I (ARCH-0018) — **COMPLETE** |
+| **Resources** ✅ *(renamed in Book I Chapter 2)* | hardware resource snapshot facade over `Current::Resources::system/network/gpu` | none | none | I (as rename only) |
 | **Tool** | garden-wide tool registry, delta stream | `ToolChanged`, `ToolBeaconEmitted` | `ToolsBeaconTransport` | II |
 | **Topology** | self-entry cache, chirp schedule | `TopologyChanged`, `ChirpEmitted` | `ChirpTransport`, `MdnsTransport` | III |
 | **Jobs** | active jobs, job history | `JobsChanged` | (in-memory only) | IV |

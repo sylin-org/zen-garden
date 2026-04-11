@@ -237,6 +237,24 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Shippability rule** - The constraint that every book merges green to `dev` at its final chapter. No long-lived epic branch. No cross-book atomicity. The `dev` branch is always buildable and testable.
 
+**Discovery mandate** - The rule (amended into [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) on 2026-04-11) that every book's Chapter 1 re-evaluates the plan against the current code before writing any implementation. If the plan is wrong, the author changes the plan (logging the amendment in ARCH-0017's revision history) before writing code. Material plan changes are surfaced to the user for visibility.
+
+### Observability-specific terms (Book I / ARCH-0018)
+
+**Resources** - Hardware state snapshots (CPU, memory, disk, network, GPU, uptime). Dynamic but derived from the physical stone. Renamed from "metrics" in Book I Chapter 2 to free the term "metrics" for its proper observability meaning. See `/api/v1/stone/resources`.
+
+**Metrics** - Software observability of the stone's behavior — per-domain event counters, mutation latency histograms, per-task timing and subscriber lag, process-global totals. Distinct from Resources (which is hardware state). See `/api/v1/stone/metrics`.
+
+**Latency histogram** - A Prometheus-compatible observation structure with fixed upper-bound buckets (1ms, 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s, +Inf), a total count, and a cumulative sum of milliseconds. Each observation falls into exactly one bucket. Used to track mutation latency for domain aggregates. Lock-free via atomic bucket counters.
+
+**Interesting transition** - A state change worth broadcasting to subscribers, as opposed to a routine counter increment. Metrics fires `MetricsChanged` events only on interesting transitions (task state changes, lag detection, domain/task registration) — counter increments are too high-volume to stream and are observed via snapshot polling instead. Push/pull duality per ARCH-0018.
+
+**Subscriber lag** - The condition where a broadcast consumer falls behind the producer and misses events. Detected via `tokio::sync::broadcast::error::RecvError::Lagged(skipped)`. Projection tasks handle lag by recording the skipped count through `Metrics::record_subscriber_lag` and doing a full reconcile from the producer's snapshot rather than breaking the stream.
+
+**Register-with-kinds** - The pattern used by Metrics to achieve lock-free per-kind counter increments without a concurrent map dependency. Domains call `register_domain(name, kinds: &'static [&'static str])` at construction; the kinds populate a plain `HashMap<&'static str, AtomicU64>` that is never mutated afterward. Lookups take a read lock on the outer state map only, then atomic-increment on the looked-up counter. No `DashMap`, no `Mutex<HashMap>`.
+
+**Observability vs lifecycle (tasks)** - Two complementary surfaces. `/api/v1/stone/tasks/{name}` returns task **lifecycle state** (Waiting/Running/Completed/Failed) from `SupervisorHandle`. `/api/v1/stone/metrics/tasks/{name}` returns **observability data** (timing, event counts, subscriber lag) from the Metrics aggregate. Consumers that want unified status join the two by task name.
+
 ---
 
 ## Quick Reference

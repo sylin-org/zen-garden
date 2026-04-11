@@ -186,7 +186,7 @@ pub async fn build_test_state() -> AppState {
                 Vec::new(),
                 Vec::new(),
                 Arc::new(domain::FileOfferingStore),
-                test_metrics,
+                test_metrics.clone(),
             )
             .await,
         ),
@@ -204,10 +204,7 @@ pub async fn build_test_state() -> AppState {
         start_time: Instant::now(),
         offerings_index: Arc::new(RwLock::new(None)),
         console: Arc::new(ConsolePrinter::new(ConsoleMode::Silent)),
-        tool: Arc::new(domain::Tool {
-            registry: domain::new_registry(),
-            delta: tool_delta_tx,
-        }),
+        tool: Arc::new(domain::Tool::new(test_metrics.clone(), tool_delta_tx).await),
         discovery: Arc::new(domain::Discovery {
             mdns: None,
             koi: koi_handle,

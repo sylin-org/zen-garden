@@ -282,13 +282,15 @@ async fn build_state(
         tracing::debug!("Initial topology file written");
     }
 
+    // Metrics aggregate (ARCH-0018) is constructed here — before Tool so
+    // `Tool::new` can register the `tool` domain with Metrics, and before
+    // Offerings so `Offerings::new` at Phase 10.75 can do the same.
+    let metrics_aggregate = Arc::new(crate::domain::Metrics::new());
+
     let (tool_delta, _) = tokio::sync::broadcast::channel::<garden_common::tools::ToolDelta>(
         garden_common::constants::channels::TOOL_DELTA,
     );
-    let tool = Arc::new(crate::domain::Tool {
-        registry: crate::domain::tool::registry::new_registry(),
-        delta: tool_delta,
-    });
+    let tool = Arc::new(crate::domain::Tool::new(metrics_aggregate.clone(), tool_delta).await);
 
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(
@@ -809,11 +811,9 @@ async fn build_state(
         }
     };
 
-    // Phase 10.75: Construct the Metrics aggregate (ARCH-0018) BEFORE the
-    // Offerings aggregate, so Offerings::new can register itself as a
-    // domain and flow mutation-latency + event recording through Metrics
-    // from its first mutation onward.
-    let metrics_aggregate = Arc::new(crate::domain::Metrics::new());
+    // Phase 10.75: The Metrics aggregate was constructed early (just before
+    // Tool) so both `Tool::new` and `Offerings::new` can register their
+    // domains with it from their first call onward. Here we just reuse it.
 
     let offerings_aggregate = Arc::new(
         crate::domain::Offerings::new(

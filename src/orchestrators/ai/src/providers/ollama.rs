@@ -162,6 +162,17 @@ impl OllamaProvider {
         let mut sizes_by_model: std::collections::HashMap<String, u64> =
             std::collections::HashMap::new();
 
+        // Max observed VRAM across all probed instances. Each
+        // `/api/ps` response reports the current in-memory
+        // footprint of the models that happen to be loaded on
+        // that instance; different instances may load the same
+        // model at different quantizations or with different
+        // context windows, so we take the MAX as the conservative
+        // upper bound on required VRAM (anything less than the
+        // max has been proven to fit somewhere).
+        let mut max_vram_by_model: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+
         // Build the instance map. Unhealthy probes (None) become
         // `InstanceHealth::Unhealthy` entries so the adapter still
         // knows about them but the selector will filter them out.
@@ -169,6 +180,16 @@ impl OllamaProvider {
             if let Some(probe) = maybe {
                 for (name, size) in probe.sizes_by_model {
                     sizes_by_model.entry(name).or_insert(size);
+                }
+                for (name, vram) in probe.loaded_vram_by_model {
+                    max_vram_by_model
+                        .entry(name)
+                        .and_modify(|current| {
+                            if vram > *current {
+                                *current = vram;
+                            }
+                        })
+                        .or_insert(vram);
                 }
                 new_matrix
                     .instances
@@ -208,6 +229,14 @@ impl OllamaProvider {
                 // required VRAM for cold models.
                 if let Some(&size) = sizes_by_model.get(&model) {
                     info.size_bytes = size;
+                }
+                // Backfill measured VRAM from /api/ps union — M4.
+                // Any non-zero size_vram proves the model loads at
+                // that footprint on at least one instance. The
+                // fit filter prefers this over the disk-size
+                // lower bound.
+                if let Some(&vram) = max_vram_by_model.get(&model) {
+                    info.observed_vram_bytes = Some(vram);
                 }
                 new_matrix.models.insert(model, info);
             }
@@ -410,15 +439,23 @@ fn selection_error_to_provider_error(err: SelectionError) -> ProviderError {
 /// models. Returns `None` if any call fails — the adapter treats that
 /// as "unreachable right now" and the instance simply doesn't appear
 /// in the matrix until the next probe.
-/// Probe result for one instance: the `InstanceEntry` itself plus a
-/// side-channel map of `model_name → disk_size_bytes` extracted
-/// from the same `/api/tags` response. The caller unions these
-/// maps across instances to populate `ModelInfo.size_bytes` during
-/// matrix enrichment — needed by the M3 fit filter as a lower
-/// bound on required VRAM.
+/// Probe result for one instance: the `InstanceEntry` itself plus
+/// two side-channel maps keyed by model name.
+///
+/// - `sizes_by_model` — disk sizes from `/api/tags`. Used as the
+///   conservative lower bound for required VRAM on cold models.
+/// - `loaded_vram_by_model` — measured VRAM footprints from
+///   `/api/ps`, populated only for models currently resident in
+///   GPU memory. Used by M4 to populate
+///   `ModelInfo.observed_vram_bytes` with the tight measured
+///   value.
+///
+/// The caller unions these maps across instances to enrich the
+/// `ModelInfo` entries during matrix rebuild.
 struct InstanceProbe {
     entry: InstanceEntry,
     sizes_by_model: std::collections::HashMap<String, u64>,
+    loaded_vram_by_model: std::collections::HashMap<String, u64>,
 }
 
 async fn probe_instance(
@@ -451,17 +488,30 @@ async fn probe_instance(
     // `/api/ps` — currently-loaded models. Optional — a brand-new
     // instance may not have anything loaded and returns an empty list.
     let ps_url = format!("{}/api/ps", base_trim);
-    let models_loaded: Vec<String> = match http
+    let (models_loaded, loaded_vram_by_model): (
+        Vec<String>,
+        std::collections::HashMap<String, u64>,
+    ) = match http
         .get(&ps_url)
         .timeout(Duration::from_secs(5))
         .send()
         .await
     {
         Ok(resp) => match resp.json::<PsResponse>().await {
-            Ok(ps) => ps.models.into_iter().map(|m| m.name).collect(),
-            Err(_) => Vec::new(),
+            Ok(ps) => {
+                let mut names = Vec::with_capacity(ps.models.len());
+                let mut vram = std::collections::HashMap::new();
+                for m in ps.models {
+                    if m.size_vram > 0 {
+                        vram.insert(m.name.clone(), m.size_vram);
+                    }
+                    names.push(m.name);
+                }
+                (names, vram)
+            }
+            Err(_) => (Vec::new(), std::collections::HashMap::new()),
         },
-        Err(_) => Vec::new(),
+        Err(_) => (Vec::new(), std::collections::HashMap::new()),
     };
 
     Some(InstanceProbe {
@@ -474,6 +524,7 @@ async fn probe_instance(
             queue_depth: 0,
         },
         sizes_by_model,
+        loaded_vram_by_model,
     })
 }
 
@@ -1524,6 +1575,14 @@ struct PsResponse {
 #[derive(Debug, Deserialize)]
 struct PsModel {
     name: String,
+    /// Measured VRAM footprint in bytes — Ollama reports this as
+    /// `size_vram` per currently-loaded model. Only meaningful
+    /// when the model is actually resident in GPU memory. M4
+    /// feeds this into `ModelInfo.observed_vram_bytes` so the
+    /// fit filter can use the tight measured value instead of
+    /// falling back to the disk `size_bytes` lower bound.
+    #[serde(default)]
+    size_vram: u64,
 }
 
 #[derive(Debug, Deserialize)]

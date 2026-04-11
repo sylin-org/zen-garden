@@ -28,10 +28,31 @@ use super::store::TopologyStore;
 use super::transport::ChirpTransport;
 use super::{TopologyCache, TopologyDirtyFlag};
 use crate::domain::Metrics;
-use garden_common::TopologyEntry;
+use garden_common::{
+    HardwareCapabilities, PeerAddress, StoneStatus, TopologyEntry, TopologyServiceEntry,
+};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
+
+/// Explicit inputs for `Topology::build_self_entry`.
+///
+/// The aggregate does not hold a back-reference to `AppState`. Callers
+/// assemble these values from their context before invoking the
+/// self-entry commands.
+#[derive(Debug, Clone)]
+pub struct SelfEntryInputs {
+    pub stone_id: String,
+    pub stone_name: String,
+    pub address: PeerAddress,
+    pub health: String,
+    pub mac: Option<String>,
+    pub capabilities: Option<HardwareCapabilities>,
+    pub tags: Vec<String>,
+    pub services: Vec<TopologyServiceEntry>,
+    pub moss_version: String,
+    pub network_ready: bool,
+}
 
 /// Default capacity for the internal `TopologyChanged` broadcast channel.
 const CHANGES_CHANNEL_CAPACITY: usize = 512;
@@ -159,6 +180,84 @@ impl Topology {
     /// Whether the cache has unsaved mutations.
     pub fn is_dirty(&self) -> bool {
         self.dirty.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Assemble a `TopologyEntry` from the given `SelfEntryInputs`.
+    ///
+    /// Pure function — no state mutation. Callers typically chain
+    /// this with `chirp(&entry)` to broadcast, or with `store.save`
+    /// for persistence.
+    pub fn build_self_entry(&self, inputs: SelfEntryInputs) -> TopologyEntry {
+        let now = chrono::Utc::now();
+        TopologyEntry {
+            stone_id: inputs.stone_id,
+            stone_name: inputs.stone_name,
+            address: inputs.address,
+            moss_version: inputs.moss_version,
+            mac: inputs.mac,
+            health: inputs.health,
+            capabilities: inputs.capabilities,
+            services: inputs.services,
+            status: StoneStatus::Online,
+            discovered_at: now,
+            last_seen: now,
+            tags: inputs.tags,
+            gateways: vec![],
+        }
+    }
+
+    /// Service-change self-entry refresh: build entry and optionally
+    /// chirp (skipping if network is not ready).
+    ///
+    /// Called after any offerings mutation. The `auto_chirp` flag
+    /// allows callers to suppress the chirp when they'll be following
+    /// up with a batch of changes.
+    pub async fn sync_services(
+        &self,
+        inputs: SelfEntryInputs,
+        auto_chirp: bool,
+    ) -> anyhow::Result<()> {
+        if !auto_chirp || !inputs.network_ready {
+            return Ok(());
+        }
+        let entry = self.build_self_entry(inputs);
+        self.chirp(&entry).await
+    }
+
+    /// Capability-change self-entry refresh.
+    pub async fn sync_capabilities(
+        &self,
+        inputs: SelfEntryInputs,
+        auto_chirp: bool,
+    ) -> anyhow::Result<()> {
+        if !auto_chirp || !inputs.network_ready {
+            return Ok(());
+        }
+        let entry = self.build_self_entry(inputs);
+        self.chirp(&entry).await
+    }
+
+    /// Health-transition self-entry refresh.
+    pub async fn update_stone_health(
+        &self,
+        inputs: SelfEntryInputs,
+        auto_chirp: bool,
+    ) -> anyhow::Result<()> {
+        if !auto_chirp || !inputs.network_ready {
+            return Ok(());
+        }
+        let entry = self.build_self_entry(inputs);
+        self.chirp(&entry).await
+    }
+
+    /// Resolution-change self-entry refresh. The caller is responsible
+    /// for updating `current.address` / `current.mac` and for the
+    /// mDNS re-registration (Book X's Discovery aggregate will absorb
+    /// mDNS ownership). This method only takes the updated values
+    /// via `SelfEntryInputs` and chirps.
+    pub async fn announce_resolution_change(&self, inputs: SelfEntryInputs) -> anyhow::Result<()> {
+        let entry = self.build_self_entry(inputs);
+        self.chirp(&entry).await
     }
 
     // ── Commands ────────────────────────────────────────────────────────

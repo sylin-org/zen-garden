@@ -30,7 +30,7 @@ pub mod event;
 pub mod store;
 pub mod transport;
 
-pub use aggregate::Topology;
+pub use aggregate::{SelfEntryInputs, Topology};
 pub use error::TopologyError;
 pub use event::{ChangeKind, TopologyChanged};
 pub use store::{FileTopologyStore, TopologyStore};

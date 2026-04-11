@@ -369,6 +369,11 @@ pub enum ClaimError {
     UnknownStone(StoneName),
     #[error("unknown device {device} on stone={stone}")]
     UnknownDevice { stone: StoneName, device: u32 },
+    #[error("stone={stone} has no GPU device matching the workload (required_vram_mb={required_vram_mb:?})")]
+    NoFittingDevice {
+        stone: StoneName,
+        required_vram_mb: Option<u64>,
+    },
 }
 
 // ── Pressure snapshot ─────────────────────────────────────────
@@ -618,6 +623,87 @@ impl Resources {
         });
         drop(state);
         self.events.publish(&topic, &payload).await;
+    }
+
+    /// Place a claim on the best-fitting GPU of a named stone
+    /// without requiring the caller to pick a specific device
+    /// index. Ideal for adapters like Ollama whose runtime picks
+    /// its own GPU and only needs the orchestrator to guarantee
+    /// the capacity is there.
+    ///
+    /// Picks the device with the most available VRAM that
+    /// satisfies the workload (matches `gpu_can_host`), then
+    /// delegates to [`Resources::claim`] with an explicit device
+    /// index. When `workload.required_stack` is `None`, the
+    /// first declared stack on the chosen device is used as the
+    /// claim's stack label — the claim's bookkeeping still needs
+    /// a concrete stack value but it's honored by the chosen
+    /// device by construction.
+    ///
+    /// Returns [`ClaimError::NoFittingDevice`] if no GPU on the
+    /// stone can host the workload.
+    pub async fn claim_best_gpu_on(
+        self: &Arc<Self>,
+        holder: ClaimHolder,
+        stone: &StoneName,
+        workload: &Workload,
+        kind: ClaimKind,
+    ) -> Result<ClaimGuard, ClaimError> {
+        // Pick the best device + concrete stack under a short
+        // read lock. There's a narrow race window between this
+        // selection and the subsequent `claim` call; if another
+        // claim lands in that window, `claim` returns the
+        // appropriate error and the caller decides whether to
+        // retry. Keeping the selection lock-brief is preferred
+        // over refactoring `claim` to accept an already-locked
+        // state.
+        let (device_idx, stack) = {
+            let state = self.state.lock().await;
+            let st = state
+                .stones
+                .get(stone)
+                .ok_or_else(|| ClaimError::UnknownStone(stone.clone()))?;
+
+            // Best fit: highest available_mb among devices that
+            // pass gpu_can_host for this workload.
+            let best = st
+                .gpus
+                .iter()
+                .filter(|gpu| gpu_can_host(gpu, &st.claims, workload))
+                .max_by_key(|gpu| gpu.available_mb().unwrap_or(0));
+
+            let Some(gpu) = best else {
+                return Err(ClaimError::NoFittingDevice {
+                    stone: stone.clone(),
+                    required_vram_mb: workload.required_vram_mb,
+                });
+            };
+
+            let stack = match workload.required_stack {
+                Some(s) => s,
+                None => gpu.compute_stack.first().copied().ok_or_else(|| {
+                    ClaimError::UnsupportedComputeStack {
+                        stone: stone.clone(),
+                        device: gpu.index,
+                        required: ComputeStack::Cpu,
+                        available: gpu.compute_stack.clone(),
+                    }
+                })?,
+            };
+            (gpu.index, stack)
+        };
+
+        self.claim(
+            holder,
+            ResourceRequest::Gpu {
+                stone: stone.clone(),
+                device: device_idx,
+                vram_mb: workload.required_vram_mb,
+                required_stack: stack,
+            },
+            kind,
+        )
+        .await
     }
 
     /// Place a claim. Returns a [`ClaimGuard`] that releases the
@@ -1763,5 +1849,112 @@ mod tests {
         // Frontier (above 96 GB) rounds up to the next 16 GB step.
         assert_eq!(tier_bucket_for(128 * 1024), 128);
         assert_eq!(tier_bucket_for(140 * 1024), 144);
+    }
+
+    // ── M5: claim_best_gpu_on ─────────────────────────────────
+
+    #[tokio::test]
+    async fn claim_best_gpu_on_picks_fitting_device() {
+        let (r, s) = test_setup().await;
+        let guard = r
+            .claim_best_gpu_on(
+                ClaimHolder::new("ollama", "http://localhost:11434"),
+                &s,
+                &Workload::any_gpu(Some(8192)),
+                ClaimKind::Hard,
+            )
+            .await
+            .unwrap();
+        let snap = r.snapshot(&s).await.unwrap();
+        assert_eq!(snap.gpus[0].committed_mb, 8192);
+        // Use release_now().await — Drop spawns an async release
+        // via tokio::spawn that won't complete synchronously.
+        guard.release_now().await;
+        let snap = r.snapshot(&s).await.unwrap();
+        assert_eq!(snap.gpus[0].committed_mb, 0);
+    }
+
+    #[tokio::test]
+    async fn claim_best_gpu_on_any_gpu_workload_uses_first_stack() {
+        let bus = EventBus::new();
+        let r = Resources::new(bus);
+        let s = StoneName::new("stone-multi-stack");
+        // Two GPUs: index 0 has Vulkan only, index 1 has
+        // CUDA + Vulkan. An any_gpu workload should succeed on
+        // either; the helper picks the one with more free VRAM.
+        r.update_topology(
+            s.clone(),
+            StoneTopology {
+                gpus: vec![
+                    TopologyGpu {
+                        index: 0,
+                        name: "small".into(),
+                        vendor: GpuVendor::Amd,
+                        compute_stack: vec![ComputeStack::Vulkan],
+                        total_vram_mb: Some(8192),
+                    },
+                    TopologyGpu {
+                        index: 1,
+                        name: "big".into(),
+                        vendor: GpuVendor::Nvidia,
+                        compute_stack: vec![ComputeStack::Cuda, ComputeStack::Vulkan],
+                        total_vram_mb: Some(24576),
+                    },
+                ],
+                memory_total_mb: Some(32768),
+            },
+        )
+        .await;
+
+        let _g = r
+            .claim_best_gpu_on(
+                ClaimHolder::new("ollama", "endpoint"),
+                &s,
+                &Workload::any_gpu(Some(16000)),
+                ClaimKind::Hard,
+            )
+            .await
+            .unwrap();
+        let snap = r.snapshot(&s).await.unwrap();
+        // The bigger GPU (index 1, 24576 MB) had more headroom
+        // so it should have been picked.
+        assert_eq!(snap.gpus[1].committed_mb, 16000);
+        assert_eq!(snap.gpus[0].committed_mb, 0);
+    }
+
+    #[tokio::test]
+    async fn claim_best_gpu_on_no_fit_returns_error() {
+        let (r, s) = test_setup().await;
+        let err = r
+            .claim_best_gpu_on(
+                ClaimHolder::new("ollama", "http://localhost:11434"),
+                &s,
+                &Workload::any_gpu(Some(100_000)),
+                ClaimKind::Hard,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            ClaimError::NoFittingDevice {
+                required_vram_mb, ..
+            } => assert_eq!(required_vram_mb, Some(100_000)),
+            other => panic!("expected NoFittingDevice, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn claim_best_gpu_on_unknown_stone_is_unknown_stone() {
+        let bus = EventBus::new();
+        let r = Resources::new(bus);
+        let err = r
+            .claim_best_gpu_on(
+                ClaimHolder::new("ollama", "http://localhost:11434"),
+                &StoneName::new("stone-nonexistent"),
+                &Workload::any_gpu(Some(4096)),
+                ClaimKind::Hard,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ClaimError::UnknownStone(_)));
     }
 }

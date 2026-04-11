@@ -46,6 +46,9 @@ use crate::domain::ids::ProviderName;
 use crate::domain::keys;
 use crate::domain::output::Output;
 use crate::domain::primitive::Primitive;
+use crate::domain::resources::{
+    ClaimError, ClaimGuard, ClaimHolder, ClaimKind, StoneName, Workload,
+};
 use crate::domain::provider::{
     Provider, ProviderError, ProviderMeta, ProviderOutcome, ProviderResult, WorkspaceDescription,
 };
@@ -602,6 +605,31 @@ fn parse_parameter_size(s: &str) -> Option<u64> {
     Some((n * mul as f64) as u64)
 }
 
+/// Map a Resources claim error to a provider error. Used by the
+/// dispatch path (M5) when the pre-dispatch GPU-budget claim
+/// fails — the adapter has to surface a meaningful 5xx to the
+/// caller rather than panicking.
+///
+/// `NoFittingDevice` and `InsufficientVram` map to `Overloaded`
+/// because the stone's hardware *could* serve this model but
+/// currently lacks headroom. `UnsupportedComputeStack` maps to
+/// `Unsupported` — a hard contract mismatch. Everything else
+/// maps to `Internal` because it indicates a bug in the
+/// Resources domain state or the adapter's claim-building logic.
+fn claim_error_to_provider_error(err: ClaimError) -> ProviderError {
+    match err {
+        ClaimError::NoFittingDevice { .. } | ClaimError::InsufficientVram { .. } => {
+            ProviderError::Overloaded(err.to_string())
+        }
+        ClaimError::InsufficientMemory { .. } => ProviderError::Overloaded(err.to_string()),
+        ClaimError::DeviceExclusivelyHeld { .. } => ProviderError::Overloaded(err.to_string()),
+        ClaimError::UnsupportedComputeStack { .. } => ProviderError::Unsupported(err.to_string()),
+        ClaimError::SizeMismatchMode { .. }
+        | ClaimError::UnknownStone(_)
+        | ClaimError::UnknownDevice { .. } => ProviderError::Internal(err.to_string()),
+    }
+}
+
 // ── Discovery subscriber ─────────────────────────────────────
 
 fn spawn_subscriber(
@@ -667,6 +695,37 @@ impl Provider for OllamaProvider {
             "ollama resolved selection",
         );
 
+        // ── M5: claim GPU budget from Resources ─────────────────
+        //
+        // Place a hard sized claim on the best-fitting GPU of the
+        // target stone for the resolved model's VRAM requirement.
+        // The ClaimGuard lives until the dispatch (sync) or the
+        // stream (streaming) completes, at which point Resources
+        // releases the budget.
+        //
+        // Required VRAM is looked up in the matrix: the measured
+        // value from /api/ps if we've seen the model loaded
+        // anywhere (M4), else the disk size as a lower bound.
+        let required_vram_mb: u64 = {
+            let matrix = self.matrix.read().await;
+            matrix
+                .models
+                .get(&model)
+                .map(|m| m.required_vram_bytes().div_ceil(1024 * 1024))
+                .unwrap_or(0)
+        };
+        let workload = Workload::any_gpu(if required_vram_mb == 0 {
+            None
+        } else {
+            Some(required_vram_mb)
+        });
+        let holder = ClaimHolder::new("ollama", &endpoint);
+        let claim_guard: ClaimGuard = self
+            .resources
+            .claim_best_gpu_on(holder, &StoneName::new(&stone), &workload, ClaimKind::Hard)
+            .await
+            .map_err(claim_error_to_provider_error)?;
+
         // Extract input preview for summary before move.
         let input_preview = request
             .payload
@@ -678,9 +737,17 @@ impl Provider for OllamaProvider {
 
         let primitive = request.action.primitive;
         let outcome = match primitive {
-            Primitive::TextChat => self.do_chat(request, &model, &endpoint).await?,
-            Primitive::TextEmbed => self.do_embed(request, &model, &endpoint).await?,
-            Primitive::ImageAnalyze => self.do_analyze(request, &model, &endpoint).await?,
+            Primitive::TextChat => {
+                self.do_chat(request, &model, &endpoint, claim_guard).await?
+            }
+            Primitive::TextEmbed => {
+                let _g = claim_guard;
+                self.do_embed(request, &model, &endpoint).await?
+            }
+            Primitive::ImageAnalyze => {
+                let _g = claim_guard;
+                self.do_analyze(request, &model, &endpoint).await?
+            }
             other => {
                 return Err(ProviderError::Unsupported(format!(
                     "ollama does not serve {}",
@@ -848,6 +915,7 @@ impl OllamaProvider {
         request: OrchestratorRequest,
         model: &str,
         base: &str,
+        claim_guard: ClaimGuard,
     ) -> Result<ProviderOutcome, ProviderError> {
         let stream_requested = request
             .payload
@@ -882,8 +950,16 @@ impl OllamaProvider {
         let endpoint = format!("{}/api/chat", base.trim_end_matches('/'));
 
         if stream_requested {
-            return self.do_chat_streaming(&endpoint, body).await;
+            // Move the claim guard into the streaming path; it
+            // will live inside the async_stream generator until
+            // the stream terminates, at which point drop releases
+            // the Resources budget.
+            return self.do_chat_streaming(&endpoint, body, claim_guard).await;
         }
+
+        // Sync path: hold the guard on the stack until this
+        // function returns.
+        let _claim = claim_guard;
 
         let resp = self
             .http
@@ -926,6 +1002,7 @@ impl OllamaProvider {
         &self,
         endpoint: &str,
         body: Value,
+        claim_guard: ClaimGuard,
     ) -> Result<ProviderOutcome, ProviderError> {
         use futures_util::StreamExt;
 
@@ -941,6 +1018,12 @@ impl OllamaProvider {
         let byte_stream = resp.bytes_stream();
 
         let deltas = async_stream::stream! {
+            // Keep the Resources claim alive for the stream's
+            // lifetime. Dropping the generator (caller stops
+            // polling, error, completion) drops the guard, which
+            // releases the GPU budget back to the Resources pool.
+            let _claim = claim_guard;
+
             let mut buffer: Vec<u8> = Vec::new();
             let mut byte_stream = byte_stream;
             while let Some(chunk) = byte_stream.next().await {

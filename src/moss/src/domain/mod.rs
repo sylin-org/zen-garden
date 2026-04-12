@@ -79,6 +79,7 @@ pub use connection::{
 };
 pub use connectivity::{ConnectivityOrchestrator, ConnectivityOutcome, ConnectivityStatus};
 pub use health::{
+    DockerHealthProbe, Health, HealthChangeKind, HealthChanged, HealthProbe, HealthProbeResult,
     build_disk_component, build_memory_component, check_disk_health, check_memory_health,
     determine_overall_status,
 };

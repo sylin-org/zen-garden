@@ -24,6 +24,19 @@ pub trait OfferingStore: Send + Sync {
     fn save<'a>(&'a self, all: &'a [Offering]) -> BoxFut<'a, Result<()>>;
 }
 
+/// No-op `OfferingStore` for unit tests — load returns empty, save is a no-op.
+pub struct NoopOfferingStore;
+
+impl OfferingStore for NoopOfferingStore {
+    fn load(&self) -> BoxFut<'_, Result<Vec<Offering>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn save<'a>(&'a self, _all: &'a [Offering]) -> BoxFut<'a, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 /// File-backed `OfferingStore` that delegates to the existing
 /// `crate::infra::{load_offerings, save_offerings}` helpers.
 pub struct FileOfferingStore;

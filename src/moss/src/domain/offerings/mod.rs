@@ -18,4 +18,4 @@ pub mod store;
 pub use aggregate::Offerings;
 pub use event::{ChangeKind, OfferingsChanged};
 pub use guard::{ActiveGuard, CandidatesGuard};
-pub use store::{FileOfferingStore, OfferingStore};
+pub use store::{FileOfferingStore, NoopOfferingStore, OfferingStore};

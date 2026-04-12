@@ -177,6 +177,27 @@ pub fn configure_public(state: AppState) -> Router {
             "/api/v1/stone/storage/health",
             get(api::v1::storage::storage_health_v1),
         )
+        // ── Banks (ARCH-0026) — read-only ───────────────────────────────
+        .route(
+            "/api/v1/stone/banks",
+            get(api::v1::banks::list_banks),
+        )
+        .route(
+            "/api/v1/stone/banks/{moniker}",
+            get(api::v1::banks::get_bank),
+        )
+        .route(
+            "/api/v1/garden/banks",
+            get(api::v1::banks::list_garden_banks),
+        )
+        .route(
+            "/api/v1/garden/banks/{moniker}",
+            get(api::v1::banks::get_garden_bank),
+        )
+        .route(
+            "/api/v1/garden/banks/{moniker}/volumes",
+            get(api::v1::banks::list_garden_bank_volumes),
+        )
         .route(
             "/api/v1/stone/presence/stream",
             get(api::v1::presence::stream_stone_presence),
@@ -722,6 +743,37 @@ pub fn configure(state: AppState) -> Router {
         .route("/dav/{name}/{*path}", any(api::v1::webdav::handle_webdav))
         // Root collection (PROPFIND on /dav/{name}/ without trailing content)
         .route("/dav/{name}", any(api::v1::webdav::handle_webdav))
+        // ── Banks (ARCH-0026) ───────────────────────────────────────────
+        // Garden-wide bank endpoints
+        .route(
+            "/api/v1/garden/banks",
+            get(api::v1::banks::list_garden_banks),
+        )
+        .route(
+            "/api/v1/garden/banks/{moniker}",
+            get(api::v1::banks::get_garden_bank),
+        )
+        .route(
+            "/api/v1/garden/banks/{moniker}/volumes",
+            get(api::v1::banks::list_garden_bank_volumes),
+        )
+        // Stone-local bank endpoints
+        .route(
+            "/api/v1/stone/banks",
+            get(api::v1::banks::list_banks),
+        )
+        .route(
+            "/api/v1/stone/banks/{moniker}",
+            get(api::v1::banks::get_bank),
+        )
+        .route(
+            "/api/v1/stone/banks/{moniker}/pin",
+            post(api::v1::banks::pin_bank),
+        )
+        .route(
+            "/api/v1/stone/banks/{moniker}/unpin",
+            post(api::v1::banks::unpin_bank),
+        )
         // Stone storage (seed banks on THIS stone) — STORAGE-0009
         .route(
             "/api/v1/stone/storage",
@@ -770,11 +822,11 @@ pub fn configure(state: AppState) -> Router {
         )
         .route(
             "/api/v1/stone/storage/banks/{name}/pin",
-            post(api::v1::storage::pin_bank_v1),
+            post(redirect_storage_bank_pin),
         )
         .route(
             "/api/v1/stone/storage/banks/{name}/unpin",
-            post(api::v1::storage::unpin_bank_v1),
+            post(redirect_storage_bank_unpin),
         )
         .route(
             "/api/v1/stone/storage/banks/{name}/roles",
@@ -1098,6 +1150,22 @@ async fn get_task_status_single(
         )
             .into_response(),
     }
+}
+
+// ── Backward-compat redirects (ARCH-0026) ────────────────────────────────
+
+/// 301 redirect: `/api/v1/stone/storage/banks/{name}/pin` → `/api/v1/stone/banks/{name}/pin`
+async fn redirect_storage_bank_pin(
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Redirect {
+    axum::response::Redirect::permanent(&format!("/api/v1/stone/banks/{name}/pin"))
+}
+
+/// 301 redirect: `/api/v1/stone/storage/banks/{name}/unpin` → `/api/v1/stone/banks/{name}/unpin`
+async fn redirect_storage_bank_unpin(
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Redirect {
+    axum::response::Redirect::permanent(&format!("/api/v1/stone/banks/{name}/unpin"))
 }
 
 // ============================================================================

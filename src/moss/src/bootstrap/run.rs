@@ -444,16 +444,20 @@ async fn build_state(
     }
 
     // Phase 2: Network monitoring
-    // Create subsystems early so network_ready flag is available for Network
-    let subsystems = crate::app_state::SubSystems::default();
+    // Create Subsystems aggregate (ARCH-0023 Book VI) — register subsystems
+    // before handing the aggregate to monitor tasks.
+    let mut subsystems = crate::domain::Subsystems::new(metrics_aggregate.clone()).await;
+    subsystems.register("network");
+    subsystems.register("docker");
+    let subsystems = std::sync::Arc::new(subsystems);
 
     // Runs in background, polls every 5s when disconnected, 30s when connected
-    // Network manages the subsystems.network.ready flag
+    // Network manages the subsystems "network" readiness
     let network = Network::start_with_config(
         NetworkConfig::default()
             .with_disconnect_retry(crate::tasks::network_monitor::DEFAULT_DISCONNECT_RETRY_SECS)
             .with_connected_poll(crate::tasks::network_monitor::DEFAULT_CONNECTED_POLL_SECS),
-        subsystems.network.ready.clone(),
+        subsystems.clone(),
     )
     .await;
 
@@ -737,13 +741,13 @@ async fn build_state(
 
     // Phase 7.5: Docker monitoring
     // Runs in background, polls every 5s when disconnected, 30s when connected
-    // DockerMonitor manages the subsystems.docker.ready flag
+    // DockerMonitor manages the subsystems "docker" readiness
     let _docker_monitor = DockerMonitor::start_with_config(
         docker.clone(),
         DockerMonitorConfig::default()
             .with_disconnect_retry(crate::tasks::docker::DEFAULT_DISCONNECT_RETRY_SECS)
             .with_connected_poll(crate::tasks::docker::DEFAULT_CONNECTED_POLL_SECS),
-        subsystems.docker.ready.clone(),
+        subsystems.clone(),
     )
     .await;
     tracing::debug!(
@@ -976,7 +980,7 @@ async fn build_state(
         }),
         // Log broadcast channel (for live SSE log streaming)
         log: log.clone(),
-        // Subsystem readiness (network_ready managed by Network)
+        // Subsystem readiness — ARCH-0023 aggregate (Book VI)
         subsystems: subsystems.clone(),
         // Orchestration coordination plane (ARCH-0004) â€” coordination primitives.
         orchestration: Arc::new(crate::domain::Orchestration {

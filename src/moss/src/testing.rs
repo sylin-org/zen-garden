@@ -128,8 +128,13 @@ pub async fn build_test_state() -> AppState {
     let companion_registry =
         Arc::new(infra::CompanionRegistry::with_path(companion_dir, companion_data).await);
 
-    let network_ready = Arc::new(AtomicBool::new(false));
-    let network = crate::tasks::Network::start(network_ready.clone()).await;
+    let test_metrics = Arc::new(domain::Metrics::new());
+
+    let mut subsystems = crate::domain::Subsystems::new(test_metrics.clone()).await;
+    subsystems.register("network");
+    subsystems.register("docker");
+    let subsystems = Arc::new(subsystems);
+    let network = crate::tasks::Network::start(subsystems.clone()).await;
 
     // ManifestRegistry — empty (no runtime manifest directories in tests)
     let manifest_registry = Arc::new(garden_common::manifests::ManifestRegistry {
@@ -147,8 +152,6 @@ pub async fn build_test_state() -> AppState {
     let current_address = Arc::new(RwLock::new(PeerAddress::new(loopback, 7185)));
 
     let infrastructure_handlers = Arc::new(domain::InfrastructureHandlerRegistry::new(Vec::new()));
-
-    let test_metrics = Arc::new(domain::Metrics::new());
 
     // Jobs aggregate (ARCH-0021 Book IV) — ephemeral, empty state.
     let jobs = Arc::new(
@@ -263,7 +266,7 @@ pub async fn build_test_state() -> AppState {
             registry: companion_registry,
         }),
         log: log_tx,
-        subsystems: crate::app_state::SubSystems::default(),
+        subsystems: subsystems.clone(),
         orchestration: Arc::new(domain::Orchestration {
             storage: domain::StorageOrchestration {
                 tick: domain::orchestration::storage::Tick {

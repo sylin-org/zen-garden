@@ -8,11 +8,11 @@
 //! - When disconnected, retries every N seconds (tunable, default 5s)
 //! - When connected, polls less frequently (default 30s)
 //! - Broadcasts Event when state changes
-//! - Updates subsystems.docker.ready flag
+//! - Updates subsystems "docker" readiness via ARCH-0023 aggregate
 
 use crate::docker::Client;
+use crate::domain::Subsystems;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -74,33 +74,34 @@ pub struct Monitor {
     /// Docker manager reference (stored for potential future methods)
     _docker: Arc<Client>,
     tx: broadcast::Sender<Event>,
-    /// Subsystem readiness flag (set when Docker daemon is healthy)
-    /// Stored for `is_ready()` method; actual updates happen in spawned task.
-    docker_ready: Arc<AtomicBool>,
+    /// Subsystems aggregate reference (ARCH-0023)
+    subsystems: Arc<Subsystems>,
 }
 
 impl Monitor {
     /// Start background Docker monitoring with default config
-    pub async fn start(docker: Arc<Client>, docker_ready: Arc<AtomicBool>) -> Self {
-        Self::start_with_config(docker, Config::default(), docker_ready).await
+    pub async fn start(docker: Arc<Client>, subsystems: Arc<Subsystems>) -> Self {
+        Self::start_with_config(docker, Config::default(), subsystems).await
     }
 
     /// Start background Docker monitoring with custom config
     pub async fn start_with_config(
         docker: Arc<Client>,
         config: Config,
-        docker_ready: Arc<AtomicBool>,
+        subsystems: Arc<Subsystems>,
     ) -> Self {
         let (tx, _) = broadcast::channel(garden_common::constants::channels::MONITOR_EVENT);
 
-        // Check initial state
+        // Check initial state and set via Subsystems aggregate
         let initially_healthy = docker.is_healthy().await;
-        docker_ready.store(initially_healthy, Ordering::Release);
+        if initially_healthy {
+            subsystems.mark_ready("docker").await;
+        }
 
         let monitor = Self {
             _docker: docker.clone(),
             tx: tx.clone(),
-            docker_ready: docker_ready.clone(),
+            subsystems: subsystems.clone(),
         };
 
         // Log initial state
@@ -118,14 +119,14 @@ impl Monitor {
         }
 
         // Spawn monitor task
-        tokio::spawn(docker_monitor_task(docker, tx, config, docker_ready));
+        tokio::spawn(docker_monitor_task(docker, tx, config, subsystems));
 
         monitor
     }
 
     /// Check if Docker is currently available
     pub fn is_ready(&self) -> bool {
-        self.docker_ready.load(Ordering::Relaxed)
+        self.subsystems.is_ready("docker")
     }
 
     /// Subscribe to Docker events
@@ -139,7 +140,7 @@ async fn docker_monitor_task(
     docker: Arc<Client>,
     tx: broadcast::Sender<Event>,
     config: Config,
-    docker_ready: Arc<AtomicBool>,
+    subsystems: Arc<Subsystems>,
 ) {
     let mut was_disconnected = !docker.is_healthy().await;
 
@@ -158,8 +159,14 @@ async fn docker_monitor_task(
         let now_disconnected = !is_healthy;
 
         if was_disconnected != now_disconnected {
-            // State changed
-            docker_ready.store(!now_disconnected, Ordering::Release);
+            // State changed — update via Subsystems aggregate
+            if now_disconnected {
+                subsystems
+                    .mark_unready("docker", "Docker ping failed")
+                    .await;
+            } else {
+                subsystems.mark_ready("docker").await;
+            }
 
             let event = if was_disconnected && !now_disconnected {
                 // Reconnected

@@ -15,7 +15,7 @@
 //! - task_history: cleans orphaned task entries
 
 use crate::AppState;
-use std::sync::atomic::Ordering;
+
 
 // ============================================================================
 // Types
@@ -215,7 +215,7 @@ async fn sweep_staging(_ctx: &Sweep<'_>) -> SweepReport {
 
 /// Sweep Docker: prune dangling images
 async fn sweep_docker(ctx: &Sweep<'_>) -> SweepReport {
-    if !ctx.state.subsystems.docker.ready.load(Ordering::Relaxed) {
+    if !ctx.state.subsystems.is_ready("docker") {
         return SweepReport {
             domain: "docker".into(),
             status: SweepStatus::Healthy,

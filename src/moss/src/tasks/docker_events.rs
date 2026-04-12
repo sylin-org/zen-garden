@@ -27,7 +27,7 @@ use bollard::models::EventMessageTypeEnum;
 use futures_util::StreamExt;
 use garden_common::constants::OFFERING_CONTAINER_PREFIX;
 use garden_common::{OfferingStatus, ServiceHealthStatus};
-use std::sync::atomic::Ordering;
+
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -51,7 +51,7 @@ pub async fn docker_events_task(state: AppState, token: CancellationToken) {
         }
 
         // Wait for Docker to be available before subscribing
-        if !state.subsystems.docker.ready.load(Ordering::Relaxed) {
+        if !state.subsystems.is_ready("docker") {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(5)) => continue,
                 _ = token.cancelled() => break,

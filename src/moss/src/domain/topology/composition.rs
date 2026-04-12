@@ -6,7 +6,7 @@
 //! [`SelfEntryInputs`] from the various AppState sub-contexts
 //! (`current.address`, `current.health`, `current.mac`,
 //! `current.capabilities`, `presence.notifications`, `offerings`,
-//! `subsystems.network.ready`) and call the aggregate's typed
+//! `subsystems.is_ready("network")`) and call the aggregate's typed
 //! commands on behalf of AppState-bound consumers.
 //!
 //! Same composition-helper shape as
@@ -16,7 +16,6 @@
 use super::aggregate::SelfEntryInputs;
 use crate::AppState;
 use garden_common::TopologyEntry;
-use std::sync::atomic::Ordering;
 
 /// Assemble `SelfEntryInputs` from the current AppState snapshot.
 ///
@@ -34,7 +33,7 @@ pub async fn self_entry_inputs(state: &AppState) -> SelfEntryInputs {
         .offerings
         .with_active(garden_common::TopologyServiceEntry::from_offerings)
         .await;
-    let network_ready = state.subsystems.network.ready.load(Ordering::Relaxed);
+    let network_ready = state.subsystems.is_ready("network");
 
     SelfEntryInputs {
         stone_id: state.current.stone.id.clone(),

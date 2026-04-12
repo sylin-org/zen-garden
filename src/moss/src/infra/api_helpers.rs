@@ -6,7 +6,7 @@ use crate::AppState;
 use axum::{Json, http::StatusCode};
 use garden_common::api_utils::ApiErrorResponse;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+
 
 /// Create an error response for API handlers
 ///
@@ -89,7 +89,7 @@ pub fn not_implemented(code: impl Into<String>, message: impl Into<String>) -> E
 /// }
 /// ```
 pub fn require_docker(state: &AppState) -> Result<(), (StatusCode, Json<ApiErrorResponse>)> {
-    if !state.subsystems.docker.ready.load(Ordering::Relaxed) {
+    if !state.subsystems.is_ready("docker") {
         return Err(error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             garden_common::constants::DOCKER_UNAVAILABLE,

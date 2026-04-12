@@ -14,9 +14,10 @@
 //! with polling as fallback for non-Linux or when netlink unavailable.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::{RwLock, broadcast};
+
+use crate::domain::Subsystems;
 
 /// Default retry interval when disconnected (no valid LAN IP)
 pub const DEFAULT_DISCONNECT_RETRY_SECS: u64 = 5;
@@ -80,31 +81,32 @@ impl NetworkConfig {
 pub struct Network {
     current_ip: Arc<RwLock<String>>,
     tx: broadcast::Sender<NetworkEvent>,
-    /// Subsystem readiness flag (set when valid LAN IP detected)
-    /// Stored for potential future `is_ready()` method; actual updates happen in spawned task.
-    _network_ready: Arc<AtomicBool>,
+    /// Subsystems aggregate reference (ARCH-0023)
+    _subsystems: Arc<Subsystems>,
 }
 
 impl Network {
     /// Start background network monitoring with default config
-    pub async fn start(network_ready: Arc<AtomicBool>) -> Self {
-        Self::start_with_config(NetworkConfig::default(), network_ready).await
+    pub async fn start(subsystems: Arc<Subsystems>) -> Self {
+        Self::start_with_config(NetworkConfig::default(), subsystems).await
     }
 
     /// Start background network monitoring with custom config
-    pub async fn start_with_config(config: NetworkConfig, network_ready: Arc<AtomicBool>) -> Self {
+    pub async fn start_with_config(config: NetworkConfig, subsystems: Arc<Subsystems>) -> Self {
         let initial_ip = get_current_ip();
         let current_ip = Arc::new(RwLock::new(initial_ip.clone()));
         let (tx, _) = broadcast::channel(garden_common::constants::channels::MONITOR_EVENT);
 
-        // Set initial network_ready state
+        // Set initial network readiness via Subsystems aggregate
         let initially_connected = !is_disconnected(&initial_ip);
-        network_ready.store(initially_connected, Ordering::Release);
+        if initially_connected {
+            subsystems.mark_ready("network").await;
+        }
 
         let monitor = Self {
             current_ip: current_ip.clone(),
             tx: tx.clone(),
-            _network_ready: network_ready.clone(),
+            _subsystems: subsystems.clone(),
         };
 
         // Log initial state
@@ -124,7 +126,7 @@ impl Network {
         }
 
         // Spawn monitor task
-        tokio::spawn(network_monitor_task(current_ip, tx, config, network_ready));
+        tokio::spawn(network_monitor_task(current_ip, tx, config, subsystems));
 
         monitor
     }
@@ -201,7 +203,7 @@ async fn network_monitor_task(
     current_ip: Arc<RwLock<String>>,
     tx: broadcast::Sender<NetworkEvent>,
     config: NetworkConfig,
-    network_ready: Arc<AtomicBool>,
+    subsystems: Arc<Subsystems>,
 ) {
     let mut was_disconnected = is_disconnected(&current_ip.read().await);
 
@@ -225,8 +227,14 @@ async fn network_monitor_task(
 
             let now_disconnected = is_disconnected(&new_ip);
 
-            // Update network_ready flag
-            network_ready.store(!now_disconnected, Ordering::Release);
+            // Update network readiness via Subsystems aggregate
+            if now_disconnected {
+                subsystems
+                    .mark_unready("network", "No valid LAN IP detected")
+                    .await;
+            } else {
+                subsystems.mark_ready("network").await;
+            }
 
             // Determine event type
             let event = if was_disconnected && !now_disconnected {

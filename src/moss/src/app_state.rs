@@ -13,11 +13,10 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{Catalog, Jobs, Metrics, Offerings, Orchestration, Security, Tool};
+use crate::domain::{Catalog, Jobs, Metrics, Offerings, Orchestration, Security, Subsystems, Tool};
 use crate::infra::{EventBus, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -132,8 +131,8 @@ pub struct AppState {
     /// Log broadcast channel (for live SSE log streaming)
     pub log: tokio::sync::broadcast::Sender<String>,
 
-    /// Subsystem readiness state
-    pub subsystems: SubSystems,
+    /// Subsystem readiness — ARCH-0023 aggregate (Book VI of ARCH-0017)
+    pub subsystems: Arc<Subsystems>,
 
     /// Orchestration coordination plane — tick signals, nudge, rescan,
     /// nurturing stores, nourishment job channels (ARCH-0004).
@@ -243,56 +242,6 @@ impl axum::extract::FromRef<AppState> for Arc<ConsolePrinter> {
 // ============================================================================
 // Subsystem Readiness
 // ============================================================================
-
-/// Subsystem readiness tracking
-///
-/// Background tasks set these flags when subsystems become operational.
-/// Consumers check flags before attempting operations that require readiness.
-#[derive(Clone, Default)]
-pub struct SubSystems {
-    /// Network subsystem state
-    pub network: NetworkSubSystem,
-    /// Client subsystem state
-    pub docker: DockerSubSystem,
-}
-
-/// Network subsystem state
-///
-/// Tracks whether the network stack is ready for communications.
-#[derive(Clone)]
-pub struct NetworkSubSystem {
-    /// True when a valid LAN IP is detected (not loopback).
-    /// Set by Network, read by Announcer/mDNS.
-    /// Use `ready.load(Ordering::Relaxed)` to check.
-    pub ready: Arc<AtomicBool>,
-}
-
-impl Default for NetworkSubSystem {
-    fn default() -> Self {
-        Self {
-            ready: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-
-/// Client subsystem state
-///
-/// Tracks whether the Client daemon is available for container operations.
-#[derive(Clone)]
-pub struct DockerSubSystem {
-    /// True when Client daemon is healthy (ping succeeds).
-    /// Set by DockerMonitor, read by API handlers and background tasks.
-    /// Use `ready.load(Ordering::Relaxed)` to check.
-    pub ready: Arc<AtomicBool>,
-}
-
-impl Default for DockerSubSystem {
-    fn default() -> Self {
-        Self {
-            ready: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
 
 impl AppState {
     /// Subscribe to the live log stream.

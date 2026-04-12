@@ -14,7 +14,7 @@
 //! - Respects network readiness (no chirps until network is ready)
 
 use crate::AppState;
-use std::sync::atomic::Ordering;
+
 use tokio::time::{Duration, interval};
 use tokio_util::sync::CancellationToken;
 
@@ -57,7 +57,7 @@ pub(crate) async fn periodic_announcer_task(state: AppState, token: Cancellation
         tick_count += 1;
 
         // Check network readiness - skip if not ready
-        if !state.subsystems.network.ready.load(Ordering::Relaxed) {
+        if !state.subsystems.is_ready("network") {
             tracing::trace!("Periodic announcement skipped (network not ready)");
             continue;
         }

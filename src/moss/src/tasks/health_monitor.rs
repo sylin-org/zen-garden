@@ -15,7 +15,7 @@ use crate::tasks::offering_reconciliation::ReconciliationCoordinator;
 use garden_common::notifications::{NOTIF_SOURCE_OFFERINGS_DEGRADED, NotificationTag};
 use garden_common::{OfferingStatus, ServiceHealthStatus};
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
+
 use tokio_util::sync::CancellationToken;
 
 /// Background health monitoring loop
@@ -52,7 +52,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         }
 
         // Check Docker availability before attempting container operations
-        if !state.subsystems.docker.ready.load(Ordering::Relaxed) {
+        if !state.subsystems.is_ready("docker") {
             tracing::debug!("Health monitor: Docker unavailable, skipping container checks");
             continue;
         }

@@ -103,7 +103,7 @@ As of 2026-04-12, after [ARCH-0031](../decisions/ARCH-0031-configuration-dissolu
 - **Owns:** pond enrollment state (enrolled, cornerstone, pond name), HTTPS listener flag, ceremony infrastructure (host, registry, journal)
 - **Commands (write):** `mark_enrolled`, `mark_unenrolled`, `set_pond_name`, `seed_state` (boot-time), `refresh_active`, `try_set_https_started`, `set_https_started`, `clear_https_started`, `recover_ceremonies`
 - **Queries (read):** `enrolled`, `pond_active`, `cornerstone`, `pond_name`, `https_started`, `stone_client`, `ceremony_host`, `ceremony_registry`, `ceremony_journal`, `active_arc`, `changes`
-- **Emits:** `SecurityChanged` with 3 kinds (`Enrolled`, `Unenrolled`, `PondRenamed`) via `changes()` broadcast. Dual stream: `PondEvent::EnrollmentChanged` on `EventBus` preserved for the pond enrollment listener until Book XVI.
+- **Emits:** `SecurityChanged` with 3 kinds (`Enrolled`, `Unenrolled`, `PondRenamed`) via `changes()` broadcast. Dual stream: `PondEvent::EnrollmentChanged` on `EventBus` preserved for the pond enrollment listener — intentional design, not deferred debt (ARCH-0034).
 - **Subscribes:** none (Security is a root; consumers subscribe to `SecurityChanged`)
 - **Ports:** `PondClient` -> `StoneClient` (inter-stone HTTP), `CeremonyPersistence` -> `CeremonyJournal` (crash recovery persistence). Both relocated from `domain/traits/` into the context.
 - **Cross-cutting:** `Arc<Metrics>` injected at construction; per-kind event counters via `register_domain`.
@@ -314,8 +314,8 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### Events (unified)
 
-- **Status:** Absent as a unified surface — `EventBus` exists alongside per-domain `changes()` streams and `Pulse` events with `PulseDomainBridge` translating between them; no coherent API
-- **Target source:** `src/moss/src/domain/events/` (expanded from the current partial module)
+- **Status:** Dissolved. ARCH-0034 (Book XVI of ARCH-0017) — completed 2026-04-12.
+- **Plan change:** ARCH-0017 anticipated a unified `Events` aggregate with `PulseProjectionTask` subscribing to all aggregate `changes()` channels. Book XVI found that EventBus (user-facing domain events with 3 listeners: chirp, pulse bridge, timer), Pulse (SSE firehose merging domain + transport), and per-aggregate `changes()` (internal state-transition notifications) serve different event populations with different consumers. No domain state, no invariants. Existing architecture is correct.
 - **Book:** XVI
 
 #### HttpApi
@@ -355,7 +355,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Orchestration::Election** | offering primary/dormant election | `ElectionResolved` | `ElectionTransport` | XI |
 | ~~**Configuration**~~ | ~~typed env + runtime settings~~ | ~~`ConfigChanged`~~ | ~~`ConfigSource`~~ | XIII (dissolved) |
 | ~~**Logging**~~ | ~~log broadcast channel, file sink handle~~ | ~~`LogLineEmitted`~~ | ~~`LogSink`~~ | XV (dissolved) |
-| **Events** | unified cross-cutting event surface | (bridges all domain events to pulse) | none | XVI |
+| ~~**Events**~~ | ~~unified cross-cutting event surface~~ | ~~(bridges all domain events to pulse)~~ | ~~none~~ | XVI (dissolved) |
 
 ### Infrastructure contexts (ports + adapters, no state)
 
@@ -414,10 +414,10 @@ Health ──────────────────→ Offerings (mark
                           └─→ Metrics (probe latency, failure counts)
 
 [every context] ─────────→ Metrics (via record_domain_event)
-[every context] ─────────→ Events (via PulseDomainBridge for SSE firehose)
+[every context] ─────────→ EventBus (cross-cutting infra; PulseDomainBridge → Pulse SSE firehose)
 ```
 
-The graph is **acyclic** by construction — if Book I proposes a subscription that would introduce a cycle, the cycle is broken by moving the coordination to a third context (typically Metrics or Events).
+The graph is **acyclic** by construction — if Book I proposes a subscription that would introduce a cycle, the cycle is broken by moving the coordination to a third context (typically Metrics or a cross-cutting EventBus listener).
 
 ---
 

@@ -30,7 +30,7 @@
 //! ]);
 //!
 //! // After topology update in coordinator
-//! handlers.on_topology_changed(&topology_cache, &manifest_registry).await;
+//! handlers.on_topology_changed(&topology, &manifest_registry).await;
 //! ```
 
 mod docker_registry;
@@ -42,7 +42,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::domain::topology::TopologyCache;
+use crate::domain::topology::Topology;
 use garden_common::manifests::ManifestRegistry;
 
 /// An instance of a matching offering discovered in the garden topology
@@ -137,7 +137,7 @@ impl InfrastructureHandlerRegistry {
     /// Errors are logged but don't stop other handlers from running.
     pub async fn on_topology_changed(
         &self,
-        topology_cache: &TopologyCache,
+        topology: &Arc<Topology>,
         manifest_registry: &Arc<ManifestRegistry>,
     ) {
         if self.handlers.is_empty() {
@@ -145,7 +145,7 @@ impl InfrastructureHandlerRegistry {
         }
 
         // Get all online stones from topology
-        let stones = crate::domain::topology::get_online_stones(topology_cache).await;
+        let stones = topology.online_stones().await;
 
         tracing::debug!(
             stone_count = stones.len(),

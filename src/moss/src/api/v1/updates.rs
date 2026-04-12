@@ -108,7 +108,7 @@ pub async fn check_garden(
     State(state): State<AppState>,
 ) -> crate::api::ApiResult<GardenNourishmentResponse> {
     // Get topology from this stone's cache
-    let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
+    let entries = state.topology.all_stones().await;
 
     // Query all stones in parallel
     let tasks: Vec<_> = entries
@@ -182,7 +182,7 @@ pub async fn execute_garden(
     use garden_common::utils::ids::generate_guidv7;
 
     // Step 1: Query all stones for their pending updates
-    let entries = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
+    let entries = state.topology.all_stones().await;
 
     // Query each stone for updates
     let check_tasks: Vec<_> = entries

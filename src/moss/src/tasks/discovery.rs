@@ -12,9 +12,6 @@ use garden_common::infra::communications::p2p;
 use tokio_util::sync::CancellationToken;
 
 use crate::AppState;
-use crate::domain::topology::{
-    TopologyCache, TopologyDirtyFlag, mark_stone_offline_dirty, upsert_from_chirp_dirty,
-};
 
 /// Lantern registration loop - registers this stone with Lantern every 45 seconds
 ///
@@ -102,8 +99,7 @@ pub async fn start_discovery_listener(
     stone_id: String,
     stone_name: String,
     api_endpoint: String,
-    topology_cache: TopologyCache,
-    topology_dirty: TopologyDirtyFlag,
+    topology: Arc<crate::domain::topology::Topology>,
     tool: Arc<crate::domain::Tool>,
     address: Arc<tokio::sync::RwLock<garden_common::PeerAddress>>,
     console: Arc<ConsolePrinter>,
@@ -155,10 +151,7 @@ pub async fn start_discovery_listener(
                     };
 
                     // Check if this is a NEW stone (not already in cache)
-                    let is_new_stone = {
-                        let cache = topology_cache.read().await;
-                        !cache.contains_key(&chirp.stone_id)
-                    };
+                    let is_new_stone = topology.get_by_id(&chirp.stone_id).await.is_none();
 
                     tracing::debug!(
                         stone = %chirp.stone_name,
@@ -171,17 +164,17 @@ pub async fn start_discovery_listener(
                     );
 
                     // Update topology cache with chirp data (marks dirty for persistence)
-                    upsert_from_chirp_dirty(&topology_cache, chirp.clone(), &topology_dirty).await;
+                    topology.upsert_from_chirp(chirp.clone()).await;
 
                     // Trigger infrastructure handlers (MOSS-0002: garden-wide effects)
                     // Handlers react to topology changes and configure local infrastructure
                     // (e.g., Docker insecure-registries for container registries)
                     {
                         let handlers = infrastructure_handlers.clone();
-                        let cache = topology_cache.clone();
+                        let topology = topology.clone();
                         let manifests = manifest_registry.clone();
                         tokio::spawn(async move {
-                            handlers.on_topology_changed(&cache, &manifests).await;
+                            handlers.on_topology_changed(&topology, &manifests).await;
                         });
                     }
 
@@ -271,8 +264,7 @@ pub async fn start_discovery_listener(
                         "Stone goodbye received, marking offline"
                     );
                     // Mark stone as offline immediately (marks dirty for persistence)
-                    mark_stone_offline_dirty(&topology_cache, &goodbye.stone_id, &topology_dirty)
-                        .await;
+                    topology.mark_stone_offline(&goodbye.stone_id).await;
 
                     // Remove all entries for offline stone via the Tool
                     // aggregate. The aggregate emits wire deltas on its

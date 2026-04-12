@@ -33,12 +33,7 @@ impl BackgroundTask for TopologyMaintenanceTask {
 
                 let self_entry =
                     crate::domain::topology::composition::build_self_entry(&ctx.state).await;
-                let (marked, evicted) = crate::domain::topology::maintain_and_persist(
-                    &ctx.state.current.topology.cache,
-                    &ctx.state.current.topology.dirty,
-                    &self_entry,
-                )
-                .await;
+                let (marked, evicted) = ctx.state.topology.maintain(&self_entry).await;
 
                 if marked > 0 || evicted > 0 {
                     tracing::debug!(

@@ -260,13 +260,11 @@ async fn broadcast_to_topology(
     companion_id: &str,
     request: &CompanionCommandRequest,
 ) {
-    use crate::domain::topology;
-
     // Get our own stone_id to exclude from broadcast
     let self_id = state.current.stone.id.clone();
 
     // Get all online stones except self
-    let stones = topology::get_online_stones(&state.current.topology.cache).await;
+    let stones = state.topology.online_stones().await;
     let other_stones: Vec<_> = stones
         .into_iter()
         .filter(|s| s.stone_id != self_id)

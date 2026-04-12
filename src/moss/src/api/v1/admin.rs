@@ -20,11 +20,9 @@ use axum::{
     http::StatusCode,
 };
 use serde_json::json;
-use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::AppState;
-use crate::domain::Current;
 
 // ============================================================================
 // Moss Operations - Daemon lifecycle
@@ -394,14 +392,13 @@ pub async fn stone_reboot(State(_state): State<AppState>) -> (StatusCode, Json<s
 /// - 400 BAD_REQUEST: Stone has no MAC address (discovery didn't capture it)
 /// - 500 INTERNAL_SERVER_ERROR: Failed to send WoL packet
 pub async fn stone_wake(
-    State(current): State<Arc<Current>>,
+    State(state): State<AppState>,
     Path(stone_name): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!(stone = %stone_name, "Wake-on-LAN requested");
 
     // Look up stone in topology cache (includes offline stones)
-    let stone =
-        crate::domain::topology::get_stone_by_name(&current.topology.cache, &stone_name).await;
+    let stone = state.topology.get_by_name(&stone_name).await;
 
     match stone {
         None => {

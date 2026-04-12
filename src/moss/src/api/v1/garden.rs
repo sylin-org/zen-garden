@@ -1,9 +1,6 @@
 use crate::api::responses::{GardenOverview, StoneInfo};
 use crate::api::suggestions::{Suggestion, generate_suggestions};
-use crate::domain::{
-    placement::{PlacementRequest, PlacementResponse},
-    topology,
-};
+use crate::domain::placement::{PlacementRequest, PlacementResponse};
 use crate::{AppState, internal, not_found};
 use axum::{
     Json,
@@ -24,7 +21,7 @@ pub async fn get_garden_v1(
 ) -> crate::api::ApiResult<GardenOverview> {
     // Build stone list: self entry + all cached peers
     let self_entry = crate::domain::topology::composition::build_self_entry(&state).await;
-    let cache_entries = topology::get_all_stones(&state.current.topology.cache).await;
+    let cache_entries = state.topology.all_stones().await;
 
     let mut stones = Vec::new();
     let mut total_services: u32 = 0;
@@ -275,7 +272,7 @@ pub async fn get_topology_v1(
     let mut stones = vec![self_entry.clone()];
 
     // Step 3: Add all cached peer stones (skipping self if present)
-    let cache_entries = topology::get_all_stones(&state.current.topology.cache).await;
+    let cache_entries = state.topology.all_stones().await;
 
     for entry in cache_entries {
         if entry.stone_id == state.current.stone.id {
@@ -335,7 +332,7 @@ pub async fn inspect_garden_v1(
     });
 
     // ── Peers (parallel fan-out) ────────────────────────────────────
-    let peers = crate::domain::topology::get_all_stones(&state.current.topology.cache).await;
+    let peers = state.topology.all_stones().await;
     let timeout = garden_inspect_timeout();
 
     let tasks: Vec<_> = peers
@@ -451,7 +448,7 @@ pub async fn get_garden_capabilities_v1(
     // stone_id onto the caps before returning so downstream
     // consumers (e.g. the AI orchestrator's Resources domain
     // keyed by stone name) get a non-colliding identity per stone.
-    let peers = topology::get_all_stones(&state.current.topology.cache).await;
+    let peers = state.topology.all_stones().await;
     for peer in peers {
         if peer.stone_id == state.current.stone.id {
             continue;

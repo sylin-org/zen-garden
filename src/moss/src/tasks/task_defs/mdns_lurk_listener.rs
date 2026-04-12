@@ -30,8 +30,7 @@ impl BackgroundTask for MdnsLurkListenerTask {
         Box::pin(async move {
             ctx.ready.signal();
 
-            let topology_cache = ctx.state.current.topology.cache.clone();
-            let topology_dirty = ctx.state.current.topology.dirty.clone();
+            let topology = ctx.state.topology.clone();
 
             loop {
                 tokio::select! {
@@ -73,12 +72,7 @@ impl BackgroundTask for MdnsLurkListenerTask {
                                         tags: vec![],
                                         gateways: vec![],
                                     };
-                                    crate::domain::topology::upsert_from_chirp_dirty(
-                                        &topology_cache,
-                                        entry,
-                                        &topology_dirty,
-                                    )
-                                    .await;
+                                    topology.upsert_from_chirp(entry).await;
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

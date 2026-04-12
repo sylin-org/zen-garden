@@ -169,12 +169,7 @@ pub(crate) async fn start_background_tasks(
                         tags: vec![],
                         gateways: vec![],
                     };
-                    crate::domain::topology::upsert_from_chirp_dirty(
-                        &state.current.topology.cache,
-                        entry,
-                        &state.current.topology.dirty,
-                    )
-                    .await;
+                    state.topology.upsert_from_chirp(entry).await;
                 }
             }
         }

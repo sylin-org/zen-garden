@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use urlencoding::encode;
 
 use crate::api::responses::ApiResponse;
-use crate::domain::{CapabilityExecutor, get_offering_port, topology};
+use crate::domain::{CapabilityExecutor, get_offering_port};
 use crate::infra::manifests::get_capability_manifest;
 use crate::{AppState, bad_gateway, bad_request, conflict, internal, not_found, not_implemented};
 
@@ -974,7 +974,9 @@ async fn resolve_stone_endpoint(state: &AppState, stone_name: &str) -> Option<St
             Some(base)
         }
     } else {
-        topology::get_stone_by_name(&state.current.topology.cache, stone_name)
+        state
+            .topology
+            .get_by_name(stone_name)
             .await
             .map(|entry| entry.address.http_base())
     }

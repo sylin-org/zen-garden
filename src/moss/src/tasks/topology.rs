@@ -24,12 +24,7 @@ pub fn start_topology_maintenance(state: crate::AppState, token: CancellationTok
                 }
             }
             let self_entry = crate::domain::topology::composition::build_self_entry(&state).await;
-            let (marked, evicted) = crate::domain::topology::maintain_and_persist(
-                &state.current.topology.cache,
-                &state.current.topology.dirty,
-                &self_entry,
-            )
-            .await;
+            let (marked, evicted) = state.topology.maintain(&self_entry).await;
             if marked > 0 || evicted > 0 {
                 tracing::debug!(
                     marked_offline = marked,

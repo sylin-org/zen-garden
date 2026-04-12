@@ -19,7 +19,6 @@ use garden_common::storage::StorageRole;
 
 use crate::app_state::AppState;
 use crate::cli;
-use crate::domain::topology;
 use crate::domain::traits::CompanionOps;
 
 /// Embedded HTML template (baked into binary at compile time)
@@ -608,7 +607,7 @@ pub async fn get_portrait_data(
 
     // === Horizon (visible stones) ===
     let horizon = {
-        let visible_stones = topology::get_all_stones(&state.current.topology.cache).await;
+        let visible_stones = state.topology.all_stones().await;
         let storage_by_stone = state.tool.storage_grouped_by_stone().await;
         let stones: Vec<HorizonStone> = visible_stones
             .iter()

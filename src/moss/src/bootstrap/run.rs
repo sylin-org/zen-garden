@@ -257,8 +257,13 @@ async fn build_state(
     // Self-entry will be progressively updated as boot continues
     let topology_cache = Arc::new(RwLock::new(std::collections::HashMap::new()));
 
-    // TOPO-0002: Dirty flag for topology persistence + ensure directory exists
-    let topology_dirty = crate::domain::topology::new_dirty_flag();
+    // TOPO-0002: Dirty flag for topology persistence + ensure directory exists.
+    // Pre-AppState bootstrap phase — the Topology aggregate doesn't exist
+    // yet; we construct the handles here and pass them into Topology::new
+    // later. The dirty flag starts true so the first maintenance cycle
+    // writes the initial file (matches the old `new_dirty_flag` helper).
+    let topology_dirty: crate::domain::topology::TopologyDirtyFlag =
+        Arc::new(std::sync::atomic::AtomicBool::new(true));
     if let Err(e) = tokio::fs::create_dir_all(garden_common::constants::paths::topology_dir()).await
     {
         tracing::warn!(error = %e, "Failed to create topology directory (will retry on first write)");
@@ -275,11 +280,17 @@ async fn build_state(
         None,
     )
     .await;
-    if let Err(e) = crate::domain::topology::persist_topology(&topology_cache, &boot_entry).await {
-        tracing::warn!(error = %e, "Failed to write initial topology file");
-    } else {
-        topology_dirty.store(false, std::sync::atomic::Ordering::Relaxed);
-        tracing::debug!("Initial topology file written");
+    // Pre-AppState persistence via the TopologyStore port adapter.
+    {
+        use crate::domain::topology::TopologyStore;
+        let store = crate::domain::topology::FileTopologyStore;
+        let snapshot = topology_cache.read().await.clone();
+        if let Err(e) = store.save(&snapshot, &boot_entry).await {
+            tracing::warn!(error = %e, "Failed to write initial topology file");
+        } else {
+            topology_dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+            tracing::debug!("Initial topology file written");
+        }
     }
 
     // Metrics aggregate (ARCH-0018) is constructed here — before Tool so
@@ -295,6 +306,29 @@ async fn build_state(
     let tool = Arc::new(
         crate::domain::Tool::new(metrics_aggregate.clone(), tool_delta, tools_transport).await,
     );
+
+    // Topology aggregate (ARCH-0020) is constructed here — before
+    // `start_discovery_listener` so we can hand it an Arc<Topology>
+    // instead of raw cache/dirty handles. The cache and dirty flag
+    // are Arc-cloned into the aggregate; the `current::Topology`
+    // sub-struct on AppState shares the same handles during the
+    // Ch5d strangler phase.
+    let topology_aggregate: Arc<crate::domain::topology::Topology> = {
+        let chirp: Arc<dyn crate::domain::topology::ChirpTransport> =
+            Arc::new(crate::domain::topology::P2pChirpTransport);
+        let store: Arc<dyn crate::domain::topology::TopologyStore> =
+            Arc::new(crate::domain::topology::FileTopologyStore);
+        Arc::new(
+            crate::domain::topology::Topology::new(
+                topology_cache.clone(),
+                topology_dirty.clone(),
+                chirp,
+                store,
+                metrics_aggregate.clone(),
+            )
+            .await,
+        )
+    };
 
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(
@@ -401,8 +435,7 @@ async fn build_state(
         stone_id.clone(),
         stone_name.clone(),
         String::new(), // Endpoint not yet known, will be set in Phase 3.5
-        topology_cache.clone(),
-        topology_dirty.clone(),
+        topology_aggregate.clone(),
         tool.clone(),
         current_address.clone(),
         console_printer.clone(),
@@ -925,22 +958,7 @@ async fn build_state(
         offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
         tool: tool.clone(),
-        topology: {
-            let chirp: Arc<dyn crate::domain::topology::ChirpTransport> =
-                Arc::new(crate::domain::topology::P2pChirpTransport);
-            let store: Arc<dyn crate::domain::topology::TopologyStore> =
-                Arc::new(crate::domain::topology::FileTopologyStore);
-            Arc::new(
-                crate::domain::topology::Topology::new(
-                    topology_cache.clone(),
-                    topology_dirty.clone(),
-                    chirp,
-                    store,
-                    metrics_aggregate.clone(),
-                )
-                .await,
-            )
-        },
+        topology: topology_aggregate.clone(),
         discovery: Arc::new(crate::domain::Discovery {
             mdns: mdns_handle.clone(),
             koi: koi_handle.clone(),
@@ -1096,12 +1114,7 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
             // TOPO-0002: Flush topology to disk before shutdown
             let self_entry =
                 crate::domain::topology::composition::build_self_entry(&goodbye_state).await;
-            crate::domain::topology::flush_topology(
-                &goodbye_state.current.topology.cache,
-                &goodbye_state.current.topology.dirty,
-                &self_entry,
-            )
-            .await;
+            goodbye_state.topology.flush(&self_entry).await;
 
             if let Err(e) = crate::announcement::send_goodbye(&goodbye_state).await {
                 tracing::warn!(error = ?e, "Failed to send goodbye announcement");

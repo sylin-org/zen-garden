@@ -270,6 +270,77 @@ impl Topology {
     // detection by comparing pre/post snapshots inside
     // `upsert_from_chirp` and `maintain`.
 
+    /// Upsert a stone from a received chirp (`STONE_CHIRP` announcement).
+    ///
+    /// Delegates to the cache-level free function during the strangler
+    /// phase. Always marks the cache dirty — the prior split into
+    /// `upsert_from_chirp` / `upsert_from_chirp_dirty` collapses here
+    /// because the aggregate owns the invariant that every mutation
+    /// marks dirty for persistence.
+    pub async fn upsert_from_chirp(&self, entry: TopologyEntry) -> Option<TopologyChanged> {
+        let pre_status = super::get_stone_by_id(&self.cache, &entry.stone_id)
+            .await
+            .map(|e| e.status);
+
+        let started = Instant::now();
+        let is_new = pre_status.is_none();
+        let stone_id = entry.stone_id.clone();
+        let stone_name = entry.stone_name.clone();
+        let new_entry_for_discovery = entry.clone();
+
+        super::upsert_from_chirp_dirty(&self.cache, entry, &self.dirty).await;
+
+        self.metrics
+            .record_mutation_latency(Self::NAME, started.elapsed())
+            .await;
+
+        let event = if is_new {
+            Some(TopologyChanged::StoneDiscovered {
+                stone: Box::new(new_entry_for_discovery),
+            })
+        } else if pre_status == Some(StoneStatus::Offline) {
+            Some(TopologyChanged::StoneOnline {
+                stone_id,
+                stone_name,
+            })
+        } else {
+            None
+        };
+        if let Some(ref ev) = event {
+            self.emit(ev.clone()).await;
+        }
+        event
+    }
+
+    /// Flush the topology cache to disk unconditionally. Called from the
+    /// graceful-shutdown path (TOPO-0002). Clears the dirty flag on
+    /// success.
+    pub async fn flush(&self, self_entry: &TopologyEntry) {
+        self.dirty
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let snapshot = self.cache.read().await.clone();
+        if let Err(e) = self.store.save(&snapshot, self_entry).await {
+            tracing::warn!(error = %e, "Failed to flush topology on shutdown");
+            // Re-dirty so a next attempt could retry.
+            self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            tracing::info!("Topology flushed to disk (shutdown)");
+        }
+    }
+
+    /// Maintain topology + persist if dirty.
+    ///
+    /// Called periodically by the topology-maintenance background task.
+    /// Returns `(marked_offline_count, evicted_count)`.
+    pub async fn maintain(&self, self_entry: &TopologyEntry) -> (usize, usize) {
+        let started = Instant::now();
+        let report = super::maintain_and_persist(&self.cache, &self.dirty, self_entry).await;
+        self.metrics
+            .record_mutation_latency(Self::NAME, started.elapsed())
+            .await;
+        report
+    }
+
     /// Forget a stone by name (operator action).
     pub async fn forget_stone(&self, stone_name: &str) -> Option<TopologyChanged> {
         let started = Instant::now();

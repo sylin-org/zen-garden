@@ -8,9 +8,7 @@ use chrono::Utc;
 use std::time::Duration;
 
 use crate::AppState;
-use crate::domain::{
-    CompiledOffering, compatibility, resources_collection, scoring, services, topology,
-};
+use crate::domain::{CompiledOffering, compatibility, resources_collection, scoring, services};
 use garden_common::TopologyEntry;
 
 /// Placement request from client
@@ -101,7 +99,7 @@ pub async fn recommend_placement(
     let local_candidate = score_local_stone(&request.offering, &local_offering, state).await?;
 
     // 2. Get peer stones from topology cache (online only — offline stones are unreachable)
-    let peer_stones = topology::get_online_stones(&state.current.topology.cache).await;
+    let peer_stones = state.topology.online_stones().await;
     tracing::debug!(
         peer_count = peer_stones.len(),
         "Discovered {} peer stones from topology cache",

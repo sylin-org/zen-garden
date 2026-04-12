@@ -189,7 +189,7 @@ pub async fn reconcile_offering(
     // 2. Handle partial prior attempt: container exists but is stopped
     if state
         .platform
-        .docker
+        .container
         .zen_container_exists(service_name)
         .await
         .unwrap_or(false)
@@ -200,7 +200,7 @@ pub async fn reconcile_offering(
         );
         state
             .platform
-            .docker
+            .container
             .start_service(service_name, Some(&state.console))
             .await
             .context("Failed to start existing container")?;
@@ -246,7 +246,7 @@ pub async fn reconcile_offering(
     // 5. Install container (port scanning handles conflicts via remapping)
     let resolved = state
         .platform
-        .docker
+        .container
         .install_service(service_name, &spec, Some(&state.console))
         .await
         .context("Failed to install container during reconciliation")?;
@@ -333,7 +333,7 @@ pub async fn compose_on_start(state: &AppState, service_name: &str) -> anyhow::R
     // Check if container needs cycling
     match state
         .platform
-        .docker
+        .container
         .needs_cycle(service_name, &desired_spec)
         .await
     {
@@ -344,7 +344,7 @@ pub async fn compose_on_start(state: &AppState, service_name: &str) -> anyhow::R
             );
             state
                 .platform
-                .docker
+                .container
                 .recreate_service(service_name, &desired_spec)
                 .await
                 .context("Failed to recreate container for compose-on-start")?;

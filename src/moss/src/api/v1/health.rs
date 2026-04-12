@@ -110,7 +110,7 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
 
 /// Check Docker daemon health
 async fn check_docker_health(state: &AppState) -> HealthCheck {
-    if state.platform.docker.is_healthy().await {
+    if state.platform.container.is_healthy().await {
         HealthCheck {
             status: garden_common::constants::CHECK_PASS.to_string(),
             message: None,
@@ -127,7 +127,7 @@ async fn check_docker_health(state: &AppState) -> HealthCheck {
 async fn build_docker_component(state: &AppState) -> ComponentHealth {
     let mut details = HashMap::new();
 
-    if state.platform.docker.is_healthy().await {
+    if state.platform.container.is_healthy().await {
         details.insert("available".to_string(), serde_json::json!(true));
         ComponentHealth::healthy(details)
     } else {

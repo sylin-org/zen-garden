@@ -19,7 +19,7 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     tracing::info!(offering, image = new_image, "Pulling new image");
     state
         .platform
-        .docker
+        .container
         .pull_image(new_image, Some(&state.console))
         .await
         .context("Failed to pull new image")?;
@@ -31,7 +31,7 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     tracing::info!(offering, "Stopping old container");
     state
         .platform
-        .docker
+        .container
         .stop_service(offering, Some(&state.console))
         .await
         .context("Failed to stop container")?;
@@ -40,7 +40,7 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     tracing::info!(offering, "Removing old container");
     state
         .platform
-        .docker
+        .container
         .remove_service(offering, Some(&state.console))
         .await
         .context("Failed to remove container")?;
@@ -49,7 +49,7 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
     tracing::info!(offering, new_image, "Creating new container");
     state
         .platform
-        .docker
+        .container
         .install_service(offering, &spec, Some(&state.console))
         .await
         .context("Failed to create new container")?;

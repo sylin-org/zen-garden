@@ -975,7 +975,7 @@ async fn build_state(
         metrics: metrics_aggregate.clone(),
         catalog: catalog_aggregate,
         platform: Arc::new(crate::domain::Platform {
-            docker: docker.clone(),
+            container: docker.clone(),
             runtime: runtime.clone(),
             network: Arc::new(network),
             handlers: infrastructure_handlers.clone(),

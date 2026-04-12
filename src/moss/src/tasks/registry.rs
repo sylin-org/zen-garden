@@ -73,7 +73,7 @@ pub fn start_registry_loader(state: AppState) {
         for (offering_id, name) in managed_snapshot {
             if !state
                 .platform
-                .docker
+                .container
                 .zen_container_exists(&name)
                 .await
                 .unwrap_or(false)

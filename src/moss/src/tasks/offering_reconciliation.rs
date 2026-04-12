@@ -251,7 +251,7 @@ impl ReconciliationCoordinator {
                         result.apply_port_updates(&state, &offering_id).await;
 
                         if target_status == OfferingStatus::Stopped
-                            && let Err(e) = state.platform.docker.stop_service(&name, None).await
+                            && let Err(e) = state.platform.container.stop_service(&name, None).await
                         {
                             tracing::warn!(
                                 offering = %name,

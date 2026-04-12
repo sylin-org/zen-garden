@@ -37,7 +37,7 @@ use garden_common::console;
 /// - Emitting events
 /// - HTTP response formatting
 pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> ReconciliationResult {
-    let existing = match state.platform.docker.list_zen_containers().await {
+    let existing = match state.platform.container.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {
             tracing::error!(error = ?e, "Failed to list zen containers during reconciliation");
@@ -69,7 +69,7 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
 
         // Attempt adoption outside the lock (I/O-heavy)
         match adopt_offering_container(
-            &state.platform.docker,
+            &state.platform.container,
             state.catalog.manifests(),
             &offering,
             &state.current.stone.name,
@@ -90,7 +90,7 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
                     tracing::warn!(offering = %offering, "Reconciliation: dropping invalid container (no matching template)");
                     match state
                         .platform
-                        .docker
+                        .container
                         .remove_service(&offering, Some(&state.console))
                         .await
                     {

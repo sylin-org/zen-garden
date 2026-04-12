@@ -153,7 +153,7 @@ async fn detect_offering(
 pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
     let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
-        state.platform.docker.clone(),
+        state.platform.container.clone(),
     ));
     let orchestrator = DetectionOrchestrator::new(detector.clone());
     let connectivity = ConnectivityOrchestrator::new(detector);

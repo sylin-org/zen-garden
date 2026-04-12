@@ -29,7 +29,7 @@ pub async fn execute(
     // Step 1: Start the container
     state
         .platform
-        .docker
+        .container
         .start_service(offering, Some(&state.console))
         .await
         .context("Failed to start container")?;
@@ -59,7 +59,7 @@ pub async fn execute(
         // Stop the unhealthy container
         let _ = state
             .platform
-            .docker
+            .container
             .stop_service(offering, Some(&state.console))
             .await;
 
@@ -74,7 +74,7 @@ pub async fn execute(
         // Start the container again (now with original volumes)
         state
             .platform
-            .docker
+            .container
             .start_service(offering, Some(&state.console))
             .await
             .context("Failed to start container after rollback")?;
@@ -106,7 +106,7 @@ async fn wait_for_health(state: &AppState, offering: &str, timeout: Duration) ->
     let poll_interval = Duration::from_secs(HEALTH_POLL_INTERVAL_SECS);
 
     while start.elapsed() < timeout {
-        match state.platform.docker.get_service_health(offering).await {
+        match state.platform.container.get_service_health(offering).await {
             Ok(health) => {
                 if health == garden_common::ServiceHealthStatus::Healthy {
                     return true;

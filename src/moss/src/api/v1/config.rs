@@ -453,7 +453,7 @@ async fn maybe_cycle_container(
     let desired_spec = effective_to_container_spec(effective);
     let needs_recreate = match state
         .platform
-        .docker
+        .container
         .needs_cycle(service_name, &desired_spec)
         .await
     {
@@ -486,7 +486,7 @@ async fn maybe_cycle_container(
         tracing::info!(service = %service_name, "Config change requires container recreation");
         if let Err(e) = state
             .platform
-            .docker
+            .container
             .recreate_service(service_name, &resolved_spec)
             .await
         {
@@ -588,7 +588,7 @@ async fn apply_config_reload(
 
     if needs_restart {
         tracing::info!(service = %service_name, "Restarting container for config file changes");
-        if let Err(e) = state.platform.docker.restart_service(service_name).await {
+        if let Err(e) = state.platform.container.restart_service(service_name).await {
             tracing::error!(
                 service = %service_name,
                 error = ?e,
@@ -599,7 +599,7 @@ async fn apply_config_reload(
         tracing::info!(service = %service_name, signal = %sig, "Sending signal for config reload");
         if let Err(e) = state
             .platform
-            .docker
+            .container
             .signal_container(service_name, &sig)
             .await
         {
@@ -608,7 +608,7 @@ async fn apply_config_reload(
                 error = ?e,
                 "Failed to send signal — falling back to restart"
             );
-            if let Err(e) = state.platform.docker.restart_service(service_name).await {
+            if let Err(e) = state.platform.container.restart_service(service_name).await {
                 tracing::error!(
                     service = %service_name,
                     error = ?e,

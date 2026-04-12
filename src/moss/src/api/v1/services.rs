@@ -523,7 +523,7 @@ pub async fn stream_service_logs_v1(
     use tokio_stream::StreamExt;
 
     let token = state.shutdown_token.child_token();
-    let mut log_source = state.platform.docker.get_logs_stream(&service_name, true);
+    let mut log_source = state.platform.container.get_logs_stream(&service_name, true);
 
     let stream = async_stream::stream! {
         loop {
@@ -587,7 +587,7 @@ pub async fn get_service_env_v1(
     if offering.is_managed() {
         match state
             .platform
-            .docker
+            .container
             .inspect_container_spec(&service_name)
             .await
         {
@@ -1075,7 +1075,7 @@ pub async fn reassign_service_v1(
     // Step 1: Stop the container
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .stop_service(&old_name, Some(&state.console))
         .await
     {
@@ -1086,14 +1086,14 @@ pub async fn reassign_service_v1(
     // Step 2: Rename the Docker container
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .rename_service(&old_name, &new_name)
         .await
     {
         // Try to restart the old container on failure
         let _ = state
             .platform
-            .docker
+            .container
             .start_service(&old_name, Some(&state.console))
             .await;
         return Err(internal(
@@ -1114,7 +1114,7 @@ pub async fn reassign_service_v1(
     // Step 4: Start the container with its new name
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .start_service(&new_name, Some(&state.console))
         .await
     {

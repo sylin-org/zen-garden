@@ -203,7 +203,7 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
     let os_version = resources::detect_os_version();
     let kernel_version = resources::detect_kernel_version();
     let swap_mb = resources::detect_swap();
-    let docker_version = state.platform.docker.get_docker_version().await.ok();
+    let docker_version = state.platform.container.get_docker_version().await.ok();
 
     HardwareCapabilities {
         stone_id: Some(state.current.stone.id.clone()),

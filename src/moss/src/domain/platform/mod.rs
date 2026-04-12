@@ -13,8 +13,8 @@ use std::sync::Arc;
 /// the network monitor, and the infrastructure change handlers.
 #[derive(Clone)]
 pub struct Platform {
-    /// Docker/container runtime client.
-    pub docker: Arc<ContainerRuntime>,
+    /// Container runtime — abstracts Docker/Podman operations (ARCH-0030).
+    pub container: Arc<ContainerRuntime>,
 
     /// Platform runtime — console/ribbon output and lifecycle signals (ARCH-0002).
     pub runtime: Arc<dyn PlatformRuntime>,

@@ -60,7 +60,7 @@ pub async fn stop(state: &AppState, service_name: &str) -> Result<LifecycleOutco
 
     state
         .platform
-        .docker
+        .container
         .stop_service(service_name, Some(&state.console))
         .await
         .context("Failed to stop container")?;
@@ -148,7 +148,7 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
     // Check if the Docker container still exists
     let container_exists = state
         .platform
-        .docker
+        .container
         .zen_container_exists(service_name)
         .await
         .unwrap_or(false);
@@ -210,7 +210,7 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
         // Start the container
         state
             .platform
-            .docker
+            .container
             .start_service(service_name, Some(&state.console))
             .await
             .context("Failed to start container")?;
@@ -246,14 +246,14 @@ pub async fn restart(state: &AppState, service_name: &str) -> Result<LifecycleOu
 
     state
         .platform
-        .docker
+        .container
         .stop_service(service_name, Some(&state.console))
         .await
         .context("Failed to stop service")?;
 
     state
         .platform
-        .docker
+        .container
         .start_service(service_name, Some(&state.console))
         .await
         .context("Failed to start service")?;
@@ -293,7 +293,7 @@ async fn remove_impl(
     // Remove container (non-fatal — continue cleanup even if container is already gone)
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .remove_service(service_name, Some(&state.console))
         .await
     {
@@ -466,7 +466,7 @@ async fn try_adopt_existing(
 ) -> Result<Option<InstallOutcome>> {
     if !state
         .platform
-        .docker
+        .container
         .zen_container_exists(service_name)
         .await
         .unwrap_or(false)
@@ -481,7 +481,7 @@ async fn try_adopt_existing(
 
     let cached_caps = state.current.capabilities.read().await.clone();
     if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
-        &state.platform.docker,
+        &state.platform.container,
         state.catalog.manifests(),
         service_name,
         &state.current.stone.name,
@@ -681,7 +681,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
     // Perform Docker upgrade
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .upgrade_service(service_name, &spec, Some(&state.console))
         .await
     {

@@ -58,7 +58,7 @@ pub async fn docker_events_task(state: AppState, token: CancellationToken) {
         }
 
         tracing::info!("Docker events stream: subscribing to container events");
-        let mut events = state.platform.docker.container_events();
+        let mut events = state.platform.container.container_events();
         let mut received_any = false;
 
         loop {

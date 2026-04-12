@@ -241,7 +241,7 @@ pub async fn restore_snapshot(
     // Stop the service first
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .stop_service(&offering_lookup, Some(&state.console))
         .await
     {
@@ -264,7 +264,7 @@ pub async fn restore_snapshot(
     // Start the service
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .start_service(&offering_lookup, Some(&state.console))
         .await
     {
@@ -497,7 +497,7 @@ pub async fn restore_from_seed_bank(
     // Stop the service first
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .stop_service(&offering_name, Some(&state.console))
         .await
     {
@@ -526,7 +526,7 @@ pub async fn restore_from_seed_bank(
     // Start the service
     if let Err(e) = state
         .platform
-        .docker
+        .container
         .start_service(&offering_name, Some(&state.console))
         .await
     {

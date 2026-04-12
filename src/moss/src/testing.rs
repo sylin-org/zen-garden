@@ -224,7 +224,7 @@ pub async fn build_test_state() -> AppState {
         ),
         catalog,
         platform: Arc::new(domain::Platform {
-            docker: docker.clone(),
+            container: docker.clone(),
             runtime: Arc::new(NoopRuntime),
             network: Arc::new(network),
             handlers: infrastructure_handlers,

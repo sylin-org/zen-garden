@@ -105,7 +105,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                 {
                     let container_exists = state
                         .platform
-                        .docker
+                        .container
                         .zen_container_exists(name)
                         .await
                         .unwrap_or(false);
@@ -123,7 +123,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
 
             // Resource usage (detail-only, no chirp)
-            if let Ok(resources) = state.platform.docker.get_container_stats(name).await {
+            if let Ok(resources) = state.platform.container.get_container_stats(name).await {
                 state
                     .offerings
                     .update(offering_id, |o| {
@@ -147,7 +147,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
 
             // ── Port reconciliation ────────────────────────────────────
             if current_status == OfferingStatus::Running
-                && let Ok(docker_ports) = state.platform.docker.get_container_ports(name).await
+                && let Ok(docker_ports) = state.platform.container.get_container_ports(name).await
             {
                 let current_port = {
                     let offerings = state.offerings.read().await;
@@ -257,24 +257,24 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     continue;
                 }
 
-                match state.platform.docker.has_topology_mount(name).await {
+                match state.platform.container.has_topology_mount(name).await {
                     Ok(true) => {}
                     Ok(false) => {
                         tracing::warn!(
                             offering = %name,
                             "Container missing topology mount, recreating"
                         );
-                        match state.platform.docker.inspect_container_spec(name).await {
+                        match state.platform.container.inspect_container_spec(name).await {
                             Ok(spec) => {
                                 if let Err(e) =
-                                    state.platform.docker.remove_service(name, None).await
+                                    state.platform.container.remove_service(name, None).await
                                 {
                                     tracing::error!(offering = %name, error = ?e, "Failed to remove container for mount remediation");
                                     continue;
                                 }
                                 if let Err(e) = state
                                     .platform
-                                    .docker
+                                    .container
                                     .install_service(name, &spec, None)
                                     .await
                                 {
@@ -305,7 +305,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         // ── Phase 5: Orphan container adoption ─────────────────────────
         let cached_caps = state.current.capabilities.read().await.clone();
         let cached_caps_ref = cached_caps.as_ref();
-        match state.platform.docker.list_zen_containers().await {
+        match state.platform.container.list_zen_containers().await {
             Ok(container_names) => {
                 for container_name in &container_names {
                     let exists = {
@@ -318,7 +318,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     if !exists {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
                         match adopt_offering_container(
-                            &state.platform.docker,
+                            &state.platform.container,
                             state.catalog.manifests(),
                             container_name,
                             &state.current.stone.name,

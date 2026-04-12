@@ -80,13 +80,13 @@ pub async fn list_offerings_v1(
             let name_str = offering.name.to_string();
             let image = state
                 .platform
-                .docker
+                .container
                 .get_service_image(&name_str)
                 .await
                 .unwrap_or_else(|_| "<unknown>".to_string());
             let uptime = state
                 .platform
-                .docker
+                .container
                 .get_service_uptime(&name_str)
                 .await
                 .ok()
@@ -424,7 +424,7 @@ pub async fn inspect_image_v1(
         ));
     }
 
-    let inspection = crate::infra::image_inspect::inspect_image(&state.platform.docker, image_ref)
+    let inspection = crate::infra::image_inspect::inspect_image(&state.platform.container, image_ref)
         .await
         .map_err(|e| {
             bad_request(
@@ -867,7 +867,7 @@ pub async fn export_offering_manifest_v1(
     if let Some(offering_entry) = running {
         // If it's an image-direct offering, use the image ref to inspect
         if let Some(image_ref) = &offering_entry.name.image_ref {
-            match crate::infra::image_inspect::inspect_image(&state.platform.docker, image_ref)
+            match crate::infra::image_inspect::inspect_image(&state.platform.container, image_ref)
                 .await
             {
                 Ok(inspection) => {

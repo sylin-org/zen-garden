@@ -53,7 +53,7 @@ pub async fn list_adoptable_v1(
 
         // Try detection (this will use cached results if available)
         let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
-            state.platform.docker.clone(),
+            state.platform.container.clone(),
         ));
         let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
         match orchestrator.detect(offering).await {
@@ -134,7 +134,7 @@ pub async fn adopt_offering_v1(
 
     // Detect offering
     let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
-        state.platform.docker.clone(),
+        state.platform.container.clone(),
     ));
     let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
     let detection_result = orchestrator
@@ -172,7 +172,7 @@ pub async fn adopt_offering_v1(
     };
 
     let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
-        state.platform.docker.clone(),
+        state.platform.container.clone(),
     ));
     let connectivity = ConnectivityOrchestrator::new(detector);
     let connectivity_outcome = connectivity

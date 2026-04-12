@@ -38,7 +38,7 @@ pub async fn execute(
         tracing::info!(offering, cmd = ?quiesce.exec, "Running quiesce command");
         let (exit_code, output) = state
             .platform
-            .docker
+            .container
             .exec_in_container(offering, &quiesce.exec, quiesce.timeout_seconds)
             .await
             .context("Failed to execute quiesce command")?;
@@ -66,7 +66,7 @@ pub async fn execute(
         tracing::info!(offering, cmd = ?resume.exec, "Running resume command");
         match state
             .platform
-            .docker
+            .container
             .exec_in_container(offering, &resume.exec, resume.timeout_seconds)
             .await
         {

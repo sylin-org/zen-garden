@@ -308,25 +308,19 @@ pub async fn get_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<StorageInfo> {
-    let bank = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "BANK_NOT_FOUND",
-                    &format!("Bank '{}' not found", name),
-                )
-            })?
-    };
+    use crate::domain::storage::bank_aggregate;
 
-    if let Err(msg) = validate_seed_bank_layout(&bank.mount_path) {
+    let info = bank_aggregate::volumes_for_bank(&name, &state.current.storage.volumes)
+        .await
+        .into_iter()
+        .find_map(|v| v.to_storage_info())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+
+    if let Err(msg) = validate_seed_bank_layout(&info.mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
     }
 
-    crate::api::ok(bank)
+    crate::api::ok(info)
 }
 
 // ============================================================================
@@ -338,19 +332,18 @@ pub async fn delete_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
-    // Check if still mounted (managed volume present = still mounted)
+    use crate::domain::storage::bank_aggregate;
+
+    // Check if still mounted — bank query only returns online volumes
+    if bank_aggregate::by_name(&name, &state.current.storage.volumes)
+        .await
+        .is_some()
     {
-        let map = state.current.storage.volumes.read().await;
-        if map
-            .values()
-            .any(|v| v.management().is_some_and(|m| m.name == name) && v.state().is_online())
-        {
-            return Err(err(
-                StatusCode::CONFLICT,
-                "BANK_MOUNTED",
-                "Bank must be released before deletion",
-            ));
-        }
+        return Err(err(
+            StatusCode::CONFLICT,
+            "BANK_MOUNTED",
+            "Bank must be released before deletion",
+        ));
     }
 
     // Remove mount directory if it exists
@@ -407,48 +400,27 @@ pub async fn release_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<ReleaseResponse> {
-    let _mount_path = {
-        let map = state.current.storage.volumes.read().await;
-        let vol = map
-            .values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "BANK_NOT_FOUND",
-                    &format!("Bank '{}' not found", name),
-                )
-            })?;
-        vol.mount_path().to_string_lossy().to_string()
-    };
+    use crate::domain::storage::bank_aggregate;
+
+    // Verify bank exists before attempting release
+    let _bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
+        .await
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
 
     #[cfg(target_os = "linux")]
-    crate::infra::storage::platform::unmount(&_mount_path)
+    if let Some(ref mp) = _bank.mount_path {
+        crate::infra::storage::platform::unmount(&mp.to_string_lossy())
+            .await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "UNMOUNT_FAILED", &e.to_string()))?;
+    }
+
+    // Domain command — releases all volumes in the bank
+    let (events, _mount_paths) = bank_aggregate::release(&name, &state.current.storage.volumes)
         .await
-        .map_err(|e| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "UNMOUNT_FAILED",
-                &e.to_string(),
-            )
-        })?;
+        .map_err(|e| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string()))?;
 
-    // STORAGE-0017: Release via domain method — events returned by Volume.
-    let events = {
-        let mut map = state.current.storage.volumes.write().await;
-        if let Some(vol) = map
-            .values_mut()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-        {
-            let evts = vol.release();
-            debug!(name = %name, "Cleared management from released volume");
-            evts
-        } else {
-            vec![]
-        }
-    };
+    debug!(name = %name, "Cleared management from released volumes");
 
-    // Forward domain events from release (Released + Removed already included)
     for event in events {
         state.emit_storage_changed(event).await;
     }
@@ -465,43 +437,36 @@ pub async fn release_bank_v1(
 // PATCH /api/v1/stone/storage/banks/:name/rename - Rename Bank
 // ============================================================================
 
-/// Rename a storage replica set.
+/// Rename a storage bank.
 ///
-/// The `name` path parameter matches on `replica_set_name` (the user-facing identity).
-/// Updates all local volumes that belong to this replica set.
+/// The `name` path parameter matches on the bank display name (the user-facing
+/// identity). Updates all local volumes that belong to this bank.
 pub async fn rename_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(request): Json<RenameStorageRequest>,
 ) -> crate::api::ApiResult<StorageInfo> {
-    // Validate new name
-    if request.new_name.is_empty() {
-        return Err(err(
-            StatusCode::BAD_REQUEST,
-            "INVALID_NAME",
-            "New name cannot be empty",
-        ));
-    }
+    use crate::domain::storage::bank_aggregate;
 
-    // Find all local volumes matching this replica set name
-    let mount_paths: Vec<String> = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .filter(|v| v.management().is_some_and(|m| m.display_name() == name))
-            .map(|v| v.mount_path().to_string_lossy().to_string())
-            .collect()
-    };
+    // Domain command — validates name, renames all volumes in the bank
+    let result = bank_aggregate::rename(&name, &request.new_name, &state.current.storage.volumes)
+        .await
+        .map_err(|e| match &e {
+            bank_aggregate::BankError::NotFound(_) => {
+                err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string())
+            }
+            bank_aggregate::BankError::InvalidName(_) => {
+                err(StatusCode::BAD_REQUEST, "INVALID_NAME", &e.to_string())
+            }
+            _ => err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RENAME_FAILED",
+                &e.to_string(),
+            ),
+        })?;
 
-    if mount_paths.is_empty() {
-        return Err(err(
-            StatusCode::NOT_FOUND,
-            "BANK_NOT_FOUND",
-            &format!("Bank '{}' not found", name),
-        ));
-    }
-
-    // Update manifest on each device in the replica set
-    for mp in &mount_paths {
+    // Persist to disk manifests (infra concern)
+    for mp in &result.mount_paths {
         update_manifest_replica_set_name(mp, &request.new_name)
             .await
             .map_err(|e| {
@@ -513,59 +478,36 @@ pub async fn rename_bank_v1(
             })?;
     }
 
-    // Sync replica_set_name to volume management via domain method and capture replica_set_id
-    let (replica_set_id, all_events) = {
-        let mut map = state.current.storage.volumes.write().await;
-        let mut rsid = String::new();
-        let mut all_events = Vec::new();
-        for vol in map.values_mut() {
-            let matches = vol.management().is_some_and(|m| m.display_name() == name);
-            if matches {
-                if let Some(mgmt) = vol.management() {
-                    rsid = mgmt.replica_set_id.clone();
-                }
-                let events = vol.rename(request.new_name.clone());
-                all_events.extend(events);
-            }
-        }
-        (rsid, all_events)
-    };
-
     // Forward domain events from rename
-    for event in all_events {
+    for event in result.events {
         state.emit_storage_changed(event).await;
     }
 
-    // Re-read updated info from volumes (return first matching volume's info)
-    let updated = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .find(|v| {
-                v.management()
-                    .is_some_and(|m| m.replica_set_name == request.new_name)
-            })
-            .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "BANK_NOT_FOUND",
-                    "Bank not found after rename",
-                )
-            })?
-    };
+    // Re-read updated info
+    let updated = bank_aggregate::volumes_for_bank(&request.new_name, &state.current.storage.volumes)
+        .await
+        .into_iter()
+        .find_map(|v| v.to_storage_info())
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                "Bank not found after rename",
+            )
+        })?;
 
-    info!(old_name = %name, new_name = %request.new_name, volumes = mount_paths.len(), "Replica set renamed");
+    info!(old_name = %name, new_name = %request.new_name, volumes = result.mount_paths.len(), "Bank renamed");
 
     // STORAGE-0013: Emit domain event — beacon subscriber + orchestration react
     state
         .emit_storage_changed(garden_common::storage::StorageChanged::Renamed {
-            replica_set_id,
+            replica_set_id: result.replica_set_id,
             new_name: request.new_name.clone(),
         })
         .await;
     state.orchestration.storage.nudge.notify_one();
 
-    crate::api::ok(updated.clone())
+    crate::api::ok(updated)
 }
 
 // ============================================================================
@@ -1257,72 +1199,42 @@ pub async fn set_visibility_v1(
     Path(name): Path<String>,
     Json(request): Json<SetVisibilityRequest>,
 ) -> Result<(StatusCode, Json<StorageInfo>), (StatusCode, Json<ApiErrorResponse>)> {
-    let mount_path = {
-        let map = state.current.storage.volumes.read().await;
-        let vol = map
-            .values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "SEED_BANK_NOT_FOUND",
-                    &format!("Seed bank '{}' not found", name),
-                )
-            })?;
-        vol.mount_path().to_string_lossy().to_string()
-    };
+    use crate::domain::storage::bank_aggregate;
 
-    update_manifest_visibility(&mount_path, request.visibility)
+    // Get mount path for manifest persistence (infra concern)
+    let bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
         .await
-        .map_err(|e| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "MANIFEST_UPDATE_FAILED",
-                &e.to_string(),
-            )
-        })?;
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
 
-    // Sync visibility to volume management via domain method
-    let events = {
-        let mut map = state.current.storage.volumes.write().await;
-        if let Some(vol) = map
-            .values_mut()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-        {
-            vol.set_visibility(request.visibility)
-        } else {
-            vec![]
-        }
-    };
+    if let Some(ref mp) = bank.mount_path {
+        update_manifest_visibility(&mp.to_string_lossy(), request.visibility)
+            .await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "MANIFEST_UPDATE_FAILED", &e.to_string()))?;
+    }
 
-    // Forward domain events
+    // Domain command
+    let events = bank_aggregate::set_visibility(&name, request.visibility, &state.current.storage.volumes)
+        .await
+        .map_err(|e| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string()))?;
+
     for event in events {
         state.emit_storage_changed(event).await;
     }
 
     // Re-read updated info
-    let updated = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "SEED_BANK_NOT_FOUND",
-                    "Seed bank disappeared after update",
-                )
-            })?
-    };
+    let updated = bank_aggregate::volumes_for_bank(&name, &state.current.storage.volumes)
+        .await
+        .into_iter()
+        .find_map(|v| v.to_storage_info())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank disappeared after update"))?;
 
-    info!(name = %name, visibility = ?request.visibility, "Seed bank visibility updated");
+    info!(name = %name, visibility = ?request.visibility, "Bank visibility updated");
 
-    // STORAGE-0013: Emit domain event — beacon subscriber reacts
     state
         .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
         .await;
 
-    Ok((StatusCode::OK, Json(updated.clone())))
+    Ok((StatusCode::OK, Json(updated)))
 }
 
 async fn update_manifest_visibility(
@@ -1407,72 +1319,42 @@ pub async fn set_roles_v1(
     Path(name): Path<String>,
     Json(request): Json<SetRolesRequest>,
 ) -> crate::api::ApiResult<StorageInfo> {
-    let mount_path = {
-        let map = state.current.storage.volumes.read().await;
-        let vol = map
-            .values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "BANK_NOT_FOUND",
-                    &format!("Bank '{}' not found", name),
-                )
-            })?;
-        vol.mount_path().to_string_lossy().to_string()
-    };
+    use crate::domain::storage::bank_aggregate;
 
-    update_manifest_roles(&mount_path, &request.roles)
+    // Get mount path for manifest persistence (infra concern)
+    let bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
         .await
-        .map_err(|e| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ROLES_UPDATE_FAILED",
-                &e.to_string(),
-            )
-        })?;
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
 
-    // Sync roles to volume management via domain method
-    let events = {
-        let mut map = state.current.storage.volumes.write().await;
-        if let Some(vol) = map
-            .values_mut()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-        {
-            vol.set_roles(request.roles.clone())
-        } else {
-            vec![]
-        }
-    };
+    if let Some(ref mp) = bank.mount_path {
+        update_manifest_roles(&mp.to_string_lossy(), &request.roles)
+            .await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "ROLES_UPDATE_FAILED", &e.to_string()))?;
+    }
 
-    // Forward domain events
+    // Domain command
+    let events = bank_aggregate::set_roles(&name, request.roles.clone(), &state.current.storage.volumes)
+        .await
+        .map_err(|e| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string()))?;
+
     for event in events {
         state.emit_storage_changed(event).await;
     }
 
     // Re-read updated info
-    let updated = {
-        let map = state.current.storage.volumes.read().await;
-        map.values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .and_then(|v| v.to_storage_info())
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "BANK_NOT_FOUND",
-                    "Bank not found after role update",
-                )
-            })?
-    };
+    let updated = bank_aggregate::volumes_for_bank(&name, &state.current.storage.volumes)
+        .await
+        .into_iter()
+        .find_map(|v| v.to_storage_info())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after role update"))?;
 
     info!(name = %name, roles = ?request.roles, "Bank roles updated");
 
-    // STORAGE-0013: Emit domain event — beacon subscriber reacts
     state
         .emit_storage_changed(garden_common::storage::StorageChanged::Reclassified)
         .await;
 
-    crate::api::ok(updated.clone())
+    crate::api::ok(updated)
 }
 
 // ============================================================================
@@ -1594,40 +1476,27 @@ pub async fn pin_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<PinSeedBankResponse> {
+    use crate::domain::storage::bank_aggregate;
+
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err(err(
-            StatusCode::BAD_REQUEST,
-            "EMPTY_NAME",
-            "Seed bank name is required",
-        ));
+        return Err(err(StatusCode::BAD_REQUEST, "EMPTY_NAME", "Bank name is required"));
     }
 
-    // STORAGE-0011: Pin via Volume — writes pin.json, sets role to Primary.
-    let events = {
-        let mut map = state.current.storage.volumes.write().await;
-        let vol = map
-            .values_mut()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "BANK_NOT_FOUND",
-                    &format!("No seed bank named '{}' on this stone", name),
-                )
-            })?;
+    // Domain command — pin via Bank aggregate
+    let events = bank_aggregate::pin(
+        &name,
+        &state.current.storage.volumes,
+        |path: PathBuf| std::sync::Arc::new(ContentStore::new(path, None)),
+    )
+    .await
+    .map_err(|e| match &e {
+        bank_aggregate::BankError::NotFound(_) => {
+            err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string())
+        }
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "PIN_FAILED", &e.to_string()),
+    })?;
 
-        let store = ContentStore::new(vol.mount_path().clone(), None);
-        vol.pin(&store).await.map_err(|e| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "PIN_FAILED",
-                &e.to_string(),
-            )
-        })?
-    };
-
-    // STORAGE-0017: Volume returns events — forward them.
     for event in &events {
         state.emit_storage_changed(event.clone()).await;
     }
@@ -1648,35 +1517,24 @@ pub async fn unpin_bank_v1(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<PinSeedBankResponse> {
+    use crate::domain::storage::bank_aggregate;
+
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err(err(
-            StatusCode::BAD_REQUEST,
-            "EMPTY_NAME",
-            "Seed bank name is required",
-        ));
+        return Err(err(StatusCode::BAD_REQUEST, "EMPTY_NAME", "Bank name is required"));
     }
 
-    // STORAGE-0017: Unpin via Volume — returns events.
-    let events = {
-        let mut map = state.current.storage.volumes.write().await;
-        if let Some(vol) = map
-            .values_mut()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-        {
-            let store = ContentStore::new(vol.mount_path().clone(), None);
-            match vol.unpin(&store).await {
-                Ok(events) => events,
-                Err(e) => {
-                    warn!(name = %name, error = %e, "Unpin encountered an error");
-                    vec![]
-                }
-            }
-        } else {
-            debug!(name = %name, "Volume not found for unpin — no-op");
-            vec![]
-        }
-    };
+    // Domain command — unpin via Bank aggregate
+    let events = bank_aggregate::unpin(
+        &name,
+        &state.current.storage.volumes,
+        |path: PathBuf| std::sync::Arc::new(ContentStore::new(path, None)),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        debug!(name = %name, error = %e, "Unpin no-op — bank not found or not pinned");
+        vec![]
+    });
 
     for event in &events {
         state.emit_storage_changed(event.clone()).await;
@@ -1705,20 +1563,16 @@ pub async fn bank_changes_v1(
     Path(name): Path<String>,
     Query(params): Query<ChangesQuery>,
 ) -> crate::api::ApiResult<garden_common::storage::ChangesResponse> {
-    let mount_path = {
-        let map = state.current.storage.volumes.read().await;
-        let vol = map
-            .values()
-            .find(|v| v.management().is_some_and(|m| m.name == name))
-            .ok_or_else(|| {
-                err(
-                    StatusCode::NOT_FOUND,
-                    "BANK_NOT_FOUND",
-                    &format!("Bank '{}' not found", name),
-                )
-            })?;
-        vol.mount_path().to_string_lossy().to_string()
-    };
+    use crate::domain::storage::bank_aggregate;
+
+    let bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
+        .await
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+
+    let mount_path = bank
+        .mount_path
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank has no mounted volume"))?;
 
     if let Err(msg) = validate_seed_bank_layout(&mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));

@@ -189,6 +189,8 @@
 
 Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its books. These define how moss is *structured* — the vocabulary every contributor should share when reading, writing, or reviewing code under `src/moss/src/domain/`.
 
+**Moss (struct)** - The daemon's runtime dependency injection container (`src/moss/src/app_state.rs`). Holds `Arc<Aggregate>` fields for each bounded context plus cross-cutting infrastructure (shutdown token, event bus, console). Renamed from `AppState` in ARCH-0037 (Book XIX) per code standards §3 (type names name the concept, not the architectural role). The only method with logic is `emit_storage_changed` (cross-cutting coordination across event bus, broadcast channel, tool projection, and orchestration nudge).
+
 **Bounded context** - A module with a single responsibility, private state, and an explicit contract for cross-boundary interaction. Every `src/moss/src/domain/<name>/` subdirectory is a bounded context. Contexts never reach into each other's state directly; they interact through events and typed method calls.  
 → See: [specs/domain-aggregates.md](specs/domain-aggregates.md)
 
@@ -309,7 +311,7 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Topology (bounded context)** - The aggregate owning the peer cache on a stone: a map of `stone_id → TopologyEntry` holding every stone this stone has discovered (online + offline). Typed commands (`upsert_from_chirp`, `mark_stone_offline`, `forget_stone`, `maintain`, `flush`, `build_self_entry`, `sync_services`, `sync_capabilities`, `update_stone_health`, `announce_resolution_change`, `chirp`) own the mutation path; typed queries (`all_stones`, `online_stones`, `get_by_id`, `get_by_name`, `count`, `online_count`, `is_dirty`) return owned values. Second persistent aggregate after Offerings.
 
-**SelfEntryInputs** - Explicit input struct for `Topology::build_self_entry`. Holds stone identity, address, health, mac, capabilities, tags, services, moss version, and the `network_ready` flag. Caller composition helpers in `domain::topology::composition::*` assemble this from AppState before invoking the aggregate — the aggregate holds no back-reference to AppState per ARCH-0020's "Alternative B rejected" rationale.
+**SelfEntryInputs** - Explicit input struct for `Topology::build_self_entry`. Holds stone identity, address, health, mac, capabilities, tags, services, moss version, and the `network_ready` flag. Caller composition helpers in `domain::topology::composition::*` assemble this from Moss before invoking the aggregate — the aggregate holds no back-reference to Moss per ARCH-0020's "Alternative B rejected" rationale.
 
 **Interesting transition (Topology)** - `TopologyChanged` fires only on status changes, not on every `upsert_from_chirp`. New stones fire `StoneDiscovered`; Offline→Online transitions fire `StoneOnline`; Online→Offline transitions fire `StoneOffline` (via maintenance or goodbye); explicit operator forgets fire `StoneForgotten`; TTL evictions fire `StoneEvicted`; local self-entry chirps fire `SelfEntryChirped`. Peer refreshes of unchanged entries produce no event — too high-volume for the interesting-transition stream. Same push/pull duality as Metrics per ARCH-0018.
 
@@ -317,7 +319,7 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **TopologyStore** - Persistence port injected into `Topology` for reading and writing `garden-topology.json` per TOPO-0002. Production adapter `FileTopologyStore` writes atomically via `tmp + rename`. Second persistent aggregate's store port after `OfferingStore` (ARCH-0016). Contrast with Tool / Metrics / Resources which are ephemeral aggregates.
 
-**Topology composition helpers** - Free functions in `domain::topology::composition::*` that take `&AppState` and call the aggregate's typed commands. They own the assembly of `SelfEntryInputs` from the seven upstream AppState sources (stone identity, address, health, mac, capabilities, presence tags, offerings, subsystems readiness) plus the mDNS re-registration side-effect in `announce_resolution_change` — mDNS stays outside the aggregate because Discovery is Book X's scope. Same shape as Book II's `domain::tool::projection::*` helpers (ARCH-0019 Ch5).
+**Topology composition helpers** - Free functions in `domain::topology::composition::*` that take `&Moss` and call the aggregate's typed commands. They own the assembly of `SelfEntryInputs` from the seven upstream Moss sources (stone identity, address, health, mac, capabilities, presence tags, offerings, subsystems readiness) plus the mDNS re-registration side-effect in `announce_resolution_change` — mDNS stays outside the aggregate because Discovery is Book X's scope. Same shape as Book II's `domain::tool::projection::*` helpers (ARCH-0019 Ch5).
 
 **Always-dirty invariant** - The `Topology::upsert_from_chirp` command always marks the cache dirty for persistence. Collapses the prior split into `upsert_from_chirp` (no-mark) + `upsert_from_chirp_dirty` (with-mark) — the aggregate owns the invariant that every mutation is followed by persistence.
 

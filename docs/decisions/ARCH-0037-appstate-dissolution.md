@@ -4,6 +4,7 @@ doc_type: decision
 status: accepted
 date: 2026-04-12
 depends_on: [ARCH-0017]
+completed: 2026-04-12
 ---
 
 # ARCH-0037: AppState Dissolution — Rename to Moss

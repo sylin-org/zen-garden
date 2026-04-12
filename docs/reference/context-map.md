@@ -32,7 +32,7 @@ Each context entry lists:
 - **Status** — one of:
   - **Full** — conforms to the [domain aggregate pattern](../specs/domain-aggregates.md)
   - **Partial** — exists as a struct or module but does not yet enforce the pattern (private state, events, ports, tests)
-  - **Absent** — does not exist yet; scattered across other contexts or as raw AppState fields
+  - **Absent** — does not exist yet; scattered across other contexts or as raw `Moss` fields
   - **Retired** — no longer exists; its responsibilities absorbed by another context
 - **Owns** — what state the context holds
 - **Emits** — what domain events it publishes via `changes()`
@@ -83,7 +83,7 @@ As of 2026-04-12, after [ARCH-0031](../decisions/ARCH-0031-configuration-dissolu
 - **Subscribes:** composition helpers pull `OfferingsChanged` into the self-entry reassembly path (`sync_services`); no internal subscription on the aggregate itself.
 - **Ports:** `ChirpTransport` → `P2pChirpTransport` (UDP `STONE_CHIRP` announcements), `TopologyStore` → `FileTopologyStore` (TOPO-0002 atomic JSON writes)
 - **Cross-cutting:** `Arc<Metrics>` injected at construction; mutation latency + per-kind event counters recorded on every command.
-- **Composition layer:** `domain::topology::composition::*` holds the AppState-bound helpers (`self_entry_inputs`, `build_self_entry`, `sync_services`, `sync_capabilities`, `update_stone_health`, `announce_resolution_change`) so the aggregate holds no back-reference to `AppState`.
+- **Composition layer:** `domain::topology::composition::*` holds the `Moss`-bound helpers (`self_entry_inputs`, `build_self_entry`, `sync_services`, `sync_capabilities`, `update_stone_health`, `announce_resolution_change`) so the aggregate holds no back-reference to `Moss`.
 - **Source:** `src/moss/src/domain/topology/` (mod.rs + aggregate.rs + event.rs + error.rs + transport.rs + store.rs + composition.rs)
 - **Book:** III (ARCH-0020) — **COMPLETE**
 
@@ -124,7 +124,7 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Subscribes:** none
 - **Ports:** none (direct infra access)
 - **Source:** `src/moss/src/domain/current/`
-- **Book:** cleaned up implicitly across Books III (Topology), VI (Subsystems), VIII (Storage), XIX (AppState dissolution)
+- **Book:** cleaned up implicitly across Books III (Topology), VI (Subsystems), VIII (Storage), XIX (Moss rename)
 
 #### Storage (Bank domain model + API surface landed, VIII-a/b)
 
@@ -192,8 +192,8 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Plan change:** ARCH-0017 anticipated 3 sub-aggregates (Tick, Nurturing, Election); Book XI found 0 aggregates warranted — Orchestration was a 110-line coordination bag with no domain state, no invariants, no business logic.
 - **Dissolved into:**
   - Storage coordination (tick, nudge, rescan, S3 listeners) → `current.storage.coordination` sub-struct
-  - Nurturing infrastructure (harvest_ops, store) → direct `AppState.nurturing` field
-  - Nourishment SSE channels (jobs) → direct `AppState.nourishment` field
+  - Nurturing infrastructure (harvest_ops, store) → direct `Moss.nurturing` field
+  - Nourishment SSE channels (jobs) → direct `Moss.nourishment` field
   - Election was never in Orchestration (lives in `Presence.elections`)
 - **Thin namespace retained:** `domain/orchestration/` still holds `NurturingOrchestration` and `NourishmentOrchestration` as thin infrastructure structs — no aggregate, no events, no ports.
 - **Book:** XI (ARCH-0029) — **COMPLETE**
@@ -242,9 +242,9 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Source:** `src/moss/src/domain/tool/` (aggregate, registry, event, error, transport, projection, capability, sse, tests — one concept per file per code-standards §14)
 - **Book:** II — ARCH-0019 closed 2026-04-11
 
-### Absent contexts (scattered across AppState or other modules)
+### Formerly absent contexts (now extracted)
 
-These contexts do not exist as modules. Their state lives as raw fields on `AppState` or as free-function modules.
+These contexts were originally scattered across `Moss` (formerly `AppState`) or free-function modules. All have been extracted into proper aggregates.
 
 #### Subsystems
 
@@ -377,7 +377,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | Context | Status | Absorbed into |
 |---------|--------|---------------|
 | **Platform** | Retired by Book XII | `ContainerRuntime` (Book XII) + `Networking` (Book X) + remaining bits moved to their owning contexts |
-| **AppState** | Retired by Book XIX | Renamed to **Moss** (a pure dependency container with no methods doing work) |
+| **AppState** | Retired by Book XIX (ARCH-0037) | Renamed to **Moss** — pure dependency container with one cross-cutting method (`emit_storage_changed`). 7 delegate methods inlined, re-exports relocated to `lib.rs`. |
 
 ---
 

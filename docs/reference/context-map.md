@@ -302,8 +302,8 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### Persistence
 
-- **Status:** Absent as a shared concept — every aggregate will have its own `Store` port, but the file-backed adapter helpers are not yet unified
-- **Target source:** `src/moss/src/infra/persistence/`
+- **Status:** Dissolved. ARCH-0032 (Book XIV of ARCH-0017) — completed 2026-04-12.
+- **Plan change:** ARCH-0017 anticipated `AtomicJsonStore<T>`, `DirectoryCache<K, V>`, and canonical error conversion as shared infra helpers; Book XIV found that `garden_common::persistence` already provides `atomic_write_file()`, `JsonStorage<T>`, and `PersistenceProvider<T>` trait — the consolidation target already exists. Store port adapters are 10-20 line thin delegates. `DirectoryCache<K, V>` has exactly one consumer (`CeremonyJournal`). Remaining inline atomic write duplicates in moss infra are mechanical cleanup, not domain architecture.
 - **Book:** XIV
 
 #### Logging
@@ -362,7 +362,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | Context | Exposes | Adapter | Book |
 |---------|---------|---------|------|
 | **ContainerRuntime** | `docker::ContainerRuntime` (sealed concrete) | Bollard internalized | XII |
-| **Persistence helpers** | `AtomicJsonStore<T>`, `DirectoryCache<K, V>`, canonical error conversion | (no trait; reusable helpers) | XIV |
+| ~~**Persistence helpers**~~ | ~~`AtomicJsonStore<T>`, `DirectoryCache<K, V>`, canonical error conversion~~ | ~~(no trait; reusable helpers)~~ | XIV (dissolved) |
 
 ### Application contexts
 

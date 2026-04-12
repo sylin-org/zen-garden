@@ -4,6 +4,7 @@ doc_type: decision
 status: accepted
 date: 2026-04-12
 depends_on: [ARCH-0017, ARCH-0007, ARCH-0024]
+completed: 2026-04-12
 ---
 
 # ARCH-0030: ContainerRuntime Port

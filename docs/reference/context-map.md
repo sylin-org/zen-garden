@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0029](../decisions/ARCH-0029-orchestration-dissolution.md).
+As of 2026-04-12, after [ARCH-0030](../decisions/ARCH-0030-container-runtime-port.md).
 
 ### Full contexts
 
@@ -178,13 +178,13 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 #### Platform
 
-- **Status:** Partial — a bag of `docker`, `runtime`, `network`, `handlers` infrastructure references
+- **Status:** Partial — a facade over `container`, `runtime`, `network`, `handlers` infrastructure references
 - **Owns:** nothing it enforces; it is a facade over four infra concerns
 - **Emits:** none
 - **Subscribes:** none
-- **Ports:** direct Bollard imports, no abstraction
+- **Ports:** none (container runtime is sealed behind `docker::ContainerRuntime`; Bollard types do not leak)
 - **Source:** `src/moss/src/domain/platform/`
-- **Book:** Book XII extracts `ContainerRuntime` from `platform.docker`; Networking stays as infrastructure on Platform (Book X determined no aggregate needed); Platform is retired or reduced to a vestigial type
+- **Book:** Book XII renamed `platform.docker` → `platform.container`, sealed Bollard leak, deleted dead `ServiceRuntime` trait + `infra/container.rs`. Networking stays as infrastructure on Platform (Book X determined no aggregate needed). Platform is reduced to a vestigial type.
 
 #### Orchestration
 
@@ -289,8 +289,9 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### ContainerRuntime
 
-- **Status:** Absent as a port — `platform.docker: DockerClient` is used directly; Bollard types bleed into domain code
-- **Target source:** `src/moss/src/domain/container_runtime/` (trait) + `src/moss/src/infra/container_runtime/` (adapter)
+- **Status:** Sealed infrastructure. ARCH-0030 (Book XII of ARCH-0017) — completed 2026-04-12.
+- **Plan change:** ARCH-0017 anticipated a full `ContainerRuntime` port trait + `BollardAdapter`; Book XII found that `docker::Client` already IS the anti-corruption layer (all Bollard types confined to method bodies, domain-type returns). Revised to rename + seal + delete: `docker::Client` → `docker::ContainerRuntime`, `Platform.docker` → `Platform.container`, domain-level `ContainerEvent` replaces the one Bollard type that leaked (`EventMessage`), dead `ServiceRuntime` trait + `infra/container.rs` deleted.
+- **Source:** `src/moss/src/docker/` (sealed module — zero Bollard types cross its boundary)
 - **Book:** XII
 
 #### Configuration
@@ -360,7 +361,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 
 | Context | Exposes | Adapter | Book |
 |---------|---------|---------|------|
-| **ContainerRuntime** | `ContainerRuntime` trait | `BollardAdapter` | XII |
+| **ContainerRuntime** | `docker::ContainerRuntime` (sealed concrete) | Bollard internalized | XII |
 | **Persistence helpers** | `AtomicJsonStore<T>`, `DirectoryCache<K, V>`, canonical error conversion | (no trait; reusable helpers) | XIV |
 
 ### Application contexts
@@ -432,7 +433,7 @@ Complete list of infrastructure ports the epic produces. Each port lives in its 
 | `MdnsTransport` | register mDNS services | `KoiMdnsAdapter` | Topology, Discovery |
 | `KoiClient` | embedded koi discovery | `KoiEmbeddedAdapter` | Discovery |
 | `InterfaceMonitor` | observe network interface state | `NetlinkAdapter` (Linux) / `IpHelperAdapter` (Windows) | Networking |
-| `ContainerRuntime` | container lifecycle operations | `BollardAdapter` | ContainerRuntime |
+| `ContainerRuntime` | container lifecycle operations | Bollard internalized (sealed in `docker::`) | Platform |
 | `FileSystem` | filesystem operations abstracted for tests | `OsFileSystem` | Storage |
 | `VolumeMonitor` | observe physical volume events | `UdevAdapter` / `WmiAdapter` | Storage::Volumes |
 | `ReplicationTransport` | peer-to-peer replication protocol | `HttpReplicationAdapter` | Storage::Replication |

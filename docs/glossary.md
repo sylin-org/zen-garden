@@ -239,6 +239,12 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Discovery mandate** - The rule (amended into [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) on 2026-04-11) that every book's Chapter 1 re-evaluates the plan against the current code before writing any implementation. If the plan is wrong, the author changes the plan (logging the amendment in ARCH-0017's revision history) before writing code. Material plan changes are surfaced to the user for visibility.
 
+### Infrastructure terms (Book XII / ARCH-0030)
+
+**ContainerRuntime** - The sealed abstraction over the container engine (Docker/Podman). Lives at `docker::ContainerRuntime` — all Bollard types are confined inside the `docker::` module boundary. Call sites use `state.platform.container.*` with domain-type returns. No trait abstraction needed — the concrete struct already is the anti-corruption layer.
+
+**ContainerEvent** - Domain-level lifecycle event from the container runtime. Captures container name and action string (start, stop, die, kill, destroy, health_status). Replaces raw Bollard `EventMessage` so no foreign types cross the `docker::` module boundary.
+
 ### Observability-specific terms (Book I / ARCH-0018)
 
 **Resources** - Hardware state snapshots (CPU, memory, disk, network, GPU, uptime). Dynamic but derived from the physical stone. Renamed from "metrics" in Book I Chapter 2 to free the term "metrics" for its proper observability meaning. See `/api/v1/stone/resources`.

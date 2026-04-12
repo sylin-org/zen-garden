@@ -17,7 +17,7 @@ use garden_common::constants::paths;
 use garden_common::storage::MemoriesOfferingManifest;
 use serde::{Deserialize, Serialize};
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::nurturing::{RemoteNurturingIndex, RemoteSnapshot};
 use crate::domain::storage_service::ProxyTarget;
 use crate::infra::storage::handle::StorageResolver;
@@ -60,7 +60,7 @@ fn validate_storage_layout(mount_path: &std::path::Path) -> Result<(), String> {
 }
 
 fn log_memories_access(
-    state: &AppState,
+    state: &Moss,
     headers: &HeaderMap,
     status: StatusCode,
     action: &str,
@@ -184,7 +184,7 @@ async fn proxy_memories_request(
 
 /// List all offering snapshots on a storage.
 pub async fn list_memories_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<RemoteNurturingIndex> {
@@ -279,7 +279,7 @@ pub async fn list_memories_v1(
 
 /// List snapshots for a specific offering.
 pub async fn list_offering_snapshots_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, offering_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<OfferingSnapshotsResponse> {
@@ -389,7 +389,7 @@ pub async fn list_offering_snapshots_v1(
 
 /// Read the offering manifest from memories.
 pub async fn get_offering_manifest_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, offering_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<MemoriesOfferingManifest> {
@@ -508,7 +508,7 @@ pub async fn get_offering_manifest_v1(
 
 /// Download a snapshot tarball.
 pub async fn download_snapshot_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, offering_id, harvest_id)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {

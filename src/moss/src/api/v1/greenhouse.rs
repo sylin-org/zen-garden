@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::infra::embedded::EmbeddedManifests;
-use crate::{AppState, bad_request, internal, not_found};
+use crate::{Moss, bad_request, internal, not_found};
 use garden_common::api_utils::ApiErrorResponse;
 use garden_common::manifests::{generate, runtime_manifests_dir, validation};
 
@@ -198,7 +198,7 @@ pub async fn get_greenhouse_page() -> impl IntoResponse {
 /// Returns a unified inventory of all offerings: installed services, available
 /// manifests (embedded + runtime), with compatibility checks and file inventory.
 pub async fn get_catalog(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<Json<Vec<CatalogEntry>>, (StatusCode, Json<ApiErrorResponse>)> {
     // 1. Scan embedded manifest files → group by offering name
     let mut embedded_files: HashMap<String, Vec<(String, String)>> = HashMap::new();
@@ -291,7 +291,7 @@ pub async fn get_catalog(
         }
     }
 
-    // 3. Get installed offerings from AppState
+    // 3. Get installed offerings from Moss
     let (installed_names, installed_running) = state
         .offerings
         .with_active(|installed| {
@@ -747,7 +747,7 @@ pub async fn export_offering(
 /// Lists managed offerings that are currently running, for the "pick a
 /// container" source selector in the Greenhouse UI.
 pub async fn list_containers_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<Json<Vec<ContainerEntry>>, (StatusCode, Json<ApiErrorResponse>)> {
     let entries: Vec<ContainerEntry> = state
         .offerings

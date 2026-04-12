@@ -6,7 +6,7 @@
 //! an internal `JobsChanged` event stream, `Arc<Metrics>` injection,
 //! and a parallel wire-format `JobEvent` stream emitted via the
 //! existing `EventBus`. State is an `Arc<RwLock<HashMap<String, Job>>>`
-//! shared with the legacy `AppState::jobs` field during the strangler
+//! shared with the legacy `Moss::jobs` field during the strangler
 //! phase — both views see the same map. Ch4 migrates executor sites
 //! to typed commands; Ch5 migrates the remaining sites, deletes the
 //! legacy field, and wires the `JobsReaperTask` onto the supervisor.

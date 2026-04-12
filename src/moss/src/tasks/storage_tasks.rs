@@ -7,7 +7,7 @@
 //! `StorageLifecycleTask` (BackgroundTask, ARCH-0015).
 //! Storage announcements are event-driven via `emit_storage_changed()`.
 
-use crate::AppState;
+use crate::Moss;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 ///   for managed Primary storage that doesn't have a listener yet.
 /// - On `Removed`/`Released`: disarm the S3 listener for the replica set.
 /// - On `RoleChanged`: arm if promoted to Primary, disarm if demoted.
-pub fn start_s3_listener_lifecycle(state: AppState, token: CancellationToken) {
+pub fn start_s3_listener_lifecycle(state: Moss, token: CancellationToken) {
     tokio::spawn(async move {
         let mut rx = state.current.storage.changed.subscribe();
 
@@ -62,7 +62,7 @@ pub fn start_s3_listener_lifecycle(state: AppState, token: CancellationToken) {
 }
 
 /// Arm S3 listeners for all managed Primary volumes that don't have one yet.
-pub(crate) async fn arm_s3_for_all_primaries(state: &AppState) {
+pub(crate) async fn arm_s3_for_all_primaries(state: &Moss) {
     let volumes = state.current.storage.volumes.read().await;
     for vol in volumes.values() {
         if let Some(mgmt) = vol.management()
@@ -83,7 +83,7 @@ pub(crate) async fn arm_s3_for_all_primaries(state: &AppState) {
 }
 
 /// Remove S3 listeners for replica sets that no longer have a local Primary volume.
-pub(crate) async fn reconcile_s3_listeners(state: &AppState) {
+pub(crate) async fn reconcile_s3_listeners(state: &Moss) {
     let s3 = &state.current.storage.coordination.s3_listeners;
     let assignments = s3.assignments().await;
     let volumes = state.current.storage.volumes.read().await;

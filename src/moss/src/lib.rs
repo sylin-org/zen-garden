@@ -28,8 +28,8 @@ pub mod app_state;
 // Test support — available to integration tests (tests/ directory)
 pub mod testing;
 
-// Re-export AppState
-pub use app_state::AppState;
+// Re-export Moss
+pub use app_state::Moss;
 
 // Re-export domain types used by external consumers (rake, tests)
 pub use domain::jobs::{Job, JobStatus};

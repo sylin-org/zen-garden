@@ -1,9 +1,9 @@
-use crate::AppState;
+use crate::Moss;
 use chrono::Utc;
 use garden_common::SubCapability;
 
 pub async fn record_capability_added(
-    state: &AppState,
+    state: &Moss,
     offering_name: &str,
     cap_type: &str,
     capability: &str,
@@ -12,7 +12,7 @@ pub async fn record_capability_added(
 }
 
 pub async fn record_capability_removed(
-    state: &AppState,
+    state: &Moss,
     offering_name: &str,
     cap_type: &str,
     capability: &str,
@@ -21,7 +21,7 @@ pub async fn record_capability_removed(
 }
 
 async fn mutate_capability_set(
-    state: &AppState,
+    state: &Moss,
     offering_name: &str,
     cap_type: &str,
     capability: &str,

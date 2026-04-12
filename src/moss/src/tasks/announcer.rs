@@ -13,7 +13,7 @@
 //! - Delegates to announcement module (SoC)
 //! - Respects network readiness (no chirps until network is ready)
 
-use crate::AppState;
+use crate::Moss;
 
 use tokio::time::{Duration, interval};
 use tokio_util::sync::CancellationToken;
@@ -29,14 +29,14 @@ use tokio_util::sync::CancellationToken;
 /// remote registries can reconcile stale entries.
 ///
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
-pub fn start_periodic_announcer(state: AppState, token: CancellationToken) {
+pub fn start_periodic_announcer(state: Moss, token: CancellationToken) {
     tokio::spawn(periodic_announcer_task(state, token));
     tracing::info!("Periodic announcer started (30s interval)");
 }
 
 /// Inner future for the periodic announcer, usable by both
 /// `start_periodic_announcer` and the `TaskSupervisor`.
-pub(crate) async fn periodic_announcer_task(state: AppState, token: CancellationToken) {
+pub(crate) async fn periodic_announcer_task(state: Moss, token: CancellationToken) {
     let mut ticker = interval(Duration::from_secs(30));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 

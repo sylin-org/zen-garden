@@ -15,7 +15,7 @@
 // the wire `JobEvent` stream internally. `emit_job_progress` is still
 // used for info-level progress updates during long-running install
 // steps and has no aggregate equivalent.
-use crate::AppState;
+use crate::Moss;
 use crate::api::v1::events::emit_job_progress;
 use crate::domain::connection;
 use crate::domain::events::OfferingEvent;
@@ -81,7 +81,7 @@ fn substitute_guidance_templates(
 /// This is used during installation and for backfilling guidance on boot.
 /// Pass `static_ip` if the stone has a static IP assigned.
 pub fn build_guidance(
-    state: &AppState,
+    state: &Moss,
     name: &str,
     offering: &str,
     ports: &std::collections::HashMap<String, (u16, u16)>,
@@ -175,7 +175,7 @@ pub fn build_guidance(
 
 /// Build guidance for adopted offerings (uses adopted guidance template)
 pub fn build_adopted_guidance(
-    state: &AppState,
+    state: &Moss,
     name: &str,
     offering: &str,
     port: u16,
@@ -222,7 +222,7 @@ pub fn build_adopted_guidance(
 /// Gets the guidance generated and cached.
 ///
 /// Returns the number of services that were updated.
-pub async fn backfill_missing_guidance(state: &AppState) -> usize {
+pub async fn backfill_missing_guidance(state: &Moss) -> usize {
     tracing::info!("Backfill: starting guidance backfill check");
     let mut updated = 0;
 
@@ -445,7 +445,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 /// });
 /// ```
 pub async fn install_service_task(
-    state: &AppState,
+    state: &Moss,
     job_id: &str,
     offering_type: &str,
     service_name: &str,
@@ -917,7 +917,7 @@ pub async fn install_service_task(
 /// Pulls the Docker image, inspects its OCI config, resolves ports/volumes/env,
 /// builds a ContainerSpec, and deploys — all without a curated manifest.
 pub async fn install_image_direct_task(
-    state: &AppState,
+    state: &Moss,
     job_id: &str,
     fqn: &OfferingFqn,
     image_ref: &str,
@@ -1143,7 +1143,7 @@ pub async fn install_image_direct_task(
 ///     install_batch_task(&state_clone, &job_id, offerings).await;
 /// });
 /// ```
-pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<String>) {
+pub async fn install_batch_task(state: &Moss, job_id: &str, offerings: Vec<String>) {
     let offerings_count = offerings.len();
 
     // Load network state to get any existing static IP for guidance rendering
@@ -1424,7 +1424,7 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
 ///
 /// Called when a service installation fails to clean up the placeholder entry
 /// that was created before the installation job started.
-async fn remove_installing_entry(state: &AppState, offering: &str) {
+async fn remove_installing_entry(state: &Moss, offering: &str) {
     // Route through the Offerings aggregate — persist + chirp are automatic.
     state.offerings.remove_by_name(offering).await;
     tracing::debug!(
@@ -1455,7 +1455,7 @@ async fn remove_installing_entry(state: &AppState, offering: &str) {
 /// - `completed` accumulates successfully refreshed capabilities
 /// - `failed` maps failed capability names to error messages
 pub async fn refresh_capabilities_task(
-    state: &AppState,
+    state: &Moss,
     job_id: &str,
     offering: &str,
     cap_type: Option<&str>,
@@ -1656,7 +1656,7 @@ pub async fn refresh_capabilities_task(
 /// Convert Offering to ServiceInfo for capability executor (internal helper)
 async fn offering_to_service_info_for_refresh(
     offering: &Offering,
-    state: &AppState,
+    state: &Moss,
 ) -> garden_common::ServiceInfo {
     use crate::domain::get_offering_port;
     use garden_common::{Ports, ServiceInfo, ServiceStatus};
@@ -1704,7 +1704,7 @@ async fn offering_to_service_info_for_refresh(
 ///
 /// Creates a job, executes the add command, and updates job status.
 pub async fn add_capability_task(
-    state: &AppState,
+    state: &Moss,
     job_id: &str,
     offering: &str,
     cap_type: &str,

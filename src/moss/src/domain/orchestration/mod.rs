@@ -3,7 +3,7 @@
 //! The `Orchestration` wrapper struct was dissolved in ARCH-0029 (Book XI).
 //! Storage coordination primitives moved to `domain::storage::Coordination`.
 //! Nurturing and Nourishment remain as thin infrastructure structs promoted
-//! to direct `AppState` fields.
+//! to direct `Moss` fields.
 //!
 //! Sub-namespaces:
 //! - [`nurturing`]   — A/B backup scheduling and harvest archives

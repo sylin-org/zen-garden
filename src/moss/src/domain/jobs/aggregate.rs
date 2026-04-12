@@ -11,7 +11,7 @@
 //!
 //! During the Book IV strangler phase (Ch3 → Ch5), the aggregate's
 //! inner state is an `Arc` shared with the legacy
-//! `AppState::jobs: Arc<RwLock<HashMap<String, Job>>>` field. Both
+//! `Moss::jobs: Arc<RwLock<HashMap<String, Job>>>` field. Both
 //! views see the same `HashMap`. Mutations through the legacy raw-map
 //! path do **not** fire aggregate events — that is the whole point
 //! of the strangler: call sites migrate file by file, each migrated
@@ -63,7 +63,7 @@ pub struct Jobs {
     /// Shared active-jobs map.
     ///
     /// During the strangler phase, the same `Arc` is held by
-    /// `AppState::jobs`. Both views read/write the same `HashMap`.
+    /// `Moss::jobs`. Both views read/write the same `HashMap`.
     pub(crate) state: Arc<RwLock<JobsState>>,
 
     /// Metrics aggregate for latency + per-kind counters.
@@ -87,7 +87,7 @@ impl Jobs {
     ///
     /// The caller (`bootstrap::run`) creates the `Arc<RwLock<...>>`
     /// once, passes a clone to this constructor, and stores a second
-    /// clone in `AppState::jobs` as the legacy raw-map field. Both
+    /// clone in `Moss::jobs` as the legacy raw-map field. Both
     /// views see the same `HashMap` throughout Ch3–Ch5.
     pub async fn with_shared_state(
         state: Arc<RwLock<JobsState>>,

@@ -1,29 +1,29 @@
-//! Composition helpers that bridge `AppState` and the `Topology`
+//! Composition helpers that bridge `Moss` and the `Topology`
 //! aggregate.
 //!
-//! The aggregate itself holds no back-reference to `AppState` per
+//! The aggregate itself holds no back-reference to `Moss` per
 //! ARCH-0020. These free functions own the assembly of
-//! [`SelfEntryInputs`] from the various AppState sub-contexts
+//! [`SelfEntryInputs`] from the various Moss sub-contexts
 //! (`current.address`, `current.health`, `current.mac`,
 //! `current.capabilities`, `presence.notifications`, `offerings`,
 //! `subsystems.is_ready("network")`) and call the aggregate's typed
-//! commands on behalf of AppState-bound consumers.
+//! commands on behalf of Moss-bound consumers.
 //!
 //! Same composition-helper shape as
 //! [`crate::domain::tool::projection::reproject_and_publish`] from
 //! Book II (ARCH-0019 Ch5).
 
 use super::aggregate::SelfEntryInputs;
-use crate::AppState;
+use crate::Moss;
 use garden_common::TopologyEntry;
 
-/// Assemble `SelfEntryInputs` from the current AppState snapshot.
+/// Assemble `SelfEntryInputs` from the current Moss snapshot.
 ///
 /// Reads from seven sources: stone identity, address, health, mac,
 /// capabilities, presence tags, active offerings, and subsystems
 /// readiness. Acquires each read lock independently; no lock is
 /// held across another lock acquisition.
-pub async fn self_entry_inputs(state: &AppState) -> SelfEntryInputs {
+pub async fn self_entry_inputs(state: &Moss) -> SelfEntryInputs {
     let address = state.current.address.read().await.clone();
     let health = state.current.health.read().await.clone();
     let mac = state.current.mac.read().await.clone();
@@ -49,17 +49,17 @@ pub async fn self_entry_inputs(state: &AppState) -> SelfEntryInputs {
     }
 }
 
-/// Build a `TopologyEntry` from the current AppState snapshot.
+/// Build a `TopologyEntry` from the current Moss snapshot.
 ///
 /// Convenience wrapper: `self_entry_inputs(state) + Topology::build_self_entry`.
-pub async fn build_self_entry(state: &AppState) -> TopologyEntry {
+pub async fn build_self_entry(state: &Moss) -> TopologyEntry {
     let inputs = self_entry_inputs(state).await;
     state.topology.build_self_entry(inputs)
 }
 
 /// Sync services: assemble inputs, delegate to
 /// `Topology::sync_services`, log failures.
-pub async fn sync_services(state: &AppState, auto_chirp: bool) {
+pub async fn sync_services(state: &Moss, auto_chirp: bool) {
     let inputs = self_entry_inputs(state).await;
     if let Err(e) = state.topology.sync_services(inputs, auto_chirp).await {
         tracing::warn!(error = ?e, "Failed to auto-chirp after service sync");
@@ -68,7 +68,7 @@ pub async fn sync_services(state: &AppState, auto_chirp: bool) {
 
 /// Sync capabilities: assemble inputs, delegate to
 /// `Topology::sync_capabilities`.
-pub async fn sync_capabilities(state: &AppState, auto_chirp: bool) {
+pub async fn sync_capabilities(state: &Moss, auto_chirp: bool) {
     tracing::info!("Capabilities updated — Topology will read fresh data");
     let inputs = self_entry_inputs(state).await;
     if let Err(e) = state.topology.sync_capabilities(inputs, auto_chirp).await {
@@ -78,7 +78,7 @@ pub async fn sync_capabilities(state: &AppState, auto_chirp: bool) {
 
 /// Update stone health: mutate `current.health`, then assemble inputs
 /// and delegate to `Topology::update_stone_health`.
-pub async fn update_stone_health(state: &AppState, health: String, auto_chirp: bool) {
+pub async fn update_stone_health(state: &Moss, health: String, auto_chirp: bool) {
     {
         let mut h = state.current.health.write().await;
         *h = health.clone();
@@ -99,7 +99,7 @@ pub async fn update_stone_health(state: &AppState, health: String, auto_chirp: b
 /// Discovery is Book X's scope, and the aggregate holds no handle
 /// to the mDNS registry per ARCH-0020's "Alternative A rejected"
 /// rationale.
-pub async fn announce_resolution_change(state: &AppState, new_ip: &str) {
+pub async fn announce_resolution_change(state: &Moss, new_ip: &str) {
     let new_endpoint = format!("http://{}:{}", new_ip, state.current.api_port);
     tracing::info!(
         endpoint = %new_endpoint,

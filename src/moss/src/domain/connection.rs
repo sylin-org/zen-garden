@@ -165,7 +165,7 @@ pub fn select_uri_template(
 pub async fn infer_protocol(
     offering_name: &str,
     category: &str,
-    state: &crate::app_state::AppState,
+    state: &crate::app_state::Moss,
 ) -> String {
     let manifest_entry = state.catalog.get_manifest(offering_name);
     let connection = manifest_entry

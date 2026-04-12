@@ -6,7 +6,7 @@
 use anyhow::Context;
 use garden_common::offerings::OfferingFqn;
 
-use crate::AppState;
+use crate::Moss;
 
 /// Build a Docker container spec from the offering manifest + config patches.
 ///
@@ -18,7 +18,7 @@ use crate::AppState;
 /// This matches the reference implementation in `install_service_task` which
 /// also uses `compiled.*` for all spec fields.
 pub async fn build_spec_from_manifest(
-    state: &AppState,
+    state: &Moss,
     service_name: &str,
 ) -> anyhow::Result<crate::docker::ContainerSpec> {
     let patches = state
@@ -141,7 +141,7 @@ impl ReconcileResult {
     /// Apply port updates to the offering registry if ports were remapped
     /// during reconciliation. Centralizes the writeback logic so callers
     /// (health monitor, service_lifecycle::start) don't duplicate it.
-    pub async fn apply_port_updates(&self, state: &AppState, offering_id: &str) {
+    pub async fn apply_port_updates(&self, state: &Moss, offering_id: &str) {
         if !self.ports_changed {
             return;
         }
@@ -175,7 +175,7 @@ impl ReconcileResult {
 /// If the container already exists (partial prior attempt), it is started
 /// rather than reinstalled.
 pub async fn reconcile_offering(
-    state: &AppState,
+    state: &Moss,
     service_name: &str,
 ) -> anyhow::Result<ReconcileResult> {
     // 1. Snapshot stored offering state (brief read lock, no await across it)
@@ -291,7 +291,7 @@ pub async fn reconcile_offering(
 /// "default" first (if present), then remaining names alphabetically.
 /// Used by `reconcile_offering` to map stored port_map overrides to spec
 /// ports and to build the named port_map after reconciliation.
-fn resolve_port_name_keys(state: &AppState, fqn: &OfferingFqn) -> Vec<String> {
+fn resolve_port_name_keys(state: &Moss, fqn: &OfferingFqn) -> Vec<String> {
     let Some(manifest) = state.catalog.get_manifest(&fqn.offering) else {
         return Vec::new();
     };
@@ -314,7 +314,7 @@ fn resolve_port_name_keys(state: &AppState, fqn: &OfferingFqn) -> Vec<String> {
 /// This ensures config patches are applied even after a container restart or
 /// Moss daemon restart. If the container spec doesn't match the desired config,
 /// it is removed and recreated.
-pub async fn compose_on_start(state: &AppState, service_name: &str) -> anyhow::Result<()> {
+pub async fn compose_on_start(state: &Moss, service_name: &str) -> anyhow::Result<()> {
     // Only run if there are config patches to apply
     let has_patches = state
         .offerings

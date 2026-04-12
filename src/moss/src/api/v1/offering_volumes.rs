@@ -18,7 +18,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
-use crate::AppState;
+use crate::Moss;
 
 /// Path parameters: (fqn, volume, file_path)
 type VolumePath = (String, String, String);
@@ -33,7 +33,7 @@ type VolumeRoot = (String, String);
 /// Streams the request body to a temp file, then atomically renames.
 /// Never buffers the full body in memory.
 pub async fn put_volume_file(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
     Path((fqn, volume, file_path)): Path<VolumePath>,
     request: Request,
 ) -> Response {
@@ -115,7 +115,7 @@ pub async fn put_volume_file(
 /// Read a file from the offering's volume. Streams from disk — never
 /// buffers the full file in memory.
 pub async fn get_volume_file(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
     Path((fqn, volume, file_path)): Path<VolumePath>,
 ) -> Response {
     if has_path_traversal(&file_path) {
@@ -160,7 +160,7 @@ pub async fn get_volume_file(
 /// Check if a file exists in the offering's volume. Returns 200 + Content-Length
 /// or 404.
 pub async fn head_volume_file(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
     Path((fqn, volume, file_path)): Path<VolumePath>,
 ) -> Response {
     if has_path_traversal(&file_path) {
@@ -210,7 +210,7 @@ pub async fn head_volume_file(
 /// }
 /// ```
 pub async fn list_volume_files(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
     Path((fqn, volume)): Path<VolumeRoot>,
 ) -> Response {
     // Resolve to the volume root by passing an empty path. The

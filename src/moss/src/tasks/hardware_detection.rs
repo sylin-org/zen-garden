@@ -8,7 +8,7 @@
 //! This non-blocking approach allows the daemon to start serving requests
 //! while GPU detection completes in the background.
 
-use crate::AppState;
+use crate::Moss;
 use crate::infra::save_capabilities_cache;
 use garden_common::console;
 use garden_common::resources::system as resources;
@@ -183,7 +183,7 @@ pub async fn detect_capabilities_background(
     stone_name: String,
     caps_arc: Arc<RwLock<Option<HardwareCapabilities>>>,
     console: Arc<console::ConsolePrinter>,
-    state: AppState,
+    state: Moss,
 ) {
     tracing::info!("Starting background hardware capability detection...");
 
@@ -250,7 +250,7 @@ pub async fn detect_capabilities_background(
     let updated_caps = {
         let mut guard = caps_arc.write().await;
         let mut caps = guard.take().unwrap_or_else(|| HardwareCapabilities {
-            stone_id: None, // Will be set from AppState
+            stone_id: None, // Will be set from Moss
             stone_name: stone_name.clone(),
             hardware: HardwareInventory {
                 cpu: CpuCapabilities {

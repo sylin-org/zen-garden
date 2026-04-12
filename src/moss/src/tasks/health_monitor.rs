@@ -9,7 +9,7 @@
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::adopt_offering_container;
 use crate::tasks::offering_reconciliation::ReconciliationCoordinator;
 use garden_common::{OfferingStatus, ServiceHealthStatus};
@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 /// 5. Discovers unregistered zen-offering containers
 /// 6. Adopts discovered containers if they match templates (self-heal)
 /// 7. Persists registry changes to disk
-pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
+pub async fn health_monitor_task(state: Moss, token: CancellationToken) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
     let reconciler = ReconciliationCoordinator::new();
 

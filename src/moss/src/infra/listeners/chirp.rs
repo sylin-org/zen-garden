@@ -27,7 +27,7 @@ pub type ChirpCallback = Arc<dyn Fn() + Send + Sync>;
 /// - A "deployed" followed by "updated" for the same offering = both pass
 /// - Events for different offerings = both pass
 pub struct ChirpListener {
-    /// Callback to trigger chirp (avoids circular dependency with AppState)
+    /// Callback to trigger chirp (avoids circular dependency with Moss)
     chirp_fn: ChirpCallback,
     /// Debouncer for rate limiting
     debouncer: StringPairDebouncer,

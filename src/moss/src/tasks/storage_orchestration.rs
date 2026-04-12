@@ -16,7 +16,7 @@ use garden_common::storage::StorageRole;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::app_state::AppState;
+use crate::app_state::Moss;
 use crate::infra::storage::ContentStore;
 
 /// Startup reconciliation window — wait before asserting Primary (ms).
@@ -40,7 +40,7 @@ const CHANGELOG_RETENTION: std::time::Duration = std::time::Duration::from_secs(
 ///
 /// Runs for the daemon's entire lifetime. Every tick it scans local seed banks,
 /// compares against garden-wide beacons, and assigns Primary/Dormant per FQN.
-pub async fn storage_orchestration_task(state: AppState, token: CancellationToken) -> Result<()> {
+pub async fn storage_orchestration_task(state: Moss, token: CancellationToken) -> Result<()> {
     info!("Seed bank orchestration task starting");
 
     // Phase 1: Startup reconciliation — wait before asserting Primary
@@ -87,7 +87,7 @@ pub async fn storage_orchestration_task(state: AppState, token: CancellationToke
 /// During this window, beacons from other stones may arrive declaring
 /// themselves Primary for a given seed bank name. If that happens, the
 /// local bank yields to Dormant.
-async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> Result<()> {
+async fn startup_reconciliation(state: &Moss, token: &CancellationToken) -> Result<()> {
     info!(
         window_ms = STARTUP_RECONCILIATION_MS,
         "Startup reconciliation: waiting before asserting Primary for seed banks"
@@ -121,7 +121,7 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
 /// 3. If remote Primary exists → become Dormant.
 /// 4. If both local and remote claim Primary (dual-primary) → lower stone_id yields.
 /// 5. Pinned Primary always wins — never reassigned by orchestration.
-async fn orchestration_tick(state: &AppState) -> Result<()> {
+async fn orchestration_tick(state: &Moss) -> Result<()> {
     // Read current managed volumes
     let (current_roles, current_pins, local_names) = {
         let map = state.current.storage.volumes.read().await;
@@ -264,7 +264,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 /// `now - CHANGELOG_RETENTION`.
 ///
 /// STORAGE-0007: Uses lifecycle objects for store access.
-async fn compact_primary_changelogs(state: &AppState) {
+async fn compact_primary_changelogs(state: &Moss) {
     let cutoff_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

@@ -30,7 +30,7 @@ pub struct MdnsHandle {
     version: String,
     /// Current health status (updated on transitions)
     health: std::sync::RwLock<String>,
-    /// Pond active flag — shared with AppState for TXT property updates
+    /// Pond active flag — shared with Moss for TXT property updates
     pond_active: Arc<AtomicBool>,
 }
 

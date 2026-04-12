@@ -5,7 +5,7 @@
 use std::time::Duration;
 use tokio::time::interval;
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::StoneEvent;
 
 /// GPU activity threshold — above this percentage, gpu_active = true (FIREFLY-0003)
@@ -16,7 +16,7 @@ const GPU_ACTIVE_THRESHOLD: f64 = 10.0;
 /// Emits StoneEvent::LoadUpdated via EventBus for presence stream.
 /// FIREFLY-0003: Now includes disk, I/O, GPU, and network resources.
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
-pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::CancellationToken) {
+pub async fn run_load_monitor_task(state: Moss, token: tokio_util::sync::CancellationToken) {
     let mut interval = interval(Duration::from_secs(5));
 
     loop {
@@ -92,7 +92,7 @@ pub async fn run_load_monitor_task(state: AppState, token: tokio_util::sync::Can
 ///
 /// Computes stone health from resources and emits StoneEvent::HealthChanged when status changes.
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
-pub async fn run_health_monitor_task(state: AppState, token: tokio_util::sync::CancellationToken) {
+pub async fn run_health_monitor_task(state: Moss, token: tokio_util::sync::CancellationToken) {
     let mut interval = interval(Duration::from_secs(30));
     let mut last_health = garden_common::constants::VITALITY_THRIVING.to_string();
 

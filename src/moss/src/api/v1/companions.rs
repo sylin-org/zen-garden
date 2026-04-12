@@ -1,7 +1,7 @@
 //! Companion management endpoints for Moss
 //! Provides Companion registry and command proxy functionality
 
-use crate::app_state::AppState;
+use crate::app_state::Moss;
 use crate::domain::Companion;
 use crate::domain::traits::CompanionOps;
 use crate::{internal, not_found};
@@ -93,7 +93,7 @@ pub async fn get_companion_manifest(
 /// If the first arg is "all", broadcasts to all stones in topology AND runs locally.
 /// The "all" keyword is stripped before forwarding to the Companion.
 pub async fn send_companion_command(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(companion_id): Path<String>,
     Json(request): Json<CompanionCommandRequest>,
 ) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
@@ -127,7 +127,7 @@ pub async fn send_companion_command(
 
 /// Execute Companion command on this stone only
 async fn execute_companion_command_local(
-    state: &AppState,
+    state: &Moss,
     companion_id: &str,
     request: &CompanionCommandRequest,
 ) -> Result<Json<CommandResponse>, (StatusCode, Json<CommandResponse>)> {
@@ -256,7 +256,7 @@ async fn execute_companion_command_local(
 ///
 /// Runs in parallel with best-effort delivery. Errors are logged but not propagated.
 async fn broadcast_to_topology(
-    state: &AppState,
+    state: &Moss,
     companion_id: &str,
     request: &CompanionCommandRequest,
 ) {
@@ -342,7 +342,7 @@ pub struct CompanionLifecycleResponse {
 /// When user explicitly starts an Companion, it should also be marked
 /// to auto-start on boot.
 pub async fn start_companion(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(companion_id): Path<String>,
 ) -> crate::api::ApiResult<CompanionLifecycleResponse> {
     // Companions always run on the same machine — use localhost

@@ -11,7 +11,7 @@
 //! - `DELETE /api/v1/stone/services/{service}/config?owner=..` — remove a patch
 
 use crate::domain::config_compose;
-use crate::{AppState, bad_request, conflict, internal, not_found};
+use crate::{Moss, bad_request, conflict, internal, not_found};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -79,7 +79,7 @@ pub struct EffectiveConfigResponse {
 // ============================================================================
 
 pub async fn get_config_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigResponse>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -129,7 +129,7 @@ pub async fn get_config_v1(
 // ============================================================================
 
 pub async fn patch_config_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     Json(request): Json<PatchConfigRequest>,
 ) -> Result<Json<ConfigResponse>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -273,7 +273,7 @@ pub async fn patch_config_v1(
 // ============================================================================
 
 pub async fn delete_config_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigResponse>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -374,7 +374,7 @@ fn normalize_service_name(service: &str) -> Result<String, (StatusCode, Json<Api
 /// Accepts full FQN strings (e.g., `mongodb::prod`) — strips the instance part
 /// to look up the base offering name in the manifest registry.
 fn get_service_template(
-    state: &AppState,
+    state: &Moss,
     name: &str,
 ) -> Result<ServiceTemplate, (StatusCode, Json<ApiErrorResponse>)> {
     // Manifest registry keys by base offering name (e.g., "mongodb"),
@@ -438,7 +438,7 @@ fn effective_to_container_spec(
 /// 2. **Env/volume/command changes** → recreate container (Docker limitation)
 /// 3. **Nothing changed** → no-op
 async fn maybe_cycle_container(
-    state: &AppState,
+    state: &Moss,
     service_name: &str,
     effective: &config_compose::EffectiveConfig,
     patches: &[garden_common::types::ConfigPatch],
@@ -572,7 +572,7 @@ async fn write_config_files(
 /// Apply the appropriate reload method after config file changes.
 /// Uses the reload policy declared in the manifest (restart or signal).
 async fn apply_config_reload(
-    state: &AppState,
+    state: &Moss,
     service_name: &str,
     config_files: &[garden_common::manifests::offering::ConfigFileMapping],
 ) {

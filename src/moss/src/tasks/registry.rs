@@ -6,7 +6,7 @@
 
 use crate::tasks::backfill_missing_guidance;
 use crate::tasks::task_scheduler::backfill_missing_tasks;
-use crate::{AppState, adopt_existing_containers};
+use crate::{Moss, adopt_existing_containers};
 use garden_common::ServiceHealthStatus;
 use garden_common::console::{ConsoleEvent, EventCategory, EventStatus};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use garden_common::console::ConsolePrinter;
 /// Runs every 15 seconds (gateway TTL is 60s, orchestrators refresh every 30s).
 /// Reaped entries are broadcast via SSE and UDP tools beacon so remote
 /// stones learn about the removal promptly.
-pub fn start_registry_maintenance(state: AppState, token: CancellationToken) {
+pub fn start_registry_maintenance(state: Moss, token: CancellationToken) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
         interval.tick().await; // Skip first immediate tick
@@ -57,7 +57,7 @@ pub fn start_registry_maintenance(state: AppState, token: CancellationToken) {
 /// Start registry loading and container adoption
 ///
 /// Reconciles persisted offerings state with actual Docker state on startup.
-pub fn start_registry_loader(state: AppState) {
+pub fn start_registry_loader(state: Moss) {
     tokio::spawn(async move {
         // Reconcile existing offerings: if the container no longer exists, mark it offline
         // Snapshot managed offerings to avoid holding write lock during async Docker calls
@@ -127,7 +127,7 @@ pub fn start_registry_loader(state: AppState) {
 /// Start offerings catalog builder
 ///
 /// Builds the offerings index from runtime templates.
-pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
+pub fn start_catalog_builder(state: Moss, console: Arc<ConsolePrinter>) {
     tokio::spawn(async move {
         tracing::info!("Building offerings catalog...");
 

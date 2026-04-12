@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 /// The only method with logic is [`emit_storage_changed`](Self::emit_storage_changed),
 /// which coordinates across multiple bounded contexts.
 #[derive(Clone)]
-pub struct AppState {
+pub struct Moss {
     /// Current domain — this stone's identity, local storage, topology, capabilities, resources.
     pub current: Arc<crate::domain::Current>,
 
@@ -137,101 +137,101 @@ pub struct AppState {
 // FromRef — handler dependency extraction (code standards §6)
 // ============================================================================
 
-// Each impl extracts a narrow dependency from AppState. Handlers declare only
-// what they need: `State(companion): State<Arc<Companion>>` instead of full AppState.
+// Each impl extracts a narrow dependency from Moss. Handlers declare only
+// what they need: `State(companion): State<Arc<Companion>>` instead of full Moss.
 
-impl axum::extract::FromRef<AppState> for Arc<crate::domain::Current> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<crate::domain::Current> {
+    fn from_ref(state: &Moss) -> Self {
         state.current.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<crate::domain::Platform> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<crate::domain::Platform> {
+    fn from_ref(state: &Moss) -> Self {
         state.platform.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<Tool> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<Tool> {
+    fn from_ref(state: &Moss) -> Self {
         state.tool.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<Offerings> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<Offerings> {
+    fn from_ref(state: &Moss) -> Self {
         state.offerings.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<Metrics> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<Metrics> {
+    fn from_ref(state: &Moss) -> Self {
         state.metrics.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<Jobs> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<Jobs> {
+    fn from_ref(state: &Moss) -> Self {
         state.jobs.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<Security> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<Security> {
+    fn from_ref(state: &Moss) -> Self {
         state.security.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<crate::domain::Discovery> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<crate::domain::Discovery> {
+    fn from_ref(state: &Moss) -> Self {
         state.discovery.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<crate::domain::Presence> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<crate::domain::Presence> {
+    fn from_ref(state: &Moss) -> Self {
         state.presence.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<crate::domain::Companion> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<crate::domain::Companion> {
+    fn from_ref(state: &Moss) -> Self {
         state.companion.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<NurturingOrchestration> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<NurturingOrchestration> {
+    fn from_ref(state: &Moss) -> Self {
         state.nurturing.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<NourishmentOrchestration> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<NourishmentOrchestration> {
+    fn from_ref(state: &Moss) -> Self {
         state.nourishment.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<Catalog> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<Catalog> {
+    fn from_ref(state: &Moss) -> Self {
         state.catalog.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for EventBus {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for EventBus {
+    fn from_ref(state: &Moss) -> Self {
         state.event_bus.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for CancellationToken {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for CancellationToken {
+    fn from_ref(state: &Moss) -> Self {
         state.shutdown_token.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<ConsolePrinter> {
-    fn from_ref(state: &AppState) -> Self {
+impl axum::extract::FromRef<Moss> for Arc<ConsolePrinter> {
+    fn from_ref(state: &Moss) -> Self {
         state.console.clone()
     }
 }
@@ -240,7 +240,7 @@ impl axum::extract::FromRef<AppState> for Arc<ConsolePrinter> {
 // Cross-cutting coordination (STORAGE-0013)
 // ============================================================================
 
-impl AppState {
+impl Moss {
     /// Emit a storage domain event.
     ///
     /// Coordinates across multiple bounded contexts: bridges the event to

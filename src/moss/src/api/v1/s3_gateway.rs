@@ -42,7 +42,7 @@ use tracing::{debug, warn};
 
 use super::s3_xml::{self, to_s3_xml};
 
-use crate::AppState;
+use crate::Moss;
 use crate::infra::storage::handle::StorageResolver;
 use garden_common::constants::headers::HEADER_SEED_BANK;
 use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
@@ -236,7 +236,7 @@ fn extract_custom_metadata(headers: &HeaderMap) -> std::collections::HashMap<Str
 /// If `X-Moss-Token` and `X-Moss-Expires` are present, validates the token.
 /// Returns `Some(error_response)` if validation fails, `None` if valid or no token present.
 async fn check_presign_token(
-    state: &AppState,
+    state: &Moss,
     method: &str,
     bucket: &str,
     key: &str,
@@ -381,7 +381,7 @@ async fn proxy_s3_request(
 
 /// Put an object to storage (or copy, or multipart part upload)
 pub async fn put_object(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((bucket, key)): Path<(String, String)>,
     Query(query): Query<UploadPartQuery>,
     headers: HeaderMap,
@@ -494,7 +494,7 @@ pub async fn put_object(
 
 /// Get an object from storage
 pub async fn get_object(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((bucket, key)): Path<(String, String)>,
     Query(selector): Query<SeedBankSelector>,
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
@@ -701,7 +701,7 @@ pub async fn get_object(
 
 /// Get object metadata without body
 pub async fn head_object(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((bucket, key)): Path<(String, String)>,
     Query(selector): Query<SeedBankSelector>,
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
@@ -839,7 +839,7 @@ pub struct DeleteObjectQuery {
 
 /// Delete an object from storage (or abort multipart upload if uploadId is present)
 pub async fn delete_object(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((bucket, key)): Path<(String, String)>,
     Query(query): Query<DeleteObjectQuery>,
     headers: HeaderMap,
@@ -928,7 +928,7 @@ pub async fn delete_object(
 
 /// List all buckets
 pub async fn list_buckets(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
 ) -> Response {
@@ -1021,7 +1021,7 @@ pub struct ListObjectsQuery {
 
 /// List objects in a bucket (supports V1 and V2)
 pub async fn list_objects(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(bucket): Path<String>,
     Query(query): Query<ListObjectsQuery>,
     headers: HeaderMap,
@@ -1175,7 +1175,7 @@ pub async fn list_objects(
 
 /// Create a bucket (directory at mount root)
 pub async fn create_bucket(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(bucket): Path<String>,
     Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
@@ -1251,7 +1251,7 @@ pub async fn create_bucket(
 
 /// Initiate a multipart upload. Returns upload ID in XML.
 pub async fn initiate_multipart_upload(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((bucket, key)): Path<(String, String)>,
     Query(selector): Query<SeedBankSelector>,
     headers: HeaderMap,
@@ -1339,7 +1339,7 @@ pub struct UploadPartQuery {
 
 /// Upload a single part of a multipart upload.
 pub async fn upload_part(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((bucket, _key)): Path<(String, String)>,
     Query(query): Query<UploadPartQuery>,
     headers: HeaderMap,
@@ -1425,7 +1425,7 @@ pub struct CompleteMultipartQuery {
 
 /// Complete a multipart upload: assembles parts and writes the final object.
 pub async fn complete_or_initiate_multipart(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((bucket, key)): Path<(String, String)>,
     Query(query): Query<CompleteMultipartQuery>,
     headers: HeaderMap,
@@ -1583,7 +1583,7 @@ pub async fn complete_or_initiate_multipart(
 
 /// Abort a multipart upload (called when delete has uploadId query param).
 pub async fn abort_multipart_upload(
-    state: &AppState,
+    state: &Moss,
     _bucket: &str,
     _key: &str,
     upload_id: &str,
@@ -1647,7 +1647,7 @@ const HEADER_COPY_SOURCE: &str = "x-amz-copy-source";
 /// The `put_object` handler delegates here when the copy header is present.
 /// Source format: `/{source-bucket}/{source-key}` or `{source-bucket}/{source-key}`.
 pub async fn copy_object(
-    state: &AppState,
+    state: &Moss,
     dest_bucket: &str,
     dest_key: &str,
     copy_source: &str,

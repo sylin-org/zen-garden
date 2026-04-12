@@ -7,13 +7,13 @@ use axum::extract::State;
 
 use crate::domain::maintenance::{SweepRun, run_sweep};
 use crate::infra::maintenance_store;
-use crate::{AppState, internal};
+use crate::{Moss, internal};
 
 /// GET /api/v1/stone/maintenance/history
 ///
 /// Returns the last N sweep runs (newest first).
 pub async fn get_sweep_history(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
 ) -> crate::api::ApiResult<Vec<SweepRun>> {
     match maintenance_store::load_sweep_history().await {
         Ok(history) => crate::api::ok(history),
@@ -27,7 +27,7 @@ pub async fn get_sweep_history(
 /// POST /api/v1/stone/maintenance/sweep
 ///
 /// Trigger an immediate sweep, persist the result, and return it.
-pub async fn trigger_sweep(State(state): State<AppState>) -> crate::api::ApiResult<SweepRun> {
+pub async fn trigger_sweep(State(state): State<Moss>) -> crate::api::ApiResult<SweepRun> {
     let task_store = crate::infra::TaskStore::new();
     let run = run_sweep(&state, &task_store).await;
 

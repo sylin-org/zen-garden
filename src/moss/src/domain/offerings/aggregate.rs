@@ -401,7 +401,7 @@ impl Offerings {
     /// Promote an adopted candidate to the active pool.
     ///
     /// This is the fix for the bug described in ARCH-0016: the old
-    /// `AppState::promote_adopted` bypassed the mutation gateway and the
+    /// `Moss::promote_adopted` bypassed the mutation gateway and the
     /// tool registry projection never saw the adopted offering.
     pub async fn promote(&self, offering_id: &str) -> bool {
         let all = {

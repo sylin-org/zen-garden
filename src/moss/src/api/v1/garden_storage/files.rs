@@ -17,7 +17,7 @@ use garden_common::storage::StorageRole;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::storage_service::StorageRoute;
 use crate::infra::storage::handle::{FileEntry, RouterError, StorageHandle, StorageResolver};
 
@@ -184,7 +184,7 @@ fn list_recursive<'a>(
 /// Returns `Err(Response)` if the request is proxied but we're not Primary.
 async fn check_proxy_loop_guard(
     name: &str,
-    state: &AppState,
+    state: &Moss,
     headers: &HeaderMap,
 ) -> Result<(), Response> {
     if is_proxied(headers)
@@ -224,7 +224,7 @@ pub struct FileWriteResult {
 /// query, not a resource fetch, so it lives on the exact `/fs` route while
 /// content operations use the `/fs/{*path}` wildcard.
 pub async fn list_fs_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
     Query(query): Query<FsListQuery>,
     headers: HeaderMap,
@@ -240,7 +240,7 @@ pub async fn list_fs_v1(
 
 /// Read a user file or list a directory from the storage root.
 pub async fn get_file_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     Query(query): Query<FsQuery>,
     headers: HeaderMap,
@@ -251,7 +251,7 @@ pub async fn get_file_v1(
 }
 
 async fn get_file_v1_inner(
-    state: &AppState,
+    state: &Moss,
     name: &str,
     path: &str,
     headers: &HeaderMap,
@@ -350,7 +350,7 @@ async fn get_file_v1_inner(
 
 /// Write a user file to the storage root.
 pub async fn put_file_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
@@ -414,7 +414,7 @@ pub async fn put_file_v1(
 
 /// Delete a user file from the storage root.
 pub async fn delete_file_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
@@ -487,7 +487,7 @@ pub async fn delete_file_v1(
 
 /// Get file metadata from the storage root.
 pub async fn head_file_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-use crate::AppState;
+use crate::Moss;
 
 // ============================================================================
 // Types
@@ -63,7 +63,7 @@ pub fn parse_trust_profile(input: Option<&str>) -> Result<koi_certmesh::profiles
 /// The certmesh CA creation is invoked via tower::Service (in-process HTTP)
 /// to avoid code path divergence with certmesh's own endpoint.
 pub async fn init(
-    state: &AppState,
+    state: &Moss,
     core: Arc<koi_certmesh::CertmeshCore>,
     input: PondInitInput,
 ) -> Result<PondInitResult> {
@@ -194,7 +194,7 @@ pub fn resolve_pond_name(input: Option<&str>) -> String {
 /// A stone is "pond active" if either:
 /// 1. It is the cornerstone (CA initialized and unlocked), OR
 /// 2. It is an enrolled member (has cert + key from a prior enrollment)
-pub async fn refresh_pond_active(state: &AppState) {
+pub async fn refresh_pond_active(state: &Moss) {
     // Cornerstone path: CA initialized and unlocked
     if let Ok(handle) = state.discovery.koi().certmesh()
         && let Ok(core) = handle.core()
@@ -222,7 +222,7 @@ pub async fn refresh_pond_active(state: &AppState) {
 /// on the EventBus, and re-registers mDNS. The enrollment-change listener
 /// (spawned at boot) reacts by starting/stopping HTTPS + chirp signing.
 pub async fn notify_enrollment_changed(
-    state: &AppState,
+    state: &Moss,
     enrolled: bool,
     cornerstone: Option<String>,
 ) {

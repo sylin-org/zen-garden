@@ -1153,7 +1153,7 @@ pub fn short_id_from_guid(guid: &str) -> String {
 /// Domain event emitted when storage state changes.
 ///
 /// Broadcast on `storage_changed_tx`. Consumers subscribe and react by
-/// pulling fresh data from the AppState boundary.
+/// pulling fresh data from the Moss boundary.
 #[derive(Debug, Clone)]
 pub enum StorageChanged {
     /// A new device was added (mounted, classified as managed).

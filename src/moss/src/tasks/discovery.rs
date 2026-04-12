@@ -11,7 +11,7 @@ use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventS
 use garden_common::infra::communications::p2p;
 use tokio_util::sync::CancellationToken;
 
-use crate::AppState;
+use crate::Moss;
 
 /// Lantern registration loop - registers this stone with Lantern every 45 seconds
 ///
@@ -24,7 +24,7 @@ pub async fn lantern_registration_loop(
     stone_name: String,
     endpoint: String,
     lantern_endpoint: String,
-    state: AppState,
+    state: Moss,
     token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     use garden_common::{RegisterRequest, RegisterServiceInfo};

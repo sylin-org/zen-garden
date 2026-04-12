@@ -8,7 +8,7 @@ use super::config::DaemonConfig;
 use crate::run_first_boot_initialization;
 use crate::tasks::discovery::start_discovery_listener;
 use crate::{
-    AppState,
+    Moss,
     DockerConfig,
     // Docker monitoring
     DockerMonitor,
@@ -42,7 +42,7 @@ use tokio::sync::RwLock;
 // Bootstrap artifacts
 // ============================================================================
 
-/// Values produced by `build_state` that cannot live in `AppState` and are
+/// Values produced by `build_state` that cannot live in `Moss` and are
 /// consumed exactly once by the task supervisor or the HTTP server.
 pub(crate) struct BuildArtifacts {
     /// Receive-end of the volume-rescan channel; consumed once by the volume watcher.
@@ -60,7 +60,7 @@ pub(crate) struct BuildArtifacts {
 /// Run the Moss daemon.
 ///
 /// Three-stage orchestration:
-/// 1. `build_state` -- sequential init, builds `AppState`, fallible
+/// 1. `build_state` -- sequential init, builds `Moss`, fallible
 /// 2. `start_background_tasks` -- spawns all concurrent workers
 /// 3. `serve` -- binds HTTP and blocks until shutdown
 pub async fn run(
@@ -169,8 +169,8 @@ pub async fn run(
 
 /// Build a skeleton `TopologyEntry` from the bootstrap source-of-truth fields.
 ///
-/// Used during early boot before `AppState` exists. After AppState construction,
-/// `AppState::build_self_entry()` supersedes this.
+/// Used during early boot before `Moss` exists. After Moss construction,
+/// `Moss::build_self_entry()` supersedes this.
 async fn build_boot_entry(
     stone_id: &str,
     stone_name: &str,
@@ -205,12 +205,12 @@ async fn build_boot_entry(
 
 /// Sequential daemon initialization.
 ///
-/// Builds `AppState` from configuration. Strictly sequential and fallible
+/// Builds `Moss` from configuration. Strictly sequential and fallible
 /// -- any error here exits the daemon cleanly before any tasks are spawned.
 async fn build_state(
     config: DaemonConfig,
     log: tokio::sync::broadcast::Sender<String>,
-) -> anyhow::Result<(AppState, BuildArtifacts)> {
+) -> anyhow::Result<(Moss, BuildArtifacts)> {
     let stone_name = config.stone_name.clone();
     let port = config.port;
 
@@ -236,7 +236,7 @@ async fn build_state(
     // Phase 0.5: Source-of-truth fields for this stone's mutable state.
     //
     // These are progressively enriched during bootstrap, then shared with
-    // AppState. After construction, `build_self_entry()` reads from them
+    // Moss. After construction, `build_self_entry()` reads from them
     // on demand -- no mutable self_entry cache.
     let current_address: Arc<RwLock<garden_common::PeerAddress>> =
         Arc::new(RwLock::new(garden_common::PeerAddress::new(
@@ -390,10 +390,10 @@ async fn build_state(
             ))),
         ]));
 
-    // Create orchestration nudge early --" shared between discovery listener and AppState
+    // Create orchestration nudge early --" shared between discovery listener and Moss
     let orchestration_nudge = Arc::new(tokio::sync::Notify::new());
 
-    // Unified volume collection (STORAGE-0011) --" created empty, populated after AppState
+    // Unified volume collection (STORAGE-0011) --" created empty, populated after Moss
     let volumes = crate::domain::new_volumes();
     // Volume rescan channel --" API handlers poke tx, watcher loop consumes rx
     let (volume_rescan, volume_rescan_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -505,7 +505,7 @@ async fn build_state(
             None,
         )
         .await;
-        // Pre-AppState bootstrap phase: construct a local transport
+        // Pre-Moss bootstrap phase: construct a local transport
         // instead of going through the Topology aggregate, which
         // doesn't exist yet at this point in the bootstrap sequence.
         let pre_state_chirp = crate::domain::topology::P2pChirpTransport;
@@ -526,7 +526,7 @@ async fn build_state(
     let koi_data_dir =
         std::path::PathBuf::from(garden_common::constants::paths::data_dir()).join("koi");
 
-    // Shared pond state flag --" created before mDNS so both MdnsHandle and AppState
+    // Shared pond state flag --" created before mDNS so both MdnsHandle and Moss
     // observe the same value. Handlers flip this after init/unlock/destroy.
     let pond_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -694,7 +694,7 @@ async fn build_state(
     // Note: IP change handler moved to Phase 11 and delegates to
     // crate::domain::topology::composition::announce_resolution_change
 
-    // Phase 6: Lantern registration -- deferred to Phase 11.post2 (needs AppState for service list)
+    // Phase 6: Lantern registration -- deferred to Phase 11.post2 (needs Moss for service list)
 
     emit_startup_events(&console_printer, &config);
 
@@ -772,7 +772,7 @@ async fn build_state(
             Some(&capabilities),
         )
         .await;
-        // Pre-AppState: construct a local transport instance.
+        // Pre-Moss: construct a local transport instance.
         let pre_state_chirp = crate::domain::topology::P2pChirpTransport;
         if let Err(e) =
             <crate::domain::topology::P2pChirpTransport as crate::domain::topology::ChirpTransport>
@@ -839,7 +839,7 @@ async fn build_state(
         .await,
     );
 
-    // Phase 11: Build AppState
+    // Phase 11: Build Moss
     // Note: manifest_registry and infrastructure_handlers already created at Phase 1
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
     let ceremony_journal: Arc<dyn crate::domain::CeremonyPersistence + Send + Sync> =
@@ -894,7 +894,7 @@ async fn build_state(
     >::new()));
     let media = crate::domain::storage::new_media();
 
-    // Phase 11.pre: Create election service (placeholder for now, will be updated after AppState)
+    // Phase 11.pre: Create election service (placeholder for now, will be updated after Moss)
     // Note: No longer async - no socket binding (uses p2p transport)
     let election_service_placeholder = Arc::new(crate::tasks::election_service::Elections::new(
         stone_id.clone(),
@@ -917,7 +917,7 @@ async fn build_state(
     // Catalog aggregate (ARCH-0022 Book V). Persistent -- compiled
     // offerings index is cached to disk via FileCatalogCache. The
     // aggregate shares `manifest_registry` (frozen, read-only) and
-    // `capabilities` with the rest of AppState.
+    // `capabilities` with the rest of Moss.
     let catalog_aggregate = Arc::new(
         crate::domain::Catalog::new(
             manifest_registry.clone(),
@@ -937,7 +937,7 @@ async fn build_state(
         .await,
     );
 
-    let state = AppState {
+    let state = Moss {
         current: Arc::new(crate::domain::Current {
             stone: Arc::new(crate::domain::current::Stone {
                 id: stone_id.clone(),
@@ -1024,7 +1024,7 @@ async fn build_state(
         task_supervisor: Arc::new(RwLock::new(None)),
     };
 
-    // Phase 11.post: Update election service with proper state provider now that AppState exists
+    // Phase 11.post: Update election service with proper state provider now that Moss exists
     // Note: No longer async - no socket binding (uses p2p transport)
     let state_for_election = Arc::new(state.clone());
     let election_service_final = Arc::new(crate::tasks::election_service::Elections::new(
@@ -1036,7 +1036,7 @@ async fn build_state(
     ));
 
     // Update the state's election service (presence domain re-wrap)
-    let state = AppState {
+    let state = Moss {
         presence: Arc::new(crate::domain::Presence {
             elections: election_service_final.clone(),
             notifications: Arc::clone(&state.presence.notifications),
@@ -1074,7 +1074,7 @@ async fn build_state(
 // ============================================================================
 
 /// Bind the HTTP server and run until shutdown.
-async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
+async fn serve(state: Moss, api_endpoint: &str) -> anyhow::Result<()> {
     let stone_name = state.current.stone.name.clone();
     let port = state.current.api_port;
     let shutdown_token = state.shutdown_token.clone();
@@ -1355,7 +1355,7 @@ fn emit_startup_events(console_printer: &console::ConsolePrinter, config: &Daemo
 /// Handle pre-install manifest on first boot
 ///
 /// Validates offerings, creates installation job, and spawns background task.
-pub(crate) async fn start_preinstall_handler(state: &AppState) {
+pub(crate) async fn start_preinstall_handler(state: &Moss) {
     let manifest = match load_preinstall_manifest().await {
         Some(m) if m.auto_install => m,
         _ => return,
@@ -1544,7 +1544,7 @@ fn set_windows_dns_hostname(name: &str) -> anyhow::Result<()> {
 /// Idempotent: HTTPS binding guarded by `https_started`; chirp enricher/verifier
 /// use `OnceLock` which silently ignores second calls.
 pub(crate) async fn activate_pond_security(
-    state: &AppState,
+    state: &Moss,
     console: &garden_common::console::ConsolePrinter,
 ) {
     let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())

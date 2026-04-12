@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 /// Periodically marks stale stones as offline, evicts old offline stones,
 /// and flushes dirty topology cache to disk.
 /// Runs every 30 seconds (aligns with stone chirp interval).
-pub fn start_topology_maintenance(state: crate::AppState, token: CancellationToken) {
+pub fn start_topology_maintenance(state: crate::Moss, token: CancellationToken) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         interval.tick().await; // Skip first immediate tick

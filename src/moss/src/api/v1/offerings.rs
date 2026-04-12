@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::infra::embedded::EmbeddedManifests;
-use crate::{AppState, bad_request, error_response, internal, unavailable};
+use crate::{Moss, bad_request, error_response, internal, unavailable};
 
 /// Query parameters for filtering offerings
 #[derive(Debug, Deserialize)]
@@ -55,7 +55,7 @@ pub struct CompatibilityView {
 /// GET /api/v1/offerings
 /// List all offerings (available + installed), optionally filtered by state
 pub async fn list_offerings_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Query(query): Query<OfferingsQuery>,
 ) -> Result<
     (StatusCode, Json<ApiResponse<Vec<OfferingView>>>),
@@ -150,7 +150,7 @@ pub async fn list_offerings_v1(
 /// GET /api/v1/offerings/:name
 /// Get details about a specific offering
 pub async fn get_offering_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> Result<
     (StatusCode, Json<ApiResponse<serde_json::Value>>),
@@ -218,7 +218,7 @@ pub async fn get_offering_v1(
 /// GET /api/v1/offerings/:name/manifest
 /// Get raw YAML manifest for an offering
 pub async fn get_offering_manifest_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>)> {
     let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
@@ -260,7 +260,7 @@ pub struct PlantOfferingRequest {
 }
 
 pub async fn plant_offering_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<PlantOfferingRequest>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),
@@ -293,7 +293,7 @@ pub async fn plant_offering_v1(
 /// DELETE /api/v1/offerings/:name
 /// Take away an offering (uninstall)
 pub async fn take_away_offering_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),
@@ -319,7 +319,7 @@ pub struct HealRequest {
 }
 
 pub async fn heal_garden_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<HealRequest>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),
@@ -338,7 +338,7 @@ pub async fn heal_garden_v1(
 /// POST /api/v1/offerings:refresh
 /// Refresh the offerings catalog from disk
 pub async fn refresh_catalog_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
@@ -406,7 +406,7 @@ pub struct InspectQuery {
 /// Inspect a Docker image without deploying. Returns OCI metadata and
 /// curated collision advisory.
 pub async fn inspect_image_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Query(query): Query<InspectQuery>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),
@@ -494,7 +494,7 @@ pub struct SearchQuery {
 /// Search offerings using taxonomy dictionary and relevance scoring.
 /// All search logic runs server-side; Rake is a thin client.
 pub async fn search_offerings_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Query(query): Query<SearchQuery>,
 ) -> Result<
     (StatusCode, Json<ApiResponse<OfferingSearchResponse>>),
@@ -681,7 +681,7 @@ pub struct ManifestTestRequest {
 /// Validate and test-deploy a manifest from raw content. Parses the snippet,
 /// builds a temporary Offering, and deploys via the standard pipeline.
 pub async fn test_manifest_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<ManifestTestRequest>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),
@@ -804,7 +804,7 @@ pub async fn test_manifest_v1(
 /// Works for both curated offerings (from registry) and image-direct
 /// offerings (synthesized from running container).
 pub async fn export_offering_manifest_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> Result<
     (StatusCode, Json<serde_json::Value>),

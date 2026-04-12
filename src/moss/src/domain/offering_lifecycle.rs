@@ -18,7 +18,7 @@
 
 use garden_common::{Offering, OfferingStatus};
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::events::OfferingEvent;
 
 // ============================================================================
@@ -26,17 +26,17 @@ use crate::domain::events::OfferingEvent;
 // ============================================================================
 
 /// Find an offering by ID. Returns a clone (snapshot).
-pub async fn find_by_id(state: &AppState, offering_id: &str) -> Option<Offering> {
+pub async fn find_by_id(state: &Moss, offering_id: &str) -> Option<Offering> {
     state.offerings.find_by_id(offering_id).await
 }
 
 /// Find an offering by service name (FQN). Returns a clone (snapshot).
-pub async fn find_by_name(state: &AppState, name: &str) -> Option<Offering> {
+pub async fn find_by_name(state: &Moss, name: &str) -> Option<Offering> {
     state.offerings.find_by_name(name).await
 }
 
 /// Find a managed offering by service name. Returns a clone (snapshot).
-pub async fn find_managed(state: &AppState, name: &str) -> Option<Offering> {
+pub async fn find_managed(state: &Moss, name: &str) -> Option<Offering> {
     state
         .offerings
         .with_active(|o| {
@@ -48,7 +48,7 @@ pub async fn find_managed(state: &AppState, name: &str) -> Option<Offering> {
 }
 
 /// Snapshot the offering ID for a service name.
-pub async fn id_for_name(state: &AppState, name: &str) -> Option<String> {
+pub async fn id_for_name(state: &Moss, name: &str) -> Option<String> {
     state
         .offerings
         .find_by_name(name)
@@ -57,7 +57,7 @@ pub async fn id_for_name(state: &AppState, name: &str) -> Option<String> {
 }
 
 /// Snapshot the offering ID for a managed service name.
-pub async fn id_for_managed(state: &AppState, name: &str) -> Option<String> {
+pub async fn id_for_managed(state: &Moss, name: &str) -> Option<String> {
     state
         .offerings
         .with_active(|o| {
@@ -69,17 +69,17 @@ pub async fn id_for_managed(state: &AppState, name: &str) -> Option<String> {
 }
 
 /// List all offerings (snapshot).
-pub async fn list_all(state: &AppState) -> Vec<Offering> {
+pub async fn list_all(state: &Moss) -> Vec<Offering> {
     state.offerings.snapshot().await
 }
 
 /// Check if an offering with the given name exists.
-pub async fn exists(state: &AppState, name: &str) -> bool {
+pub async fn exists(state: &Moss, name: &str) -> bool {
     state.offerings.find_by_name(name).await.is_some()
 }
 
 /// Check if an offering is in a given status.
-pub async fn has_status(state: &AppState, name: &str, status: OfferingStatus) -> bool {
+pub async fn has_status(state: &Moss, name: &str, status: OfferingStatus) -> bool {
     state
         .offerings
         .with_active(|o| o.iter().any(|o| o.name.fqn_eq(name) && o.status == status))
@@ -92,7 +92,7 @@ pub async fn has_status(state: &AppState, name: &str, status: OfferingStatus) ->
 
 /// Insert or update an offering. Emits a domain event based on whether this
 /// is a new registration or an update to an existing one.
-pub async fn upsert(state: &AppState, offering: Offering) {
+pub async fn upsert(state: &Moss, offering: Offering) {
     let is_new = state
         .offerings
         .with_active(|offerings| {
@@ -120,12 +120,12 @@ pub async fn upsert(state: &AppState, offering: Offering) {
 
 /// Insert or update an offering without emitting an event.
 /// Use for intermediate states (e.g., Installing placeholder before job starts).
-pub async fn upsert_quiet(state: &AppState, offering: Offering) {
+pub async fn upsert_quiet(state: &Moss, offering: Offering) {
     state.offerings.upsert(offering).await;
 }
 
 /// Remove an offering by ID. Emits `OfferingEvent::removed`.
-pub async fn remove(state: &AppState, offering_id: &str, name: &str) {
+pub async fn remove(state: &Moss, offering_id: &str, name: &str) {
     state.offerings.remove(offering_id).await;
 
     state.event_bus.emit(OfferingEvent::removed(
@@ -136,7 +136,7 @@ pub async fn remove(state: &AppState, offering_id: &str, name: &str) {
 }
 
 /// Remove an offering by name. Emits `OfferingEvent::removed`.
-pub async fn remove_by_name(state: &AppState, name: &str) {
+pub async fn remove_by_name(state: &Moss, name: &str) {
     if let Some(offering_id) = id_for_name(state, name).await {
         state.offerings.remove_by_name(name).await;
 
@@ -150,7 +150,7 @@ pub async fn remove_by_name(state: &AppState, name: &str) {
 
 /// Update a single offering by ID. Returns true if changed.
 /// The event must be emitted by the caller (operation-specific).
-pub async fn update<F>(state: &AppState, offering_id: &str, mutator: F) -> bool
+pub async fn update<F>(state: &Moss, offering_id: &str, mutator: F) -> bool
 where
     F: FnOnce(&mut Offering) -> bool,
 {
@@ -159,7 +159,7 @@ where
 
 /// Update a single offering by name. Returns true if changed.
 /// The event must be emitted by the caller (operation-specific).
-pub async fn update_by_name<F>(state: &AppState, name: &str, mutator: F) -> bool
+pub async fn update_by_name<F>(state: &Moss, name: &str, mutator: F) -> bool
 where
     F: FnOnce(&mut Offering) -> bool,
 {
@@ -167,7 +167,7 @@ where
 }
 
 /// Batch-update offerings. Returns count of changed offerings.
-pub async fn batch_update<F>(state: &AppState, mutator: F) -> usize
+pub async fn batch_update<F>(state: &Moss, mutator: F) -> usize
 where
     F: FnOnce(&mut Vec<Offering>) -> usize,
 {
@@ -179,7 +179,7 @@ where
 // ============================================================================
 
 /// Transition an offering to Running status. Emits `OfferingEvent::started`.
-pub async fn mark_running(state: &AppState, offering_id: &str, name: &str) {
+pub async fn mark_running(state: &Moss, offering_id: &str, name: &str) {
     let changed = state
         .offerings
         .update(offering_id, |o| {
@@ -198,7 +198,7 @@ pub async fn mark_running(state: &AppState, offering_id: &str, name: &str) {
 }
 
 /// Transition an offering to Stopped status. Emits `OfferingEvent::stopped`.
-pub async fn mark_stopped(state: &AppState, offering_id: &str, name: &str) {
+pub async fn mark_stopped(state: &Moss, offering_id: &str, name: &str) {
     let changed = state
         .offerings
         .update(offering_id, |o| {

@@ -1,6 +1,6 @@
 use crate::domain::Tool;
 use crate::domain::tool::{ToolQuery, ToolsSnapshotPayload, stream_event_type_for_delta};
-use crate::{AppState, bad_request};
+use crate::{Moss, bad_request};
 use axum::{
     Json,
     extract::{Query, State},
@@ -95,7 +95,7 @@ pub async fn list_garden_tools_v1(
 }
 
 pub async fn stream_garden_tools_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
     Query(query): Query<ToolsQueryParams>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<ApiErrorResponse>)>

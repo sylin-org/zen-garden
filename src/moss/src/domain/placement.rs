@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::time::Duration;
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::{CompiledOffering, compatibility, resources_collection, scoring, services};
 use garden_common::TopologyEntry;
 
@@ -82,7 +82,7 @@ pub struct ScoreBreakdown {
 /// 5. Returns top N recommendations sorted by score
 pub async fn recommend_placement(
     request: PlacementRequest,
-    state: &AppState,
+    state: &Moss,
 ) -> Result<PlacementResponse> {
     let start_time = std::time::Instant::now();
 
@@ -255,7 +255,7 @@ fn build_exclusion_summary(
 async fn score_local_stone(
     _offering_id: &str,
     offering: &CompiledOffering,
-    state: &AppState,
+    state: &Moss,
 ) -> Result<PlacementRecommendation> {
     // Get local resources (zero latency)
     let local_resources =
@@ -344,7 +344,7 @@ async fn score_remote_stone(
     _offering_id: &str,
     offering: &CompiledOffering,
     stone_resources: &resources_collection::NormalizedResources,
-    _state: &AppState,
+    _state: &Moss,
 ) -> Result<PlacementRecommendation> {
     // Get remote service count (with timeout)
     let service_count =

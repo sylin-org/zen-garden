@@ -28,7 +28,7 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::AppState;
+use crate::Moss;
 use crate::api::responses::ApiResponse;
 use crate::domain::Metrics;
 use crate::domain::metrics::{DomainSnapshot, GlobalSnapshot, MetricsSnapshot, TaskSnapshot};
@@ -127,7 +127,7 @@ pub async fn get_metrics_task(
 /// The stream is cancellation-aware: it ends cleanly when the moss
 /// shutdown token fires (MOSS-0004).
 pub async fn stream_metrics(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let token = state.shutdown_token.child_token();
     let rx = state.metrics.changes();

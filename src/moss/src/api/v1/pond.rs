@@ -12,7 +12,7 @@
 //! - All cert lifecycle managed by certmesh (issue, renew, revoke)
 
 use crate::{
-    AppState, bad_gateway, bad_request, conflict, error_response, forbidden, internal, not_found,
+    Moss, bad_gateway, bad_request, conflict, error_response, forbidden, internal, not_found,
     unavailable,
 };
 use axum::{
@@ -259,9 +259,9 @@ fn certmesh_err(e: koi_certmesh::CertmeshError) -> (StatusCode, Json<ApiErrorRes
     }
 }
 
-/// Get the CertmeshCore from AppState, returning appropriate HTTP errors
+/// Get the CertmeshCore from Moss, returning appropriate HTTP errors
 fn get_certmesh_core(
-    state: &AppState,
+    state: &Moss,
 ) -> Result<std::sync::Arc<koi_certmesh::CertmeshCore>, (StatusCode, Json<ApiErrorResponse>)> {
     let handle = state.discovery.koi().certmesh().map_err(|e| {
         unavailable(
@@ -281,7 +281,7 @@ fn get_certmesh_core(
 ///
 /// Delegates to domain function. Kept as a thin wrapper so existing callers
 /// in this module continue to work without a path change.
-async fn refresh_pond_active(state: &AppState) {
+async fn refresh_pond_active(state: &Moss) {
     crate::domain::security::pond_lifecycle::refresh_pond_active(state).await;
 }
 
@@ -289,7 +289,7 @@ async fn refresh_pond_active(state: &AppState) {
 ///
 /// Delegates to domain function. Kept as a thin wrapper so existing callers
 /// in this module continue to work without a path change.
-async fn notify_enrollment_changed(state: &AppState, enrolled: bool, cornerstone: Option<String>) {
+async fn notify_enrollment_changed(state: &Moss, enrolled: bool, cornerstone: Option<String>) {
     crate::domain::security::pond_lifecycle::notify_enrollment_changed(
         state,
         enrolled,
@@ -321,7 +321,7 @@ pub async fn get_pond_page() -> (
 /// becomes the cornerstone (primary CA holder). Returns a TOTP URI for
 /// the authenticator app — this is used to authorize future stone enrollments.
 pub async fn pond_init_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<PondInitRequest>,
 ) -> PondResult<PondInitResponse> {
     use crate::domain::security::pond_lifecycle::{self, PondInitInput};
@@ -373,7 +373,7 @@ pub async fn pond_init_v1(
 }
 
 /// GET /api/v1/pond/status — Get pond status and membership
-pub async fn pond_status_v1(State(state): State<AppState>) -> PondResult<PondStatusResponse> {
+pub async fn pond_status_v1(State(state): State<Moss>) -> PondResult<PondStatusResponse> {
     let core = get_certmesh_core(&state)?;
     let status = core.certmesh_status().await;
 
@@ -419,7 +419,7 @@ pub async fn pond_status_v1(State(state): State<AppState>) -> PondResult<PondSta
 /// Rake always sends `POST /api/v1/pond/join` to the tended stone.
 /// Rake never contacts another stone directly.
 pub async fn pond_join_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<PondJoinRequest>,
 ) -> PondResult<PondJoinResponse> {
     // Determine if this stone is the cornerstone (has CA initialized)
@@ -442,7 +442,7 @@ pub async fn pond_join_v1(
 
 /// Handle enrollment locally — this stone IS the cornerstone.
 async fn local_enrollment(
-    state: &AppState,
+    state: &Moss,
     payload: PondJoinRequest,
 ) -> PondResult<PondJoinResponse> {
     let core = get_certmesh_core(state)?;
@@ -493,7 +493,7 @@ async fn local_enrollment(
 ///
 /// Flow: Rake → this stone → cornerstone → cert issued → stored locally.
 async fn proxy_enrollment(
-    state: &AppState,
+    state: &Moss,
     payload: PondJoinRequest,
 ) -> PondResult<PondJoinResponse> {
     // Discover cornerstone address via topology
@@ -614,7 +614,7 @@ async fn proxy_enrollment(
 /// Queries online peers for `/api/v1/pond/status` to find which stone
 /// holds the CA (role = "primary"). Returns the cornerstone's `PeerAddress`.
 async fn discover_cornerstone(
-    state: &AppState,
+    state: &Moss,
 ) -> Result<garden_common::PeerAddress, (StatusCode, Json<ApiErrorResponse>)> {
     // Collect online peers, most recently seen first
     let mut candidates: Vec<_> = state
@@ -762,7 +762,7 @@ async fn write_enrollment_certs(
 /// window for a limited duration, and returns the new TOTP URI for the
 /// invitee to add to their authenticator app.
 pub async fn pond_invite_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<PondInviteRequest>,
 ) -> PondResult<PondInviteResponse> {
     let core = get_certmesh_core(&state)?;
@@ -815,7 +815,7 @@ pub async fn pond_invite_v1(
 /// - `totp_code`: authenticator app code (requires TOTP unlock slot)
 /// - `fido2_credential_id`: security key (requires FIDO2 unlock slot, assertion pre-verified)
 pub async fn pond_unlock_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<PondUnlockRequest>,
 ) -> PondResult<serde_json::Value> {
     let core = get_certmesh_core(&state)?;
@@ -889,7 +889,7 @@ pub async fn pond_unlock_v1(
 ///
 /// Irreversibly destroys the CA and all certificates.
 /// All enrolled stones lose their trust relationship.
-pub async fn pond_remove_v1(State(state): State<AppState>) -> PondResult<serde_json::Value> {
+pub async fn pond_remove_v1(State(state): State<Moss>) -> PondResult<serde_json::Value> {
     let core = get_certmesh_core(&state)?;
 
     core.destroy().await.map_err(certmesh_err)?;
@@ -916,7 +916,7 @@ pub async fn pond_remove_v1(State(state): State<AppState>) -> PondResult<serde_j
 /// Changes the decorative pond name without any cryptographic consequences.
 /// If no name is provided, a new random name is generated.
 pub async fn pond_rename_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<PondRenameRequest>,
 ) -> PondResult<serde_json::Value> {
     if !state.security.enrolled() {
@@ -954,7 +954,7 @@ pub async fn pond_rename_v1(
 
 /// DELETE /api/v1/pond/stones/{stone_name} — Untrust a stone (revoke certificate)
 pub async fn pond_untrust_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(stone_name): Path<String>,
 ) -> PondResult<serde_json::Value> {
     let core = get_certmesh_core(&state)?;
@@ -973,7 +973,7 @@ pub async fn pond_untrust_v1(
 
 /// POST /api/v1/pond/promote — Promote this stone to standby CA
 pub async fn pond_promote_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<PondPromoteRequest>,
 ) -> PondResult<serde_json::Value> {
     let core = get_certmesh_core(&state)?;
@@ -1010,7 +1010,7 @@ pub async fn pond_promote_v1(
 /// Serves the CA public certificate for manual trust installation
 /// on non-enrolled machines (e.g., browsers, phones).
 pub async fn pond_ca_cert_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<(StatusCode, [(String, String); 1], String), (StatusCode, Json<ApiErrorResponse>)> {
     let core = get_certmesh_core(&state)?;
     let status = core.certmesh_status().await;
@@ -1056,7 +1056,7 @@ pub async fn pond_ca_cert_v1(
 /// When the "init" ceremony completes, the handler automatically
 /// creates the CA using the collected bag data.
 pub async fn pond_ceremony_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(request): Json<koi_common::ceremony::CeremonyRequest>,
 ) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
     let host = state.security.ceremony_host();
@@ -1105,7 +1105,7 @@ pub async fn pond_ceremony_v1(
 /// Execute pond initialization using data collected by the ceremony,
 /// then return the ceremony response with creation details attached.
 async fn execute_pond_init_from_ceremony(
-    state: &AppState,
+    state: &Moss,
     mut response: koi_common::ceremony::CeremonyResponse,
 ) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
     let bag = response.result_data.as_ref().ok_or_else(|| {
@@ -1410,7 +1410,7 @@ async fn execute_pond_init_from_ceremony(
 
 /// Execute pond unlock using data collected by the unlock ceremony.
 async fn execute_pond_unlock_from_ceremony(
-    state: &AppState,
+    state: &Moss,
     mut response: koi_common::ceremony::CeremonyResponse,
 ) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
     let bag = response.result_data.as_ref().ok_or_else(|| {
@@ -1505,7 +1505,7 @@ async fn execute_pond_unlock_from_ceremony(
 /// start HTTPS, or emit `PondEvent`. It calls `CertmeshCore::enroll()` directly —
 /// same crypto, same auth verification, but without stone lifecycle side effects.
 pub async fn pond_enroll_client_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<ClientEnrollRequest>,
 ) -> PondResult<ClientEnrollResponse> {
     // Only the cornerstone can issue certificates

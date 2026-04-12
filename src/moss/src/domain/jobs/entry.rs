@@ -1,13 +1,13 @@
 //! Job entry types — the domain value objects that back the Jobs aggregate.
 //!
 //! These types previously lived inline in `crate::app_state` alongside the
-//! `AppState` struct, violating code-standards §14 (one concept per file).
+//! `Moss` struct, violating code-standards §14 (one concept per file).
 //! Book IV Chapter 2 of [ARCH-0017] moved them here without semantic change:
 //! same fields, same derives, same serde representation, same public API.
 //!
 //! The aggregate that owns mutation of these values lives in
 //! [`super::aggregate`] and is introduced in Chapter 3. For the duration of
-//! Ch2, the old `AppState::jobs: Arc<RwLock<HashMap<String, Job>>>` field
+//! Ch2, the old `Moss::jobs: Arc<RwLock<HashMap<String, Job>>>` field
 //! continues to hold these values directly — only the type *definitions*
 //! have moved.
 //!

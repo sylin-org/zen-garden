@@ -1,7 +1,7 @@
 //! Canonical stone types — the authoritative domain model for a garden node.
 //!
 //! A **stone** is a single node in the garden network. Whether it is the local
-//! daemon (`AppState.current.stone`) or a remote peer in the topology cache, a
+//! daemon (`Moss.current.stone`) or a remote peer in the topology cache, a
 //! stone is always described by the same type. There are no DTO copies.
 //!
 //! ## Type hierarchy
@@ -47,7 +47,7 @@ use crate::types::{GatewayRegistration, HardwareCapabilities, StoneStatus, Topol
 /// A stone in the garden — the authoritative, complete description of a node.
 ///
 /// Used for:
-/// - **Local node**: `AppState.current.stone` — wrapped in `Arc<RwLock<Stone>>`
+/// - **Local node**: `Moss.current.stone` — wrapped in `Arc<RwLock<Stone>>`
 ///   so name and address updates are atomic.
 /// - **Remote peers**: the topology discovery cache — same type, no DTO copy.
 /// - **P2P chirp payload**: stones broadcast a stripped `Stone` over UDP;

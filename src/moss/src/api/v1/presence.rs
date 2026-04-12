@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::convert::Infallible;
 use tokio_stream::StreamExt;
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::StoneEvent;
 use crate::domain::traits::CompanionOps;
 use crate::infra::PulseEvent;
@@ -40,7 +40,7 @@ pub struct PresenceQuery {
 /// Only emits events relevant to THIS stone.
 ///
 /// **Flow:**
-/// 1. Generate snapshot from AppState
+/// 1. Generate snapshot from Moss
 /// 2. Subscribe to pulse (unified pulse channel)
 /// 3. Filter for Domain events only, apply category filter
 /// 4. Translate to presence vocabulary and emit as SSE
@@ -49,7 +49,7 @@ pub struct PresenceQuery {
 /// - `categories`: Comma-separated event categories (e.g., "service,stone,storage")
 pub async fn stream_stone_presence(
     Query(query): Query<PresenceQuery>,
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     tracing::info!("Presence client connected");
 
@@ -129,7 +129,7 @@ pub async fn stream_stone_presence(
 }
 
 /// Generate presence snapshot from current state
-pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
+pub(crate) async fn generate_snapshot(state: &Moss) -> PresenceSnapshot {
     // Map all offerings (managed + adopted + borrowed)
     let offerings: Vec<OfferingState> = state
         .offerings
@@ -281,7 +281,7 @@ fn compute_health(cpu: f64, memory: f64) -> String {
 /// }
 /// ```
 pub async fn notify_presence(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(notification): Json<ClientNotification>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     tracing::info!(

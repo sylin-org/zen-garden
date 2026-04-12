@@ -22,7 +22,7 @@ use anyhow::{Context, Result};
 use garden_common::OfferingStatus;
 use tracing::{error, info, warn};
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::events::OfferingEvent;
 
 /// Result of a service lifecycle operation — carries metadata for the handler to format.
@@ -36,7 +36,7 @@ pub struct LifecycleOutcome {
 ///
 /// This is the common precondition check for all lifecycle operations.
 /// Delegates to `offering_lifecycle::find_managed` (single source of truth).
-pub async fn find_managed(state: &AppState, service_name: &str) -> Result<String> {
+pub async fn find_managed(state: &Moss, service_name: &str) -> Result<String> {
     crate::domain::offering_lifecycle::id_for_managed(state, service_name)
         .await
         .ok_or_else(|| anyhow::anyhow!("Service '{}' not found", service_name))
@@ -44,7 +44,7 @@ pub async fn find_managed(state: &AppState, service_name: &str) -> Result<String
 
 /// Find any offering by service name (managed or adopted/borrowed).
 /// Delegates to `offering_lifecycle::id_for_name` (single source of truth).
-pub async fn find_any(state: &AppState, service_name: &str) -> Result<String> {
+pub async fn find_any(state: &Moss, service_name: &str) -> Result<String> {
     crate::domain::offering_lifecycle::id_for_name(state, service_name)
         .await
         .ok_or_else(|| anyhow::anyhow!("Service '{}' not found", service_name))
@@ -55,7 +55,7 @@ pub async fn find_any(state: &AppState, service_name: &str) -> Result<String> {
 // ============================================================================
 
 /// Stop a running service. Docker container is stopped; offering status → Stopped.
-pub async fn stop(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+pub async fn stop(state: &Moss, service_name: &str) -> Result<LifecycleOutcome> {
     let offering_id = find_managed(state, service_name).await?;
 
     state
@@ -91,7 +91,7 @@ pub async fn stop(state: &AppState, service_name: &str) -> Result<LifecycleOutco
 
 /// Mark a service as cordoned (non-schedulable). The container keeps running
 /// but placement logic excludes it from new work assignments.
-pub async fn cordon(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+pub async fn cordon(state: &Moss, service_name: &str) -> Result<LifecycleOutcome> {
     let offering_id = find_managed(state, service_name).await?;
 
     state
@@ -114,7 +114,7 @@ pub async fn cordon(state: &AppState, service_name: &str) -> Result<LifecycleOut
 }
 
 /// Remove cordon from a service, restoring it to running status.
-pub async fn uncordon(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+pub async fn uncordon(state: &Moss, service_name: &str) -> Result<LifecycleOutcome> {
     let offering_id = find_managed(state, service_name).await?;
 
     state
@@ -142,7 +142,7 @@ pub async fn uncordon(state: &AppState, service_name: &str) -> Result<LifecycleO
 
 /// Start a stopped service. Handles missing containers (self-heal reinstall)
 /// and config-patch drift (compose-on-start).
-pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+pub async fn start(state: &Moss, service_name: &str) -> Result<LifecycleOutcome> {
     let offering_id = find_managed(state, service_name).await?;
 
     // Check if the Docker container still exists
@@ -239,7 +239,7 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
 // ============================================================================
 
 /// Restart a service (stop + start). No status transition in registry.
-pub async fn restart(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+pub async fn restart(state: &Moss, service_name: &str) -> Result<LifecycleOutcome> {
     let offering_id = find_managed(state, service_name).await?;
 
     state
@@ -268,12 +268,12 @@ pub async fn restart(state: &AppState, service_name: &str) -> Result<LifecycleOu
 
 /// Remove a service (soft delete). Container is stopped and removed (volumes preserved).
 /// Cleans up scheduled tasks and static IP allocation.
-pub async fn remove(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+pub async fn remove(state: &Moss, service_name: &str) -> Result<LifecycleOutcome> {
     remove_impl(state, service_name, false).await
 }
 
 /// Destroy a service (hard delete). Same as remove but signals permanent deletion.
-pub async fn destroy(state: &AppState, service_name: &str) -> Result<LifecycleOutcome> {
+pub async fn destroy(state: &Moss, service_name: &str) -> Result<LifecycleOutcome> {
     remove_impl(state, service_name, true).await
 }
 
@@ -282,7 +282,7 @@ pub async fn destroy(state: &AppState, service_name: &str) -> Result<LifecycleOu
 /// `hard_delete` controls the event semantics: `false` emits `removed`,
 /// `true` emits `destroyed`.
 async fn remove_impl(
-    state: &AppState,
+    state: &Moss,
     service_name: &str,
     hard_delete: bool,
 ) -> Result<LifecycleOutcome> {
@@ -347,7 +347,7 @@ pub enum InstallOutcome {
 /// - Self-heal container adoption
 /// - Manifest-based installation with compatibility checks
 pub async fn install(
-    state: &AppState,
+    state: &Moss,
     offering_fqn: &mut garden_common::offerings::OfferingFqn,
 ) -> Result<InstallOutcome> {
     use garden_common::offerings::OfferingSource;
@@ -368,7 +368,7 @@ pub async fn install(
 
 /// Image-direct deployment: pull and run a Docker image by reference (OFFER-0006).
 async fn install_image_direct(
-    state: &AppState,
+    state: &Moss,
     offering_fqn: &garden_common::offerings::OfferingFqn,
     service_name: &str,
 ) -> Result<InstallOutcome> {
@@ -459,7 +459,7 @@ async fn install_image_direct(
 
 /// Self-heal: adopt an orphaned zen-offering-* container not in the registry.
 async fn try_adopt_existing(
-    state: &AppState,
+    state: &Moss,
     service_name: &str,
 ) -> Result<Option<InstallOutcome>> {
     if !state
@@ -498,7 +498,7 @@ async fn try_adopt_existing(
 
 /// Manifest-based installation: resolve offering from catalog and deploy.
 async fn install_from_manifest(
-    state: &AppState,
+    state: &Moss,
     offering_fqn: &mut garden_common::offerings::OfferingFqn,
 ) -> Result<InstallOutcome> {
     use garden_common::utils::generate_guidv7;
@@ -631,7 +631,7 @@ pub enum NourishOutcome {
 ///
 /// Loads the manifest template, pulls the new image, recreates the container,
 /// and updates the offering registry. On failure, restores the previous status.
-pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutcome> {
+pub async fn nourish(state: &Moss, service_name: &str) -> Result<NourishOutcome> {
     // Find and validate the service
     let (offering_id, offering, old_version) = {
         let o = state
@@ -744,7 +744,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
 ///
 /// NOTE: `TaskStore::new()` is lightweight (path construction only, no I/O or
 /// connections). A per-call instance is acceptable until `TaskStore` is injected
-/// via `AppState` as part of the ARCH-0005 trait boundary work.
+/// via `Moss` as part of the ARCH-0005 trait boundary work.
 async fn cleanup_tasks(offering_id: &str) {
     let task_store = crate::infra::task_store::TaskStore::new();
     if let Err(e) = task_store.unregister_tasks(offering_id).await {

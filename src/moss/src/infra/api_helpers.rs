@@ -2,7 +2,7 @@
 //!
 //! Common utilities for HTTP API handlers including error response creation.
 
-use crate::AppState;
+use crate::Moss;
 use axum::{Json, http::StatusCode};
 use garden_common::api_utils::ApiErrorResponse;
 use std::collections::HashMap;
@@ -82,12 +82,12 @@ pub fn not_implemented(code: impl Into<String>, message: impl Into<String>) -> E
 ///
 /// # Example
 /// ```rust,ignore
-/// pub async fn create_service(state: State<AppState>) -> Result<..., (StatusCode, Json<ApiErrorResponse>)> {
+/// pub async fn create_service(state: State<Moss>) -> Result<..., (StatusCode, Json<ApiErrorResponse>)> {
 ///     require_docker(&state)?;
 ///     // ... Docker operations ...
 /// }
 /// ```
-pub fn require_docker(state: &AppState) -> Result<(), (StatusCode, Json<ApiErrorResponse>)> {
+pub fn require_docker(state: &Moss) -> Result<(), (StatusCode, Json<ApiErrorResponse>)> {
     if !state.subsystems.is_ready("docker") {
         return Err(error_response(
             StatusCode::SERVICE_UNAVAILABLE,

@@ -5,14 +5,14 @@
 //! Config patches are composed into the new container spec to ensure they survive
 //! image upgrades.
 
-use crate::AppState;
+use crate::Moss;
 use anyhow::{Context, Result};
 
 /// Execute the nourish phase
 ///
 /// Pulls the new image and recreates the container with the updated image.
 /// Existing config patches are composed into the new container spec.
-pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Result<()> {
+pub async fn execute(state: &Moss, offering: &str, new_image: &str) -> Result<()> {
     tracing::info!(offering, new_image, "Starting nourish phase");
 
     // Step 1: Pull the new image
@@ -68,7 +68,7 @@ pub async fn execute(state: &AppState, offering: &str, new_image: &str) -> Resul
 /// Uses `build_spec_from_manifest` (CompiledOffering + config patches) to get
 /// the hardware-resolved spec, then overrides the image with `new_image`.
 async fn build_nourish_spec(
-    state: &AppState,
+    state: &Moss,
     offering: &str,
     new_image: &str,
 ) -> Result<crate::docker::ContainerSpec> {

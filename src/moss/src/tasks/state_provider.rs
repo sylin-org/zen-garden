@@ -1,19 +1,19 @@
 //! State provider for election criteria evaluation
 
-use crate::app_state::AppState;
+use crate::app_state::Moss;
 use crate::domain::fitness;
 use crate::version_string;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// State provider that extracts election-relevant fields from AppState
+/// State provider that extracts election-relevant fields from Moss
 pub struct MossStateProvider {
-    state: Arc<AppState>,
+    state: Arc<Moss>,
 }
 
 impl MossStateProvider {
-    pub fn new(state: Arc<AppState>) -> Self {
+    pub fn new(state: Arc<Moss>) -> Self {
         Self { state }
     }
 
@@ -63,7 +63,7 @@ impl super::election_service::StateProvider for MossStateProvider {
 }
 
 /// Placeholder state provider for bootstrapping
-/// Used temporarily before AppState is fully constructed
+/// Used temporarily before Moss is fully constructed
 pub struct PlaceholderStateProvider;
 
 impl super::election_service::StateProvider for PlaceholderStateProvider {
@@ -76,7 +76,7 @@ impl super::election_service::StateProvider for PlaceholderStateProvider {
 // Fitness Provider (ORCH-0001)
 // ============================================================================
 
-/// Fitness provider that computes scores from live AppState.
+/// Fitness provider that computes scores from live Moss.
 ///
 /// Injected into `Elections` after bootstrap so the election protocol
 /// can ask "how fit is this stone for offering X?" without knowing the answer
@@ -85,11 +85,11 @@ impl super::election_service::StateProvider for PlaceholderStateProvider {
 /// Relies on the **existing per-stone compatibility evaluation** stored in
 /// the compiled offerings index — no manifest constraint duplication.
 pub struct MossFitnessProvider {
-    state: Arc<AppState>,
+    state: Arc<Moss>,
 }
 
 impl MossFitnessProvider {
-    pub fn new(state: Arc<AppState>) -> Self {
+    pub fn new(state: Arc<Moss>) -> Self {
         Self { state }
     }
 }

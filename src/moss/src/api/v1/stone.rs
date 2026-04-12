@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::compatibility::validate_binary_architecture;
 use garden_common::{
     HardwareCapabilities, Offering,
@@ -48,7 +48,7 @@ pub struct StoneInfoResponse {
 /// - 200: StoneInfoResponse with capabilities + offerings + endpoint
 /// - 500: Internal error
 pub async fn get_stone_info_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     _headers: HeaderMap,
 ) -> crate::api::ApiResult<StoneInfoResponse> {
     // Get capabilities from cached state
@@ -88,7 +88,7 @@ pub struct UpgradeRequest {
 }
 
 pub async fn upgrade_stone_v1(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
     Json(payload): Json<UpgradeRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!(
@@ -281,7 +281,7 @@ pub async fn upgrade_stone_v1(
 /// The package is staged and will be processed on next restart.
 /// If the package contains garden-moss, a restart is initiated automatically.
 pub async fn deploy_stone_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {

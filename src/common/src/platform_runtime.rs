@@ -2,7 +2,7 @@
 //!
 //! Single abstraction for console/ribbon output and system lifecycle signals.
 //! Implemented by `LinuxRuntime` (→ /dev/tty1, sd_notify) and
-//! `WindowsRuntime` (→ stdout, SCM). Injected into `AppState` at startup.
+//! `WindowsRuntime` (→ stdout, SCM). Injected into `Moss` at startup.
 //!
 //! No `#[cfg]` above the injection point in `bootstrap/run.rs`.
 
@@ -13,7 +13,7 @@ use crate::console::{
 /// Cross-cutting platform concerns: console output and system lifecycle signals.
 ///
 /// Implemented by `LinuxRuntime` (→ /dev/tty1, sd_notify) and
-/// `WindowsRuntime` (→ stdout, SCM). Injected into `AppState` at startup.
+/// `WindowsRuntime` (→ stdout, SCM). Injected into `Moss` at startup.
 /// No `#[cfg]` above this layer.
 ///
 /// See: ARCH-0002

@@ -6,7 +6,7 @@
 //! Writes go directly to `tool.registry` with `EntryOrigin::Gateway` and a
 //! TTL. The registry reaper removes expired entries. No separate registry.
 
-use crate::AppState;
+use crate::Moss;
 use axum::{
     Json,
     extract::{Path, State},
@@ -52,7 +52,7 @@ pub struct PutGatewayResponse {
 /// Register or refresh a gateway for an offering. Idempotent upsert.
 /// The orchestrator calls this every 30s as a heartbeat.
 pub async fn put_gateway(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
     Json(body): Json<PutGatewayRequest>,
 ) -> Result<Json<PutGatewayResponse>, StatusCode> {
@@ -186,7 +186,7 @@ pub async fn put_gateway(
 ///
 /// Deregister a gateway. Removes from registry and broadcasts removal beacon.
 pub async fn delete_gateway(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
 ) -> StatusCode {
     let event = state

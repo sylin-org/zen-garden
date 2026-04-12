@@ -125,7 +125,7 @@ impl Elections {
         }
     }
 
-    /// Set the fitness provider (injected after AppState construction).
+    /// Set the fitness provider (injected after Moss construction).
     ///
     /// Called by bootstrap once the domain layer is ready.
     pub async fn set_fitness_provider(&self, provider: Box<dyn FitnessProvider>) {

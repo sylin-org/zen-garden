@@ -14,7 +14,7 @@ use tokio::sync::{RwLock, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::AppState;
+use crate::Moss;
 
 use super::task_trait::{BackgroundTask, DependencyGate, ReadySignal, TaskContext, TaskOutcome};
 
@@ -151,7 +151,7 @@ impl TaskSupervisor {
     /// than deadlock silently.
     pub fn build(
         tasks: Vec<Box<dyn BackgroundTask>>,
-        state: AppState,
+        state: Moss,
         token: CancellationToken,
     ) -> anyhow::Result<Self> {
         let task_count = tasks.len();

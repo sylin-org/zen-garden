@@ -3,7 +3,7 @@
 //! Backs up the offering's state (container image + volumes) so we can
 //! roll back if the update fails.
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::traits::HarvestOps;
 use anyhow::{Context, Result};
 use garden_common::manifests::{CeremonyMode, CeremonyPolicy};
@@ -15,7 +15,7 @@ use garden_common::manifests::{CeremonyMode, CeremonyPolicy};
 /// so the container stays running while data is frozen to disk.
 /// Returns the harvest ID if created, None if skipped.
 pub async fn execute(
-    state: &AppState,
+    state: &Moss,
     offering: &str,
     policy: &CeremonyPolicy,
     recklessly: bool,
@@ -101,7 +101,7 @@ pub async fn execute(
 mod tests {
     #[test]
     fn test_recklessly_skips_collect() {
-        // Unit test would need mocked AppState
+        // Unit test would need mocked Moss
         // Integration tests in tests/ceremony_integration.rs
     }
 }

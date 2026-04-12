@@ -37,7 +37,7 @@ use futures_util::StreamExt;
 use garden_common::storage::ChangelogEntry;
 use tracing::{debug, warn};
 
-use crate::AppState;
+use crate::Moss;
 use crate::infra::storage::handle::StorageResolver;
 
 use super::garden_storage::HEADER_ZEN_PROXIED;
@@ -50,7 +50,7 @@ use super::garden_storage::HEADER_ZEN_PROXIED;
 ///
 /// Extracts the storage name from the URI, resolves via StorageService,
 /// then serves locally or proxies to the remote stone.
-pub async fn handle_webdav(State(state): State<AppState>, request: Request) -> Response {
+pub async fn handle_webdav(State(state): State<Moss>, request: Request) -> Response {
     let uri_path = request.uri().path().to_string();
     let method = request.method().clone();
 

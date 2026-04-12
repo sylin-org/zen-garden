@@ -8,14 +8,14 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::AppState;
+use crate::Moss;
 use garden_common::infra::communications::p2p;
 
 /// Start discovery request handler
 ///
 /// Subscribes to p2p events and responds to discovery requests.
 /// Runs as background task, never exits unless p2p transport fails.
-pub async fn start_discovery_handler(state: Arc<AppState>) -> Result<()> {
+pub async fn start_discovery_handler(state: Arc<Moss>) -> Result<()> {
     tracing::info!("Discovery handler starting, subscribing to p2p events");
 
     let mut udp_rx = p2p::subscribe_to_announcement(

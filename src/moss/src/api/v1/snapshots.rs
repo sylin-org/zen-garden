@@ -29,7 +29,7 @@ use axum::{
     http::StatusCode,
 };
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots, RemoteNurturingIndex,
     ReplicationResult, build_memories_manifest,
@@ -60,7 +60,7 @@ pub struct RestoreRequest {
 
 /// Returns the full NurturingIndex - offerings can be filtered client-side
 pub async fn list_nurturing(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<NurturingIndex> {
     let index = state
         .nurturing
@@ -82,7 +82,7 @@ pub async fn list_nurturing(
 // ============================================================================
 
 pub async fn get_offering_slots(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
 ) -> crate::api::ApiResult<Option<OfferingSlots>> {
     let offering_lookup =
@@ -133,7 +133,7 @@ pub async fn get_offering_slots(
 // ============================================================================
 
 pub async fn create_snapshot(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
     Json(request): Json<CreateSnapshotRequest>,
 ) -> crate::api::ApiResult<NurturingResult> {
@@ -197,7 +197,7 @@ pub async fn create_snapshot(
 // ============================================================================
 
 pub async fn restore_snapshot(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
     Json(request): Json<RestoreRequest>,
 ) -> crate::api::ApiResult<crate::domain::HarvestManifest> {
@@ -280,7 +280,7 @@ pub async fn restore_snapshot(
 // ============================================================================
 
 pub async fn delete_nurturing(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     let offering_lookup =
@@ -345,7 +345,7 @@ pub struct RestoreRemoteRequest {
 // ============================================================================
 
 pub async fn replicate_to_seed_bank(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
     Json(request): Json<ReplicateRequest>,
 ) -> crate::api::ApiResult<ReplicationResult> {
@@ -422,7 +422,7 @@ pub async fn replicate_to_seed_bank(
 // ============================================================================
 
 pub async fn list_remote_snapshots(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(storage_name): Path<String>,
 ) -> crate::api::ApiResult<RemoteNurturingIndex> {
     // Find the seed bank
@@ -457,7 +457,7 @@ pub async fn list_remote_snapshots(
 // ============================================================================
 
 pub async fn restore_from_seed_bank(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
     Json(request): Json<RestoreRemoteRequest>,
 ) -> crate::api::ApiResult<crate::domain::HarvestManifest> {
@@ -561,7 +561,7 @@ fn normalize_offering_for_lookup(offering: &str) -> Option<String> {
 /// Called by system timers to perform automated backups.
 /// Workflow: local A/B snapshot → find seed banks → replicate with failover
 pub async fn trigger_offering_nurturing(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
 ) -> crate::api::ApiResult<NurturingWorkflowResult> {
     let offering_lookup =
@@ -589,7 +589,7 @@ pub async fn trigger_offering_nurturing(
 ///
 /// Useful for manual batch operations or testing.
 pub async fn trigger_all_offerings_nurturing(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<Vec<NurturingWorkflowResult>> {
     tracing::info!("Nurturing trigger-all received");
 

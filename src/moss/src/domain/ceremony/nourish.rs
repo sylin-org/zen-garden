@@ -9,7 +9,7 @@
 
 use super::phases::{collect, nourish, water};
 use super::types::{Ceremony, CeremonyState, Phase};
-use crate::AppState;
+use crate::Moss;
 use anyhow::Result;
 use garden_common::manifests::CeremonyPolicy;
 
@@ -29,7 +29,7 @@ use garden_common::manifests::CeremonyPolicy;
 /// * `Ok(())` - Ceremony completed successfully
 /// * `Err` - Ceremony failed (may have been rolled back)
 pub async fn execute_nourish_offering(
-    state: &AppState,
+    state: &Moss,
     ceremony: &mut Ceremony,
     offering: &str,
     new_image: &str,
@@ -137,7 +137,7 @@ pub async fn execute_nourish_offering(
 /// - Persisting state after execution
 /// - Advancing to next phase on success
 async fn execute_phase<T, F>(
-    state: &AppState,
+    state: &Moss,
     ceremony: &mut Ceremony,
     phase_index: usize,
     phase_fn: F,
@@ -191,7 +191,7 @@ where
 }
 
 /// Persist ceremony state to journal
-async fn persist_ceremony(state: &AppState, ceremony: &Ceremony) -> Result<()> {
+async fn persist_ceremony(state: &Moss, ceremony: &Ceremony) -> Result<()> {
     state
         .security
         .ceremony_journal()

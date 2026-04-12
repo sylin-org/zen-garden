@@ -1,4 +1,4 @@
-//! Test support — minimal AppState and router construction for integration tests.
+//! Test support — minimal Moss and router construction for integration tests.
 //!
 //! Provides [`build_test_state`] and [`build_test_router`] for in-process API testing
 //! through the axum router, without Docker, network, or filesystem side effects.
@@ -22,7 +22,7 @@
 //! }
 //! ```
 
-use crate::app_state::AppState;
+use crate::app_state::Moss;
 use crate::bootstrap::router;
 use crate::domain;
 use crate::infra;
@@ -52,7 +52,7 @@ impl garden_common::PlatformRuntime for NoopRuntime {
 
 // ── Builder ─────────────────────────────────────────────────────────────────
 
-/// Build a minimal [`AppState`] suitable for integration tests.
+/// Build a minimal [`Moss`] suitable for integration tests.
 ///
 /// The returned state contains:
 /// - A synthetic stone identity (`test-stone-id` / `stone-test`)
@@ -63,8 +63,8 @@ impl garden_common::PlatformRuntime for NoopRuntime {
 /// - Real `CeremonyHost`, `CeremonyRegistry`, `CeremonyJournal` (to a temp dir)
 /// - Real `CompanionRegistry` (to a temp dir — avoids global paths)
 ///
-/// Callers can mutate the returned `AppState` before passing to `build_router`.
-pub async fn build_test_state() -> AppState {
+/// Callers can mutate the returned `Moss` before passing to `build_router`.
+pub async fn build_test_state() -> Moss {
     let shutdown_token = CancellationToken::new();
     let event_bus = infra::EventBus::new();
     let (pulse_tx, _) = tokio::sync::broadcast::channel(64);
@@ -178,7 +178,7 @@ pub async fn build_test_state() -> AppState {
         .await,
     );
 
-    AppState {
+    Moss {
         current: Arc::new(domain::Current {
             stone: Arc::new(domain::current::Stone {
                 id: "test-stone-id".to_string(),

@@ -2,7 +2,7 @@ use crate::api::responses::{ApiResponse, CreateServiceRequest, ServiceActionResp
 use crate::api::suggestions::{Suggestion, generate_suggestions};
 use crate::domain::events::OfferingEvent;
 use crate::domain::service_lifecycle;
-use crate::{AppState, bad_request, conflict, internal, not_found};
+use crate::{Moss, bad_request, conflict, internal, not_found};
 use axum::{
     Json,
     extract::{Path, State},
@@ -96,7 +96,7 @@ impl ServicesQuery {
 ///
 /// Response: ServiceDiscoveryResponse with local services
 pub async fn list_services_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
 ) -> Result<
     Json<ApiResponse<crate::domain::ServiceDiscoveryResponse>>,
@@ -130,7 +130,7 @@ pub async fn list_services_v1(
 ///
 /// Response: ServiceDiscoveryResponse with found services
 pub async fn find_services_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     axum::extract::Query(query): axum::extract::Query<ServicesQuery>,
     headers: HeaderMap,
 ) -> Result<
@@ -194,7 +194,7 @@ pub async fn find_services_v1(
 
 /// GET /api/v1/services/:service - Get specific service
 pub async fn get_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceInfo>>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -237,7 +237,7 @@ pub async fn get_service_v1(
 
 /// POST /api/v1/services - Create service (zen: offer)
 pub async fn create_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
     Json(payload): Json<CreateServiceRequest>,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -304,7 +304,7 @@ pub async fn create_service_v1(
 
 /// POST /api/v1/services/:service/rest - Rest (stop) service
 pub async fn rest_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<ServiceActionResponse> {
@@ -329,7 +329,7 @@ pub async fn rest_service_v1(
 
 /// POST /api/v1/services/:service/wake - Wake (start) service
 pub async fn wake_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<ServiceActionResponse> {
@@ -354,7 +354,7 @@ pub async fn wake_service_v1(
 
 /// POST /api/v1/services/:service/nourish - Nourish (upgrade) service
 pub async fn nourish_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<ServiceActionResponse>>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -389,7 +389,7 @@ pub async fn nourish_service_v1(
 /// Container is stopped and removed, but volumes are preserved for potential recovery.
 /// Use POST /api/v1/services/:service/destroy for complete destruction (uproot).
 pub async fn delete_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<ServiceActionResponse> {
@@ -415,7 +415,7 @@ pub async fn delete_service_v1(
 
 /// POST /api/v1/services/:service/destroy - Hard delete (uproot: remove from registry AND destroy container)
 pub async fn destroy_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<ServiceActionResponse> {
@@ -500,7 +500,7 @@ pub async fn get_manifest_v1(
 /// GET /api/v1/services/:service/logs - Stream service logs (SSE)
 pub async fn stream_service_logs_v1(
     Path(service): Path<String>,
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<
     axum::response::sse::Sse<
         impl futures_util::stream::Stream<
@@ -560,7 +560,7 @@ pub async fn stream_service_logs_v1(
 /// Returns environment variables for a running Docker-managed service.
 /// Adopted services return an empty map (env is managed by the host OS).
 pub async fn get_service_env_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
     let service_name = normalize_service_name(&service)?;
@@ -628,7 +628,7 @@ pub async fn get_service_env_v1(
 
 /// PATCH /api/v1/services/:service/env - Update manageable environment variables
 pub async fn patch_service_env_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     Json(body): Json<std::collections::HashMap<String, Option<String>>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -707,7 +707,7 @@ pub async fn patch_service_env_v1(
 
 /// POST /api/v1/services/:service:restart - Restart service
 pub async fn restart_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     let service_name = normalize_service_name(&service)?;
@@ -729,7 +729,7 @@ pub async fn restart_service_v1(
 
 /// POST /api/v1/services/:service/cordon - Mark service non-schedulable
 pub async fn cordon_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<ServiceActionResponse> {
@@ -760,7 +760,7 @@ pub struct ReconcileRequest {
 }
 
 pub async fn reconcile_inventory_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(payload): Json<ReconcileRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     use crate::domain::reconcile_services;
@@ -782,7 +782,7 @@ pub async fn reconcile_inventory_v1(
 
 /// POST /api/v1/services:refresh - Refresh manifests catalog
 pub async fn refresh_manifests_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     // Rebuild offerings catalog (which includes manifest validation)
     state.catalog.rebuild().await.map_err(|e| {
@@ -819,7 +819,7 @@ pub async fn refresh_manifests_v1(
 ///
 /// GET /api/v1/stone/services/:service/capabilities
 pub async fn discover_service_capabilities_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service_name): Path<String>,
 ) -> Result<
     Json<ApiResponse<Vec<garden_common::SubCapability>>>,
@@ -900,7 +900,7 @@ pub async fn discover_service_capabilities_v1(
 ///
 /// POST /api/v1/stone/services/refresh-capabilities
 pub async fn refresh_all_capabilities_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     let executor = crate::domain::CapabilityExecutor::new();
     let mut updated = 0;
@@ -1017,7 +1017,7 @@ fn lifecycle_error(code: &str, err: &anyhow::Error) -> (StatusCode, Json<ApiErro
 /// in the registry, persists, and starts the container back up.
 /// Volumes are bound by container ID and survive the rename.
 pub async fn reassign_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(service): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {

@@ -26,7 +26,7 @@
 //! - Cricket audio companion
 //! - CLI progress monitoring
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::events::JobEvent;
 
 /// Emit a job progress event via the unified EventBus
@@ -45,7 +45,7 @@ use crate::domain::events::JobEvent;
 /// emit_job_progress(&state, "info", "Pulling image...".to_string(), &job_id, "mongodb");
 /// ```
 pub fn emit_job_progress(
-    state: &AppState,
+    state: &Moss,
     level: &str,
     message: String,
     job_id: &str,
@@ -64,21 +64,21 @@ pub fn emit_job_progress(
 }
 
 /// Emit job started event
-pub fn emit_job_started(state: &AppState, job_id: &str, offering: &str, operation: &str) {
+pub fn emit_job_started(state: &Moss, job_id: &str, offering: &str, operation: &str) {
     let event = JobEvent::started(job_id, offering, operation);
     state.event_bus.emit(event);
     tracing::info!("Job started: {} {}", operation, offering);
 }
 
 /// Emit job completed event
-pub fn emit_job_completed(state: &AppState, job_id: &str, offering: &str) {
+pub fn emit_job_completed(state: &Moss, job_id: &str, offering: &str) {
     let event = JobEvent::completed(job_id, offering);
     state.event_bus.emit(event);
     tracing::info!("Job completed: {}", offering);
 }
 
 /// Emit job failed event
-pub fn emit_job_failed(state: &AppState, job_id: &str, offering: &str, error: &str) {
+pub fn emit_job_failed(state: &Moss, job_id: &str, offering: &str, error: &str) {
     let event = JobEvent::failed(job_id, offering, error);
     state.event_bus.emit(event);
     tracing::error!("Job failed: {} - {}", offering, error);

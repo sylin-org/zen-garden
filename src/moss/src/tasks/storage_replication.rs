@@ -33,7 +33,7 @@ use garden_common::storage::{ChangelogOp, ChangesResponse, StorageRole};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::app_state::AppState;
+use crate::app_state::Moss;
 use crate::infra::storage::ContentStore;
 
 /// How often the replication sync loop runs (seconds).
@@ -68,7 +68,7 @@ fn api_relative_path(changelog_path: &str) -> Option<&str> {
 ///
 /// Runs for the daemon's entire lifetime. Each tick it checks local
 /// Dormant seed banks and syncs them from their respective Primaries.
-pub async fn storage_replication_task(state: AppState, token: CancellationToken) -> Result<()> {
+pub async fn storage_replication_task(state: Moss, token: CancellationToken) -> Result<()> {
     info!("Seed bank replication task starting");
 
     // Wait a bit for orchestration to assign roles before first sync
@@ -120,7 +120,7 @@ pub async fn storage_replication_task(state: AppState, token: CancellationToken)
 // ============================================================================
 
 /// Run one replication cycle for all local Dormant seed banks.
-async fn replication_tick(state: &AppState) -> Result<()> {
+async fn replication_tick(state: &Moss) -> Result<()> {
     // Collect Dormant volumes from unified collection
     let map = state.current.storage.volumes.read().await;
     let dormant_banks: Vec<(String, String, std::path::PathBuf)> = map
@@ -159,7 +159,7 @@ async fn replication_tick(state: &AppState) -> Result<()> {
 
 /// Sync a single Dormant seed bank from its Primary.
 async fn sync_dormant_bank(
-    state: &AppState,
+    state: &Moss,
     name: &str,
     local_bank_id: &str,
     mount_path: &std::path::Path,
@@ -349,7 +349,7 @@ async fn sync_dormant_bank(
 /// 3. Download missing or modified files from Primary
 /// 4. Delete local files that no longer exist on Primary
 async fn full_sync_dormant_bank(
-    state: &AppState,
+    state: &Moss,
     name: &str,
     peer: &PeerAddress,
     local_store: &ContentStore,
@@ -505,7 +505,7 @@ async fn walk_local_objects(
 // ============================================================================
 
 async fn download_and_write(
-    state: &AppState,
+    state: &Moss,
     peer: &PeerAddress,
     remote_path: &str,
     local_store: &ContentStore,

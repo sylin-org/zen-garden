@@ -3,7 +3,7 @@
 //! Spawns the main registration loop and (if using dynamic IP) an IP change
 //! handler that triggers immediate re-registration when the network IP changes.
 
-use crate::AppState;
+use crate::Moss;
 use crate::lantern_registration_loop;
 use crate::tasks::network_monitor::{Network, NetworkEvent};
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
@@ -24,7 +24,7 @@ pub async fn start_lantern_registration(
     use_static_host: bool,
     network: &Network,
     console: Option<&ConsolePrinter>,
-    state: AppState,
+    state: Moss,
     token: CancellationToken,
 ) {
     let lantern_endpoint = match std::env::var(garden_common::constants::ENV_LANTERN_ENDPOINT) {

@@ -15,7 +15,7 @@ use axum::{
 use std::collections::HashMap;
 
 use crate::api::responses::ApiResponse;
-use crate::{AppState, Job, JobStatus};
+use crate::{Moss, Job, JobStatus};
 
 /// GET /api/v1/jobs/:job_id - Get status of a specific job
 ///
@@ -45,7 +45,7 @@ use crate::{AppState, Job, JobStatus};
 /// ```
 pub async fn get_job_status(
     Path(job_id): Path<String>,
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> (StatusCode, Json<ApiResponse<Job>>) {
     match state.jobs.get(&job_id).await {
         Some(job) => (StatusCode::OK, Json(ApiResponse::new(job))),
@@ -94,7 +94,7 @@ pub async fn get_job_status(
 ///   ]
 /// }
 /// ```
-pub async fn list_jobs(State(state): State<AppState>) -> (StatusCode, Json<ApiResponse<Vec<Job>>>) {
+pub async fn list_jobs(State(state): State<Moss>) -> (StatusCode, Json<ApiResponse<Vec<Job>>>) {
     let job_list = state.jobs.snapshot().await;
     (StatusCode::OK, Json(ApiResponse::new(job_list)))
 }

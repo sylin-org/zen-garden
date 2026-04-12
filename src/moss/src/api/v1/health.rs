@@ -6,13 +6,13 @@
 //! - Memory usage
 //! - Initialization progress
 
-use crate::AppState;
+use crate::Moss;
 use axum::{Json, extract::State, http::StatusCode};
 use garden_common::{ComponentHealth, DaemonHealthStatus, HealthCheck};
 use std::collections::HashMap;
 
 /// GET /api/health - System health status
-pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<DaemonHealthStatus>) {
+pub async fn get_health(State(state): State<Moss>) -> (StatusCode, Json<DaemonHealthStatus>) {
     // Run health checks (using domain logic where possible)
     let docker_check = check_docker_health(&state).await;
     let disk_check = crate::domain::health::check_disk_health();
@@ -27,7 +27,7 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
     // Build new components with detailed information
     let mut components = HashMap::new();
 
-    // Docker component (AppState-dependent)
+    // Docker component (Moss-dependent)
     let docker_component = build_docker_component(&state).await;
     components.insert("docker".to_string(), docker_component);
 
@@ -39,7 +39,7 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
     let memory_component = crate::domain::health::build_memory_component();
     components.insert("memory".to_string(), memory_component);
 
-    // Initialization component (AppState-dependent)
+    // Initialization component (Moss-dependent)
     let init_component = build_initialization_component(&state).await;
     components.insert("initialization".to_string(), init_component);
 
@@ -105,11 +105,11 @@ pub async fn get_health(State(state): State<AppState>) -> (StatusCode, Json<Daem
 }
 
 // ============================================================================
-// AppState-Dependent Helpers
+// Moss-Dependent Helpers
 // ============================================================================
 
 /// Check Docker daemon health
-async fn check_docker_health(state: &AppState) -> HealthCheck {
+async fn check_docker_health(state: &Moss) -> HealthCheck {
     if state.platform.container.is_healthy().await {
         HealthCheck {
             status: garden_common::constants::CHECK_PASS.to_string(),
@@ -124,7 +124,7 @@ async fn check_docker_health(state: &AppState) -> HealthCheck {
 }
 
 /// Build Docker component health with availability check
-async fn build_docker_component(state: &AppState) -> ComponentHealth {
+async fn build_docker_component(state: &Moss) -> ComponentHealth {
     let mut details = HashMap::new();
 
     if state.platform.container.is_healthy().await {
@@ -137,7 +137,7 @@ async fn build_docker_component(state: &AppState) -> ComponentHealth {
 }
 
 /// Build initialization component showing startup progress
-async fn build_initialization_component(state: &AppState) -> ComponentHealth {
+async fn build_initialization_component(state: &Moss) -> ComponentHealth {
     let mut details = HashMap::new();
 
     // Check hardware detection status

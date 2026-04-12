@@ -13,7 +13,7 @@ use futures_util::stream::Stream;
 use std::convert::Infallible;
 use tokio_stream::StreamExt;
 
-use crate::AppState;
+use crate::Moss;
 use crate::infra::PulseEvent;
 
 const PULSE_HTML: &str = include_str!("../../../assets/pulse.html");
@@ -43,7 +43,7 @@ pub async fn get_pulse_page() -> impl IntoResponse {
 /// - `domain.*` — Domain events (service.started, stone.tended, etc.)
 /// - `transport.*` — Raw UDP announcements (stone_chirp, election_request, etc.)
 pub async fn stream_pulse(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     tracing::info!("Pulse client connected");
 

@@ -17,7 +17,7 @@ use std::hash::{Hash, Hasher};
 
 use garden_common::storage::StorageRole;
 
-use crate::app_state::AppState;
+use crate::app_state::Moss;
 use crate::cli;
 use crate::domain::traits::CompanionOps;
 
@@ -364,17 +364,17 @@ pub async fn get_portrait_page() -> impl IntoResponse {
 /// Returns JSON data for the portrait SPA.
 /// Aggregates identity, foundation resources, offerings, adapters, and topology.
 ///
-/// PERF: This endpoint MUST only read from cached AppState data - NO I/O operations.
-/// All resources are collected by background tasks and cached in AppState.
+/// PERF: This endpoint MUST only read from cached Moss data - NO I/O operations.
+/// All resources are collected by background tasks and cached in Moss.
 /// Target latency: <10ms. Any I/O here will cause latency regression.
 pub async fn get_portrait_data(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<Json<PortraitResponse>, StatusCode> {
     // === Identity ===
     let stone_color = derive_stone_color(&state.current.stone.id);
 
     // Role is always STONE for now — multi-role (LANTERN, CORNERSTONE) requires
-    // a role field in AppState once Pond/elections are implemented.
+    // a role field in Moss once Pond/elections are implemented.
     let role = "STONE".to_string();
 
     // Build endpoint URL
@@ -700,7 +700,7 @@ pub async fn get_portrait_data(
 /// Supports HTTP caching via ETag header.
 ///
 /// Returns 204 No Content if no offerings have guidance.
-pub async fn get_portrait_guidance(State(state): State<AppState>) -> axum::response::Response {
+pub async fn get_portrait_guidance(State(state): State<Moss>) -> axum::response::Response {
     use axum::body::Body;
     use axum::response::Response;
 

@@ -7,7 +7,7 @@
 //! Seed-banks are projected directly from the seed bank lifecycle objects.
 
 use super::event::ToolChanged;
-use crate::AppState;
+use crate::Moss;
 use crate::domain::connection;
 use crate::domain::storage::VolumeState;
 use garden_common::Offering;
@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 ///    by the gateway API. Not projected here — `reconcile_local` only touches
 ///    `Local` entries, so `Gateway` entries survive.
 /// 3. **Seed-banks** — from the unified volume store.
-pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
+pub async fn project_local_tools(state: &Moss) -> Vec<GardenTool> {
     let mut tools = Vec::new();
 
     let endpoint = state.current.address.read().await.http_base();
@@ -115,7 +115,7 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
 async fn offering_to_garden_tool(
     offering: &Offering,
     stone: &Stone,
-    state: &AppState,
+    state: &Moss,
 ) -> GardenTool {
     let fqn = parse_fqn_for_fqid(&offering.name.to_string(), &offering.offering);
     let fqid = fqn.fqn();
@@ -229,23 +229,23 @@ fn volume_state_to_readiness(state: &VolumeState) -> (&'static str, bool) {
 // ── Reconciliation + publication helpers ────────────────────────────────
 //
 // These free functions compose the aggregate's typed commands with the
-// AppState-dependent projection step and the transport publish step.
+// Moss-dependent projection step and the transport publish step.
 // The projection task calls `reproject_and_publish`; gateway handlers
 // and the reaper task call `publish_events_for_state` after their own
 // typed commands.
 //
 // Keeping these as free functions in the `projection` module (rather
 // than methods on `Tool`) preserves the aggregate's freedom from an
-// `AppState` back-reference per ARCH-0019.
+// `Moss` back-reference per ARCH-0019.
 
-/// Reproject local tools from `AppState` and reconcile them into the
+/// Reproject local tools from `Moss` and reconcile them into the
 /// Tool aggregate; publish any resulting wire deltas via the injected
 /// beacon transport. Best-effort — failures are logged as warnings.
 ///
 /// Called by:
 /// - The `offerings-projection` background task on every `OfferingsChanged`.
 /// - The storage-mutation path in `app_state.rs` after a volume change.
-pub async fn reproject_and_publish(state: &AppState) {
+pub async fn reproject_and_publish(state: &Moss) {
     let projections = project_local_tools(state).await;
     let stone_id = state.current.stone.id.clone();
     let events = state.tool.reconcile_local(&stone_id, projections).await;
@@ -260,7 +260,7 @@ pub async fn reproject_and_publish(state: &AppState) {
 ///
 /// Best-effort — failures are logged as warnings. Empty delta batches
 /// are skipped without calling the transport.
-pub async fn publish_events_for_state(state: &AppState, events: &[ToolChanged]) {
+pub async fn publish_events_for_state(state: &Moss, events: &[ToolChanged]) {
     let deltas: Vec<ToolDelta> = events
         .iter()
         .filter_map(|e| e.as_delta().cloned())

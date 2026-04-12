@@ -49,7 +49,7 @@ use tracing::{debug, info, warn};
 use crate::domain::storage::analyze_device;
 use crate::infra::storage::{ContentStore, OsPlatform, layout};
 use crate::infra::{DomainPulse, PulseEvent};
-use crate::{AppState, error_response};
+use crate::{Moss, error_response};
 use garden_common::presence::event_types;
 
 // ============================================================================
@@ -182,7 +182,7 @@ fn err(status: StatusCode, code: &str, msg: &str) -> (StatusCode, Json<ApiErrorR
 ///
 /// Returns local bank stats plus garden-wide view from registry.
 pub async fn storage_overview_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<StorageOverview> {
     // Get local banks from the unified Volumes domain (STORAGE-0011)
     let local_banks: Vec<StorageInfo> = {
@@ -270,7 +270,7 @@ pub async fn storage_overview_v1(
 
 /// Get storage readiness for this stone (mounted + canonical + writable).
 pub async fn storage_health_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<StorageHealth> {
     let managed: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
@@ -287,7 +287,7 @@ pub async fn storage_health_v1(
 
 /// List all seed banks
 pub async fn list_banks_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<Vec<StorageInfo>> {
     let banks: Vec<StorageInfo> = {
         let map = state.current.storage.volumes.read().await;
@@ -305,7 +305,7 @@ pub async fn list_banks_v1(
 
 /// Get seed bank details by name
 pub async fn get_bank_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<StorageInfo> {
     use crate::domain::storage::bank_aggregate;
@@ -335,7 +335,7 @@ pub async fn get_bank_v1(
 
 /// Remove seed bank mount directory (device must be unmounted first)
 pub async fn delete_bank_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
     use crate::domain::storage::bank_aggregate;
@@ -403,7 +403,7 @@ pub async fn delete_bank_v1(
 
 /// Safely unmount a seed bank
 pub async fn release_bank_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<ReleaseResponse> {
     use crate::domain::storage::bank_aggregate;
@@ -460,7 +460,7 @@ pub async fn release_bank_v1(
 /// The `name` path parameter matches on the bank display name (the user-facing
 /// identity). Updates all local volumes that belong to this bank.
 pub async fn rename_bank_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
     Json(request): Json<RenameStorageRequest>,
 ) -> crate::api::ApiResult<StorageInfo> {
@@ -537,7 +537,7 @@ pub async fn rename_bank_v1(
 ///
 /// Returns unmanaged, removable, online volumes from the Volumes domain.
 pub async fn list_candidates_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<(StatusCode, Json<CandidatesResponse>), (StatusCode, Json<ApiErrorResponse>)> {
     // Space and medium candidates collected under a single scope for both read guards.
     let (spaces, media) = {
@@ -624,7 +624,7 @@ pub async fn list_candidates_v1(
 /// - Block device or directory with existing files → creates `.zen-garden/`, catalogs content
 /// - Path with existing `.zen-garden/` → 409 Conflict
 pub async fn add_storage_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(request): Json<AddStorageRequest>,
 ) -> crate::api::ApiResult<AddStorageResponse> {
     let target = &request.target;
@@ -882,7 +882,7 @@ pub async fn add_storage_v1(
 
 /// Shared logic: initialize layout, write manifest, catalog content, broadcast.
 async fn add_at_path(
-    state: AppState,
+    state: Moss,
     mount_path: &std::path::Path,
     manifest: StorageManifest,
     formatted: bool,
@@ -1214,7 +1214,7 @@ fn generate_storage_name() -> String {
 
 /// Change seed bank visibility (updates manifest on device)
 pub async fn set_visibility_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
     Json(request): Json<SetVisibilityRequest>,
 ) -> Result<(StatusCode, Json<StorageInfo>), (StatusCode, Json<ApiErrorResponse>)> {
@@ -1353,7 +1353,7 @@ async fn write_manifest_atomic(
 /// Roles are strings like `"seed-bank"`, `"archive"`, etc. They replace the
 /// current roles array entirely.
 pub async fn set_roles_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
     Json(request): Json<SetRolesRequest>,
 ) -> crate::api::ApiResult<StorageInfo> {
@@ -1420,7 +1420,7 @@ pub async fn set_roles_v1(
 
 /// Safely unmount all seed banks
 pub async fn release_all_seed_banks_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Result<(StatusCode, Json<Vec<ReleaseResponse>>), (StatusCode, Json<ApiErrorResponse>)> {
     // Collect managed bank info before mutating
     let managed: Vec<(String, String)> = {
@@ -1530,7 +1530,7 @@ pub struct PinSeedBankResponse {
 /// a newer pin_id (higher GUIDv7) overrides an older one garden-wide.
 /// The pin is propagated via beacons so all stones resolve the winner.
 pub async fn pin_bank_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<PinSeedBankResponse> {
     use crate::domain::storage::bank_aggregate;
@@ -1577,7 +1577,7 @@ pub async fn pin_bank_v1(
 /// Remove the Primary role pin for a logical seed bank. Returns to normal
 /// first-online-wins orchestration.
 pub async fn unpin_bank_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
 ) -> crate::api::ApiResult<PinSeedBankResponse> {
     use crate::domain::storage::bank_aggregate;
@@ -1624,7 +1624,7 @@ pub async fn unpin_bank_v1(
 ///
 /// Returns `ChangesResponse { cursor, changes }`.
 pub async fn bank_changes_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
     Query(params): Query<ChangesQuery>,
 ) -> crate::api::ApiResult<garden_common::storage::ChangesResponse> {
@@ -1695,7 +1695,7 @@ pub struct StorageStreamQuery {
 /// `/bank/{id}/changes` pull endpoint.
 pub async fn stream_storage_v1(
     Query(query): Query<StorageStreamQuery>,
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> axum::response::sse::Sse<
     impl futures_util::stream::Stream<
         Item = Result<axum::response::sse::Event, std::convert::Infallible>,
@@ -1765,7 +1765,7 @@ pub async fn stream_storage_v1(
 /// on a specific storage.
 ///
 /// Response: `{ "ports": { "storage": 23454, "prod": 23455 } }`
-pub async fn s3_port_catalog(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
+pub async fn s3_port_catalog(State(state): State<Moss>) -> axum::Json<serde_json::Value> {
     let catalog = state
         .current
         .storage

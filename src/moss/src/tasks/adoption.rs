@@ -3,13 +3,13 @@
 //! Thin wrappers that check configuration and spawn the auto-adoption
 //! background task from `auto_adoption`.
 
-use crate::{AppState, auto_adoption_task, infra};
+use crate::{Moss, auto_adoption_task, infra};
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
 use tokio_util::sync::CancellationToken;
 
 /// Start auto-adoption task if enabled
 pub fn start_auto_adoption(
-    state: AppState,
+    state: Moss,
     config: infra::MossConfig,
     console: &ConsolePrinter,
     token: CancellationToken,
@@ -23,7 +23,7 @@ pub fn start_auto_adoption(
 /// Use this variant when no MossConfig file is available - it will use
 /// deployment profile detection to determine if adoption should be enabled.
 pub fn start_auto_adoption_with_config(
-    state: AppState,
+    state: Moss,
     adoption_config: infra::AdoptionConfig,
     console: &ConsolePrinter,
     token: CancellationToken,

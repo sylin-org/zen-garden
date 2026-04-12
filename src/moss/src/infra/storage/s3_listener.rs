@@ -39,7 +39,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::AppState;
+use crate::Moss;
 
 /// Default base port for S3 listeners (23400-23499 range)
 pub const S3_LISTENER_BASE_PORT: u16 = 23400;
@@ -151,7 +151,7 @@ impl S3Listeners {
         &self,
         replica_set_name: &str,
         storage_id: &str,
-        state: AppState,
+        state: Moss,
     ) -> Option<u16> {
         let port = self.allocate_port(replica_set_name).await?;
 
@@ -298,7 +298,7 @@ impl S3Listeners {
 /// - `PUT /{bucket}/{*key}` → PutObject (+ CopyObject via x-amz-copy-source)
 /// - `HEAD /{bucket}/{*key}` → HeadObject
 /// - `DELETE /{bucket}/{*key}` → DeleteObject
-fn build_s3_router(state: AppState, replica_set_name: String) -> Router {
+fn build_s3_router(state: Moss, replica_set_name: String) -> Router {
     let s3_state = S3ListenerState {
         app_state: state,
         replica_set_name,
@@ -322,7 +322,7 @@ fn build_s3_router(state: AppState, replica_set_name: String) -> Router {
 /// State for per-storage S3 listeners
 #[derive(Clone)]
 struct S3ListenerState {
-    app_state: AppState,
+    app_state: Moss,
     replica_set_name: String,
 }
 

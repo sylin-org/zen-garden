@@ -8,7 +8,7 @@
 
 use crate::api::suggestions::{Suggestion, generate_suggestions};
 use crate::domain::{ConnectivityOrchestrator, ConnectivityStatus, connection};
-use crate::{AppState, bad_request, conflict, internal, not_found};
+use crate::{Moss, bad_request, conflict, internal, not_found};
 use axum::{
     Json,
     extract::{Path, State},
@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 /// Returns list of services detected on the host that can be adopted.
 /// These are services detected but not yet managed by Moss.
 pub async fn list_adoptable_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<Vec<AdoptableOffering>> {
     // Get offering manifests that support adopted mode
@@ -81,7 +81,7 @@ pub async fn list_adoptable_v1(
 /// Attempts to detect and adopt a specific offering.
 /// Returns the adopted offering info if successful.
 pub async fn adopt_offering_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
     headers: HeaderMap,
     Json(req): Json<AdoptOfferingRequest>,
@@ -253,7 +253,7 @@ pub async fn adopt_offering_v1(
 
 /// GET /api/v1/offerings/adopted - List adopted offerings
 pub async fn list_adopted_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<Vec<Offering>> {
     let offerings = state
@@ -269,7 +269,7 @@ pub async fn list_adopted_v1(
 
 /// GET /api/v1/offerings/borrowed - List borrowed offerings
 pub async fn list_borrowed_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<Vec<Offering>> {
     let offerings = state
@@ -287,7 +287,7 @@ pub async fn list_borrowed_v1(
 ///
 /// Removes an adopted offering from management (doesn't stop/delete the service).
 pub async fn unadopt_offering_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<String> {
@@ -380,7 +380,7 @@ pub struct BorrowOfferingRequest {
 /// Borrowed services are external network services not managed by this stone,
 /// but registered for reference and service discovery.
 pub async fn borrow_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
     Json(req): Json<BorrowOfferingRequest>,
 ) -> crate::api::ApiResult<Offering> {
@@ -479,7 +479,7 @@ pub async fn borrow_service_v1(
 ///
 /// Removes a borrowed service registration (doesn't affect the external service).
 pub async fn unborrow_service_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<String> {

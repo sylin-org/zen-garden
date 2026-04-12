@@ -8,7 +8,7 @@ use std::time::Duration;
 /// Get count of running services on local stone
 ///
 /// Fast, zero-latency check of local offerings registry.
-pub async fn get_local_service_count(state: &crate::AppState) -> Result<usize> {
+pub async fn get_local_service_count(state: &crate::Moss) -> Result<usize> {
     let count = state
         .offerings
         .with_active(|offerings| {
@@ -54,7 +54,7 @@ pub async fn fetch_remote_service_count(endpoint: &str, timeout: Duration) -> Re
 
 #[cfg(test)]
 mod tests {
-    // Note: get_local_service_count requires AppState, so we test it via integration tests
+    // Note: get_local_service_count requires Moss, so we test it via integration tests
     // fetch_remote_service_count requires a live HTTP server, so we test it manually
 
     #[test]

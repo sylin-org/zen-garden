@@ -12,7 +12,7 @@
 //! 4. Results are recorded and next run is scheduled
 //! 5. Tasks are unregistered when offering is removed
 
-use crate::AppState;
+use crate::Moss;
 use crate::infra::TaskStore;
 use anyhow::Result;
 use garden_common::{ScheduledTask, TaskResult};
@@ -60,7 +60,7 @@ fn next_run_time(cron_expr: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 /// Execute a task inside a container
-async fn execute_task(state: &AppState, task: &ScheduledTask) -> TaskResult {
+async fn execute_task(state: &Moss, task: &ScheduledTask) -> TaskResult {
     let start = std::time::Instant::now();
 
     tracing::info!(
@@ -134,7 +134,7 @@ async fn execute_task(state: &AppState, task: &ScheduledTask) -> TaskResult {
 /// Run a single iteration of the scheduler
 ///
 /// Checks for due tasks, executes them, and updates their status.
-pub async fn run_scheduler_iteration(state: &AppState) -> Result<usize> {
+pub async fn run_scheduler_iteration(state: &Moss) -> Result<usize> {
     let task_store = TaskStore::new();
     let due_tasks = task_store.due_tasks().await?;
 
@@ -200,7 +200,7 @@ pub async fn run_scheduler_iteration(state: &AppState) -> Result<usize> {
 /// Should be spawned with tokio::spawn().
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
 pub async fn task_scheduler_loop(
-    state: AppState,
+    state: Moss,
     config: TaskSchedulerConfig,
     token: tokio_util::sync::CancellationToken,
 ) {
@@ -236,7 +236,7 @@ pub async fn task_scheduler_loop(
 
 /// Start the task scheduler in the background
 pub fn start_task_scheduler(
-    state: AppState,
+    state: Moss,
     token: tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(task_scheduler_loop(
@@ -255,7 +255,7 @@ pub fn start_task_scheduler(
 /// Gets the tasks registered.
 ///
 /// Returns the number of tasks that were registered.
-pub async fn backfill_missing_tasks(state: &AppState) -> usize {
+pub async fn backfill_missing_tasks(state: &Moss) -> usize {
     tracing::info!("Starting scheduled task backfill");
 
     let task_store = TaskStore::new();

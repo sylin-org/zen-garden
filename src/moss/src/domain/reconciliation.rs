@@ -7,7 +7,7 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::adopt_offering_container;
 use garden_common::console;
 
@@ -36,7 +36,7 @@ use garden_common::console;
 /// - Persisting registry changes (if adopted or dropped any)
 /// - Emitting events
 /// - HTTP response formatting
-pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> ReconciliationResult {
+pub async fn reconcile_services(state: &Moss, drop_invalid: bool) -> ReconciliationResult {
     let existing = match state.platform.container.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {

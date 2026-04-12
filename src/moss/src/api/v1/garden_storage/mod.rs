@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::domain::storage_service::{ProxyTarget, StorageRoute};
-use crate::{AppState, error_response};
+use crate::{Moss, error_response};
 
 // ============================================================================
 // Constants
@@ -280,7 +280,7 @@ pub(crate) async fn proxy_request(
 /// Aggregates local managed storages with remote registry beacons.
 /// Groups by storage name — each name may have multiple replicas.
 pub async fn list_storages_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<Vec<GardenStorageSummary>> {
     let mut by_name: std::collections::HashMap<String, GardenStorageSummary> =
         std::collections::HashMap::new();
@@ -339,7 +339,7 @@ pub async fn list_storages_v1(
 ///
 /// Combines local managed storages with remote registry beacons.
 pub async fn discover_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> crate::api::ApiResult<StorageDiscovery> {
     let mut instances = Vec::new();
@@ -428,7 +428,7 @@ pub async fn discover_v1(
 async fn build_s3_connection(
     replica_set: &str,
     instances: &[StorageInstance],
-    state: &AppState,
+    state: &Moss,
 ) -> Option<S3Connection> {
     // Find primary instance (or first available)
     let primary = instances
@@ -489,7 +489,7 @@ fn extract_host(endpoint: &str) -> Option<String> {
 /// Uses `resolve_key_material` for the two-tier key derivation
 /// (pond CA fingerprint → stone_id fallback), then HMAC-derives
 /// access and secret keys scoped to the replica set name.
-async fn generate_s3_credentials(replica_set: &str, state: &AppState) -> (String, String) {
+async fn generate_s3_credentials(replica_set: &str, state: &Moss) -> (String, String) {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
 

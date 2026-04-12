@@ -10,7 +10,7 @@
 //!
 //! This is a non-blocking background task that runs for the lifetime of the daemon.
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::compatibility::{CompatibilityDecision, evaluate_compatibility};
 use crate::domain::connection;
 use crate::domain::{ConnectivityOrchestrator, ConnectivityStatus, DetectionOrchestrator};
@@ -150,7 +150,7 @@ async fn detect_offering(
 /// });
 /// // Task runs forever in background
 /// ```
-pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: CancellationToken) {
+pub async fn auto_adoption_task(state: Moss, config: AdoptionConfig, token: CancellationToken) {
     // Keep orchestrator persistent across scans to maintain stability tracking
     let detector = std::sync::Arc::new(crate::infra::detection::ContainerDetector::new(
         state.platform.container.clone(),

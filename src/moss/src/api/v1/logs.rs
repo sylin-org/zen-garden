@@ -11,7 +11,7 @@ use std::convert::Infallible;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::AppState;
+use crate::Moss;
 use crate::internal;
 
 /// Query parameters for GET /api/v1/stone/logs
@@ -28,7 +28,7 @@ pub struct LogsQuery {
 /// Returns the last N lines from the current log file.
 /// Reads from `{data_dir}/logs/garden-moss.log.{today}`.
 pub async fn get_recent_logs(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
     Query(params): Query<LogsQuery>,
 ) -> crate::api::ApiResult<Vec<String>> {
     let max_lines = params.lines.unwrap_or(100).min(5000);
@@ -85,7 +85,7 @@ pub async fn get_recent_logs(
 /// Live log stream via Server-Sent Events.
 /// Subscribes to the log broadcast channel and streams new events.
 pub async fn stream_logs(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     // MOSS-0004: child token for cooperative shutdown
     let token = state.shutdown_token.child_token();

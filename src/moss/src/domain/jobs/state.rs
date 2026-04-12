@@ -2,9 +2,9 @@
 //!
 //! A thin alias over `HashMap<String, Job>`. During the Book IV
 //! strangler phase (Ch3 → Ch5), the same `Arc<RwLock<JobsState>>` is
-//! shared with the legacy `AppState::jobs` field so existing raw-map
+//! shared with the legacy `Moss::jobs` field so existing raw-map
 //! call sites keep working while migrations land file by file.
-//! Ch5 deletes the legacy field and flips `AppState::jobs` to
+//! Ch5 deletes the legacy field and flips `Moss::jobs` to
 //! `Arc<Jobs>` exclusively.
 
 use std::collections::HashMap;

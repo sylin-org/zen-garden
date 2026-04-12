@@ -11,7 +11,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! // In an API handler with access to AppState:
+//! // In an API handler with access to Moss:
 //! let resp = state.stone_client
 //!     .get(&entry.address, "/api/v1/services")
 //!     .timeout(Duration::from_secs(5))
@@ -21,7 +21,7 @@
 //!
 //! ## Lifecycle
 //!
-//! Created once during bootstrap, stored in `AppState`. When pond enrollment
+//! Created once during bootstrap, stored in `Moss`. When pond enrollment
 //! changes (`PondEvent::EnrollmentChanged`), call `reload_tls()` to rebuild
 //! the TLS client with fresh certificates.
 

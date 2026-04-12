@@ -14,7 +14,7 @@ use garden_common::api_utils::{ApiErrorResponse, ApiResponse};
 use garden_common::storage::StorageRole;
 use tracing::debug;
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::storage_service::StorageRoute;
 use crate::infra::storage::handle::StorageResolver;
 
@@ -44,7 +44,7 @@ fn parse_object_path(path: &str) -> (String, String) {
 
 /// Read an S3 object or list objects/buckets.
 pub async fn get_object_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     Query(params): Query<ListQueryParams>,
     headers: HeaderMap,
@@ -150,7 +150,7 @@ pub async fn get_object_v1(
 
 /// Create or update an S3 object on the Primary replica.
 pub async fn put_object_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
@@ -264,7 +264,7 @@ pub async fn put_object_v1(
 
 /// Delete an S3 object from the Primary replica.
 pub async fn delete_object_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
@@ -356,7 +356,7 @@ pub async fn delete_object_v1(
 
 /// Get S3 object metadata from the Primary replica.
 pub async fn head_object_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((name, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {

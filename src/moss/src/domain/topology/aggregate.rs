@@ -29,7 +29,7 @@ use tokio::sync::broadcast;
 
 /// Explicit inputs for `Topology::build_self_entry`.
 ///
-/// The aggregate does not hold a back-reference to `AppState`. Callers
+/// The aggregate does not hold a back-reference to `Moss`. Callers
 /// assemble these values from their context before invoking the
 /// self-entry commands.
 #[derive(Debug, Clone)]

@@ -22,7 +22,7 @@ use axum::{
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::AppState;
+use crate::Moss;
 
 // ============================================================================
 // Moss Operations - Daemon lifecycle
@@ -270,7 +270,7 @@ pub async fn moss_take_root()
 /// - 200 OK: Shutdown command issued
 /// - 500 INTERNAL_SERVER_ERROR: Failed to issue shutdown command
 pub async fn stone_shutdown(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     tracing::warn!("Stone shutdown requested - initiating system poweroff");
 
@@ -331,7 +331,7 @@ pub async fn stone_shutdown(
 /// # Returns
 /// - 200 OK: Reboot command issued
 /// - 500 INTERNAL_SERVER_ERROR: Failed to issue reboot command
-pub async fn stone_reboot(State(_state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
+pub async fn stone_reboot(State(_state): State<Moss>) -> (StatusCode, Json<serde_json::Value>) {
     tracing::warn!("Stone reboot requested - initiating system restart");
 
     // Spawn reboot command after brief delay to allow response
@@ -392,7 +392,7 @@ pub async fn stone_reboot(State(_state): State<AppState>) -> (StatusCode, Json<s
 /// - 400 BAD_REQUEST: Stone has no MAC address (discovery didn't capture it)
 /// - 500 INTERNAL_SERVER_ERROR: Failed to send WoL packet
 pub async fn stone_wake(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(stone_name): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     tracing::info!(stone = %stone_name, "Wake-on-LAN requested");

@@ -11,7 +11,7 @@
 //! and calls `process_missing_offerings()` each cycle with the set of
 //! offerings whose containers are confirmed missing.
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::events::OfferingEvent;
 use garden_common::console::{self, EventCategory, EventStatus};
 use garden_common::{OfferingStatus, ServiceHealthStatus};
@@ -120,7 +120,7 @@ impl ReconciliationCoordinator {
     /// Returns whether any state changes were made (for chirp batching).
     pub(crate) async fn process_missing_offerings(
         &self,
-        state: &AppState,
+        state: &Moss,
         token: &CancellationToken,
         confirmed_missing: &HashSet<String>,
     ) -> bool {

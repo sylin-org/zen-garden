@@ -3,7 +3,7 @@
 //! Starts the newly created container and waits for it to become healthy.
 //! If health check fails and auto_rollback is enabled, restores from harvest.
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::traits::HarvestOps;
 use anyhow::{Context, Result};
 use std::time::Duration;
@@ -19,7 +19,7 @@ const HEALTH_POLL_INTERVAL_SECS: u64 = 3;
 /// Starts the container and waits for health check to pass.
 /// If health fails and we have a harvest, rolls back automatically.
 pub async fn execute(
-    state: &AppState,
+    state: &Moss,
     offering: &str,
     harvest_id: Option<&str>,
     auto_rollback: bool,
@@ -101,7 +101,7 @@ pub async fn execute(
 /// Wait for container to become healthy
 ///
 /// Polls health status until healthy or timeout expires.
-async fn wait_for_health(state: &AppState, offering: &str, timeout: Duration) -> bool {
+async fn wait_for_health(state: &Moss, offering: &str, timeout: Duration) -> bool {
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_secs(HEALTH_POLL_INTERVAL_SECS);
 

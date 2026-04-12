@@ -20,7 +20,7 @@
 //! - Topology mount checks
 //! - Self-heal adoption of orphaned containers
 
-use crate::AppState;
+use crate::Moss;
 use crate::docker::{ContainerEvent, decode_zen_offering_container_name};
 use crate::domain::events::OfferingEvent;
 use futures_util::StreamExt;
@@ -40,7 +40,7 @@ const INITIAL_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 /// state transitions in real time.
 ///
 /// Exits cooperatively when the shutdown token is cancelled (MOSS-0004).
-pub async fn docker_events_task(state: AppState, token: CancellationToken) {
+pub async fn docker_events_task(state: Moss, token: CancellationToken) {
     let mut backoff = INITIAL_RECONNECT_BACKOFF;
 
     loop {
@@ -108,7 +108,7 @@ pub async fn docker_events_task(state: AppState, token: CancellationToken) {
 ///
 /// Checks whether the container is a managed zen-offering container,
 /// and updates the offering status and emits domain events accordingly.
-async fn handle_container_event(state: &AppState, event: &ContainerEvent) {
+async fn handle_container_event(state: &Moss, event: &ContainerEvent) {
     let action = event.action.as_str();
     let container_name = event.container_name.as_str();
 

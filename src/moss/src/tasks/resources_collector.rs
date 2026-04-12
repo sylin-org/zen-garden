@@ -2,7 +2,7 @@
 //!
 //! Periodically gathers CPU, memory, disk, and network resource snapshots
 //! using `garden_common::resources::system`.
-//! Updates AppState caches at different intervals:
+//! Updates Moss caches at different intervals:
 //! - Fast resources (CPU, memory, uptime, network): every 5 seconds
 //! - Slow resources (disk, seed bank usage): every 30 seconds (involves
 //!   filesystem stat calls)
@@ -21,7 +21,7 @@
 
 use tokio::time::interval;
 
-use crate::AppState;
+use crate::Moss;
 use garden_common::constants::timeouts::{resources_disk_interval, resources_fast_interval};
 use garden_common::notifications::{NOTIF_SOURCE_CANDIDATES, NotificationTag};
 use garden_common::resources::system::{
@@ -43,7 +43,7 @@ use garden_common::resources::system::{
 /// refreshes. Multiple consumers (presence SSE, load monitor, health
 /// checks) read from the cache. Exits cooperatively when the shutdown
 /// token is cancelled (MOSS-0004).
-pub async fn run_resources_collector(state: AppState, token: tokio_util::sync::CancellationToken) {
+pub async fn run_resources_collector(state: Moss, token: tokio_util::sync::CancellationToken) {
     let mut fast_interval = interval(resources_fast_interval());
     let mut disk_interval = interval(resources_disk_interval());
 

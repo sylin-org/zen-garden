@@ -7,7 +7,7 @@
 //! then hands off to the task registry and supervisor for all long-running
 //! background tasks.
 
-use crate::{AppState, infra, mdns};
+use crate::{Moss, infra, mdns};
 use garden_common::console::{ConsoleEvent, EventCategory, EventStatus};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,13 +28,13 @@ pub use super::lantern::start_lantern_registration;
 /// endpoint string for `serve` plus a `TaskSupervisor` that the caller
 /// must `.run()` to monitor tasks and handle panics.
 pub(crate) async fn start_background_tasks(
-    state: AppState,
+    state: Moss,
     artifacts: crate::bootstrap::BuildArtifacts,
     config: Option<infra::MossConfig>,
 ) -> (String, super::supervisor::TaskSupervisor) {
     use garden_common::console;
 
-    // Rebind Stage-1 locals from AppState so the task-wiring body is verbatim.
+    // Rebind Stage-1 locals from Moss so the task-wiring body is verbatim.
     let stone_id = state.current.stone.id.clone();
     let stone_name = state.current.stone.name.clone();
     let shutdown_token = state.shutdown_token.clone();
@@ -184,7 +184,7 @@ pub(crate) async fn start_background_tasks(
         tracing::warn!(error = ?e, "Initial announcement failed");
     }
 
-    // Phase 15: Lantern registration (now has AppState for service list)
+    // Phase 15: Lantern registration (now has Moss for service list)
     {
         let network = state.platform.network.clone();
         start_lantern_registration(

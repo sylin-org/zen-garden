@@ -10,7 +10,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::connection::ResolvedConnection;
 use crate::domain::tool::registry::ToolQuery;
 use garden_common::manifests::get_category_registry;
@@ -226,7 +226,7 @@ pub use garden_common::discovery::{FoundService, ServiceDiscoveryResponse, Stone
 ///
 /// Returns all offerings on this stone from the tool registry.
 /// Includes both running and non-running entries.
-pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryResponse {
+pub async fn list_all_local_services(state: &Moss) -> ServiceDiscoveryResponse {
     let query = ToolQuery {
         stone_id: Some(state.current.stone.id.clone()),
         ..Default::default()
@@ -255,7 +255,7 @@ pub async fn list_all_local_services(state: &AppState) -> ServiceDiscoveryRespon
 /// (gateway check + local offerings + topology cache).
 pub async fn find_services(
     criteria: &ServiceSearchCriteria,
-    state: &AppState,
+    state: &Moss,
 ) -> ServiceDiscoveryResponse {
     let start = std::time::Instant::now();
 
@@ -418,7 +418,7 @@ fn garden_tool_to_found_service(tool: GardenTool) -> FoundService {
 ///
 /// Looks up the offering and returns the default port.
 /// Returns 8080 as fallback if not found.
-pub async fn get_offering_port(offering: &str, state: &AppState) -> u16 {
+pub async fn get_offering_port(offering: &str, state: &Moss) -> u16 {
     if let Some(offering_def) = state.catalog.get_manifest(offering) {
         let port = offering_def.default_host_port();
         if port != 8080 {

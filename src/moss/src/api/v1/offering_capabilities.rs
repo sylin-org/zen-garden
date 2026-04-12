@@ -20,7 +20,7 @@ use urlencoding::encode;
 use crate::api::responses::ApiResponse;
 use crate::domain::{CapabilityExecutor, get_offering_port};
 use crate::infra::manifests::get_capability_manifest;
-use crate::{AppState, bad_gateway, bad_request, conflict, internal, not_found, not_implemented};
+use crate::{Moss, bad_gateway, bad_request, conflict, internal, not_found, not_implemented};
 
 /// Response for capability listing
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,7 +72,7 @@ pub struct CapabilitiesQuery {
 /// }
 /// ```
 pub async fn list_offering_capabilities_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering_name): Path<String>,
 ) -> crate::api::ApiResult<CapabilitiesResponse> {
     let (offering, mode) = resolve_offering_for_capability(&state, &offering_name).await?;
@@ -233,7 +233,7 @@ pub enum AddCapabilityResponse {
 /// { "data": { "status": "started", "job_id": "...", ... } }
 /// ```
 pub async fn add_offering_capability_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering_name): Path<String>,
     Json(request): Json<AddCapabilityRequest>,
 ) -> crate::api::ApiResult<AddCapabilityResponse> {
@@ -402,7 +402,7 @@ pub async fn add_offering_capability_v1(
 /// }
 /// ```
 pub async fn remove_offering_capability_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path((offering_name, capability_name)): Path<(String, String)>,
     axum::extract::Query(query): axum::extract::Query<RemoveCapabilityQuery>,
 ) -> crate::api::ApiResult<CapabilityMutationResponse> {
@@ -639,7 +639,7 @@ pub struct MirrorCapabilitiesResponse {
 /// { "data": { "status": "started", "job_id": "...", "total": 5, "message": "..." } }
 /// ```
 pub async fn refresh_offering_capabilities_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering_name): Path<String>,
     Json(request): Json<RefreshCapabilitiesRequest>,
 ) -> crate::api::ApiResult<RefreshCapabilitiesResponse> {
@@ -794,7 +794,7 @@ pub async fn refresh_offering_capabilities_v1(
 /// The tended stone orchestrates by querying source and target, then adding missing
 /// capabilities on the destination.
 pub async fn mirror_offering_capabilities_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(offering_name): Path<String>,
     Json(request): Json<MirrorCapabilitiesRequest>,
 ) -> crate::api::ApiResult<MirrorCapabilitiesResponse> {
@@ -937,7 +937,7 @@ pub async fn mirror_offering_capabilities_v1(
     })
 }
 
-async fn resolve_stone_endpoint(state: &AppState, stone_name: &str) -> Option<String> {
+async fn resolve_stone_endpoint(state: &Moss, stone_name: &str) -> Option<String> {
     if stone_name.eq_ignore_ascii_case(&state.current.stone.name) {
         let base = state.current.address.read().await.http_base();
         if base.contains("0.0.0.0") {
@@ -1049,7 +1049,7 @@ async fn add_capability_to_stone(
 }
 
 /// Convert Offering to ServiceInfo for capability executor compatibility
-async fn offering_to_service_info(offering: &Offering, state: &AppState) -> ServiceInfo {
+async fn offering_to_service_info(offering: &Offering, state: &Moss) -> ServiceInfo {
     // Use location port, falling back to manifest default
     let port = if offering.location.port > 0 {
         offering.location.port
@@ -1092,7 +1092,7 @@ async fn offering_to_service_info(offering: &Offering, state: &AppState) -> Serv
 
 /// Helper to find a service (managed or adopted) for capability operations
 async fn find_service_for_capability(
-    state: &AppState,
+    state: &Moss,
     offering_name: &str,
 ) -> Result<(ServiceInfo, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
     let (offering, mode) = resolve_offering_for_capability(state, offering_name).await?;
@@ -1101,7 +1101,7 @@ async fn find_service_for_capability(
 }
 
 async fn resolve_offering_for_capability(
-    state: &AppState,
+    state: &Moss,
     offering_name: &str,
 ) -> Result<(Offering, OfferingMode), (StatusCode, Json<ApiErrorResponse>)> {
     let normalized = normalize_offering_selector(offering_name);

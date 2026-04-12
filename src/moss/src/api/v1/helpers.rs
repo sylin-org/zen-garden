@@ -7,7 +7,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::AppState;
+use crate::Moss;
 
 /// Request for JSON transformation
 #[derive(Debug, Deserialize)]
@@ -70,7 +70,7 @@ pub struct TransformError {
 /// Transform JSON input into normalized CapabilityItem format.
 /// Used by capability discovery commands to avoid jq dependency.
 pub async fn json_transform(
-    State(_state): State<AppState>,
+    State(_state): State<Moss>,
     Json(request): Json<JsonTransformRequest>,
 ) -> Result<Json<JsonTransformResponse>, (StatusCode, Json<TransformError>)> {
     // Extract items array using items_path

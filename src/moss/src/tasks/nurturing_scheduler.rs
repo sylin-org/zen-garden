@@ -14,7 +14,7 @@
 //! Uses the local StorageRegistry to find available seed banks and selects
 //! targets based on routing strategy. Implements failover if primary fails.
 
-use crate::AppState;
+use crate::Moss;
 use crate::domain::nurturing::{NurturingResult, ReplicationResult, build_memories_manifest};
 use anyhow::{Context, Result};
 use garden_common::storage::{StorageInfo, StorageRole};
@@ -105,19 +105,19 @@ impl NurturingWorkflowConfig {
 /// Nurturing scheduler that executes the full backup workflow
 pub struct NurturingScheduler {
     /// Reference to app state
-    state: AppState,
+    state: Moss,
     /// Workflow configuration
     config: NurturingWorkflowConfig,
 }
 
 impl NurturingScheduler {
     /// Create a new scheduler with the given state
-    pub fn new(state: AppState) -> Self {
+    pub fn new(state: Moss) -> Self {
         Self::with_config(state, NurturingWorkflowConfig::default())
     }
 
     /// Create with custom configuration
-    pub fn with_config(state: AppState, config: NurturingWorkflowConfig) -> Self {
+    pub fn with_config(state: Moss, config: NurturingWorkflowConfig) -> Self {
         Self { state, config }
     }
 
@@ -483,7 +483,7 @@ impl NurturingScheduler {
 ///
 /// This is the function called by the API endpoint when a timer fires.
 pub async fn trigger_nurturing(
-    state: &AppState,
+    state: &Moss,
     offering_name: &str,
 ) -> Result<NurturingWorkflowResult> {
     let scheduler = NurturingScheduler::new(state.clone());
@@ -493,7 +493,7 @@ pub async fn trigger_nurturing(
 /// Trigger nurturing for all running offerings
 ///
 /// Used for batch nurturing or testing.
-pub async fn trigger_all_nurturing(state: &AppState) -> Vec<NurturingWorkflowResult> {
+pub async fn trigger_all_nurturing(state: &Moss) -> Vec<NurturingWorkflowResult> {
     let offerings: Vec<String> = state
         .offerings
         .with_active(|offerings| {

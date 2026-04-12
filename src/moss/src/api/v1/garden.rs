@@ -1,7 +1,7 @@
 use crate::api::responses::{GardenOverview, StoneInfo};
 use crate::api::suggestions::{Suggestion, generate_suggestions};
 use crate::domain::placement::{PlacementRequest, PlacementResponse};
-use crate::{AppState, internal, not_found};
+use crate::{Moss, internal, not_found};
 use axum::{
     Json,
     extract::{Path, State},
@@ -16,7 +16,7 @@ use garden_common::{
 
 /// GET /api/v1/garden - Get garden overview (all stones)
 pub async fn get_garden_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<GardenOverview> {
     // Build stone list: self entry + all cached peers
@@ -100,7 +100,7 @@ fn topology_entry_to_stone_info_with_metrics(
 
 /// GET /api/v1/garden/stones/:stone_name - Get specific stone details
 pub async fn get_stone_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(stone_name): Path<String>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<HardwareCapabilities> {
@@ -122,7 +122,7 @@ pub async fn get_stone_v1(
 
 /// GET /api/v1/stone - Get local stone consolidated info
 pub async fn get_local_stone_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<HardwareCapabilities> {
     let caps = get_capabilities(&state).await;
@@ -134,7 +134,7 @@ pub async fn get_local_stone_v1(
 }
 /// POST /api/v1/garden/recommend - Get intelligent placement recommendation
 pub async fn recommend_placement_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
     Json(request): Json<PlacementRequest>,
 ) -> crate::api::ApiResult<PlacementResponse> {
@@ -160,7 +160,7 @@ pub async fn recommend_placement_v1(
     }
 }
 // Helper function to build consolidated capabilities (based on main.rs capabilities handler)
-async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
+async fn get_capabilities(state: &Moss) -> HardwareCapabilities {
     let (cpu_model, cpu_features, architecture) = resources::get_cpu_info().unwrap_or_else(|_| {
         (
             "Unknown".to_string(),
@@ -254,7 +254,7 @@ async fn get_capabilities(state: &AppState) -> HardwareCapabilities {
 /// Returns all stones as TopologyEntry objects: self entry first, then peers from cache.
 /// No conversion needed - TopologyEntry is the universal model.
 pub async fn get_topology_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<Vec<TopologyEntry>> {
     // Step 1: Build self entry on demand from source domains
@@ -300,7 +300,7 @@ pub async fn get_topology_v1(
 /// `FullCapabilities` for each reachable stone (including self), and returns
 /// a `GardenInspection` summary.
 pub async fn inspect_garden_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<garden_common::types::hardware_topology::GardenInspection> {
     use garden_common::api_utils::responses::ApiResponse as CommonApiResponse;
     use garden_common::constants::timeouts::garden_inspect_timeout;
@@ -420,7 +420,7 @@ pub async fn inspect_garden_v1(
 ///   (peers' Tier 2 data is local to each stone — hit their
 ///   `/capabilities` endpoint directly for full data).
 pub async fn get_garden_capabilities_v1(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<Vec<garden_common::types::hardware_topology::FullCapabilities>> {
     use garden_common::types::hardware_topology::FullCapabilities;
 

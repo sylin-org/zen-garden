@@ -7,7 +7,7 @@
 //!
 //! This is pure domain logic - delegates I/O to infra layer.
 
-use crate::AppState;
+use crate::Moss;
 use crate::docker::ContainerRuntime;
 use crate::domain::compatibility::{CompatibilityDecision, evaluate_compatibility};
 use crate::domain::connection;
@@ -242,7 +242,7 @@ pub async fn adopt_offering_container(
 /// - Persisting registry changes
 /// - Emitting events
 /// - Logging warnings for failed adoptions
-pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
+pub async fn adopt_existing_containers(state: &Moss) -> AdoptionResult {
     let existing = match state.platform.container.list_zen_containers().await {
         Ok(list) => list,
         Err(e) => {

@@ -25,7 +25,7 @@ use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::AppState;
+use crate::Moss;
 use crate::api::responses::ApiResponse;
 use garden_common::HardwareCapabilities;
 use garden_common::console::{self, EventCategory, EventStatus};
@@ -40,7 +40,7 @@ use garden_common::nourishment::*;
 /// Queries Docker registry for offering updates and detects firmware updates.
 /// Validates hardware constraints and returns available/blocked updates.
 pub async fn check_stone(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<NourishmentCheckResponse> {
     // Get hardware capabilities for constraint checking
     let caps_guard = state.current.capabilities.read().await;
@@ -105,7 +105,7 @@ pub async fn check_stone(
 ///
 /// Queries all stones in parallel for updates, following the observe pattern.
 pub async fn check_garden(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<GardenNourishmentResponse> {
     // Get topology from this stone's cache
     let entries = state.topology.all_stones().await;
@@ -175,7 +175,7 @@ async fn query_stone_nourishment(
 /// Receives scope from Rake, queries all stones for pending updates,
 /// then dispatches execute requests to each affected stone.
 pub async fn execute_garden(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(request): Json<ExecuteRequest>,
 ) -> crate::api::ApiResult<GardenExecuteResponse> {
     use garden_common::nourishment::UpdateScope;
@@ -345,7 +345,7 @@ async fn dispatch_execute_to_stone(
 /// - scope: "firmware" → apply only firmware updates
 /// - items: ["offering:x", "firmware:y"] → apply specific items (future V1+)
 pub async fn execute_stone(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(request): Json<ExecuteRequest>,
 ) -> crate::api::ApiResult<ExecuteResponse> {
     use garden_common::nourishment::UpdateScope;
@@ -499,7 +499,7 @@ pub async fn execute_stone(
 /// as critical tty1 events so operators see real-time progress on the
 /// physical console during updates.
 async fn execute_updates_background(
-    state: AppState,
+    state: Moss,
     offerings: Vec<String>,
     firmware: Vec<String>,
     job_id: String,
@@ -663,7 +663,7 @@ async fn execute_updates_background(
 
 /// Execute offering (Docker container) update
 async fn execute_offering_update(
-    state: &AppState,
+    state: &Moss,
     name: &str,
     tx: &broadcast::Sender<String>,
     console: &console::ConsolePrinter,
@@ -827,7 +827,7 @@ async fn execute_firmware_update(
 
 /// Stream nourishment job status (Server-Sent Events)
 pub async fn stream_status(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(job_id): Path<String>,
 ) -> Result<
     Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>,
@@ -862,7 +862,7 @@ pub async fn stream_status(
 
 /// Check offering updates with constraint validation
 async fn check_offering_updates(
-    state: &AppState,
+    state: &Moss,
     capabilities: &HardwareCapabilities,
 ) -> anyhow::Result<Vec<Result<Update, BlockedUpdate>>> {
     use crate::domain::constraints::check_constraints;
@@ -994,7 +994,7 @@ async fn check_offering_updates(
 /// - Blocks updates if requires_ac_power and not plugged in
 /// - Adds version context from manifest (minimum, recommended, latest_known)
 async fn check_firmware_updates(
-    state: &AppState,
+    state: &Moss,
     capabilities: &HardwareCapabilities,
 ) -> anyhow::Result<Vec<Result<Update, BlockedUpdate>>> {
     use crate::infra::firmware::detect_firmware_updates;
@@ -1186,7 +1186,7 @@ fn version_less_than(a: &str, b: &str) -> bool {
 /// hardcoded rules for offerings without manifest metadata.
 fn get_offering_requirements(
     name: &str,
-    state: &crate::AppState,
+    state: &crate::Moss,
 ) -> crate::domain::constraints::Requirements {
     use crate::domain::constraints::Requirements;
 

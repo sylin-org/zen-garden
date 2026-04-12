@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tracing::debug;
 
-use crate::AppState;
+use crate::Moss;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -54,7 +54,7 @@ pub struct PresignResponse {
 
 /// Generate a presigned URL for an S3 object
 pub async fn generate_presigned_url(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Json(req): Json<PresignRequest>,
 ) -> Response {
     let now = chrono::Utc::now();
@@ -148,7 +148,7 @@ pub fn validate_presign_token(
 /// - **Fallback**: stone_id (stone-scoped).
 ///
 /// Used by both presigned URL generation and S3 credential derivation.
-pub(crate) async fn resolve_key_material(state: &AppState) -> String {
+pub(crate) async fn resolve_key_material(state: &Moss) -> String {
     if state.security.pond_active()
         && let Ok(handle) = state.discovery.koi().certmesh()
         && let Ok(core) = handle.core()
@@ -166,13 +166,13 @@ pub(crate) async fn resolve_key_material(state: &AppState) -> String {
     state.current.stone.id.clone()
 }
 
-/// Derive the HMAC secret for presigned URLs from AppState.
+/// Derive the HMAC secret for presigned URLs from Moss.
 ///
 /// Two-tier:
 /// - **Pond active + CA fingerprint available**: garden-scoped secret from CA fingerprint.
 ///   Presigned URLs are portable across all stones in the pond.
 /// - **Fallback**: stone-scoped secret from stone_id.
-pub async fn derive_presign_secret(state: &AppState) -> Vec<u8> {
+pub async fn derive_presign_secret(state: &Moss) -> Vec<u8> {
     let material = resolve_key_material(state).await;
     derive_secret_from_material(&material)
 }

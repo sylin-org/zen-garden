@@ -32,7 +32,7 @@ use tracing::debug;
 
 use crate::domain::storage::bank_aggregate;
 use crate::infra::storage::ContentStore;
-use crate::{AppState, error_response};
+use crate::{Moss, error_response};
 
 // ============================================================================
 // Shared helpers
@@ -89,7 +89,7 @@ pub struct PinResponse {
 // ============================================================================
 
 /// List all banks with a local volume on this stone.
-pub async fn list_banks(State(state): State<AppState>) -> crate::api::ApiResult<Vec<StorageInfo>> {
+pub async fn list_banks(State(state): State<Moss>) -> crate::api::ApiResult<Vec<StorageInfo>> {
     let infos = bank_aggregate::bank_infos(&state.current.storage.volumes).await;
     crate::api::ok(infos)
 }
@@ -100,7 +100,7 @@ pub async fn list_banks(State(state): State<AppState>) -> crate::api::ApiResult<
 
 /// Get bank details for a single bank on this stone.
 pub async fn get_bank(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(moniker): Path<String>,
 ) -> crate::api::ApiResult<StorageInfo> {
     let info = bank_aggregate::volumes_for_bank(&moniker, &state.current.storage.volumes)
@@ -124,7 +124,7 @@ pub async fn get_bank(
 
 /// Pin the Primary role for a bank on this stone.
 pub async fn pin_bank(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(moniker): Path<String>,
 ) -> crate::api::ApiResult<PinResponse> {
     let moniker = moniker.trim().to_string();
@@ -169,7 +169,7 @@ pub async fn pin_bank(
 
 /// Release the Primary role pin for a bank on this stone.
 pub async fn unpin_bank(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(moniker): Path<String>,
 ) -> crate::api::ApiResult<PinResponse> {
     let moniker = moniker.trim().to_string();
@@ -211,7 +211,7 @@ pub async fn unpin_bank(
 ///
 /// Aggregates local managed storages with remote registry beacons.
 pub async fn list_garden_banks(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
 ) -> crate::api::ApiResult<Vec<GardenBankSummary>> {
     let mut by_name: std::collections::HashMap<String, GardenBankSummary> =
         std::collections::HashMap::new();
@@ -264,7 +264,7 @@ pub async fn list_garden_banks(
 
 /// Get bank details including volume locations across the garden.
 pub async fn get_garden_bank(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(moniker): Path<String>,
 ) -> crate::api::ApiResult<GardenBankDetail> {
     let volumes = build_bank_volumes(&moniker, &state).await;
@@ -293,7 +293,7 @@ pub async fn get_garden_bank(
 }
 
 /// Build the list of volumes for a bank across the garden.
-async fn build_bank_volumes(moniker: &str, state: &AppState) -> Vec<BankVolume> {
+async fn build_bank_volumes(moniker: &str, state: &Moss) -> Vec<BankVolume> {
     let mut volumes = Vec::new();
 
     // Local volumes
@@ -348,7 +348,7 @@ async fn build_bank_volumes(moniker: &str, state: &AppState) -> Vec<BankVolume> 
 
 /// List individual volumes for a bank across the garden.
 pub async fn list_garden_bank_volumes(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     Path(moniker): Path<String>,
 ) -> crate::api::ApiResult<Vec<BankVolume>> {
     let volumes = build_bank_volumes(&moniker, &state).await;

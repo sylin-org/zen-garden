@@ -16,7 +16,7 @@
 //!
 //! When pond is not active, HTTP :7185 → `configure()` (all routes, backwards compatible).
 
-use crate::{AppState, api};
+use crate::{Moss, api};
 use axum::{
     Router,
     extract::State,
@@ -36,7 +36,7 @@ use tower_http::trace::TraceLayer;
 /// it is talking to without a dedicated `/capabilities` call — the
 /// identity piggy-backs on every response for free.
 async fn inject_stone_identity(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     request: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Response {
@@ -59,7 +59,7 @@ async fn inject_stone_identity(
 ///
 /// Mutation endpoints, admin operations, and service management are only
 /// available on the HTTPS listener via `configure()`.
-pub fn configure_public(state: AppState) -> Router {
+pub fn configure_public(state: Moss) -> Router {
     Router::new()
         // ══════════════════════════════════════════════════════════════════
         // ROOT LEVEL - Industry standard endpoints
@@ -347,7 +347,7 @@ pub fn configure_public(state: AppState) -> Router {
 /// When pond is NOT active, this is served on HTTP :7185.
 /// When pond IS active, this is served on HTTPS :7183 (the full set)
 /// while HTTP :7185 serves the reduced `configure_public()` set.
-pub fn configure(state: AppState) -> Router {
+pub fn configure(state: Moss) -> Router {
     Router::new()
         // ══════════════════════════════════════════════════════════════════
         // ROOT LEVEL - Industry standard endpoints
@@ -1096,7 +1096,7 @@ pub fn configure(state: AppState) -> Router {
 // ── Task supervisor status (ARCH-0015) ──────────────────────────────────
 
 /// GET /api/v1/stone/tasks — Background task status.
-async fn get_task_status(State(state): State<AppState>) -> axum::response::Response {
+async fn get_task_status(State(state): State<Moss>) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
@@ -1120,7 +1120,7 @@ async fn get_task_status(State(state): State<AppState>) -> axum::response::Respo
 ///
 /// Consumers that want a unified view call both and join by name.
 async fn get_task_status_single(
-    State(state): State<AppState>,
+    State(state): State<Moss>,
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;

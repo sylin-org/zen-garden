@@ -14,7 +14,7 @@
 //! - binaries: removes old .backup files (>7d)
 //! - task_history: cleans orphaned task entries
 
-use crate::AppState;
+use crate::Moss;
 
 // ============================================================================
 // Types
@@ -59,9 +59,9 @@ pub struct SweepRun {
     pub reports: Vec<SweepReport>,
 }
 
-/// Everything a sweeper needs — thin wrapper around AppState
+/// Everything a sweeper needs — thin wrapper around Moss
 pub struct Sweep<'a> {
-    pub state: &'a AppState,
+    pub state: &'a Moss,
     pub task_persistence: &'a crate::infra::TaskStore,
 }
 
@@ -70,7 +70,7 @@ pub struct Sweep<'a> {
 // ============================================================================
 
 /// Run all sweepers sequentially, collect results
-pub async fn run_sweep(state: &AppState, task_persistence: &crate::infra::TaskStore) -> SweepRun {
+pub async fn run_sweep(state: &Moss, task_persistence: &crate::infra::TaskStore) -> SweepRun {
     let ctx = Sweep {
         state,
         task_persistence,

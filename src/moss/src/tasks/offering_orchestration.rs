@@ -21,7 +21,7 @@ use garden_common::utils::ids::generate_guidv7;
 use garden_common::{OfferingRole, OrchestrationState};
 use tokio_util::sync::CancellationToken;
 
-use crate::app_state::AppState;
+use crate::app_state::Moss;
 use crate::domain::events::OfferingEvent;
 
 /// How long to wait during startup reconciliation before asserting Primary (ms).
@@ -42,7 +42,7 @@ const ORCHESTRATION_TICK_SECS: u64 = DEGRADATION_CHECK_INTERVAL_SECS;
 ///
 /// Runs for the daemon's entire lifetime. Iterates offerings that have
 /// orchestration state and dispatches the state-machine per role.
-pub async fn offering_orchestration_task(state: AppState, token: CancellationToken) -> Result<()> {
+pub async fn offering_orchestration_task(state: Moss, token: CancellationToken) -> Result<()> {
     tracing::info!("Offering orchestration task starting");
 
     // Phase 1: Startup reconciliation
@@ -87,7 +87,7 @@ pub async fn offering_orchestration_task(state: AppState, token: CancellationTok
 /// During this window, watch for chirps from other Stones that may have
 /// legitimately taken over while this Stone was down. If another Stone is
 /// already Primary for a given FQN, yield to it.
-async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> Result<()> {
+async fn startup_reconciliation(state: &Moss, token: &CancellationToken) -> Result<()> {
     let offerings = state.offerings.snapshot().await;
     let orchestrated: Vec<_> = offerings
         .iter()
@@ -150,7 +150,7 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
 /// - `orchestration` is `None`
 /// - The manifest declares `coordination: elected` (ORCH-0006)
 /// - The offering is in `Running` status
-async fn backfill_orchestration(state: &AppState) {
+async fn backfill_orchestration(state: &Moss) {
     use garden_common::OfferingStatus;
 
     let offerings = state.offerings.snapshot().await;
@@ -216,7 +216,7 @@ async fn backfill_orchestration(state: &AppState) {
 
 /// On startup, for any pinned offering, trigger a re-election.
 /// Score 1001 guarantees victory.
-async fn pin_recovery(state: &AppState) {
+async fn pin_recovery(state: &Moss) {
     let offerings = state.offerings.snapshot().await;
 
     for offering in &offerings {
@@ -259,7 +259,7 @@ async fn pin_recovery(state: &AppState) {
 /// Iterates all offerings with orchestration state and dispatches by role.
 /// Skips offerings whose manifest declares `Independent` coordination (ORCH-0006).
 /// Skips offerings whose type is handled by an active gateway (ORCH-0008).
-async fn orchestration_tick(state: &AppState) -> Result<()> {
+async fn orchestration_tick(state: &Moss) -> Result<()> {
     // Build elected-types set from the catalog (ORCH-0006 gate).
     let elected_types: std::collections::HashSet<String> = {
         match state.catalog.compiled_snapshot().await {
@@ -327,7 +327,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
 
 /// Primary: check for dual-primary conflicts.
 async fn dispatch_primary(
-    state: &AppState,
+    state: &Moss,
     offering_id: &str,
     fqn: &str,
     _orch: &OrchestrationState,
@@ -356,7 +356,7 @@ async fn dispatch_primary(
 
 /// Dormant: watch primary heartbeat via topology cache.
 async fn dispatch_dormant(
-    state: &AppState,
+    state: &Moss,
     offering_id: &str,
     fqn: &str,
     orch: &OrchestrationState,
@@ -475,7 +475,7 @@ async fn dispatch_dormant(
 
 /// Process an election result for this offering.
 async fn handle_election_result(
-    state: &AppState,
+    state: &Moss,
     offering_id: &str,
     fqn: &str,
     winner: &garden_common::election::ElectionWinner,
@@ -505,7 +505,7 @@ async fn handle_election_result(
 /// All downstream effects (chirps, presence events, tools projection) are driven
 /// by the event bus — zero manual wiring.
 async fn transition_role(
-    state: &AppState,
+    state: &Moss,
     offering_id: &str,
     fqn: &str,
     new_role: OfferingRole,
@@ -569,7 +569,7 @@ async fn transition_role(
 
 /// Update the `primary_stone_id` on an offering's orchestration state.
 async fn update_primary_stone_id(
-    state: &AppState,
+    state: &Moss,
     offering_id: &str,
     primary_id: &str,
 ) -> Result<()> {
@@ -592,7 +592,7 @@ async fn update_primary_stone_id(
 ///
 /// Scans the topology cache for online stones with a matching service entry
 /// whose role is "primary". Returns the stone_id of the first match.
-async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
+async fn find_remote_primary(state: &Moss, fqn: &str) -> Option<String> {
     for entry in state.topology.online_stones().await {
         // Skip self
         if entry.stone_id == state.current.stone.id {
@@ -616,7 +616,7 @@ async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
 /// Self-healing: offerings deployed before ORCH-0006 may carry stale roles.
 /// Runs once at startup; the tick loop also gates on `elected_types` as a
 /// belt-and-suspenders check.
-async fn cleanup_independent_orchestration(state: &AppState) {
+async fn cleanup_independent_orchestration(state: &Moss) {
     let elected_types: std::collections::HashSet<String> = {
         match state.catalog.compiled_snapshot().await {
             Some(offerings) => offerings
@@ -661,7 +661,7 @@ async fn cleanup_independent_orchestration(state: &AppState) {
 /// Call this after deployment completes (offering status = Running).
 /// - If no other stone has the same FQN as Primary → Primary
 /// - If another stone already has it → Joining
-pub async fn assign_initial_role(state: &AppState, offering_id: &str, fqn: &str) -> Result<()> {
+pub async fn assign_initial_role(state: &Moss, offering_id: &str, fqn: &str) -> Result<()> {
     let new_role = if find_remote_primary(state, fqn).await.is_some() {
         OfferingRole::Joining
     } else {
@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(STARTUP_RECONCILIATION_MS, 3_000);
     }
 
-    // Note: Full state-machine tests require AppState mocking which is
+    // Note: Full state-machine tests require Moss mocking which is
     // covered by integration tests. Unit tests here validate constants
     // and pure logic. The resolve_fitness_election tests live in
     // elections.rs. Fitness scoring tests live in domain/fitness.rs.

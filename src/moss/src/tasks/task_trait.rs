@@ -9,7 +9,7 @@ use std::pin::Pin;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::AppState;
+use crate::Moss;
 
 // ── Outcome ─────────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ impl std::fmt::Display for TaskOutcome {
 /// (unblocks downstream tasks).
 pub struct TaskContext {
     /// Full application state.
-    pub state: AppState,
+    pub state: Moss,
     /// Cancellation token scoped to this task (child of the global shutdown token).
     pub token: CancellationToken,
     /// Gate that blocks until all declared dependencies have signaled ready.

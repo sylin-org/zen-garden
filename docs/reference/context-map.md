@@ -181,6 +181,21 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Source:** `src/moss/src/domain/orchestration/`
 - **Book:** XI (deep clean into Tick, Nurturing, Election sub-aggregates)
 
+#### Jobs
+
+- **Status:** Full — DDD aggregate with typed commands, typed queries, dual event streams, Metrics injection, and a periodic `JobsReaperTask`. ARCH-0021 (Book IV of ARCH-0017) — completed 2026-04-11.
+- **Owns:** active + recently-terminal jobs keyed by job id
+- **Commands (write):** `submit`, `start`, `record_item_completed`, `record_item_failed`, `complete`, `fail`, `maintain` (+ `maintain_with` for tests)
+- **Queries (read):** `get`, `snapshot`, `list_active`, `active_count`, `find_active_by_prefix`
+- **Emits:** `JobsChanged` domain event via `changes()`; parallel wire-format `JobEvent` via `EventBus::emit()` — dual streams (the wire format is an existing SSE-consumer contract — rake, dashboards — that cannot be collapsed)
+- **Subscribes:** none (consumers query; no upstream context feeds Jobs)
+- **Ports:** none — ephemeral aggregate, state is rebuilt empty on every process start
+- **Reaper:** `JobsReaperTask` runs every 10 minutes and calls `Jobs::maintain()`, which evicts terminal jobs (`Completed` / `Failed`) whose `completed_at` is older than 24 hours. Active jobs (`Pending` / `Running`) are never evicted — a stuck job is a bug worth surfacing, not a memory leak to hide.
+- **Metrics:** domain `jobs` registered with seven kinds (`submitted`, `started`, `item_completed`, `item_failed`, `completed`, `failed`, `evicted`) using the register-with-kinds pattern for a lock-free hot path
+- **Mutations:** infallible — commands return `()` (or a value) and no `JobsError` type exists; missing-id calls are warn-level no-ops, matching Book I `Metrics`
+- **Source:** `src/moss/src/domain/jobs/` (aggregate, state, entry, event, maintenance, tests — one concept per file per code-standards §14)
+- **Book:** IV — ARCH-0021 closed 2026-04-11
+
 #### Tool
 
 - **Status:** Full — DDD aggregate with typed commands, typed queries, dual event streams, Metrics injection, and a `ToolsBeaconTransport` port. ARCH-0019 (Book II of ARCH-0017) — completed 2026-04-11.
@@ -199,12 +214,6 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 ### Absent contexts (scattered across AppState or other modules)
 
 These contexts do not exist as modules. Their state lives as raw fields on `AppState` or as free-function modules.
-
-#### Jobs
-
-- **Status:** Absent — raw `AppState::jobs: Arc<RwLock<HashMap<String, Job>>>`
-- **Target source:** `src/moss/src/domain/jobs/`
-- **Book:** IV
 
 #### Catalog (Manifests + offerings_index)
 
@@ -287,7 +296,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Resources** ✅ *(renamed in Book I Chapter 2)* | hardware resource snapshot facade over `Current::Resources::system/network/gpu` | none | none | I (as rename only) |
 | **Tool** ✅ | garden-wide tool registry (Local + Gateway + Announced origins), typed commands, dual event streams | `ToolChanged` (internal), `ToolDelta` (wire format, existing contract) | `ToolsBeaconTransport` | II (ARCH-0019) — **COMPLETE** |
 | **Topology** ✅ | peer cache (discovered + offline stones), persistence dirty flag, self-entry assembly | `TopologyChanged` (6 kinds: Discovered/Online/Offline/Forgotten/Evicted/Chirped) | `ChirpTransport`, `TopologyStore` | III (ARCH-0020) — **COMPLETE** |
-| **Jobs** | active jobs, job history | `JobsChanged` | (in-memory only) | IV |
+| **Jobs** ✅ | active + recently-terminal jobs (HashMap keyed by id) | `JobsChanged` (7 kinds: Submitted/Started/ItemCompleted/ItemFailed/Completed/Failed/Evicted) + wire `JobEvent` via `EventBus` | none (ephemeral; `JobsReaperTask` sweeps terminal jobs past 24h TTL) | IV (ARCH-0021) — **COMPLETE** |
 | **Catalog** | manifest registry, compiled offerings index | `CatalogChanged` | `ManifestSource`, `CatalogCache` | V |
 | **Subsystems** | per-subsystem readiness state | `SubsystemReady`, `SubsystemUnready` | none | VI |
 | **Health** | per-offering health state, probe schedule | `HealthChanged` | `HealthProbe` | VII |
@@ -378,7 +387,6 @@ Complete list of infrastructure ports the epic produces. Each port lives in its 
 | Port | Purpose | Primary adapter | Owning context |
 |------|---------|-----------------|----------------|
 | `OfferingStore` | load/save `Vec<Offering>` | `FileOfferingStore` | Offerings |
-| `JobsStore` | (optional) persist job history | `FileJobsStore` or `NoopJobsStore` | Jobs |
 | `ToolsBeaconTransport` | broadcast tool deltas over UDP | `UdpBeaconAdapter` | Tool |
 | `ChirpTransport` | send topology chirps over UDP | `UdpChirpAdapter` | Topology, Announcement |
 | `MdnsTransport` | register mDNS services | `KoiMdnsAdapter` | Topology, Discovery |

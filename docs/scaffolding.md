@@ -245,6 +245,41 @@ The revisit is **not in scope** for any ARCH-0017 book. It is a separate effort 
 - `rg 'pub struct PlacementMetrics' src/moss/src/`
 - `rg 'pub metrics: PlacementMetrics' src/moss/src/`
 
+### deferred-job-offerings-field: `Job.offerings` semantic overload
+
+```yaml
+id: deferred-job-offerings-field
+kind: deferred-rename
+introduced_in: ARCH-0021 Book IV Chapter 1
+revisit_when: Post-moss-epic API realignment
+```
+
+**What would have been renamed:**
+
+- `moss::domain::jobs::entry::Job.offerings: Vec<String>` (field) → `.targets`
+
+**Why it was not renamed:**
+
+The field is semantically overloaded. For install jobs (`install_service_task`, `install_image_direct_task`, `install_batch_task`) it holds service names. For `refresh_capabilities_task` and `add_capability_task` it is repurposed to hold capability names so progress can be computed as `completed.len() / offerings.len()` — the same vector that's interpreted as "targets" in both cases, just with different caller semantics. `.targets` is the correct universal name.
+
+The field is serialized in the public `/api/v1/jobs/:id` and `/api/v1/jobs` response bodies. `garden-rake` and any operator dashboards deserialize it as `offerings: Vec<String>`. Renaming the Rust field (or applying `#[serde(rename)]`) changes the wire shape from `{"offerings": [...]}` to `{"targets": [...]}` and breaks consumers.
+
+Per [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md), external API contracts stay stable throughout the epic. The Jobs aggregate's `submit` command takes the parameter as `targets: Vec<String>` internally — only the serialized field keeps the legacy name — so the semantic split is already visible at the typed-command call site, which is the cleanest compromise available without breaking wire compatibility.
+
+**What the revisit looks like:**
+
+The same post-moss-epic API realignment project that revisits `deferred-placement-metrics`. That project:
+
+1. Audits every consumer of `/api/v1/jobs` and related endpoints.
+2. Chooses a versioning strategy (new endpoint path, Accept header, or coordinated break).
+3. Renames moss's Rust field (`offerings` → `targets`) and updates the serde-facing name in lockstep with every consumer.
+4. Removes this entry from the deferred-renames section.
+
+**Other searchable markers:**
+
+- `rg 'pub offerings: Vec<String>' src/moss/src/domain/jobs/entry.rs`
+- `rg 'offerings holds capability names' src/moss/src/` — the comments that flag the overload at the `record_item_failed` sites
+
 ---
 
 ## References

@@ -18,6 +18,7 @@ Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **livin
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-12 | **Book IX opened.** Security — plan revised: 1 aggregate (not 3 sub-contexts), `domain/ceremony/` untouched (nourishment, not pond), no Trust sub-context. | [ARCH-0027](ARCH-0027-security-aggregate.md) |
 | 2026-04-12 | **Book VIII-b closed.** Storage API surface — `/v1/stone/banks` and `/v1/garden/banks` routes, `BankContentOps` port + data-plane commands, 301 redirects for pin/unpin, 741 tests. | [ARCH-0026](ARCH-0026-storage-api-surface.md) |
 | 2026-04-12 | **Book VIII-a closed.** Storage domain model — Bank view aggregate, VolumeIngestor rename, ports relocated, 8 API handlers migrated, `BankError` typed enum, 735 tests. | [ARCH-0025](ARCH-0025-storage-bank-aggregate.md) |
 | 2026-04-12 | **Book VII closed.** Health — stateless probe facade, `HealthProbe` port, `DockerHealthProbe` adapter, 724 tests. | [ARCH-0024](ARCH-0024-health-aggregate.md) |

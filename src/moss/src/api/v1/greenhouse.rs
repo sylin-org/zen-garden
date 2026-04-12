@@ -313,10 +313,9 @@ pub async fn get_catalog(
         volume_count: usize,
     }
     let (compat_map, meta_map) = {
-        let index = state.offerings_index.read().await;
-        let compat: HashMap<String, CompatResult> = match index.as_ref() {
-            Some(cache) => cache
-                .offerings
+        let compiled = state.catalog.compiled_snapshot().await;
+        let compat: HashMap<String, CompatResult> = match compiled.as_ref() {
+            Some(offerings) => offerings
                 .iter()
                 .map(|o| {
                     let status = match o.compatibility.decision.as_str() {
@@ -340,9 +339,8 @@ pub async fn get_catalog(
                 .collect(),
             None => HashMap::new(),
         };
-        let meta: HashMap<String, OfferingMeta> = match index.as_ref() {
-            Some(cache) => cache
-                .offerings
+        let meta: HashMap<String, OfferingMeta> = match compiled.as_ref() {
+            Some(offerings) => offerings
                 .iter()
                 .map(|o| {
                     (

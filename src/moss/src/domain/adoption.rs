@@ -270,7 +270,7 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
 
         match adopt_offering_container(
             &state.platform.docker,
-            &state.manifest_registry,
+            state.catalog.manifests(),
             &offering,
             &state.current.stone.name,
             cached_caps_ref,

@@ -206,7 +206,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
 
             // ── Protocol reconciliation ────────────────────────────────
             if new_status == OfferingStatus::Running
-                && let Some(template) = state.manifest_registry.get_offering(name)
+                && let Some(template) = state.catalog.get_manifest(name)
             {
                 let expected_protocol =
                     crate::domain::connection::infer_protocol_from_manifest_metadata(
@@ -349,7 +349,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");
                         match adopt_offering_container(
                             &state.platform.docker,
-                            &state.manifest_registry,
+                            state.catalog.manifests(),
                             container_name,
                             &state.current.stone.name,
                             cached_caps_ref,

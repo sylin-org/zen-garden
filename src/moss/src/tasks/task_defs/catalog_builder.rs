@@ -38,26 +38,18 @@ impl BackgroundTask for CatalogBuilderTask {
                 "Runtime templates".to_string(),
             ));
 
-            match crate::domain::ensure_offerings_index(
-                &ctx.state,
-                false,
-                &crate::domain::FileCatalogCache,
-            )
-            .await
-            {
-                Ok(_) => {
-                    let idx_guard = ctx.state.offerings_index.read().await;
-                    if let Some(idx) = idx_guard.as_ref() {
-                        tracing::info!(
-                            offerings_count = idx.offerings.len(),
-                            "Offerings catalog loaded successfully"
-                        );
-                        ctx.state.console.emit(ConsoleEvent::new(
-                            EventCategory::Manifests,
-                            EventStatus::Loaded,
-                            format!("{} manifests", idx.offerings.len()),
-                        ));
-                    }
+            match ctx.state.catalog.load().await {
+                Ok(()) => {
+                    let stats = ctx.state.catalog.stats().await;
+                    tracing::info!(
+                        offerings_count = stats.compiled_count,
+                        "Offerings catalog loaded successfully"
+                    );
+                    ctx.state.console.emit(ConsoleEvent::new(
+                        EventCategory::Manifests,
+                        EventStatus::Loaded,
+                        format!("{} manifests", stats.compiled_count),
+                    ));
                 }
                 Err(e) => {
                     tracing::warn!(error = ?e, "Failed to build offerings catalog");

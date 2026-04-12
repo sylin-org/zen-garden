@@ -1115,7 +1115,7 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
 
     // Prepare boot banner info
     let current_ip = state.platform.network.get_ip().await;
-    let manifests_count = state.manifest_registry.sw.entries.len();
+    let manifests_count = state.catalog.manifest_count();
     let boot_banner = Some(console::BootBannerInfo {
         stone_name: stone_name.clone(),
         version: version_string(),
@@ -1362,7 +1362,7 @@ pub(crate) async fn start_preinstall_handler(state: &AppState) {
     for offering in &manifest.offerings {
         match OfferingFqn::parse(offering) {
             Ok(fqn) => {
-                if state.manifest_registry.sw.get(&fqn.offering).is_none() {
+                if state.catalog.get_manifest(&fqn.offering).is_none() {
                     invalid_offerings.push(offering.clone());
                 }
             }

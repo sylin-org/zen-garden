@@ -70,7 +70,7 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
         // Attempt adoption outside the lock (I/O-heavy)
         match adopt_offering_container(
             &state.platform.docker,
-            &state.manifest_registry,
+            state.catalog.manifests(),
             &offering,
             &state.current.stone.name,
             cached_caps_ref,

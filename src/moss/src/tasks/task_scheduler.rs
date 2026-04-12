@@ -281,7 +281,7 @@ pub async fn backfill_missing_tasks(state: &AppState) -> usize {
 
     for (offering_id, offering_name, offering_type) in managed_offerings {
         // Get manifest for this offering type
-        let Some(manifest) = state.manifest_registry.sw.get(&offering_type) else {
+        let Some(manifest) = state.catalog.get_manifest(&offering_type) else {
             continue;
         };
 

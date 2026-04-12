@@ -482,7 +482,7 @@ async fn try_adopt_existing(
     let cached_caps = state.current.capabilities.read().await.clone();
     if let Ok(Some(adopted_offering)) = crate::adopt_offering_container(
         &state.platform.docker,
-        &state.manifest_registry,
+        state.catalog.manifests(),
         service_name,
         &state.current.stone.name,
         cached_caps.as_ref(),
@@ -512,10 +512,11 @@ async fn install_from_manifest(
     let offering_type = offering_fqn.offering.clone();
     let mut service_name = offering_fqn.fqn();
 
-    let compiled =
-        crate::get_compiled_offering(state, &offering_type, &crate::domain::FileCatalogCache)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Unknown offering: {}", offering_type))?;
+    let compiled = state
+        .catalog
+        .get_compiled(&offering_type)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Unknown offering: {}", offering_type))?;
 
     if compiled.compatibility.decision == garden_common::constants::COMPAT_FAIL {
         let reason = compiled

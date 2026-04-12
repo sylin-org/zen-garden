@@ -162,8 +162,7 @@ async fn build_initialization_component(state: &AppState) -> ComponentHealth {
     );
 
     // Check catalog build status
-    let catalog_guard = state.offerings_index.read().await;
-    let catalog_ready = catalog_guard.is_some();
+    let catalog_ready = state.catalog.is_loaded().await;
     details.insert(
         "catalog_ready".to_string(),
         serde_json::json!(catalog_ready),

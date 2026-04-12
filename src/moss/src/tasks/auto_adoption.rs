@@ -230,13 +230,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
         };
 
         for (offering_id, offering_name, location) in active_adopted {
-            let manifest = match state.manifest_registry.get_offering(&offering_name) {
+            let manifest = match state.catalog.get_manifest(&offering_name) {
                 Some(m) => m,
                 None => continue,
             };
 
             let outcome = detect_offering(
-                manifest,
+                &manifest,
                 &orchestrator,
                 &process_pipeline,
                 Some(location.port),
@@ -267,7 +267,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
                     // Connectivity enforcement
                     let connectivity_outcome = connectivity
-                        .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
+                        .ensure_connectivity(&manifest, Some(&location), &state.current.stone.name)
                         .await
                         .unwrap_or_else(|e| {
                             tracing::warn!(offering = %offering_name, error = %e, "Connectivity enforcement failed");
@@ -333,13 +333,13 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
         };
 
         for (offering_id, offering_name, location) in candidate_snapshot {
-            let manifest = match state.manifest_registry.get_offering(&offering_name) {
+            let manifest = match state.catalog.get_manifest(&offering_name) {
                 Some(m) => m,
                 None => continue,
             };
 
             let outcome = detect_offering(
-                manifest,
+                &manifest,
                 &orchestrator,
                 &process_pipeline,
                 Some(location.port),
@@ -373,7 +373,7 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
                     // Detected — promote to active pool
                     let connectivity_outcome = connectivity
-                        .ensure_connectivity(manifest, Some(&location), &state.current.stone.name)
+                        .ensure_connectivity(&manifest, Some(&location), &state.current.stone.name)
                         .await
                         .unwrap_or_else(|e| {
                             tracing::warn!(offering = %offering_name, error = %e, "Connectivity enforcement failed");

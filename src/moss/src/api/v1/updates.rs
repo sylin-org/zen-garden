@@ -999,12 +999,12 @@ async fn check_firmware_updates(
     let firmware_list = detect_firmware_updates().await?;
 
     // Find matching hardware manifest for this system
-    let hw_entry = state.manifest_registry.hw.find_matching(
+    let hw_entry = state.catalog.find_hw_manifest(
         capabilities.hardware.system_manufacturer.as_deref(),
         capabilities.hardware.system_product.as_deref(),
     );
 
-    if let Some(entry) = hw_entry {
+    if let Some(entry) = hw_entry.as_ref() {
         tracing::info!(
             manifest = %entry.key(),
             "Matched system to hardware manifest"
@@ -1012,8 +1012,9 @@ async fn check_firmware_updates(
     }
 
     // Get manifest firmware config if available
-    let manifest_config =
-        hw_entry.and_then(|e| e.manifest.as_ref().and_then(|m| m.firmware.as_ref()));
+    let manifest_config = hw_entry
+        .as_ref()
+        .and_then(|e| e.manifest.as_ref().and_then(|m| m.firmware.as_ref()));
 
     let mut results: Vec<Result<Update, BlockedUpdate>> = Vec::new();
 
@@ -1186,7 +1187,7 @@ fn get_offering_requirements(
     use crate::domain::constraints::Requirements;
 
     // Try to load from manifest first — parse DSL predicates to extract requirements
-    if let Some(offering) = state.manifest_registry.sw.get(name)
+    if let Some(offering) = state.catalog.get_manifest(name)
         && let Some(ref compat) = offering.compatibility
     {
         let mut req = Requirements::new();

@@ -172,16 +172,14 @@ async fn backfill_orchestration(state: &AppState) {
 
     // Check offerings index for coordination mode (ORCH-0006)
     let elected_types: std::collections::HashSet<String> = {
-        let index_guard = state.offerings_index.read().await;
-        match index_guard.as_ref() {
-            Some(index) => index
-                .offerings
+        match state.catalog.compiled_snapshot().await {
+            Some(offerings) => offerings
                 .iter()
                 .filter(|co| co.coordination.is_elected())
                 .map(|co| co.name.clone())
                 .collect(),
             None => {
-                // Index not built yet — safe default: skip all (Independent)
+                // Catalog not loaded yet — safe default: skip all (Independent)
                 std::collections::HashSet::new()
             }
         }
@@ -262,12 +260,10 @@ async fn pin_recovery(state: &AppState) {
 /// Skips offerings whose manifest declares `Independent` coordination (ORCH-0006).
 /// Skips offerings whose type is handled by an active gateway (ORCH-0008).
 async fn orchestration_tick(state: &AppState) -> Result<()> {
-    // Build elected-types set from the offerings index (ORCH-0006 gate).
+    // Build elected-types set from the catalog (ORCH-0006 gate).
     let elected_types: std::collections::HashSet<String> = {
-        let index_guard = state.offerings_index.read().await;
-        match index_guard.as_ref() {
-            Some(index) => index
-                .offerings
+        match state.catalog.compiled_snapshot().await {
+            Some(offerings) => offerings
                 .iter()
                 .filter(|co| co.coordination.is_elected())
                 .map(|co| co.name.clone())
@@ -625,15 +621,13 @@ async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
 /// belt-and-suspenders check.
 async fn cleanup_independent_orchestration(state: &AppState) {
     let elected_types: std::collections::HashSet<String> = {
-        let index_guard = state.offerings_index.read().await;
-        match index_guard.as_ref() {
-            Some(index) => index
-                .offerings
+        match state.catalog.compiled_snapshot().await {
+            Some(offerings) => offerings
                 .iter()
                 .filter(|co| co.coordination.is_elected())
                 .map(|co| co.name.clone())
                 .collect(),
-            None => return, // Index not built yet — skip cleanup
+            None => return, // Catalog not loaded yet — skip cleanup
         }
     };
 

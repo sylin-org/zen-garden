@@ -419,7 +419,7 @@ fn garden_tool_to_found_service(tool: GardenTool) -> FoundService {
 /// Looks up the offering and returns the default port.
 /// Returns 8080 as fallback if not found.
 pub async fn get_offering_port(offering: &str, state: &AppState) -> u16 {
-    if let Some(offering_def) = state.manifest_registry.get_offering(offering) {
+    if let Some(offering_def) = state.catalog.get_manifest(offering) {
         let port = offering_def.default_host_port();
         if port != 8080 {
             // 8080 is the generic default

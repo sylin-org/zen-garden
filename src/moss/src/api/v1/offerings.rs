@@ -68,10 +68,9 @@ pub async fn list_offerings_v1(
         .map(|o| (o.name.to_string(), o))
         .collect();
 
-    // Get available offerings from index (may still be building)
-    let idx_guard = state.offerings_index.read().await;
-    let offerings_index = idx_guard.as_ref();
-    let catalog_building = offerings_index.is_none();
+    // Get available offerings from catalog (may still be loading)
+    let compiled_offerings = state.catalog.compiled_snapshot().await;
+    let catalog_building = compiled_offerings.is_none();
 
     let mut offerings: Vec<OfferingView> = Vec::new();
 
@@ -109,9 +108,9 @@ pub async fn list_offerings_v1(
 
     // Add available offerings (not yet installed) - only if catalog loaded
     if query.state.as_deref() != Some("installed")
-        && let Some(offerings_index) = offerings_index
+        && let Some(ref compiled) = compiled_offerings
     {
-        for offering in &offerings_index.offerings {
+        for offering in compiled {
             if !installed.contains_key(&offering.name) {
                 offerings.push(OfferingView {
                     name: offering.name.clone(),
@@ -185,16 +184,14 @@ pub async fn get_offering_v1(
     }
 
     // Check if available
-    let idx_guard = state.offerings_index.read().await;
-    let offerings_index = idx_guard
-        .as_ref()
-        .ok_or_else(|| unavailable("INDEX_UNAVAILABLE", "Offerings catalog not yet loaded"))?;
+    if !state.catalog.is_loaded().await {
+        return Err(unavailable(
+            "INDEX_UNAVAILABLE",
+            "Offerings catalog not yet loaded",
+        ));
+    }
 
-    if let Some(offering) = offerings_index
-        .offerings
-        .iter()
-        .find(|o| o.name == offering_type)
-    {
+    if let Some(offering) = state.catalog.get_compiled(&offering_type).await {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse::new(serde_json::json!({
@@ -236,7 +233,7 @@ pub async fn get_offering_manifest_v1(
     })?;
     let offering_type = offering_fqn.offering;
 
-    match state.manifest_registry.sw.get(&offering_type) {
+    match state.catalog.get_manifest(&offering_type) {
         Some(entry) => {
             let yaml = entry
                 .managed
@@ -350,23 +347,21 @@ pub async fn refresh_catalog_v1(
     (StatusCode, Json<serde_json::Value>),
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
-    // Rebuild offerings index
-    crate::ensure_offerings_index(&state, true, &crate::domain::FileCatalogCache)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "Failed to rebuild offerings catalog");
-            let mut details = HashMap::new();
-            details.insert("error".to_string(), serde_json::json!(format!("{}", e)));
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                garden_common::constants::INTERNAL_ERROR,
-                "Failed to rebuild offerings catalog".to_string(),
-                Some(details),
-            )
-        })?;
+    // Rebuild offerings catalog
+    state.catalog.rebuild().await.map_err(|e| {
+        tracing::error!(error = ?e, "Failed to rebuild offerings catalog");
+        let mut details = HashMap::new();
+        details.insert("error".to_string(), serde_json::json!(format!("{}", e)));
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            garden_common::constants::INTERNAL_ERROR,
+            "Failed to rebuild offerings catalog".to_string(),
+            Some(details),
+        )
+    })?;
 
-    let idx_guard = state.offerings_index.read().await;
-    let idx = idx_guard.as_ref().ok_or_else(|| {
+    let stats = state.catalog.stats().await;
+    let fingerprint = stats.fingerprint.ok_or_else(|| {
         internal(
             garden_common::constants::INTERNAL_ERROR,
             "Offerings catalog unavailable after rebuild",
@@ -377,9 +372,9 @@ pub async fn refresh_catalog_v1(
         StatusCode::OK,
         Json(serde_json::json!({
             "status": "refreshed",
-            "count": idx.offerings.len(),
-            "fingerprint": idx.fingerprint,
-            "generated_at": idx.generated_at,
+            "count": stats.compiled_count,
+            "fingerprint": fingerprint,
+            "generated_at": chrono::Utc::now().to_rfc3339(),
         })),
     ))
 }
@@ -440,10 +435,13 @@ pub async fn inspect_image_v1(
 
     // Check for curated alternative
     let curated = {
-        let idx_guard = state.offerings_index.read().await;
-        idx_guard.as_ref().and_then(|idx| {
-            crate::domain::offering_resolution::check_curated_collision(image_ref, &idx.offerings)
-        })
+        state
+            .catalog
+            .compiled_snapshot()
+            .await
+            .and_then(|offerings| {
+                crate::domain::offering_resolution::check_curated_collision(image_ref, &offerings)
+            })
     };
 
     let curated_json = curated.map(|alt| {
@@ -534,17 +532,17 @@ pub async fn search_offerings_v1(
 
     let limit = query.limit.unwrap_or(5).min(50); // Cap at 50
 
-    // Get offerings from index
-    let idx_guard = state.offerings_index.read().await;
-    let offerings_index = idx_guard
-        .as_ref()
+    // Get offerings from catalog
+    let compiled = state
+        .catalog
+        .compiled_snapshot()
+        .await
         .ok_or_else(|| unavailable("INDEX_UNAVAILABLE", "Offerings catalog not yet loaded"))?;
 
-    let total_offerings = offerings_index.offerings.len();
+    let total_offerings = compiled.len();
 
     // Score and rank offerings
-    let mut ranked: Vec<(i32, &crate::domain::CompiledOffering)> = offerings_index
-        .offerings
+    let mut ranked: Vec<(i32, &crate::domain::CompiledOffering)> = compiled
         .iter()
         .filter(|o| o.compatibility.decision.as_str() != garden_common::constants::COMPAT_FAIL)
         .map(|o| {
@@ -824,7 +822,7 @@ pub async fn export_offering_manifest_v1(
     })?;
 
     // Try curated manifest first
-    if let Some(offering) = state.manifest_registry.sw.get(&offering_fqn.offering) {
+    if let Some(offering) = state.catalog.get_manifest(&offering_fqn.offering) {
         let snippet_yaml = offering
             .managed
             .as_ref()

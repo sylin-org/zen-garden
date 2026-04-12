@@ -17,9 +17,9 @@
 // steps and has no aggregate equivalent.
 use crate::AppState;
 use crate::api::v1::events::emit_job_progress;
+use crate::domain::connection;
 use crate::domain::events::OfferingEvent;
 use crate::domain::network::NetworkMode;
-use crate::domain::{connection, get_compiled_offering};
 use crate::infra::TaskStore;
 use crate::infra::config::MossConfig;
 use crate::infra::network::{apply_static_from_pool, load_network_state};
@@ -98,7 +98,7 @@ pub fn build_guidance(
         "build_guidance: starting"
     );
 
-    let manifest = match state.manifest_registry.sw.get(offering) {
+    let manifest = match state.catalog.get_manifest(offering) {
         Some(m) => {
             tracing::debug!(
                 offering = %offering,
@@ -111,7 +111,7 @@ pub fn build_guidance(
         None => {
             tracing::debug!(
                 offering = %offering,
-                manifest_count = state.manifest_registry.sw.len(),
+                manifest_count = state.catalog.manifest_count(),
                 "build_guidance: no manifest found for offering"
             );
             return None;
@@ -181,7 +181,7 @@ pub fn build_adopted_guidance(
     port: u16,
     static_ip: Option<&str>,
 ) -> Option<OfferingGuidance> {
-    let manifest = state.manifest_registry.sw.get(offering)?;
+    let manifest = state.catalog.get_manifest(offering)?;
     let template = manifest
         .adopted
         .as_ref()
@@ -261,7 +261,7 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         .collect();
 
     tracing::info!(
-        total_manifests = state.manifest_registry.sw.len(),
+        total_manifests = state.catalog.manifest_count(),
         with_guidance = manifests_with_guidance.len(),
         guidance_offerings = ?manifests_with_guidance,
         "Backfill: manifest registry state"
@@ -465,42 +465,26 @@ pub async fn install_service_task(
         offering_type,
         "Resolving compiled offering config"
     );
-    let compiled =
-        match get_compiled_offering(state, offering_type, &crate::domain::FileCatalogCache).await {
-            Ok(Some(o)) => o,
-            Ok(None) => {
-                state.console.emit(console::ConsoleEvent::new(
-                    console::EventCategory::Jobs,
-                    console::EventStatus::Failed,
-                    format!("Offering not found: {}", offering),
-                ));
-                remove_installing_entry(state, offering).await;
-                state
-                    .jobs
-                    .fail(
-                        job_id,
-                        offering,
-                        Some((offering.to_string(), "Offering not found".to_string())),
-                    )
-                    .await;
-                return;
-            }
-            Err(e) => {
-                remove_installing_entry(state, offering).await;
-                state
-                    .jobs
-                    .fail(
-                        job_id,
-                        offering,
-                        Some((
-                            offering.to_string(),
-                            format!("Offerings index error: {}", e),
-                        )),
-                    )
-                    .await;
-                return;
-            }
-        };
+    let compiled = match state.catalog.get_compiled(offering_type).await {
+        Some(o) => o,
+        None => {
+            state.console.emit(console::ConsoleEvent::new(
+                console::EventCategory::Jobs,
+                console::EventStatus::Failed,
+                format!("Offering not found: {}", offering),
+            ));
+            remove_installing_entry(state, offering).await;
+            state
+                .jobs
+                .fail(
+                    job_id,
+                    offering,
+                    Some((offering.to_string(), "Offering not found".to_string())),
+                )
+                .await;
+            return;
+        }
+    };
 
     if compiled.compatibility.decision == "fail" {
         let reason = compiled
@@ -990,10 +974,8 @@ pub async fn install_image_direct_task(
 
     // Step 3: Check for curated alternative (advisory only — log it)
     {
-        let idx_guard = state.offerings_index.read().await;
-        if let Some(idx) = idx_guard.as_ref()
-            && let Some(alt) =
-                offering_resolution::check_curated_collision(image_ref, &idx.offerings)
+        if let Some(snapshot) = state.catalog.compiled_snapshot().await
+            && let Some(alt) = offering_resolution::check_curated_collision(image_ref, &snapshot)
         {
             tracing::info!(
                 image_ref,
@@ -1206,34 +1188,20 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let service_name = offering_fqn.fqn();
         let offering_type = offering_fqn.offering.clone();
 
-        let compiled =
-            match get_compiled_offering(state, &offering_type, &crate::domain::FileCatalogCache)
-                .await
-            {
-                Ok(Some(o)) => o,
-                Ok(None) => {
-                    state
-                        .jobs
-                        .record_item_failed(
-                            job_id,
-                            service_name.clone(),
-                            "Offering not found".to_string(),
-                        )
-                        .await;
-                    continue;
-                }
-                Err(e) => {
-                    state
-                        .jobs
-                        .record_item_failed(
-                            job_id,
-                            service_name.clone(),
-                            format!("Offerings index error: {}", e),
-                        )
-                        .await;
-                    continue;
-                }
-            };
+        let compiled = match state.catalog.get_compiled(&offering_type).await {
+            Some(o) => o,
+            None => {
+                state
+                    .jobs
+                    .record_item_failed(
+                        job_id,
+                        service_name.clone(),
+                        "Offering not found".to_string(),
+                    )
+                    .await;
+                continue;
+            }
+        };
 
         if compiled.compatibility.decision == "fail" {
             let reason = compiled

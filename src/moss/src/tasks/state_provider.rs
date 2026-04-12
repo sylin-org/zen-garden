@@ -115,15 +115,12 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // Look up the per-stone compatibility evaluation from the
             // compiled offerings index. This was already evaluated against
             // THIS stone's capabilities when the index was built.
-            let compatibility = {
-                let idx_guard = self.state.offerings_index.read().await;
-                idx_guard.as_ref().and_then(|idx| {
-                    idx.offerings
-                        .iter()
-                        .find(|o| o.name == offering.offering)
-                        .map(|o| o.compatibility.clone())
-                })
-            };
+            let compatibility = self
+                .state
+                .catalog
+                .get_compiled(&offering.offering)
+                .await
+                .map(|o| o.compatibility);
 
             let compat = compatibility.unwrap_or_else(|| {
                 // Index not built yet or offering not in manifest — assume pass

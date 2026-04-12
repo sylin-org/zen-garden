@@ -87,13 +87,13 @@ pub async fn recommend_placement(
     let start_time = std::time::Instant::now();
 
     // Get local compiled offering with compatibility
-    let offerings_index = state.offerings_index.read().await;
-    let local_offering = offerings_index
-        .as_ref()
-        .and_then(|idx| idx.offerings.iter().find(|o| o.name == request.offering))
-        .ok_or_else(|| anyhow::anyhow!("Offering '{}' not found on local stone", request.offering))?
-        .clone();
-    drop(offerings_index);
+    let local_offering = state
+        .catalog
+        .get_compiled(&request.offering)
+        .await
+        .ok_or_else(|| {
+            anyhow::anyhow!("Offering '{}' not found on local stone", request.offering)
+        })?;
 
     // 1. Evaluate tended stone first (zero latency)
     let local_candidate = score_local_stone(&request.offering, &local_offering, state).await?;

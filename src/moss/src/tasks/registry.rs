@@ -6,7 +6,7 @@
 
 use crate::tasks::backfill_missing_guidance;
 use crate::tasks::task_scheduler::backfill_missing_tasks;
-use crate::{AppState, adopt_existing_containers, ensure_offerings_index};
+use crate::{AppState, adopt_existing_containers};
 use garden_common::ServiceHealthStatus;
 use garden_common::console::{ConsoleEvent, EventCategory, EventStatus};
 use std::sync::Arc;
@@ -135,20 +135,18 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
             "Runtime templates".to_string(),
         ));
 
-        match ensure_offerings_index(&state, false, &crate::domain::FileCatalogCache).await {
-            Ok(_) => {
-                let idx_guard = state.offerings_index.read().await;
-                if let Some(idx) = idx_guard.as_ref() {
-                    tracing::info!(
-                        offerings_count = idx.offerings.len(),
-                        "Offerings catalog loaded successfully"
-                    );
-                    console.emit(ConsoleEvent::new(
-                        EventCategory::Manifests,
-                        EventStatus::Loaded,
-                        format!("{} manifests", idx.offerings.len()),
-                    ));
-                }
+        match state.catalog.load().await {
+            Ok(()) => {
+                let stats = state.catalog.stats().await;
+                tracing::info!(
+                    offerings_count = stats.compiled_count,
+                    "Offerings catalog loaded successfully"
+                );
+                console.emit(ConsoleEvent::new(
+                    EventCategory::Manifests,
+                    EventStatus::Loaded,
+                    format!("{} manifests", stats.compiled_count),
+                ));
             }
             Err(e) => {
                 tracing::warn!(error = ?e, "Failed to build offerings catalog");

@@ -576,8 +576,10 @@ pub async fn get_service_env_v1(
     })?;
 
     // Look up manageable_env from the manifest
-    let manifest_offering = state.manifest_registry.sw.get(&service_name);
-    let manageable = manifest_offering.and_then(|o| o.manageable_env.as_ref());
+    let manifest_offering = state.catalog.get_manifest(&service_name);
+    let manageable = manifest_offering
+        .as_ref()
+        .and_then(|o| o.manageable_env.as_ref());
     let manageable_vars: Vec<String> = manageable.map(|m| m.vars.clone()).unwrap_or_default();
 
     // For Docker-managed containers, inspect to get env vars
@@ -644,10 +646,12 @@ pub async fn patch_service_env_v1(
     }
 
     // Look up manageable_env from the manifest
-    let manifest_offering = state.manifest_registry.sw.get(&service_name);
-    let manageable = manifest_offering.and_then(|o| o.manageable_env.as_ref());
+    let manifest_offering = state.catalog.get_manifest(&service_name);
+    let manageable_ref = manifest_offering
+        .as_ref()
+        .and_then(|o| o.manageable_env.as_ref());
 
-    let manageable = manageable.ok_or_else(|| {
+    let manageable = manageable_ref.ok_or_else(|| {
         bad_request(
             "NO_MANAGEABLE_ENV",
             format!(
@@ -781,18 +785,16 @@ pub async fn reconcile_inventory_v1(
 pub async fn refresh_manifests_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
-    // Rebuild offerings index (which includes manifest validation)
-    crate::ensure_offerings_index(&state, true, &crate::domain::FileCatalogCache)
-        .await
-        .map_err(|e| {
-            internal(
-                "REFRESH_FAILED",
-                format!("Failed to refresh manifests: {}", e),
-            )
-        })?;
+    // Rebuild offerings catalog (which includes manifest validation)
+    state.catalog.rebuild().await.map_err(|e| {
+        internal(
+            "REFRESH_FAILED",
+            format!("Failed to refresh manifests: {}", e),
+        )
+    })?;
 
-    let idx_guard = state.offerings_index.read().await;
-    let idx = idx_guard.as_ref().ok_or_else(|| {
+    let stats = state.catalog.stats().await;
+    let fingerprint = stats.fingerprint.ok_or_else(|| {
         internal(
             "INDEX_UNAVAILABLE",
             "Manifests index unavailable after refresh".to_string(),
@@ -803,9 +805,9 @@ pub async fn refresh_manifests_v1(
         StatusCode::OK,
         Json(serde_json::json!({
             "status": "refreshed",
-            "count": idx.offerings.len(),
-            "fingerprint": idx.fingerprint,
-            "generated_at": idx.generated_at
+            "count": stats.compiled_count,
+            "fingerprint": fingerprint,
+            "generated_at": chrono::Utc::now().to_rfc3339()
         })),
     ))
 }

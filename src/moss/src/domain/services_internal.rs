@@ -38,12 +38,11 @@ pub async fn build_spec_from_manifest(
     // Primary path: use the CompiledOffering (hardware-resolved image,
     // device_requests, environment, command, volumes, ports, config_files).
     // This is the same source that install_service_task uses.
-    let compiled =
-        crate::get_compiled_offering(state, &offering_type, &crate::domain::FileCatalogCache).await;
+    let compiled = state.catalog.get_compiled(&offering_type).await;
 
     let (image, command, ports, environment, volumes, config_files, device_requests) =
         match compiled {
-            Ok(Some(compiled)) => {
+            Some(compiled) => {
                 // Resolve FQN-specific volume paths (e.g., comfyui::prod isolation)
                 let fqn_volumes = compiled.volumes_for_fqn(&fqn);
                 let ports = compiled.ports_vec();
@@ -57,24 +56,17 @@ pub async fn build_spec_from_manifest(
                     compiled.device_requests,
                 )
             }
-            Ok(None) | Err(_) => {
+            None => {
                 // Fallback: use raw template (no hardware resolution).
                 // This path should rarely execute — the compiled index is
                 // always available in production.
-                if compiled.is_err() {
-                    tracing::warn!(
-                        service = %service_name,
-                        "Failed to read compiled offerings index, using raw manifest template"
-                    );
-                } else {
-                    tracing::debug!(
-                        service = %service_name,
-                        "No compiled offering found, using raw manifest template"
-                    );
-                }
+                tracing::debug!(
+                    service = %service_name,
+                    "No compiled offering found, using raw manifest template"
+                );
                 let manifest = state
-                    .manifest_registry
-                    .get_offering(&offering_type)
+                    .catalog
+                    .get_manifest(&offering_type)
                     .context("No manifest for offering")?;
                 let template = manifest
                     .parse_template_for_fqn(&fqn)
@@ -296,7 +288,7 @@ pub async fn reconcile_offering(
 /// Used by `reconcile_offering` to map stored port_map overrides to spec
 /// ports and to build the named port_map after reconciliation.
 fn resolve_port_name_keys(state: &AppState, fqn: &OfferingFqn) -> Vec<String> {
-    let Some(manifest) = state.manifest_registry.get_offering(&fqn.offering) else {
+    let Some(manifest) = state.catalog.get_manifest(&fqn.offering) else {
         return Vec::new();
     };
     let Ok(template) = manifest.parse_template_for_fqn(fqn) else {

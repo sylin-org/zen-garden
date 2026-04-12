@@ -21,9 +21,8 @@
 //! - Self-heal adoption of orphaned containers
 
 use crate::AppState;
-use crate::docker::decode_zen_offering_container_name;
+use crate::docker::{ContainerEvent, decode_zen_offering_container_name};
 use crate::domain::events::OfferingEvent;
-use bollard::models::EventMessageTypeEnum;
 use futures_util::StreamExt;
 use garden_common::constants::OFFERING_CONTAINER_PREFIX;
 use garden_common::{OfferingStatus, ServiceHealthStatus};
@@ -66,9 +65,9 @@ pub async fn docker_events_task(state: AppState, token: CancellationToken) {
             tokio::select! {
                 maybe_event = events.next() => {
                     match maybe_event {
-                        Some(Ok(event)) => {
+                        Some(Ok(ref event)) => {
                             received_any = true;
-                            handle_container_event(&state, &event).await;
+                            handle_container_event(&state, event).await;
                         }
                         Some(Err(e)) => {
                             tracing::warn!(
@@ -105,34 +104,13 @@ pub async fn docker_events_task(state: AppState, token: CancellationToken) {
     }
 }
 
-/// Process a single Docker container event.
+/// Process a single container lifecycle event.
 ///
-/// Extracts the container name from the event actor attributes, checks
-/// whether it is a managed zen-offering container, and updates the
-/// offering status and emits domain events accordingly.
-async fn handle_container_event(state: &AppState, event: &bollard::models::EventMessage) {
-    // Only process container events (filter should already ensure this)
-    if event.typ != Some(EventMessageTypeEnum::CONTAINER) {
-        return;
-    }
-
-    let action = match event.action.as_deref() {
-        Some(a) => a,
-        None => return,
-    };
-
-    // Extract container name from actor attributes
-    let container_name = event
-        .actor
-        .as_ref()
-        .and_then(|a| a.attributes.as_ref())
-        .and_then(|attrs| attrs.get("name"))
-        .map(|n| n.as_str());
-
-    let container_name = match container_name {
-        Some(name) => name,
-        None => return,
-    };
+/// Checks whether the container is a managed zen-offering container,
+/// and updates the offering status and emits domain events accordingly.
+async fn handle_container_event(state: &AppState, event: &ContainerEvent) {
+    let action = event.action.as_str();
+    let container_name = event.container_name.as_str();
 
     // Only process zen-offering containers
     if !container_name.starts_with(OFFERING_CONTAINER_PREFIX) {

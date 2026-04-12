@@ -21,7 +21,6 @@ pub mod ceremony_journal;
 pub mod cloud_filter;
 pub mod companions;
 pub mod config;
-pub mod container;
 pub mod detection;
 pub mod docker_config;
 pub mod docker_config_adapter;
@@ -62,7 +61,6 @@ pub use auth::NoAuth;
 pub use ceremony_journal::CeremonyJournal;
 pub use companions::CompanionRegistry;
 pub use config::{AdoptionConfig, MossConfig, NetworkConfig, StaticIpPoolConfig};
-pub use container::ContainerRuntime;
 pub use docker_config_adapter::OsDockerConfig;
 pub use embedded::{
     AssetSource, EmbeddedCompanions, EmbeddedManifests, EmbeddedSeeds, ManifestSource,

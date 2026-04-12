@@ -1,3 +1,4 @@
+mod event;
 mod exec;
 mod inspect;
 mod lifecycle;
@@ -6,13 +7,13 @@ mod port;
 mod spec;
 
 // Re-export public API (preserves all existing import paths)
+pub use event::ContainerEvent;
 pub use naming::{decode_zen_offering_container_name, zen_offering_container_name};
 pub use port::check_and_remediate_ports;
 pub use spec::{ContainerSpec, LogLine};
 
 use anyhow::{Context, Result};
 use bollard::Docker as BollardDocker;
-use bollard::models::EventMessage;
 use bollard::query_parameters::EventsOptionsBuilder;
 use futures_util::Stream;
 use std::collections::HashMap;
@@ -77,14 +78,19 @@ impl Client {
         network.ipam?.config?.into_iter().find_map(|c| c.gateway)
     }
 
-    /// Subscribe to Docker container lifecycle events.
+    /// Subscribe to container lifecycle events.
     ///
-    /// Returns a stream of `EventMessage` filtered to container-type events
-    /// with actions: start, stop, die, kill, destroy, health_status.
+    /// Returns a stream of domain-level `ContainerEvent` values filtered to
+    /// container lifecycle actions: start, stop, die, kill, destroy,
+    /// health_status. Bollard types are translated inside this method —
+    /// callers never see `bollard::models::EventMessage`.
+    ///
     /// The caller drives the stream and handles reconnection on error.
     pub fn container_events(
         &self,
-    ) -> impl Stream<Item = Result<EventMessage, bollard::errors::Error>> {
+    ) -> impl Stream<Item = Result<ContainerEvent, bollard::errors::Error>> {
+        use futures_util::StreamExt;
+
         let filters = HashMap::from([
             ("type".to_string(), vec!["container".to_string()]),
             (
@@ -101,7 +107,29 @@ impl Client {
         ]);
 
         let options = EventsOptionsBuilder::new().filters(&filters).build();
-        self.docker.events(Some(options))
+        self.docker.events(Some(options)).filter_map(|result| {
+            std::future::ready(match result {
+                Ok(msg) => {
+                    let action = msg.action.unwrap_or_default();
+                    let container_name = msg
+                        .actor
+                        .as_ref()
+                        .and_then(|a| a.attributes.as_ref())
+                        .and_then(|attrs| attrs.get("name"))
+                        .cloned()
+                        .unwrap_or_default();
+                    if container_name.is_empty() {
+                        None
+                    } else {
+                        Some(Ok(ContainerEvent {
+                            container_name,
+                            action,
+                        }))
+                    }
+                }
+                Err(e) => Some(Err(e)),
+            })
+        })
     }
 
     /// Build container networking configuration.

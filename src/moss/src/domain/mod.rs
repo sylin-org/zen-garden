@@ -103,7 +103,7 @@ pub use service_discovery::{
     get_offering_port, list_all_local_services,
 };
 pub use storage::{
-    Management, Media, Medium, Storage, StorageBank, Volume, VolumeState, Volumes, new_media,
+    Management, Media, Medium, Storage, VolumeIngestor, Volume, VolumeState, Volumes, new_media,
     new_volumes,
 };
 pub use storage_service::{LocalStorage, ProxyTarget, StorageRoute};

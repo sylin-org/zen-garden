@@ -1,29 +1,35 @@
-//! Storage bank (STORAGE-0014, STORAGE-0017)
+//! Volume ingestor (STORAGE-0014, STORAGE-0017, ARCH-0025)
 //!
 //! Domain bridge for physical storage events. Routes OS facts into Volume
 //! domain objects and forwards the returned events to the broadcast channel.
+//!
+//! Renamed from `StorageBank` in ARCH-0025 — the old name conflicted with
+//! the Bank aggregate (the user-facing named storage container).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tracing::{debug, info};
 
-use crate::domain::traits::ManagementStoreOps;
+use super::ports::ManagementStoreOps;
 
 use super::volume::DiskResources;
 use super::{Volume, VolumeSnapshot, Volumes};
 
 /// Domain bridge for physical storage events.
 ///
-/// The monitor detects and measures; the bank routes facts to Volume objects
-/// and forwards whatever events Volume returns.
-pub struct StorageBank<S: ManagementStoreOps + 'static = crate::infra::storage::ContentStore> {
+/// The monitor detects and measures; the ingestor routes facts to Volume
+/// objects and forwards whatever events Volume returns.
+///
+/// Previously named `StorageBank` — renamed in ARCH-0025 to avoid
+/// conflicting with the Bank aggregate (the user-facing storage container).
+pub struct VolumeIngestor<S: ManagementStoreOps + 'static = crate::infra::storage::ContentStore> {
     volumes: Volumes,
     changed: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
     make_store: Box<dyn Fn(PathBuf) -> Arc<S> + Send + Sync>,
 }
 
-impl<S: ManagementStoreOps + 'static> StorageBank<S> {
+impl<S: ManagementStoreOps + 'static> VolumeIngestor<S> {
     pub fn new(
         volumes: Volumes,
         changed: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,

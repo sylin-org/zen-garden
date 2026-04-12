@@ -19,7 +19,7 @@ pub struct TaskConfig {
 pub struct TaskChannels {
     pub vol_rx: tokio::sync::mpsc::Receiver<crate::infra::storage::monitor::PhysicalStorageEvent>,
     pub rescan_rx: tokio::sync::mpsc::Receiver<()>,
-    pub bank: std::sync::Arc<crate::domain::StorageBank>,
+    pub bank: std::sync::Arc<crate::domain::VolumeIngestor>,
     pub volumes: crate::domain::Volumes,
     pub pulse: tokio::sync::broadcast::Sender<crate::infra::PulseEvent>,
     pub notifications: std::sync::Arc<garden_common::notifications::NotificationRegistry>,

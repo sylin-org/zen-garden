@@ -1,7 +1,7 @@
 //! BackgroundTask: volume-monitor (ARCH-0015, STORAGE-0014)
 //!
 //! Cross-platform volume monitor. Receives physical storage events from the
-//! platform monitor and processes them through StorageBank. Also handles
+//! platform monitor and processes them through VolumeIngestor. Also handles
 //! ad-hoc rescan requests (e.g. after `storage add`).
 //!
 //! Pattern C: carries the volume event receiver, rescan receiver, and
@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::domain::StorageBank;
+use crate::domain::VolumeIngestor;
 use crate::infra;
 use crate::infra::storage::monitor::PhysicalStorageEvent;
 use crate::infra::storage::{ContentStore, OsPlatform};
@@ -27,7 +27,7 @@ type Volumes =
 pub struct VolumeMonitorTask {
     pub vol_rx: tokio::sync::mpsc::Receiver<PhysicalStorageEvent>,
     pub rescan_rx: tokio::sync::mpsc::Receiver<()>,
-    pub bank: Arc<StorageBank>,
+    pub bank: Arc<VolumeIngestor>,
     pub volumes: Volumes,
     pub pulse: tokio::sync::broadcast::Sender<infra::PulseEvent>,
     pub notifications: Arc<garden_common::notifications::NotificationRegistry>,

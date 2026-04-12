@@ -212,7 +212,7 @@ pub(crate) async fn start_background_tasks(
     let (vol_tx, vol_rx) =
         tokio::sync::mpsc::channel::<crate::infra::storage::monitor::PhysicalStorageEvent>(32);
     let monitor_token = shutdown_token.child_token();
-    let bank = crate::domain::StorageBank::new(
+    let bank = crate::domain::VolumeIngestor::new(
         state.current.storage.volumes.clone(),
         state.current.storage.changed.clone(),
         |path: PathBuf| -> Arc<ContentStore> { Arc::new(ContentStore::new(path, None)) },

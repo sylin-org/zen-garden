@@ -7,7 +7,7 @@
 //! - [`volume`] — `Volume`, `VolumeState`, `Management`, `PinState` (the universal entity)
 //! - [`collection`] — `Volumes` map, reconcile, initial scan, query helpers
 //! - [`medium`] — `Medium`, `Media` (physical disk layer, host-only)
-//! - [`bank`] — `StorageBank` (domain bridge for physical storage events)
+//! - [`bank`] — `VolumeIngestor` (domain bridge for physical storage events)
 //! - [`health`] — seed bank validation and health assessment
 //! - [`automount`] — auto-mount unmounted managed devices
 //! - [`analysis`] — device eligibility for `storage add`
@@ -20,6 +20,8 @@ pub mod collection;
 pub mod health;
 pub mod medium;
 pub mod platform_types;
+pub mod ports;
+pub mod routing;
 pub mod volume;
 
 // ── Re-exports for backward compatibility ──────────────────────────────
@@ -37,7 +39,7 @@ pub use collection::{
 pub use medium::{Media, Medium, new_media, reconcile_media};
 
 // Bank
-pub use bank::StorageBank;
+pub use bank::VolumeIngestor;
 
 // Analysis
 pub use analysis::{analyze_device, is_allowed_mount, validate_manifest};
@@ -50,6 +52,12 @@ pub use health::{
 
 // Automount
 pub use automount::auto_mount_unmounted;
+
+// Ports (ARCH-0025)
+pub use ports::{ManagementStoreOps, StoragePlatform};
+
+// Routing (ARCH-0025 — absorbed from storage_service.rs)
+pub use routing::{LocalStorage, ProxyTarget, StorageRoute};
 
 // Platform value types
 pub use platform_types::{

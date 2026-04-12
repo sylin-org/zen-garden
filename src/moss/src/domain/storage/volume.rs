@@ -28,7 +28,7 @@ use garden_common::storage::{
 };
 use tracing::{debug, info, warn};
 
-use crate::domain::traits::ManagementStoreOps;
+use super::ports::ManagementStoreOps;
 
 use super::platform_types::{DeviceHealth, VolumeSnapshot};
 
@@ -293,7 +293,7 @@ impl Volume {
         });
     }
 
-    /// Manifest ID if this volume is managed (used for dedup in StorageBank).
+    /// Manifest ID if this volume is managed (used for dedup in VolumeIngestor).
     pub fn manifest_id(&self) -> Option<&str> {
         self.management.as_ref().map(|m| m.id.as_str())
     }

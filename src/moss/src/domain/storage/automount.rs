@@ -2,17 +2,17 @@
 //!
 //! Scans for unmounted removable devices that have a Zen Garden manifest,
 //! then mounts them at their canonical path. VolumeMonitor detects the
-//! mount and calls StorageBank to classify and register.
+//! mount and calls VolumeIngestor to classify and register.
 
 use tracing::{debug, info, warn};
 
-use crate::domain::traits::StoragePlatform;
+use super::ports::StoragePlatform;
 
 /// Auto-mount unmounted removable devices that have a Zen Garden manifest.
 ///
 /// Scans for unmounted removable devices, probes each for a manifest, and mounts
 /// to the canonical path. Returns the count mounted.
-/// Emits no StorageChanged events — VolumeMonitor detects the mount and calls StorageBank.
+/// Emits no StorageChanged events — VolumeMonitor detects the mount and calls VolumeIngestor.
 pub async fn auto_mount_unmounted(platform: &(impl StoragePlatform + ?Sized)) -> usize {
     let unmounted = platform.list_unmounted_removable();
     if unmounted.is_empty() {
@@ -84,7 +84,7 @@ pub async fn auto_mount_unmounted(platform: &(impl StoragePlatform + ?Sized)) ->
             continue;
         }
 
-        // StorageBank will detect the new mount via VolumeMonitor and emit Connected.
+        // VolumeIngestor will detect the new mount via VolumeMonitor and emit Connected.
         mounted += 1;
     }
 

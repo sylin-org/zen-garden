@@ -1187,6 +1187,28 @@ impl crate::domain::traits::ManagementStoreOps for ContentStore {
 }
 
 // ============================================================================
+// BankContentOps adapter (ARCH-0026)
+// ============================================================================
+
+impl crate::domain::storage::BankContentOps for ContentStore {
+    async fn read_file(&self, rel: &str) -> anyhow::Result<Vec<u8>> {
+        ContentStore::read_file(self, rel).await
+    }
+
+    async fn write_file(&self, rel: &str, data: &[u8]) -> anyhow::Result<()> {
+        ContentStore::write_file(self, rel, data).await
+    }
+
+    async fn delete_file(&self, rel: &str) -> anyhow::Result<()> {
+        ContentStore::delete_file(self, rel).await
+    }
+
+    async fn exists(&self, rel: &std::path::Path) -> bool {
+        ContentStore::exists(self, rel).await
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

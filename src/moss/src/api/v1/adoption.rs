@@ -438,7 +438,7 @@ pub async fn borrow_service_v1(
                 // Store credentials in Koi vault if provided
                 if let Some(ref creds) = req.credentials {
                     let vault_key = format!("borrowed:{}:credentials", req.name);
-                    match state.discovery.koi.vault() {
+                    match state.discovery.koi().vault() {
                         Ok(vault) => {
                             if let Err(e) = vault.store(&vault_key, creds) {
                                 tracing::warn!(error = %e, "Failed to store borrowed credentials in vault");

@@ -196,7 +196,7 @@ pub fn resolve_pond_name(input: Option<&str>) -> String {
 /// 2. It is an enrolled member (has cert + key from a prior enrollment)
 pub async fn refresh_pond_active(state: &AppState) {
     // Cornerstone path: CA initialized and unlocked
-    if let Ok(handle) = state.discovery.koi.certmesh()
+    if let Ok(handle) = state.discovery.koi().certmesh()
         && let Ok(core) = handle.core()
     {
         let status = core.certmesh_status().await;
@@ -243,19 +243,18 @@ pub async fn notify_enrollment_changed(
         ));
 
     // Re-register mDNS with/without pond TXT properties
-    if let Some(ref mdns) = state.discovery.mdns {
+    {
         let (ip, mac) = garden_common::infra::network::get_local_ip_and_mac();
         if ip != "127.0.0.1" && !ip.is_empty() {
-            let _ = mdns.reregister(&ip, mac.as_deref()).await;
+            state.discovery.reregister(&ip, mac.as_deref()).await;
         }
     }
 
     // Register certmesh CA service on mDNS if this is the cornerstone
     if enrolled {
-        crate::mdns::register_certmesh_service(
-            &state.discovery.koi,
-            garden_common::constants::MOSS_HTTP,
-        )
-        .await;
+        state
+            .discovery
+            .register_certmesh(garden_common::constants::MOSS_HTTP)
+            .await;
     }
 }

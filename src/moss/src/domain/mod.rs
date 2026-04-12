@@ -115,7 +115,7 @@ pub use ceremony::{
 };
 pub use companion::Companion;
 pub use current::{Current, Stone as CurrentStone};
-pub use discovery::Discovery;
+pub use discovery::{Discovery, DiscoveryChangeKind, DiscoveryChanged};
 pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent};
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{

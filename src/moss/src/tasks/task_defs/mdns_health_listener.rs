@@ -19,11 +19,11 @@ impl BackgroundTask for MdnsHealthListenerTask {
         Box::pin(async move {
             ctx.ready.signal();
 
-            let mdns = match ctx.state.discovery.mdns.as_ref() {
-                Some(m) => m.clone(),
-                None => return TaskOutcome::Completed,
-            };
+            if !ctx.state.discovery.has_mdns() {
+                return TaskOutcome::Completed;
+            }
 
+            let discovery = ctx.state.discovery.clone();
             let mut health_rx = ctx.state.event_bus.subscribe();
 
             loop {
@@ -34,7 +34,7 @@ impl BackgroundTask for MdnsHealthListenerTask {
                             Ok(crate::domain::DomainEvent::Stone(
                                 crate::domain::StoneEvent::HealthChanged { ref health, .. },
                             )) => {
-                                mdns.update_health(health).await;
+                                discovery.update_health(health).await;
                             }
                             Ok(_) => {} // Ignore non-health events
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

@@ -19,7 +19,8 @@ pub mod tasks;
 pub mod announcement;
 pub mod docker;
 pub mod http;
-pub mod mdns;
+// mdns relocated to domain/discovery/mdns.rs in Book X (ARCH-0028)
+pub use domain::discovery::mdns;
 
 // App state for HTTP handlers
 pub mod app_state;

@@ -149,7 +149,7 @@ pub fn validate_presign_token(
 /// Used by both presigned URL generation and S3 credential derivation.
 pub(crate) async fn resolve_key_material(state: &AppState) -> String {
     if state.security.pond_active()
-        && let Ok(handle) = state.discovery.koi.certmesh()
+        && let Ok(handle) = state.discovery.koi().certmesh()
         && let Ok(core) = handle.core()
     {
         let status = core.certmesh_status().await;

@@ -127,12 +127,8 @@ pub async fn announce_resolution_change(state: &AppState, new_ip: &str) {
         *state.current.mac.write().await = new_mac.clone();
     }
 
-    // Re-register mDNS with updated IP and MAC
-    if let Some(ref mdns) = state.discovery.mdns
-        && let Err(e) = mdns.reregister(new_ip, new_mac.as_deref()).await
-    {
-        tracing::warn!(error = ?e, "Failed to re-register mDNS after resolution change");
-    }
+    // Re-register mDNS with updated IP and MAC (delegated to Discovery aggregate)
+    state.discovery.reregister(new_ip, new_mac.as_deref()).await;
 
     // Delegate the chirp to the aggregate.
     let inputs = self_entry_inputs(state).await;

@@ -977,10 +977,15 @@ async fn build_state(
         console: console_printer.clone(),
         tool: tool.clone(),
         topology: topology_aggregate.clone(),
-        discovery: Arc::new(crate::domain::Discovery {
-            mdns: mdns_handle.clone(),
-            koi: koi_handle.clone(),
-        }),
+        discovery: Arc::new(
+            crate::domain::Discovery::new(
+                koi_handle.clone(),
+                mdns_handle.clone(),
+                None, // lurk_tx — lurk-listener is started in coordinator
+                metrics_aggregate.clone(),
+            )
+            .await,
+        ),
         security: security_aggregate.clone(),
         presence: Arc::new(crate::domain::Presence {
             elections: election_service_placeholder,

@@ -41,7 +41,7 @@ pub(crate) async fn start_background_tasks(
     let console_printer = state.console.clone();
     let event_bus = state.event_bus.clone();
     let pulse = state.pulse.clone();
-    let koi_handle = state.discovery.koi.clone();
+    let koi_handle = state.discovery.koi().clone();
     let api_endpoint = artifacts.api_endpoint;
     let volume_rescan_rx = artifacts.volume_rescan_rx;
     // bool: true when ZG_STONE_HOST was set (gates IP-change handler variant)
@@ -302,7 +302,7 @@ pub(crate) async fn start_background_tasks(
     let task_config = super::task_registry::TaskConfig {
         adoption_config,
         use_static_host,
-        mdns_available: state.discovery.mdns.is_some(),
+        mdns_available: state.discovery.has_mdns(),
     };
 
     let channels = super::task_registry::TaskChannels {

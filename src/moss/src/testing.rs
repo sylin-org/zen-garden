@@ -240,10 +240,9 @@ pub async fn build_test_state() -> AppState {
             )
             .await,
         ),
-        discovery: Arc::new(domain::Discovery {
-            mdns: None,
-            koi: koi_handle,
-        }),
+        discovery: Arc::new(
+            domain::Discovery::new(koi_handle, None, None, test_metrics.clone()).await,
+        ),
         security: Arc::new(
             domain::Security::new(
                 Arc::new(AtomicBool::new(false)),

@@ -10,7 +10,7 @@
 //! - Broadcasts Event when state changes
 //! - Updates subsystems "docker" readiness via ARCH-0023 aggregate
 
-use crate::docker::Client;
+use crate::docker::ContainerRuntime;
 use crate::domain::Subsystems;
 use std::sync::Arc;
 use std::time::Duration;
@@ -72,7 +72,7 @@ impl Config {
 #[derive(Clone)]
 pub struct Monitor {
     /// Docker manager reference (stored for potential future methods)
-    _docker: Arc<Client>,
+    _docker: Arc<ContainerRuntime>,
     tx: broadcast::Sender<Event>,
     /// Subsystems aggregate reference (ARCH-0023)
     subsystems: Arc<Subsystems>,
@@ -80,13 +80,13 @@ pub struct Monitor {
 
 impl Monitor {
     /// Start background Docker monitoring with default config
-    pub async fn start(docker: Arc<Client>, subsystems: Arc<Subsystems>) -> Self {
+    pub async fn start(docker: Arc<ContainerRuntime>, subsystems: Arc<Subsystems>) -> Self {
         Self::start_with_config(docker, Config::default(), subsystems).await
     }
 
     /// Start background Docker monitoring with custom config
     pub async fn start_with_config(
-        docker: Arc<Client>,
+        docker: Arc<ContainerRuntime>,
         config: Config,
         subsystems: Arc<Subsystems>,
     ) -> Self {
@@ -137,7 +137,7 @@ impl Monitor {
 
 /// Background task that monitors Docker daemon health
 async fn docker_monitor_task(
-    docker: Arc<Client>,
+    docker: Arc<ContainerRuntime>,
     tx: broadcast::Sender<Event>,
     config: Config,
     subsystems: Arc<Subsystems>,

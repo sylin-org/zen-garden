@@ -20,11 +20,11 @@ use std::collections::HashMap;
 
 use spec::ContainerNetworking;
 
-pub struct Client {
+pub struct ContainerRuntime {
     docker: BollardDocker,
 }
 
-impl Client {
+impl ContainerRuntime {
     pub fn new() -> Result<Self> {
         #[cfg(target_os = "windows")]
         let docker = {

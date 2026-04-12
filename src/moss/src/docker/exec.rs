@@ -6,11 +6,11 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use super::Client;
+use super::ContainerRuntime;
 use super::naming::zen_offering_container_name;
 use super::spec::LogLine;
 
-impl Client {
+impl ContainerRuntime {
     /// Pull a Docker image from registry
     ///
     /// Used during install and nourishment to fetch images.

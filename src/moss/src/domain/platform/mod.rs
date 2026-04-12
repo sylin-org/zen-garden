@@ -1,6 +1,6 @@
 //! Platform domain — Docker, runtime, network monitor, infrastructure handlers.
 
-use crate::docker::Client;
+use crate::docker::ContainerRuntime;
 use crate::domain::InfrastructureHandlerRegistry;
 use crate::tasks::Network;
 use garden_common::PlatformRuntime;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Platform {
     /// Docker/container runtime client.
-    pub docker: Arc<Client>,
+    pub docker: Arc<ContainerRuntime>,
 
     /// Platform runtime — console/ribbon output and lifecycle signals (ARCH-0002).
     pub runtime: Arc<dyn PlatformRuntime>,

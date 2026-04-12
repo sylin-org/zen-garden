@@ -81,7 +81,7 @@ pub async fn build_test_state() -> AppState {
     // Docker client: attempt connection. If Docker is not available the
     // client is still valid — only health checks and container ops will fail.
     let docker =
-        Arc::new(crate::docker::Client::new().expect("Docker client construction should not fail"));
+        Arc::new(crate::docker::ContainerRuntime::new().expect("Docker client construction should not fail"));
 
     // Koi handle: all capabilities disabled — no mDNS, DNS, certmesh, proxy, HTTP.
     let koi_handle = Arc::new(

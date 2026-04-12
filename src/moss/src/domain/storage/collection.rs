@@ -11,7 +11,7 @@ use garden_common::storage::{StorageChanged, StorageRole};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::domain::traits::{ManagementStoreOps, StoragePlatform};
+use super::ports::{ManagementStoreOps, StoragePlatform};
 
 use super::platform_types::VolumeSnapshot;
 #[cfg(test)]

@@ -8,12 +8,12 @@ use garden_common::console::{self, ConsolePrinter};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::Client;
+use super::ContainerRuntime;
 use super::naming::zen_offering_container_name;
 use super::port::check_and_remediate_ports;
 use super::spec::ContainerSpec;
 
-impl Client {
+impl ContainerRuntime {
     /// Stop a service container
     pub async fn stop_service(
         &self,

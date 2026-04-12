@@ -8,7 +8,7 @@
 //! This is pure domain logic - delegates I/O to infra layer.
 
 use crate::AppState;
-use crate::docker::Client;
+use crate::docker::ContainerRuntime;
 use crate::domain::compatibility::{CompatibilityDecision, evaluate_compatibility};
 use crate::domain::connection;
 use garden_common::manifests::ManifestRegistry;
@@ -38,7 +38,7 @@ use garden_common::{
 /// - Persisting registry changes
 /// - Emitting events
 pub async fn adopt_offering_container(
-    docker: &Client,
+    docker: &ContainerRuntime,
     manifest_registry: &ManifestRegistry,
     offering: &str,
     stone_name: &str,

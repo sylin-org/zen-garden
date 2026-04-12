@@ -7,7 +7,7 @@
 //!
 //! Extracted from main.rs for cleaner separation of concerns.
 
-use crate::docker::Client;
+use crate::docker::ContainerRuntime;
 use crate::infra;
 use garden_common::PlatformRuntime;
 use garden_common::console::{ConsoleEvent, ConsolePrinter, EventCategory, EventStatus};
@@ -41,11 +41,11 @@ pub async fn connect_docker(
     console: &ConsolePrinter,
     runtime: &dyn PlatformRuntime,
     config: DockerConfig,
-) -> anyhow::Result<Arc<Client>> {
+) -> anyhow::Result<Arc<ContainerRuntime>> {
     let mut retries = 0;
 
     loop {
-        match Client::new() {
+        match ContainerRuntime::new() {
             Ok(dm) => {
                 tracing::info!("Docker daemon connected successfully");
 

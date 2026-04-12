@@ -6,7 +6,7 @@
 //! - Image pattern matching (regex)
 //! - Running state verification
 
-use crate::docker::Client;
+use crate::docker::ContainerRuntime;
 use crate::domain::traits::ServiceDetector;
 use anyhow::{Context, Result};
 use garden_common::detection::DetectionResult;
@@ -16,11 +16,11 @@ use std::sync::Arc;
 
 /// Concrete container-based service detector backed by Docker.
 pub struct ContainerDetector {
-    docker: Arc<Client>,
+    docker: Arc<ContainerRuntime>,
 }
 
 impl ContainerDetector {
-    pub fn new(docker: Arc<Client>) -> Self {
+    pub fn new(docker: Arc<ContainerRuntime>) -> Self {
         Self { docker }
     }
 }
@@ -45,7 +45,7 @@ impl ServiceDetector for ContainerDetector {
 /// let detected = detect_by_container_inspect(&docker, &config).await?;
 /// ```
 pub async fn detect_by_container_inspect(
-    docker: &Client,
+    docker: &ContainerRuntime,
     config: &ContainerInspectDetection,
 ) -> Result<DetectionResult> {
     tracing::debug!(

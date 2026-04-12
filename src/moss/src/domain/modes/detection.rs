@@ -270,7 +270,7 @@ mod tests {
     use garden_common::manifests::{CommandDetection, DetectionConfig};
 
     fn test_detector() -> Arc<ContainerDetector> {
-        let docker = Arc::new(crate::docker::Client::new().unwrap());
+        let docker = Arc::new(crate::docker::ContainerRuntime::new().unwrap());
         Arc::new(ContainerDetector::new(docker))
     }
 

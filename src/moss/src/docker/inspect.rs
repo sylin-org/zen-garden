@@ -6,11 +6,11 @@ use garden_common::constants::OFFERING_CONTAINER_PREFIX;
 use garden_common::{ServiceHealthStatus, ServiceStatus};
 use std::collections::HashMap;
 
-use super::Client;
+use super::ContainerRuntime;
 use super::naming::{decode_zen_offering_container_name, zen_offering_container_name};
 use super::spec::ContainerSpec;
 
-impl Client {
+impl ContainerRuntime {
     pub(super) async fn container_exists(&self, name: &str) -> Result<bool> {
         let filters = HashMap::from([("name".to_string(), vec![name.to_string()])]);
         let options = ListContainersOptions {

@@ -30,11 +30,11 @@ pub trait HealthProbe: Send + Sync {
 
 /// Production adapter: probes offering health via Docker container inspection.
 pub struct DockerHealthProbe {
-    docker: std::sync::Arc<crate::docker::Client>,
+    docker: std::sync::Arc<crate::docker::ContainerRuntime>,
 }
 
 impl DockerHealthProbe {
-    pub fn new(docker: std::sync::Arc<crate::docker::Client>) -> Self {
+    pub fn new(docker: std::sync::Arc<crate::docker::ContainerRuntime>) -> Self {
         Self { docker }
     }
 }

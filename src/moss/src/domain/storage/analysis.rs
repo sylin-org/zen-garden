@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use garden_common::storage::{DeviceState, StorageDetectedInfo, StorageManifest};
 
-use crate::domain::traits::StoragePlatform;
+use super::ports::StoragePlatform;
 
 /// Check if a mount path is in an allowed location for managed storage.
 pub fn is_allowed_mount(mount_path: &str) -> bool {

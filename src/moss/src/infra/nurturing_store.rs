@@ -20,7 +20,7 @@
 //!     {harvest_id}.tar.gz                <- Compressed harvest archive
 //! ```
 
-use crate::docker::Client;
+use crate::docker::ContainerRuntime;
 use crate::domain::harvest::HarvestManifest;
 use crate::domain::nurturing::{
     NurturingIndex, NurturingResult, NurturingSlot, OfferingSlots, RemoteNurturingIndex,
@@ -39,7 +39,7 @@ pub struct NurturingStore {
     /// Underlying harvest store for backup operations
     harvest_store: HarvestStore,
     /// Docker client for container operations (image commit, volume inspection)
-    docker: std::sync::Arc<Client>,
+    docker: std::sync::Arc<ContainerRuntime>,
     /// Mutex to serialize index load/modify/save cycles (STORAGE-0006 fix)
     /// Without this, two concurrent snapshots can read the same index,
     /// modify independently, and overwrite each other's changes.
@@ -48,7 +48,7 @@ pub struct NurturingStore {
 
 impl NurturingStore {
     /// Create a new nurturing store
-    pub fn new(harvest_store: HarvestStore, docker: std::sync::Arc<Client>) -> Self {
+    pub fn new(harvest_store: HarvestStore, docker: std::sync::Arc<ContainerRuntime>) -> Self {
         let config_dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
         let index_path = config_dir.join("nurturing").join("index.json");
 
@@ -743,7 +743,7 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
 
         // Create store with custom path
-        let docker = std::sync::Arc::new(crate::docker::Client::new().unwrap());
+        let docker = std::sync::Arc::new(crate::docker::ContainerRuntime::new().unwrap());
         let store = NurturingStore {
             index_path: config_dir.join("nurturing").join("index.json"),
             harvest_store,

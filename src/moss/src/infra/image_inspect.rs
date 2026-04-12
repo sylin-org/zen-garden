@@ -8,7 +8,7 @@
 //! helpers live in `domain::image_types`; this module provides the I/O
 //! function that populates them.
 
-use crate::docker::Client;
+use crate::docker::ContainerRuntime;
 use anyhow::{Context, Result};
 
 // Re-export domain value types so existing `use crate::infra::image_inspect::*`
@@ -20,7 +20,7 @@ pub use crate::domain::image_types::{
 /// Pull an image (if not present) and inspect its OCI config.
 ///
 /// Returns structured metadata extracted from the image's config layer.
-pub async fn inspect_image(docker: &Client, image_ref: &str) -> Result<ImageInspection> {
+pub async fn inspect_image(docker: &ContainerRuntime, image_ref: &str) -> Result<ImageInspection> {
     // Pull image first (no-op if already present, updates if tag changed)
     docker
         .pull_image(image_ref, None)

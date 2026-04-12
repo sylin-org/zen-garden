@@ -136,7 +136,7 @@ pub use platform::Platform;
 pub use pond::{PondMetadata, PondState, load_pond_metadata, save_pond_metadata};
 pub use presence::Presence;
 pub use security::{Pond, Security};
-pub use subsystems::{Subsystems, SubsystemStatus, SubsystemsChanged, SubsystemsChangeKind};
+pub use subsystems::{SubsystemStatus, Subsystems, SubsystemsChangeKind, SubsystemsChanged};
 pub use tool::{
     EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, Tool, ToolQuery,
     ToolsSnapshotPayload, new_registry, stream_event_type_for_delta,

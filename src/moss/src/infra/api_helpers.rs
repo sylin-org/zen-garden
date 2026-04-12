@@ -7,7 +7,6 @@ use axum::{Json, http::StatusCode};
 use garden_common::api_utils::ApiErrorResponse;
 use std::collections::HashMap;
 
-
 /// Create an error response for API handlers
 ///
 /// This is a convenience helper that wraps ApiErrorResponse creation

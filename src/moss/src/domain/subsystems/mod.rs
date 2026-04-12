@@ -23,5 +23,5 @@ pub mod event;
 #[cfg(test)]
 mod tests;
 
-pub use aggregate::{Subsystems, SubsystemStatus};
+pub use aggregate::{SubsystemStatus, Subsystems};
 pub use event::{ChangeKind as SubsystemsChangeKind, SubsystemsChanged};

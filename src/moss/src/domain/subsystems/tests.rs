@@ -82,8 +82,10 @@ async fn ready_unready_cycle_fires_both_events() {
     assert!(matches!(e1.kind, ChangeKind::Ready { ref name } if name == "network"));
 
     let e2 = rx.try_recv().expect("unready event");
-    assert!(matches!(e2.kind, ChangeKind::Unready { ref name, ref reason }
-        if name == "network" && reason == "cable unplugged"));
+    assert!(
+        matches!(e2.kind, ChangeKind::Unready { ref name, ref reason }
+        if name == "network" && reason == "cable unplugged")
+    );
 }
 
 #[tokio::test]
@@ -154,33 +156,29 @@ async fn wait_ready_resolves_on_transition() {
     let subs = Arc::new(make_subsystems(&["docker"]).await);
     let subs_clone = subs.clone();
 
-    let handle = tokio::spawn(async move {
-        subs_clone.wait_ready("docker").await
-    });
+    let handle = tokio::spawn(async move { subs_clone.wait_ready("docker").await });
 
     // Small delay to let the waiter subscribe
     tokio::task::yield_now().await;
     subs.mark_ready("docker").await;
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        handle,
-    )
-    .await
-    .expect("should not timeout")
-    .expect("task should not panic");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
 
     assert!(result);
 }
 
 #[tokio::test]
 async fn change_kind_names() {
+    assert_eq!(ChangeKind::Ready { name: "x".into() }.name(), "Ready");
     assert_eq!(
-        ChangeKind::Ready { name: "x".into() }.name(),
-        "Ready"
-    );
-    assert_eq!(
-        ChangeKind::Unready { name: "x".into(), reason: "y".into() }.name(),
+        ChangeKind::Unready {
+            name: "x".into(),
+            reason: "y".into()
+        }
+        .name(),
         "Unready"
     );
     assert_eq!(ChangeKind::ALL_NAMES, &["Ready", "Unready"]);

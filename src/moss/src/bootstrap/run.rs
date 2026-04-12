@@ -13,8 +13,6 @@ use crate::{
     // Docker monitoring
     DockerMonitor,
     DockerMonitorConfig,
-    Job,
-    JobStatus,
     // Network monitoring
     Network,
     NetworkConfig,
@@ -884,14 +882,12 @@ async fn build_state(
         Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
     ));
 
-    // Jobs aggregate (ARCH-0021 Book IV Ch3). The aggregate shares
-    // its inner `Arc<RwLock<HashMap<String, Job>>>` with the legacy
-    // `AppState::jobs` field during the Ch3 → Ch5 strangler phase so
-    // that raw-map callers and typed command callers see the same map.
-    let jobs_shared: Arc<RwLock<HashMap<String, Job>>> = Arc::new(RwLock::new(HashMap::new()));
-    let jobs_aggregate = Arc::new(
+    // Jobs aggregate (ARCH-0021 Book IV Ch5). Ephemeral — no
+    // persistence, state starts empty and is swept periodically by
+    // `JobsReaperTask` after the terminal TTL.
+    let jobs = Arc::new(
         crate::domain::Jobs::with_shared_state(
-            Arc::clone(&jobs_shared),
+            Arc::new(RwLock::new(HashMap::new())),
             metrics_aggregate.clone(),
             event_bus.clone(),
         )
@@ -930,8 +926,7 @@ async fn build_state(
             network: Arc::new(network),
             handlers: infrastructure_handlers.clone(),
         }),
-        jobs: jobs_shared,
-        jobs_aggregate,
+        jobs,
         pulse: pulse.clone(),
         event_bus: event_bus.clone(),
         shutdown_token: shutdown_token.clone(),
@@ -1371,19 +1366,19 @@ pub(crate) async fn start_preinstall_handler(state: &AppState) {
     }
 
     let job_id = uuid::Uuid::now_v7().to_string();
-    let job = Job {
-        id: job_id.clone(),
-        offerings: manifest.offerings.clone(),
-        status: JobStatus::Pending,
-        completed: vec![],
-        failed: HashMap::new(),
-        started_at: std::time::SystemTime::now(),
-        completed_at: None,
-    };
+    state
+        .jobs
+        .submit(job_id.clone(), "install-batch", manifest.offerings.clone())
+        .await;
 
-    state.jobs.write().await.insert(job_id.clone(), job);
-
-    // Spawn background installation + cleanup task
+    // Spawn background installation + cleanup task.
+    //
+    // `install_batch_task` always reaches a terminal state
+    // (`Completed` or `Failed`) before returning — the per-item
+    // `record_item_*` + final `complete`/`fail` calls all await
+    // inline. Once the task's `.await` returns, the manifest can
+    // be deleted. The previous 5-second poll loop that watched the
+    // raw jobs map for terminal status was redundant.
     let install_state = state.clone();
     let install_job_id = job_id.clone();
     let install_offerings = manifest.offerings.clone();
@@ -1391,29 +1386,11 @@ pub(crate) async fn start_preinstall_handler(state: &AppState) {
     tokio::spawn(async move {
         install_batch_task(&install_state, &install_job_id, install_offerings).await;
 
-        // Wait for job completion, then remove manifest
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            let jobs = install_state.jobs.read().await;
-            if let Some(job) = jobs.get(&install_job_id) {
-                match job.status {
-                    JobStatus::Completed | JobStatus::Failed => {
-                        drop(jobs); // Release lock
-                        tracing::info!("Pre-install job finished, removing manifest");
-                        if let Err(e) =
-                            tokio::fs::remove_file("/home/stone/garden-moss-preinstall.json").await
-                        {
-                            tracing::warn!(error = ?e, "Failed to remove pre-install manifest");
-                        } else {
-                            tracing::info!("Pre-install manifest removed - system ready");
-                        }
-                        break;
-                    }
-                    _ => continue,
-                }
-            } else {
-                break;
-            }
+        tracing::info!("Pre-install job finished, removing manifest");
+        if let Err(e) = tokio::fs::remove_file("/home/stone/garden-moss-preinstall.json").await {
+            tracing::warn!(error = ?e, "Failed to remove pre-install manifest");
+        } else {
+            tracing::info!("Pre-install manifest removed - system ready");
         }
     });
 

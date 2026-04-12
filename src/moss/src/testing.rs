@@ -150,14 +150,10 @@ pub async fn build_test_state() -> AppState {
 
     let test_metrics = Arc::new(domain::Metrics::new());
 
-    // Jobs strangler (ARCH-0021 Book IV Ch3): one shared `Arc` backs
-    // both `AppState::jobs` (legacy raw map) and the aggregate's
-    // internal state.
-    let jobs_shared: Arc<RwLock<HashMap<String, crate::Job>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-    let jobs_aggregate = Arc::new(
+    // Jobs aggregate (ARCH-0021 Book IV) — ephemeral, empty state.
+    let jobs = Arc::new(
         domain::Jobs::with_shared_state(
-            Arc::clone(&jobs_shared),
+            Arc::new(RwLock::new(HashMap::new())),
             test_metrics.clone(),
             event_bus.clone(),
         )
@@ -204,8 +200,7 @@ pub async fn build_test_state() -> AppState {
             network: Arc::new(network),
             handlers: infrastructure_handlers,
         }),
-        jobs: jobs_shared,
-        jobs_aggregate,
+        jobs,
         pulse: pulse_tx,
         event_bus,
         shutdown_token: shutdown_token.clone(),

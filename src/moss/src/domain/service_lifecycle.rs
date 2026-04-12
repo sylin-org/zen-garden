@@ -399,16 +399,10 @@ async fn install_image_direct(
     }
 
     let job_id = uuid::Uuid::now_v7().to_string();
-    let job = crate::Job {
-        id: job_id.clone(),
-        offerings: vec![service_name.to_string()],
-        status: crate::JobStatus::Pending,
-        completed: vec![],
-        failed: std::collections::HashMap::new(),
-        started_at: std::time::SystemTime::now(),
-        completed_at: None,
-    };
-    state.jobs.write().await.insert(job_id.clone(), job);
+    state
+        .jobs
+        .submit(job_id.clone(), "install", vec![service_name.to_string()])
+        .await;
 
     let installing_offering = Offering {
         offering_id: generate_guidv7(),
@@ -561,16 +555,10 @@ async fn install_from_manifest(
     }
 
     let job_id = uuid::Uuid::now_v7().to_string();
-    let job = crate::Job {
-        id: job_id.clone(),
-        offerings: vec![service_name.clone()],
-        status: crate::JobStatus::Pending,
-        completed: vec![],
-        failed: std::collections::HashMap::new(),
-        started_at: std::time::SystemTime::now(),
-        completed_at: None,
-    };
-    state.jobs.write().await.insert(job_id.clone(), job);
+    state
+        .jobs
+        .submit(job_id.clone(), "install", vec![service_name.clone()])
+        .await;
 
     let native_port = compiled.default_host_port();
     let offering_protocol = crate::domain::connection::infer_protocol_from_manifest_metadata(

@@ -59,6 +59,7 @@ pub fn build_task_registry(
         Box::new(MediaWatcherTask),
         Box::new(TopologyMaintenanceTask),
         Box::new(RegistryMaintenanceTask),
+        Box::new(JobsReaperTask),
         Box::new(StorageLifecycleTask),
         Box::new(S3ListenerLifecycleTask),
         Box::new(StorageConsoleTask),

@@ -16,7 +16,6 @@
 use crate::domain::{Jobs, Metrics, Offerings, Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -76,24 +75,13 @@ pub struct AppState {
     /// Platform domain — Docker, runtime, network monitor, infrastructure handlers.
     pub platform: Arc<crate::domain::Platform>,
 
-    /// Background job tracker — the raw shared map.
-    ///
-    /// **Strangler field (Ch3 → Ch5 of ARCH-0021).** The same `Arc`
-    /// backs both this field and the `jobs_aggregate`'s private state,
-    /// so legacy raw-map call sites (`state.jobs.write().await.insert(...)`)
-    /// and typed aggregate commands (`state.jobs_aggregate.submit(...)`)
-    /// land in the same `HashMap`. Ch4 migrates executor sites; Ch5
-    /// migrates the remaining sites, deletes this field, and renames
-    /// `jobs_aggregate` back to `jobs`.
-    pub jobs: Arc<RwLock<HashMap<String, Job>>>,
-
-    /// Jobs aggregate (ARCH-0021). Typed command/query API over the
-    /// same shared `Arc` held by `jobs` above. Every mutation through
-    /// this path emits `JobsChanged` (internal) + `JobEvent` (wire)
-    /// atomically. Ch4/Ch5 migrate call sites; until then, the legacy
-    /// raw-map path above remains the primary mutation entry point
-    /// and does not fire events.
-    pub jobs_aggregate: Arc<Jobs>,
+    /// Jobs aggregate (ARCH-0021) — typed command/query API for the
+    /// `Jobs` bounded context. Every mutation emits `JobsChanged`
+    /// (internal) + `JobEvent` (wire) atomically through
+    /// `EventBus`. Terminal jobs are swept by the `JobsReaperTask`
+    /// background task after the terminal TTL
+    /// ([`DEFAULT_TERMINAL_TTL`](crate::domain::JOBS_DEFAULT_TERMINAL_TTL)).
+    pub jobs: Arc<Jobs>,
 
     /// Unified pulse event channel (domain + transport events).
     /// Consumers: pulse stream (full firehose), presence stream (domain-only, translated).
@@ -194,7 +182,7 @@ impl axum::extract::FromRef<AppState> for Arc<Metrics> {
 
 impl axum::extract::FromRef<AppState> for Arc<Jobs> {
     fn from_ref(state: &AppState) -> Self {
-        state.jobs_aggregate.clone()
+        state.jobs.clone()
     }
 }
 

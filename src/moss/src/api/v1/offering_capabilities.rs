@@ -237,8 +237,6 @@ pub async fn add_offering_capability_v1(
     Path(offering_name): Path<String>,
     Json(request): Json<AddCapabilityRequest>,
 ) -> crate::api::ApiResult<AddCapabilityResponse> {
-    use crate::{Job, JobStatus};
-
     // Find the service (managed or adopted)
     let (service, mode) = find_service_for_capability(&state, &offering_name).await?;
 
@@ -325,41 +323,29 @@ pub async fn add_offering_capability_v1(
         });
     }
 
-    // Case 3: Check for existing running add job for this capability
+    // Case 3: Check for existing running add job for this capability.
+    // `find_active_by_prefix` returns the first in-progress job whose id
+    // starts with the canonical `add-capability-{offering}-{capability}`
+    // prefix (every id from Case 4 has that prefix plus a trailing UUID).
     let job_key = format!("add-capability-{}-{}", service.name, request.name);
-    {
-        let jobs = state.jobs.read().await;
-        for (job_id, job) in jobs.iter() {
-            if job_id.starts_with(&job_key)
-                && matches!(job.status, JobStatus::Running | JobStatus::Pending)
-            {
-                return crate::api::ok(AddCapabilityResponse::InProgress {
-                    offering: service.name.clone(),
-                    capability: request.name.clone(),
-                    job_id: job_id.clone(),
-                    message: format!(
-                        "Add operation already in progress for {} '{}'",
-                        cap_type, request.name
-                    ),
-                });
-            }
-        }
+    if let Some(existing) = state.jobs.find_active_by_prefix(&job_key).await {
+        return crate::api::ok(AddCapabilityResponse::InProgress {
+            offering: service.name.clone(),
+            capability: request.name.clone(),
+            job_id: existing.id,
+            message: format!(
+                "Add operation already in progress for {} '{}'",
+                cap_type, request.name
+            ),
+        });
     }
 
-    // Case 4: Create job and spawn background task
+    // Case 4: Create job and spawn background task.
     let job_id = format!("{}-{}", job_key, uuid::Uuid::now_v7());
-
-    let job = Job {
-        id: job_id.clone(),
-        offerings: vec![request.name.clone()], // Track capability name
-        status: JobStatus::Pending,
-        completed: vec![],
-        failed: std::collections::HashMap::new(),
-        started_at: std::time::SystemTime::now(),
-        completed_at: None,
-    };
-
-    state.jobs.write().await.insert(job_id.clone(), job);
+    state
+        .jobs
+        .submit(job_id.clone(), "add-capability", vec![request.name.clone()])
+        .await;
 
     // Spawn background task
     let state = state.clone();
@@ -657,8 +643,6 @@ pub async fn refresh_offering_capabilities_v1(
     Path(offering_name): Path<String>,
     Json(request): Json<RefreshCapabilitiesRequest>,
 ) -> crate::api::ApiResult<RefreshCapabilitiesResponse> {
-    use crate::{Job, JobStatus};
-
     // Find the service (managed or adopted)
     let (service, mode) = find_service_for_capability(&state, &offering_name).await?;
 
@@ -735,56 +719,44 @@ pub async fn refresh_offering_capabilities_v1(
         });
     }
 
-    // Case 3: Check for existing running refresh job for this offering
+    // Case 3: Check for existing running refresh job for this offering.
     let job_key = format!("refresh-capabilities-{}", service.name);
-    {
-        let jobs = state.jobs.read().await;
-        for (job_id, job) in jobs.iter() {
-            // Check if this is a refresh job for the same offering and still running
-            if job_id.starts_with(&job_key)
-                && matches!(job.status, JobStatus::Running | JobStatus::Pending)
-            {
-                let completed = job.completed.len();
-                let failed = job.failed.len();
-                let job_total = job.offerings.len(); // offerings holds capability names for refresh jobs
-                let progress = if job_total > 0 {
-                    ((completed + failed) * 100 / job_total) as u8
-                } else {
-                    0
-                };
+    if let Some(existing) = state.jobs.find_active_by_prefix(&job_key).await {
+        let completed = existing.completed.len();
+        let failed = existing.failed.len();
+        let job_total = existing.offerings.len(); // offerings holds capability names for refresh jobs
+        let progress = if job_total > 0 {
+            ((completed + failed) * 100 / job_total) as u8
+        } else {
+            0
+        };
 
-                return crate::api::ok(RefreshCapabilitiesResponse::InProgress {
-                    offering: service.name.clone(),
-                    job_id: job_id.clone(),
-                    progress_percent: progress,
-                    completed,
-                    failed,
-                    total: job_total,
-                });
-            }
-        }
+        return crate::api::ok(RefreshCapabilitiesResponse::InProgress {
+            offering: service.name.clone(),
+            job_id: existing.id,
+            progress_percent: progress,
+            completed,
+            failed,
+            total: job_total,
+        });
     }
 
-    // Case 4: Create new job and spawn background task
+    // Case 4: Create new job and spawn background task.
     let job_id = format!("{}-{}", job_key, uuid::Uuid::now_v7());
 
-    // For refresh jobs, we use offerings to store capability names for progress tracking
+    // For refresh jobs, `offerings` is repurposed to hold capability names
+    // so progress can be computed as `completed.len() / offerings.len()`.
+    // See `docs/scaffolding.md` deferred-job-offerings-field entry for the
+    // post-epic rename plan.
     let capability_names: Vec<String> = capabilities_to_refresh
         .iter()
         .map(|c| c.name.clone())
         .collect();
 
-    let job = Job {
-        id: job_id.clone(),
-        offerings: capability_names, // Repurposed: holds capability names for progress
-        status: JobStatus::Pending,
-        completed: vec![],
-        failed: std::collections::HashMap::new(),
-        started_at: std::time::SystemTime::now(),
-        completed_at: None,
-    };
-
-    state.jobs.write().await.insert(job_id.clone(), job);
+    state
+        .jobs
+        .submit(job_id.clone(), "refresh-capabilities", capability_names)
+        .await;
 
     // Spawn background task
     let state = state.clone();

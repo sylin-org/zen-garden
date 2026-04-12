@@ -426,7 +426,7 @@ pub async fn put_object(
         volumes: &state.current.storage.volumes,
         registry: &state.tool.registry,
         stone_id: &state.current.stone.id,
-        tick: Some(state.orchestration.storage.tick.raw.clone()),
+        tick: Some(state.current.storage.coordination.tick.raw.clone()),
     };
 
     let handle = match resolver.for_write(&selected).await {
@@ -870,7 +870,7 @@ pub async fn delete_object(
         volumes: &state.current.storage.volumes,
         registry: &state.tool.registry,
         stone_id: &state.current.stone.id,
-        tick: Some(state.orchestration.storage.tick.raw.clone()),
+        tick: Some(state.current.storage.coordination.tick.raw.clone()),
     };
 
     let handle = match resolver.for_write(&selected).await {
@@ -1470,7 +1470,7 @@ pub async fn complete_or_initiate_multipart(
         volumes: &state.current.storage.volumes,
         registry: &state.tool.registry,
         stone_id: &state.current.stone.id,
-        tick: Some(state.orchestration.storage.tick.raw.clone()),
+        tick: Some(state.current.storage.coordination.tick.raw.clone()),
     };
 
     let handle = match resolver.for_write(&selected).await {

@@ -29,8 +29,8 @@ impl BackgroundTask for StorageTickAggregatorTask {
             }
             ctx.ready.signal();
 
-            let raw_rx = ctx.state.orchestration.storage.tick.raw.subscribe();
-            let agg_tx = ctx.state.orchestration.storage.tick.debounced.clone();
+            let raw_rx = ctx.state.current.storage.coordination.tick.raw.subscribe();
+            let agg_tx = ctx.state.current.storage.coordination.tick.debounced.clone();
 
             crate::tasks::storage_tick_aggregator::storage_tick_aggregator_task(
                 raw_rx, agg_tx, ctx.token,

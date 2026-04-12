@@ -188,6 +188,17 @@ pub async fn build_test_state() -> AppState {
                 volumes: domain::new_volumes(),
                 media: domain::new_media(),
                 changed: storage_changed,
+                coordination: domain::storage::Coordination {
+                    tick: domain::storage::Tick {
+                        raw: storage_tick_raw,
+                        debounced: storage_tick_debounced,
+                    },
+                    nudge: Arc::new(tokio::sync::Notify::new()),
+                    rescan: rescan_tx,
+                    s3_listeners: Arc::new(crate::infra::storage::S3Listeners::new(
+                        shutdown_token.clone(),
+                    )),
+                },
             }),
             capabilities,
             hardware_topology: Arc::new(RwLock::new(None)),
@@ -272,25 +283,12 @@ pub async fn build_test_state() -> AppState {
             .await,
         ),
         subsystems: subsystems.clone(),
-        orchestration: Arc::new(domain::Orchestration {
-            storage: domain::StorageOrchestration {
-                tick: domain::orchestration::storage::Tick {
-                    raw: storage_tick_raw,
-                    debounced: storage_tick_debounced,
-                },
-                nudge: Arc::new(tokio::sync::Notify::new()),
-                rescan: rescan_tx,
-                s3_listeners: Arc::new(crate::infra::storage::S3Listeners::new(
-                    shutdown_token.clone(),
-                )),
-            },
-            nurturing: domain::orchestration::nurturing::NurturingOrchestration {
-                harvest_ops,
-                store: nurturing_store,
-            },
-            nourishment: domain::orchestration::nourishment::NourishmentOrchestration {
-                jobs: Arc::new(RwLock::new(HashMap::new())),
-            },
+        nurturing: Arc::new(domain::NurturingOrchestration {
+            harvest_ops,
+            store: nurturing_store,
+        }),
+        nourishment: Arc::new(domain::NourishmentOrchestration {
+            jobs: Arc::new(RwLock::new(HashMap::new())),
         }),
         task_supervisor: Arc::new(RwLock::new(None)),
     }

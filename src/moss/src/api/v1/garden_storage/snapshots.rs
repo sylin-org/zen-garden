@@ -209,7 +209,6 @@ pub async fn list_memories_v1(
         let store = handle.content_store_for_read().unwrap();
         let volume_id = handle.volume_id().unwrap();
         match state
-            .orchestration
             .nurturing
             .store
             .list_remote_snapshots(&store, volume_id)
@@ -313,7 +312,6 @@ pub async fn list_offering_snapshots_v1(
         let store = handle.content_store_for_read().unwrap();
         let volume_id = handle.volume_id().unwrap();
         let index = state
-            .orchestration
             .nurturing
             .store
             .list_remote_snapshots(&store, volume_id)

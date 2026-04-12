@@ -154,7 +154,7 @@ pub async fn pin_bank(
     for event in &events {
         state.emit_storage_changed(event.clone()).await;
     }
-    state.orchestration.storage.nudge.notify_one();
+    state.current.storage.coordination.nudge.notify_one();
 
     crate::api::ok(PinResponse {
         name: moniker.clone(),
@@ -194,7 +194,7 @@ pub async fn unpin_bank(
     for event in &events {
         state.emit_storage_changed(event.clone()).await;
     }
-    state.orchestration.storage.nudge.notify_one();
+    state.current.storage.coordination.nudge.notify_one();
 
     crate::api::ok(PinResponse {
         name: moniker.clone(),

@@ -70,7 +70,7 @@ pub(crate) async fn arm_s3_for_all_primaries(state: &AppState) {
         {
             let name = mgmt.display_name().to_string();
             let storage_id = mgmt.id.clone();
-            let s3 = &state.orchestration.storage.s3_listeners;
+            let s3 = &state.current.storage.coordination.s3_listeners;
             if let Some(port) = s3.arm(&name, &storage_id, state.clone()).await {
                 tracing::debug!(
                     replica_set = %name,
@@ -84,7 +84,7 @@ pub(crate) async fn arm_s3_for_all_primaries(state: &AppState) {
 
 /// Remove S3 listeners for replica sets that no longer have a local Primary volume.
 pub(crate) async fn reconcile_s3_listeners(state: &AppState) {
-    let s3 = &state.orchestration.storage.s3_listeners;
+    let s3 = &state.current.storage.coordination.s3_listeners;
     let assignments = s3.assignments().await;
     let volumes = state.current.storage.volumes.read().await;
 

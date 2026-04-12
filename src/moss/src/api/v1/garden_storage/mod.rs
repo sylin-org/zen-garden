@@ -443,8 +443,9 @@ async fn build_s3_connection(
     }
 
     let catalog = state
-        .orchestration
+        .current
         .storage
+        .coordination
         .s3_listeners
         .port_catalog()
         .await;

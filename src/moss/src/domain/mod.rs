@@ -93,9 +93,7 @@ pub use offerings::{
     ActiveGuard, CandidatesGuard, ChangeKind, FileOfferingStore, OfferingStore, Offerings,
     OfferingsChanged,
 };
-pub use orchestration::{
-    NourishmentOrchestration, NurturingOrchestration, Orchestration, StorageOrchestration,
-};
+pub use orchestration::{NourishmentOrchestration, NurturingOrchestration};
 pub use reconciliation::{ReconciliationResult, reconcile_services};
 pub use registry::Registry;
 pub use service_discovery::{

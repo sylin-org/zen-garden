@@ -65,7 +65,6 @@ pub async fn execute(
 
         // Restore volumes from harvest via trait object (no infra import)
         state
-            .orchestration
             .nurturing
             .harvest_ops
             .restore_harvest(harvest_id)

@@ -234,7 +234,7 @@ pub(crate) async fn start_background_tasks(
     // StorageWatcherSet (STORAGE-0009 Phase 5, STORAGE-0013)
     let watcher_set = crate::infra::storage::StorageWatcherSet::new(
         state.current.storage.volumes.clone(),
-        state.orchestration.storage.tick.raw.clone(),
+        state.current.storage.coordination.tick.raw.clone(),
         shutdown_token.child_token(),
     );
     // Initial reconciliation — start watchers for already-mounted storages
@@ -263,7 +263,7 @@ pub(crate) async fn start_background_tasks(
             state.current.storage.volumes.clone(),
             state.tool.registry.clone(),
             state.current.stone.id.clone(),
-            state.orchestration.storage.tick.raw.clone(),
+            state.current.storage.coordination.tick.raw.clone(),
             state.subscribe_storage_changed(),
             state.tool.delta_stream(),
             state.console.clone(),

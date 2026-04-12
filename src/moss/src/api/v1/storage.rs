@@ -524,7 +524,7 @@ pub async fn rename_bank_v1(
             new_name: request.new_name.clone(),
         })
         .await;
-    state.orchestration.storage.nudge.notify_one();
+    state.current.storage.coordination.nudge.notify_one();
 
     crate::api::ok(updated)
 }
@@ -1563,7 +1563,7 @@ pub async fn pin_bank_v1(
     for event in &events {
         state.emit_storage_changed(event.clone()).await;
     }
-    state.orchestration.storage.nudge.notify_one();
+    state.current.storage.coordination.nudge.notify_one();
 
     crate::api::ok(PinSeedBankResponse {
         name: name.clone(),
@@ -1604,7 +1604,7 @@ pub async fn unpin_bank_v1(
     for event in &events {
         state.emit_storage_changed(event.clone()).await;
     }
-    state.orchestration.storage.nudge.notify_one();
+    state.current.storage.coordination.nudge.notify_one();
 
     crate::api::ok(PinSeedBankResponse {
         name: name.clone(),
@@ -1706,7 +1706,7 @@ pub async fn stream_storage_v1(
     use tokio_stream::StreamExt;
 
     let token = state.shutdown_token.child_token();
-    let rx = state.orchestration.storage.tick_stream();
+    let rx = state.current.storage.tick_stream();
     let filter_name = query.storage.clone();
 
     info!(
@@ -1767,8 +1767,9 @@ pub async fn stream_storage_v1(
 /// Response: `{ "ports": { "storage": 23454, "prod": 23455 } }`
 pub async fn s3_port_catalog(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
     let catalog = state
-        .orchestration
+        .current
         .storage
+        .coordination
         .s3_listeners
         .port_catalog()
         .await;

@@ -71,9 +71,9 @@ pub use platform_types::{
 
 /// Storage data plane — what physically exists on this stone (ARCH-0004).
 ///
-/// Holds only the collections that describe physical storage: volumes, media,
-/// and the domain event channel. Coordination primitives (tick, nudge, rescan,
-/// nurturing, nourishment) live in `state.orchestration.*`.
+/// Holds the collections that describe physical storage (volumes, media,
+/// domain event channel) and the coordination primitives that drive the
+/// storage orchestration loop (tick, nudge, rescan, S3 listeners).
 ///
 /// Field path: `state.current.storage.*`
 #[derive(Clone)]
@@ -87,4 +87,61 @@ pub struct Storage {
     /// Storage domain event channel (STORAGE-0013).
     /// Emitted on add, remove, rename, role change, health change, rescan.
     pub changed: tokio::sync::broadcast::Sender<garden_common::storage::StorageChanged>,
+
+    /// Coordination primitives for the storage orchestration loop (ARCH-0029).
+    /// Formerly `state.orchestration.storage.*`.
+    pub coordination: Coordination,
+}
+
+impl Storage {
+    /// Subscribe to the debounced storage tick stream.
+    ///
+    /// Returns a broadcast receiver of [`garden_common::storage::StorageTick`]
+    /// events quantized at 2s quiet / 10s deadline. Use this for SSE streams
+    /// and replication tasks instead of accessing `coordination.tick.debounced`
+    /// directly.
+    pub fn tick_stream(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageTick> {
+        self.coordination.tick.debounced.subscribe()
+    }
+}
+
+/// Coordination signals for the storage domain (ARCH-0029).
+///
+/// Drives the background storage orchestration loop (Primary/Dormant
+/// role assignment, tick aggregation, S3 listener lifecycle).
+///
+/// Formerly `StorageOrchestration` in `domain::orchestration::storage`.
+/// Field path: `state.current.storage.coordination.*`
+#[derive(Clone)]
+pub struct Coordination {
+    /// Write-event tick channels at two frequencies.
+    pub tick: Tick,
+
+    /// Wakes the orchestration loop immediately (skip the 3s tick wait).
+    /// Fired on beacon arrival, rename, pin/unpin.
+    pub nudge: std::sync::Arc<tokio::sync::Notify>,
+
+    /// Requests a full volume reconcile from the watcher loop.
+    /// Sent by API handlers after on-disk manifest mutations.
+    pub rescan: tokio::sync::mpsc::Sender<()>,
+
+    /// Per-storage S3 listeners (STORAGE-0016).
+    /// Arms a dedicated S3-compatible HTTP port per managed storage.
+    pub s3_listeners: std::sync::Arc<crate::infra::storage::S3Listeners>,
+}
+
+/// Write-event tick channels at two frequencies.
+///
+/// Field path: `state.current.storage.coordination.tick.{raw|debounced}`
+#[derive(Clone)]
+pub struct Tick {
+    /// Raw per-write tick (high frequency, internal only).
+    /// Consumed by the debounce task; not for downstream subscribers.
+    pub raw: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
+
+    /// Debounced tick (2s quiet / 10s deadline cap).
+    /// Internal — use [`Storage::tick_stream()`] to subscribe.
+    pub(crate) debounced: tokio::sync::broadcast::Sender<garden_common::storage::StorageTick>,
 }

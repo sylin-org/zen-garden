@@ -947,6 +947,17 @@ async fn build_state(
                 volumes: volumes.clone(),
                 media: media.clone(),
                 changed: storage_changed.clone(),
+                coordination: crate::domain::storage::Coordination {
+                    tick: crate::domain::storage::Tick {
+                        raw: storage_tick_raw.clone(),
+                        debounced: storage_tick_debounced.clone(),
+                    },
+                    nudge: orchestration_nudge.clone(),
+                    rescan: volume_rescan.clone(),
+                    s3_listeners: Arc::new(crate::infra::storage::S3Listeners::new(
+                        shutdown_token.clone(),
+                    )),
+                },
             }),
             capabilities: capabilities.clone(),
             hardware_topology: Arc::new(RwLock::new(None)),
@@ -1000,26 +1011,13 @@ async fn build_state(
         health: health_aggregate,
         // Subsystem readiness -- ARCH-0023 aggregate (Book VI)
         subsystems: subsystems.clone(),
-        // Orchestration coordination plane (ARCH-0004) --" coordination primitives.
-        orchestration: Arc::new(crate::domain::Orchestration {
-            storage: crate::domain::StorageOrchestration {
-                tick: crate::domain::orchestration::storage::Tick {
-                    raw: storage_tick_raw.clone(),
-                    debounced: storage_tick_debounced.clone(),
-                },
-                nudge: orchestration_nudge.clone(),
-                rescan: volume_rescan.clone(),
-                s3_listeners: Arc::new(crate::infra::storage::S3Listeners::new(
-                    shutdown_token.clone(),
-                )),
-            },
-            nurturing: crate::domain::orchestration::nurturing::NurturingOrchestration {
-                harvest_ops: Arc::clone(&harvest_ops),
-                store: Arc::clone(&nurturing_store),
-            },
-            nourishment: crate::domain::orchestration::nourishment::NourishmentOrchestration {
-                jobs: nourishment_map.clone(),
-            },
+        // Nurturing + nourishment (ARCH-0029: dissolved from Orchestration).
+        nurturing: Arc::new(crate::domain::NurturingOrchestration {
+            harvest_ops: Arc::clone(&harvest_ops),
+            store: Arc::clone(&nurturing_store),
+        }),
+        nourishment: Arc::new(crate::domain::NourishmentOrchestration {
+            jobs: nourishment_map.clone(),
         }),
 
         // ARCH-0015: supervisor handle set after supervisor is built

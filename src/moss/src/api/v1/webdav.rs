@@ -89,7 +89,7 @@ pub async fn handle_webdav(State(state): State<AppState>, request: Request) -> R
         registry: &state.tool.registry,
         stone_id: &state.current.stone.id,
         tick: if is_mutation {
-            Some(state.orchestration.storage.tick.raw.clone())
+            Some(state.current.storage.coordination.tick.raw.clone())
         } else {
             None
         },

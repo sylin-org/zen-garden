@@ -382,7 +382,7 @@ pub async fn put_file_v1(
         volumes: &state.current.storage.volumes,
         registry: &state.tool.registry,
         stone_id: &state.current.stone.id,
-        tick: Some(state.orchestration.storage.tick.raw.clone()),
+        tick: Some(state.current.storage.coordination.tick.raw.clone()),
     };
     let handle = resolver.for_write(&name).await.map_err(|e| {
         err(
@@ -445,7 +445,7 @@ pub async fn delete_file_v1(
         volumes: &state.current.storage.volumes,
         registry: &state.tool.registry,
         stone_id: &state.current.stone.id,
-        tick: Some(state.orchestration.storage.tick.raw.clone()),
+        tick: Some(state.current.storage.coordination.tick.raw.clone()),
     };
     let handle = resolver.for_write(&name).await.map_err(|e| {
         err(

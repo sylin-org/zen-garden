@@ -63,7 +63,6 @@ pub async fn list_nurturing(
     State(state): State<AppState>,
 ) -> crate::api::ApiResult<NurturingIndex> {
     let index = state
-        .orchestration
         .nurturing
         .store
         .load_index()
@@ -99,7 +98,6 @@ pub async fn get_offering_slots(
 
     let slots = if let Some(id) = offering_id {
         state
-            .orchestration
             .nurturing
             .store
             .get_offering_slots(&id)
@@ -113,7 +111,6 @@ pub async fn get_offering_slots(
     } else {
         // Try looking up directly by offering_id
         state
-            .orchestration
             .nurturing
             .store
             .get_offering_slots(&offering)
@@ -176,7 +173,6 @@ pub async fn create_snapshot(
     );
 
     let result = state
-        .orchestration
         .nurturing
         .store
         .create_snapshot(
@@ -254,7 +250,6 @@ pub async fn restore_snapshot(
 
     // Restore the snapshot
     let manifest = state
-        .orchestration
         .nurturing
         .store
         .restore_snapshot(&offering_id, slot)
@@ -304,7 +299,6 @@ pub async fn delete_nurturing(
     let offering_id = offering_id.unwrap_or(offering.clone());
 
     state
-        .orchestration
         .nurturing
         .store
         .delete_offering(&offering_id)
@@ -400,7 +394,6 @@ pub async fn replicate_to_seed_bank(
     let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let result = state
-        .orchestration
         .nurturing
         .store
         .replicate_to_seed_bank(
@@ -443,7 +436,6 @@ pub async fn list_remote_snapshots(
     let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
 
     let index = state
-        .orchestration
         .nurturing
         .store
         .list_remote_snapshots(&store, &seed_bank.id)
@@ -515,7 +507,6 @@ pub async fn restore_from_seed_bank(
     // Restore from seed bank
     let store = crate::infra::storage::ContentStore::new_public(&seed_bank.mount_path);
     let manifest = state
-        .orchestration
         .nurturing
         .store
         .restore_from_seed_bank(

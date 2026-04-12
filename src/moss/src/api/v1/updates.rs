@@ -466,7 +466,7 @@ pub async fn execute_stone(
 
     // Store channel in state
     {
-        let mut jobs = state.orchestration.nourishment.jobs.write().await;
+        let mut jobs = state.nourishment.jobs.write().await;
         jobs.insert(job_id.clone(), tx.clone());
     }
 
@@ -603,7 +603,7 @@ async fn execute_updates_background(
 
     // Cleanup job from state before potential reboot
     {
-        let mut jobs = state.orchestration.nourishment.jobs.write().await;
+        let mut jobs = state.nourishment.jobs.write().await;
         jobs.remove(&job_id);
     }
 
@@ -831,7 +831,7 @@ pub async fn stream_status(
 > {
     // Get broadcast receiver for this job
     let rx = {
-        let jobs = state.orchestration.nourishment.jobs.read().await;
+        let jobs = state.nourishment.jobs.read().await;
         jobs.get(&job_id).map(|tx| tx.subscribe()).ok_or_else(|| {
             crate::not_found(
                 "JOB_NOT_FOUND",

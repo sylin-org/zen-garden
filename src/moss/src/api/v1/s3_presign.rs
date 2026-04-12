@@ -67,8 +67,9 @@ pub async fn generate_presigned_url(
     // Determine the S3 endpoint for the URL
     let s3_port = {
         let catalog = state
-            .orchestration
+            .current
             .storage
+            .coordination
             .s3_listeners
             .port_catalog()
             .await;

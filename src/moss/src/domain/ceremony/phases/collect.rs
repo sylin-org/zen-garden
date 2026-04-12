@@ -54,7 +54,6 @@ pub async fn execute(
 
     // Create the harvest via trait object (no infra import)
     let harvest_result = state
-        .orchestration
         .nurturing
         .harvest_ops
         .create_harvest(offering, &state.current.stone.id, commit_image)

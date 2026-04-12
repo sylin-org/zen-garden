@@ -14,8 +14,9 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::domain::{
-    Catalog, Health, Jobs, Metrics, Offerings, Orchestration, Security, Subsystems, Tool,
+    Catalog, Health, Jobs, Metrics, Offerings, Security, Subsystems, Tool,
 };
+use crate::domain::orchestration::{NourishmentOrchestration, NurturingOrchestration};
 use crate::infra::{EventBus, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use std::sync::Arc;
@@ -142,9 +143,13 @@ pub struct AppState {
     /// Subsystem readiness — ARCH-0023 aggregate (Book VI of ARCH-0017)
     pub subsystems: Arc<Subsystems>,
 
-    /// Orchestration coordination plane — tick signals, nudge, rescan,
-    /// nurturing stores, nourishment job channels (ARCH-0004).
-    pub orchestration: Arc<Orchestration>,
+    /// Nurturing infrastructure — A/B backup scheduling and harvest
+    /// archives (ARCH-0029: dissolved from Orchestration).
+    pub nurturing: Arc<NurturingOrchestration>,
+
+    /// Nourishment SSE channels — per-job broadcast senders for update
+    /// progress streaming (ARCH-0029: dissolved from Orchestration).
+    pub nourishment: Arc<NourishmentOrchestration>,
 
     /// Task supervisor status handle (ARCH-0015). Set after supervisor is built.
     pub task_supervisor: Arc<RwLock<Option<crate::tasks::supervisor::SupervisorHandle>>>,
@@ -217,9 +222,15 @@ impl axum::extract::FromRef<AppState> for Arc<crate::domain::Companion> {
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<Orchestration> {
+impl axum::extract::FromRef<AppState> for Arc<NurturingOrchestration> {
     fn from_ref(state: &AppState) -> Self {
-        state.orchestration.clone()
+        state.nurturing.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<NourishmentOrchestration> {
+    fn from_ref(state: &AppState) -> Self {
+        state.nourishment.clone()
     }
 }
 
@@ -272,7 +283,7 @@ impl AppState {
     /// Non-blocking. If the channel is full (a rescan is already pending),
     /// the request is silently dropped — one rescan is sufficient.
     pub fn request_volume_rescan(&self) {
-        let _ = self.orchestration.storage.rescan.try_send(());
+        let _ = self.current.storage.coordination.rescan.try_send(());
     }
 
     /// Get stone ID (GUID v7)
@@ -391,7 +402,7 @@ impl AppState {
 
         // Nudge orchestration so role resolution (Primary/Dormant) reacts
         // immediately to connect/disconnect/role changes (STORAGE-0018).
-        self.orchestration.storage.nudge.notify_one();
+        self.current.storage.coordination.nudge.notify_one();
     }
 
     /// Subscribe to storage domain events.

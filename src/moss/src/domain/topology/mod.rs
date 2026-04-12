@@ -59,25 +59,15 @@ const OFFLINE_THRESHOLD_SECS: i64 = 90;
 /// TTL for offline stones before eviction (hours)
 const OFFLINE_EVICTION_HOURS: i64 = 24;
 
-/// In-memory topology cache
+/// In-memory topology cache.
 ///
-/// Stores all discovered stones indexed by stone_id.
-/// Populated from UDP discovery responses and mDNS announcements.
-pub type TopologyCache = Arc<RwLock<HashMap<String, TopologyEntry>>>;
+/// Stores all discovered stones indexed by stone_id. Populated from
+/// UDP discovery responses and mDNS announcements. Private to the
+/// topology module — the `Topology` aggregate is the only owner.
+pub(crate) type TopologyCache = Arc<RwLock<HashMap<String, TopologyEntry>>>;
 
-/// Shared dirty flag for topology persistence
-///
-/// Set by mutation functions, cleared after successful write.
-pub type TopologyDirtyFlag = Arc<AtomicBool>;
-
-/// Create a new dirty flag (initially dirty)
-///
-/// Starts dirty so the first maintenance cycle writes the initial topology
-/// file — even if no peer chirps have arrived yet, the self entry should
-/// be persisted to disk for container cold-start seeding.
-pub fn new_dirty_flag() -> TopologyDirtyFlag {
-    Arc::new(AtomicBool::new(true))
-}
+/// Shared dirty flag for topology persistence (private).
+pub(crate) type TopologyDirtyFlag = Arc<AtomicBool>;
 
 /// Mark the topology cache as dirty (needs persistence)
 fn mark_dirty(dirty: &TopologyDirtyFlag) {
@@ -88,7 +78,7 @@ fn mark_dirty(dirty: &TopologyDirtyFlag) {
 ///
 /// Primary method for updating topology cache from stone chirps.
 /// The chirp IS a TopologyEntry being broadcast.
-pub async fn upsert_from_chirp(cache: &TopologyCache, mut chirped_entry: TopologyEntry) {
+pub(super) async fn upsert_from_chirp(cache: &TopologyCache, mut chirped_entry: TopologyEntry) {
     let mut map = cache.write().await;
     let now = Utc::now();
 
@@ -118,7 +108,7 @@ pub async fn upsert_from_chirp(cache: &TopologyCache, mut chirped_entry: Topolog
 }
 
 /// Add or update a stone from a chirp, and mark dirty flag for persistence
-pub async fn upsert_from_chirp_dirty(
+pub(super) async fn upsert_from_chirp_dirty(
     cache: &TopologyCache,
     chirped_entry: TopologyEntry,
     dirty: &TopologyDirtyFlag,
@@ -128,13 +118,13 @@ pub async fn upsert_from_chirp_dirty(
 }
 
 /// Get all stones from topology cache (both online and offline)
-pub async fn get_all_stones(cache: &TopologyCache) -> Vec<TopologyEntry> {
+pub(super) async fn get_all_stones(cache: &TopologyCache) -> Vec<TopologyEntry> {
     let map = cache.read().await;
     map.values().cloned().collect()
 }
 
 /// Get only online stones from topology cache
-pub async fn get_online_stones(cache: &TopologyCache) -> Vec<TopologyEntry> {
+pub(super) async fn get_online_stones(cache: &TopologyCache) -> Vec<TopologyEntry> {
     let map = cache.read().await;
     map.values()
         .filter(|e| e.status == StoneStatus::Online)
@@ -143,13 +133,19 @@ pub async fn get_online_stones(cache: &TopologyCache) -> Vec<TopologyEntry> {
 }
 
 /// Get a specific stone by ID (regardless of status)
-pub async fn get_stone_by_id(cache: &TopologyCache, stone_id: &str) -> Option<TopologyEntry> {
+pub(super) async fn get_stone_by_id(
+    cache: &TopologyCache,
+    stone_id: &str,
+) -> Option<TopologyEntry> {
     let map = cache.read().await;
     map.get(stone_id).cloned()
 }
 
 /// Get a specific stone by name (regardless of status)
-pub async fn get_stone_by_name(cache: &TopologyCache, stone_name: &str) -> Option<TopologyEntry> {
+pub(super) async fn get_stone_by_name(
+    cache: &TopologyCache,
+    stone_name: &str,
+) -> Option<TopologyEntry> {
     let map = cache.read().await;
     map.values()
         .find(|entry| entry.stone_name == stone_name)
@@ -157,13 +153,13 @@ pub async fn get_stone_by_name(cache: &TopologyCache, stone_name: &str) -> Optio
 }
 
 /// Count stones in topology cache
-pub async fn count_stones(cache: &TopologyCache) -> usize {
+pub(super) async fn count_stones(cache: &TopologyCache) -> usize {
     let map = cache.read().await;
     map.len()
 }
 
 /// Count online stones in topology cache
-pub async fn count_online_stones(cache: &TopologyCache) -> usize {
+pub(super) async fn count_online_stones(cache: &TopologyCache) -> usize {
     let map = cache.read().await;
     map.values()
         .filter(|e| e.status == StoneStatus::Online)
@@ -178,7 +174,7 @@ pub async fn count_online_stones(cache: &TopologyCache) -> usize {
 /// 3. If more than MAX_OFFLINE_STONES offline → evict oldest (LRU)
 ///
 /// Returns (marked_offline_count, evicted_count)
-pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
+pub(super) async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
     let mut map = cache.write().await;
     let now = Utc::now();
     let offline_threshold = Duration::seconds(OFFLINE_THRESHOLD_SECS);
@@ -251,7 +247,7 @@ pub async fn maintain_topology(cache: &TopologyCache) -> (usize, usize) {
 ///
 /// Called every 30s by the topology maintenance task.
 /// Combines marking/eviction with persistence.
-pub async fn maintain_and_persist(
+pub(super) async fn maintain_and_persist(
     cache: &TopologyCache,
     dirty: &TopologyDirtyFlag,
     self_entry: &TopologyEntry,
@@ -275,17 +271,11 @@ pub async fn maintain_and_persist(
     (marked, evicted)
 }
 
-/// Legacy function for compatibility - now calls maintain_topology
-pub async fn prune_stale_stones(cache: &TopologyCache, _stale_threshold_minutes: i64) -> usize {
-    let (marked, evicted) = maintain_topology(cache).await;
-    marked + evicted
-}
-
 /// Mark a stone as offline by stone_id (graceful goodbye)
 ///
 /// Called when receiving a STONE_GOODBYE announcement.
 /// Returns true if the stone was found and marked offline.
-pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
+pub(super) async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
     let mut map = cache.write().await;
     if let Some(entry) = map.get_mut(stone_id)
         && entry.status != StoneStatus::Offline
@@ -305,7 +295,7 @@ pub async fn mark_stone_offline(cache: &TopologyCache, stone_id: &str) -> bool {
 }
 
 /// Mark a stone as offline and set dirty flag for persistence
-pub async fn mark_stone_offline_dirty(
+pub(super) async fn mark_stone_offline_dirty(
     cache: &TopologyCache,
     stone_id: &str,
     dirty: &TopologyDirtyFlag,
@@ -318,7 +308,7 @@ pub async fn mark_stone_offline_dirty(
 }
 
 /// Remove a specific stone from the cache (explicit forget)
-pub async fn forget_stone(cache: &TopologyCache, stone_name: &str) -> bool {
+pub(super) async fn forget_stone(cache: &TopologyCache, stone_name: &str) -> bool {
     let mut map = cache.write().await;
     let stone_id = map
         .values()
@@ -333,7 +323,7 @@ pub async fn forget_stone(cache: &TopologyCache, stone_name: &str) -> bool {
 }
 
 /// Remove a specific stone and set dirty flag for persistence
-pub async fn forget_stone_dirty(
+pub(super) async fn forget_stone_dirty(
     cache: &TopologyCache,
     stone_name: &str,
     dirty: &TopologyDirtyFlag,
@@ -354,7 +344,7 @@ pub async fn forget_stone_dirty(
 /// Writes self entry first, then all cached peers (skipping self).
 /// Format: bare `TopologyEntry[]` (not the API envelope).
 /// Uses atomic write (tmp + rename) for crash safety.
-pub async fn persist_topology(
+pub(super) async fn persist_topology(
     cache: &TopologyCache,
     self_entry: &TopologyEntry,
 ) -> Result<(), anyhow::Error> {
@@ -390,24 +380,6 @@ pub async fn persist_topology(
     );
 
     Ok(())
-}
-
-/// Flush topology to disk immediately (for graceful shutdown)
-///
-/// Checks dirty flag and flushes unconditionally.
-pub async fn flush_topology(
-    cache: &TopologyCache,
-    dirty: &TopologyDirtyFlag,
-    self_entry: &TopologyEntry,
-) {
-    // Clear dirty flag (we're flushing regardless)
-    dirty.store(false, Ordering::Relaxed);
-
-    if let Err(e) = persist_topology(cache, self_entry).await {
-        tracing::warn!(error = %e, "Failed to flush topology on shutdown");
-    } else {
-        tracing::info!("Topology flushed to disk (shutdown)");
-    }
 }
 
 #[cfg(test)]
@@ -617,7 +589,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dirty_flag_basics() {
-        let dirty = new_dirty_flag();
+        let dirty: TopologyDirtyFlag = Arc::new(AtomicBool::new(true));
         // Starts dirty — first maintenance cycle writes initial file
         assert!(dirty.load(Ordering::Relaxed));
 
@@ -639,7 +611,7 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_dirty_sets_flag() {
         let cache = make_test_cache();
-        let dirty = new_dirty_flag();
+        let dirty: TopologyDirtyFlag = Arc::new(AtomicBool::new(true));
 
         let entry = make_entry("s1", "oak", "http://10.0.0.1:7123", "0.1.0");
         upsert_from_chirp_dirty(&cache, entry, &dirty).await;

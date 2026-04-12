@@ -73,6 +73,20 @@ As of 2026-04-11, after [ARCH-0016](../decisions/ARCH-0016-offerings-aggregate-d
 - **HTTP surface:** `/api/v1/stone/metrics` (snapshot), `/metrics/global`, `/metrics/domains`, `/metrics/domains/{name}`, `/metrics/tasks`, `/metrics/tasks/{name}`, `/metrics/stream` (SSE)
 - **Book:** ARCH-0018 (Book I of ARCH-0017) — **COMPLETE**
 
+#### Topology
+
+- **Status:** Full. ARCH-0020 (Book III of ARCH-0017) — completed 2026-04-11.
+- **Owns:** peer cache (discovered + offline stones indexed by stone_id), persistence dirty flag, self-entry assembly from upstream domains
+- **Commands:** `upsert_from_chirp` (always-dirty invariant), `mark_stone_offline`, `forget_stone`, `maintain` (periodic eviction + persist), `flush` (graceful shutdown), `build_self_entry` (query-style), `sync_services` / `sync_capabilities` / `update_stone_health` / `announce_resolution_change` (self-entry commands with `auto_chirp` gate), `chirp` (transport passthrough)
+- **Queries:** `all_stones`, `online_stones`, `get_by_id`, `get_by_name`, `count`, `online_count`, `is_dirty`
+- **Emits:** `TopologyChanged` with six `ChangeKind` variants — `Discovered`, `Online`, `Offline`, `Forgotten`, `Evicted`, `Chirped`. Fires only on interesting transitions — peer refreshes of unchanged entries do NOT fire events.
+- **Subscribes:** composition helpers pull `OfferingsChanged` into the self-entry reassembly path (`sync_services`); no internal subscription on the aggregate itself.
+- **Ports:** `ChirpTransport` → `P2pChirpTransport` (UDP `STONE_CHIRP` announcements), `TopologyStore` → `FileTopologyStore` (TOPO-0002 atomic JSON writes)
+- **Cross-cutting:** `Arc<Metrics>` injected at construction; mutation latency + per-kind event counters recorded on every command.
+- **Composition layer:** `domain::topology::composition::*` holds the AppState-bound helpers (`self_entry_inputs`, `build_self_entry`, `sync_services`, `sync_capabilities`, `update_stone_health`, `announce_resolution_change`) so the aggregate holds no back-reference to `AppState`.
+- **Source:** `src/moss/src/domain/topology/` (mod.rs + aggregate.rs + event.rs + error.rs + transport.rs + store.rs + composition.rs)
+- **Book:** III (ARCH-0020) — **COMPLETE**
+
 #### Resources (incidentally extracted by Book I Chapter 2)
 
 - **Status:** Full-but-thin. Book I Chapter 2 renamed the existing hardware-resource surface from "metrics" to "resources" across `garden-common`, `garden-moss`, and the typed client. Not a new aggregate — Resources is a simple facade over `Current::Resources` (the runtime hardware snapshot updated by the `resources-collector` background task).
@@ -186,12 +200,6 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 These contexts do not exist as modules. Their state lives as raw fields on `AppState` or as free-function modules.
 
-#### Topology
-
-- **Status:** Absent — responsibilities scattered across `AppState::build_self_entry`, `AppState::sync_self_services`, `AppState::sync_self_capabilities`, `AppState::update_stone_health`, `AppState::announce_resolution_change`
-- **Target source:** `src/moss/src/domain/topology/`
-- **Book:** III
-
 #### Jobs
 
 - **Status:** Absent — raw `AppState::jobs: Arc<RwLock<HashMap<String, Job>>>`
@@ -278,7 +286,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Metrics** ✅ | per-domain counters, per-task metrics (timing, event counts, lag), global metrics, 9-bucket latency histogram | `MetricsChanged` (interesting transitions only — not counter increments) | none (in-memory only, counters reset on restart) | I (ARCH-0018) — **COMPLETE** |
 | **Resources** ✅ *(renamed in Book I Chapter 2)* | hardware resource snapshot facade over `Current::Resources::system/network/gpu` | none | none | I (as rename only) |
 | **Tool** ✅ | garden-wide tool registry (Local + Gateway + Announced origins), typed commands, dual event streams | `ToolChanged` (internal), `ToolDelta` (wire format, existing contract) | `ToolsBeaconTransport` | II (ARCH-0019) — **COMPLETE** |
-| **Topology** | self-entry cache, chirp schedule | `TopologyChanged`, `ChirpEmitted` | `ChirpTransport`, `MdnsTransport` | III |
+| **Topology** ✅ | peer cache (discovered + offline stones), persistence dirty flag, self-entry assembly | `TopologyChanged` (6 kinds: Discovered/Online/Offline/Forgotten/Evicted/Chirped) | `ChirpTransport`, `TopologyStore` | III (ARCH-0020) — **COMPLETE** |
 | **Jobs** | active jobs, job history | `JobsChanged` | (in-memory only) | IV |
 | **Catalog** | manifest registry, compiled offerings index | `CatalogChanged` | `ManifestSource`, `CatalogCache` | V |
 | **Subsystems** | per-subsystem readiness state | `SubsystemReady`, `SubsystemUnready` | none | VI |

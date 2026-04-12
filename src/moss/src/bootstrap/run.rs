@@ -252,45 +252,11 @@ async fn build_state(
 
     tracing::debug!("Self topology entry initialized (health=starting)");
 
-    // Phase 1: Start UDP listener EARLY (can now respond to discovery requests)
-    // Listener needs minimal dependencies: stone_id, stone_name, topology_cache
-    // Self-entry will be progressively updated as boot continues
-    let topology_cache = Arc::new(RwLock::new(std::collections::HashMap::new()));
-
-    // TOPO-0002: Dirty flag for topology persistence + ensure directory exists.
-    // Pre-AppState bootstrap phase — the Topology aggregate doesn't exist
-    // yet; we construct the handles here and pass them into Topology::new
-    // later. The dirty flag starts true so the first maintenance cycle
-    // writes the initial file (matches the old `new_dirty_flag` helper).
-    let topology_dirty: crate::domain::topology::TopologyDirtyFlag =
-        Arc::new(std::sync::atomic::AtomicBool::new(true));
+    // Phase 1: Ensure topology directory exists before the aggregate
+    // constructor attempts its first flush.
     if let Err(e) = tokio::fs::create_dir_all(garden_common::constants::paths::topology_dir()).await
     {
         tracing::warn!(error = %e, "Failed to create topology directory (will retry on first write)");
-    }
-
-    // Write initial topology file immediately (self entry only, no peers yet).
-    // Don't wait for the 30s maintenance cycle -- containers may start before then.
-    let boot_entry = build_boot_entry(
-        &stone_id,
-        &stone_name,
-        &current_address,
-        &current_health,
-        &current_mac,
-        None,
-    )
-    .await;
-    // Pre-AppState persistence via the TopologyStore port adapter.
-    {
-        use crate::domain::topology::TopologyStore;
-        let store = crate::domain::topology::FileTopologyStore;
-        let snapshot = topology_cache.read().await.clone();
-        if let Err(e) = store.save(&snapshot, &boot_entry).await {
-            tracing::warn!(error = %e, "Failed to write initial topology file");
-        } else {
-            topology_dirty.store(false, std::sync::atomic::Ordering::Relaxed);
-            tracing::debug!("Initial topology file written");
-        }
     }
 
     // Metrics aggregate (ARCH-0018) is constructed here — before Tool so
@@ -307,28 +273,32 @@ async fn build_state(
         crate::domain::Tool::new(metrics_aggregate.clone(), tool_delta, tools_transport).await,
     );
 
-    // Topology aggregate (ARCH-0020) is constructed here — before
-    // `start_discovery_listener` so we can hand it an Arc<Topology>
-    // instead of raw cache/dirty handles. The cache and dirty flag
-    // are Arc-cloned into the aggregate; the `current::Topology`
-    // sub-struct on AppState shares the same handles during the
-    // Ch5d strangler phase.
+    // Topology aggregate (ARCH-0020). The aggregate owns its internal
+    // cache + dirty flag; no external handles to thread through.
     let topology_aggregate: Arc<crate::domain::topology::Topology> = {
         let chirp: Arc<dyn crate::domain::topology::ChirpTransport> =
             Arc::new(crate::domain::topology::P2pChirpTransport);
         let store: Arc<dyn crate::domain::topology::TopologyStore> =
             Arc::new(crate::domain::topology::FileTopologyStore);
         Arc::new(
-            crate::domain::topology::Topology::new(
-                topology_cache.clone(),
-                topology_dirty.clone(),
-                chirp,
-                store,
-                metrics_aggregate.clone(),
-            )
-            .await,
+            crate::domain::topology::Topology::new(chirp, store, metrics_aggregate.clone()).await,
         )
     };
+
+    // Write the initial topology file immediately (self entry only,
+    // no peers yet). Don't wait for the 30s maintenance cycle —
+    // containers may start before then and need the file for
+    // cold-start seeding.
+    let boot_entry = build_boot_entry(
+        &stone_id,
+        &stone_name,
+        &current_address,
+        &current_health,
+        &current_mac,
+        None,
+    )
+    .await;
+    topology_aggregate.flush(&boot_entry).await;
 
     // Console is needed for UDP listener, create it early
     let console_printer = Arc::new(console::ConsolePrinter::with_dedup_ttl(

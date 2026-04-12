@@ -255,6 +255,22 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Observability vs lifecycle (tasks)** - Two complementary surfaces. `/api/v1/stone/tasks/{name}` returns task **lifecycle state** (Waiting/Running/Completed/Failed) from `SupervisorHandle`. `/api/v1/stone/metrics/tasks/{name}` returns **observability data** (timing, event counts, subscriber lag) from the Metrics aggregate. Consumers that want unified status join the two by task name.
 
+### Topology aggregate terms (Book III / ARCH-0020)
+
+**Topology (bounded context)** - The aggregate owning the peer cache on a stone: a map of `stone_id → TopologyEntry` holding every stone this stone has discovered (online + offline). Typed commands (`upsert_from_chirp`, `mark_stone_offline`, `forget_stone`, `maintain`, `flush`, `build_self_entry`, `sync_services`, `sync_capabilities`, `update_stone_health`, `announce_resolution_change`, `chirp`) own the mutation path; typed queries (`all_stones`, `online_stones`, `get_by_id`, `get_by_name`, `count`, `online_count`, `is_dirty`) return owned values. Second persistent aggregate after Offerings.
+
+**SelfEntryInputs** - Explicit input struct for `Topology::build_self_entry`. Holds stone identity, address, health, mac, capabilities, tags, services, moss version, and the `network_ready` flag. Caller composition helpers in `domain::topology::composition::*` assemble this from AppState before invoking the aggregate — the aggregate holds no back-reference to AppState per ARCH-0020's "Alternative B rejected" rationale.
+
+**Interesting transition (Topology)** - `TopologyChanged` fires only on status changes, not on every `upsert_from_chirp`. New stones fire `StoneDiscovered`; Offline→Online transitions fire `StoneOnline`; Online→Offline transitions fire `StoneOffline` (via maintenance or goodbye); explicit operator forgets fire `StoneForgotten`; TTL evictions fire `StoneEvicted`; local self-entry chirps fire `SelfEntryChirped`. Peer refreshes of unchanged entries produce no event — too high-volume for the interesting-transition stream. Same push/pull duality as Metrics per ARCH-0018.
+
+**ChirpTransport** - Port injected into `Topology` for publishing `STONE_CHIRP` announcements over the garden's UDP transport. Production adapter `P2pChirpTransport` wraps `crate::announcement::announce`; test adapter `NoopChirpTransport`. Removes direct `crate::announcement::*` imports from the aggregate per code-standards §15.
+
+**TopologyStore** - Persistence port injected into `Topology` for reading and writing `garden-topology.json` per TOPO-0002. Production adapter `FileTopologyStore` writes atomically via `tmp + rename`. Second persistent aggregate's store port after `OfferingStore` (ARCH-0016). Contrast with Tool / Metrics / Resources which are ephemeral aggregates.
+
+**Topology composition helpers** - Free functions in `domain::topology::composition::*` that take `&AppState` and call the aggregate's typed commands. They own the assembly of `SelfEntryInputs` from the seven upstream AppState sources (stone identity, address, health, mac, capabilities, presence tags, offerings, subsystems readiness) plus the mDNS re-registration side-effect in `announce_resolution_change` — mDNS stays outside the aggregate because Discovery is Book X's scope. Same shape as Book II's `domain::tool::projection::*` helpers (ARCH-0019 Ch5).
+
+**Always-dirty invariant** - The `Topology::upsert_from_chirp` command always marks the cache dirty for persistence. Collapses the prior split into `upsert_from_chirp` (no-mark) + `upsert_from_chirp_dirty` (with-mark) — the aggregate owns the invariant that every mutation is followed by persistence.
+
 ### Tool aggregate terms (Book II / ARCH-0019)
 
 **Tool (bounded context)** - The aggregate owning the garden-wide registry of `GardenTool` entries (offerings + seed-banks + gateway registrations + remote-announced tools from peer stones) on a single stone. Typed commands (`upsert`, `register_gateway`, `deregister_gateway`, `reap_expired_gateways`, `reconcile_local`, `apply_remote_beacon`, `remove_stone`) own the write path; typed queries return owned values without leaking references across the lock boundary. See `/api/v1/stone/tools/{fqid}` and `/api/v1/garden/tools`.

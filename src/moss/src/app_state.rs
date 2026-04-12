@@ -120,9 +120,9 @@ pub struct AppState {
     pub tool: Arc<Tool>,
 
     /// Garden topology — peer cache, chirp transport, persistence store
-    /// (ARCH-0020). Shares cache + dirty handles with `current.topology`
-    /// during the Book III strangler phase; Ch5 flips the sub-struct
-    /// out entirely.
+    /// DDD aggregate for the Topology bounded context (ARCH-0020).
+    /// Owns the peer cache + dirty flag internally, plus the injected
+    /// `ChirpTransport` and `TopologyStore` ports.
     pub topology: Arc<crate::domain::topology::Topology>,
 
     /// Security domain — pond trust, inter-stone TLS, ceremonies (ARCH-0004).
@@ -397,7 +397,7 @@ impl AppState {
         self.offerings.find_by_id(offering_id).await
     }
 
-    // `update_stone_health` and `announce_resolution_change` moved to
+    // The stone-health and resolution-change methods have moved to
     // `crate::domain::topology::composition::*` per ARCH-0020 Book III.
 
     /// Recover incomplete ceremonies from previous run

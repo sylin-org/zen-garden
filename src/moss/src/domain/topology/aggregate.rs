@@ -6,22 +6,14 @@
 //! integration, `TopologyChanged` event stream, and two injected
 //! ports: [`ChirpTransport`] and [`TopologyStore`].
 //!
-//! ## Strangler phase (Ch3–Ch5)
+//! ## Ownership
 //!
-//! The aggregate shares its cache + dirty-flag handles with the
-//! existing `current::Topology { cache, dirty }` sub-struct on
-//! AppState via `Arc` cloning. Both paths point at the same backing
-//! `RwLock<HashMap<String, TopologyEntry>>` and the same
-//! `AtomicBool`. The 42 existing `topology::free_fn(&cache, ...)`
-//! caller sites continue to compile unchanged; the aggregate's typed
-//! commands read and mutate the same storage via wrapper methods
-//! that delegate to the existing free functions in `super::mod`.
-//!
-//! Ch5 migrates callers to typed commands, deletes the free
-//! functions from `super::mod`, and marks the cache/dirty fields on
-//! the aggregate private. Ch5 also deletes the `current::Topology`
-//! sub-struct and promotes `state.topology` to a top-level AppState
-//! field.
+//! The aggregate owns its cache + dirty-flag handles internally.
+//! Module-private free functions in `super::mod` implement the
+//! cache operations (upsert, get, maintain, persist); the aggregate
+//! wraps them with Metrics recording and event emission. The
+//! `TopologyCache` / `TopologyDirtyFlag` type aliases are
+//! `pub(crate)` — not exposed outside the topology module.
 
 use super::event::{ChangeKind, TopologyChanged};
 use super::store::TopologyStore;
@@ -92,13 +84,10 @@ impl Topology {
 
     /// Construct a new `Topology` aggregate.
     ///
-    /// `cache` and `dirty` are passed in rather than created — during
-    /// the strangler phase the aggregate shares handles with the
-    /// existing `current::Topology` sub-struct. Ch5 flips to
-    /// constructor-owned state loaded from the store.
+    /// The aggregate owns its cache + dirty-flag state. The dirty
+    /// flag starts `true` so the first maintenance cycle writes the
+    /// initial topology file for container cold-start seeding.
     pub async fn new(
-        cache: TopologyCache,
-        dirty: TopologyDirtyFlag,
         chirp: Arc<dyn ChirpTransport>,
         store: Arc<dyn TopologyStore>,
         metrics: Arc<Metrics>,
@@ -110,8 +99,8 @@ impl Topology {
         let (changes, _) = broadcast::channel(CHANGES_CHANNEL_CAPACITY);
 
         Self {
-            cache,
-            dirty,
+            cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            dirty: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             chirp,
             store,
             metrics,

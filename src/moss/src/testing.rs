@@ -143,9 +143,6 @@ pub async fn build_test_state() -> AppState {
         },
     });
 
-    let topology_cache: domain::topology::TopologyCache = Arc::new(RwLock::new(HashMap::new()));
-    let topology_dirty: domain::topology::TopologyDirtyFlag = Arc::new(AtomicBool::new(false));
-
     let loopback: IpAddr = "127.0.0.1".parse().unwrap();
     let current_address = Arc::new(RwLock::new(PeerAddress::new(loopback, 7185)));
 
@@ -202,8 +199,6 @@ pub async fn build_test_state() -> AppState {
         console: Arc::new(ConsolePrinter::new(ConsoleMode::Silent)),
         topology: Arc::new(
             domain::topology::Topology::new(
-                topology_cache,
-                topology_dirty,
                 Arc::new(domain::topology::NoopChirpTransport),
                 Arc::new(domain::topology::FileTopologyStore),
                 test_metrics.clone(),

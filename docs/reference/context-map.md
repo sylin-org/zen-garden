@@ -2,7 +2,7 @@
 audience: [developer, ai]
 doc_type: reference
 status: canonical
-last_verified: 2026-04-12
+last_verified: 2026-04-13
 ---
 
 # Bounded Context Map
@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0023](../decisions/ARCH-0023-subsystems-aggregate.md).
+As of 2026-04-12, after [ARCH-0024](../decisions/ARCH-0024-health-aggregate.md).
 
 ### Full contexts
 
@@ -246,9 +246,17 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### Health
 
-- **Status:** Absent — HTTP/TCP probes live in `tasks/health_monitor.rs`, probe logic mixed with task orchestration
-- **Target source:** `src/moss/src/domain/health/`
-- **Book:** VII
+- **Status:** Full. ARCH-0024 (Book VII of ARCH-0017) — completed 2026-04-12.
+- **Owns:** probe scheduling/execution (via `HealthProbe` port), transition detection, event emission, notification projection. Does NOT own per-offering health state (stays on `Offering.health` field).
+- **Commands (write):** `probe_offering` (probe via port, compare, mutate offering, emit event), `apply_docker_event` (apply real-time Docker event status/health), `update_notification` (set/clear degraded-offerings notification tag)
+- **Queries (read):** `changes()` — subscribe to `HealthChanged` events
+- **Emits:** `HealthChanged` with 3 transition kinds (`Recovered`, `Degraded`, `Failed`) — fires only on interesting transitions, not on every probe cycle
+- **Subscribes:** none (Health is called imperatively by the health monitor task and docker events task)
+- **Ports:** `HealthProbe` -> `DockerHealthProbe` (wraps Docker container inspection via Bollard)
+- **Cross-cutting:** `Arc<Metrics>` injected at construction; mutation latency + per-kind event counters recorded using the register-with-kinds pattern
+- **Mutations:** infallible — commands return `ProbeOutcome` or `bool`, no `HealthError` type (ephemeral aggregate pattern deviation, matching Book I Metrics)
+- **Source:** `src/moss/src/domain/health/` (mod.rs + aggregate.rs + event.rs + probe.rs + system.rs + tests.rs)
+- **Book:** VII (ARCH-0024) — **COMPLETE**
 
 #### Announcement
 
@@ -316,7 +324,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Jobs** ✅ | active + recently-terminal jobs (HashMap keyed by id) | `JobsChanged` (7 kinds: Submitted/Started/ItemCompleted/ItemFailed/Completed/Failed/Evicted) + wire `JobEvent` via `EventBus` | none (ephemeral; `JobsReaperTask` sweeps terminal jobs past 24h TTL) | IV (ARCH-0021) — **COMPLETE** |
 | **Catalog** ✅ | frozen manifest registry, compiled offerings index | `CatalogChanged` (2 kinds: Loaded, Rebuilt) | `CatalogCache` | V (ARCH-0022) — **COMPLETE** |
 | **Subsystems** ✅ | per-subsystem readiness state (watch channels) | `SubsystemsChanged` (2 kinds: Ready, Unready) | none (ephemeral) | VI (ARCH-0023) — **COMPLETE** |
-| **Health** | per-offering health state, probe schedule | `HealthChanged` | `HealthProbe` | VII |
+| **Health** ✅ | probe execution, transition detection, notification projection (no per-offering state — delegates to Offerings) | `HealthChanged` | `HealthProbe` | VII (ARCH-0024) — **COMPLETE** |
 | **Storage::Volumes** | physical volume state | `VolumeChanged` | `VolumeMonitor`, `FileSystem` | VIII |
 | **Storage::Banks** | seed-bank lifecycle | `BankChanged` | `FileSystem` | VIII |
 | **Storage::Replication** | replication state machine | `ReplicationChanged` | `ReplicationTransport` | VIII |

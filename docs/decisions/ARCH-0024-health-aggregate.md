@@ -4,7 +4,7 @@ doc_type: decision
 status: accepted
 date: 2026-04-12
 depends_on: [ARCH-0017, ARCH-0016, ARCH-0018, ARCH-0023]
-completed: ~
+completed: 2026-04-12
 ---
 
 # ARCH-0024: Health Aggregate — Per-Offering Health Probing as a Bounded Context

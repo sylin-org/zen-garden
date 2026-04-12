@@ -78,29 +78,31 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         // Only these are passed to the reconciliation coordinator.
         let mut confirmed_missing: HashSet<String> = HashSet::new();
 
-        // ── Phase 1: Status polling ────────────────────────────────────
+        // ── Phase 1: Status polling (ARCH-0024) ────────────────────────
         for (offering_id, name, old_status, old_health) in &managed_snapshot {
             if *old_status == OfferingStatus::Installing {
                 tracing::trace!(offering = %name, "Skipping health check (currently installing)");
                 continue;
             }
 
-            let (new_status, new_health) = match state
-                .platform
-                .docker
-                .get_service_status(name)
-                .await
-            {
-                Ok(service_status) => {
-                    let health = state
-                        .platform
-                        .docker
-                        .get_service_health(name)
-                        .await
-                        .unwrap_or(ServiceHealthStatus::Offline);
-                    (OfferingStatus::from(service_status), health)
-                }
-                Err(e) => {
+            // Probe through Health aggregate's injected HealthProbe port
+            let outcome = state
+                .health
+                .probe_offering(&state.offerings, name, offering_id, *old_status, old_health)
+                .await;
+
+            if outcome.is_changed() {
+                state_changed = true;
+
+                // Check if the probe result indicates a missing container
+                // (reconciliation concern — stays in the task layer)
+                if let crate::domain::health::aggregate::ProbeOutcome::Changed {
+                    new_status,
+                    new_health,
+                } = &outcome
+                    && *new_status == OfferingStatus::Stopped
+                    && *new_health == ServiceHealthStatus::Offline
+                {
                     let container_exists = state
                         .platform
                         .docker
@@ -115,44 +117,9 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                                 offering = %name,
                                 "Container missing, queuing for reconciliation"
                             );
-                        } else {
-                            tracing::debug!(
-                                offering = %name,
-                                "Container still missing (reconciliation in progress or backed off)"
-                            );
                         }
-                    } else {
-                        tracing::warn!(
-                            offering = %name,
-                            error = ?e,
-                            "Failed to get offering status, marking as offline"
-                        );
                     }
-
-                    (OfferingStatus::Stopped, ServiceHealthStatus::Offline)
                 }
-            };
-
-            if new_status != *old_status || new_health != *old_health {
-                tracing::info!(
-                    offering = %name,
-                    old_status = ?old_status, new_status = ?new_status,
-                    old_health = ?old_health, new_health = ?new_health,
-                    "Offering state changed"
-                );
-                // Delegate mutation + event emission to Health aggregate (ARCH-0024)
-                state
-                    .health
-                    .apply_docker_event(
-                        &state.offerings,
-                        offering_id,
-                        name,
-                        old_health,
-                        new_status,
-                        new_health,
-                    )
-                    .await;
-                state_changed = true;
             }
 
             // Resource usage (detail-only, no chirp)
@@ -168,8 +135,18 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     .await;
             }
 
+            // Read current status after probe for port/protocol reconciliation
+            let current_status = {
+                let offerings = state.offerings.read().await;
+                offerings
+                    .iter()
+                    .find(|o| o.offering_id == *offering_id)
+                    .map(|o| o.status)
+                    .unwrap_or(*old_status)
+            };
+
             // ── Port reconciliation ────────────────────────────────────
-            if new_status == OfferingStatus::Running
+            if current_status == OfferingStatus::Running
                 && let Ok(docker_ports) = state.platform.docker.get_container_ports(name).await
             {
                 let current_port = {
@@ -208,7 +185,7 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
 
             // ── Protocol reconciliation ────────────────────────────────
-            if new_status == OfferingStatus::Running
+            if current_status == OfferingStatus::Running
                 && let Some(template) = state.catalog.get_manifest(name)
             {
                 let expected_protocol =

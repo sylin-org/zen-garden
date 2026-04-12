@@ -60,6 +60,7 @@ pub mod services;
 pub mod services_internal;
 pub mod storage;
 pub mod storage_service;
+pub mod subsystems;
 pub mod task_registry;
 pub mod tool;
 pub mod topology;
@@ -135,6 +136,7 @@ pub use platform::Platform;
 pub use pond::{PondMetadata, PondState, load_pond_metadata, save_pond_metadata};
 pub use presence::Presence;
 pub use security::{Pond, Security};
+pub use subsystems::{Subsystems, SubsystemStatus, SubsystemsChanged, SubsystemsChangeKind};
 pub use tool::{
     EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, Tool, ToolQuery,
     ToolsSnapshotPayload, new_registry, stream_event_type_for_delta,

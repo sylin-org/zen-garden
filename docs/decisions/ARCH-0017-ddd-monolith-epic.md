@@ -491,14 +491,13 @@ chapters reflect that.
 - **Subscribes**: OS-level interface change events
 - **Ports**: `InterfaceMonitor`
 
-### Orchestration
+### Orchestration *(dissolved — ARCH-0029)*
 
-**Orchestration** (Book XI) — deep-clean of existing partial context
-- **Owns**: orchestration tick stream, nurturing store, nudge state,
-  offering primary/dormant elections
-- **Emits**: `OrchestrationTick`, `ElectionResolved`
-- **Subscribes**: `OfferingsChanged`, periodic timer
-- **Ports**: `ElectionTransport`
+**Orchestration** (Book XI) — dissolved, not deep-cleaned. Was a 110-line
+coordination bag with no domain state. Contents relocated:
+- Storage coordination → `current.storage.coordination`
+- Nurturing/Nourishment → direct `AppState` fields
+- Election was never here (lives in Presence)
 
 ### Infrastructure contexts
 
@@ -1273,26 +1272,28 @@ subscribes to)
 
 **Estimated size:** ~1600 lines
 
-### Book XI — Orchestration Deep-Clean
+### Book XI — Orchestration Dissolution *(plan changed)*
 
 **Scope:** The existing partial `Orchestration` context has tick
 aggregation, nudge, nurturing, offering election state. Deep-clean.
 
-**Bounded context:** `Orchestration`
+**Bounded context:** `Orchestration` (dissolved — see ARCH-0029)
 
-**Deliverables:**
-- `domain/orchestration/` deep clean
-- `Tick` sub-aggregate for storage tick aggregation
-- `Nurturing` sub-aggregate for nurturing lifecycle
-- `Election` sub-aggregate for offering primary/dormant coordination
-- Events: `OrchestrationTick`, `ElectionResolved`
-- Ports: `ElectionTransport`
-- Metrics integration
-- Tests
+**Plan change:** Discovery found Orchestration is a 110-line coordination
+bag with zero domain state, zero invariants, and zero business logic.
+Election was never in Orchestration (it lives in Presence). 3 planned
+sub-aggregates → dissolution into natural owners.
+
+**Actual deliverables:**
+- Storage coordination (tick, nudge, rescan, S3 listeners) → `current.storage.coordination`
+- Nurturing/Nourishment → direct `AppState` fields
+- `Orchestration` struct and `FromRef` deleted
+- `domain/orchestration/storage.rs` deleted
+- 26 files migrated, 0 behavioral changes
 
 **Dependencies:** Book I, Book VIII (Storage tick source), ARCH-0016
 
-**Estimated size:** ~1400 lines
+**Actual size:** ~300 lines (vs ~1400 estimated)
 
 ### Book XII — ContainerRuntime Port
 

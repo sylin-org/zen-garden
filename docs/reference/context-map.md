@@ -2,7 +2,7 @@
 audience: [developer, ai]
 doc_type: reference
 status: canonical
-last_verified: 2026-04-13
+last_verified: 2026-04-12
 ---
 
 # Bounded Context Map
@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0028](../decisions/ARCH-0028-discovery-aggregate.md).
+As of 2026-04-12, after [ARCH-0029](../decisions/ARCH-0029-orchestration-dissolution.md).
 
 ### Full contexts
 
@@ -128,7 +128,7 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 #### Storage (Bank domain model + API surface landed, VIII-a/b)
 
-- **Status:** Partial — Bank view aggregate added (ARCH-0025), API surface unified (ARCH-0026), Volume state machine clean, but `Current::Storage` still holds raw `Volumes` and `Media` maps. Ports relocated into context (`StoragePlatform`, `ManagementStoreOps`, `BankContentOps`).
+- **Status:** Partial — Bank view aggregate added (ARCH-0025), API surface unified (ARCH-0026), coordination primitives absorbed (ARCH-0029). Volume state machine clean, but `Current::Storage` still holds raw `Volumes` and `Media` maps. Ports relocated into context (`StoragePlatform`, `ManagementStoreOps`, `BankContentOps`).
 - **Owns:** physical volumes (state machine), bank view aggregate (queries + commands + data-plane), media, storage event channel
 - **Commands (Bank):** `rename`, `set_roles`, `set_visibility`, `pin`, `unpin`, `release`, `read`, `write`, `delete` (data-plane)
 - **Queries (Bank):** `local_banks`, `by_name`, `primary_volume`, `volumes_for_bank`, `bank_infos`
@@ -188,13 +188,15 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 #### Orchestration
 
-- **Status:** Partial — holds tick stream, nudge, nurturing store, rescan as direct fields
-- **Owns:** storage tick broadcast, nurturing store, nudge notifier, offering election state
-- **Emits:** ticks via direct `broadcast::Sender`
-- **Subscribes:** ad-hoc
-- **Ports:** none
-- **Source:** `src/moss/src/domain/orchestration/`
-- **Book:** XI (deep clean into Tick, Nurturing, Election sub-aggregates)
+- **Status:** Retired. ARCH-0029 (Book XI of ARCH-0017) — dissolved 2026-04-12.
+- **Plan change:** ARCH-0017 anticipated 3 sub-aggregates (Tick, Nurturing, Election); Book XI found 0 aggregates warranted — Orchestration was a 110-line coordination bag with no domain state, no invariants, no business logic.
+- **Dissolved into:**
+  - Storage coordination (tick, nudge, rescan, S3 listeners) → `current.storage.coordination` sub-struct
+  - Nurturing infrastructure (harvest_ops, store) → direct `AppState.nurturing` field
+  - Nourishment SSE channels (jobs) → direct `AppState.nourishment` field
+  - Election was never in Orchestration (lives in `Presence.elections`)
+- **Thin namespace retained:** `domain/orchestration/` still holds `NurturingOrchestration` and `NourishmentOrchestration` as thin infrastructure structs — no aggregate, no events, no ports.
+- **Book:** XI (ARCH-0029) — **COMPLETE**
 
 #### Jobs
 

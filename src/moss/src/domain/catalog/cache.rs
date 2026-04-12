@@ -17,24 +17,26 @@
 
 use anyhow::Result;
 use std::future::Future;
+use std::pin::Pin;
 
 use super::index::OfferingsIndex;
 
+type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// Persistence port for the compiled catalog snapshot.
 ///
-/// The Catalog aggregate (Ch3+) holds an `Arc<dyn CatalogCache>`
-/// injected at construction time. `load` is called on startup by the
-/// `load()` command and returns `None` when no cache exists (first
-/// boot). `save` is called after every successful rebuild so
-/// subsequent cold starts can skip manifest compilation when the
-/// fingerprint matches.
+/// The Catalog aggregate holds an `Arc<dyn CatalogCache>` injected at
+/// construction time. `load` is called on startup by the `load()`
+/// command and returns `None` when no cache exists (first boot).
+/// `save` is called after every successful rebuild so subsequent cold
+/// starts can skip manifest compilation when the fingerprint matches.
 pub trait CatalogCache: Send + Sync {
     /// Load the cached offerings index from persistent storage.
     /// Returns `Ok(None)` when no cache exists.
-    fn load(&self) -> impl Future<Output = Result<Option<OfferingsIndex>>> + Send;
+    fn load(&self) -> BoxFut<'_, Result<Option<OfferingsIndex>>>;
 
     /// Save the offerings index to persistent storage. Atomic write.
-    fn save(&self, cache: &OfferingsIndex) -> impl Future<Output = Result<()>> + Send;
+    fn save<'a>(&'a self, cache: &'a OfferingsIndex) -> BoxFut<'a, Result<()>>;
 }
 
 /// File-system adapter — reads and writes
@@ -44,11 +46,11 @@ pub trait CatalogCache: Send + Sync {
 pub struct FileCatalogCache;
 
 impl CatalogCache for FileCatalogCache {
-    async fn load(&self) -> Result<Option<OfferingsIndex>> {
-        crate::infra::persistence::load_offerings_cache().await
+    fn load(&self) -> BoxFut<'_, Result<Option<OfferingsIndex>>> {
+        Box::pin(crate::infra::persistence::load_offerings_cache())
     }
 
-    async fn save(&self, cache: &OfferingsIndex) -> Result<()> {
-        crate::infra::persistence::save_offerings_cache(cache).await
+    fn save<'a>(&'a self, cache: &'a OfferingsIndex) -> BoxFut<'a, Result<()>> {
+        Box::pin(crate::infra::persistence::save_offerings_cache(cache))
     }
 }

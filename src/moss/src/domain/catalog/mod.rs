@@ -1,27 +1,21 @@
 //! Catalog bounded context — Book V of [ARCH-0017].
 //!
-//! ## Chapter 2 state
+//! ## Chapter 3 state
 //!
-//! This module holds the **type definitions** and the **persistence
-//! port** for the compiled catalog. The `Catalog` aggregate itself
-//! lands in Ch3. During Ch2 the existing free functions in
-//! `domain/offerings/catalog.rs` (`ensure_offerings_index`,
-//! `get_compiled_offering`, `rebuild_offerings_index`) remain the
-//! coordination layer between `AppState::manifest_registry`,
-//! `AppState::offerings_index`, and this module's types — they stay
-//! in place as the strangler surface until Ch4 migrates their callers
-//! to the aggregate's typed commands.
+//! `Catalog` is a full DDD aggregate with typed commands (`load`,
+//! `rebuild`), typed queries (`get_manifest`, `get_compiled`,
+//! `compiled_snapshot`, `stats`, `is_loaded`, `manifest_count`,
+//! `find_hw_manifest`, `manifests`), a `CatalogChanged` internal event
+//! stream with two kinds (`Loaded`, `Rebuilt`), `Arc<Metrics>`
+//! injection, a `CatalogCache` persistence port, and the first typed
+//! `CatalogError` enum in the epic.
 //!
-//! ## Moved from Ch2
-//!
-//! - `CompiledOffering` → [`entry`]
-//! - `OfferingsIndex` + `OfferingsFingerprint` → [`index`]
-//! - `moss_version_string` + `manifests_hash` +
-//!   `current_capabilities_hash` → [`fingerprint`]
-//! - `OfferingsCachePersistence` trait → [`cache::CatalogCache`]
-//!   (renamed)
-//! - `OsOfferingsCache` struct → [`cache::FileCatalogCache`]
-//!   (renamed and relocated from `infra/persistence.rs`)
+//! During Ch3 the existing free functions in [`legacy`]
+//! (`ensure_offerings_index`, `get_compiled_offering`,
+//! `rebuild_offerings_index`) remain the coordination layer between the
+//! legacy `AppState::manifest_registry` / `AppState::offerings_index`
+//! fields. Ch4 migrates their callers to the aggregate's typed
+//! commands. Ch5 deletes the legacy module.
 //!
 //! Type names that cross the moss crate boundary (`CompiledOffering`,
 //! `OfferingsIndex`, `OfferingsFingerprint`) are **preserved** — they
@@ -30,14 +24,24 @@
 //!
 //! [ARCH-0017]: ../../../../docs/decisions/ARCH-0017-ddd-monolith-epic.md
 
+pub mod aggregate;
 pub mod cache;
 pub mod entry;
+pub mod error;
+pub mod event;
 pub mod fingerprint;
 pub mod index;
 pub mod legacy;
+mod state;
 
+#[cfg(test)]
+mod tests;
+
+pub use aggregate::{Catalog, CatalogStats};
 pub use cache::{CatalogCache, FileCatalogCache};
 pub use entry::CompiledOffering;
+pub use error::CatalogError;
+pub use event::{CatalogChanged, ChangeKind as CatalogChangeKind, LoadSource};
 pub use fingerprint::{current_capabilities_hash, manifests_hash, moss_version_string};
 pub use index::{OfferingsFingerprint, OfferingsIndex};
 pub use legacy::{ensure_offerings_index, get_compiled_offering, rebuild_offerings_index};

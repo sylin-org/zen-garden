@@ -160,6 +160,20 @@ pub async fn build_test_state() -> AppState {
         .await,
     );
 
+    // Capabilities handle — shared with Catalog aggregate (ARCH-0022 Book V).
+    let capabilities = Arc::new(RwLock::new(None));
+
+    // Catalog aggregate (ARCH-0022 Book V) — persistent, empty registry.
+    let catalog = Arc::new(
+        domain::Catalog::new(
+            manifest_registry.clone(),
+            capabilities.clone(),
+            Arc::new(domain::FileCatalogCache),
+            test_metrics.clone(),
+        )
+        .await,
+    );
+
     AppState {
         current: Arc::new(domain::Current {
             stone: Arc::new(domain::current::Stone {
@@ -171,7 +185,7 @@ pub async fn build_test_state() -> AppState {
                 media: domain::new_media(),
                 changed: storage_changed,
             }),
-            capabilities: Arc::new(RwLock::new(None)),
+            capabilities,
             hardware_topology: Arc::new(RwLock::new(None)),
             address: current_address,
             health: Arc::new(RwLock::new("thriving".to_string())),
@@ -194,6 +208,7 @@ pub async fn build_test_state() -> AppState {
             .await,
         ),
         manifest_registry,
+        catalog,
         platform: Arc::new(domain::Platform {
             docker,
             runtime: Arc::new(NoopRuntime),

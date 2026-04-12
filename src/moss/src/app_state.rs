@@ -13,7 +13,7 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{Jobs, Metrics, Offerings, Orchestration, Security, Tool};
+use crate::domain::{Catalog, Jobs, Metrics, Offerings, Orchestration, Security, Tool};
 use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use std::sync::Arc;
@@ -71,6 +71,13 @@ pub struct AppState {
     /// Manifest registry - single source of truth for all manifests
     /// Contains both software (sw) and hardware (hw) manifests
     pub manifest_registry: Arc<ManifestRegistry>,
+
+    /// Catalog aggregate (ARCH-0022) — compiled offerings index, frozen
+    /// manifest registry queries, and hardware manifest lookups. Typed
+    /// commands (`load`, `rebuild`) replace the legacy free functions.
+    /// Coexists alongside the legacy `manifest_registry` and
+    /// `offerings_index` fields during Ch3–Ch5 of Book V.
+    pub catalog: Arc<Catalog>,
 
     /// Platform domain — Docker, runtime, network monitor, infrastructure handlers.
     pub platform: Arc<crate::domain::Platform>,
@@ -219,6 +226,12 @@ impl axum::extract::FromRef<AppState> for Arc<Orchestration> {
 impl axum::extract::FromRef<AppState> for Arc<ManifestRegistry> {
     fn from_ref(state: &AppState) -> Self {
         state.manifest_registry.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<Catalog> {
+    fn from_ref(state: &AppState) -> Self {
+        state.catalog.clone()
     }
 }
 

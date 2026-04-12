@@ -894,6 +894,20 @@ async fn build_state(
         .await,
     );
 
+    // Catalog aggregate (ARCH-0022 Book V). Persistent — compiled
+    // offerings index is cached to disk via FileCatalogCache. The
+    // aggregate shares `manifest_registry` (frozen, read-only) and
+    // `capabilities` with the rest of AppState.
+    let catalog_aggregate = Arc::new(
+        crate::domain::Catalog::new(
+            manifest_registry.clone(),
+            capabilities.clone(),
+            Arc::new(crate::domain::FileCatalogCache),
+            metrics_aggregate.clone(),
+        )
+        .await,
+    );
+
     let state = AppState {
         current: Arc::new(crate::domain::Current {
             stone: Arc::new(crate::domain::current::Stone {
@@ -920,6 +934,7 @@ async fn build_state(
         offerings: offerings_aggregate,
         metrics: metrics_aggregate.clone(),
         manifest_registry: manifest_registry.clone(),
+        catalog: catalog_aggregate,
         platform: Arc::new(crate::domain::Platform {
             docker: docker.clone(),
             runtime: runtime.clone(),

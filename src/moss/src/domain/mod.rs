@@ -69,7 +69,8 @@ pub use adoption::{AdoptionResult, adopt_existing_containers, adopt_offering_con
 pub use cloud_drive::{DriveAction, classify_rename};
 // compatibility: use crate::domain::compatibility::{...} directly
 pub use catalog::{
-    CatalogCache, CompiledOffering, FileCatalogCache, OfferingsFingerprint, OfferingsIndex,
+    Catalog, CatalogCache, CatalogChangeKind, CatalogChanged, CatalogError, CatalogStats,
+    CompiledOffering, FileCatalogCache, LoadSource, OfferingsFingerprint, OfferingsIndex,
     current_capabilities_hash, ensure_offerings_index, get_compiled_offering, manifests_hash,
     moss_version_string, rebuild_offerings_index,
 };

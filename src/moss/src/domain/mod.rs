@@ -89,10 +89,7 @@ pub use metrics::{
     MetricsSnapshot, TaskSnapshot as MetricsTaskSnapshot,
 };
 pub use modes::{AggregatedDetectionResult, DetectionOrchestrator};
-pub use offerings::{
-    ActiveGuard, CandidatesGuard, ChangeKind, FileOfferingStore, OfferingStore, Offerings,
-    OfferingsChanged,
-};
+pub use offerings::{ChangeKind, FileOfferingStore, OfferingStore, Offerings, OfferingsChanged};
 pub use orchestration::{NourishmentOrchestration, NurturingOrchestration};
 pub use reconciliation::{ReconciliationResult, reconcile_services};
 pub use registry::Registry;

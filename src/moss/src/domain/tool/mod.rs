@@ -23,7 +23,7 @@
 //! unchanged against `state.tool.registry.read().await`. Ch6 migrates
 //! every one of them to a typed command or query method and marks the
 //! field private. The field-level strangler is the Ch3 refinement of
-//! ARCH-0019's original `ActiveGuard` plan — same end state, fewer
+//! ARCH-0019's original Offerings strangler plan — same end state, fewer
 //! moving parts.
 
 pub mod aggregate;

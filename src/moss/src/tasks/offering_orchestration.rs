@@ -88,7 +88,7 @@ pub async fn offering_orchestration_task(state: AppState, token: CancellationTok
 /// legitimately taken over while this Stone was down. If another Stone is
 /// already Primary for a given FQN, yield to it.
 async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> Result<()> {
-    let offerings = state.get_offerings().await;
+    let offerings = state.offerings.snapshot().await;
     let orchestrated: Vec<_> = offerings
         .iter()
         .filter(|o| o.orchestration.is_some())
@@ -153,7 +153,7 @@ async fn startup_reconciliation(state: &AppState, token: &CancellationToken) -> 
 async fn backfill_orchestration(state: &AppState) {
     use garden_common::OfferingStatus;
 
-    let offerings = state.get_offerings().await;
+    let offerings = state.offerings.snapshot().await;
     let candidates: Vec<(String, String, String)> = offerings
         .iter()
         .filter(|o| o.orchestration.is_none() && o.status == OfferingStatus::Running)
@@ -217,7 +217,7 @@ async fn backfill_orchestration(state: &AppState) {
 /// On startup, for any pinned offering, trigger a re-election.
 /// Score 1001 guarantees victory.
 async fn pin_recovery(state: &AppState) {
-    let offerings = state.get_offerings().await;
+    let offerings = state.offerings.snapshot().await;
 
     for offering in &offerings {
         let orch = match &offering.orchestration {
@@ -276,7 +276,7 @@ async fn orchestration_tick(state: &AppState) -> Result<()> {
     // A registered gateway suppresses elections for that offering type.
     let gateway_handled: std::collections::HashSet<String> = state.tool.handled_offerings().await;
 
-    let offerings = state.get_offerings().await;
+    let offerings = state.offerings.snapshot().await;
 
     for offering in &offerings {
         let orch = match &offering.orchestration {

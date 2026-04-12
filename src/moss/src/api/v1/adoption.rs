@@ -256,7 +256,10 @@ pub async fn list_adopted_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<Vec<Offering>> {
-    let offerings = state.get_adopted_offerings().await;
+    let offerings = state
+        .offerings
+        .with_active(|o| o.iter().filter(|o| o.is_adopted()).cloned().collect::<Vec<_>>())
+        .await;
 
     let ctx = Suggestion::from_headers(&headers, "list_adopted");
     let suggestions = generate_suggestions(&ctx);
@@ -269,7 +272,10 @@ pub async fn list_borrowed_v1(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> crate::api::ApiResult<Vec<Offering>> {
-    let offerings = state.get_borrowed_offerings().await;
+    let offerings = state
+        .offerings
+        .with_active(|o| o.iter().filter(|o| o.is_borrowed()).cloned().collect::<Vec<_>>())
+        .await;
 
     let ctx = Suggestion::from_headers(&headers, "list_borrowed");
     let suggestions = generate_suggestions(&ctx);

@@ -18,7 +18,7 @@
 //! while the new typed API grows alongside. Ch6 migrates all call
 //! sites to typed methods and marks the field private. The field-level
 //! strangler is documented as a Ch3 refinement of ARCH-0019's original
-//! `ActiveGuard` plan — same end state, fewer moving parts.
+//! Offerings strangler plan — same end state, fewer moving parts.
 //!
 //! ## Pattern deviations (see ARCH-0019 §"Pattern deviations")
 //!

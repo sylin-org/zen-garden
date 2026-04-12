@@ -56,10 +56,8 @@ pub struct AppState {
     /// mutation persists and emits an `OfferingsChanged` event through the
     /// aggregate's broadcast channel.
     ///
-    /// **Reads** continue to use `.read().await` during the strangler-vine
-    /// migration phase — `Offerings::read()` returns an `ActiveGuard` that
-    /// derefs to `&Vec<Offering>`. New code should prefer `snapshot()`,
-    /// `find_by_id()`, `with_active()`, or the other typed query methods.
+    /// **Reads** use the typed query API: `snapshot()`, `find_by_id()`,
+    /// `find_by_name()`, `with_active()`, `count_active()`.
     pub offerings: Arc<Offerings>,
 
     /// Metrics aggregate (ARCH-0018) — stone self-observation. Holds
@@ -302,64 +300,6 @@ impl AppState {
     // from AppState and delegate to the aggregate's typed commands.
 
     // ========================================================================
-    // Offering Accessors — thin delegates to the Offerings aggregate (ARCH-0016)
-    // ========================================================================
-    //
-    // Mutation methods are gone — use `state.offerings.{upsert,remove,update,
-    // promote,demote,...}` directly. The aggregate owns the persist+emit
-    // invariant internally. See ARCH-0016.
-
-    /// Snapshot of the active offerings pool.
-    pub async fn get_offerings(&self) -> Vec<Offering> {
-        self.offerings.snapshot().await
-    }
-
-    /// Get managed offerings only.
-    pub async fn get_managed_offerings(&self) -> Vec<Offering> {
-        self.offerings
-            .with_active(|o| {
-                o.iter()
-                    .filter(|o| o.is_managed())
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .await
-    }
-
-    /// Get adopted offerings only.
-    pub async fn get_adopted_offerings(&self) -> Vec<Offering> {
-        self.offerings
-            .with_active(|o| {
-                o.iter()
-                    .filter(|o| o.is_adopted())
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .await
-    }
-
-    /// Get borrowed offerings only.
-    pub async fn get_borrowed_offerings(&self) -> Vec<Offering> {
-        self.offerings
-            .with_active(|o| {
-                o.iter()
-                    .filter(|o| o.is_borrowed())
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .await
-    }
-
-    /// Find offering by instance name (FQN).
-    pub async fn find_offering(&self, name: &str) -> Option<Offering> {
-        self.offerings.find_by_name(name).await
-    }
-
-    /// Find offering by ID.
-    pub async fn find_offering_by_id(&self, offering_id: &str) -> Option<Offering> {
-        self.offerings.find_by_id(offering_id).await
-    }
-
     // The stone-health and resolution-change methods have moved to
     // `crate::domain::topology::composition::*` per ARCH-0020 Book III.
 

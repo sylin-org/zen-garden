@@ -6,20 +6,17 @@
 //! handle on the inner state — mutation is impossible except through the
 //! methods on this type.
 //!
-//! **Read access** is currently provided in three shapes:
-//! 1. `read()` — back-compat shim returning `ActiveGuard`, which derefs to
-//!    `&Vec<Offering>`. This keeps the 82 existing `.read().await` call
-//!    sites compiling while they migrate opportunistically.
-//! 2. `snapshot()`, `find_by_id()`, `find_by_name()`, `candidates_snapshot()`
-//!    — typed query methods preferred for new code.
-//! 3. `with_active()`, `with_candidates()` — scoped closures for hot paths
-//!    that want to iterate without cloning.
+//! **Read access** is provided via typed query methods:
+//! - `snapshot()`, `candidates_snapshot()` — clone the pool
+//! - `find_by_id()`, `find_by_name()` — single-item lookup
+//! - `with_active()`, `with_candidates()` — scoped closures (no clone)
+//! - `count_active()` — pool size
 //!
 //! See [ARCH-0016](../../../../../docs/decisions/ARCH-0016-offerings-aggregate-domain.md)
-//! for full rationale.
+//! for the original design and [ARCH-0036](../../../../../docs/decisions/ARCH-0036-offerings-strangler-removal.md)
+//! for the strangler removal.
 
 use super::event::{ChangeKind, OfferingsChanged};
-use super::guard::{ActiveGuard, CandidatesGuard};
 use super::store::OfferingStore;
 use crate::domain::Metrics;
 use garden_common::{Offering, OfferingStatus, ServiceHealthStatus};
@@ -120,24 +117,6 @@ impl Offerings {
     // ========================================================================
     // Read API — snapshots and queries
     // ========================================================================
-
-    /// Back-compat read guard for the active pool.
-    ///
-    /// Derefs to `&Vec<Offering>` so existing call sites that do
-    /// `state.offerings.read().await.iter()...` compile unchanged.
-    /// New code should prefer `snapshot()`, `find_by_id()`, or `with_active()`.
-    pub async fn read(&self) -> ActiveGuard<'_> {
-        ActiveGuard {
-            inner: self.state.read().await,
-        }
-    }
-
-    /// Read guard for the adopted-candidates pool.
-    pub async fn read_candidates(&self) -> CandidatesGuard<'_> {
-        CandidatesGuard {
-            inner: self.state.read().await,
-        }
-    }
 
     /// Clone of the active offerings pool.
     pub async fn snapshot(&self) -> Vec<Offering> {

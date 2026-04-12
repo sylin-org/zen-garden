@@ -104,7 +104,7 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
         let fqn = offering_fqn.to_string();
         Box::pin(async move {
             // Find the running offering by FQN
-            let offering = self.state.find_offering(&fqn).await?;
+            let offering = self.state.offerings.find_by_name(&fqn).await?;
 
             // ORCH-0008: if a registered gateway handles this offering type,
             // this stone is ineligible — the gateway owns the lifecycle.

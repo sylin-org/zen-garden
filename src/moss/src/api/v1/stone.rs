@@ -60,7 +60,7 @@ pub async fn get_stone_info_v1(
     };
 
     // Get offerings from registry
-    let offerings = state.get_offerings().await;
+    let offerings = state.offerings.snapshot().await;
 
     // Build endpoint
     let current_ip = state.platform.network.get_ip().await;

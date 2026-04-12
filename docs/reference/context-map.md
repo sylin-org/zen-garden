@@ -308,8 +308,8 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### Logging
 
-- **Status:** Absent — `AppState::log: broadcast::Sender<String>` is a raw field; tracing layer wiring is in `bootstrap/run.rs`
-- **Target source:** `src/moss/src/domain/logging/`
+- **Status:** Dissolved. ARCH-0033 (Book XV of ARCH-0017) — completed 2026-04-12.
+- **Plan change:** ARCH-0017 anticipated a `Logging` aggregate with `LogLineEmitted` event and `LogSink` port; Book XV found that logging is pure infrastructure — a single `broadcast::Sender<String>` with 1 consumer (SSE stream), `LogBroadcastLayer` correctly in `infra/`, file sink managed by `tracing-appender`. No domain state, no invariants, no events beyond raw tracing output.
 - **Book:** XV
 
 #### Events (unified)
@@ -354,7 +354,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Orchestration::Nurturing** | nurturing lifecycle state | `NurturingChanged` | `NurturingStore` | XI |
 | **Orchestration::Election** | offering primary/dormant election | `ElectionResolved` | `ElectionTransport` | XI |
 | ~~**Configuration**~~ | ~~typed env + runtime settings~~ | ~~`ConfigChanged`~~ | ~~`ConfigSource`~~ | XIII (dissolved) |
-| **Logging** | log broadcast channel, file sink handle | `LogLineEmitted` | `LogSink` | XV |
+| ~~**Logging**~~ | ~~log broadcast channel, file sink handle~~ | ~~`LogLineEmitted`~~ | ~~`LogSink`~~ | XV (dissolved) |
 | **Events** | unified cross-cutting event surface | (bridges all domain events to pulse) | none | XVI |
 
 ### Infrastructure contexts (ports + adapters, no state)
@@ -446,7 +446,7 @@ Complete list of infrastructure ports the epic produces. Each port lives in its 
 | `ElectionTransport` | election message transport | `UdpElectionAdapter` | Orchestration::Election |
 | `NurturingStore` | persist nurturing state | `FileNurturingStore` | Orchestration::Nurturing |
 | ~~`ConfigSource`~~ | ~~load typed configuration~~ | ~~`EnvConfigSource` + `FileConfigSource`~~ | ~~Configuration~~ (dissolved — Book XIII) |
-| `LogSink` | write log lines | `FileLogSink`, `StderrLogSink`, `MemoryLogSink` (for tests) | Logging |
+| ~~`LogSink`~~ | ~~write log lines~~ | ~~`FileLogSink`, `StderrLogSink`, `MemoryLogSink`~~ | ~~Logging~~ (dissolved — Book XV) |
 | `CompanionSocket` | command forwarding to companion processes | `HttpCompanionSocket` | Companion |
 | `CompanionManifest` | load companion manifests | `FileCompanionManifest` | Companion |
 

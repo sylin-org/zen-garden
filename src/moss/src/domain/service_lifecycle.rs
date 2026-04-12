@@ -157,13 +157,11 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
         // OFFER-0008: If the offering is already Installing (health monitor reconciliation
         // in-flight), skip the redundant reconcile to avoid a Docker "name already in use"
         // race. The health monitor will complete it.
-        let current_status = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .find(|o| o.offering_id == offering_id)
-                .map(|o| o.status)
-        };
+        let current_status = state
+            .offerings
+            .find_by_id(&offering_id)
+            .await
+            .map(|o| o.status);
         if current_status == Some(OfferingStatus::Installing) {
             info!(
                 service = %service_name,
@@ -186,15 +184,15 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
         info!(service = %service_name, "Container reconciled successfully (data preserved)");
     } else {
         // Check if compose-on-start needed (config patches exist)
-        let needs_compose = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .find(|o| o.offering_id == offering_id)
-                .and_then(|o| o.managed_data())
-                .map(|d| !d.config_patches.is_empty())
-                .unwrap_or(false)
-        };
+        let needs_compose = state
+            .offerings
+            .find_by_id(&offering_id)
+            .await
+            .and_then(|o| {
+                o.managed_data()
+                    .map(|d| !d.config_patches.is_empty())
+            })
+            .unwrap_or(false);
 
         if needs_compose
             && let Err(e) =
@@ -636,10 +634,15 @@ pub enum NourishOutcome {
 pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutcome> {
     // Find and validate the service
     let (offering_id, offering, old_version) = {
-        let offerings = state.offerings.read().await;
-        let o = offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
+        let o = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .find(|o| o.name.to_string() == service_name && o.is_managed())
+                    .cloned()
+            })
+            .await
             .ok_or_else(|| anyhow::anyhow!("Service '{}' not found", service_name))?;
 
         if o.status == OfferingStatus::Maintenance {

@@ -40,7 +40,7 @@ impl MossStateProvider {
         fields.insert("health".to_string(), json!(health));
 
         // Offering count
-        let offerings_count = self.state.offerings.read().await.len();
+        let offerings_count = self.state.offerings.count_active().await;
         fields.insert("offerings".to_string(), json!(offerings_count));
 
         fields
@@ -137,7 +137,7 @@ impl super::election_service::FitnessProvider for MossFitnessProvider {
             // Collect normalised resources for placement scoring
             let resources = crate::domain::resources_collection::get_local_resources().ok();
 
-            let offering_count = self.state.offerings.read().await.len();
+            let offering_count = self.state.offerings.count_active().await;
 
             // Compute fitness score (domain logic)
             let score = fitness::compute_fitness_score(

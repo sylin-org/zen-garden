@@ -354,10 +354,11 @@ async fn sweep_task_history(ctx: &Sweep<'_>) -> SweepReport {
     let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
 
     // Get current offering IDs
-    let offering_ids: std::collections::HashSet<String> = {
-        let offerings = ctx.state.offerings.read().await;
-        offerings.iter().map(|o| o.offering_id.clone()).collect()
-    };
+    let offering_ids: std::collections::HashSet<String> = ctx
+        .state
+        .offerings
+        .with_active(|offerings| offerings.iter().map(|o| o.offering_id.clone()).collect())
+        .await;
 
     // Find orphaned tasks
     let orphaned_ids: Vec<String> = registry

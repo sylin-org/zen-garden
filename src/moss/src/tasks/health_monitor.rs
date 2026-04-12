@@ -57,21 +57,23 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         }
 
         // Get snapshot of managed offerings to check
-        let managed_snapshot: Vec<(String, String, OfferingStatus, ServiceHealthStatus)> = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .filter(|o| o.is_managed())
-                .map(|o| {
-                    (
-                        o.offering_id.clone(),
-                        o.name.to_string(),
-                        o.status,
-                        o.health.clone(),
-                    )
-                })
-                .collect()
-        };
+        let managed_snapshot: Vec<(String, String, OfferingStatus, ServiceHealthStatus)> = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .filter(|o| o.is_managed())
+                    .map(|o| {
+                        (
+                            o.offering_id.clone(),
+                            o.name.to_string(),
+                            o.status,
+                            o.health.clone(),
+                        )
+                    })
+                    .collect()
+            })
+            .await;
 
         let mut state_changed = false;
         // Track offerings confirmed missing during status checks (OFFER-0008).
@@ -136,26 +138,22 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
 
             // Read current status after probe for port/protocol reconciliation
-            let current_status = {
-                let offerings = state.offerings.read().await;
-                offerings
-                    .iter()
-                    .find(|o| o.offering_id == *offering_id)
-                    .map(|o| o.status)
-                    .unwrap_or(*old_status)
-            };
+            let current_status = state
+                .offerings
+                .find_by_id(offering_id)
+                .await
+                .map(|o| o.status)
+                .unwrap_or(*old_status);
 
             // ── Port reconciliation ────────────────────────────────────
             if current_status == OfferingStatus::Running
                 && let Ok(docker_ports) = state.platform.container.get_container_ports(name).await
             {
-                let current_port = {
-                    let offerings = state.offerings.read().await;
-                    offerings
-                        .iter()
-                        .find(|o| o.offering_id == *offering_id)
-                        .map(|o| o.location.port)
-                };
+                let current_port = state
+                    .offerings
+                    .find_by_id(offering_id)
+                    .await
+                    .map(|o| o.location.port);
                 if let Some(current_port) = current_port {
                     let best_port = docker_ports
                         .iter()
@@ -195,13 +193,11 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                         template.connection.as_ref(),
                     );
 
-                let current_protocol = {
-                    let offerings = state.offerings.read().await;
-                    offerings
-                        .iter()
-                        .find(|o| o.offering_id == *offering_id)
-                        .map(|o| o.location.protocol.clone())
-                };
+                let current_protocol = state
+                    .offerings
+                    .find_by_id(offering_id)
+                    .await
+                    .map(|o| o.location.protocol.clone());
                 if let Some(current_protocol) = current_protocol
                     && current_protocol != expected_protocol
                 {
@@ -243,14 +239,16 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
 
         // ── Phase 3: TOPO-0002 topology mount remediation ──────────────
         {
-            let running_snapshot: Vec<String> = {
-                let offerings = state.offerings.read().await;
-                offerings
-                    .iter()
-                    .filter(|o| o.is_managed() && o.status == OfferingStatus::Running)
-                    .map(|o| o.name.to_string())
-                    .collect()
-            };
+            let running_snapshot: Vec<String> = state
+                .offerings
+                .with_active(|offerings| {
+                    offerings
+                        .iter()
+                        .filter(|o| o.is_managed() && o.status == OfferingStatus::Running)
+                        .map(|o| o.name.to_string())
+                        .collect()
+                })
+                .await;
 
             for name in &running_snapshot {
                 if reconciler.is_in_flight(name).await {
@@ -308,12 +306,14 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
         match state.platform.container.list_zen_containers().await {
             Ok(container_names) => {
                 for container_name in &container_names {
-                    let exists = {
-                        let offerings = state.offerings.read().await;
-                        offerings
-                            .iter()
-                            .any(|o| o.name.to_string() == *container_name)
-                    };
+                    let exists = state
+                        .offerings
+                        .with_active(|offerings| {
+                            offerings
+                                .iter()
+                                .any(|o| o.name.to_string() == *container_name)
+                        })
+                        .await;
 
                     if !exists {
                         tracing::warn!(container = %container_name, "Found zen-offering container not in registry (adopting)");

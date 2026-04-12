@@ -130,13 +130,15 @@ async fn handle_container_event(state: &AppState, event: &ContainerEvent) {
     );
 
     // Look up the offering in the registry
-    let offering_snapshot = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering_name)
-            .map(|o| (o.offering_id.clone(), o.status, o.health.clone()))
-    };
+    let offering_snapshot = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string() == offering_name)
+                .map(|o| (o.offering_id.clone(), o.status, o.health.clone()))
+        })
+        .await;
 
     let (offering_id, old_status, old_health) = match offering_snapshot {
         Some(snap) => snap,

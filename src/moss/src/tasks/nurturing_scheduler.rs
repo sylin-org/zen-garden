@@ -139,16 +139,21 @@ impl NurturingScheduler {
         );
 
         // Look up offering to get offering_id
-        let offering_entry = {
-            let offerings = self.state.offerings.read().await;
-            offerings
-                .iter()
-                .find(|o| o.name.to_string() == offering_name || o.offering_id == offering_name)
-                .cloned()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Offering '{}' not found in registry", offering_name)
-                })?
-        };
+        let offering_entry = self
+            .state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .find(|o| {
+                        o.name.to_string() == offering_name || o.offering_id == offering_name
+                    })
+                    .cloned()
+            })
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!("Offering '{}' not found in registry", offering_name)
+            })?;
         let offering_id = offering_entry.offering_id.clone();
         let actual_name = offering_entry.name.to_string();
 
@@ -489,14 +494,16 @@ pub async fn trigger_nurturing(
 ///
 /// Used for batch nurturing or testing.
 pub async fn trigger_all_nurturing(state: &AppState) -> Vec<NurturingWorkflowResult> {
-    let offerings: Vec<String> = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .filter(|o| o.status == garden_common::OfferingStatus::Running)
-            .map(|o| o.name.to_string())
-            .collect()
-    };
+    let offerings: Vec<String> = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .filter(|o| o.status == garden_common::OfferingStatus::Running)
+                .map(|o| o.name.to_string())
+                .collect()
+        })
+        .await;
 
     let mut results = Vec::new();
     let scheduler = NurturingScheduler::new(state.clone());

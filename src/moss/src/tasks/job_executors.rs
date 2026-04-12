@@ -276,84 +276,88 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
         String,
         String,
         std::collections::HashMap<String, (u16, u16)>,
-    )> = {
-        let offerings = state.offerings.read().await;
-        tracing::info!(
-            offering_count = offerings.len(),
-            "Backfill: checking offerings in registry"
-        );
+    )> = state
+        .offerings
+        .with_active(|offerings| {
+            tracing::info!(
+                offering_count = offerings.len(),
+                "Backfill: checking offerings in registry"
+            );
 
-        offerings
-            .iter()
-            .filter(|o| o.is_managed())
-            .filter(|o| {
-                let has_guidance = o
-                    .managed_data()
-                    .map(|m| m.guidance.is_some())
-                    .unwrap_or(false);
-                let manifest_has_guidance = state
-                    .catalog
-                    .get_manifest(&o.offering)
-                    .as_ref()
-                    .map(|m| m.guidance.is_some())
-                    .unwrap_or(false);
+            offerings
+                .iter()
+                .filter(|o| o.is_managed())
+                .filter(|o| {
+                    let has_guidance = o
+                        .managed_data()
+                        .map(|m| m.guidance.is_some())
+                        .unwrap_or(false);
+                    let manifest_has_guidance = state
+                        .catalog
+                        .get_manifest(&o.offering)
+                        .as_ref()
+                        .map(|m| m.guidance.is_some())
+                        .unwrap_or(false);
 
-                tracing::info!(
-                    offering = %o.name,
-                    offering_type = %o.offering,
-                    has_guidance = has_guidance,
-                    manifest_has_guidance = manifest_has_guidance,
-                    "Backfill: checking offering"
-                );
+                    tracing::info!(
+                        offering = %o.name,
+                        offering_type = %o.offering,
+                        has_guidance = has_guidance,
+                        manifest_has_guidance = manifest_has_guidance,
+                        "Backfill: checking offering"
+                    );
 
-                // Only consider offerings without guidance where manifest has guidance
-                !has_guidance && manifest_has_guidance
-            })
-            .filter_map(|o| {
-                // Get ports from the manifest template for proper template substitution
-                let ports = state
-                    .catalog
-                    .get_manifest(&o.offering)
-                    .and_then(|m| m.parse_template().ok())
-                    .map(|t| t.ports)?;
-                Some((
-                    o.offering_id.clone(),
-                    o.name.to_string(),
-                    o.offering.clone(),
-                    ports,
-                ))
-            })
-            .collect()
-    };
+                    // Only consider offerings without guidance where manifest has guidance
+                    !has_guidance && manifest_has_guidance
+                })
+                .filter_map(|o| {
+                    // Get ports from the manifest template for proper template substitution
+                    let ports = state
+                        .catalog
+                        .get_manifest(&o.offering)
+                        .and_then(|m| m.parse_template().ok())
+                        .map(|t| t.ports)?;
+                    Some((
+                        o.offering_id.clone(),
+                        o.name.to_string(),
+                        o.offering.clone(),
+                        ports,
+                    ))
+                })
+                .collect()
+        })
+        .await;
 
-    let offerings_needing_adopted_guidance: Vec<(String, String, String, u16)> = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .filter(|o| o.is_adopted())
-            .filter(|o| {
-                let has_guidance = o
-                    .adopted_data()
-                    .map(|a| a.guidance.is_some())
-                    .unwrap_or(false);
-                let manifest_has_guidance = state
-                    .catalog
-                    .get_manifest(&o.offering)
-                    .and_then(|m| m.adopted)
-                    .and_then(|a| a.guidance)
-                    .is_some();
-                !has_guidance && manifest_has_guidance
-            })
-            .map(|o| {
-                (
-                    o.offering_id.clone(),
-                    o.name.to_string(),
-                    o.offering.clone(),
-                    o.location.port,
-                )
-            })
-            .collect()
-    };
+    let offerings_needing_adopted_guidance: Vec<(String, String, String, u16)> = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .filter(|o| o.is_adopted())
+                .filter(|o| {
+                    let has_guidance = o
+                        .adopted_data()
+                        .map(|a| a.guidance.is_some())
+                        .unwrap_or(false);
+                    let manifest_has_guidance = state
+                        .catalog
+                        .get_manifest(&o.offering)
+                        .and_then(|m| m.adopted)
+                        .and_then(|a| a.guidance)
+                        .is_some();
+                    !has_guidance && manifest_has_guidance
+                })
+                .map(|o| {
+                    (
+                        o.offering_id.clone(),
+                        o.name.to_string(),
+                        o.offering.clone(),
+                        o.location.port,
+                    )
+                })
+                .collect()
+        })
+        .await;
 
     if offerings_needing_guidance.is_empty() && offerings_needing_adopted_guidance.is_empty() {
         tracing::info!("Backfill: no offerings need guidance");
@@ -798,11 +802,11 @@ pub async fn install_service_task(
         .await;
 
     let offering_id = if updated {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering)
-            .map(|o| o.offering_id.clone())
+        state
+            .offerings
+            .find_by_name(offering)
+            .await
+            .map(|o| o.offering_id)
             .unwrap_or_default()
     } else {
         // Fallback: entry was somehow removed, recreate it
@@ -1473,25 +1477,29 @@ pub async fn refresh_capabilities_task(
     tracing::info!(job_id, offering, "Starting capabilities refresh");
 
     // Find the offering
-    let (service, mode) = {
-        let offerings = state.offerings.read().await;
-        match offerings
-            .iter()
-            .find(|o| o.name.to_string().eq_ignore_ascii_case(offering))
-        {
-            Some(o) => {
-                let mode = o.mode();
-                let service = offering_to_service_info_for_refresh(o, state).await;
-                (service, mode)
-            }
-            None => {
-                let error = format!("Offering '{}' not found", offering);
-                state
-                    .jobs
-                    .fail(job_id, offering, Some((offering.to_string(), error)))
-                    .await;
-                return;
-            }
+    let found = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string().eq_ignore_ascii_case(offering))
+                .cloned()
+        })
+        .await;
+
+    let (service, mode) = match found {
+        Some(o) => {
+            let mode = o.mode();
+            let service = offering_to_service_info_for_refresh(&o, state).await;
+            (service, mode)
+        }
+        None => {
+            let error = format!("Offering '{}' not found", offering);
+            state
+                .jobs
+                .fail(job_id, offering, Some((offering.to_string(), error)))
+                .await;
+            return;
         }
     };
 
@@ -1728,25 +1736,29 @@ pub async fn add_capability_task(
     );
 
     // Find the offering
-    let (service, mode) = {
-        let offerings = state.offerings.read().await;
-        match offerings
-            .iter()
-            .find(|o| o.name.to_string().eq_ignore_ascii_case(offering))
-        {
-            Some(o) => {
-                let mode = o.mode();
-                let service = offering_to_service_info_for_refresh(o, state).await;
-                (service, mode)
-            }
-            None => {
-                let error = format!("Offering '{}' not found", offering);
-                state
-                    .jobs
-                    .fail(job_id, offering, Some((capability_name.to_string(), error)))
-                    .await;
-                return;
-            }
+    let found = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string().eq_ignore_ascii_case(offering))
+                .cloned()
+        })
+        .await;
+
+    let (service, mode) = match found {
+        Some(o) => {
+            let mode = o.mode();
+            let service = offering_to_service_info_for_refresh(&o, state).await;
+            (service, mode)
+        }
+        None => {
+            let error = format!("Offering '{}' not found", offering);
+            state
+                .jobs
+                .fail(job_id, offering, Some((capability_name.to_string(), error)))
+                .await;
+            return;
         }
     };
 

@@ -21,15 +21,17 @@ pub async fn build_spec_from_manifest(
     state: &AppState,
     service_name: &str,
 ) -> anyhow::Result<crate::docker::ContainerSpec> {
-    let patches = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.fqn_eq(service_name) && o.is_managed())
-            .and_then(|o| o.managed_data())
-            .map(|d| d.config_patches.clone())
-            .unwrap_or_default()
-    };
+    let patches = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.fqn_eq(service_name) && o.is_managed())
+                .and_then(|o| o.managed_data())
+                .map(|d| d.config_patches.clone())
+                .unwrap_or_default()
+        })
+        .await;
 
     // Resolve the offering type (strip instance suffix for FQN lookups)
     let fqn = OfferingFqn::parse(service_name).context("Invalid offering FQN")?;
@@ -177,14 +179,16 @@ pub async fn reconcile_offering(
     service_name: &str,
 ) -> anyhow::Result<ReconcileResult> {
     // 1. Snapshot stored offering state (brief read lock, no await across it)
-    let stored_port_map = {
-        let offerings = state.offerings.read().await;
-        let offering = offerings
-            .iter()
-            .find(|o| o.name.fqn_eq(service_name) && o.is_managed())
-            .context("Managed offering not found in registry")?;
-        offering.location.port_map.clone()
-    };
+    let stored_port_map = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.fqn_eq(service_name) && o.is_managed())
+                .map(|o| o.location.port_map.clone())
+        })
+        .await
+        .context("Managed offering not found in registry")?;
 
     // 2. Handle partial prior attempt: container exists but is stopped
     if state
@@ -312,15 +316,17 @@ fn resolve_port_name_keys(state: &AppState, fqn: &OfferingFqn) -> Vec<String> {
 /// it is removed and recreated.
 pub async fn compose_on_start(state: &AppState, service_name: &str) -> anyhow::Result<()> {
     // Only run if there are config patches to apply
-    let has_patches = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.fqn_eq(service_name) && o.is_managed())
-            .and_then(|o| o.managed_data())
-            .map(|d| !d.config_patches.is_empty())
-            .unwrap_or(false)
-    };
+    let has_patches = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.fqn_eq(service_name) && o.is_managed())
+                .and_then(|o| o.managed_data())
+                .map(|d| !d.config_patches.is_empty())
+                .unwrap_or(false)
+        })
+        .await;
 
     if !has_patches {
         return Ok(());

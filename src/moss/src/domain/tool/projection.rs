@@ -35,8 +35,8 @@ pub async fn project_local_tools(state: &AppState) -> Vec<GardenTool> {
 
     // ── Offerings (direct read, no service_discovery) ─────────
     {
-        let offerings = state.offerings.read().await;
-        for offering in offerings.iter() {
+        let offerings = state.offerings.snapshot().await;
+        for offering in &offerings {
             tools.push(offering_to_garden_tool(offering, &stone, state).await);
         }
     }

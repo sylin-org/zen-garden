@@ -215,20 +215,22 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
         // Phase 1A: Validate active adopted offerings
         // If detection fails, demote back to candidates.
-        let active_adopted: Vec<(String, String, garden_common::OfferingLocation)> = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .filter(|o| o.is_adopted())
-                .map(|o| {
-                    (
-                        o.offering_id.clone(),
-                        o.offering.clone(),
-                        o.location.clone(),
-                    )
-                })
-                .collect()
-        };
+        let active_adopted: Vec<(String, String, garden_common::OfferingLocation)> = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .filter(|o| o.is_adopted())
+                    .map(|o| {
+                        (
+                            o.offering_id.clone(),
+                            o.offering.clone(),
+                            o.location.clone(),
+                        )
+                    })
+                    .collect()
+            })
+            .await;
 
         for (offering_id, offering_name, location) in active_adopted {
             let manifest = match state.catalog.get_manifest(&offering_name) {
@@ -427,8 +429,11 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
             // Check if already registered (any mode: managed, adopted, or borrowed)
             {
-                let offerings = state.offerings.read().await;
-                if offerings.iter().any(|o| o.offering == manifest.name) {
+                let already = state
+                    .offerings
+                    .with_active(|o| o.iter().any(|o| o.offering == manifest.name))
+                    .await;
+                if already {
                     continue; // Already in registry (any mode)
                 }
             }

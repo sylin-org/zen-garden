@@ -34,14 +34,16 @@ impl BackgroundTask for RegistryLoaderTask {
             let state = &ctx.state;
 
             // Reconcile existing offerings: if the container no longer exists, mark it offline
-            let managed_snapshot: Vec<(String, String)> = {
-                let offerings = state.offerings.read().await;
-                offerings
-                    .iter()
-                    .filter(|o| o.is_managed())
-                    .map(|o| (o.offering_id.clone(), o.name.to_string()))
-                    .collect()
-            };
+            let managed_snapshot: Vec<(String, String)> = state
+                .offerings
+                .with_active(|offerings| {
+                    offerings
+                        .iter()
+                        .filter(|o| o.is_managed())
+                        .map(|o| (o.offering_id.clone(), o.name.to_string()))
+                        .collect()
+                })
+                .await;
             let mut any_changed = false;
             for (offering_id, name) in managed_snapshot {
                 if !state

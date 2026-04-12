@@ -9,13 +9,15 @@ use std::time::Duration;
 ///
 /// Fast, zero-latency check of local offerings registry.
 pub async fn get_local_service_count(state: &crate::AppState) -> Result<usize> {
-    let offerings = state.offerings.read().await;
-
-    // Count offerings that are in running state
-    let count = offerings
-        .iter()
-        .filter(|o| o.status == garden_common::OfferingStatus::Running)
-        .count();
+    let count = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .filter(|o| o.status == garden_common::OfferingStatus::Running)
+                .count()
+        })
+        .await;
 
     Ok(count)
 }

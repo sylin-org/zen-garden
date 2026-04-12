@@ -260,10 +260,10 @@ pub async fn adopt_existing_containers(state: &AppState) -> AdoptionResult {
     let mut failed = Vec::new();
 
     for offering in existing {
-        let already = {
-            let offerings = state.offerings.read().await;
-            offerings.iter().any(|o| o.name.to_string() == offering)
-        };
+        let already = state
+            .offerings
+            .with_active(|o| o.iter().any(|o| o.name.to_string() == offering))
+            .await;
         if already {
             continue;
         }

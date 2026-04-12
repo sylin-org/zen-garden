@@ -148,14 +148,12 @@ pub async fn run_scheduler_iteration(state: &AppState) -> Result<usize> {
 
     for task in due_tasks {
         // Verify container is running before executing
-        let container_running = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .find(|o| o.offering_id == task.offering_id)
-                .map(|o| o.status == garden_common::OfferingStatus::Running)
-                .unwrap_or(false)
-        };
+        let container_running = state
+            .offerings
+            .find_by_id(&task.offering_id)
+            .await
+            .map(|o| o.status == garden_common::OfferingStatus::Running)
+            .unwrap_or(false);
 
         if !container_running {
             tracing::debug!(
@@ -264,20 +262,22 @@ pub async fn backfill_missing_tasks(state: &AppState) -> usize {
     let mut registered = 0;
 
     // Get all managed offerings from registry
-    let managed_offerings: Vec<(String, String, String)> = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .filter(|o| o.is_managed())
-            .map(|o| {
-                (
-                    o.offering_id.clone(),
-                    o.name.to_string(),
-                    o.offering.clone(),
-                )
-            })
-            .collect()
-    };
+    let managed_offerings: Vec<(String, String, String)> = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .filter(|o| o.is_managed())
+                .map(|o| {
+                    (
+                        o.offering_id.clone(),
+                        o.name.to_string(),
+                        o.offering.clone(),
+                    )
+                })
+                .collect()
+        })
+        .await;
 
     for (offering_id, offering_name, offering_type) in managed_offerings {
         // Get manifest for this offering type

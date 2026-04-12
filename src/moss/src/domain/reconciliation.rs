@@ -60,8 +60,11 @@ pub async fn reconcile_services(state: &AppState, drop_invalid: bool) -> Reconci
     for offering in existing {
         // Check if already in registry (read lock, brief)
         {
-            let offerings = state.offerings.read().await;
-            if offerings.iter().any(|o| o.name.to_string() == offering) {
+            let already = state
+                .offerings
+                .with_active(|o| o.iter().any(|o| o.name.to_string() == offering))
+                .await;
+            if already {
                 skipped_existing.push(offering);
                 continue;
             }

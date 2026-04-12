@@ -127,18 +127,20 @@ impl ReconciliationCoordinator {
         let mut state_changed = false;
 
         // Snapshot offerings (drop read guard before acquiring in_flight)
-        let candidates_raw: Vec<(String, String, OfferingStatus)> = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .filter(|o| {
-                    o.is_managed()
-                        && o.status != OfferingStatus::Installing
-                        && o.status != OfferingStatus::Cordoned
-                })
-                .map(|o| (o.offering_id.clone(), o.name.to_string(), o.status))
-                .collect()
-        };
+        let candidates_raw: Vec<(String, String, OfferingStatus)> = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .filter(|o| {
+                        o.is_managed()
+                            && o.status != OfferingStatus::Installing
+                            && o.status != OfferingStatus::Cordoned
+                    })
+                    .map(|o| (o.offering_id.clone(), o.name.to_string(), o.status))
+                    .collect()
+            })
+            .await;
 
         // Filter to confirmed-missing and not in-flight (separate lock scope)
         let reconcile_candidates: Vec<(String, String, OfferingStatus)> = {

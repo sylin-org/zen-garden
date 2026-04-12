@@ -34,13 +34,15 @@ async fn mutate_capability_set(
     }
 
     // Resolve exact offering name (case-insensitive lookup)
-    let resolved_name = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string().eq_ignore_ascii_case(offering_name))
-            .map(|o| o.name.to_string())
-    };
+    let resolved_name = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string().eq_ignore_ascii_case(offering_name))
+                .map(|o| o.name.to_string())
+        })
+        .await;
     let resolved_name = resolved_name.ok_or_else(|| {
         anyhow::anyhow!(
             "Offering '{}' not found while updating capability set",

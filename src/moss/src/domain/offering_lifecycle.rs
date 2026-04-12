@@ -27,63 +27,63 @@ use crate::domain::events::OfferingEvent;
 
 /// Find an offering by ID. Returns a clone (snapshot).
 pub async fn find_by_id(state: &AppState, offering_id: &str) -> Option<Offering> {
-    let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .find(|o| o.offering_id == offering_id)
-        .cloned()
+    state.offerings.find_by_id(offering_id).await
 }
 
 /// Find an offering by service name (FQN). Returns a clone (snapshot).
 pub async fn find_by_name(state: &AppState, name: &str) -> Option<Offering> {
-    let offerings = state.offerings.read().await;
-    offerings.iter().find(|o| o.name.fqn_eq(name)).cloned()
+    state.offerings.find_by_name(name).await
 }
 
-/// Find a managed offering by service name. Returns (offering_id, offering clone).
+/// Find a managed offering by service name. Returns a clone (snapshot).
 pub async fn find_managed(state: &AppState, name: &str) -> Option<Offering> {
-    let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .find(|o| o.name.fqn_eq(name) && o.is_managed())
-        .cloned()
+    state
+        .offerings
+        .with_active(|o| {
+            o.iter()
+                .find(|o| o.name.fqn_eq(name) && o.is_managed())
+                .cloned()
+        })
+        .await
 }
 
 /// Snapshot the offering ID for a service name.
 pub async fn id_for_name(state: &AppState, name: &str) -> Option<String> {
-    let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .find(|o| o.name.fqn_eq(name))
-        .map(|o| o.offering_id.clone())
+    state
+        .offerings
+        .find_by_name(name)
+        .await
+        .map(|o| o.offering_id)
 }
 
 /// Snapshot the offering ID for a managed service name.
 pub async fn id_for_managed(state: &AppState, name: &str) -> Option<String> {
-    let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .find(|o| o.name.fqn_eq(name) && o.is_managed())
-        .map(|o| o.offering_id.clone())
+    state
+        .offerings
+        .with_active(|o| {
+            o.iter()
+                .find(|o| o.name.fqn_eq(name) && o.is_managed())
+                .map(|o| o.offering_id.clone())
+        })
+        .await
 }
 
 /// List all offerings (snapshot).
 pub async fn list_all(state: &AppState) -> Vec<Offering> {
-    state.offerings.read().await.clone()
+    state.offerings.snapshot().await
 }
 
 /// Check if an offering with the given name exists.
 pub async fn exists(state: &AppState, name: &str) -> bool {
-    let offerings = state.offerings.read().await;
-    offerings.iter().any(|o| o.name.fqn_eq(name))
+    state.offerings.find_by_name(name).await.is_some()
 }
 
 /// Check if an offering is in a given status.
 pub async fn has_status(state: &AppState, name: &str, status: OfferingStatus) -> bool {
-    let offerings = state.offerings.read().await;
-    offerings
-        .iter()
-        .any(|o| o.name.fqn_eq(name) && o.status == status)
+    state
+        .offerings
+        .with_active(|o| o.iter().any(|o| o.name.fqn_eq(name) && o.status == status))
+        .await
 }
 
 // ============================================================================

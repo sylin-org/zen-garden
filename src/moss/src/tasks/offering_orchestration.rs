@@ -511,18 +511,15 @@ async fn transition_role(
     new_role: OfferingRole,
 ) -> Result<()> {
     // Read old role first (for logging and no-op check)
-    let old_role = {
-        let offerings = state.offerings.read().await;
-        match offerings.iter().find(|o| o.offering_id == offering_id) {
-            Some(o) => o
-                .orchestration
-                .as_ref()
-                .map(|orch| orch.role.clone())
-                .unwrap_or_default(),
-            None => {
-                tracing::warn!(offering_id = %offering_id, "Offering not found for role transition");
-                return Ok(());
-            }
+    let old_role = match state.offerings.find_by_id(offering_id).await {
+        Some(o) => o
+            .orchestration
+            .as_ref()
+            .map(|orch| orch.role.clone())
+            .unwrap_or_default(),
+        None => {
+            tracing::warn!(offering_id = %offering_id, "Offering not found for role transition");
+            return Ok(());
         }
     };
 

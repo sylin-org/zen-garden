@@ -42,22 +42,24 @@ pub async fn lantern_registration_loop(
 
     loop {
         // Build service list from current offerings
-        let services = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .map(|o| RegisterServiceInfo {
-                    name: o.name.to_string(),
-                    service_type: o.offering.clone(),
-                    status: o.status.to_string(),
-                    connection_string: format!(
-                        "{}:{}",
-                        endpoint,
-                        o.location.port_map.values().next().copied().unwrap_or(0)
-                    ),
-                })
-                .collect()
-        };
+        let services = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .map(|o| RegisterServiceInfo {
+                        name: o.name.to_string(),
+                        service_type: o.offering.clone(),
+                        status: o.status.to_string(),
+                        connection_string: format!(
+                            "{}:{}",
+                            endpoint,
+                            o.location.port_map.values().next().copied().unwrap_or(0)
+                        ),
+                    })
+                    .collect()
+            })
+            .await;
 
         let request = RegisterRequest {
             stone_id: Some(stone_id.clone()),

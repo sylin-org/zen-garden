@@ -16,6 +16,7 @@
 pub mod analysis;
 pub mod automount;
 pub mod bank;
+pub mod bank_aggregate;
 pub mod collection;
 pub mod health;
 pub mod medium;
@@ -38,8 +39,9 @@ pub use collection::{
 // Medium types
 pub use medium::{Media, Medium, new_media, reconcile_media};
 
-// Bank
+// Bank (ARCH-0025)
 pub use bank::VolumeIngestor;
+pub use bank_aggregate::{Bank, BankError};
 
 // Analysis
 pub use analysis::{analyze_device, is_allowed_mount, validate_manifest};

@@ -1078,7 +1078,7 @@ Before opening a PR introducing a new bounded context, verify every box:
 
 ## Documented deviations
 
-The pattern below is the default shape. Three deviations are documented as first-class variants rather than special cases in individual ADRs:
+The pattern below is the default shape. Five deviations are documented as first-class variants rather than special cases in individual ADRs:
 
 ### Ephemeral aggregates (no Store port)
 
@@ -1150,6 +1150,16 @@ Query methods on an aggregate with `RwLock`-protected state cannot return refere
 The pattern default is **owned clones** — they are simpler at the call site, and the clone cost is dwarfed by the lock-acquire cost for all but the hottest paths. Hot-path callers get dedicated typed methods that return already-filtered results (`Tool::storage_primary`, `Tool::find_s3_gateways`) rather than iterating a cloned `Vec`.
 
 **When to use closure-style queries**: proven hot-path performance regressions. Never by default.
+
+### Lock-free state (no internal RwLock)
+
+The standard pattern uses `RwLock<State>` to protect the aggregate's mutable interior. Some aggregates have state that is structurally immutable after bootstrap (the shape of the `HashMap` never changes) and where mutations are handled by an inherently thread-safe primitive (`watch::Sender::send_modify`, atomic operations).
+
+In these cases, the `RwLock` is unnecessary overhead. The aggregate stores a plain `HashMap` populated during single-threaded bootstrap (via `register()` calls) and never structurally modified afterward. Mutations flow through the inherently thread-safe channel primitives.
+
+**When to use**: the aggregate's state map is frozen after a single-threaded registration phase, and mutations go through a thread-safe channel type.
+
+**Aggregate using this deviation**: Subsystems (Book VI — `HashMap<String, watch::Sender<bool>>`, frozen after bootstrap, mutated via `watch::Sender::send_modify`).
 
 ---
 

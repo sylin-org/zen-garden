@@ -265,6 +265,14 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Typed errors (Catalog)** - The first domain aggregate in the ARCH-0017 epic to return `Result<T, CatalogError>` from commands instead of infallible mutations or `anyhow::Result`. `CatalogError` has four variants: `ManifestHashFailed`, `CompilationFailed`, `CacheReadFailed`, `CacheWriteFailed`. Matches code-standards section 10 "Domain errors as enums". Elevated to a first-class pattern deviation in `docs/specs/domain-aggregates.md`.
 
+### Subsystems aggregate terms (Book VI / ARCH-0023)
+
+**Subsystems (bounded context)** - The aggregate owning per-subsystem readiness state, backed by `tokio::sync::watch` channels. Subsystems are registered by name at bootstrap (`register("network")`, `register("docker")`); monitor tasks toggle readiness via `mark_ready`/`mark_unready` commands; consumer tasks and API handlers poll via `is_ready()` (synchronous, zero-cost) or await via `wait_ready()` (async). The simplest aggregate in the epic: no `RwLock` (the `HashMap` is frozen after registration and `watch::Sender::send_modify` is inherently thread-safe), no persistence, no typed errors. Replaces the prior `SubSystems` struct of `Arc<AtomicBool>` fields.
+
+**Subsystem readiness** - A boolean gate indicating whether a prerequisite infrastructure dependency (network stack, Docker daemon) is operational. Producers (monitor tasks) set readiness; consumers (background tasks, API handlers) gate their work on it. Before ARCH-0023, readiness was an `Arc<AtomicBool>` threaded through constructors. After ARCH-0023, readiness is a named slot in the `Subsystems` aggregate with `watch` channel semantics — synchronous poll for existing sites, async wait for future sites.
+
+**Watch channel (subsystems)** - `tokio::sync::watch` — a single-producer, multi-consumer channel where the latest value is always available via `borrow()`. Used by the Subsystems aggregate instead of `AtomicBool` because it offers both synchronous polling (`.borrow()` / `.is_ready()`) and async waiting (`.changed()` / `.wait_ready()`) with built-in change notification. No lock contention because `watch::Sender::send_modify` acquires only a brief internal lock that does not block readers.
+
 ### Jobs aggregate terms (Book IV / ARCH-0021)
 
 **Jobs (bounded context)** - The aggregate owning the in-memory map of background job state (`Pending`, `Running`, `Completed`, `Failed`) keyed by job id. Typed commands (`submit`, `start`, `record_item_completed`, `record_item_failed`, `complete`, `fail`, `maintain`) own the write path; typed queries (`get`, `snapshot`, `list_active`, `active_count`, `find_active_by_prefix`) return owned values. The first **ephemeral aggregate with a periodic reaper** — no `JobStore` port (state is rebuilt empty on every process start), but a `JobsReaperTask` sweeps terminal jobs past the 24-hour TTL every 10 minutes.

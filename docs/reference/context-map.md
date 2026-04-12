@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0022](../decisions/ARCH-0022-catalog-aggregate.md).
+As of 2026-04-12, after [ARCH-0023](../decisions/ARCH-0023-subsystems-aggregate.md).
 
 ### Full contexts
 
@@ -229,11 +229,20 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 These contexts do not exist as modules. Their state lives as raw fields on `AppState` or as free-function modules.
 
-#### Subsystems / Readiness
+#### Subsystems
 
-- **Status:** Absent as an aggregate — `AppState::subsystems: SubSystems` is a struct of `AtomicBool` flags (`network.ready`, `docker.ready`) checked imperatively
-- **Target source:** `src/moss/src/domain/subsystems/`
-- **Book:** VI
+- **Status:** Full. ARCH-0023 (Book VI of ARCH-0017) — completed 2026-04-12.
+- **Owns:** per-subsystem readiness state (network, docker) via `tokio::sync::watch` channels
+- **Commands (write):** `register` (bootstrap-time, panics on duplicate), `mark_ready`, `mark_unready`
+- **Queries (read):** `is_ready` (synchronous poll, zero-cost), `wait_ready` (async), `snapshot`
+- **Emits:** `SubsystemsChanged` with 2 kinds (`Ready`, `Unready`) — interesting transitions only
+- **Subscribes:** none (Subsystems is a pure readiness authority; producer tasks push into it)
+- **Ports:** none — ephemeral aggregate, readiness is runtime-only
+- **Cross-cutting:** `Arc<Metrics>` injected at construction; readiness transitions recorded as domain events
+- **Mutations:** infallible — commands return `()` and no `SubsystemsError` type exists; unknown-name calls are warn-level no-ops, matching Book I `Metrics` and Book IV `Jobs`
+- **No internal `RwLock`:** `watch::Sender` is inherently thread-safe; the `HashMap` is frozen after registration. Simplification over the standard `RwLock<State>` pattern.
+- **Source:** `src/moss/src/domain/subsystems/` (mod.rs + aggregate.rs + event.rs + tests.rs)
+- **Book:** VI (ARCH-0023) — **COMPLETE**
 
 #### Health
 
@@ -306,7 +315,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Topology** ✅ | peer cache (discovered + offline stones), persistence dirty flag, self-entry assembly | `TopologyChanged` (6 kinds: Discovered/Online/Offline/Forgotten/Evicted/Chirped) | `ChirpTransport`, `TopologyStore` | III (ARCH-0020) — **COMPLETE** |
 | **Jobs** ✅ | active + recently-terminal jobs (HashMap keyed by id) | `JobsChanged` (7 kinds: Submitted/Started/ItemCompleted/ItemFailed/Completed/Failed/Evicted) + wire `JobEvent` via `EventBus` | none (ephemeral; `JobsReaperTask` sweeps terminal jobs past 24h TTL) | IV (ARCH-0021) — **COMPLETE** |
 | **Catalog** ✅ | frozen manifest registry, compiled offerings index | `CatalogChanged` (2 kinds: Loaded, Rebuilt) | `CatalogCache` | V (ARCH-0022) — **COMPLETE** |
-| **Subsystems** | per-subsystem readiness state | `SubsystemReady`, `SubsystemUnready` | none | VI |
+| **Subsystems** ✅ | per-subsystem readiness state (watch channels) | `SubsystemsChanged` (2 kinds: Ready, Unready) | none (ephemeral) | VI (ARCH-0023) — **COMPLETE** |
 | **Health** | per-offering health state, probe schedule | `HealthChanged` | `HealthProbe` | VII |
 | **Storage::Volumes** | physical volume state | `VolumeChanged` | `VolumeMonitor`, `FileSystem` | VIII |
 | **Storage::Banks** | seed-bank lifecycle | `BankChanged` | `FileSystem` | VIII |

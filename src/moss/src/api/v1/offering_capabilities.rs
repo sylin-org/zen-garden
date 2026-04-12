@@ -1113,7 +1113,7 @@ async fn resolve_offering_for_capability(
     })?;
     let offering_fqn_str = offering_fqn.fqn();
 
-    let offerings = state.offerings.read().await;
+    let offerings = state.offerings.snapshot().await;
 
     // If instance is explicitly provided, require exact match.
     if offering_fqn.instance.is_some() {

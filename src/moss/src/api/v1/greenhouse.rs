@@ -292,16 +292,18 @@ pub async fn get_catalog(
     }
 
     // 3. Get installed offerings from AppState
-    let (installed_names, installed_running) = {
-        let installed = state.offerings.read().await;
-        let names: HashSet<String> = installed.iter().map(|o| o.offering.clone()).collect();
-        let running: HashSet<String> = installed
-            .iter()
-            .filter(|o| o.status.to_string() == "running")
-            .map(|o| o.offering.clone())
-            .collect();
-        (names, running)
-    };
+    let (installed_names, installed_running) = state
+        .offerings
+        .with_active(|installed| {
+            let names: HashSet<String> = installed.iter().map(|o| o.offering.clone()).collect();
+            let running: HashSet<String> = installed
+                .iter()
+                .filter(|o| o.status.to_string() == "running")
+                .map(|o| o.offering.clone())
+                .collect();
+            (names, running)
+        })
+        .await;
 
     // 4. Get compiled offerings index for compatibility info
     // Extract rich metadata from compiled offerings
@@ -747,31 +749,34 @@ pub async fn export_offering(
 pub async fn list_containers_v1(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ContainerEntry>>, (StatusCode, Json<ApiErrorResponse>)> {
-    let offerings = state.offerings.read().await;
+    let entries: Vec<ContainerEntry> = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .filter(|o| o.is_managed())
+                .map(|o| {
+                    let ports: Vec<String> = {
+                        let mut ps = Vec::new();
+                        if o.location.port > 0 {
+                            ps.push(format!("{}:{}", o.location.port, o.location.port));
+                        }
+                        for (name, &host_port) in &o.location.port_map {
+                            ps.push(format!("{host_port} ({name})"));
+                        }
+                        ps
+                    };
 
-    let entries: Vec<ContainerEntry> = offerings
-        .iter()
-        .filter(|o| o.is_managed())
-        .map(|o| {
-            let ports: Vec<String> = {
-                let mut ps = Vec::new();
-                if o.location.port > 0 {
-                    ps.push(format!("{}:{}", o.location.port, o.location.port));
-                }
-                for (name, &host_port) in &o.location.port_map {
-                    ps.push(format!("{host_port} ({name})"));
-                }
-                ps
-            };
-
-            ContainerEntry {
-                name: o.name.to_string(),
-                image: o.offering.clone(),
-                status: o.status.to_string(),
-                ports,
-            }
+                    ContainerEntry {
+                        name: o.name.to_string(),
+                        image: o.offering.clone(),
+                        status: o.status.to_string(),
+                        ports,
+                    }
+                })
+                .collect()
         })
-        .collect();
+        .await;
 
     Ok(Json(entries))
 }

@@ -88,13 +88,15 @@ pub async fn get_offering_slots(
     let offering_lookup =
         normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering by name to get the offering_id
-    let offering_id = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
-            .map(|o| o.offering_id.clone())
-    };
+    let offering_id = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
+                .map(|o| o.offering_id.clone())
+        })
+        .await;
 
     let slots = if let Some(id) = offering_id {
         state
@@ -138,19 +140,17 @@ pub async fn create_snapshot(
     let offering_lookup =
         normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
-    let (offering_id, offering_name) = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering_lookup)
-            .map(|o| (o.offering_id.clone(), o.name.to_string()))
-            .ok_or_else(|| {
-                crate::not_found(
-                    "OFFERING_NOT_FOUND",
-                    format!("Offering '{}' not found in registry", offering_lookup),
-                )
-            })?
-    };
+    let (offering_id, offering_name) = state
+        .offerings
+        .find_by_name(&offering_lookup)
+        .await
+        .map(|o| (o.offering_id, o.name.to_string()))
+        .ok_or_else(|| {
+            crate::not_found(
+                "OFFERING_NOT_FOUND",
+                format!("Offering '{}' not found in registry", offering_lookup),
+            )
+        })?;
 
     if offering_id.is_empty() {
         return Err(crate::bad_request(
@@ -204,19 +204,17 @@ pub async fn restore_snapshot(
     let offering_lookup =
         normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
-    let offering_id = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering_lookup)
-            .map(|o| o.offering_id.clone())
-            .ok_or_else(|| {
-                crate::not_found(
-                    "OFFERING_NOT_FOUND",
-                    format!("Offering '{}' not found in registry", offering_lookup),
-                )
-            })?
-    };
+    let offering_id = state
+        .offerings
+        .find_by_name(&offering_lookup)
+        .await
+        .map(|o| o.offering_id)
+        .ok_or_else(|| {
+            crate::not_found(
+                "OFFERING_NOT_FOUND",
+                format!("Offering '{}' not found in registry", offering_lookup),
+            )
+        })?;
 
     // Parse slot if specified
     let slot = match request.slot.as_deref() {
@@ -288,13 +286,15 @@ pub async fn delete_nurturing(
     let offering_lookup =
         normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
-    let offering_id = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
-            .map(|o| o.offering_id.clone())
-    };
+    let offering_id = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
+                .map(|o| o.offering_id.clone())
+        })
+        .await;
 
     let offering_id = offering_id.unwrap_or(offering.clone());
 
@@ -352,19 +352,21 @@ pub async fn replicate_to_seed_bank(
     let offering_lookup =
         normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
-    let offering_entry = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
-            .cloned()
-            .ok_or_else(|| {
-                crate::not_found(
-                    "OFFERING_NOT_FOUND",
-                    format!("Offering '{}' not found in registry", offering_lookup),
-                )
-            })?
-    };
+    let offering_entry = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
+                .cloned()
+        })
+        .await
+        .ok_or_else(|| {
+            crate::not_found(
+                "OFFERING_NOT_FOUND",
+                format!("Offering '{}' not found in registry", offering_lookup),
+            )
+        })?;
     let offering_id = offering_entry.offering_id.clone();
 
     // Find the seed bank
@@ -462,19 +464,21 @@ pub async fn restore_from_seed_bank(
     let offering_lookup =
         normalize_offering_for_lookup(&offering).unwrap_or_else(|| offering.clone());
     // Look up the offering to get offering_id
-    let (offering_id, offering_name) = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
-            .map(|o| (o.offering_id.clone(), o.name.to_string()))
-            .ok_or_else(|| {
-                crate::not_found(
-                    "OFFERING_NOT_FOUND",
-                    format!("Offering '{}' not found in registry", offering_lookup),
-                )
-            })?
-    };
+    let (offering_id, offering_name) = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.to_string() == offering_lookup || o.offering_id == offering)
+                .map(|o| (o.offering_id.clone(), o.name.to_string()))
+        })
+        .await
+        .ok_or_else(|| {
+            crate::not_found(
+                "OFFERING_NOT_FOUND",
+                format!("Offering '{}' not found in registry", offering_lookup),
+            )
+        })?;
 
     // Find the seed bank
     let seed_bank = find_seed_bank(&state.current.storage.volumes, &request.storage)

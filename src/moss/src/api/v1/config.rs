@@ -85,23 +85,25 @@ pub async fn get_config_v1(
 ) -> Result<Json<ConfigResponse>, (StatusCode, Json<ApiErrorResponse>)> {
     let service_name = normalize_service_name(&service)?;
 
-    let patches = {
-        let offerings = state.offerings.read().await;
-        let offering = offerings
-            .iter()
-            .find(|o| o.name.fqn() == service_name && o.is_managed())
-            .ok_or_else(|| {
-                not_found(
-                    "SERVICE_NOT_FOUND",
-                    format!("Managed service '{}' not found", service_name),
-                )
-            })?;
-
-        offering
-            .managed_data()
-            .map(|d| d.config_patches.clone())
-            .unwrap_or_default()
-    };
+    let patches = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .find(|o| o.name.fqn() == service_name && o.is_managed())
+                .map(|o| {
+                    o.managed_data()
+                        .map(|d| d.config_patches.clone())
+                        .unwrap_or_default()
+                })
+        })
+        .await
+        .ok_or_else(|| {
+            not_found(
+                "SERVICE_NOT_FOUND",
+                format!("Managed service '{}' not found", service_name),
+            )
+        })?;
 
     // If owner filter is specified, return only that owner's patch(es)
     let filtered_patches = if let Some(ref owner) = query.owner {
@@ -200,21 +202,25 @@ pub async fn patch_config_v1(
 
     // Get existing patches, validate, and build the updated list
     let patches_after = {
-        let offerings = state.offerings.read().await;
-        let offering = offerings
-            .iter()
-            .find(|o| o.name.fqn() == service_name && o.is_managed())
+        let existing = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .find(|o| o.name.fqn() == service_name && o.is_managed())
+                    .map(|o| {
+                        o.managed_data()
+                            .map(|d| d.config_patches.clone())
+                            .unwrap_or_default()
+                    })
+            })
+            .await
             .ok_or_else(|| {
                 not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Managed service '{}' not found", service_name),
                 )
             })?;
-
-        let existing = offering
-            .managed_data()
-            .map(|d| d.config_patches.clone())
-            .unwrap_or_default();
 
         // Validate against existing patches from OTHER owners
         config_compose::validate_patch(&existing, &new_patch)
@@ -282,21 +288,25 @@ pub async fn delete_config_v1(
 
     // Remove the patch
     let (patches_after, had_patch) = {
-        let offerings = state.offerings.read().await;
-        let offering = offerings
-            .iter()
-            .find(|o| o.name.fqn() == service_name && o.is_managed())
+        let existing = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .find(|o| o.name.fqn() == service_name && o.is_managed())
+                    .map(|o| {
+                        o.managed_data()
+                            .map(|d| d.config_patches.clone())
+                            .unwrap_or_default()
+                    })
+            })
+            .await
             .ok_or_else(|| {
                 not_found(
                     "SERVICE_NOT_FOUND",
                     format!("Managed service '{}' not found", service_name),
                 )
             })?;
-
-        let existing = offering
-            .managed_data()
-            .map(|d| d.config_patches.clone())
-            .unwrap_or_default();
 
         let had_patch = existing.iter().any(|p| p.owner == owner);
 
@@ -433,14 +443,12 @@ async fn maybe_cycle_container(
     effective: &config_compose::EffectiveConfig,
     patches: &[garden_common::types::ConfigPatch],
 ) {
-    let is_running = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.fqn() == service_name)
-            .map(|o| o.status == garden_common::OfferingStatus::Running)
-            .unwrap_or(false)
-    };
+    let is_running = state
+        .offerings
+        .find_by_name(service_name)
+        .await
+        .map(|o| o.status == garden_common::OfferingStatus::Running)
+        .unwrap_or(false);
 
     if !is_running {
         return;

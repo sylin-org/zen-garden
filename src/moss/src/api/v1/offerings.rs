@@ -62,8 +62,8 @@ pub async fn list_offerings_v1(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     // Get installed services from unified offerings registry
-    let offerings_guard = state.offerings.read().await;
-    let installed: HashMap<String, &garden_common::Offering> = offerings_guard
+    let offerings_snapshot = state.offerings.snapshot().await;
+    let installed: HashMap<String, &garden_common::Offering> = offerings_snapshot
         .iter()
         .map(|o| (o.name.to_string(), o))
         .collect();
@@ -76,7 +76,7 @@ pub async fn list_offerings_v1(
 
     // Add installed offerings with runtime details
     if query.state.as_deref() != Some("available") {
-        for offering in offerings_guard.iter() {
+        for offering in &offerings_snapshot {
             let name_str = offering.name.to_string();
             let image = state
                 .platform
@@ -166,11 +166,7 @@ pub async fn get_offering_v1(
     let offering_type = offering_fqn.offering.clone();
 
     // Check if installed
-    let offerings_guard = state.offerings.read().await;
-    if let Some(offering) = offerings_guard
-        .iter()
-        .find(|o| o.name.fqn() == service_name)
-    {
+    if let Some(offering) = state.offerings.find_by_name(&service_name).await {
         return Ok((
             StatusCode::OK,
             Json(ApiResponse::new(serde_json::json!({
@@ -859,10 +855,7 @@ pub async fn export_offering_manifest_v1(
     }
 
     // Try image-direct: inspect the running container and synthesize
-    let offerings = state.offerings.read().await;
-    let running = offerings
-        .iter()
-        .find(|o| o.name.fqn() == offering_fqn.fqn());
+    let running = state.offerings.find_by_name(&offering_fqn.fqn()).await;
 
     if let Some(offering_entry) = running {
         // If it's an image-direct offering, use the image ref to inspect

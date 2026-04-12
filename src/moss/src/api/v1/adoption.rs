@@ -40,12 +40,10 @@ pub async fn list_adoptable_v1(
 
     for offering in adoptable_manifests {
         // Check if already adopted
-        let already_adopted = {
-            let offerings = state.offerings.read().await;
-            offerings
-                .iter()
-                .any(|o| o.offering == offering.name && o.is_adopted())
-        };
+        let already_adopted = state
+            .offerings
+            .with_active(|o| o.iter().any(|o| o.offering == offering.name && o.is_adopted()))
+            .await;
 
         if already_adopted {
             continue;
@@ -104,11 +102,11 @@ pub async fn adopt_offering_v1(
 
     // Check if already adopted
     {
-        let offerings = state.offerings.read().await;
-        if offerings
-            .iter()
-            .any(|o| o.offering == offering_type && o.is_adopted())
-        {
+        let already = state
+            .offerings
+            .with_active(|o| o.iter().any(|o| o.offering == offering_type && o.is_adopted()))
+            .await;
+        if already {
             return Err(conflict(
                 "ALREADY_ADOPTED",
                 format!("Offering '{}' is already adopted", offering_type),
@@ -296,13 +294,14 @@ pub async fn unadopt_offering_v1(
     let offering_name = offering_fqn.fqn();
 
     // Find the offering to remove
-    let found = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name == offering_fqn && o.is_adopted())
-            .cloned()
-    };
+    let found = state
+        .offerings
+        .with_active(|o| {
+            o.iter()
+                .find(|o| o.name == offering_fqn && o.is_adopted())
+                .cloned()
+        })
+        .await;
 
     match found {
         Some(to_remove) => {
@@ -388,11 +387,11 @@ pub async fn borrow_service_v1(
 
     // Check if already borrowed with this name
     {
-        let offerings = state.offerings.read().await;
-        if offerings
-            .iter()
-            .any(|o| o.name == borrow_fqn && o.is_borrowed())
-        {
+        let already = state
+            .offerings
+            .with_active(|o| o.iter().any(|o| o.name == borrow_fqn && o.is_borrowed()))
+            .await;
+        if already {
             return Err(conflict(
                 "ALREADY_BORROWED",
                 format!("Service '{}' is already registered as borrowed", req.name),
@@ -486,13 +485,14 @@ pub async fn unborrow_service_v1(
     })?;
 
     // Find the offering to remove
-    let found = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name == unborrow_fqn && o.is_borrowed())
-            .cloned()
-    };
+    let found = state
+        .offerings
+        .with_active(|o| {
+            o.iter()
+                .find(|o| o.name == unborrow_fqn && o.is_borrowed())
+                .cloned()
+        })
+        .await;
 
     match found {
         Some(to_remove) => {

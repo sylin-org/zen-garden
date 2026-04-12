@@ -130,17 +130,20 @@ pub async fn stream_stone_presence(
 
 /// Generate presence snapshot from current state
 pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
-    let offerings_guard = state.offerings.read().await;
-
     // Map all offerings (managed + adopted + borrowed)
-    let offerings: Vec<OfferingState> = offerings_guard
-        .iter()
-        .map(|o| OfferingState {
-            name: o.name.to_string(),
-            status: format!("{:?}", o.status).to_lowercase(),
-            health: format!("{:?}", o.health).to_lowercase(),
+    let offerings: Vec<OfferingState> = state
+        .offerings
+        .with_active(|offerings_list| {
+            offerings_list
+                .iter()
+                .map(|o| OfferingState {
+                    name: o.name.to_string(),
+                    status: format!("{:?}", o.status).to_lowercase(),
+                    health: format!("{:?}", o.health).to_lowercase(),
+                })
+                .collect()
         })
-        .collect();
+        .await;
 
     // Compute stone state
     let uptime = state.start_time.elapsed().as_secs();
@@ -236,7 +239,10 @@ pub(crate) async fn generate_snapshot(state: &AppState) -> PresenceSnapshot {
             net_tx_bytes_per_sec: net_tx,
             has_gpu,
             gpu_active,
-            is_lantern: offerings_guard.iter().any(|o| o.offering == "lantern"),
+            is_lantern: state
+                .offerings
+                .with_active(|o| o.iter().any(|o| o.offering == "lantern"))
+                .await,
             has_cricket,
             hour,
             seed_bank,

@@ -609,10 +609,14 @@ async fn execute_updates_background(
 
     // Restore stone health based on service state
     let health_status = {
-        let offerings = state.offerings.read().await;
-        let has_degraded = offerings
-            .iter()
-            .any(|o| matches!(o.status, garden_common::OfferingStatus::Degraded));
+        let has_degraded = state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .any(|o| matches!(o.status, garden_common::OfferingStatus::Degraded))
+            })
+            .await;
 
         if has_degraded {
             garden_common::constants::STONE_DEGRADED.to_string()
@@ -866,7 +870,7 @@ async fn check_offering_updates(
         RegistryConfig, find_newer_version, get_image_digest, query_image_tags,
     };
 
-    let offerings = state.offerings.read().await;
+    let offerings = state.offerings.snapshot().await;
     let config = RegistryConfig::default();
 
     let mut results = Vec::new();

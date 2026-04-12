@@ -205,11 +205,15 @@ pub async fn get_service_v1(
     );
 
     let service_info = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .map(offering_to_service_info)
+        state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .find(|o| o.name.to_string() == service_name && o.is_managed())
+                    .map(offering_to_service_info)
+            })
+            .await
             .ok_or_else(|| {
                 tracing::warn!(
                     service = %service_name,
@@ -508,10 +512,11 @@ pub async fn stream_service_logs_v1(
     let service_name = normalize_service_name(&service)?;
 
     // Verify the service exists before starting the stream
-    let exists = {
-        let offerings = state.offerings.read().await;
-        offerings.iter().any(|o| o.name.to_string() == service_name)
-    };
+    let exists = state
+        .offerings
+        .find_by_name(&service_name)
+        .await
+        .is_some();
     if !exists {
         return Err(not_found(
             "SERVICE_NOT_FOUND",
@@ -561,13 +566,7 @@ pub async fn get_service_env_v1(
     let service_name = normalize_service_name(&service)?;
 
     // Check if service exists in registry
-    let offering = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name)
-            .cloned()
-    };
+    let offering = state.offerings.find_by_name(&service_name).await;
 
     let offering = offering.ok_or_else(|| {
         not_found(
@@ -637,8 +636,7 @@ pub async fn patch_service_env_v1(
 
     // Check if service exists
     {
-        let offerings = state.offerings.read().await;
-        if !offerings.iter().any(|o| o.name.to_string() == service_name) {
+        if state.offerings.find_by_name(&service_name).await.is_none() {
             return Err(not_found(
                 "SERVICE_NOT_FOUND",
                 format!("Service '{}' not found", service_name),
@@ -830,11 +828,15 @@ pub async fn discover_service_capabilities_v1(
     let service_name = normalize_service_name(&service_name)?;
     // Find the service and convert to ServiceInfo for discovery
     let service = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name && o.is_managed())
-            .map(offering_to_service_info)
+        state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .find(|o| o.name.to_string() == service_name && o.is_managed())
+                    .map(offering_to_service_info)
+            })
+            .await
             .ok_or_else(|| {
                 not_found(
                     "SERVICE_NOT_FOUND",
@@ -853,14 +855,12 @@ pub async fn discover_service_capabilities_v1(
         })?;
 
     // Determine offering mode
-    let mode = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == service_name)
-            .map(|o| o.mode_data.mode())
-            .unwrap_or(garden_common::OfferingMode::Managed)
-    };
+    let mode = state
+        .offerings
+        .find_by_name(&service_name)
+        .await
+        .map(|o| o.mode_data.mode())
+        .unwrap_or(garden_common::OfferingMode::Managed);
 
     // Discover capabilities using manifest-based executor
     let executor = crate::domain::CapabilityExecutor::new();
@@ -906,21 +906,23 @@ pub async fn refresh_all_capabilities_v1(
     let mut updated = 0;
 
     // Get offerings snapshot
-    let offerings_snapshot: Vec<(String, String, garden_common::OfferingMode, ServiceInfo)> = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .filter(|o| o.status == OfferingStatus::Running)
-            .map(|o| {
-                (
-                    o.name.to_string(),
-                    o.offering.clone(),
-                    o.mode_data.mode(),
-                    offering_to_service_info(o),
-                )
-            })
-            .collect()
-    };
+    let offerings_snapshot: Vec<(String, String, garden_common::OfferingMode, ServiceInfo)> = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .filter(|o| o.status == OfferingStatus::Running)
+                .map(|o| {
+                    (
+                        o.name.to_string(),
+                        o.offering.clone(),
+                        o.mode_data.mode(),
+                        offering_to_service_info(o),
+                    )
+                })
+                .collect()
+        })
+        .await;
 
     // Discover capabilities for each offering that has a manifest
     let mut updates: Vec<(String, Vec<garden_common::SubCapability>)> = Vec::new();
@@ -1048,8 +1050,7 @@ pub async fn reassign_service_v1(
 
     // Check no existing service has the new name
     {
-        let offerings = state.offerings.read().await;
-        if offerings.iter().any(|o| o.name.to_string() == new_name) {
+        if state.offerings.find_by_name(&new_name).await.is_some() {
             return Err(conflict(
                 "FQN_EXISTS",
                 format!("A service with FQN '{}' already exists", new_name),
@@ -1059,11 +1060,15 @@ pub async fn reassign_service_v1(
 
     // Find the offering
     let offering_id = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .find(|o| o.name.to_string() == old_name && o.is_managed())
-            .map(|o| o.offering_id.clone())
+        state
+            .offerings
+            .with_active(|offerings| {
+                offerings
+                    .iter()
+                    .find(|o| o.name.to_string() == old_name && o.is_managed())
+                    .map(|o| o.offering_id.clone())
+            })
+            .await
             .ok_or_else(|| {
                 not_found(
                     "SERVICE_NOT_FOUND",

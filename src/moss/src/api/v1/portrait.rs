@@ -507,42 +507,43 @@ pub async fn get_portrait_data(
     };
 
     // === Offerings (managed containers + adopted native services) ===
-    let offerings = {
-        let offerings_guard = state.offerings.read().await;
-        offerings_guard
-            .iter()
-            .map(|o| {
-                let status_str = match o.status {
-                    garden_common::OfferingStatus::Running => "running",
-                    garden_common::OfferingStatus::Stopped => "stopped",
-                    garden_common::OfferingStatus::Installing => "installing",
-                    garden_common::OfferingStatus::Maintenance => "maintenance",
-                    garden_common::OfferingStatus::Degraded => "degraded",
-                    garden_common::OfferingStatus::Unknown => "unknown",
-                    garden_common::OfferingStatus::Cordoned => "cordoned",
-                };
-                let health_str = match o.health {
-                    garden_common::ServiceHealthStatus::Healthy => "healthy",
-                    garden_common::ServiceHealthStatus::Degraded => "degraded",
-                    garden_common::ServiceHealthStatus::Offline => "offline",
-                };
+    let offerings = state
+        .offerings
+        .with_active(|offerings_list| {
+            offerings_list
+                .iter()
+                .map(|o| {
+                    let status_str = match o.status {
+                        garden_common::OfferingStatus::Running => "running",
+                        garden_common::OfferingStatus::Stopped => "stopped",
+                        garden_common::OfferingStatus::Installing => "installing",
+                        garden_common::OfferingStatus::Maintenance => "maintenance",
+                        garden_common::OfferingStatus::Degraded => "degraded",
+                        garden_common::OfferingStatus::Unknown => "unknown",
+                        garden_common::OfferingStatus::Cordoned => "cordoned",
+                    };
+                    let health_str = match o.health {
+                        garden_common::ServiceHealthStatus::Healthy => "healthy",
+                        garden_common::ServiceHealthStatus::Degraded => "degraded",
+                        garden_common::ServiceHealthStatus::Offline => "offline",
+                    };
 
-                PortraitOffering {
-                    name: o.name.to_string(),
-                    // Managed offerings have containers, adopted/borrowed don't
-                    container: if o.is_managed() {
-                        Some(o.offering.clone())
-                    } else {
-                        None
-                    },
-                    port: o.location.port,
-                    status: status_str.to_string(),
-                    health: health_str.to_string(),
-                    capabilities: format_capabilities(&o.sub_capabilities),
-                }
-            })
-            .collect()
-    };
+                    PortraitOffering {
+                        name: o.name.to_string(),
+                        container: if o.is_managed() {
+                            Some(o.offering.clone())
+                        } else {
+                            None
+                        },
+                        port: o.location.port,
+                        status: status_str.to_string(),
+                        health: health_str.to_string(),
+                        capabilities: format_capabilities(&o.sub_capabilities),
+                    }
+                })
+                .collect()
+        })
+        .await;
 
     // === Seed Banks ===
     // STORAGE-0011: Read from unified Volumes collection.
@@ -704,18 +705,20 @@ pub async fn get_portrait_guidance(State(state): State<AppState>) -> axum::respo
     use axum::response::Response;
 
     // Collect all guidance from installed offerings (managed + adopted)
-    let guidance_sections: Vec<(String, String)> = {
-        let offerings = state.offerings.read().await;
-        offerings
-            .iter()
-            .filter_map(|o| {
-                o.managed_data()
-                    .and_then(|m| m.guidance.as_ref())
-                    .or_else(|| o.adopted_data().and_then(|a| a.guidance.as_ref()))
-                    .map(|g| (o.name.to_string(), g.content.clone()))
-            })
-            .collect()
-    };
+    let guidance_sections: Vec<(String, String)> = state
+        .offerings
+        .with_active(|offerings| {
+            offerings
+                .iter()
+                .filter_map(|o| {
+                    o.managed_data()
+                        .and_then(|m| m.guidance.as_ref())
+                        .or_else(|| o.adopted_data().and_then(|a| a.guidance.as_ref()))
+                        .map(|g| (o.name.to_string(), g.content.clone()))
+                })
+                .collect()
+        })
+        .await;
 
     // Return 204 if no guidance available
     if guidance_sections.is_empty() {

@@ -320,8 +320,8 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### HttpApi
 
-- **Status:** Absent as a named context — handlers exist under `api/v1/` but reach into `state.X.read().await` directly; DTO separation is inconsistent
-- **Target source:** `src/moss/src/api/v1/` (handlers become thin dispatchers; DTOs under `api/dto/`)
+- **Status:** Dissolved. ARCH-0035 (Book XVII of ARCH-0017) — completed 2026-04-12.
+- **Plan change:** ARCH-0017 anticipated handlers containing business logic that needed extraction into a thin dispatcher layer with separate DTOs. After 16 books of aggregate extraction, handlers already dispatch to typed commands/queries (85 aggregate method calls across 27 files). `FromRef` migration (161 handlers) is cosmetic — handlers access their correct aggregates regardless of extraction style. DTOs inline with handlers is higher-cohesion than a separate `api/dto/` directory. Remaining `offerings.read()` sites are Book XVIII scope.
 - **Book:** XVII
 
 ---
@@ -368,7 +368,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 
 | Context | Responsibility | Book |
 |---------|----------------|------|
-| **HttpApi** | Axum router, handlers as thin command/query dispatchers, DTOs in `api/dto/` separated from domain types | XVII |
+| ~~**HttpApi**~~ | ~~Axum router, handlers as thin command/query dispatchers, DTOs in `api/dto/` separated from domain types~~ | XVII (dissolved) |
 | **Bootstrap** | startup sequence, dependency injection wiring | touched by every book |
 | **Shutdown** | cascading shutdown lifecycle, final flush hooks | XIX |
 

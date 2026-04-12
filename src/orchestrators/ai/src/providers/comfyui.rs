@@ -202,6 +202,11 @@ pub struct ComfyUiProvider {
     /// the concrete ComfyUI instance URLs the adapter stores
     /// everywhere else.
     instance_stones: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    /// Latest DiscoveredInstance list from discovery. Cached so
+    /// the topology listener can re-trigger
+    /// `refresh_inventory_and_readiness` without going back
+    /// through the discovery stream.
+    current_discovered: Arc<tokio::sync::RwLock<Vec<DiscoveredInstance>>>,
     /// Cross-adapter resource domain — consulted at matrix-build
     /// time to filter skills whose VRAM requirement exceeds
     /// every garden stone, and claimed against on dispatch.
@@ -261,12 +266,13 @@ impl ComfyUiProvider {
             instances: Arc::new(InstancePool::new()),
             http: build_http_client(),
             skills: Arc::new(tokio::sync::RwLock::new(skills_map)),
-            events,
+            events: events.clone(),
             provisioning,
             cache_paths,
             instance_inventories: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             ready_instances: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             instance_stones: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            current_discovered: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             resources,
             preferences,
         });
@@ -280,7 +286,8 @@ impl ComfyUiProvider {
         provider.publish_capabilities().await;
 
         spawn_subscriber(provider.clone(), discovery, shutdown.clone());
-        spawn_provisioning_worker(provider.clone(), shutdown);
+        spawn_provisioning_worker(provider.clone(), shutdown.clone());
+        spawn_topology_listener(provider.clone(), events, shutdown);
         provider
     }
 
@@ -484,6 +491,22 @@ impl ComfyUiProvider {
             return ready;
         }
 
+        // Snapshot the set of stones Resources knows about right
+        // now. We use this as the "absence of evidence" gate: a
+        // skill can only be dropped if Resources has positive data
+        // about *every* stone hosting it AND none of them can
+        // host the workload. If ANY hosting stone is unknown to
+        // Resources (e.g. topology puller hasn't polled yet, or
+        // an older Moss is returning sparse peer capabilities),
+        // the filter abstains for that skill.
+        let known_stones: std::collections::HashSet<StoneName> = self
+            .resources
+            .snapshot_all()
+            .await
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+
         let skills_map = self.skills.read().await;
         let instance_stones = self.instance_stones.read().await;
 
@@ -511,25 +534,53 @@ impl ComfyUiProvider {
         drop(instance_stones);
 
         let mut dropped: Vec<(Moniker, u64)> = Vec::new();
+        let mut abstained = 0usize;
         for (moniker, required_mb, skill_stones) in queries {
+            // Three-state filter: a skill is dropped only when we
+            // have POSITIVE evidence it can't be hosted.
+            //
+            // - If skill_stones is empty → no discovery event yet
+            //   → abstain (can't decide without knowing where it
+            //   runs).
+            // - If any hosting stone is unknown to Resources →
+            //   abstain (absence of evidence is not evidence of
+            //   absence; relevant while the topology puller is
+            //   still converging or when peer stones are on an
+            //   older Moss that doesn't report them).
+            // - If every hosting stone is known AND none can
+            //   host the workload → DROP.
+            // - Otherwise (at least one known-capable stone) →
+            //   keep.
+            if skill_stones.is_empty() {
+                abstained += 1;
+                continue;
+            }
+            let all_known = skill_stones.iter().all(|s| known_stones.contains(s));
+            if !all_known {
+                abstained += 1;
+                continue;
+            }
             let workload = Workload::any_gpu(Some(required_mb));
             let capable = self.resources.stones_capable_of(&workload).await;
-            if skill_stones.intersection(&capable).next().is_none() {
+            let any_capable = skill_stones.iter().any(|s| capable.contains(s));
+            if !any_capable {
                 dropped.push((moniker.clone(), required_mb));
                 ready.remove(&moniker);
             }
         }
 
-        if !dropped.is_empty() {
+        if !dropped.is_empty() || abstained > 0 {
             tracing::info!(
-                count = dropped.len(),
-                "comfyui fit filter dropped skills (no stone in garden has enough VRAM)"
+                dropped = dropped.len(),
+                abstained,
+                known_stones = known_stones.len(),
+                "comfyui fit filter: pass complete"
             );
             for (moniker, required_mb) in &dropped {
                 tracing::debug!(
                     skill = %moniker,
                     required_mb,
-                    "comfyui fit filter: dropped"
+                    "comfyui fit filter: dropped (every hosting stone known; none can host)"
                 );
             }
         }
@@ -704,6 +755,77 @@ impl ComfyUiProvider {
     }
 }
 
+/// Spawn the topology-change listener (ORCH-0038 reactive filter).
+///
+/// Subscribes to `resources.stone.**.topology.changed` events on
+/// the bus. On each event, re-runs `refresh_inventory_and_readiness`
+/// against the cached discovered-instance list so the fit filter
+/// re-evaluates with the newly-updated Resources data. This fixes
+/// the startup race where the first discovery event fires before
+/// the hardware puller's first poll has populated Resources.
+///
+/// Events are coalesced via `tokio::sync::Notify` with a 500 ms
+/// sleep — a burst of topology updates collapses into a single
+/// refresh.
+fn spawn_topology_listener(
+    provider: Arc<ComfyUiProvider>,
+    events: Arc<EventBus>,
+    shutdown: CancellationToken,
+) {
+    use crate::domain::events::{FocusMatcher, SubscriptionEvent};
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let notify_listener = notify.clone();
+    let shutdown_listener = shutdown.clone();
+
+    tokio::spawn(async move {
+        let matcher = match FocusMatcher::from_patterns(&[
+            "resources.stone.*.topology.changed",
+        ]) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, "comfyui topology listener: bad focus pattern");
+                return;
+            }
+        };
+        let mut sub = events.subscribe(matcher, None).await;
+        loop {
+            tokio::select! {
+                _ = shutdown_listener.cancelled() => break,
+                ev = sub.recv() => match ev {
+                    SubscriptionEvent::Event(_) => notify_listener.notify_one(),
+                    SubscriptionEvent::Lagged(n) => {
+                        tracing::warn!(skipped = n, "comfyui topology listener: lagged");
+                        notify_listener.notify_one();
+                    }
+                    SubscriptionEvent::Closed => break,
+                },
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                _ = notify.notified() => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    let discovered = provider.current_discovered.read().await.clone();
+                    if discovered.is_empty() {
+                        continue;
+                    }
+                    let urls: Vec<String> =
+                        discovered.iter().map(|i| i.url.clone()).collect();
+                    tracing::debug!(
+                        instance_count = urls.len(),
+                        "comfyui topology listener: resources changed, refreshing inventory"
+                    );
+                    provider.refresh_inventory_and_readiness(&urls).await;
+                }
+            }
+        }
+    });
+}
+
 /// Map a Resources claim error to a provider error. Same rationale
 /// as Ollama's helper in `providers/ollama.rs`: capacity-related
 /// errors become `Overloaded` (retry-friendly), stack mismatches
@@ -753,6 +875,11 @@ fn spawn_subscriber(
                             stones.insert(inst.url.clone(), inst.stone_name.clone());
                         }
                     }
+
+                    // Cache the current discovered list so the
+                    // topology listener can re-trigger the refresh
+                    // without going back through discovery.
+                    *provider.current_discovered.write().await = instances.clone();
 
                     provider.apply_merged(merged.clone()).await;
 

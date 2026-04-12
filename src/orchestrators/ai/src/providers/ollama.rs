@@ -81,6 +81,11 @@ pub struct OllamaProvider {
     /// `orchestrator.strict_fit` setting (ORCH-0038). Default
     /// `true` when the setting is unset.
     preferences: Arc<crate::domain::preferences::Preferences>,
+    /// Latest discovery bindings — the URL+stone_name list the
+    /// subscriber received most recently. Stored so the topology
+    /// listener can re-trigger `rebuild_matrix` on topology
+    /// changes without going back through discovery.
+    current_bindings: Arc<RwLock<Vec<crate::providers::common::InstanceBinding>>>,
 }
 
 impl OllamaProvider {
@@ -97,11 +102,13 @@ impl OllamaProvider {
             name: name.clone(),
             matrix: Arc::new(RwLock::new(OllamaCapabilityMatrix::new())),
             http: build_http_client(),
-            events,
+            events: events.clone(),
             resources,
             preferences,
+            current_bindings: Arc::new(RwLock::new(Vec::new())),
         });
-        spawn_subscriber(provider.clone(), discovery, shutdown);
+        spawn_subscriber(provider.clone(), discovery, shutdown.clone());
+        spawn_topology_listener(provider.clone(), events, shutdown);
         provider
     }
 
@@ -298,6 +305,21 @@ impl OllamaProvider {
             return;
         }
 
+        // Snapshot the set of stones Resources knows about right
+        // now. Used as the "absence of evidence" gate below — the
+        // filter only drops models when it has POSITIVE data
+        // about their hosting stones. If the hardware puller
+        // hasn't completed its first poll yet, or if some hosts
+        // are on a stone Resources doesn't track, we abstain
+        // rather than dropping everything to a race.
+        let known_stones: std::collections::HashSet<StoneName> = self
+            .resources
+            .snapshot_all()
+            .await
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+
         // Build a map from model name → set of stone names that
         // host it, walking the healthy instances.
         let mut hosts: std::collections::HashMap<String, std::collections::HashSet<StoneName>> =
@@ -315,10 +337,19 @@ impl OllamaProvider {
             }
         }
 
-        // Walk every model in the matrix. For each model, ask the
-        // Resources domain which stones could host its workload.
-        // Intersect with the instances that actually have the
-        // model on disk; if the intersection is empty, drop it.
+        // Walk every model in the matrix. Three-state filter
+        // (mirrors the ComfyUI M6 fix): a model is only dropped
+        // when we have POSITIVE evidence it can't be hosted.
+        //
+        // - If the model has no hosting stones in the matrix →
+        //   abstain.
+        // - If any hosting stone is unknown to Resources →
+        //   abstain (absence of evidence is not evidence of
+        //   absence; applies when the puller hasn't yet updated
+        //   Resources with that stone's topology).
+        // - If every hosting stone is known AND none can host
+        //   the workload → DROP.
+        // - Otherwise (at least one known-capable stone) → keep.
         let all_model_names: Vec<String> = matrix.models.keys().cloned().collect();
         let mut dropped: Vec<(String, u64)> = Vec::new();
         for name in all_model_names {
@@ -335,6 +366,19 @@ impl OllamaProvider {
                 continue;
             }
 
+            let available_hosts = hosts.get(&name).cloned().unwrap_or_default();
+            if available_hosts.is_empty() {
+                // No healthy instance reports this model yet —
+                // abstain, the next matrix rebuild will re-check.
+                continue;
+            }
+            let all_known = available_hosts.iter().all(|s| known_stones.contains(s));
+            if !all_known {
+                // At least one hosting stone is missing from
+                // Resources. Can't reliably decide → abstain.
+                continue;
+            }
+
             // Required VRAM in MB for the Resources domain query.
             // Round up: a 7_000_000_001-byte model needs at least
             // 6676 MB, not 6675.
@@ -347,13 +391,8 @@ impl OllamaProvider {
             let workload = Workload::any_gpu(Some(required_mb));
             let capable = self.resources.stones_capable_of(&workload).await;
 
-            let available_hosts = hosts.get(&name).cloned().unwrap_or_default();
-            let intersection_empty = available_hosts
-                .intersection(&capable)
-                .next()
-                .is_none();
-
-            if intersection_empty {
+            let any_capable = available_hosts.iter().any(|s| capable.contains(s));
+            if !any_capable {
                 dropped.push((name.clone(), required));
                 matrix.models.remove(&name);
             }
@@ -698,6 +737,89 @@ fn parse_ollama_oom_error(body: &str) -> Option<u64> {
     Some((value * multiplier as f64).ceil() as u64)
 }
 
+/// Spawn the topology-change listener (ORCH-0038 reactive filter).
+///
+/// Subscribes to `resources.stone.**.topology.changed` events on
+/// the bus. On each event the provider re-runs `rebuild_matrix`
+/// against its cached bindings — the fit filter re-evaluates with
+/// the newly-updated Resources data, and the capability
+/// announcement is republished. This is the event-driven fix for
+/// the startup race where the first discovery event fires before
+/// the hardware puller's first poll has populated Resources.
+///
+/// Events are coalesced via `tokio::sync::Notify`: the listener
+/// wakes the worker on every matching event, but the worker
+/// sleeps briefly before acting so a burst of topology updates
+/// (e.g. initial poll loading five stones in quick succession)
+/// results in a single rebuild.
+fn spawn_topology_listener(
+    provider: Arc<OllamaProvider>,
+    events: Arc<EventBus>,
+    shutdown: CancellationToken,
+) {
+    use crate::domain::events::{FocusMatcher, SubscriptionEvent};
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let notify_listener = notify.clone();
+    let shutdown_listener = shutdown.clone();
+
+    // Listener task — translates topology events into notify pulses.
+    tokio::spawn(async move {
+        let matcher = match FocusMatcher::from_patterns(&[
+            "resources.stone.*.topology.changed",
+        ]) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, "ollama topology listener: bad focus pattern");
+                return;
+            }
+        };
+        let mut sub = events.subscribe(matcher, None).await;
+        loop {
+            tokio::select! {
+                _ = shutdown_listener.cancelled() => break,
+                ev = sub.recv() => match ev {
+                    SubscriptionEvent::Event(_) => notify_listener.notify_one(),
+                    SubscriptionEvent::Lagged(n) => {
+                        tracing::warn!(skipped = n, "ollama topology listener: lagged");
+                        // Still nudge the worker — any pending state may
+                        // have changed.
+                        notify_listener.notify_one();
+                    }
+                    SubscriptionEvent::Closed => break,
+                },
+            }
+        }
+    });
+
+    // Worker task — coalesces notifications and re-runs the
+    // rebuild against the cached bindings.
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                _ = notify.notified() => {
+                    // Coalesce bursts: sleep briefly so multiple
+                    // topology events within ~500ms collapse into
+                    // one rebuild.
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    let bindings = provider.current_bindings.read().await.clone();
+                    if bindings.is_empty() {
+                        // Discovery hasn't delivered instances yet.
+                        // Skip — the next discovery event will
+                        // re-run naturally.
+                        continue;
+                    }
+                    tracing::debug!(
+                        binding_count = bindings.len(),
+                        "ollama topology listener: resources changed, rebuilding matrix"
+                    );
+                    provider.rebuild_matrix(bindings).await;
+                }
+            }
+        }
+    });
+}
+
 /// Map a Resources claim error to a provider error. Used by the
 /// dispatch path (M5) when the pre-dispatch GPU-budget claim
 /// fails — the adapter has to surface a meaningful 5xx to the
@@ -753,7 +875,10 @@ fn spawn_subscriber(
                         })
                         .collect();
                     pool.set_bindings(&event.fqn, bindings);
-                    provider.rebuild_matrix(pool.flatten_bindings()).await;
+                    let merged = pool.flatten_bindings();
+                    // Cache for the topology listener.
+                    *provider.current_bindings.write().await = merged.clone();
+                    provider.rebuild_matrix(merged).await;
                 }
             }
         }

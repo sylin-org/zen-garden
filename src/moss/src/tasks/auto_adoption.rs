@@ -199,7 +199,8 @@ pub async fn auto_adoption_task(state: AppState, config: AdoptionConfig, token: 
 
         // Get manifests that support adopted mode
         let adoptable_manifests = state
-            .manifest_registry
+            .catalog
+            .manifests()
             .offerings_by_mode(&OfferingMode::Adopted);
         tracing::debug!(
             count = adoptable_manifests.len(),

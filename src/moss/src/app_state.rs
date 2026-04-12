@@ -14,7 +14,7 @@
 //! This is the unified AppState used by both main.rs and all API handlers.
 
 use crate::domain::{Catalog, Jobs, Metrics, Offerings, Orchestration, Security, Tool};
-use crate::infra::{EventBus, ManifestRegistry, PulseEvent};
+use crate::infra::{EventBus, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 // migration.
 pub use crate::domain::jobs::{Job, JobStatus};
 
-// Offerings types moved to domain/offerings.rs
+// Offerings types moved to domain/catalog/ in Book V (ARCH-0022)
 pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndex};
 
 // Offering types (unified)
@@ -68,15 +68,11 @@ pub struct AppState {
     /// `record_mutation_latency` from their `finalize` pipelines.
     pub metrics: Arc<Metrics>,
 
-    /// Manifest registry - single source of truth for all manifests
-    /// Contains both software (sw) and hardware (hw) manifests
-    pub manifest_registry: Arc<ManifestRegistry>,
-
     /// Catalog aggregate (ARCH-0022) — compiled offerings index, frozen
     /// manifest registry queries, and hardware manifest lookups. Typed
     /// commands (`load`, `rebuild`) replace the legacy free functions.
-    /// Coexists alongside the legacy `manifest_registry` and
-    /// `offerings_index` fields during Ch3–Ch5 of Book V.
+    /// Absorbs `manifest_registry` and `offerings_index` — those fields
+    /// are deleted as of Ch5 of Book V.
     pub catalog: Arc<Catalog>,
 
     /// Platform domain — Docker, runtime, network monitor, infrastructure handlers.
@@ -105,9 +101,6 @@ pub struct AppState {
 
     /// Daemon start time (for uptime calculation)
     pub start_time: Instant,
-
-    /// Compiled offerings index (with compatibility checks)
-    pub offerings_index: Arc<RwLock<Option<OfferingsIndex>>>,
 
     /// Console event printer (for tty/systemd/verbose modes)
     pub console: Arc<ConsolePrinter>,
@@ -220,12 +213,6 @@ impl axum::extract::FromRef<AppState> for Arc<crate::domain::Companion> {
 impl axum::extract::FromRef<AppState> for Arc<Orchestration> {
     fn from_ref(state: &AppState) -> Self {
         state.orchestration.clone()
-    }
-}
-
-impl axum::extract::FromRef<AppState> for Arc<ManifestRegistry> {
-    fn from_ref(state: &AppState) -> Self {
-        state.manifest_registry.clone()
     }
 }
 

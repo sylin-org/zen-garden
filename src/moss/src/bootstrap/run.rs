@@ -933,7 +933,6 @@ async fn build_state(
         }),
         offerings: offerings_aggregate,
         metrics: metrics_aggregate.clone(),
-        manifest_registry: manifest_registry.clone(),
         catalog: catalog_aggregate,
         platform: Arc::new(crate::domain::Platform {
             docker: docker.clone(),
@@ -946,7 +945,6 @@ async fn build_state(
         event_bus: event_bus.clone(),
         shutdown_token: shutdown_token.clone(),
         start_time: std::time::Instant::now(),
-        offerings_index: Arc::new(RwLock::new(None)),
         console: console_printer.clone(),
         tool: tool.clone(),
         topology: topology_aggregate.clone(),

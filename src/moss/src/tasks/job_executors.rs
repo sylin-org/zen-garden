@@ -236,7 +236,8 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
 
     // Log all manifests that have guidance templates
     let manifests_with_guidance: Vec<(String, usize)> = state
-        .manifest_registry
+        .catalog
+        .manifests()
         .sw
         .entries
         .iter()
@@ -291,9 +292,9 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
                     .map(|m| m.guidance.is_some())
                     .unwrap_or(false);
                 let manifest_has_guidance = state
-                    .manifest_registry
-                    .sw
-                    .get(&o.offering)
+                    .catalog
+                    .get_manifest(&o.offering)
+                    .as_ref()
                     .map(|m| m.guidance.is_some())
                     .unwrap_or(false);
 
@@ -311,9 +312,8 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
             .filter_map(|o| {
                 // Get ports from the manifest template for proper template substitution
                 let ports = state
-                    .manifest_registry
-                    .sw
-                    .get(&o.offering)
+                    .catalog
+                    .get_manifest(&o.offering)
                     .and_then(|m| m.parse_template().ok())
                     .map(|t| t.ports)?;
                 Some((
@@ -337,11 +337,10 @@ pub async fn backfill_missing_guidance(state: &AppState) -> usize {
                     .map(|a| a.guidance.is_some())
                     .unwrap_or(false);
                 let manifest_has_guidance = state
-                    .manifest_registry
-                    .sw
-                    .get(&o.offering)
-                    .and_then(|m| m.adopted.as_ref())
-                    .and_then(|a| a.guidance.as_ref())
+                    .catalog
+                    .get_manifest(&o.offering)
+                    .and_then(|m| m.adopted)
+                    .and_then(|a| a.guidance)
                     .is_some();
                 !has_guidance && manifest_has_guidance
             })
@@ -648,8 +647,9 @@ pub async fn install_service_task(
         offering_type,
         &compiled.category,
         state
-            .manifest_registry
-            .get_offering(offering_type)
+            .catalog
+            .get_manifest(offering_type)
+            .as_ref()
             .and_then(|entry| entry.connection.as_ref()),
     );
     let guidance = build_guidance(
@@ -1232,8 +1232,9 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
             &offering_type,
             &compiled.category,
             state
-                .manifest_registry
-                .get_offering(&offering_type)
+                .catalog
+                .get_manifest(&offering_type)
+                .as_ref()
                 .and_then(|entry| entry.connection.as_ref()),
         );
         let guidance = build_guidance(

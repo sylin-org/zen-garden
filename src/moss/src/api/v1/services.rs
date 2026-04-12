@@ -440,7 +440,7 @@ pub async fn destroy_service_v1(
 
 /// GET /api/v1/services/manifests - List all service manifests
 pub async fn list_manifests_v1(
-    State(manifest_registry): State<Arc<crate::infra::ManifestRegistry>>,
+    State(catalog): State<Arc<crate::domain::Catalog>>,
 ) -> Result<
     (
         StatusCode,
@@ -448,7 +448,8 @@ pub async fn list_manifests_v1(
     ),
     (StatusCode, Json<ApiErrorResponse>),
 > {
-    let manifests: Vec<_> = manifest_registry
+    let manifests: Vec<_> = catalog
+        .manifests()
         .sw
         .entries
         .values()
@@ -466,7 +467,7 @@ pub async fn list_manifests_v1(
 
 /// GET /api/v1/services/:name/manifest - Get specific manifest YAML
 pub async fn get_manifest_v1(
-    State(manifest_registry): State<Arc<crate::infra::ManifestRegistry>>,
+    State(catalog): State<Arc<crate::domain::Catalog>>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, Json<ApiErrorResponse>)> {
     let offering_fqn = OfferingFqn::parse(&name).map_err(|e| {
@@ -477,7 +478,7 @@ pub async fn get_manifest_v1(
     })?;
     let offering_type = offering_fqn.offering.clone();
 
-    let entry = manifest_registry.sw.get(&offering_type).ok_or_else(|| {
+    let entry = catalog.get_manifest(&offering_type).ok_or_else(|| {
         not_found(
             "MANIFEST_NOT_FOUND",
             format!("Manifest for '{}' not found", offering_type),

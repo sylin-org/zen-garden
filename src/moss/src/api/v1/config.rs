@@ -373,15 +373,12 @@ fn get_service_template(
         .map(|fqn| fqn.offering)
         .unwrap_or_else(|_| name.to_string());
 
-    let manifest = state
-        .manifest_registry
-        .get_offering(&base_name)
-        .ok_or_else(|| {
-            not_found(
-                "TEMPLATE_NOT_FOUND",
-                format!("No manifest template for '{}'", name),
-            )
-        })?;
+    let manifest = state.catalog.get_manifest(&base_name).ok_or_else(|| {
+        not_found(
+            "TEMPLATE_NOT_FOUND",
+            format!("No manifest template for '{}'", name),
+        )
+    })?;
 
     manifest.parse_template().map_err(|e| {
         internal(

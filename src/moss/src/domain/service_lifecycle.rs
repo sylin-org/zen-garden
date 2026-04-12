@@ -563,8 +563,9 @@ async fn install_from_manifest(
         &offering_type,
         &compiled.category,
         state
-            .manifest_registry
-            .get_offering(&offering_type)
+            .catalog
+            .get_manifest(&offering_type)
+            .as_ref()
             .and_then(|entry| entry.connection.as_ref()),
     );
     let installing_offering = Offering {

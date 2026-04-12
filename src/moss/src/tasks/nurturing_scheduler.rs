@@ -265,11 +265,7 @@ impl NurturingScheduler {
             "Selected seed bank targets"
         );
 
-        let manifest = self
-            .state
-            .manifest_registry
-            .get_offering(&offering.offering)
-            .cloned();
+        let manifest = self.state.catalog.get_manifest(&offering.offering);
         let hydration_manifest = build_memories_manifest(
             offering,
             manifest,

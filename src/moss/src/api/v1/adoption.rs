@@ -32,7 +32,8 @@ pub async fn list_adoptable_v1(
 ) -> crate::api::ApiResult<Vec<AdoptableOffering>> {
     // Get offering manifests that support adopted mode
     let adoptable_manifests = state
-        .manifest_registry
+        .catalog
+        .manifests()
         .offerings_by_mode(&garden_common::OfferingMode::Adopted);
 
     let mut adoptable = Vec::new();
@@ -116,15 +117,12 @@ pub async fn adopt_offering_v1(
     }
 
     // Find offering definition
-    let offering_def = state
-        .manifest_registry
-        .get_offering(&offering_type)
-        .ok_or_else(|| {
-            not_found(
-                "OFFERING_NOT_FOUND",
-                format!("Offering '{}' not found", offering_type),
-            )
-        })?;
+    let offering_def = state.catalog.get_manifest(&offering_type).ok_or_else(|| {
+        not_found(
+            "OFFERING_NOT_FOUND",
+            format!("Offering '{}' not found", offering_type),
+        )
+    })?;
 
     // Verify offering supports adopted mode
     if !offering_def.supports_mode(&garden_common::OfferingMode::Adopted) {
@@ -140,7 +138,7 @@ pub async fn adopt_offering_v1(
     ));
     let orchestrator = crate::domain::DetectionOrchestrator::new(detector);
     let detection_result = orchestrator
-        .detect(offering_def)
+        .detect(&offering_def)
         .await
         .map_err(|e| internal("DETECTION_FAILED", format!("Detection failed: {}", e)))?;
 
@@ -178,7 +176,7 @@ pub async fn adopt_offering_v1(
     ));
     let connectivity = ConnectivityOrchestrator::new(detector);
     let connectivity_outcome = connectivity
-        .ensure_connectivity(offering_def, Some(&location), &state.current.stone.name)
+        .ensure_connectivity(&offering_def, Some(&location), &state.current.stone.name)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!(

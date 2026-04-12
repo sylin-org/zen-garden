@@ -389,10 +389,7 @@ pub async fn replicate_to_seed_bank(
         "Replicating nurturing snapshot to seed bank"
     );
 
-    let manifest = state
-        .manifest_registry
-        .get_offering(&offering_entry.offering)
-        .cloned();
+    let manifest = state.catalog.get_manifest(&offering_entry.offering);
     let hydration_manifest = build_memories_manifest(
         &offering_entry,
         manifest,

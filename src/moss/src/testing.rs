@@ -207,7 +207,6 @@ pub async fn build_test_state() -> AppState {
             )
             .await,
         ),
-        manifest_registry,
         catalog,
         platform: Arc::new(domain::Platform {
             docker,
@@ -220,7 +219,6 @@ pub async fn build_test_state() -> AppState {
         event_bus,
         shutdown_token: shutdown_token.clone(),
         start_time: Instant::now(),
-        offerings_index: Arc::new(RwLock::new(None)),
         console: Arc::new(ConsolePrinter::new(ConsoleMode::Silent)),
         topology: Arc::new(
             domain::topology::Topology::new(

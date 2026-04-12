@@ -167,9 +167,9 @@ pub async fn infer_protocol(
     category: &str,
     state: &crate::app_state::AppState,
 ) -> String {
-    let connection = state
-        .manifest_registry
-        .get_offering(offering_name)
+    let manifest_entry = state.catalog.get_manifest(offering_name);
+    let connection = manifest_entry
+        .as_ref()
         .and_then(|offering| offering.connection.as_ref());
 
     infer_protocol_from_manifest_metadata(offering_name, category, connection)

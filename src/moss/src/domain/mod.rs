@@ -71,8 +71,6 @@ pub use cloud_drive::{DriveAction, classify_rename};
 pub use catalog::{
     Catalog, CatalogCache, CatalogChangeKind, CatalogChanged, CatalogError, CatalogStats,
     CompiledOffering, FileCatalogCache, LoadSource, OfferingsFingerprint, OfferingsIndex,
-    current_capabilities_hash, ensure_offerings_index, get_compiled_offering, manifests_hash,
-    moss_version_string, rebuild_offerings_index,
 };
 pub use connection::{
     ResolvedConnection, build_hostname, default_template, extract_ip, infer_protocol,

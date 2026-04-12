@@ -129,9 +129,9 @@ async fn offering_to_garden_tool(
     let protocol = connection::infer_protocol(&offering.offering, &category, state).await;
     let port = offering.location.port;
 
-    let connection_profile = state
-        .manifest_registry
-        .get_offering(&offering.offering)
+    let manifest_entry = state.catalog.get_manifest(&offering.offering);
+    let connection_profile = manifest_entry
+        .as_ref()
         .and_then(|entry| entry.connection.as_ref());
     let template = connection::select_uri_template(connection_profile, &category);
 

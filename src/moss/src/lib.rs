@@ -48,10 +48,7 @@ pub use api::v1::events::{
 pub use garden_common::ServiceInfo;
 
 // Re-export domain functions and types
-pub use domain::{
-    adopt_existing_containers, adopt_offering_container, ensure_offerings_index,
-    get_compiled_offering, reconcile_services,
-};
+pub use domain::{adopt_existing_containers, adopt_offering_container, reconcile_services};
 
 // Re-export tasks for background execution
 pub use tasks::{

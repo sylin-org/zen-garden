@@ -18,6 +18,7 @@ Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **livin
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-12 | **Book VIII-a closed.** Storage domain model — Bank view aggregate, VolumeIngestor rename, ports relocated, 8 API handlers migrated, `BankError` typed enum, 735 tests. | [ARCH-0025](ARCH-0025-storage-bank-aggregate.md) |
 | 2026-04-12 | **Book VII closed.** Health — stateless probe facade, `HealthProbe` port, `DockerHealthProbe` adapter, 724 tests. | [ARCH-0024](ARCH-0024-health-aggregate.md) |
 | 2026-04-12 | **Book VI closed.** Subsystems — `watch` channels replace `AtomicBool` flags, lock-free state deviation, 707 tests. | [ARCH-0023](ARCH-0023-subsystems-aggregate.md) |
 | 2026-04-12 | **Book V closed.** Catalog — frozen `ManifestRegistry` + compiled index, first typed `CatalogError`, third persistent aggregate, 692 tests. | [ARCH-0022](ARCH-0022-catalog-aggregate.md) |

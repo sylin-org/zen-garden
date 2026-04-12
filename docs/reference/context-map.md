@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0024](../decisions/ARCH-0024-health-aggregate.md).
+As of 2026-04-12, after [ARCH-0025](../decisions/ARCH-0025-storage-bank-aggregate.md).
 
 ### Full contexts
 
@@ -121,15 +121,19 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Source:** `src/moss/src/domain/security/`, `src/moss/src/domain/ceremony/`, `src/moss/src/domain/pond/`
 - **Book:** IX (consolidation)
 
-#### Storage
+#### Storage (Bank domain model landed, VIII-a)
 
-- **Status:** Partial — exists as `Current::Storage` with `volumes`, `media`, and a `changed` broadcast but no enforced aggregate
-- **Owns:** physical volumes, volume state, media, bank lifecycle (scattered)
+- **Status:** Partial — Bank view aggregate added (ARCH-0025), Volume state machine clean, but `Current::Storage` still holds raw `Volumes` and `Media` maps. Ports relocated into context (`StoragePlatform`, `ManagementStoreOps`).
+- **Owns:** physical volumes (state machine), bank view aggregate (queries + commands), media, storage event channel
+- **Commands (Bank):** `rename`, `set_roles`, `set_visibility`, `pin`, `unpin`, `release`
+- **Queries (Bank):** `local_banks`, `by_name`, `primary_volume`, `volumes_for_bank`, `bank_infos`
 - **Emits:** `StorageChanged` via `Current::Storage::changed` (direct `broadcast::Sender` field)
 - **Subscribes:** storage event handlers in various tasks
-- **Ports:** none (direct `crate::infra::storage::*` imports)
-- **Source:** `src/moss/src/domain/storage/`, `src/moss/src/current/storage.rs`
-- **Book:** VIII (deep clean into sub-aggregates: Volumes, Banks, Replication)
+- **Ports:** `StoragePlatform` → `OsPlatform`, `ManagementStoreOps` → `ContentStore` (relocated from `domain/traits/` to `domain/storage/ports.rs`)
+- **VolumeIngestor:** renamed from `StorageBank` (ARCH-0025) — routes OS monitor events into Volume state machines
+- **BankError:** typed error enum (NotFound, InvalidName, PinFailed, UnpinFailed)
+- **Source:** `src/moss/src/domain/storage/` (bank_aggregate.rs, bank.rs, volume.rs, collection.rs, routing.rs, ports.rs, etc.)
+- **Book:** VIII-a (domain model) — **COMPLETE**; VIII-b (API surface unification) pending
 
 #### Discovery
 

@@ -315,6 +315,16 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Always-dirty invariant** - The `Topology::upsert_from_chirp` command always marks the cache dirty for persistence. Collapses the prior split into `upsert_from_chirp` (no-mark) + `upsert_from_chirp_dirty` (with-mark) — the aggregate owns the invariant that every mutation is followed by persistence.
 
+### Storage domain terms (Book VIII-a / ARCH-0025)
+
+**Bank** - The user-facing named storage container (FQN: "personal", "media"). A bank groups volumes across stones under a shared `replica_set_id`. In moss, Bank is a view aggregate: derived from the volume collection at query time, not separately persisted. Typed commands: `rename`, `set_roles`, `set_visibility`, `pin`, `unpin`, `release`. Typed queries: `local_banks`, `by_name`, `primary_volume`, `volumes_for_bank`. Source: `src/moss/src/domain/storage/bank_aggregate.rs`.
+
+**Volume** - A physical storage device known to this stone (USB drive, NAS mount, local directory). Owns a state machine (Online / Degraded / Offline) driven by OS facts. A managed volume belongs to exactly one bank (via `Management::replica_set_id`). Source: `src/moss/src/domain/storage/volume.rs`.
+
+**VolumeIngestor** - Domain bridge for physical storage events. Routes OS monitor events (appeared/vanished) into Volume state machines and forwards the returned events to the broadcast channel. Previously named `StorageBank` (renamed in ARCH-0025 to avoid conflicting with the Bank aggregate). Source: `src/moss/src/domain/storage/bank.rs`.
+
+**BankError** - Typed error enum for bank-level operations: `NotFound`, `InvalidName`, `PinFailed`, `UnpinFailed`. Fourth pattern deviation (typed errors) following Catalog (ARCH-0022).
+
 ### Tool aggregate terms (Book II / ARCH-0019)
 
 **Tool (bounded context)** - The aggregate owning the garden-wide registry of `GardenTool` entries (offerings + seed-banks + gateway registrations + remote-announced tools from peer stones) on a single stone. Typed commands (`upsert`, `register_gateway`, `deregister_gateway`, `reap_expired_gateways`, `reconcile_local`, `apply_remote_beacon`, `remove_stone`) own the write path; typed queries return owned values without leaking references across the lock boundary. See `/api/v1/stone/tools/{fqid}` and `/api/v1/garden/tools`.

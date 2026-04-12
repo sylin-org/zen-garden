@@ -89,9 +89,7 @@ pub struct PinResponse {
 // ============================================================================
 
 /// List all banks with a local volume on this stone.
-pub async fn list_banks(
-    State(state): State<AppState>,
-) -> crate::api::ApiResult<Vec<StorageInfo>> {
+pub async fn list_banks(State(state): State<AppState>) -> crate::api::ApiResult<Vec<StorageInfo>> {
     let infos = bank_aggregate::bank_infos(&state.current.storage.volumes).await;
     crate::api::ok(infos)
 }
@@ -138,21 +136,20 @@ pub async fn pin_bank(
         ));
     }
 
-    let events =
-        bank_aggregate::pin(&moniker, &state.current.storage.volumes, |path: PathBuf| {
-            std::sync::Arc::new(ContentStore::new(path, None))
-        })
-        .await
-        .map_err(|e| match &e {
-            bank_aggregate::BankError::NotFound(_) => {
-                err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string())
-            }
-            _ => err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "PIN_FAILED",
-                &e.to_string(),
-            ),
-        })?;
+    let events = bank_aggregate::pin(&moniker, &state.current.storage.volumes, |path: PathBuf| {
+        std::sync::Arc::new(ContentStore::new(path, None))
+    })
+    .await
+    .map_err(|e| match &e {
+        bank_aggregate::BankError::NotFound(_) => {
+            err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string())
+        }
+        _ => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PIN_FAILED",
+            &e.to_string(),
+        ),
+    })?;
 
     for event in &events {
         state.emit_storage_changed(event.clone()).await;
@@ -251,7 +248,8 @@ pub async fn list_garden_banks(
                 roles: sm.map(|s| s.roles.clone()).unwrap_or_default(),
             });
         entry.replica_count += 1;
-        if sm.is_some_and(|s| s.role.as_deref() == Some("Primary")) && entry.primary_stone.is_none() {
+        if sm.is_some_and(|s| s.role.as_deref() == Some("Primary")) && entry.primary_stone.is_none()
+        {
             entry.primary_stone = Some(storage_entry.tool.stone.name.clone());
         }
     }
@@ -279,7 +277,10 @@ pub async fn get_garden_bank(
         ));
     }
 
-    let primary_stone = volumes.iter().find(|v| v.role == StorageRole::Primary).map(|v| v.stone_name.clone());
+    let primary_stone = volumes
+        .iter()
+        .find(|v| v.role == StorageRole::Primary)
+        .map(|v| v.stone_name.clone());
     let roles = volumes.first().map(|v| v.roles.clone()).unwrap_or_default();
 
     crate::api::ok(GardenBankDetail {
@@ -296,7 +297,8 @@ async fn build_bank_volumes(moniker: &str, state: &AppState) -> Vec<BankVolume> 
     let mut volumes = Vec::new();
 
     // Local volumes
-    let local_vols = bank_aggregate::volumes_for_bank(moniker, &state.current.storage.volumes).await;
+    let local_vols =
+        bank_aggregate::volumes_for_bank(moniker, &state.current.storage.volumes).await;
     for vol in &local_vols {
         if let Some(mgmt) = vol.management() {
             volumes.push(BankVolume {
@@ -304,7 +306,11 @@ async fn build_bank_volumes(moniker: &str, state: &AppState) -> Vec<BankVolume> 
                 stone_name: state.current.stone.name.clone(),
                 volume_id: mgmt.id.clone(),
                 role: mgmt.role,
-                endpoint: format!("http://{}:{}", state.current.stone.name, garden_common::constants::MOSS_HTTP),
+                endpoint: format!(
+                    "http://{}:{}",
+                    state.current.stone.name,
+                    garden_common::constants::MOSS_HTTP
+                ),
                 roles: mgmt.roles.clone(),
             });
         }

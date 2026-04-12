@@ -178,10 +178,7 @@ pub fn configure_public(state: AppState) -> Router {
             get(api::v1::storage::storage_health_v1),
         )
         // ── Banks (ARCH-0026) — read-only ───────────────────────────────
-        .route(
-            "/api/v1/stone/banks",
-            get(api::v1::banks::list_banks),
-        )
+        .route("/api/v1/stone/banks", get(api::v1::banks::list_banks))
         .route(
             "/api/v1/stone/banks/{moniker}",
             get(api::v1::banks::get_bank),
@@ -758,10 +755,7 @@ pub fn configure(state: AppState) -> Router {
             get(api::v1::banks::list_garden_bank_volumes),
         )
         // Stone-local bank endpoints
-        .route(
-            "/api/v1/stone/banks",
-            get(api::v1::banks::list_banks),
-        )
+        .route("/api/v1/stone/banks", get(api::v1::banks::list_banks))
         .route(
             "/api/v1/stone/banks/{moniker}",
             get(api::v1::banks::get_bank),

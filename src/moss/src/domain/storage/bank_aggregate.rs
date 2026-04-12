@@ -58,10 +58,7 @@ pub trait BankContentOps: Send + Sync {
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
 
     /// Check whether a file exists at the given relative path.
-    fn exists(
-        &self,
-        rel: &Path,
-    ) -> impl std::future::Future<Output = bool> + Send;
+    fn exists(&self, rel: &Path) -> impl std::future::Future<Output = bool> + Send;
 }
 
 // ============================================================================
@@ -868,7 +865,10 @@ mod tests {
         }
 
         async fn write_file(&self, rel: &str, data: &[u8]) -> anyhow::Result<()> {
-            self.files.write().await.insert(rel.to_string(), data.to_vec());
+            self.files
+                .write()
+                .await
+                .insert(rel.to_string(), data.to_vec());
             Ok(())
         }
 
@@ -882,7 +882,10 @@ mod tests {
         }
 
         async fn exists(&self, rel: &Path) -> bool {
-            self.files.read().await.contains_key(rel.to_string_lossy().as_ref())
+            self.files
+                .read()
+                .await
+                .contains_key(rel.to_string_lossy().as_ref())
         }
     }
 
@@ -914,7 +917,10 @@ mod tests {
     #[tokio::test]
     async fn read_not_found_bank() {
         let volumes = new_volumes();
-        let result = read("nonexistent", "hello.txt", &volumes, |_| TestContentStore::new()).await;
+        let result = read("nonexistent", "hello.txt", &volumes, |_| {
+            TestContentStore::new()
+        })
+        .await;
         assert!(matches!(result, Err(BankError::NotFound(_))));
     }
 
@@ -935,9 +941,11 @@ mod tests {
             );
         }
 
-        let event = write("photos", "new.txt", b"data", &volumes, |_| TestContentStore::new())
-            .await
-            .unwrap();
+        let event = write("photos", "new.txt", b"data", &volumes, |_| {
+            TestContentStore::new()
+        })
+        .await
+        .unwrap();
         assert!(matches!(event, StorageChanged::Reclassified));
     }
 
@@ -958,7 +966,10 @@ mod tests {
             );
         }
 
-        let result = write("photos", "new.txt", b"data", &volumes, |_| TestContentStore::new()).await;
+        let result = write("photos", "new.txt", b"data", &volumes, |_| {
+            TestContentStore::new()
+        })
+        .await;
         assert!(matches!(result, Err(BankError::IoFailed(_))));
     }
 

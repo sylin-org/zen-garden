@@ -583,7 +583,7 @@ async fn build_state(
     // Phase 4.0.1: Seed pond_active from persisted certmesh state
     // Two cases: (a) cornerstone with CA initialized + unlocked, or
     // (b) enrolled member with cert files from a prior enrollment.
-    // Also seeds the PondState domain surface (no event emitted at boot).
+    // Seeds pond_active flag; Security aggregate is seeded later at Phase 11.
     //
     // Auto-unlock now happens inside koi-embedded's init_certmesh_core(),
     // so by this point the CA is already unlocked if the key file exists.

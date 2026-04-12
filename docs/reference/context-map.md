@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0025](../decisions/ARCH-0025-storage-bank-aggregate.md).
+As of 2026-04-12, after [ARCH-0026](../decisions/ARCH-0026-storage-api-surface.md).
 
 ### Full contexts
 
@@ -121,19 +121,20 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Source:** `src/moss/src/domain/security/`, `src/moss/src/domain/ceremony/`, `src/moss/src/domain/pond/`
 - **Book:** IX (consolidation)
 
-#### Storage (Bank domain model landed, VIII-a)
+#### Storage (Bank domain model + API surface landed, VIII-a/b)
 
-- **Status:** Partial — Bank view aggregate added (ARCH-0025), Volume state machine clean, but `Current::Storage` still holds raw `Volumes` and `Media` maps. Ports relocated into context (`StoragePlatform`, `ManagementStoreOps`).
-- **Owns:** physical volumes (state machine), bank view aggregate (queries + commands), media, storage event channel
-- **Commands (Bank):** `rename`, `set_roles`, `set_visibility`, `pin`, `unpin`, `release`
+- **Status:** Partial — Bank view aggregate added (ARCH-0025), API surface unified (ARCH-0026), Volume state machine clean, but `Current::Storage` still holds raw `Volumes` and `Media` maps. Ports relocated into context (`StoragePlatform`, `ManagementStoreOps`, `BankContentOps`).
+- **Owns:** physical volumes (state machine), bank view aggregate (queries + commands + data-plane), media, storage event channel
+- **Commands (Bank):** `rename`, `set_roles`, `set_visibility`, `pin`, `unpin`, `release`, `read`, `write`, `delete` (data-plane)
 - **Queries (Bank):** `local_banks`, `by_name`, `primary_volume`, `volumes_for_bank`, `bank_infos`
 - **Emits:** `StorageChanged` via `Current::Storage::changed` (direct `broadcast::Sender` field)
 - **Subscribes:** storage event handlers in various tasks
-- **Ports:** `StoragePlatform` → `OsPlatform`, `ManagementStoreOps` → `ContentStore` (relocated from `domain/traits/` to `domain/storage/ports.rs`)
+- **Ports:** `StoragePlatform` → `OsPlatform`, `ManagementStoreOps` → `ContentStore`, `BankContentOps` → `ContentStore` (relocated from `domain/traits/` to `domain/storage/ports.rs`)
 - **VolumeIngestor:** renamed from `StorageBank` (ARCH-0025) — routes OS monitor events into Volume state machines
-- **BankError:** typed error enum (NotFound, InvalidName, PinFailed, UnpinFailed)
-- **Source:** `src/moss/src/domain/storage/` (bank_aggregate.rs, bank.rs, volume.rs, collection.rs, routing.rs, ports.rs, etc.)
-- **Book:** VIII-a (domain model) — **COMPLETE**; VIII-b (API surface unification) pending
+- **BankError:** typed error enum (NotFound, InvalidName, PinFailed, UnpinFailed, IoFailed)
+- **HTTP surface (ARCH-0026):** `/api/v1/stone/banks` (list, get), `/api/v1/stone/banks/{moniker}/pin`, `/unpin`; `/api/v1/garden/banks` (list, get, volumes). Legacy `/storage/banks/` pin/unpin redirected 301 to new paths.
+- **Source:** `src/moss/src/domain/storage/` (bank_aggregate.rs, bank.rs, volume.rs, collection.rs, routing.rs, ports.rs, etc.), `src/moss/src/api/v1/banks.rs`
+- **Book:** VIII-a (domain model) — **COMPLETE**; VIII-b (API surface) — **COMPLETE**
 
 #### Discovery
 

@@ -62,6 +62,17 @@ Quick reference for all REST endpoints. For rules and patterns, see `.agentic/`.
 | GET | `/api/v1/stone/storage/banks/{name}/changes` | Replication changelog |
 | GET | `/api/v1/stone/storage/stream` | SSE replication stream |
 
+### Banks (ARCH-0026)
+
+First-class bank endpoints. Pin/unpin on the legacy `/storage/banks/` paths redirect 301 to these.
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/v1/stone/banks` | List banks with a local volume |
+| GET | `/api/v1/stone/banks/{moniker}` | Bank details |
+| POST | `/api/v1/stone/banks/{moniker}/pin` | Claim Primary |
+| POST | `/api/v1/stone/banks/{moniker}/unpin` | Release Primary |
+
 ### S3 Gateway (STORAGE-0016)
 
 **Per-storage port listeners** — each bank has a dedicated S3 port (default range 23400–23499).
@@ -156,6 +167,14 @@ All conditional headers honored: `If-Match`, `If-None-Match`, `If-Modified-Since
 | GET | `/api/v1/garden/updates` | Aggregate updates |
 | POST | `/api/v1/garden/updates/execute` | Dispatch to affected stones |
 | GET | `/api/v1/garden/topology` | Aggregate topology |
+
+### Garden Banks (ARCH-0026)
+
+| Method | Endpoint | Purpose |
+|--------|----------|----------|
+| GET | `/api/v1/garden/banks` | All banks in the garden |
+| GET | `/api/v1/garden/banks/{moniker}` | Bank details + volume locations |
+| GET | `/api/v1/garden/banks/{moniker}/volumes` | Individual volumes, their stones, roles |
 
 ### Garden Storage (STORAGE-0009)
 

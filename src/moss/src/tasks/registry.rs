@@ -135,9 +135,7 @@ pub fn start_catalog_builder(state: AppState, console: Arc<ConsolePrinter>) {
             "Runtime templates".to_string(),
         ));
 
-        match ensure_offerings_index(&state, false, &crate::infra::persistence::OsOfferingsCache)
-            .await
-        {
+        match ensure_offerings_index(&state, false, &crate::domain::FileCatalogCache).await {
             Ok(_) => {
                 let idx_guard = state.offerings_index.read().await;
                 if let Some(idx) = idx_guard.as_ref() {

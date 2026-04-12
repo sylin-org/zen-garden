@@ -465,47 +465,42 @@ pub async fn install_service_task(
         offering_type,
         "Resolving compiled offering config"
     );
-    let compiled = match get_compiled_offering(
-        state,
-        offering_type,
-        &crate::infra::persistence::OsOfferingsCache,
-    )
-    .await
-    {
-        Ok(Some(o)) => o,
-        Ok(None) => {
-            state.console.emit(console::ConsoleEvent::new(
-                console::EventCategory::Jobs,
-                console::EventStatus::Failed,
-                format!("Offering not found: {}", offering),
-            ));
-            remove_installing_entry(state, offering).await;
-            state
-                .jobs
-                .fail(
-                    job_id,
-                    offering,
-                    Some((offering.to_string(), "Offering not found".to_string())),
-                )
-                .await;
-            return;
-        }
-        Err(e) => {
-            remove_installing_entry(state, offering).await;
-            state
-                .jobs
-                .fail(
-                    job_id,
-                    offering,
-                    Some((
-                        offering.to_string(),
-                        format!("Offerings index error: {}", e),
-                    )),
-                )
-                .await;
-            return;
-        }
-    };
+    let compiled =
+        match get_compiled_offering(state, offering_type, &crate::domain::FileCatalogCache).await {
+            Ok(Some(o)) => o,
+            Ok(None) => {
+                state.console.emit(console::ConsoleEvent::new(
+                    console::EventCategory::Jobs,
+                    console::EventStatus::Failed,
+                    format!("Offering not found: {}", offering),
+                ));
+                remove_installing_entry(state, offering).await;
+                state
+                    .jobs
+                    .fail(
+                        job_id,
+                        offering,
+                        Some((offering.to_string(), "Offering not found".to_string())),
+                    )
+                    .await;
+                return;
+            }
+            Err(e) => {
+                remove_installing_entry(state, offering).await;
+                state
+                    .jobs
+                    .fail(
+                        job_id,
+                        offering,
+                        Some((
+                            offering.to_string(),
+                            format!("Offerings index error: {}", e),
+                        )),
+                    )
+                    .await;
+                return;
+            }
+        };
 
     if compiled.compatibility.decision == "fail" {
         let reason = compiled
@@ -1211,37 +1206,34 @@ pub async fn install_batch_task(state: &AppState, job_id: &str, offerings: Vec<S
         let service_name = offering_fqn.fqn();
         let offering_type = offering_fqn.offering.clone();
 
-        let compiled = match get_compiled_offering(
-            state,
-            &offering_type,
-            &crate::infra::persistence::OsOfferingsCache,
-        )
-        .await
-        {
-            Ok(Some(o)) => o,
-            Ok(None) => {
-                state
-                    .jobs
-                    .record_item_failed(
-                        job_id,
-                        service_name.clone(),
-                        "Offering not found".to_string(),
-                    )
-                    .await;
-                continue;
-            }
-            Err(e) => {
-                state
-                    .jobs
-                    .record_item_failed(
-                        job_id,
-                        service_name.clone(),
-                        format!("Offerings index error: {}", e),
-                    )
-                    .await;
-                continue;
-            }
-        };
+        let compiled =
+            match get_compiled_offering(state, &offering_type, &crate::domain::FileCatalogCache)
+                .await
+            {
+                Ok(Some(o)) => o,
+                Ok(None) => {
+                    state
+                        .jobs
+                        .record_item_failed(
+                            job_id,
+                            service_name.clone(),
+                            "Offering not found".to_string(),
+                        )
+                        .await;
+                    continue;
+                }
+                Err(e) => {
+                    state
+                        .jobs
+                        .record_item_failed(
+                            job_id,
+                            service_name.clone(),
+                            format!("Offerings index error: {}", e),
+                        )
+                        .await;
+                    continue;
+                }
+            };
 
         if compiled.compatibility.decision == "fail" {
             let reason = compiled

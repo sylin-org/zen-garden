@@ -351,7 +351,7 @@ pub async fn refresh_catalog_v1(
     (StatusCode, Json<garden_common::api_utils::ApiErrorResponse>),
 > {
     // Rebuild offerings index
-    crate::ensure_offerings_index(&state, true, &crate::infra::persistence::OsOfferingsCache)
+    crate::ensure_offerings_index(&state, true, &crate::domain::FileCatalogCache)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "Failed to rebuild offerings catalog");
@@ -543,7 +543,7 @@ pub async fn search_offerings_v1(
     let total_offerings = offerings_index.offerings.len();
 
     // Score and rank offerings
-    let mut ranked: Vec<(i32, &crate::domain::offerings::CompiledOffering)> = offerings_index
+    let mut ranked: Vec<(i32, &crate::domain::CompiledOffering)> = offerings_index
         .offerings
         .iter()
         .filter(|o| o.compatibility.decision.as_str() != garden_common::constants::COMPAT_FAIL)
@@ -639,10 +639,7 @@ fn token_matches_category(token: &str, category: &str) -> bool {
 }
 
 /// Calculate relevance score for an offering against search tokens.
-fn offering_relevance_score(
-    tokens: &[String],
-    offering: &crate::domain::offerings::CompiledOffering,
-) -> i32 {
+fn offering_relevance_score(tokens: &[String], offering: &crate::domain::CompiledOffering) -> i32 {
     let name_lc = offering.name.to_lowercase();
     let desc_lc = offering.description.to_lowercase();
     let tags_lc: HashSet<String> = offering.tags.iter().map(|t| t.to_lowercase()).collect();

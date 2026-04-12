@@ -147,7 +147,7 @@ pub fn resolve_from_inspection(
 /// For example, `mongo:7` matches curated offering `mongodb` whose image is `mongo:7`.
 pub fn check_curated_collision(
     image_ref: &str,
-    offerings: &[super::offerings::CompiledOffering],
+    offerings: &[super::catalog::CompiledOffering],
 ) -> Option<CuratedAlternative> {
     let image_base = image_ref
         .rsplit_once(':')
@@ -288,7 +288,7 @@ mod tests {
     fn curated_collision_detects_image_family() {
         use crate::domain::compatibility::CompiledCompatibility;
 
-        let offerings = vec![super::super::offerings::CompiledOffering {
+        let offerings = vec![super::super::catalog::CompiledOffering {
             name: "mongodb".to_string(),
             category: "data".to_string(),
             description: "MongoDB with replica set support".to_string(),

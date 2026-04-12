@@ -782,7 +782,7 @@ pub async fn refresh_manifests_v1(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiErrorResponse>)> {
     // Rebuild offerings index (which includes manifest validation)
-    crate::ensure_offerings_index(&state, true, &crate::infra::persistence::OsOfferingsCache)
+    crate::ensure_offerings_index(&state, true, &crate::domain::FileCatalogCache)
         .await
         .map_err(|e| {
             internal(

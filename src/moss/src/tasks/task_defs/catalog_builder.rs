@@ -41,7 +41,7 @@ impl BackgroundTask for CatalogBuilderTask {
             match crate::domain::ensure_offerings_index(
                 &ctx.state,
                 false,
-                &crate::infra::persistence::OsOfferingsCache,
+                &crate::domain::FileCatalogCache,
             )
             .await
             {

@@ -512,13 +512,10 @@ async fn install_from_manifest(
     let offering_type = offering_fqn.offering.clone();
     let mut service_name = offering_fqn.fqn();
 
-    let compiled = crate::get_compiled_offering(
-        state,
-        &offering_type,
-        &crate::infra::persistence::OsOfferingsCache,
-    )
-    .await?
-    .ok_or_else(|| anyhow::anyhow!("Unknown offering: {}", offering_type))?;
+    let compiled =
+        crate::get_compiled_offering(state, &offering_type, &crate::domain::FileCatalogCache)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Unknown offering: {}", offering_type))?;
 
     if compiled.compatibility.decision == garden_common::constants::COMPAT_FAIL {
         let reason = compiled

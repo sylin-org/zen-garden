@@ -100,8 +100,8 @@ pub use network::{
 };
 pub use nurturing_store::NurturingStore;
 pub use persistence::{
-    OsOfferingsCache, load_offerings, load_offerings_cache, load_or_generate_stone_id,
-    save_offerings, save_offerings_cache,
+    load_offerings, load_offerings_cache, load_or_generate_stone_id, save_offerings,
+    save_offerings_cache,
 };
 pub use process::{
     check_moss_processes_exist, kill_existing_moss_processes, kill_existing_moss_processes_graceful,

@@ -174,18 +174,10 @@ pub async fn save_offerings_cache<T: serde::Serialize>(cache: &T) -> Result<()> 
     atomic_write(&path, cache).await
 }
 
-/// Filesystem-backed offerings cache persistence.
-pub struct OsOfferingsCache;
-
-impl crate::domain::traits::OfferingsCachePersistence for OsOfferingsCache {
-    async fn load_cache(&self) -> Result<Option<crate::domain::offerings::OfferingsIndex>> {
-        load_offerings_cache().await
-    }
-
-    async fn save_cache(&self, cache: &crate::domain::offerings::OfferingsIndex) -> Result<()> {
-        save_offerings_cache(cache).await
-    }
-}
+// Note: the filesystem-backed catalog cache adapter lives in
+// `domain/catalog/cache.rs` as `FileCatalogCache` (ARCH-0022 Ch2).
+// It delegates back to the `load_offerings_cache` / `save_offerings_cache`
+// helpers above.
 
 // ============================================================================
 // Stone Identity

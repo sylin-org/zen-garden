@@ -475,9 +475,7 @@ pub async fn detect_capabilities_background(
     // Re-evaluate offerings index now that complete hardware is known
     // This ensures compatibility warnings update (e.g., no AI → no Ollama, no AVX → MongoDB warning)
     tracing::info!("Re-evaluating offerings compatibility with detected hardware...");
-    if let Err(e) =
-        ensure_offerings_index(&state, true, &crate::infra::persistence::OsOfferingsCache).await
-    {
+    if let Err(e) = ensure_offerings_index(&state, true, &crate::domain::FileCatalogCache).await {
         tracing::warn!(error = ?e, "Failed to rebuild offerings index after detection");
     } else {
         console.emit(console::ConsoleEvent::new(

@@ -38,12 +38,8 @@ pub async fn build_spec_from_manifest(
     // Primary path: use the CompiledOffering (hardware-resolved image,
     // device_requests, environment, command, volumes, ports, config_files).
     // This is the same source that install_service_task uses.
-    let compiled = crate::get_compiled_offering(
-        state,
-        &offering_type,
-        &crate::infra::persistence::OsOfferingsCache,
-    )
-    .await;
+    let compiled =
+        crate::get_compiled_offering(state, &offering_type, &crate::domain::FileCatalogCache).await;
 
     let (image, command, ports, environment, volumes, config_files, device_requests) =
         match compiled {

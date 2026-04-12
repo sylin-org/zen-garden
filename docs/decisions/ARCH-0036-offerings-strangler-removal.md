@@ -4,7 +4,7 @@ doc_type: decision
 status: accepted
 date: 2026-04-12
 depends_on: [ARCH-0017, ARCH-0016]
-completed: ~
+completed: 2026-04-12
 ---
 
 # ARCH-0036: Offerings Strangler Removal

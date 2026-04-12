@@ -2,7 +2,7 @@
 audience: [developer, ai]
 doc_type: reference
 status: canonical
-last_verified: 2026-04-11
+last_verified: 2026-04-12
 ---
 
 # Scaffolding Tracker
@@ -145,14 +145,20 @@ The permanent record of removed scaffolds is how the epic's postmortem (Book XX)
 
 ## Active scaffolds
 
+*(Empty. All scaffolds have been removed.)*
+
+---
+
+## Removed scaffolds
+
 ### arch-0016-active-guard: Offerings back-compat read shim
 
 ```yaml
 id: arch-0016-active-guard
-status: active
+status: removed
 introduced_in: ARCH-0016 (commit 426f020c)
 removal_trigger: Book XVIII — Offerings Strangler Removal
-removal_commit: ~
+removal_commit: 182a5a95
 check:
   - pattern: "state\\.offerings\\.read\\(\\)"
     paths:
@@ -171,31 +177,9 @@ check:
       - src/moss/src/domain/offerings
 ```
 
-**What:** `Offerings::read()` and `Offerings::read_candidates()` return guard types (`ActiveGuard`, `CandidatesGuard`) that deref to `&Vec<Offering>`. This keeps the 82 `state.offerings.read().await.iter()...` call sites from [ARCH-0016](decisions/ARCH-0016-offerings-aggregate-domain.md) compiling unchanged. The guards are a strangler-vine — the aggregate's real read API (`snapshot`, `find_by_*`, `with_active`) is in place from day one, but callers migrate to it opportunistically as they are touched by other books. This pattern avoids a flag-day rewrite of 82 read sites in a single PR.
+**What:** `Offerings::read()` and `Offerings::read_candidates()` returned guard types (`ActiveGuard`, `CandidatesGuard`) that deref'd to `&Vec<Offering>`. Kept the 82 `state.offerings.read().await.iter()...` call sites from [ARCH-0016](decisions/ARCH-0016-offerings-aggregate-domain.md) compiling unchanged during the migration period.
 
-**Where:**
-
-- `src/moss/src/domain/offerings/guard.rs` — the `ActiveGuard` and `CandidatesGuard` types with their `Deref<Target = Vec<Offering>>` impls
-- `src/moss/src/domain/offerings/aggregate.rs` — the `Offerings::read()` and `Offerings::read_candidates()` methods
-- ~82 call sites across `src/moss/src/` that use `state.offerings.read().await`
-- `src/moss/src/app_state.rs` — the thin delegate methods `get_offerings`, `get_managed_offerings`, `get_adopted_offerings`, `get_borrowed_offerings`, `find_offering`, `find_offering_by_id` that wrap the aggregate
-
-**Removal action:**
-
-1. Migrate every remaining `state.offerings.read().await` call site to a typed query method: `snapshot().await` for full-clone callers, `find_by_id(id).await` / `find_by_name(name).await` for single-item lookups, `with_active(|o| ...).await` for scoped iteration.
-2. Delete `src/moss/src/domain/offerings/guard.rs`.
-3. Delete the `read()` and `read_candidates()` methods from `src/moss/src/domain/offerings/aggregate.rs`.
-4. Delete the `pub mod guard;` line and the `pub use guard::{ActiveGuard, CandidatesGuard};` re-export from `src/moss/src/domain/offerings/mod.rs`.
-5. Delete the `ActiveGuard`/`CandidatesGuard` re-export from `src/moss/src/domain/mod.rs`.
-6. Delete `get_offerings`, `get_managed_offerings`, `get_adopted_offerings`, `get_borrowed_offerings`, `find_offering`, `find_offering_by_id` from `src/moss/src/app_state.rs`.
-7. Run `./scripts/check-scaffolding.sh` — all patterns must return zero matches.
-8. Change this entry's `status` to `removed` and set `removal_commit`.
-
----
-
-## Removed scaffolds
-
-*(Empty. Entries move here from Active scaffolds as their trigger books complete.)*
+**Removal:** ARCH-0036 Book XVIII migrated all 81 remaining `.read().await` sites to typed aggregate queries (`snapshot`, `find_by_id`, `find_by_name`, `with_active`, `count_active`), deleted `guard.rs`, removed the `read()` and `read_candidates()` methods, and deleted 6 `AppState` delegate methods.
 
 ---
 

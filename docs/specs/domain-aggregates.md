@@ -214,7 +214,7 @@ impl <Context>State {
 }
 ```
 
-The state struct fields are `pub(super)` — visible to sibling modules inside the context (`aggregate.rs`, `guard.rs` during strangler migration) but not to code outside the context. This is the compiler-enforced privacy boundary that makes invariants robust.
+The state struct fields are `pub(super)` — visible to sibling modules inside the context (`aggregate.rs`, `store.rs`) but not to code outside the context. This is the compiler-enforced privacy boundary that makes invariants robust.
 
 ---
 
@@ -1018,7 +1018,7 @@ Fix: declare a port trait in `domain/offerings/port.rs`, implement it in `infra/
 
 | Pattern element | Offerings instance |
 |-----------------|--------------------|
-| Module layout | `domain/offerings/{mod.rs, aggregate.rs, event.rs, guard.rs, store.rs, catalog.rs}` |
+| Module layout | `domain/offerings/{mod.rs, aggregate.rs, event.rs, store.rs}` |
 | Private state | `OfferingsState { active, candidates }` inside `aggregate.rs`, `pub(super)` visibility |
 | Port | `OfferingStore` trait in `store.rs`, `FileOfferingStore` impl wrapping `crate::infra::{load,save}_offerings` |
 | Read API | `snapshot`, `candidates_snapshot`, `find_by_id`, `find_by_name`, `with_active`, `with_candidates`, `count_active` |
@@ -1026,7 +1026,6 @@ Fix: declare a port trait in `domain/offerings/port.rs`, implement it in `infra/
 | `finalize` pipeline | Lock-scoped mutation → snapshot clone → `store.save` → `self.changes.send` |
 | Event | `OfferingsChanged { kind: ChangeKind, affected: Vec<String>, timestamp }` with 8 `ChangeKind` variants |
 | Projection task | `OfferingsProjectionTask` in `tasks/task_defs/offerings_projection.rs`, subscribes to `offerings.changes()` and calls `refresh_local_tools_projection` + `sync_self_services` |
-| Strangler vine | `ActiveGuard`/`CandidatesGuard` in `guard.rs`, tracked in [scaffolding.md](../scaffolding.md) for Book XVIII removal |
 
 The two things Offerings does **differently** from the pattern spec, documented as deliberate Phase 1 compromises in ARCH-0016:
 

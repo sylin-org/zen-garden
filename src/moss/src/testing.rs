@@ -113,7 +113,8 @@ pub async fn build_test_state() -> AppState {
         harvest_store,
     ));
     let ceremony_registry = Arc::new(domain::CeremonyRegistry::new());
-    let ceremony_journal = Arc::new(infra::CeremonyJournal::new(&temp));
+    let ceremony_journal: Arc<dyn domain::CeremonyPersistence + Send + Sync> =
+        Arc::new(infra::CeremonyJournal::new(&temp));
 
     let election_service = Arc::new(crate::tasks::election_service::Elections::new(
         "test-stone-id".to_string(),
@@ -243,21 +244,19 @@ pub async fn build_test_state() -> AppState {
             mdns: None,
             koi: koi_handle,
         }),
-        security: Arc::new(domain::Security {
-            pond: domain::Pond {
-                state: domain::PondState::new(),
-                active: Arc::new(AtomicBool::new(false)),
-                ceremony: domain::security::ceremony::Ceremony {
-                    host: Arc::new(koi_common::ceremony::CeremonyHost::new(
-                        koi_certmesh::pond_ceremony::PondCeremonyRules,
-                    )),
-                    registry: ceremony_registry,
-                    journal: ceremony_journal,
-                },
-            },
-            stone_client: Arc::new(infra::stone_client::StoneClient::new("stone-test")),
-            https: Arc::new(AtomicBool::new(false)),
-        }),
+        security: Arc::new(
+            domain::Security::new(
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(infra::stone_client::StoneClient::new("stone-test")),
+                Arc::new(koi_common::ceremony::CeremonyHost::new(
+                    koi_certmesh::pond_ceremony::PondCeremonyRules,
+                )),
+                ceremony_registry,
+                ceremony_journal,
+                test_metrics.clone(),
+            )
+            .await,
+        ),
         presence: Arc::new(domain::Presence {
             elections: election_service,
             notifications: Arc::new(garden_common::notifications::NotificationRegistry::new()),

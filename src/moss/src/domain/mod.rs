@@ -134,9 +134,11 @@ pub use nurturing::{
     snapshot_from_harvest,
 };
 pub use platform::Platform;
-pub use pond::{PondMetadata, PondState, load_pond_metadata, save_pond_metadata};
+pub use pond::{PondMetadata, load_pond_metadata, save_pond_metadata};
 pub use presence::Presence;
-pub use security::{Pond, Security};
+pub use security::{
+    CeremonyPersistence, PondClient, Security, SecurityChangeKind, SecurityChanged,
+};
 pub use subsystems::{SubsystemStatus, Subsystems, SubsystemsChangeKind, SubsystemsChanged};
 pub use tool::{
     EntryOrigin, GardenRegistry, GardenRegistryInner, RegistryEntry, Tool, ToolQuery,

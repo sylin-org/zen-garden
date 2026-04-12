@@ -203,24 +203,40 @@ impl CeremonyJournal {
 }
 
 impl CeremonyPersistence for CeremonyJournal {
-    async fn persist(&self, ceremony: &Ceremony) -> Result<()> {
-        CeremonyJournal::persist(self, ceremony).await
+    fn persist<'a>(
+        &'a self,
+        ceremony: &'a Ceremony,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(CeremonyJournal::persist(self, ceremony))
     }
 
-    async fn load_active(&self) -> Result<Vec<Ceremony>> {
-        CeremonyJournal::load_active(self).await
+    fn load_active(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<Ceremony>>> + Send + '_>>
+    {
+        Box::pin(CeremonyJournal::load_active(self))
     }
 
-    async fn load(&self, id: &CeremonyId) -> Result<Option<Ceremony>> {
-        CeremonyJournal::load(self, id).await
+    fn load<'a>(
+        &'a self,
+        id: &'a CeremonyId,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<Ceremony>>> + Send + 'a>>
+    {
+        Box::pin(CeremonyJournal::load(self, id))
     }
 
-    async fn remove(&self, id: &CeremonyId) -> Result<()> {
-        CeremonyJournal::remove(self, id).await
+    fn remove<'a>(
+        &'a self,
+        id: &'a CeremonyId,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(CeremonyJournal::remove(self, id))
     }
 
-    async fn prune_archive(&self, older_than: chrono::Duration) -> Result<usize> {
-        CeremonyJournal::prune_archive(self, older_than).await
+    fn prune_archive(
+        &self,
+        older_than: chrono::Duration,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send + '_>> {
+        Box::pin(CeremonyJournal::prune_archive(self, older_than))
     }
 }
 

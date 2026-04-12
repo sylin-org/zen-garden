@@ -196,7 +196,7 @@ async fn sync_dormant_bank(
 
     let resp = state
         .security
-        .stone_client
+        .stone_client()
         .get(&peer, &changes_path)
         .timeout(std::time::Duration::from_secs(PULL_TIMEOUT_SECS))
         .send()
@@ -360,7 +360,7 @@ async fn full_sync_dormant_bank(
 
     let resp = state
         .security
-        .stone_client
+        .stone_client()
         .get(peer, &listing_path)
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .send()
@@ -513,7 +513,7 @@ async fn download_and_write(
 ) -> Result<()> {
     let resp = state
         .security
-        .stone_client
+        .stone_client()
         .get(peer, remote_path)
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .send()

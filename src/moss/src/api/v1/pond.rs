@@ -399,7 +399,7 @@ pub async fn pond_status_v1(State(state): State<AppState>) -> PondResult<PondSta
     crate::api::ok(PondStatusResponse {
         active,
         locked: status.ca_initialized && status.ca_locked,
-        name: state.security.pond.state.name().await,
+        name: state.security.pond_name().await,
         cornerstone,
         stones,
         profile: format!("{:?}", status.profile),
@@ -514,7 +514,7 @@ async fn proxy_enrollment(
 
     let resp = state
         .security
-        .stone_client
+        .stone_client()
         .post(&cornerstone_addr, "/api/v1/pond/join")
         .timeout(garden_common::constants::timeouts::pond_join_timeout())
         .json(&proxy_payload)
@@ -637,7 +637,7 @@ async fn discover_cornerstone(
     for entry in &candidates {
         let resp = match state
             .security
-            .stone_client
+            .stone_client()
             .get(&entry.address, "/api/v1/pond/status")
             .timeout(garden_common::constants::timeouts::pond_operation_timeout())
             .send()
@@ -919,7 +919,7 @@ pub async fn pond_rename_v1(
     State(state): State<AppState>,
     Json(payload): Json<PondRenameRequest>,
 ) -> PondResult<serde_json::Value> {
-    if !state.security.pond.state.enrolled() {
+    if !state.security.enrolled() {
         return Err(conflict(
             "POND_NOT_INITIALIZED",
             "No pond to rename. Initialize with 'garden-rake place keystone' first.",
@@ -937,7 +937,7 @@ pub async fn pond_rename_v1(
         _ => crate::domain::naming::generate_pond_name(),
     };
 
-    state.security.pond.state.set_name(new_name.clone()).await;
+    state.security.set_pond_name(new_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(new_name.clone()),
     };
@@ -1059,7 +1059,7 @@ pub async fn pond_ceremony_v1(
     State(state): State<AppState>,
     Json(request): Json<koi_common::ceremony::CeremonyRequest>,
 ) -> Result<Json<koi_common::ceremony::CeremonyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
-    let host = &state.security.pond.ceremony.host;
+    let host = state.security.ceremony_host();
 
     // Pre-fill hostname for TOTP personalization
     let mut req = request;
@@ -1369,7 +1369,7 @@ async fn execute_pond_init_from_ceremony(
     }
 
     let pond_name = crate::domain::naming::generate_pond_name();
-    state.security.pond.state.set_name(pond_name.clone()).await;
+    state.security.set_pond_name(pond_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(pond_name.clone()),
     };

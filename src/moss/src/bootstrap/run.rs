@@ -60,9 +60,9 @@ pub(crate) struct BuildArtifacts {
 /// Run the Moss daemon.
 ///
 /// Three-stage orchestration:
-/// 1. `build_state` — sequential init, builds `AppState`, fallible
-/// 2. `start_background_tasks` — spawns all concurrent workers
-/// 3. `serve` — binds HTTP and blocks until shutdown
+/// 1. `build_state` -- sequential init, builds `AppState`, fallible
+/// 2. `start_background_tasks` -- spawns all concurrent workers
+/// 3. `serve` -- binds HTTP and blocks until shutdown
 pub async fn run(
     config: DaemonConfig,
     log: tokio::sync::broadcast::Sender<String>,
@@ -72,7 +72,7 @@ pub async fn run(
 
     // Write MOTD on every startup with whatever is known at this point.
     // Hardware may not be fully detected yet (that happens in background), so
-    // cpu/ram/gpu may be None — the MOTD writer handles that gracefully.
+    // cpu/ram/gpu may be None -- the MOTD writer handles that gracefully.
     // The hardware detection task will overwrite with full info once it completes.
     #[cfg(target_os = "linux")]
     {
@@ -84,7 +84,7 @@ pub async fn run(
         let ip = state.current.address.read().await.ip_str();
         let port = state.current.api_port;
         let version = version_string();
-        let pond_name = state.security.pond.state.name().await;
+        let pond_name = state.security.pond_name().await;
 
         let (cpu_cores, ram_mb, gpu) = match &caps {
             Some(c) => {
@@ -155,7 +155,7 @@ pub async fn run(
         *guard = Some(supervisor.handle());
     }
 
-    // Run the task supervisor in the background — it monitors all spawned tasks
+    // Run the task supervisor in the background -- it monitors all spawned tasks
     // for panics and handles clean shutdown when the cancellation token fires.
     let shutdown_token = state.shutdown_token.clone();
     tokio::spawn(supervisor.run(shutdown_token));
@@ -206,7 +206,7 @@ async fn build_boot_entry(
 /// Sequential daemon initialization.
 ///
 /// Builds `AppState` from configuration. Strictly sequential and fallible
-/// — any error here exits the daemon cleanly before any tasks are spawned.
+/// -- any error here exits the daemon cleanly before any tasks are spawned.
 async fn build_state(
     config: DaemonConfig,
     log: tokio::sync::broadcast::Sender<String>,
@@ -237,7 +237,7 @@ async fn build_state(
     //
     // These are progressively enriched during bootstrap, then shared with
     // AppState. After construction, `build_self_entry()` reads from them
-    // on demand — no mutable self_entry cache.
+    // on demand -- no mutable self_entry cache.
     let current_address: Arc<RwLock<garden_common::PeerAddress>> =
         Arc::new(RwLock::new(garden_common::PeerAddress::new(
             std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
@@ -257,7 +257,7 @@ async fn build_state(
         tracing::warn!(error = %e, "Failed to create topology directory (will retry on first write)");
     }
 
-    // Metrics aggregate (ARCH-0018) is constructed here — before Tool so
+    // Metrics aggregate (ARCH-0018) is constructed here -- before Tool so
     // `Tool::new` can register the `tool` domain with Metrics, and before
     // Offerings so `Offerings::new` at Phase 10.75 can do the same.
     let metrics_aggregate = Arc::new(crate::domain::Metrics::new());
@@ -284,7 +284,7 @@ async fn build_state(
     };
 
     // Write the initial topology file immediately (self entry only,
-    // no peers yet). Don't wait for the 30s maintenance cycle —
+    // no peers yet). Don't wait for the 30s maintenance cycle --
     // containers may start before then and need the file for
     // cold-start seeding.
     let boot_entry = build_boot_entry(
@@ -390,12 +390,12 @@ async fn build_state(
             ))),
         ]));
 
-    // Create orchestration nudge early â€” shared between discovery listener and AppState
+    // Create orchestration nudge early --" shared between discovery listener and AppState
     let orchestration_nudge = Arc::new(tokio::sync::Notify::new());
 
-    // Unified volume collection (STORAGE-0011) â€” created empty, populated after AppState
+    // Unified volume collection (STORAGE-0011) --" created empty, populated after AppState
     let volumes = crate::domain::new_volumes();
-    // Volume rescan channel â€” API handlers poke tx, watcher loop consumes rx
+    // Volume rescan channel --" API handlers poke tx, watcher loop consumes rx
     let (volume_rescan, volume_rescan_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     // Start UDP listener with full infrastructure handler support
@@ -444,7 +444,7 @@ async fn build_state(
     }
 
     // Phase 2: Network monitoring
-    // Create Subsystems aggregate (ARCH-0023 Book VI) — register subsystems
+    // Create Subsystems aggregate (ARCH-0023 Book VI) -- register subsystems
     // before handing the aggregate to monitor tasks.
     let mut subsystems = crate::domain::Subsystems::new(metrics_aggregate.clone()).await;
     subsystems.register("network");
@@ -526,7 +526,7 @@ async fn build_state(
     let koi_data_dir =
         std::path::PathBuf::from(garden_common::constants::paths::data_dir()).join("koi");
 
-    // Shared pond state flag â€” created before mDNS so both MdnsHandle and AppState
+    // Shared pond state flag --" created before mDNS so both MdnsHandle and AppState
     // observe the same value. Handlers flip this after init/unlock/destroy.
     let pond_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -588,15 +588,13 @@ async fn build_state(
     // Auto-unlock now happens inside koi-embedded's init_certmesh_core(),
     // so by this point the CA is already unlocked if the key file exists.
     // We just read the status and seed the application state.
-    let pond_state = crate::domain::PondState::new();
     if let Ok(cm) = koi_handle.certmesh()
         && let Ok(core) = cm.core()
     {
         let status = core.certmesh_status().await;
         if status.ca_initialized && !status.ca_locked {
             pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
-            pond_state.seed_enrolled(true);
-            tracing::info!("Pond active â€” CA initialized and unlocked");
+            tracing::info!("Pond active -- CA initialized and unlocked");
 
             // Register _certmesh._tcp mDNS so Rake clients can discover us
             crate::mdns::register_certmesh_service(
@@ -605,7 +603,7 @@ async fn build_state(
             )
             .await;
         } else if status.ca_initialized {
-            // CA is initialized but still locked â€” no auto-unlock key
+            // CA is initialized but still locked --" no auto-unlock key
             // existed, or decryption failed.  Report available methods.
             let slot_table_path = koi_certmesh::CertmeshPaths::default().slot_table_path();
             if slot_table_path.exists() {
@@ -613,22 +611,20 @@ async fn build_state(
                     let methods = table.available_methods();
                     if methods.contains(&"totp") {
                         tracing::info!(
-                            "Pond CA locked â€” unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
+                            "Pond CA locked -- unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
                         );
                     } else if methods.contains(&"fido2") {
-                        tracing::info!("Pond CA locked â€” unlock with security key via pond UI");
+                        tracing::info!("Pond CA locked -- unlock with security key via pond UI");
                     } else {
                         tracing::info!(
-                            "Pond CA locked â€” run 'garden-rake pond unlock' with passphrase"
+                            "Pond CA locked -- run 'garden-rake pond unlock' with passphrase"
                         );
                     }
                 } else {
-                    tracing::info!(
-                        "Pond CA exists but is locked â€” run 'garden-rake pond unlock'"
-                    );
+                    tracing::info!("Pond CA exists but is locked -- run 'garden-rake pond unlock'");
                 }
             } else {
-                tracing::info!("Pond CA exists but is locked â€” run 'garden-rake pond unlock'");
+                tracing::info!("Pond CA exists but is locked -- run 'garden-rake pond unlock'");
             }
         }
     }
@@ -640,14 +636,9 @@ async fn build_state(
             .join(&stone_name);
         if certs_dir.join("cert.pem").exists() && certs_dir.join("key.pem").exists() {
             pond_active.store(true, std::sync::atomic::Ordering::Relaxed);
-            pond_state.seed_enrolled(true);
-            tracing::info!("Pond active â€” enrolled member with certs from previous enrollment");
+            tracing::info!("Pond active -- enrolled member with certs from previous enrollment");
         }
     }
-
-    // Seed pond name from persisted metadata
-    let pond_metadata = crate::domain::load_pond_metadata();
-    pond_state.seed_name(pond_metadata.name).await;
 
     // Phase 4.0.1b: Propagate pond state into address
     if pond_active.load(std::sync::atomic::Ordering::Relaxed) {
@@ -659,11 +650,11 @@ async fn build_state(
         );
     }
 
-    // Phase 4.0.2â€“4.0.3: Chirp signing + verification
+    // Phase 4.0.2--"4.0.3: Chirp signing + verification
     // Deferred to Phase 18 boot (activate_pond_security) and the
     // enrollment-change listener (Phase 11.3). No duplicated code here.
 
-    // Phase 4.1: mDNS announcement â€” includes stone_id and MAC in TXT records
+    // Phase 4.1: mDNS announcement --" includes stone_id and MAC in TXT records
     // Must happen before IP change handler so we can pass the handle
     // Note: If current IP is loopback, registration is deferred until valid IP is available
     let current_ip = network.get_ip().await;
@@ -703,7 +694,7 @@ async fn build_state(
     // Note: IP change handler moved to Phase 11 and delegates to
     // crate::domain::topology::composition::announce_resolution_change
 
-    // Phase 6: Lantern registration — deferred to Phase 11.post2 (needs AppState for service list)
+    // Phase 6: Lantern registration -- deferred to Phase 11.post2 (needs AppState for service list)
 
     emit_startup_events(&console_printer, &config);
 
@@ -720,7 +711,7 @@ async fn build_state(
             tracing::warn!(error = %e, "could not configure systemd-resolved (containers may not resolve stone names)");
         }
     } else {
-        tracing::warn!("could not determine Docker bridge gateway â€” container DNS may not work");
+        tracing::warn!("could not determine Docker bridge gateway -- container DNS may not work");
     }
 
     // Phase 7.2: Reconcile DNS on existing managed containers
@@ -805,7 +796,7 @@ async fn build_state(
     // confirms it's actually running.
     //
     // The aggregate owns both pools privately and persists through an
-    // `OfferingStore` port — every mutation is persisted and publishes an
+    // `OfferingStore` port -- every mutation is persisted and publishes an
     // `OfferingsChanged` event consumed by `OfferingsProjectionTask`.
     let offering_store: Arc<dyn crate::domain::OfferingStore> =
         Arc::new(crate::domain::FileOfferingStore);
@@ -851,7 +842,32 @@ async fn build_state(
     // Phase 11: Build AppState
     // Note: manifest_registry and infrastructure_handlers already created at Phase 1
     let ceremony_registry = Arc::new(crate::domain::CeremonyRegistry::new());
-    let ceremony_journal = Arc::new(infra::CeremonyJournal::default_journal());
+    let ceremony_journal: Arc<dyn crate::domain::CeremonyPersistence + Send + Sync> =
+        Arc::new(infra::CeremonyJournal::default_journal());
+
+    // Security aggregate -- ARCH-0027 (Book IX)
+    let security_aggregate = Arc::new(
+        crate::domain::Security::new(
+            pond_active.clone(),
+            Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
+            Arc::new(koi_common::ceremony::CeremonyHost::new(
+                koi_certmesh::pond_ceremony::PondCeremonyRules,
+            )),
+            ceremony_registry,
+            ceremony_journal,
+            metrics_aggregate.clone(),
+        )
+        .await,
+    );
+
+    // Seed Security aggregate with boot-time enrollment state
+    {
+        let enrolled = pond_active.load(std::sync::atomic::Ordering::Relaxed);
+        let pond_metadata = crate::domain::load_pond_metadata();
+        security_aggregate
+            .seed_state(enrolled, None, pond_metadata.name)
+            .await;
+    }
     let harvest_store = Arc::new(infra::HarvestStore::default_store());
     let harvest_ops = Arc::new(crate::infra::harvest::OsHarvestOps::new(
         docker.clone(),
@@ -886,7 +902,7 @@ async fn build_state(
         Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
     ));
 
-    // Jobs aggregate (ARCH-0021 Book IV Ch5). Ephemeral — no
+    // Jobs aggregate (ARCH-0021 Book IV Ch5). Ephemeral -- no
     // persistence, state starts empty and is swept periodically by
     // `JobsReaperTask` after the terminal TTL.
     let jobs = Arc::new(
@@ -898,7 +914,7 @@ async fn build_state(
         .await,
     );
 
-    // Catalog aggregate (ARCH-0022 Book V). Persistent — compiled
+    // Catalog aggregate (ARCH-0022 Book V). Persistent -- compiled
     // offerings index is cached to disk via FileCatalogCache. The
     // aggregate shares `manifest_registry` (frozen, read-only) and
     // `capabilities` with the rest of AppState.
@@ -965,21 +981,7 @@ async fn build_state(
             mdns: mdns_handle.clone(),
             koi: koi_handle.clone(),
         }),
-        security: Arc::new(crate::domain::Security {
-            pond: crate::domain::Pond {
-                state: pond_state,
-                active: pond_active.clone(),
-                ceremony: crate::domain::security::ceremony::Ceremony {
-                    host: Arc::new(koi_common::ceremony::CeremonyHost::new(
-                        koi_certmesh::pond_ceremony::PondCeremonyRules,
-                    )),
-                    registry: ceremony_registry,
-                    journal: ceremony_journal,
-                },
-            },
-            stone_client: Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
-            https: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }),
+        security: security_aggregate.clone(),
         presence: Arc::new(crate::domain::Presence {
             elections: election_service_placeholder,
             notifications: Arc::new(garden_common::notifications::NotificationRegistry::new()),
@@ -989,11 +991,11 @@ async fn build_state(
         }),
         // Log broadcast channel (for live SSE log streaming)
         log: log.clone(),
-        // Health aggregate — ARCH-0024 (Book VII)
+        // Health aggregate -- ARCH-0024 (Book VII)
         health: health_aggregate,
-        // Subsystem readiness — ARCH-0023 aggregate (Book VI)
+        // Subsystem readiness -- ARCH-0023 aggregate (Book VI)
         subsystems: subsystems.clone(),
-        // Orchestration coordination plane (ARCH-0004) â€” coordination primitives.
+        // Orchestration coordination plane (ARCH-0004) --" coordination primitives.
         orchestration: Arc::new(crate::domain::Orchestration {
             storage: crate::domain::StorageOrchestration {
                 tick: crate::domain::orchestration::storage::Tick {
@@ -1082,23 +1084,14 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
     // When pond security is active, split routes across two listeners:
     // - HTTP :7185 â†’ public lobby (health, discovery, pond join/status)
     // - HTTPS :7183 â†’ all routes (authenticated, full API)
-    let pond_is_active = state
-        .security
-        .pond
-        .active
-        .load(std::sync::atomic::Ordering::Relaxed);
+    let pond_is_active = state.security.pond_active();
 
     // If already enrolled at boot, activate HTTPS + chirp signing/verification
     if pond_is_active {
         activate_pond_security(&state, &console_printer).await;
     }
 
-    let app = if pond_is_active
-        && state
-            .security
-            .https
-            .load(std::sync::atomic::Ordering::Relaxed)
-    {
+    let app = if pond_is_active && state.security.https_started() {
         tracing::info!(
             "Pond active: HTTP :{} serves public lobby, HTTPS :{} serves all routes",
             port,
@@ -1161,10 +1154,10 @@ async fn serve(state: AppState, api_endpoint: &str) -> anyhow::Result<()> {
 
 /// Configure systemd-resolved for Zen Garden container DNS.
 ///
-/// 1. `DNSStubListenerExtra=<bridge_gw>` â€” resolved listens on Docker bridge
+/// 1. `DNSStubListenerExtra=<bridge_gw>` --" resolved listens on Docker bridge
 ///    gateway so containers can use it for DNS.
 /// 2. `resolvectl dns docker0 <koi_dns>` + `resolvectl domain docker0 ~zengarden`
-///    â€” routes `.zengarden` queries to Koi DNS (port 5642).
+///    --" routes `.zengarden` queries to Koi DNS (port 5642).
 ///    Uses `docker0` because `lo` (loopback) is rejected by resolvectl.
 #[cfg(target_os = "linux")]
 async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()> {
@@ -1222,7 +1215,7 @@ async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()
     }
 
     if !docker0_ready {
-        tracing::warn!("docker0 interface not found after 5s â€” .zengarden DNS routing skipped");
+        tracing::warn!("docker0 interface not found after 5s -- .zengarden DNS routing skipped");
         return Ok(());
     }
 
@@ -1233,7 +1226,7 @@ async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()
         .context("resolvectl dns")?;
     if !dns_output.status.success() {
         let stderr = String::from_utf8_lossy(&dns_output.stderr);
-        tracing::warn!(%stderr, "resolvectl dns docker0 failed â€” .zengarden routing unavailable");
+        tracing::warn!(%stderr, "resolvectl dns docker0 failed -- .zengarden routing unavailable");
         return Ok(());
     }
 
@@ -1244,7 +1237,7 @@ async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()
         .context("resolvectl domain")?;
     if !domain_output.status.success() {
         let stderr = String::from_utf8_lossy(&domain_output.stderr);
-        tracing::warn!(%stderr, "resolvectl domain docker0 failed â€” .zengarden routing unavailable");
+        tracing::warn!(%stderr, "resolvectl domain docker0 failed -- .zengarden routing unavailable");
         return Ok(());
     }
 
@@ -1402,7 +1395,7 @@ pub(crate) async fn start_preinstall_handler(state: &AppState) {
     // Spawn background installation + cleanup task.
     //
     // `install_batch_task` always reaches a terminal state
-    // (`Completed` or `Failed`) before returning — the per-item
+    // (`Completed` or `Failed`) before returning -- the per-item
     // `record_item_*` + final `complete`/`fail` calls all await
     // inline. Once the task's `.await` returns, the manifest can
     // be deleted. The previous 5-second poll loop that watched the
@@ -1621,17 +1614,7 @@ pub(crate) async fn activate_pond_security(
     }
 
     // --- HTTPS listener ---
-    if state
-        .security
-        .https
-        .compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        )
-        .is_ok()
-    {
+    if state.security.try_set_https_started() {
         let handle = tls::try_start_https(
             garden_common::constants::MOSS_HTTPS,
             &state.current.stone.name,
@@ -1642,10 +1625,7 @@ pub(crate) async fn activate_pond_security(
         .await;
 
         if handle.is_none() {
-            state
-                .security
-                .https
-                .store(false, std::sync::atomic::Ordering::Relaxed);
+            state.security.clear_https_started();
             tracing::warn!("HTTPS listener not started (certs may not be ready)");
         } else {
             tracing::info!(

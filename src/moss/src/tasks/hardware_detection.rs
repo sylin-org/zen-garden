@@ -410,7 +410,7 @@ pub async fn detect_capabilities_background(
         let ip = state.current.address.read().await.ip_str();
         let port = state.current.api_port;
         let version = crate::version_string();
-        let pond_name = state.security.pond.state.name().await;
+        let pond_name = state.security.pond_name().await;
 
         let (cpu_cores, ram_mb, gpu) = match &caps {
             Some(c) => {

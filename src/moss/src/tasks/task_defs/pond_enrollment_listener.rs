@@ -28,7 +28,7 @@ impl BackgroundTask for PondEnrollmentListenerTask {
                         match result {
                             Ok(DomainEvent::Pond(PondEvent::EnrollmentChanged { enrolled, .. })) => {
                                 // Reload inter-stone TLS client with fresh cert material
-                                ctx.state.security.stone_client.reload_tls();
+                                ctx.state.security.stone_client().reload_tls();
 
                                 if enrolled {
                                     crate::bootstrap::run::activate_pond_security(
@@ -37,10 +37,7 @@ impl BackgroundTask for PondEnrollmentListenerTask {
                                     )
                                     .await;
                                 } else {
-                                    ctx.state
-                                        .security
-                                        .https
-                                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                                    ctx.state.security.clear_https_started();
                                     tracing::info!(
                                         "Pond unenrolled — HTTPS deactivated (flag cleared)"
                                     );

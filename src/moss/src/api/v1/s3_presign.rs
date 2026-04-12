@@ -20,7 +20,6 @@ use axum::{
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::sync::atomic::Ordering;
 use tracing::debug;
 
 use crate::AppState;
@@ -149,7 +148,7 @@ pub fn validate_presign_token(
 ///
 /// Used by both presigned URL generation and S3 credential derivation.
 pub(crate) async fn resolve_key_material(state: &AppState) -> String {
-    if state.security.pond.active.load(Ordering::Relaxed)
+    if state.security.pond_active()
         && let Ok(handle) = state.discovery.koi.certmesh()
         && let Ok(core) = handle.core()
     {

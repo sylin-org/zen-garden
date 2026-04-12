@@ -194,9 +194,7 @@ where
 async fn persist_ceremony(state: &AppState, ceremony: &Ceremony) -> Result<()> {
     state
         .security
-        .pond
-        .ceremony
-        .journal
+        .ceremony_journal()
         .persist(ceremony)
         .await
         .map_err(|e| {

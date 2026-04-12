@@ -352,32 +352,11 @@ impl AppState {
     // The stone-health and resolution-change methods have moved to
     // `crate::domain::topology::composition::*` per ARCH-0020 Book III.
 
-    /// Recover incomplete ceremonies from previous run
+    /// Recover incomplete ceremonies from previous run.
     ///
-    /// Called on startup to detect ceremonies that were interrupted
-    /// (e.g., by crash or restart). Returns count of recovered ceremonies.
+    /// Delegates to the Security aggregate's `recover_ceremonies` command.
     pub async fn recover_ceremonies(&self) -> anyhow::Result<usize> {
-        let incomplete = self.security.pond.ceremony.journal.load_active().await?;
-        let count = incomplete.len();
-
-        for ceremony in incomplete {
-            tracing::warn!(
-                ceremony_id = %ceremony.id,
-                ceremony_type = ceremony.ceremony_type.name(),
-                state = ?ceremony.state,
-                "Found incomplete ceremony from previous run"
-            );
-            self.security.pond.ceremony.registry.insert(ceremony).await;
-        }
-
-        if count > 0 {
-            tracing::warn!(
-                count,
-                "Recovered incomplete ceremonies - manual intervention may be required"
-            );
-        }
-
-        Ok(count)
+        self.security.recover_ceremonies().await
     }
 
     // ========================================================================

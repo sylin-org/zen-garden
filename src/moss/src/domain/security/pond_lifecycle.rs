@@ -142,7 +142,7 @@ pub async fn init(
     let pond_name = resolve_pond_name(input.name.as_deref());
 
     // Persist pond metadata and update state
-    state.security.pond.state.set_name(pond_name.clone()).await;
+    state.security.set_pond_name(pond_name.clone()).await;
     let metadata = crate::domain::PondMetadata {
         name: Some(pond_name.clone()),
     };
@@ -195,15 +195,13 @@ pub fn resolve_pond_name(input: Option<&str>) -> String {
 /// 1. It is the cornerstone (CA initialized and unlocked), OR
 /// 2. It is an enrolled member (has cert + key from a prior enrollment)
 pub async fn refresh_pond_active(state: &AppState) {
-    use std::sync::atomic::Ordering;
-
     // Cornerstone path: CA initialized and unlocked
     if let Ok(handle) = state.discovery.koi.certmesh()
         && let Ok(core) = handle.core()
     {
         let status = core.certmesh_status().await;
         if status.ca_initialized && !status.ca_locked {
-            state.security.pond.active.store(true, Ordering::Relaxed);
+            state.security.refresh_active(true);
             return;
         }
     }
@@ -214,7 +212,7 @@ pub async fn refresh_pond_active(state: &AppState) {
         .join("certs")
         .join(&state.current.stone.name);
     if certs_dir.join("cert.pem").exists() && certs_dir.join("key.pem").exists() {
-        state.security.pond.active.store(true, Ordering::Relaxed);
+        state.security.refresh_active(true);
     }
 }
 
@@ -228,26 +226,15 @@ pub async fn notify_enrollment_changed(
     enrolled: bool,
     cornerstone: Option<String>,
 ) {
-    use std::sync::atomic::Ordering;
-
-    // Update flags
-    state
-        .security
-        .pond
-        .active
-        .store(enrolled, Ordering::Relaxed);
+    // Update enrollment state via aggregate commands
     if enrolled {
-        state
-            .security
-            .pond
-            .state
-            .set_enrolled(cornerstone.clone())
-            .await;
+        state.security.mark_enrolled(cornerstone.clone()).await;
     } else {
-        state.security.pond.state.set_unenrolled().await;
+        state.security.mark_unenrolled().await;
     }
 
-    // Emit domain event — listener handles HTTPS + chirps
+    // Emit domain event on EventBus — listener handles HTTPS + chirps
+    // (dual stream: SecurityChanged via aggregate + PondEvent via EventBus)
     state
         .event_bus
         .emit(crate::domain::PondEvent::enrollment_changed(

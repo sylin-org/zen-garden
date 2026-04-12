@@ -4,6 +4,7 @@ doc_type: decision
 status: accepted
 date: 2026-04-12
 depends_on: [ARCH-0017, ARCH-0016, ARCH-0018]
+completed: 2026-04-12
 ---
 
 # ARCH-0027: Security Aggregate — Pond Enrollment and Ceremony Coordination

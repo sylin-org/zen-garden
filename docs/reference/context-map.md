@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0026](../decisions/ARCH-0026-storage-api-surface.md).
+As of 2026-04-12, after [ARCH-0027](../decisions/ARCH-0027-security-aggregate.md).
 
 ### Full contexts
 
@@ -97,6 +97,21 @@ As of 2026-04-12, after [ARCH-0026](../decisions/ARCH-0026-storage-api-surface.m
 - **Source:** `src/common/src/resources/system.rs`, `src/moss/src/api/v1/resources.rs`, `src/moss/src/domain/resources_collection.rs`, `src/moss/src/tasks/resources_collector.rs`
 - **Book:** I (as a rename, not a new aggregate)
 
+#### Security
+
+- **Status:** Full. ARCH-0027 (Book IX of ARCH-0017) -- completed 2026-04-12.
+- **Owns:** pond enrollment state (enrolled, cornerstone, pond name), HTTPS listener flag, ceremony infrastructure (host, registry, journal)
+- **Commands (write):** `mark_enrolled`, `mark_unenrolled`, `set_pond_name`, `seed_state` (boot-time), `refresh_active`, `try_set_https_started`, `set_https_started`, `clear_https_started`, `recover_ceremonies`
+- **Queries (read):** `enrolled`, `pond_active`, `cornerstone`, `pond_name`, `https_started`, `stone_client`, `ceremony_host`, `ceremony_registry`, `ceremony_journal`, `active_arc`, `changes`
+- **Emits:** `SecurityChanged` with 3 kinds (`Enrolled`, `Unenrolled`, `PondRenamed`) via `changes()` broadcast. Dual stream: `PondEvent::EnrollmentChanged` on `EventBus` preserved for the pond enrollment listener until Book XVI.
+- **Subscribes:** none (Security is a root; consumers subscribe to `SecurityChanged`)
+- **Ports:** `PondClient` -> `StoneClient` (inter-stone HTTP), `CeremonyPersistence` -> `CeremonyJournal` (crash recovery persistence). Both relocated from `domain/traits/` into the context.
+- **Cross-cutting:** `Arc<Metrics>` injected at construction; per-kind event counters via `register_domain`.
+- **Mutations:** infallible -- commands return `bool` (changed-or-not), matching Book I Metrics and Book IV Jobs.
+- **Source:** `src/moss/src/domain/security/` (mod.rs + aggregate.rs + event.rs + ceremony_persistence.rs + pond_client.rs + pond_lifecycle.rs + tests.rs)
+- **Note:** `domain/ceremony/` (nourishment ceremonies) is a separate bounded context, NOT part of Security.
+- **Book:** IX (ARCH-0027) -- **COMPLETE**
+
 ### Partial contexts (exist but do not enforce the pattern)
 
 These contexts were extracted by earlier refactors (ARCH-0004 and after) but retain imperative methods, scattered state, and direct infra imports.
@@ -110,16 +125,6 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Ports:** none (direct infra access)
 - **Source:** `src/moss/src/domain/current/`
 - **Book:** cleaned up implicitly across Books III (Topology), VI (Subsystems), VIII (Storage), XIX (AppState dissolution)
-
-#### Security / Pond / Ceremony (scattered)
-
-- **Status:** Partial — Pond and Ceremony are separate structs under `security` with tangled ownership
-- **Owns:** pond state, ceremony registry, ceremony host, ceremony journal, TLS key material
-- **Emits:** ad-hoc via `event_bus`, not a typed context event
-- **Subscribes:** ad-hoc
-- **Ports:** `CeremonyJournal` exists as a concrete type, not an injected port
-- **Source:** `src/moss/src/domain/security/`, `src/moss/src/domain/ceremony/`, `src/moss/src/domain/pond/`
-- **Book:** IX (consolidation)
 
 #### Storage (Bank domain model + API surface landed, VIII-a/b)
 

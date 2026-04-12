@@ -229,14 +229,17 @@ async fn handle_container_event(state: &AppState, event: &bollard::models::Event
 
     let stone_id = state.current.stone.id.clone();
 
-    // Update offerings registry (auto_chirp=true for immediate notification)
+    // Delegate mutation + event emission to Health aggregate (ARCH-0024)
     state
-        .offerings
-        .update(&offering_id, |o| {
-            o.status = new_status;
-            o.health = new_health.clone();
-            true
-        })
+        .health
+        .apply_docker_event(
+            &state.offerings,
+            &offering_id,
+            &offering_name,
+            &old_health,
+            new_status,
+            new_health.clone(),
+        )
         .await;
 
     // Emit domain event for listeners (chirp, pulse/SSE, companions)

@@ -12,7 +12,6 @@
 use crate::AppState;
 use crate::domain::adopt_offering_container;
 use crate::tasks::offering_reconciliation::ReconciliationCoordinator;
-use garden_common::notifications::{NOTIF_SOURCE_OFFERINGS_DEGRADED, NotificationTag};
 use garden_common::{OfferingStatus, ServiceHealthStatus};
 use std::collections::HashSet;
 
@@ -141,13 +140,17 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
                     old_health = ?old_health, new_health = ?new_health,
                     "Offering state changed"
                 );
+                // Delegate mutation + event emission to Health aggregate (ARCH-0024)
                 state
-                    .offerings
-                    .update(offering_id, |o| {
-                        o.status = new_status;
-                        o.health = new_health;
-                        true
-                    })
+                    .health
+                    .apply_docker_event(
+                        &state.offerings,
+                        offering_id,
+                        name,
+                        old_health,
+                        new_status,
+                        new_health,
+                    )
                     .await;
                 state_changed = true;
             }
@@ -316,21 +319,11 @@ pub async fn health_monitor_task(state: AppState, token: CancellationToken) {
             }
         }
 
-        // ── Phase 4: Notification update ───────────────────────────────
-        {
-            let offerings = state.offerings.read().await;
-            let has_degraded = offerings.iter().any(|o| {
-                matches!(
-                    o.health,
-                    ServiceHealthStatus::Degraded | ServiceHealthStatus::Offline
-                )
-            });
-            state.presence.notifications.set_if(
-                NOTIF_SOURCE_OFFERINGS_DEGRADED,
-                NotificationTag::Attention,
-                has_degraded,
-            );
-        }
+        // ── Phase 4: Notification update (ARCH-0024) ─────────────────
+        state
+            .health
+            .update_notification(&state.offerings, &state.presence.notifications)
+            .await;
 
         // ── Phase 5: Orphan container adoption ─────────────────────────
         let cached_caps = state.current.capabilities.read().await.clone();

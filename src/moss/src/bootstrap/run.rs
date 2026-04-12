@@ -912,6 +912,15 @@ async fn build_state(
         .await,
     );
 
+    // Health aggregate (ARCH-0024 Book VII)
+    let health_aggregate = Arc::new(
+        crate::domain::Health::new(
+            metrics_aggregate.clone(),
+            Arc::new(crate::domain::DockerHealthProbe::new(docker.clone())),
+        )
+        .await,
+    );
+
     let state = AppState {
         current: Arc::new(crate::domain::Current {
             stone: Arc::new(crate::domain::current::Stone {
@@ -980,6 +989,8 @@ async fn build_state(
         }),
         // Log broadcast channel (for live SSE log streaming)
         log: log.clone(),
+        // Health aggregate — ARCH-0024 (Book VII)
+        health: health_aggregate,
         // Subsystem readiness — ARCH-0023 aggregate (Book VI)
         subsystems: subsystems.clone(),
         // Orchestration coordination plane (ARCH-0004) â€” coordination primitives.

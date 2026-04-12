@@ -212,7 +212,7 @@ pub async fn build_test_state() -> AppState {
         ),
         catalog,
         platform: Arc::new(domain::Platform {
-            docker,
+            docker: docker.clone(),
             runtime: Arc::new(NoopRuntime),
             network: Arc::new(network),
             handlers: infrastructure_handlers,
@@ -266,6 +266,13 @@ pub async fn build_test_state() -> AppState {
             registry: companion_registry,
         }),
         log: log_tx,
+        health: Arc::new(
+            domain::Health::new(
+                test_metrics.clone(),
+                Arc::new(domain::DockerHealthProbe::new(docker.clone())),
+            )
+            .await,
+        ),
         subsystems: subsystems.clone(),
         orchestration: Arc::new(domain::Orchestration {
             storage: domain::StorageOrchestration {

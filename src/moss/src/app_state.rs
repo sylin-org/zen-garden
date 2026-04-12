@@ -13,7 +13,9 @@
 //!
 //! This is the unified AppState used by both main.rs and all API handlers.
 
-use crate::domain::{Catalog, Jobs, Metrics, Offerings, Orchestration, Security, Subsystems, Tool};
+use crate::domain::{
+    Catalog, Health, Jobs, Metrics, Offerings, Orchestration, Security, Subsystems, Tool,
+};
 use crate::infra::{EventBus, PulseEvent};
 use garden_common::console::ConsolePrinter;
 use std::sync::Arc;
@@ -130,6 +132,12 @@ pub struct AppState {
     // Background tasks keep these state slices fresh.
     /// Log broadcast channel (for live SSE log streaming)
     pub log: tokio::sync::broadcast::Sender<String>,
+
+    /// Health aggregate (ARCH-0024) — per-offering health probing,
+    /// transition detection, and event emission. Stateless facade that
+    /// delegates probe execution through `HealthProbe` port and offering
+    /// mutation through the Offerings aggregate.
+    pub health: Arc<Health>,
 
     /// Subsystem readiness — ARCH-0023 aggregate (Book VI of ARCH-0017)
     pub subsystems: Arc<Subsystems>,

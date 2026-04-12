@@ -325,6 +325,14 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **BankError** - Typed error enum for bank-level operations: `NotFound`, `InvalidName`, `PinFailed`, `UnpinFailed`. Fourth pattern deviation (typed errors) following Catalog (ARCH-0022).
 
+### Discovery aggregate terms (Book X / ARCH-0028)
+
+**Discovery (bounded context)** - The aggregate encapsulating mDNS service registration, the Koi embedded handle, and peer discovery via lurk-listener. Ephemeral (no persistence). Typed commands: `reregister` (mDNS `_moss._tcp` + `_http._tcp`), `update_health` (mDNS TXT record), `register_certmesh` (`_certmesh._tcp` CA service). The Koi handle is accessed via `koi()` — it serves multiple domains (Security for certmesh, Storage for vault, Discovery for mDNS) and stays on Discovery as the multi-capability embedded handle's home. Source: `src/moss/src/domain/discovery/`.
+
+**Koi handle** - `Arc<KoiHandle>` from `koi-embedded`. A multi-capability embedded service providing mDNS, DNS, certmesh, vault, proxy, and health sub-handles. Owned by the Discovery aggregate but consumed cross-domain via `state.discovery.koi()`. The handle's placement under Discovery is historical — it predates DDD extraction — but is preserved because Discovery is the closest domain to its primary function (service advertisement).
+
+**Lurk-listener** - A passive mDNS browse task that listens for `_moss._tcp` service announcements from peer stones. Discovered peers are fed to the Topology aggregate via `topology.upsert_from_chirp()`. The lurk-listener is infrastructure (Koi browse API wrapping) — it lives in `domain/discovery/mdns.rs` as a free function, not as an aggregate command.
+
 ### Tool aggregate terms (Book II / ARCH-0019)
 
 **Tool (bounded context)** - The aggregate owning the garden-wide registry of `GardenTool` entries (offerings + seed-banks + gateway registrations + remote-announced tools from peer stones) on a single stone. Typed commands (`upsert`, `register_gateway`, `deregister_gateway`, `reap_expired_gateways`, `reconcile_local`, `apply_remote_beacon`, `remove_stone`) own the write path; typed queries return owned values without leaking references across the lock boundary. See `/api/v1/stone/tools/{fqid}` and `/api/v1/garden/tools`.

@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0027](../decisions/ARCH-0027-security-aggregate.md).
+As of 2026-04-12, after [ARCH-0028](../decisions/ARCH-0028-discovery-aggregate.md).
 
 ### Full contexts
 
@@ -143,13 +143,18 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 
 #### Discovery
 
-- **Status:** Partial — holds `mdns` handle and `koi` embedded handle as direct fields
-- **Owns:** mDNS re-registration handle, koi discovery state
-- **Emits:** none (mDNS events flow through koi callbacks)
-- **Subscribes:** adapter callbacks
-- **Ports:** none
-- **Source:** `src/moss/src/domain/discovery/`
-- **Book:** X (with Announcement and Networking)
+- **Status:** Full. ARCH-0028 (Book X of ARCH-0017) — completed 2026-04-12.
+- **Owns:** Koi embedded handle (mDNS, DNS, certmesh, vault sub-handles), mDNS service registration handle, lurk-listener broadcast source
+- **Commands (write):** `reregister` (mDNS `_moss._tcp` + `_http._tcp`), `update_health` (mDNS TXT record), `register_certmesh` (`_certmesh._tcp` CA service)
+- **Queries (read):** `koi()` (shared Koi handle), `mdns_registered()`, `has_mdns()`, `lurk_stream()`, `changes()`
+- **Emits:** `DiscoveryChanged` with 3 kinds (`Registered`, `HealthUpdated`, `CertmeshRegistered`)
+- **Subscribes:** none (Discovery is called imperatively by IP-change handler, health listener, and pond lifecycle)
+- **Ports:** none — `MdnsHandle` wraps Koi mDNS directly; a `MdnsTransport` trait is not warranted (single implementation)
+- **Cross-cutting:** `Arc<Metrics>` injected at construction; per-kind event counters via `register_domain`
+- **Mutations:** infallible — commands return `()` or `bool`; mDNS errors are logged and swallowed (non-fatal)
+- **Plan change:** ARCH-0017 planned 3 contexts (Discovery, Announcement, Networking); Book X landed 1 aggregate. Announcement (pure functions) and Networking (infrastructure feeding Subsystems) are correctly placed and need no aggregate.
+- **Source:** `src/moss/src/domain/discovery/` (mod.rs + aggregate.rs + event.rs + mdns.rs + tests.rs)
+- **Book:** X (ARCH-0028) — **COMPLETE**
 
 #### Presence
 
@@ -179,7 +184,7 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Subscribes:** none
 - **Ports:** direct Bollard imports, no abstraction
 - **Source:** `src/moss/src/domain/platform/`
-- **Book:** Book XII extracts `ContainerRuntime` from `platform.docker`; Book X extracts `Networking` from `platform.network`; Platform is retired or reduced to a vestigial type
+- **Book:** Book XII extracts `ContainerRuntime` from `platform.docker`; Networking stays as infrastructure on Platform (Book X determined no aggregate needed); Platform is retired or reduced to a vestigial type
 
 #### Orchestration
 
@@ -270,15 +275,15 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### Announcement
 
-- **Status:** Absent — chirp scheduling lives in `tasks/periodic_announcer.rs` and `announcement.rs` free functions
-- **Target source:** `src/moss/src/domain/announcement/`
-- **Book:** X
+- **Status:** Not warranted — Book X (ARCH-0028) determined no aggregate needed. `domain/announcement.rs` contains pure decision functions (no state). Periodic announcer task is a timer using Topology's `chirp()` command. Chirp transport is already owned by Topology (Book III).
+- **Source:** `src/moss/src/domain/announcement.rs` (pure functions), `src/moss/src/tasks/announcer.rs` (timer task)
+- **Book:** X — evaluated and rejected as aggregate
 
 #### Networking
 
-- **Status:** Absent — network interface monitoring is in `tasks/ip_change_handler.rs` and scattered `infra::network` free functions
-- **Target source:** `src/moss/src/domain/networking/`
-- **Book:** X
+- **Status:** Not warranted — Book X (ARCH-0028) determined no aggregate needed. `Network` monitor (`tasks/network_monitor.rs`) is infrastructure that feeds Subsystems readiness. `domain/network.rs` contains value objects for static IP management. No domain state to encapsulate.
+- **Source:** `src/moss/src/tasks/network_monitor.rs` (infrastructure), `src/moss/src/domain/network.rs` (value objects)
+- **Book:** X — evaluated and rejected as aggregate
 
 #### ContainerRuntime
 
@@ -341,9 +346,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Security::Pond** | pond membership, CA, enrollment | `PondChanged` | `PondCertStore`, `MtlsAcceptor` | IX |
 | **Security::Ceremonies** | ceremony registry, journal, lifecycle | `CeremonyChanged` | `CeremonyJournal` | IX |
 | **Security::Trust** | per-stone trust, mTLS material | `TrustChanged` | `MtlsAcceptor` | IX |
-| **Discovery** | known peer stones | `StoneDiscovered`, `StoneLost` | `MdnsTransport`, `KoiClient` | X |
-| **Announcement** | chirp schedule, last-chirp timestamp | `ChirpEmitted` | `ChirpTransport` | X |
-| **Networking** | network interface state | `NetworkStateChanged` | `InterfaceMonitor` | X |
+| **Discovery** ✅ | Koi handle, mDNS registration, lurk-listener | `DiscoveryChanged` (3 kinds) | none | X (ARCH-0028) — **COMPLETE** |
 | **Orchestration::Tick** | storage tick aggregation | `OrchestrationTick` | none | XI |
 | **Orchestration::Nurturing** | nurturing lifecycle state | `NurturingChanged` | `NurturingStore` | XI |
 | **Orchestration::Election** | offering primary/dormant election | `ElectionResolved` | `ElectionTransport` | XI |

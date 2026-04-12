@@ -4,7 +4,7 @@ doc_type: decision
 status: accepted
 date: 2026-04-12
 depends_on: [ARCH-0017, ARCH-0018, ARCH-0020, ARCH-0023]
-completed: ~
+completed: 2026-04-12
 ---
 
 # ARCH-0028: Discovery Aggregate — mDNS Registration, Koi Handle, and Network Monitor

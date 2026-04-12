@@ -123,11 +123,11 @@ let sse_feed         = state.storage.orchestration.tick.subscribe();
 
 ## 5. Domain ownership through struct nesting
 
-`AppState` is a facade. Each domain owns its fields. Struct nesting makes domain boundaries visible to the compiler.
+`Moss` is the daemon's runtime — a thin dependency container. Each domain owns its fields. Struct nesting makes domain boundaries visible to the compiler.
 
 ```rust
 #[derive(Clone)]
-pub struct AppState {
+pub struct Moss {
     // This node's mutable self-description
     pub current: Current,
 
@@ -136,14 +136,19 @@ pub struct AppState {
     pub event_bus:      EventBus,
     pub console:        Arc<ConsolePrinter>,
 
-    // Domain contexts — each domain owns its state
-    pub infra:      Arc<Infra>,
-    pub discovery:  Arc<Discovery>,
-    pub security:   Arc<Security>,
+    // Domain aggregates — each domain owns its state
     pub offerings:  Arc<Offerings>,
-    pub storage:    Arc<Storage>,
+    pub metrics:    Arc<Metrics>,
+    pub catalog:    Arc<Catalog>,
+    pub jobs:       Arc<Jobs>,
+    pub tool:       Arc<Tool>,
+    pub topology:   Arc<Topology>,
+    pub security:   Arc<Security>,
+    pub discovery:  Arc<Discovery>,
     pub presence:   Arc<Presence>,
-    pub companions: Arc<Companions>,
+    pub companion:  Arc<Companion>,
+    pub health:     Arc<Health>,
+    pub subsystems: Arc<Subsystems>,
 }
 ```
 
@@ -185,15 +190,15 @@ state.current.health.read().await              // current health — mutable, lo
 Handlers declare only the dependencies they actually need. Axum's `FromRef` enforces this at the type level.
 
 ```rust
-impl FromRef<AppState> for Arc<Storage> {
-    fn from_ref(state: &AppState) -> Self { state.storage.clone() }
+impl FromRef<Moss> for Arc<Storage> {
+    fn from_ref(state: &Moss) -> Self { state.storage.clone() }
 }
 
 // Handler's dependency surface is explicit and compiler-enforced
 async fn list_volumes(State(storage): State<Arc<Storage>>) -> impl IntoResponse { ... }
 
 // Not this — implicit dependency on everything
-async fn list_volumes(State(state): State<AppState>) -> impl IntoResponse { ... }
+async fn list_volumes(State(state): State<Moss>) -> impl IntoResponse { ... }
 ```
 
 ---
@@ -600,15 +605,15 @@ When the size is known upfront, use `Vec::with_capacity()` to avoid reallocation
 | Type duplicated in name | Remove the redundant part |
 | `Context` / `Manager` / `Service` suffix | Drop the suffix |
 | `_tx` / `_rx` in struct field | Name the concept; type declares direction |
-| Flat 64-field AppState | Domain contexts with `Arc<T>` grouping |
+| Flat 64-field root struct | Domain aggregates with `Arc<T>` grouping |
 | `bool` flag pairs | State machine enum |
 | `Option<T>` in long-lived struct | Typestate phases |
 | `anyhow` inside domain logic | Typed error enum |
-| Handler takes full `AppState` | `FromRef` with minimal context |
+| Handler takes full `Moss` | `FromRef` with minimal context |
 | `let x_clone = x.clone()` | Shadow: `let x = x.clone()` |
 | `fn f(stone_id: String, stone_name: String)` | Domain value object: `fn f(stone: &Stone)` |
 | Duplicated struct fields across types | Embed canonical type; enrich with `#[serde(flatten)]` |
-| `app_state.rs` containing all domains | One file per concept; `app_state.rs` becomes thin re-export |
+| `app_state.rs` containing all domains | One file per concept; root struct becomes thin container |
 | `helpers.rs` / `utils.rs` catch-alls | Each item moves to its concept's file |
 | `.subscribe()` called outside domain | Expose `on_X()` / `X_stream()` instead |
 | SSE handler navigates internal channels | Subscribe via domain event API |

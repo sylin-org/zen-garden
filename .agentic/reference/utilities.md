@@ -205,7 +205,7 @@ For SSE streams or raw HTTP access, use `api.http()` to get the underlying `reqw
 
 | Module | Purpose |
 |--------|---------|
-| `moss/src/app_state.rs` | Shared state via `Arc<RwLock<T>>` |
+| `moss/src/app_state.rs` | `Moss` runtime — dependency injection container |
 | `moss/src/infra/persistence.rs` | `load_json<T>()`, `save_json<T>()` atomic |
 | `moss/src/infra/docker.rs` | Bollard wrapper |
 | `moss/src/infra/manifests/` | YAML frontmatter loader |

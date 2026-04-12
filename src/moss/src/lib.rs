@@ -22,13 +22,13 @@ pub mod http;
 // mdns relocated to domain/discovery/mdns.rs in Book X (ARCH-0028)
 pub use domain::discovery::mdns;
 
-// App state for HTTP handlers
+// Moss runtime — central dependency injection container
 pub mod app_state;
 
 // Test support — available to integration tests (tests/ directory)
 pub mod testing;
 
-// Re-export Moss
+// Re-export Moss (the runtime struct, defined in app_state module)
 pub use app_state::Moss;
 
 // Re-export domain types used by external consumers (rake, tests)

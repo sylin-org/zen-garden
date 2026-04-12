@@ -108,7 +108,7 @@ pub use ceremony::{
     CeremonyType, Phase, PhaseState, execute_nourish_offering,
 };
 pub use companion::Companion;
-pub use current::{Current, Stone as CurrentStone, Topology as CurrentTopology};
+pub use current::{Current, Stone as CurrentStone};
 pub use discovery::Discovery;
 pub use events::{DomainEvent, OfferingEvent, PondEvent, StoneEvent, StorageEvent};
 pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};

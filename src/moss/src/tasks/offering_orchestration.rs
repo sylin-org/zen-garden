@@ -18,7 +18,7 @@ use garden_common::constants::orchestration::{
 };
 use garden_common::election::{ElectionType, ScoreMechanism};
 use garden_common::utils::ids::generate_guidv7;
-use garden_common::{OfferingRole, OrchestrationState, StoneStatus};
+use garden_common::{OfferingRole, OrchestrationState};
 use tokio_util::sync::CancellationToken;
 
 use crate::app_state::AppState;
@@ -386,9 +386,8 @@ async fn dispatch_dormant(
         }
     };
 
-    // Check primary staleness via topology cache
-    let cache = state.current.topology.cache.read().await;
-    if let Some(primary_entry) = cache.get(&primary_stone_id) {
+    // Check primary staleness via Topology aggregate
+    if let Some(primary_entry) = state.topology.get_by_id(&primary_stone_id).await {
         let staleness_ms = (Utc::now() - primary_entry.last_seen)
             .num_milliseconds()
             .unsigned_abs();
@@ -400,8 +399,6 @@ async fn dispatch_dormant(
             .any(|svc| svc.name.to_string() == fqn && svc.role.as_deref() == Some("degraded"));
 
         if staleness_ms > PRIMARY_STALE_THRESHOLD_MS || primary_degraded {
-            drop(cache); // Release lock before election
-
             let reason = if primary_degraded {
                 "primary degraded"
             } else {
@@ -441,8 +438,6 @@ async fn dispatch_dormant(
             }
         }
     } else {
-        drop(cache);
-
         // Primary stone not in topology at all — trigger election
         tracing::warn!(
             offering = %fqn,
@@ -605,15 +600,9 @@ async fn update_primary_stone_id(
 /// Scans the topology cache for online stones with a matching service entry
 /// whose role is "primary". Returns the stone_id of the first match.
 async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
-    let cache = state.current.topology.cache.read().await;
-
-    for (stone_id, entry) in cache.iter() {
+    for entry in state.topology.online_stones().await {
         // Skip self
-        if stone_id == &state.current.stone.id {
-            continue;
-        }
-        // Only consider online stones
-        if entry.status != StoneStatus::Online {
+        if entry.stone_id == state.current.stone.id {
             continue;
         }
         // Check if this stone has the offering with role "primary"
@@ -621,7 +610,7 @@ async fn find_remote_primary(state: &AppState, fqn: &str) -> Option<String> {
             if svc.name.to_string() == fqn
                 && svc.role.as_deref() == Some(garden_common::constants::ROLE_PRIMARY)
             {
-                return Some(stone_id.clone());
+                return Some(entry.stone_id.clone());
             }
         }
     }

@@ -925,10 +925,6 @@ async fn build_state(
                 media: media.clone(),
                 changed: storage_changed.clone(),
             }),
-            topology: crate::domain::current::Topology {
-                cache: topology_cache.clone(),
-                dirty: topology_dirty.clone(),
-            },
             capabilities: capabilities.clone(),
             hardware_topology: Arc::new(RwLock::new(None)),
             address: current_address.clone(),

@@ -616,13 +616,13 @@ async fn proxy_enrollment(
 async fn discover_cornerstone(
     state: &AppState,
 ) -> Result<garden_common::PeerAddress, (StatusCode, Json<ApiErrorResponse>)> {
-    let cache = state.current.topology.cache.read().await;
-
     // Collect online peers, most recently seen first
-    let mut candidates: Vec<_> = cache
-        .values()
+    let mut candidates: Vec<_> = state
+        .topology
+        .online_stones()
+        .await
+        .into_iter()
         .filter(|e| e.stone_name != state.current.stone.name)
-        .filter(|e| e.status == garden_common::types::StoneStatus::Online)
         .collect();
     candidates.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
 
@@ -658,17 +658,16 @@ async fn discover_cornerstone(
             .and_then(|c| c.as_str());
 
         if let Some(name) = cornerstone_name {
-            // Found the cornerstone hostname — look up its address
-            for e in cache.values() {
-                if e.stone_name == name {
-                    tracing::info!(
-                        cornerstone = %name,
-                        endpoint = %e.address,
-                        via = %entry.stone_name,
-                        "Cornerstone discovered via peer"
-                    );
-                    return Ok(e.address.clone());
-                }
+            // Found the cornerstone hostname — look up its address via
+            // the Topology aggregate.
+            if let Some(found) = state.topology.get_by_name(name).await {
+                tracing::info!(
+                    cornerstone = %name,
+                    endpoint = %found.address,
+                    via = %entry.stone_name,
+                    "Cornerstone discovered via peer"
+                );
+                return Ok(found.address.clone());
             }
             // Cornerstone identified but not in our topology cache
             return Err(unavailable(

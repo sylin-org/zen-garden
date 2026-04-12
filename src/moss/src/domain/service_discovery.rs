@@ -288,13 +288,17 @@ pub async fn find_services(
     );
 
     // Compute cache age from the most recent topology entry's last_seen
-    let cache_age_seconds = {
-        let map = state.current.topology.cache.read().await;
-        map.values().map(|e| e.last_seen).max().map(|newest| {
+    let cache_age_seconds = state
+        .topology
+        .all_stones()
+        .await
+        .iter()
+        .map(|e| e.last_seen)
+        .max()
+        .map(|newest| {
             let age = Utc::now().signed_duration_since(newest);
             age.num_seconds().max(0) as u64
-        })
-    };
+        });
 
     ServiceDiscoveryResponse {
         found: !all_services.is_empty(),

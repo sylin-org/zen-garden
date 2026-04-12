@@ -164,10 +164,6 @@ pub async fn build_test_state() -> AppState {
                 media: domain::new_media(),
                 changed: storage_changed,
             }),
-            topology: domain::current::Topology {
-                cache: topology_cache.clone(),
-                dirty: topology_dirty.clone(),
-            },
             capabilities: Arc::new(RwLock::new(None)),
             hardware_topology: Arc::new(RwLock::new(None)),
             address: current_address,

@@ -34,15 +34,6 @@ pub struct Resources {
     pub gpu: Arc<RwLock<Option<f32>>>,
 }
 
-/// Topology sub-context (`state.current.topology`).
-#[derive(Clone)]
-pub struct Topology {
-    /// In-memory topology cache for discovered stones.
-    pub cache: crate::domain::topology::TopologyCache,
-    /// Dirty flag for topology persistence (TOPO-0002).
-    pub dirty: crate::domain::topology::TopologyDirtyFlag,
-}
-
 /// Current domain context (`state.current`).
 ///
 /// Groups all state that describes *this* stone — its identity, local storage,
@@ -54,9 +45,6 @@ pub struct Current {
 
     /// This stone's storage (volumes, media, domain event channel).
     pub storage: Arc<crate::domain::Storage>,
-
-    /// Topology state: peer cache and dirty flag for persistence.
-    pub topology: Topology,
 
     /// Hardware capabilities cache — Tier 1 (detected at startup, persisted).
     pub capabilities: Arc<RwLock<Option<HardwareCapabilities>>>,

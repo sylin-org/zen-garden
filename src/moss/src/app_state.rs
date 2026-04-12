@@ -23,26 +23,11 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-/// Job execution status
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum JobStatus {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-}
-
-/// Background job for tracking long-running operations
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct Job {
-    pub id: String,
-    pub offerings: Vec<String>,
-    pub status: JobStatus,
-    pub completed: Vec<String>,
-    pub failed: HashMap<String, String>, // service -> error message
-    pub started_at: std::time::SystemTime,
-    pub completed_at: Option<std::time::SystemTime>,
-}
+// Job value objects moved to `domain/jobs/entry.rs` in Book IV Ch2 of
+// ARCH-0017. Re-exported here so `use crate::{Job, JobStatus}` at the
+// crate root keeps resolving for call sites during the Ch3–Ch5
+// migration.
+pub use crate::domain::jobs::{Job, JobStatus};
 
 // Offerings types moved to domain/offerings.rs
 pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndex};

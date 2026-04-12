@@ -32,6 +32,7 @@ pub mod harvest;
 pub mod health;
 pub mod image_types;
 pub mod infrastructure;
+pub mod jobs;
 pub mod maintenance;
 pub mod metrics;
 pub mod modes;
@@ -115,6 +116,7 @@ pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
     DockerRegistry, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
 };
+pub use jobs::{Job, JobStatus};
 pub use network::{
     NetworkError, NetworkMode, PoolExhausted, ProbeResult, StaticIpActive, StaticIpDesired,
     StaticIpRelease, StaticIpRequest, StaticIpSeverity, StaticIpState,

@@ -314,7 +314,13 @@ pub async fn get_bank_v1(
         .await
         .into_iter()
         .find_map(|v| v.to_storage_info())
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                &format!("Bank '{}' not found", name),
+            )
+        })?;
 
     if let Err(msg) = validate_seed_bank_layout(&info.mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));
@@ -405,13 +411,25 @@ pub async fn release_bank_v1(
     // Verify bank exists before attempting release
     let _bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
         .await
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                &format!("Bank '{}' not found", name),
+            )
+        })?;
 
     #[cfg(target_os = "linux")]
     if let Some(ref mp) = _bank.mount_path {
         crate::infra::storage::platform::unmount(&mp.to_string_lossy())
             .await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "UNMOUNT_FAILED", &e.to_string()))?;
+            .map_err(|e| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "UNMOUNT_FAILED",
+                    &e.to_string(),
+                )
+            })?;
     }
 
     // Domain command — releases all volumes in the bank
@@ -484,17 +502,18 @@ pub async fn rename_bank_v1(
     }
 
     // Re-read updated info
-    let updated = bank_aggregate::volumes_for_bank(&request.new_name, &state.current.storage.volumes)
-        .await
-        .into_iter()
-        .find_map(|v| v.to_storage_info())
-        .ok_or_else(|| {
-            err(
-                StatusCode::NOT_FOUND,
-                "BANK_NOT_FOUND",
-                "Bank not found after rename",
-            )
-        })?;
+    let updated =
+        bank_aggregate::volumes_for_bank(&request.new_name, &state.current.storage.volumes)
+            .await
+            .into_iter()
+            .find_map(|v| v.to_storage_info())
+            .ok_or_else(|| {
+                err(
+                    StatusCode::NOT_FOUND,
+                    "BANK_NOT_FOUND",
+                    "Bank not found after rename",
+                )
+            })?;
 
     info!(old_name = %name, new_name = %request.new_name, volumes = result.mount_paths.len(), "Bank renamed");
 
@@ -1204,18 +1223,31 @@ pub async fn set_visibility_v1(
     // Get mount path for manifest persistence (infra concern)
     let bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
         .await
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                &format!("Bank '{}' not found", name),
+            )
+        })?;
 
     if let Some(ref mp) = bank.mount_path {
         update_manifest_visibility(&mp.to_string_lossy(), request.visibility)
             .await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "MANIFEST_UPDATE_FAILED", &e.to_string()))?;
+            .map_err(|e| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "MANIFEST_UPDATE_FAILED",
+                    &e.to_string(),
+                )
+            })?;
     }
 
     // Domain command
-    let events = bank_aggregate::set_visibility(&name, request.visibility, &state.current.storage.volumes)
-        .await
-        .map_err(|e| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string()))?;
+    let events =
+        bank_aggregate::set_visibility(&name, request.visibility, &state.current.storage.volumes)
+            .await
+            .map_err(|e| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string()))?;
 
     for event in events {
         state.emit_storage_changed(event).await;
@@ -1226,7 +1258,13 @@ pub async fn set_visibility_v1(
         .await
         .into_iter()
         .find_map(|v| v.to_storage_info())
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank disappeared after update"))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                "Bank disappeared after update",
+            )
+        })?;
 
     info!(name = %name, visibility = ?request.visibility, "Bank visibility updated");
 
@@ -1324,18 +1362,31 @@ pub async fn set_roles_v1(
     // Get mount path for manifest persistence (infra concern)
     let bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
         .await
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                &format!("Bank '{}' not found", name),
+            )
+        })?;
 
     if let Some(ref mp) = bank.mount_path {
         update_manifest_roles(&mp.to_string_lossy(), &request.roles)
             .await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "ROLES_UPDATE_FAILED", &e.to_string()))?;
+            .map_err(|e| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ROLES_UPDATE_FAILED",
+                    &e.to_string(),
+                )
+            })?;
     }
 
     // Domain command
-    let events = bank_aggregate::set_roles(&name, request.roles.clone(), &state.current.storage.volumes)
-        .await
-        .map_err(|e| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string()))?;
+    let events =
+        bank_aggregate::set_roles(&name, request.roles.clone(), &state.current.storage.volumes)
+            .await
+            .map_err(|e| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string()))?;
 
     for event in events {
         state.emit_storage_changed(event).await;
@@ -1346,7 +1397,13 @@ pub async fn set_roles_v1(
         .await
         .into_iter()
         .find_map(|v| v.to_storage_info())
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank not found after role update"))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                "Bank not found after role update",
+            )
+        })?;
 
     info!(name = %name, roles = ?request.roles, "Bank roles updated");
 
@@ -1480,21 +1537,27 @@ pub async fn pin_bank_v1(
 
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "EMPTY_NAME", "Bank name is required"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "EMPTY_NAME",
+            "Bank name is required",
+        ));
     }
 
     // Domain command — pin via Bank aggregate
-    let events = bank_aggregate::pin(
-        &name,
-        &state.current.storage.volumes,
-        |path: PathBuf| std::sync::Arc::new(ContentStore::new(path, None)),
-    )
+    let events = bank_aggregate::pin(&name, &state.current.storage.volumes, |path: PathBuf| {
+        std::sync::Arc::new(ContentStore::new(path, None))
+    })
     .await
     .map_err(|e| match &e {
         bank_aggregate::BankError::NotFound(_) => {
             err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &e.to_string())
         }
-        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "PIN_FAILED", &e.to_string()),
+        _ => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PIN_FAILED",
+            &e.to_string(),
+        ),
     })?;
 
     for event in &events {
@@ -1521,15 +1584,17 @@ pub async fn unpin_bank_v1(
 
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "EMPTY_NAME", "Bank name is required"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "EMPTY_NAME",
+            "Bank name is required",
+        ));
     }
 
     // Domain command — unpin via Bank aggregate
-    let events = bank_aggregate::unpin(
-        &name,
-        &state.current.storage.volumes,
-        |path: PathBuf| std::sync::Arc::new(ContentStore::new(path, None)),
-    )
+    let events = bank_aggregate::unpin(&name, &state.current.storage.volumes, |path: PathBuf| {
+        std::sync::Arc::new(ContentStore::new(path, None))
+    })
     .await
     .unwrap_or_else(|e| {
         debug!(name = %name, error = %e, "Unpin no-op — bank not found or not pinned");
@@ -1567,12 +1632,24 @@ pub async fn bank_changes_v1(
 
     let bank = bank_aggregate::by_name(&name, &state.current.storage.volumes)
         .await
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", &format!("Bank '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                &format!("Bank '{}' not found", name),
+            )
+        })?;
 
     let mount_path = bank
         .mount_path
         .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "BANK_NOT_FOUND", "Bank has no mounted volume"))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                "BANK_NOT_FOUND",
+                "Bank has no mounted volume",
+            )
+        })?;
 
     if let Err(msg) = validate_seed_bank_layout(&mount_path) {
         return Err(err(StatusCode::CONFLICT, "BANK_NONCANONICAL", &msg));

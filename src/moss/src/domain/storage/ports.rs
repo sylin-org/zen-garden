@@ -10,7 +10,9 @@ use anyhow::Result;
 use garden_common::storage::{DeviceState, StorageManifest};
 use std::future::Future;
 
-use super::platform_types::{DeviceHealth, DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot};
+use super::platform_types::{
+    DeviceHealth, DiskUsage, MediumSnapshot, UnmountedDevice, VolumeSnapshot,
+};
 
 // ============================================================================
 // StoragePlatform — OS-level volume and device operations

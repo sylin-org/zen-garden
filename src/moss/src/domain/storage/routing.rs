@@ -230,47 +230,6 @@ async fn find_remote(
 }
 
 // ============================================================================
-// Replica set rename (domain: in-memory mutation)
-// ============================================================================
-
-/// Rename a replica set in the local volumes map.
-///
-/// Returns the mount paths of affected volumes so the caller can persist
-/// the change to disk (infra concern).  Returns `Err` if no local volumes
-/// matched `old_name`.
-pub async fn rename_replica_set(
-    old_name: &str,
-    new_name: &str,
-    volumes: &Volumes,
-) -> Result<Vec<String>> {
-    if find_local(old_name, volumes).await.is_none() {
-        anyhow::bail!("storage '{}' not found locally", old_name);
-    }
-
-    let mut map = volumes.write().await;
-    let mut mount_paths = Vec::new();
-    for vol in map.values_mut() {
-        let matches = vol
-            .management()
-            .is_some_and(|m| m.display_name() == old_name);
-        if matches {
-            mount_paths.push(vol.mount_path().to_string_lossy().to_string());
-            if let Some(mgmt) = vol.management_mut() {
-                mgmt.replica_set_name = new_name.to_string();
-                mgmt.replica_set_name_updated_at = Some(chrono::Utc::now());
-            }
-        }
-    }
-    drop(map);
-
-    if mount_paths.is_empty() {
-        anyhow::bail!("no volumes found for storage '{}'", old_name);
-    }
-
-    Ok(mount_paths)
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 

@@ -25,9 +25,9 @@ use std::path::PathBuf;
 
 use garden_common::storage::{StorageChanged, StorageInfo, StorageRole, StorageVisibility};
 
+use super::Volumes;
 use super::ports::ManagementStoreOps;
 use super::volume::Volume;
-use super::Volumes;
 
 // ============================================================================
 // Bank — view projection from the volume collection
@@ -140,11 +140,7 @@ pub async fn primary_volume(name: &str, volumes: &Volumes) -> Option<Volume> {
 pub async fn volumes_for_bank(name: &str, volumes: &Volumes) -> Vec<Volume> {
     let map = volumes.read().await;
     map.values()
-        .filter(|v| {
-            v.is_managed()
-                && v.management()
-                    .is_some_and(|m| m.display_name() == name)
-        })
+        .filter(|v| v.is_managed() && v.management().is_some_and(|m| m.display_name() == name))
         .cloned()
         .collect()
 }
@@ -175,9 +171,7 @@ pub async fn rename(
     let device_keys: Vec<String> = map
         .iter()
         .filter(|(_, v)| {
-            v.is_managed()
-                && v.management()
-                    .is_some_and(|m| m.display_name() == old_name)
+            v.is_managed() && v.management().is_some_and(|m| m.display_name() == old_name)
         })
         .map(|(k, _)| k.clone())
         .collect();
@@ -220,9 +214,7 @@ pub async fn set_roles(
     let mut found = false;
 
     for vol in map.values_mut() {
-        let matches = vol
-            .management()
-            .is_some_and(|m| m.display_name() == name);
+        let matches = vol.management().is_some_and(|m| m.display_name() == name);
         if matches {
             found = true;
             events.extend(vol.set_roles(roles.clone()));
@@ -246,9 +238,7 @@ pub async fn set_visibility(
     let mut found = false;
 
     for vol in map.values_mut() {
-        let matches = vol
-            .management()
-            .is_some_and(|m| m.display_name() == name);
+        let matches = vol.management().is_some_and(|m| m.display_name() == name);
         if matches {
             found = true;
             events.extend(vol.set_visibility(visibility));
@@ -274,8 +264,7 @@ pub async fn pin<S: ManagementStoreOps>(
         .find(|v| {
             v.is_managed()
                 && v.is_online()
-                && v.management()
-                    .is_some_and(|m| m.display_name() == name)
+                && v.management().is_some_and(|m| m.display_name() == name)
         })
         .ok_or_else(|| BankError::NotFound(name.to_string()))?;
 
@@ -320,9 +309,7 @@ pub async fn release(
     let mut found = false;
 
     for vol in map.values_mut() {
-        let matches = vol
-            .management()
-            .is_some_and(|m| m.display_name() == name);
+        let matches = vol.management().is_some_and(|m| m.display_name() == name);
         if matches {
             found = true;
             mount_paths.push(vol.mount_path().to_string_lossy().to_string());
@@ -390,8 +377,8 @@ impl std::error::Error for BankError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::storage::volume::{Management, PinState, VolumeState};
     use crate::domain::storage::new_volumes;
+    use crate::domain::storage::volume::{Management, PinState, VolumeState};
     use garden_common::storage::{StorageRole, StorageVisibility};
 
     fn make_managed_volume(
@@ -435,11 +422,23 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "personal", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "personal",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
             map.insert(
                 "/dev/sdb1".into(),
-                make_managed_volume("/dev/sdb1", "/mnt/b", "personal", "rs-1", StorageRole::Dormant),
+                make_managed_volume(
+                    "/dev/sdb1",
+                    "/mnt/b",
+                    "personal",
+                    "rs-1",
+                    StorageRole::Dormant,
+                ),
             );
             map.insert(
                 "/dev/sdc1".into(),
@@ -467,7 +466,13 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "photos", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
         }
 
@@ -482,11 +487,23 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "photos", "rs-1", StorageRole::Dormant),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Dormant,
+                ),
             );
             map.insert(
                 "/dev/sdb1".into(),
-                make_managed_volume("/dev/sdb1", "/mnt/b", "photos", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sdb1",
+                    "/mnt/b",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
         }
 
@@ -503,11 +520,23 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "photos", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
             map.insert(
                 "/dev/sdb1".into(),
-                make_managed_volume("/dev/sdb1", "/mnt/b", "photos", "rs-1", StorageRole::Dormant),
+                make_managed_volume(
+                    "/dev/sdb1",
+                    "/mnt/b",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Dormant,
+                ),
             );
             map.insert(
                 "/dev/sdc1".into(),
@@ -529,11 +558,23 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "photos", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
             map.insert(
                 "/dev/sdb1".into(),
-                make_managed_volume("/dev/sdb1", "/mnt/b", "photos", "rs-1", StorageRole::Dormant),
+                make_managed_volume(
+                    "/dev/sdb1",
+                    "/mnt/b",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Dormant,
+                ),
             );
         }
 
@@ -569,7 +610,13 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "photos", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
         }
 
@@ -586,7 +633,13 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "photos", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
         }
 
@@ -603,7 +656,13 @@ mod tests {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_managed_volume("/dev/sda1", "/mnt/a", "photos", "rs-1", StorageRole::Primary),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
             );
         }
 

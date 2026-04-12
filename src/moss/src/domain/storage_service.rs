@@ -4,4 +4,3 @@
 //! Book VIII (ARCH-0025). This module re-exports for backward compatibility.
 
 pub use crate::domain::storage::routing::{LocalStorage, ProxyTarget, StorageRoute};
-pub use crate::domain::storage::routing::rename_replica_set;

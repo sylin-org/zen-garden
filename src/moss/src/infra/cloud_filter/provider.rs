@@ -128,18 +128,18 @@ impl ZenGardenProvider {
 
     /// Rename a top-level storage folder (replica set name) via Explorer.
     ///
-    /// Domain mutation via `rename_replica_set`; disk persistence via infra.
+    /// Domain mutation via Bank aggregate; disk persistence via infra.
     async fn do_rename_storage(&self, old_name: &str, new_name: &str) -> CResult<()> {
-        use crate::domain::storage_service::rename_replica_set;
+        use crate::domain::storage::bank_aggregate;
 
-        let mount_paths = rename_replica_set(old_name, new_name, &self.volumes)
+        let result = bank_aggregate::rename(old_name, new_name, &self.volumes)
             .await
             .map_err(|e| {
                 warn!(old = %old_name, new = %new_name, error = %e, "rename rejected");
                 CloudErrorKind::NotInSync
             })?;
 
-        for mp in &mount_paths {
+        for mp in &result.mount_paths {
             if let Err(e) =
                 crate::api::v1::storage::update_manifest_replica_set_name(mp, new_name).await
             {
@@ -157,8 +157,8 @@ impl ZenGardenProvider {
         info!(
             old = %old_name,
             new = %new_name,
-            volumes = mount_paths.len(),
-            "replica set renamed via Explorer"
+            volumes = result.mount_paths.len(),
+            "bank renamed via Explorer"
         );
         Ok(())
     }

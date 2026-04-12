@@ -53,7 +53,7 @@
 **Template** - Service configuration blueprint (YAML spec). Operators can create custom templates for services not in the standard catalog.  
 → See: [specs/offerings.md](specs/offerings.md)
 
-**Catalog** - Collection of available offerings. Moss maintains a catalog of validated templates in `/etc/zen-garden/offerings/`.
+**Catalog** - The compiled offering catalog. Combines the frozen `ManifestRegistry` (offering templates) with hardware-resolved compatibility evaluations into a compiled `OfferingsIndex`. Extracted as a DDD aggregate in ARCH-0022 (Book V). See also the [Catalog bounded context](#catalog-aggregate-terms-book-v--arch-0022) section below.
 
 **Native Service** - Database/service running on its native protocol. Examples: MongoDB on port 27017, Redis on 6379, PostgreSQL on 5432. Apps connect using standard drivers.
 
@@ -254,6 +254,16 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 **Register-with-kinds** - The pattern used by Metrics to achieve lock-free per-kind counter increments without a concurrent map dependency. Domains call `register_domain(name, kinds: &'static [&'static str])` at construction; the kinds populate a plain `HashMap<&'static str, AtomicU64>` that is never mutated afterward. Lookups take a read lock on the outer state map only, then atomic-increment on the looked-up counter. No `DashMap`, no `Mutex<HashMap>`.
 
 **Observability vs lifecycle (tasks)** - Two complementary surfaces. `/api/v1/stone/tasks/{name}` returns task **lifecycle state** (Waiting/Running/Completed/Failed) from `SupervisorHandle`. `/api/v1/stone/metrics/tasks/{name}` returns **observability data** (timing, event counts, subscriber lag) from the Metrics aggregate. Consumers that want unified status join the two by task name.
+
+### Catalog aggregate terms (Book V / ARCH-0022)
+
+**Catalog (bounded context)** - The aggregate owning the compile-time manifest catalog: a frozen `Arc<ManifestRegistry>` (immutable after bootstrap) providing typed manifest queries, and a mutable `RwLock<CatalogState>` holding the compiled offerings index (per-offering compatibility evaluation, image resolution, port/volume/env resolution). Typed commands `load` (idempotent, cache-first) and `rebuild` (force-refresh after capabilities change) own the write path; typed queries (`get_manifest`, `get_compiled`, `compiled_snapshot`, `stats`, `is_loaded`, `manifest_count`, `find_hw_manifest`, `manifests`) return owned values. Third persistent aggregate after Offerings and Topology.
+
+**Frozen input** - An immutable cross-crate type held by an aggregate as a struct field but not subject to mutation, persistence, dirty tracking, or event emission. Part of the aggregate's state *shape* (queryable through typed methods) but not its *identity* (cannot mutate or subscribe to changes). Example: `Catalog` holds `Arc<ManifestRegistry>` as a frozen input — the registry is built once in `bootstrap::build_state()` and never changes. No interior lock needed.
+
+**Dual-rebuild invariant** - The constraint that the catalog must tolerate being built twice per process start with different hardware capabilities. The `catalog-builder` task calls `Catalog::load()` early with zero or partial capabilities (GPU detection takes 2-6 seconds on Windows). Later, `hardware-detection` calls `Catalog::rebuild()` with the complete capabilities snapshot to refresh compatibility decisions (e.g., "no GPU -> ollama incompatible" transitions to "CUDA detected -> ollama compatible"). Both entry points are stable typed commands on the aggregate.
+
+**Typed errors (Catalog)** - The first domain aggregate in the ARCH-0017 epic to return `Result<T, CatalogError>` from commands instead of infallible mutations or `anyhow::Result`. `CatalogError` has four variants: `ManifestHashFailed`, `CompilationFailed`, `CacheReadFailed`, `CacheWriteFailed`. Matches code-standards section 10 "Domain errors as enums". Elevated to a first-class pattern deviation in `docs/specs/domain-aggregates.md`.
 
 ### Jobs aggregate terms (Book IV / ARCH-0021)
 

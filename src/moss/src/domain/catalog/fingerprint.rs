@@ -21,7 +21,7 @@ use anyhow::Result;
 use garden_common::manifests::ManifestRegistry;
 
 /// Get moss version string (from Cargo.toml + build number).
-pub fn moss_version_string() -> String {
+pub(super) fn moss_version_string() -> String {
     // build.rs injects `BUILD_NUMBER` (see src/moss/src/discovery.rs).
     format!("{}.{}", env!("CARGO_PKG_VERSION"), env!("BUILD_NUMBER"))
 }
@@ -35,7 +35,7 @@ fn blake3_hex(bytes: &[u8]) -> String {
 ///
 /// Includes CPU, memory, GPU/AI capabilities. Changes trigger an
 /// offerings-index rebuild.
-pub fn current_capabilities_hash(
+pub(super) fn current_capabilities_hash(
     cached_capabilities: Option<&garden_common::HardwareCapabilities>,
 ) -> String {
     let payload = if let Some(caps) = cached_capabilities {
@@ -59,7 +59,7 @@ pub fn current_capabilities_hash(
 ///
 /// Includes moss version, offering names, and all configuration.
 /// Changes trigger an offerings-index rebuild.
-pub fn manifests_hash(registry: &ManifestRegistry) -> Result<String> {
+pub(super) fn manifests_hash(registry: &ManifestRegistry) -> Result<String> {
     let mut hasher = blake3::Hasher::new();
 
     // Include moss version in the hash so schema/parsing changes

@@ -207,6 +207,37 @@ Each entry here is a **deliberate non-rename**. It is not a scaffold (no tempora
 
 **Rule:** entries here do not block the epic. They do not run through `check-scaffolding.sh`. They exist as a searchable, durable record that survives the epic and feeds into a future "API realignment" effort.
 
+### deferred-registry-loader-task-rename: `registry-loader` task is misnamed
+
+```yaml
+id: deferred-registry-loader-task-rename
+kind: deferred-rename
+introduced_in: ARCH-0022 Book V Chapter 6
+revisit_when: Post-moss-epic task name realignment
+```
+
+**What would have been renamed:**
+
+- `registry-loader` background task name → `offerings-reconciler` or `offerings-bootstrap-sync`
+
+**Why it was not renamed:**
+
+The task name `registry-loader` is referenced as a dependency by `catalog-builder`, `initial-service-sync`, and two other supervisor tasks in `tasks/task_registry.rs`. It also appears in the task-name wire format exposed via `/api/v1/stone/tasks`. Renaming cascades into the supervisor dependency graph (which uses string-based dependency names) and the public task list endpoint. The task has nothing to do with loading the manifest registry (which is synchronous in `build_state()` before any task starts) — it reconciles the `Offerings` aggregate against live Docker container state.
+
+**What the revisit looks like:**
+
+A future task-name cleanup (possibly Book XVIII or a post-epic effort) renames the task in lockstep with its supervisor dependencies and the wire format. That project:
+
+1. Renames the task constant and struct.
+2. Updates all `dependencies()` arrays that reference `"registry-loader"`.
+3. Updates any rake or dashboard code that matches on the task name.
+4. Removes this entry.
+
+**Other searchable markers:**
+
+- `rg '"registry-loader"' src/moss/src/`
+- `rg 'RegistryLoaderTask' src/moss/src/`
+
 ### deferred-placement-metrics: `PlacementMetrics` struct and `.metrics` field
 
 ```yaml

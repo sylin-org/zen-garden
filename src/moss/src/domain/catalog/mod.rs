@@ -20,7 +20,7 @@ pub mod cache;
 pub mod entry;
 pub mod error;
 pub mod event;
-pub mod fingerprint;
+pub(super) mod fingerprint;
 pub mod index;
 mod state;
 

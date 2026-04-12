@@ -2,7 +2,8 @@
 audience: [developer, ai]
 doc_type: decision
 status: accepted
-last_verified: 2026-04-11
+last_verified: 2026-04-12
+completed: 2026-04-12
 canonical: true
 ---
 

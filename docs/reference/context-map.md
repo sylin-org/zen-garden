@@ -2,7 +2,7 @@
 audience: [developer, ai]
 doc_type: reference
 status: canonical
-last_verified: 2026-04-11
+last_verified: 2026-04-12
 ---
 
 # Bounded Context Map
@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-11, after [ARCH-0016](../decisions/ARCH-0016-offerings-aggregate-domain.md).
+As of 2026-04-12, after [ARCH-0022](../decisions/ARCH-0022-catalog-aggregate.md).
 
 ### Full contexts
 
@@ -196,6 +196,20 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 - **Source:** `src/moss/src/domain/jobs/` (aggregate, state, entry, event, maintenance, tests — one concept per file per code-standards §14)
 - **Book:** IV — ARCH-0021 closed 2026-04-11
 
+#### Catalog
+
+- **Status:** Full. ARCH-0022 (Book V of ARCH-0017) — completed 2026-04-12.
+- **Owns:** frozen manifest registry (`Arc<ManifestRegistry>`, immutable after bootstrap), compiled offerings index (`RwLock<CatalogState>` wrapping `Option<OfferingsIndex>`)
+- **Commands (write):** `load` (idempotent, cache-first startup path), `rebuild` (force-recompile after capabilities change)
+- **Queries (read):** `get_manifest`, `find_hw_manifest`, `manifest_count`, `get_compiled`, `compiled_snapshot`, `stats`, `is_loaded`, `manifests` (raw registry access)
+- **Emits:** `CatalogChanged` with 2 kinds (`Loaded`, `Rebuilt`) — minimal, since the catalog is mostly inert after startup
+- **Subscribes:** none (Catalog is a root: it reads manifests and capabilities, emits events for downstream consumers)
+- **Ports:** `CatalogCache` -> `FileCatalogCache` (persistent — third persistent aggregate after Offerings and Topology)
+- **Cross-cutting:** `Arc<Metrics>` injected at construction; mutation latency + per-kind event counters recorded
+- **Typed errors:** First aggregate with `CatalogError` enum (ManifestHashFailed, CompilationFailed, CacheReadFailed, CacheWriteFailed) — commands return `Result<(), CatalogError>` instead of `anyhow::Result`
+- **Source:** `src/moss/src/domain/catalog/` (mod.rs + aggregate.rs + state.rs + entry.rs + index.rs + fingerprint.rs + event.rs + error.rs + cache.rs + tests.rs)
+- **Book:** V (ARCH-0022) — **COMPLETE**
+
 #### Tool
 
 - **Status:** Full — DDD aggregate with typed commands, typed queries, dual event streams, Metrics injection, and a `ToolsBeaconTransport` port. ARCH-0019 (Book II of ARCH-0017) — completed 2026-04-11.
@@ -214,12 +228,6 @@ These contexts were extracted by earlier refactors (ARCH-0004 and after) but ret
 ### Absent contexts (scattered across AppState or other modules)
 
 These contexts do not exist as modules. Their state lives as raw fields on `AppState` or as free-function modules.
-
-#### Catalog (Manifests + offerings_index)
-
-- **Status:** Absent as a unified context — `manifest_registry` is a bare `Arc<ManifestRegistry>` on AppState; `offerings_index` is a bare `Arc<RwLock<Option<OfferingsIndex>>>`; catalog-building logic lives in `domain/offerings/catalog.rs` (a file misplaced under Offerings — it is the compile-time catalog, not the runtime aggregate)
-- **Target source:** `src/moss/src/domain/catalog/`
-- **Book:** V
 
 #### Subsystems / Readiness
 
@@ -297,7 +305,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Tool** ✅ | garden-wide tool registry (Local + Gateway + Announced origins), typed commands, dual event streams | `ToolChanged` (internal), `ToolDelta` (wire format, existing contract) | `ToolsBeaconTransport` | II (ARCH-0019) — **COMPLETE** |
 | **Topology** ✅ | peer cache (discovered + offline stones), persistence dirty flag, self-entry assembly | `TopologyChanged` (6 kinds: Discovered/Online/Offline/Forgotten/Evicted/Chirped) | `ChirpTransport`, `TopologyStore` | III (ARCH-0020) — **COMPLETE** |
 | **Jobs** ✅ | active + recently-terminal jobs (HashMap keyed by id) | `JobsChanged` (7 kinds: Submitted/Started/ItemCompleted/ItemFailed/Completed/Failed/Evicted) + wire `JobEvent` via `EventBus` | none (ephemeral; `JobsReaperTask` sweeps terminal jobs past 24h TTL) | IV (ARCH-0021) — **COMPLETE** |
-| **Catalog** | manifest registry, compiled offerings index | `CatalogChanged` | `ManifestSource`, `CatalogCache` | V |
+| **Catalog** ✅ | frozen manifest registry, compiled offerings index | `CatalogChanged` (2 kinds: Loaded, Rebuilt) | `CatalogCache` | V (ARCH-0022) — **COMPLETE** |
 | **Subsystems** | per-subsystem readiness state | `SubsystemReady`, `SubsystemUnready` | none | VI |
 | **Health** | per-offering health state, probe schedule | `HealthChanged` | `HealthProbe` | VII |
 | **Storage::Volumes** | physical volume state | `VolumeChanged` | `VolumeMonitor`, `FileSystem` | VIII |

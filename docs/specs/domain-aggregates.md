@@ -1114,6 +1114,32 @@ Both streams are fed atomically from every command. The wire format is a pre-exi
 
 **When NOT to use**: greenfield aggregates that own their own wire format. Emit one event type.
 
+### Typed errors (first-class domain error enums)
+
+The pattern default is `anyhow::Result` for command return types — sufficient when the aggregate is infallible (Metrics, Jobs) or when failure modes are unstructured (Topology). When commands have structured, domain-meaningful failure modes worth propagating (disk I/O variants, per-item compilation errors, fingerprint hash failures), use a typed `thiserror` enum:
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum CatalogError {
+    #[error("failed to hash manifests for fingerprint")]
+    ManifestHashFailed(#[source] anyhow::Error),
+    #[error("failed to compile offering {offering}")]
+    CompilationFailed { offering: String, #[source] source: anyhow::Error },
+    #[error("failed to read catalog cache from disk")]
+    CacheReadFailed(#[source] anyhow::Error),
+    #[error("failed to write catalog cache to disk")]
+    CacheWriteFailed(#[source] anyhow::Error),
+}
+```
+
+Commands return `Result<(), CatalogError>`. API handlers at the boundary wrap into `anyhow::Error` for the existing 5xx path; domain-internal callers can pattern-match on failure mode.
+
+**When to use**: persistent aggregates with distinct I/O failure paths, or any aggregate where callers benefit from matching on error variants rather than parsing error messages.
+
+**When NOT to use**: ephemeral aggregates with no persistence and no domain invariants to violate (Metrics, Jobs). Use infallible mutations instead.
+
+**First application**: Catalog aggregate (ARCH-0022, Book V) — the first in the epic with typed `CatalogError`.
+
 ### Owned-value queries (no borrowed references across locks)
 
 Query methods on an aggregate with `RwLock`-protected state cannot return references into the inner state because the lock guard drops at the method boundary. Two shapes are possible:

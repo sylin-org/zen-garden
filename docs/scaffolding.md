@@ -183,117 +183,21 @@ check:
 
 ---
 
-## Deferred renames — wire-format preserved
+## Deferred renames — resolved
 
-A third category exists for renames that **were not performed** during the epic because the affected surface is part of an external wire contract (JSON response body, UDP payload, SSE event shape) consumed by another crate or another process. Renaming these would break Rake, orchestrators, or external dashboards.
+All deferred renames were resolved in Book XX (Epilogue) of ARCH-0017. No entries remain.
 
-Each entry here is a **deliberate non-rename**. It is not a scaffold (no temporary code exists) and not a scaffold removal (nothing was deleted). It is a note that a better internal name was left alone, with a concrete resolution point.
+### deferred-registry-loader-task-rename: RESOLVED
 
-**Mandate:** All deferred renames are resolved in the **Epilogue (Book XX)**. Every entry's wire-format rename is coordinated across moss, rake, and consumers in a single sweep. No entry survives past the epic. See [ARCH-0017 Book XX](decisions/ARCH-0017-ddd-monolith-epic.md).
+**Resolution (Book XX):** Renamed in full. `RegistryLoaderTask` -> `OfferingsReconcilerTask`, task name `"registry-loader"` -> `"offerings-reconciler"`. All supervisor dependency strings updated (`catalog-builder`, `initial-service-sync`). The task name is informational on the `/api/v1/stone/tasks` endpoint — no external consumer matches on it by name (rake does not reference it). Safe to rename without wire-format concerns.
 
-### deferred-registry-loader-task-rename: `registry-loader` task is misnamed
+### deferred-placement-metrics: RESOLVED (closed without rename)
 
-```yaml
-id: deferred-registry-loader-task-rename
-kind: deferred-rename
-introduced_in: ARCH-0022 Book V Chapter 6
-revisit_when: Epilogue (Book XX)
-```
+**Resolution (Book XX):** Closed without rename. `PlacementMetrics` is semantically accurate — the struct holds hardware resource *metrics* used for placement scoring (memory free/total, CPU load, storage free/total). The proposed rename to `PlacementResources` offers marginal clarity at the cost of a wire-format break across moss, rake (`PlacementRecommendation.metrics`), and the typed `StoneApi` client. The current name is acceptable and the rename is not warranted.
 
-**What would have been renamed:**
+### deferred-job-offerings-field: RESOLVED
 
-- `registry-loader` background task name → `offerings-reconciler` or `offerings-bootstrap-sync`
-
-**Why it was not renamed:**
-
-The task name `registry-loader` is referenced as a dependency by `catalog-builder`, `initial-service-sync`, and two other supervisor tasks in `tasks/task_registry.rs`. It also appears in the task-name wire format exposed via `/api/v1/stone/tasks`. Renaming cascades into the supervisor dependency graph (which uses string-based dependency names) and the public task list endpoint. The task has nothing to do with loading the manifest registry (which is synchronous in `build_state()` before any task starts) — it reconciles the `Offerings` aggregate against live Docker container state.
-
-**What the revisit looks like:**
-
-A future task-name cleanup (possibly Book XVIII or a post-epic effort) renames the task in lockstep with its supervisor dependencies and the wire format. That project:
-
-1. Renames the task constant and struct.
-2. Updates all `dependencies()` arrays that reference `"registry-loader"`.
-3. Updates any rake or dashboard code that matches on the task name.
-4. Removes this entry.
-
-**Other searchable markers:**
-
-- `rg '"registry-loader"' src/moss/src/`
-- `rg 'RegistryLoaderTask' src/moss/src/`
-
-### deferred-placement-metrics: `PlacementMetrics` struct and `.metrics` field
-
-```yaml
-id: deferred-placement-metrics
-kind: deferred-rename
-introduced_in: ARCH-0018 Book I Chapter 2
-revisit_when: Epilogue (Book XX)
-```
-
-**What would have been renamed:**
-
-- `moss::domain::placement::PlacementMetrics` (struct) → `PlacementResources`
-- `moss::domain::placement::PlacementRecommendation.metrics` (field) → `resources`
-
-**Why it was not renamed:**
-
-Both symbols are part of the JSON response body of `POST /api/v1/offerings/place` (and equivalent placement endpoints). `garden-rake` has its own `PlacementRecommendation` struct at [src/rake/src/commands/offering/mod.rs:61](../src/rake/src/commands/offering/mod.rs) with a matching `metrics: PlacementMetrics` field that deserializes the response. Renaming moss's Rust field to `resources` would change the wire format from `{"metrics": {...}}` to `{"resources": {...}}` and break Rake deserialization.
-
-Per [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md), external API contracts (REST endpoints, UDP wire format, JSON schemas) stay stable throughout the epic. Internal Rust APIs are rewritten freely, but the serialized names on public HTTP responses are not internal.
-
-An alternative — `#[serde(rename = "metrics")]` on a renamed Rust field — is technically available. It was rejected for Chapter 2 because it introduces a mild Rust/JSON naming asymmetry that is only worth paying for as part of a coordinated cross-crate realignment, not inside a rename chapter of a rename book.
-
-**What the revisit looks like:**
-
-A future "API realignment" project (post-moss-epic) renames the wire shape in lockstep across moss, rake, the typed `StoneApi` client, any orchestrator consumers of the placement endpoint, and any external dashboards. That project:
-
-1. Audits every consumer of `/api/v1/offerings/place` (and related endpoints).
-2. Chooses a versioning strategy: either a new endpoint path, an `Accept: application/vnd.garden.v2+json` header, or a coordinated breaking change with a deprecation window.
-3. Renames moss's Rust symbols (`PlacementMetrics` → `PlacementResources`, `.metrics` → `.resources`) and updates the serde-facing names in lockstep with every consumer.
-4. Removes this entry from the deferred-renames section.
-
-The revisit is **not in scope** for any ARCH-0017 book. It is a separate effort that depends on the moss refactor being complete (so it has a clean baseline to realign against).
-
-**Other searchable markers:**
-
-- `rg 'pub struct PlacementMetrics' src/moss/src/`
-- `rg 'pub metrics: PlacementMetrics' src/moss/src/`
-
-### deferred-job-offerings-field: `Job.offerings` semantic overload
-
-```yaml
-id: deferred-job-offerings-field
-kind: deferred-rename
-introduced_in: ARCH-0021 Book IV Chapter 1
-revisit_when: Epilogue (Book XX)
-```
-
-**What would have been renamed:**
-
-- `moss::domain::jobs::entry::Job.offerings: Vec<String>` (field) → `.targets`
-
-**Why it was not renamed:**
-
-The field is semantically overloaded. For install jobs (`install_service_task`, `install_image_direct_task`, `install_batch_task`) it holds service names. For `refresh_capabilities_task` and `add_capability_task` it is repurposed to hold capability names so progress can be computed as `completed.len() / offerings.len()` — the same vector that's interpreted as "targets" in both cases, just with different caller semantics. `.targets` is the correct universal name.
-
-The field is serialized in the public `/api/v1/jobs/:id` and `/api/v1/jobs` response bodies. `garden-rake` and any operator dashboards deserialize it as `offerings: Vec<String>`. Renaming the Rust field (or applying `#[serde(rename)]`) changes the wire shape from `{"offerings": [...]}` to `{"targets": [...]}` and breaks consumers.
-
-Per [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md), external API contracts stay stable throughout the epic. The Jobs aggregate's `submit` command takes the parameter as `targets: Vec<String>` internally — only the serialized field keeps the legacy name — so the semantic split is already visible at the typed-command call site, which is the cleanest compromise available without breaking wire compatibility.
-
-**What the revisit looks like:**
-
-The same post-moss-epic API realignment project that revisits `deferred-placement-metrics`. That project:
-
-1. Audits every consumer of `/api/v1/jobs` and related endpoints.
-2. Chooses a versioning strategy (new endpoint path, Accept header, or coordinated break).
-3. Renames moss's Rust field (`offerings` → `targets`) and updates the serde-facing name in lockstep with every consumer.
-4. Removes this entry from the deferred-renames section.
-
-**Other searchable markers:**
-
-- `rg 'pub offerings: Vec<String>' src/moss/src/domain/jobs/entry.rs`
-- `rg 'offerings holds capability names' src/moss/src/` — the comments that flag the overload at the `record_item_failed` sites
+**Resolution (Book XX):** Rust field renamed from `offerings` to `targets` with `#[serde(rename = "offerings")]` to preserve wire compatibility. The JSON response still serializes as `{"offerings": [...]}` so rake and dashboard consumers are unaffected. The Rust-side name now accurately reflects the field's universal semantics (targets of a job — service names for install jobs, capability names for refresh jobs). All internal code references updated.
 
 ---
 

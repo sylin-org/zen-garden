@@ -2,7 +2,7 @@
 //!
 //! One-shot task that synchronises the local service list after registry
 //! loading is complete. Replaces the old 2-second sleep hack — the
-//! dependency gate ensures registry-loader has finished first.
+//! dependency gate ensures offerings-reconciler has finished first.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -17,7 +17,7 @@ impl BackgroundTask for InitialServiceSyncTask {
     }
 
     fn dependencies(&self) -> &'static [&'static str] {
-        &["registry-loader"]
+        &["offerings-reconciler"]
     }
 
     fn run(

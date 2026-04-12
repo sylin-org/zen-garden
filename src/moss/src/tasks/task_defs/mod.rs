@@ -59,7 +59,7 @@ pub use offerings_projection::OfferingsProjectionTask;
 pub use periodic_announcer::PeriodicAnnouncerTask;
 pub use pond_enrollment_listener::PondEnrollmentListenerTask;
 pub use presence_monitor::{PresenceHealthMonitorTask, PresenceLoadMonitorTask};
-pub use registry_loader::RegistryLoaderTask;
+pub use registry_loader::OfferingsReconcilerTask;
 pub use registry_maintenance::RegistryMaintenanceTask;
 pub use resources_collector::ResourcesCollectorTask;
 pub use s3_listener_lifecycle::S3ListenerLifecycleTask;

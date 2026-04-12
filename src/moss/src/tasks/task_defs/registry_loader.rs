@@ -1,8 +1,11 @@
-//! BackgroundTask: registry-loader (ARCH-0015)
+//! BackgroundTask: offerings-reconciler (ARCH-0015)
 //!
 //! One-shot task that reconciles managed offerings against Docker state,
 //! coalesces duplicates, backfills guidance and scheduled tasks, and
 //! adopts existing containers.
+//!
+//! Formerly named `registry-loader` — renamed in Book XX (Epilogue)
+//! of ARCH-0017 to reflect actual purpose.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -11,11 +14,11 @@ use garden_common::ServiceHealthStatus;
 
 use crate::tasks::task_trait::{BackgroundTask, TaskContext, TaskOutcome};
 
-pub struct RegistryLoaderTask;
+pub struct OfferingsReconcilerTask;
 
-impl BackgroundTask for RegistryLoaderTask {
+impl BackgroundTask for OfferingsReconcilerTask {
     fn name(&self) -> &'static str {
-        "registry-loader"
+        "offerings-reconciler"
     }
 
     fn dependencies(&self) -> &'static [&'static str] {

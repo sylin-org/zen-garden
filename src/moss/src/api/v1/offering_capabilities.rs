@@ -724,7 +724,7 @@ pub async fn refresh_offering_capabilities_v1(
     if let Some(existing) = state.jobs.find_active_by_prefix(&job_key).await {
         let completed = existing.completed.len();
         let failed = existing.failed.len();
-        let job_total = existing.offerings.len(); // offerings holds capability names for refresh jobs
+        let job_total = existing.targets.len();
         let progress = if job_total > 0 {
             ((completed + failed) * 100 / job_total) as u8
         } else {
@@ -744,10 +744,8 @@ pub async fn refresh_offering_capabilities_v1(
     // Case 4: Create new job and spawn background task.
     let job_id = format!("{}-{}", job_key, uuid::Uuid::now_v7());
 
-    // For refresh jobs, `offerings` is repurposed to hold capability names
-    // so progress can be computed as `completed.len() / offerings.len()`.
-    // See `docs/scaffolding.md` deferred-job-offerings-field entry for the
-    // post-epic rename plan.
+    // For refresh jobs, `targets` holds capability names so progress
+    // can be computed as `completed.len() / targets.len()`.
     let capability_names: Vec<String> = capabilities_to_refresh
         .iter()
         .map(|c| c.name.clone())

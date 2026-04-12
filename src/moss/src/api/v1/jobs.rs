@@ -57,7 +57,7 @@ pub async fn get_job_status(
                     Job {
                         id: job_id.clone(),
                         status: JobStatus::Failed,
-                        offerings: vec![],
+                        targets: vec![],
                         completed: vec![],
                         failed: HashMap::new(),
                         started_at: std::time::SystemTime::now(),

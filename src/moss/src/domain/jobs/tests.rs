@@ -53,7 +53,7 @@ async fn submit_inserts_pending_job() {
     assert_eq!(job.id, "job-1");
     assert!(matches!(job.status, JobStatus::Pending));
     assert_eq!(
-        job.offerings,
+        job.targets,
         vec!["nginx".to_string(), "redis".to_string()]
     );
     assert!(job.completed.is_empty());
@@ -420,7 +420,7 @@ async fn legacy_raw_map_mutations_visible_through_aggregate_queries() {
         "legacy".to_string(),
         Job {
             id: "legacy".to_string(),
-            offerings: vec![],
+            targets: vec![],
             status: JobStatus::Running,
             completed: vec![],
             failed: HashMap::new(),

@@ -34,17 +34,17 @@ pub enum JobStatus {
 
 /// Background job for tracking long-running operations.
 ///
-/// `offerings` is semantically overloaded today: install jobs store
-/// service names, capability-refresh/capability-add jobs repurpose it
-/// to hold capability names so progress tracking can drive the
-/// `completed.len() / offerings.len()` ratio. A rename to `targets`
-/// is a breaking wire-format change tracked in
-/// `docs/scaffolding.md` under the `deferred-job-offerings-field`
-/// entry for the post-epic API realignment project.
+/// `targets` holds the items a job tracks for progress computation
+/// (`completed.len() / targets.len()`). For install jobs these are
+/// service names; for capability-refresh/capability-add jobs they are
+/// capability names. The Rust field is `targets`; the wire name stays
+/// `"offerings"` via `#[serde(rename)]` for backward compatibility
+/// with rake and dashboard consumers.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Job {
     pub id: String,
-    pub offerings: Vec<String>,
+    #[serde(rename = "offerings")]
+    pub targets: Vec<String>,
     pub status: JobStatus,
     pub completed: Vec<String>,
     pub failed: HashMap<String, String>, // key -> error message

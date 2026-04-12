@@ -45,7 +45,7 @@ pub fn build_task_registry(
         Box::new(DiscoveryHandlerTask),
         Box::new(HardwareDetectionTask),
         Box::new(TopologyProbeTask),
-        Box::new(RegistryLoaderTask),
+        Box::new(OfferingsReconcilerTask),
         Box::new(CatalogBuilderTask),
         Box::new(ResourcesCollectorTask),
         Box::new(CompanionScanTask),

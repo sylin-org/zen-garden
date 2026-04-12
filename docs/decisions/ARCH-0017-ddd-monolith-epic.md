@@ -1,15 +1,15 @@
 ---
 audience: [developer, ai]
 doc_type: decision
-status: accepted-living
-last_verified: 2026-04-11
+status: completed
+last_verified: 2026-04-12
 canonical: true
 ---
 
 # ARCH-0017: DDD Monolith Epic — Pattern-Enforced Bounded Contexts Across Moss
 
 **Date**: 2026-04-11
-**Status**: Accepted — Living Document
+**Status**: Completed (2026-04-12)
 **Depends on**: [ARCH-0004](ARCH-0004-appstate-domain-context-extraction.md) (domain context extraction), [ARCH-0007](ARCH-0007-monomorphic-domain-traits.md) (monomorphic trait pattern), [ARCH-0015](ARCH-0015-task-supervisor-registry.md) (BackgroundTask registry), [ARCH-0016](ARCH-0016-offerings-aggregate-domain.md) (first domain aggregate)
 
 ## Revision history
@@ -18,6 +18,7 @@ Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **livin
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-12 | **Book XX closed — EPIC COMPLETE.** Epilogue — resolved all 3 deferred renames in `docs/scaffolding.md`: `Job.offerings` -> `Job.targets` (with `#[serde(rename)]` for wire compat), `RegistryLoaderTask` -> `OfferingsReconcilerTask` (full rename including supervisor deps), `PlacementMetrics` closed without rename (name is accurate). Scaffolding tracker: 0 active entries, 0 deferred renames. Pattern spec decision matrix verified (8 aggregates + 7 dissolutions). 764 tests. Status changed from `accepted-living` to `completed`. | — |
 | 2026-04-12 | **Book XIX closed.** AppState Dissolution — `AppState` renamed to `Moss` across 97 files (555 occurrences). 7 delegate methods inlined at call sites (`stone_id`, `stone_name`, `recover_ceremonies`, `log_stream`, `pulse_stream`, `request_volume_rescan`, `subscribe_storage_changed`). Re-exports relocated from `app_state.rs` to `lib.rs`. `emit_storage_changed` retained as sole cross-cutting coordination method. Code standards, context map, glossary updated. 764 tests. | [ARCH-0037](ARCH-0037-appstate-dissolution.md) |
 | 2026-04-12 | **Book XVIII closed.** Offerings Strangler Removal — 81 `.read().await` sites across 31 files migrated to typed aggregate queries (`snapshot`, `find_by_id`, `find_by_name`, `with_active`, `count_active`). `ActiveGuard`/`CandidatesGuard` deleted. `guard.rs` deleted. 6 `AppState` delegate methods deleted. `docs/scaffolding.md` active scaffold count: 0. 764 tests. | [ARCH-0036](ARCH-0036-offerings-strangler-removal.md) |
 | 2026-04-12 | **Book XVII closed.** HTTP API Thin Layer — plan change: thin-layer refactor → dissolution. After 16 books of aggregate extraction, handlers already dispatch to typed commands/queries (85 aggregate method calls across 27 files). `FromRef` migration (161 handlers) is cosmetic, not architectural. DTOs inline with handlers is higher-cohesion than separate `api/dto/`. Remaining `.read().await` sites are Book XVIII scope. 764 tests. | [ARCH-0035](ARCH-0035-http-api-thin-layer-dissolution.md) |

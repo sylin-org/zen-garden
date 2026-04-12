@@ -113,19 +113,16 @@ impl Jobs {
     /// the public wire contract treats "job was started" as the first
     /// observable transition; submit is internal-only.
     ///
-    /// `targets` is what the legacy `Job.offerings` field stores — a
-    /// list of service names (for install jobs) or capability names
-    /// (for capability-refresh / add jobs). The semantic overload is
-    /// tracked in `docs/scaffolding.md` under the
-    /// `deferred-job-offerings-field` entry for post-epic API
-    /// realignment.
+    /// `targets` holds the items this job tracks for progress —
+    /// service names (for install jobs) or capability names (for
+    /// capability-refresh / add jobs).
     #[tracing::instrument(level = "debug", skip(self, targets), fields(jobs.id = %id, jobs.operation = %operation))]
     pub async fn submit(&self, id: String, operation: &str, targets: Vec<String>) -> Job {
         let started = Instant::now();
         let target_count = targets.len();
         let job = Job {
             id: id.clone(),
-            offerings: targets,
+            targets,
             status: JobStatus::Pending,
             completed: Vec::new(),
             failed: HashMap::new(),

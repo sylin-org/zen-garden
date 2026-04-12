@@ -2,7 +2,7 @@
 audience: [developer, ai]
 doc_type: spec
 status: canonical
-last_verified: 2026-04-11
+last_verified: 2026-04-12
 ---
 
 # Domain Aggregate Pattern
@@ -1121,6 +1121,7 @@ option.
 
 | Aggregate | Persistence | Errors | Events | Locking | Queries | Book |
 |-----------|------------|--------|--------|---------|---------|------|
+| Offerings | Persistent | Infallible | Single | RwLock | Owned + Closure | ARCH-0016 |
 | Metrics | Ephemeral | Infallible | Single | Lock-free (register-with-kinds) | Owned | I |
 | Tool | Ephemeral | Infallible | Dual (`ToolDelta` wire) | RwLock | Owned | II |
 | Topology | Persistent | Infallible | Single | RwLock | Owned | III |
@@ -1128,6 +1129,11 @@ option.
 | Catalog | Persistent | Typed (`CatalogError`) | Single | RwLock | Owned | V |
 | Subsystems | Ephemeral | Infallible | Single | Lock-free (`watch`) | Owned | VI |
 | Health | Ephemeral | Infallible | Single | — (stateless facade) | — | VII |
+| Storage (Bank) | Ephemeral | Typed (`BankError`) | Single | RwLock | Owned | VIII |
+| Security | Ephemeral | Infallible | Single (+ `EventBus` dual) | RwLock | Owned | IX |
+| Discovery | Ephemeral | Infallible | Single | — (stateless facade) | Owned | X |
+
+**Dissolutions** (Books XI-XVII, XIX): Orchestration, ContainerRuntime, Configuration, Persistence, Logging, EventBus/Pulse, HttpApi, and AppState were each evaluated and found to not warrant the aggregate pattern. See individual ADRs (ARCH-0029 through ARCH-0037) for rationale.
 
 ---
 

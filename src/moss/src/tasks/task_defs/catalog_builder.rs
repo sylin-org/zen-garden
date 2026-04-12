@@ -18,7 +18,7 @@ impl BackgroundTask for CatalogBuilderTask {
     }
 
     fn dependencies(&self) -> &'static [&'static str] {
-        &["registry-loader"]
+        &["offerings-reconciler"]
     }
 
     fn run(

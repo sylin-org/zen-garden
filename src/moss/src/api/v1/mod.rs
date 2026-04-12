@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod adoption;
+pub mod banks;
 pub mod capabilities;
 pub mod companions;
 pub mod config;

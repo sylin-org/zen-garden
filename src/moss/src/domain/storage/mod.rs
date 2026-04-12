@@ -41,7 +41,7 @@ pub use medium::{Media, Medium, new_media, reconcile_media};
 
 // Bank (ARCH-0025)
 pub use bank::VolumeIngestor;
-pub use bank_aggregate::{Bank, BankError};
+pub use bank_aggregate::{Bank, BankContentOps, BankError};
 
 // Analysis
 pub use analysis::{analyze_device, is_allowed_mount, validate_manifest};

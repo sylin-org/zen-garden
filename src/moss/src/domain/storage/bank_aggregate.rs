@@ -21,13 +21,48 @@
 //! - `volumes_for_bank(name)` — all local volumes in a bank
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use garden_common::storage::{StorageChanged, StorageInfo, StorageRole, StorageVisibility};
 
 use super::Volumes;
 use super::ports::ManagementStoreOps;
 use super::volume::Volume;
+
+// ============================================================================
+// Data-plane port — what the bank needs from storage I/O
+// ============================================================================
+
+/// Port for bank data-plane operations.
+///
+/// Implemented by `ContentStore` in the infra layer. The bank aggregate
+/// uses this to read/write/delete content without depending on infra.
+pub trait BankContentOps: Send + Sync {
+    /// Read a file at the given relative path.
+    fn read_file(
+        &self,
+        rel: &str,
+    ) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send;
+
+    /// Write content to the given relative path.
+    fn write_file(
+        &self,
+        rel: &str,
+        data: &[u8],
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+
+    /// Delete a file at the given relative path.
+    fn delete_file(
+        &self,
+        rel: &str,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+
+    /// Check whether a file exists at the given relative path.
+    fn exists(
+        &self,
+        rel: &Path,
+    ) -> impl std::future::Future<Output = bool> + Send;
+}
 
 // ============================================================================
 // Bank — view projection from the volume collection
@@ -331,6 +366,105 @@ pub async fn bank_infos(volumes: &Volumes) -> Vec<StorageInfo> {
 }
 
 // ============================================================================
+// Data-plane commands — unified read/write/delete through the bank
+// ============================================================================
+
+/// Read a file from a bank.
+///
+/// Resolves the bank to a local volume and reads via the provided store.
+/// This is the unified read path — future protocol handler refactors
+/// will converge on this.
+pub async fn read<S: BankContentOps>(
+    name: &str,
+    rel_path: &str,
+    volumes: &Volumes,
+    make_store: impl Fn(PathBuf) -> S,
+) -> Result<Vec<u8>, BankError> {
+    let bank = by_name(name, volumes)
+        .await
+        .ok_or_else(|| BankError::NotFound(name.to_string()))?;
+
+    let mount = bank
+        .mount_path
+        .ok_or_else(|| BankError::NotFound(format!("{} (no mount)", name)))?;
+
+    let store = make_store(mount);
+    store
+        .read_file(rel_path)
+        .await
+        .map_err(|e| BankError::IoFailed(e.to_string()))
+}
+
+/// Write a file to a bank.
+///
+/// Resolves the bank to a local Primary volume and writes via the
+/// provided store. Returns a domain event on success.
+pub async fn write<S: BankContentOps>(
+    name: &str,
+    rel_path: &str,
+    data: &[u8],
+    volumes: &Volumes,
+    make_store: impl Fn(PathBuf) -> S,
+) -> Result<StorageChanged, BankError> {
+    let bank = by_name(name, volumes)
+        .await
+        .ok_or_else(|| BankError::NotFound(name.to_string()))?;
+
+    if !bank.has_local_primary() {
+        return Err(BankError::IoFailed(format!(
+            "bank '{}' has no local Primary volume",
+            name
+        )));
+    }
+
+    let mount = bank
+        .mount_path
+        .ok_or_else(|| BankError::NotFound(format!("{} (no mount)", name)))?;
+
+    let store = make_store(mount);
+    store
+        .write_file(rel_path, data)
+        .await
+        .map_err(|e| BankError::IoFailed(e.to_string()))?;
+
+    Ok(StorageChanged::Reclassified)
+}
+
+/// Delete a file from a bank.
+///
+/// Resolves the bank to a local Primary volume and deletes via the
+/// provided store. Returns a domain event on success.
+pub async fn delete<S: BankContentOps>(
+    name: &str,
+    rel_path: &str,
+    volumes: &Volumes,
+    make_store: impl Fn(PathBuf) -> S,
+) -> Result<StorageChanged, BankError> {
+    let bank = by_name(name, volumes)
+        .await
+        .ok_or_else(|| BankError::NotFound(name.to_string()))?;
+
+    if !bank.has_local_primary() {
+        return Err(BankError::IoFailed(format!(
+            "bank '{}' has no local Primary volume",
+            name
+        )));
+    }
+
+    let mount = bank
+        .mount_path
+        .ok_or_else(|| BankError::NotFound(format!("{} (no mount)", name)))?;
+
+    let store = make_store(mount);
+    store
+        .delete_file(rel_path)
+        .await
+        .map_err(|e| BankError::IoFailed(e.to_string()))?;
+
+    Ok(StorageChanged::Reclassified)
+}
+
+// ============================================================================
 // Result and error types
 // ============================================================================
 
@@ -355,6 +489,8 @@ pub enum BankError {
     PinFailed(String),
     /// Unpin operation failed.
     UnpinFailed(String),
+    /// Data-plane I/O error.
+    IoFailed(String),
 }
 
 impl std::fmt::Display for BankError {
@@ -364,6 +500,7 @@ impl std::fmt::Display for BankError {
             Self::InvalidName(reason) => write!(f, "invalid bank name: {}", reason),
             Self::PinFailed(reason) => write!(f, "pin failed: {}", reason),
             Self::UnpinFailed(reason) => write!(f, "unpin failed: {}", reason),
+            Self::IoFailed(reason) => write!(f, "I/O failed: {}", reason),
         }
     }
 }
@@ -693,5 +830,181 @@ mod tests {
 
         let banks = local_banks(&volumes).await;
         assert!(banks.is_empty());
+    }
+
+    // ── Data-plane tests ────────────────────────────────────────────────
+
+    /// In-memory content store for testing data-plane commands.
+    struct TestContentStore {
+        files: std::sync::Arc<tokio::sync::RwLock<HashMap<String, Vec<u8>>>>,
+    }
+
+    impl TestContentStore {
+        fn new() -> Self {
+            Self {
+                files: std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            }
+        }
+
+        fn seeded(files: Vec<(&str, &[u8])>) -> Self {
+            let map: HashMap<String, Vec<u8>> = files
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_vec()))
+                .collect();
+            Self {
+                files: std::sync::Arc::new(tokio::sync::RwLock::new(map)),
+            }
+        }
+    }
+
+    impl BankContentOps for TestContentStore {
+        async fn read_file(&self, rel: &str) -> anyhow::Result<Vec<u8>> {
+            self.files
+                .read()
+                .await
+                .get(rel)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("file not found: {}", rel))
+        }
+
+        async fn write_file(&self, rel: &str, data: &[u8]) -> anyhow::Result<()> {
+            self.files.write().await.insert(rel.to_string(), data.to_vec());
+            Ok(())
+        }
+
+        async fn delete_file(&self, rel: &str) -> anyhow::Result<()> {
+            self.files
+                .write()
+                .await
+                .remove(rel)
+                .ok_or_else(|| anyhow::anyhow!("file not found: {}", rel))?;
+            Ok(())
+        }
+
+        async fn exists(&self, rel: &Path) -> bool {
+            self.files.read().await.contains_key(rel.to_string_lossy().as_ref())
+        }
+    }
+
+    #[tokio::test]
+    async fn read_returns_file_content() {
+        let volumes = new_volumes();
+        {
+            let mut map = volumes.write().await;
+            map.insert(
+                "/dev/sda1".into(),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
+            );
+        }
+
+        let data = read("photos", "hello.txt", &volumes, |_| {
+            TestContentStore::seeded(vec![("hello.txt", b"hello world")])
+        })
+        .await
+        .unwrap();
+        assert_eq!(data, b"hello world");
+    }
+
+    #[tokio::test]
+    async fn read_not_found_bank() {
+        let volumes = new_volumes();
+        let result = read("nonexistent", "hello.txt", &volumes, |_| TestContentStore::new()).await;
+        assert!(matches!(result, Err(BankError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn write_emits_event() {
+        let volumes = new_volumes();
+        {
+            let mut map = volumes.write().await;
+            map.insert(
+                "/dev/sda1".into(),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
+            );
+        }
+
+        let event = write("photos", "new.txt", b"data", &volumes, |_| TestContentStore::new())
+            .await
+            .unwrap();
+        assert!(matches!(event, StorageChanged::Reclassified));
+    }
+
+    #[tokio::test]
+    async fn write_rejects_no_primary() {
+        let volumes = new_volumes();
+        {
+            let mut map = volumes.write().await;
+            map.insert(
+                "/dev/sda1".into(),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Dormant,
+                ),
+            );
+        }
+
+        let result = write("photos", "new.txt", b"data", &volumes, |_| TestContentStore::new()).await;
+        assert!(matches!(result, Err(BankError::IoFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn delete_emits_event() {
+        let volumes = new_volumes();
+        {
+            let mut map = volumes.write().await;
+            map.insert(
+                "/dev/sda1".into(),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Primary,
+                ),
+            );
+        }
+
+        let event = delete("photos", "old.txt", &volumes, |_| {
+            TestContentStore::seeded(vec![("old.txt", b"old data")])
+        })
+        .await
+        .unwrap();
+        assert!(matches!(event, StorageChanged::Reclassified));
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_no_primary() {
+        let volumes = new_volumes();
+        {
+            let mut map = volumes.write().await;
+            map.insert(
+                "/dev/sda1".into(),
+                make_managed_volume(
+                    "/dev/sda1",
+                    "/mnt/a",
+                    "photos",
+                    "rs-1",
+                    StorageRole::Dormant,
+                ),
+            );
+        }
+
+        let result = delete("photos", "old.txt", &volumes, |_| TestContentStore::new()).await;
+        assert!(matches!(result, Err(BankError::IoFailed(_))));
     }
 }

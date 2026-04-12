@@ -18,6 +18,7 @@ Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **livin
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-12 | **Book XI closed.** Orchestration — plan change: 3 sub-aggregates → dissolution. Orchestration has no domain state, no invariants, no election code. Dissolved into natural owners: storage coordination → `current.storage.coordination`, nurturing/nourishment → direct AppState fields. `Orchestration` struct and module deleted. | [ARCH-0029](ARCH-0029-orchestration-dissolution.md) |
 | 2026-04-12 | **Book X closed.** Discovery — plan change: 3 contexts → 1 aggregate. Announcement (pure functions) and Networking (infrastructure) not warranted as aggregates. Discovery encapsulates mDNS + Koi handles, typed commands (`reregister`, `update_health`, `register_certmesh`), `DiscoveryChanged` event, `mdns.rs` relocated, 761 tests. | [ARCH-0028](ARCH-0028-discovery-aggregate.md) |
 | 2026-04-12 | **Book IX closed.** Security — single aggregate (not 3 sub-contexts), private enrollment state, `SecurityChanged` event, `PondClient` + `CeremonyPersistence` ports relocated, `PondState` absorbed, 753 tests. | [ARCH-0027](ARCH-0027-security-aggregate.md) |
 | 2026-04-12 | **Book VIII-b closed.** Storage API surface — `/v1/stone/banks` and `/v1/garden/banks` routes, `BankContentOps` port + data-plane commands, 301 redirects for pin/unpin, 741 tests. | [ARCH-0026](ARCH-0026-storage-api-surface.md) |

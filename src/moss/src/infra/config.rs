@@ -42,30 +42,6 @@ pub struct MossConfig {
     #[serde(default)]
     pub docker_retry_delay_secs: Option<u64>,
 
-    /// Health check interval in seconds - default: 30
-    #[serde(default)]
-    pub health_check_interval_secs: Option<u64>,
-
-    /// Docker reconnect interval in seconds - default: 5
-    #[serde(default)]
-    pub docker_reconnect_interval_secs: Option<u64>,
-
-    /// HTTP capabilities fetch timeout in seconds - default: 5
-    #[serde(default)]
-    pub http_capabilities_timeout_secs: Option<u64>,
-
-    /// HTTP health check timeout in seconds - default: 2
-    #[serde(default)]
-    pub http_health_timeout_secs: Option<u64>,
-
-    /// HTTP quick health check timeout in milliseconds - default: 200
-    #[serde(default)]
-    pub http_quick_health_timeout_millis: Option<u64>,
-
-    /// HTTP long operation timeout in seconds - default: 300 (5 minutes)
-    #[serde(default)]
-    pub http_long_operation_timeout_secs: Option<u64>,
-
     /// Adoption settings for adopted offerings
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub adoption: Option<AdoptionConfig>,
@@ -377,36 +353,6 @@ impl MossConfig {
     /// Get Docker retry delay in seconds (default: 3)
     pub fn docker_retry_delay_secs(&self) -> u64 {
         self.docker_retry_delay_secs.unwrap_or(3)
-    }
-
-    /// Get health check interval in seconds (default: 30)
-    pub fn health_check_interval_secs(&self) -> u64 {
-        self.health_check_interval_secs.unwrap_or(30)
-    }
-
-    /// Get Docker reconnect interval in seconds (default: 5)
-    pub fn docker_reconnect_interval_secs(&self) -> u64 {
-        self.docker_reconnect_interval_secs.unwrap_or(5)
-    }
-
-    /// Get HTTP capabilities timeout in seconds (default: 5)
-    pub fn http_capabilities_timeout_secs(&self) -> u64 {
-        self.http_capabilities_timeout_secs.unwrap_or(5)
-    }
-
-    /// Get HTTP health timeout in seconds (default: 2)
-    pub fn http_health_timeout_secs(&self) -> u64 {
-        self.http_health_timeout_secs.unwrap_or(2)
-    }
-
-    /// Get HTTP quick health timeout in milliseconds (default: 200)
-    pub fn http_quick_health_timeout_millis(&self) -> u64 {
-        self.http_quick_health_timeout_millis.unwrap_or(200)
-    }
-
-    /// Get HTTP long operation timeout in seconds (default: 300)
-    pub fn http_long_operation_timeout_secs(&self) -> u64 {
-        self.http_long_operation_timeout_secs.unwrap_or(300)
     }
 
     /// Get adoption configuration (with defaults)

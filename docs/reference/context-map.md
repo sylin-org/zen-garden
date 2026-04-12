@@ -45,7 +45,7 @@ Each context entry lists:
 
 ## Current state
 
-As of 2026-04-12, after [ARCH-0030](../decisions/ARCH-0030-container-runtime-port.md).
+As of 2026-04-12, after [ARCH-0031](../decisions/ARCH-0031-configuration-dissolution.md).
 
 ### Full contexts
 
@@ -296,8 +296,8 @@ These contexts do not exist as modules. Their state lives as raw fields on `AppS
 
 #### Configuration
 
-- **Status:** Absent — `EnvConfig` is a free-function module in `garden-common`; runtime feature flags are scattered
-- **Target source:** `src/moss/src/domain/configuration/`
+- **Status:** Dissolved. ARCH-0031 (Book XIII of ARCH-0017) — completed 2026-04-12.
+- **Plan change:** ARCH-0017 anticipated a `Configuration` aggregate with `ConfigChanged` events and `ConfigSource` port; Book XIII found that config is loaded once at boot and frozen — no mutable state, no invariants, no events. `MossConfig` (infra value object) + `DaemonConfig` (bootstrap merge facade) are the correct architecture. `EnvConfig` stays in `garden-common` (cross-crate). 6 dead timeout fields/accessors deleted.
 - **Book:** XIII
 
 #### Persistence
@@ -353,7 +353,7 @@ After [ARCH-0017](../decisions/ARCH-0017-ddd-monolith-epic.md) completes. Every 
 | **Orchestration::Tick** | storage tick aggregation | `OrchestrationTick` | none | XI |
 | **Orchestration::Nurturing** | nurturing lifecycle state | `NurturingChanged` | `NurturingStore` | XI |
 | **Orchestration::Election** | offering primary/dormant election | `ElectionResolved` | `ElectionTransport` | XI |
-| **Configuration** | typed env + runtime settings | `ConfigChanged` | `ConfigSource` | XIII |
+| ~~**Configuration**~~ | ~~typed env + runtime settings~~ | ~~`ConfigChanged`~~ | ~~`ConfigSource`~~ | XIII (dissolved) |
 | **Logging** | log broadcast channel, file sink handle | `LogLineEmitted` | `LogSink` | XV |
 | **Events** | unified cross-cutting event surface | (bridges all domain events to pulse) | none | XVI |
 
@@ -445,7 +445,7 @@ Complete list of infrastructure ports the epic produces. Each port lives in its 
 | `MtlsAcceptor` | inbound TLS acceptor | `RustlsMtlsAcceptor` | Security::Trust |
 | `ElectionTransport` | election message transport | `UdpElectionAdapter` | Orchestration::Election |
 | `NurturingStore` | persist nurturing state | `FileNurturingStore` | Orchestration::Nurturing |
-| `ConfigSource` | load typed configuration | `EnvConfigSource` + `FileConfigSource` | Configuration |
+| ~~`ConfigSource`~~ | ~~load typed configuration~~ | ~~`EnvConfigSource` + `FileConfigSource`~~ | ~~Configuration~~ (dissolved — Book XIII) |
 | `LogSink` | write log lines | `FileLogSink`, `StderrLogSink`, `MemoryLogSink` (for tests) | Logging |
 | `CompanionSocket` | command forwarding to companion processes | `HttpCompanionSocket` | Companion |
 | `CompanionManifest` | load companion manifests | `FileCompanionManifest` | Companion |

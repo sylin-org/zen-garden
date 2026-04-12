@@ -116,7 +116,10 @@ pub use harvest::{HarvestId, HarvestManifest, VolumeArchive};
 pub use infrastructure::{
     DockerRegistry, InfrastructureHandler, InfrastructureHandlerRegistry, OfferingInstance,
 };
-pub use jobs::{Job, JobStatus};
+pub use jobs::{
+    DEFAULT_TERMINAL_TTL as JOBS_DEFAULT_TERMINAL_TTL, EvictionReason as JobsEvictionReason, Job,
+    JobStatus, Jobs, JobsChangeKind, JobsChanged, ReapReport as JobsReapReport,
+};
 pub use network::{
     NetworkError, NetworkMode, PoolExhausted, ProbeResult, StaticIpActive, StaticIpDesired,
     StaticIpRelease, StaticIpRequest, StaticIpSeverity, StaticIpState,

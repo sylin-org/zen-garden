@@ -884,6 +884,20 @@ async fn build_state(
         Box::new(crate::tasks::state_provider::PlaceholderStateProvider),
     ));
 
+    // Jobs aggregate (ARCH-0021 Book IV Ch3). The aggregate shares
+    // its inner `Arc<RwLock<HashMap<String, Job>>>` with the legacy
+    // `AppState::jobs` field during the Ch3 → Ch5 strangler phase so
+    // that raw-map callers and typed command callers see the same map.
+    let jobs_shared: Arc<RwLock<HashMap<String, Job>>> = Arc::new(RwLock::new(HashMap::new()));
+    let jobs_aggregate = Arc::new(
+        crate::domain::Jobs::with_shared_state(
+            Arc::clone(&jobs_shared),
+            metrics_aggregate.clone(),
+            event_bus.clone(),
+        )
+        .await,
+    );
+
     let state = AppState {
         current: Arc::new(crate::domain::Current {
             stone: Arc::new(crate::domain::current::Stone {
@@ -916,7 +930,8 @@ async fn build_state(
             network: Arc::new(network),
             handlers: infrastructure_handlers.clone(),
         }),
-        jobs: Arc::new(RwLock::new(HashMap::new())),
+        jobs: jobs_shared,
+        jobs_aggregate,
         pulse: pulse.clone(),
         event_bus: event_bus.clone(),
         shutdown_token: shutdown_token.clone(),

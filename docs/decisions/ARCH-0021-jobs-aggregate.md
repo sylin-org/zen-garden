@@ -94,15 +94,16 @@ Book IV extracts `Jobs` as a full DDD aggregate with private state, typed comman
 
 ```
 src/moss/src/domain/jobs/
-├── mod.rs            — re-exports Jobs, Job, JobStatus, JobsChanged, JobsError
+├── mod.rs            — re-exports Jobs, Job, JobStatus, JobsChanged, ReapReport
 ├── aggregate.rs      — `Jobs` struct, typed commands, queries, changes()
-├── state.rs          — `JobsState` (HashMap<String, Job>, optional reaper cursor)
-├── entry.rs          — `Job`, `JobStatus` (moved from app_state.rs)
+├── state.rs          — `JobsState` type alias (HashMap<String, Job>)
+├── entry.rs          — `Job`, `JobStatus` (moved from app_state.rs in Ch2)
 ├── event.rs          — `JobsChanged` enum + `ChangeKind` for metrics
-├── error.rs          — `JobsError`
-├── maintenance.rs    — TTL policy, eviction logic, `ReapReport`
+├── maintenance.rs    — TTL policy, `ReapReport`, `is_expired` helper
 └── tests.rs          — unit tests
 ```
+
+There is deliberately no `error.rs`. Per the infallible-mutations deviation (see §Pattern deviations), `Jobs` commands have no domain-meaningful failure modes — every mutation returns `()` (or a value), with warn-level no-ops on unknown job ids.
 
 ### Aggregate API
 
@@ -259,6 +260,8 @@ Book IV is closed when:
 ## Pattern deviations
 
 Book IV is an **ephemeral aggregate** (no Store port, no persistence) with a **dual event stream** (`JobsChanged` internal + `JobEvent` wire format). Both deviations are already first-class entries in [`docs/specs/domain-aggregates.md`](../specs/domain-aggregates.md); Book IV adds `Jobs` to the "Current instances" tables rather than introducing a new deviation section.
+
+Book IV also reuses the **infallible mutations** deviation established by Book I (`Metrics`). All `Jobs` commands return `()` (or a value) and no `JobsError` type is declared. Rationale: an ephemeral aggregate with no persistence port and no cross-context invariants has no domain-meaningful failure modes to surface — there is no save to flunk, no external port to propagate errors from, and no rule for a command to violate. Mutations addressed at a missing job id are treated as warn-level no-ops, matching how `Metrics::record_domain_event` handles an unregistered domain. This deviation shape is already documented in Book I's ADR (ARCH-0018) and in `docs/specs/domain-aggregates.md`; Book IV contributes `Jobs` as a second ephemeral-aggregate example rather than introducing new spec text.
 
 One **minor pattern note** — not a deviation, but worth recording: the `Jobs::submit` command takes an owned `String` id rather than generating one internally. All current callers derive the id from an external format (`uuid::Uuid::now_v7()` for install jobs, formatted composite keys like `add-capability-{offering}-{name}-{uuid}` for capability jobs). A future version could offer both `submit_with_id(id)` and `submit_new() -> id` — Book IV only provides the explicit-id form to avoid over-designing.
 

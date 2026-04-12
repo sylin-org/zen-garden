@@ -18,6 +18,7 @@ Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **livin
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-12 | **Book XII opened.** ContainerRuntime Port — plan change: full trait abstraction → rename + seal + delete. `docker::Client` already IS the anti-corruption layer; dead `ServiceRuntime` trait + `ContainerRuntime` struct deleted, Bollard leak sealed, `docker→container` rename. ~600 lines (vs ~1800 estimated). | [ARCH-0030](ARCH-0030-container-runtime-port.md) |
 | 2026-04-12 | **Book XI closed.** Orchestration — plan change: 3 sub-aggregates → dissolution. Orchestration has no domain state, no invariants, no election code. Dissolved into natural owners: storage coordination → `current.storage.coordination`, nurturing/nourishment → direct AppState fields. `Orchestration` struct and module deleted. | [ARCH-0029](ARCH-0029-orchestration-dissolution.md) |
 | 2026-04-12 | **Book X closed.** Discovery — plan change: 3 contexts → 1 aggregate. Announcement (pure functions) and Networking (infrastructure) not warranted as aggregates. Discovery encapsulates mDNS + Koi handles, typed commands (`reregister`, `update_health`, `register_certmesh`), `DiscoveryChanged` event, `mdns.rs` relocated, 761 tests. | [ARCH-0028](ARCH-0028-discovery-aggregate.md) |
 | 2026-04-12 | **Book IX closed.** Security — single aggregate (not 3 sub-contexts), private enrollment state, `SecurityChanged` event, `PondClient` + `CeremonyPersistence` ports relocated, `PondState` absorbed, 753 tests. | [ARCH-0027](ARCH-0027-security-aggregate.md) |

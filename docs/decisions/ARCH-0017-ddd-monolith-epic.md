@@ -16,24 +16,18 @@ canonical: true
 
 Unlike typical ADRs which are immutable after acceptance, ARCH-0017 is a **living plan** that evolves as the epic progresses. Every amendment is logged here with date, trigger, and scope. See [The Discovery Mandate](#the-discovery-mandate) for the rule that authorizes amendments.
 
-| Date | Change | Trigger |
-|------|--------|---------|
-| 2026-04-12 | **Book VII closed.** Health aggregate extracted as the seventh DDD bounded context — a stateless command facade (ephemeral pattern deviation) that orchestrates probe→compare→mutate→emit for per-offering health. Chapters landed green: Ch1 ADR with 12 findings (no HTTP/TCP probes exist, health monitor is a 6-concern monolith, aggregate is stateless) → Ch2-3 module skeleton with `Health` aggregate (3 typed commands: `probe_offering`, `apply_docker_event`, `update_notification`), `HealthChanged` event (3 kinds: Recovered/Degraded/Failed), `HealthProbe` port + `DockerHealthProbe` adapter, `NoopOfferingStore` for test support, system health moved to `system.rs`, `Arc<Metrics>` injection, 20 unit tests → Ch4 wired into AppState/bootstrap/testing, health monitor Phase 1 and Phase 4 delegated through aggregate, docker_events delegated through aggregate → Ch5 full probe migration via `probe_offering()`, 0 direct `get_service_health/status` calls from health_monitor, port/protocol reconciliation reads current_status after probe. Pattern deviations: ephemeral (Book I), infallible mutations (Book I). 724 tests (+17 over Book VI baseline). See ARCH-0024 for full record. | Book VII exit criteria met; ready for Book VIII (Storage Deep-Clean). |
-| 2026-04-12 | **Book VII Ch1** — Health aggregate re-evaluation. Twelve findings: `domain/health.rs` is stone-level system health (disk/memory checks for `/api/health`), not per-offering probes; the real probe logic lives in `tasks/health_monitor.rs` (383-line monolith with 6 concerns: container polling, offering mutation, reconciliation, topo mount remediation, notifications, orphan adoption — only polling and mutation are health concerns); no HTTP/TCP probes exist anywhere (ARCH-0017 anticipated them but the code only checks Docker container health via Bollard `inspect_container`); per-offering health state lives on `Offering.health: ServiceHealthStatus` not a separate map; `current.health: Arc<RwLock<String>>` is stone identity not per-offering health; `docker_events.rs` is a second write path for health (event-driven vs. poll-based); `ReconciliationCoordinator` is already well-structured and not a health concern; port/protocol reconciliation, topo mount remediation, orphan adoption are not health concerns. **Material plan change:** `HealthProbe` port wraps Docker health checking only (no HTTP/TCP adapters — those don't exist). Health aggregate is stateless (ephemeral pattern deviation) — orchestrates probe→transition→mutation→event pipeline but does NOT own per-offering health state (stays on `Offering` struct). Size estimate revised ~1300 → ~800-1000 lines. See [ARCH-0024](ARCH-0024-health-aggregate.md) for full record. | Chapter 1 re-evaluation of Book VII surfaced that ARCH-0017's anticipated HTTP/TCP probes do not exist, and that the health monitor task is a grab-bag of 6 concerns only 2 of which are health. Scope narrowed to the actual health determination pipeline. |
-| 2026-04-12 | **Book VI closed.** Subsystems aggregate extracted as the sixth DDD bounded context — the simplest aggregate in the epic (no RwLock, no persistence, no typed errors). Chapters landed green: Ch1 ADR with 8 findings (only 2 subsystems, 6 consumer sites, all non-blocking polls, watch channels as the right primitive) → Ch2-3 aggregate skeleton with registration-based `Subsystems` using `watch::Sender<bool>` channels, 3 typed commands (`register`, `mark_ready`, `mark_unready`), 4 typed queries (`is_ready`, `wait_ready`, `snapshot`, `changes`), `SubsystemsChanged` event (2 kinds: Ready, Unready), `Arc<Metrics>` injection, 15 unit tests → Ch4 full caller migration (deleted `SubSystems`/`NetworkSubSystem`/`DockerSubSystem` from `app_state.rs`, rewired Network and DockerMonitor producers from `Arc<AtomicBool>` to `Arc<Subsystems>`, migrated 6 consumer sites from `.ready.load(Ordering::Relaxed)` to `.is_ready()`) → Ch5 exit criteria verified (0 legacy struct refs, 0 `.ready.load/store` sites, 0 `subsystems.network/docker.` sites) → Ch6 docs closure. Pattern deviations: ephemeral (Book I), infallible mutations (Book I), no internal `RwLock` (new — `watch::Sender` is inherently thread-safe). 707 tests (+15 over Book V baseline). See ARCH-0023 for full record. | Book VI exit criteria met; ready for Book VII (Health). |
-| 2026-04-12 | **Book VI Ch1** — Subsystems aggregate re-evaluation. Eight findings: only 2 subsystems exist today (network, docker) with 6 consumer sites (all non-blocking polls) and 2 producer sites (Network, DockerMonitor); scope is smaller than anticipated (~500-600 lines vs ~900 estimate); `watch` channel replaces `Arc<AtomicBool>` — synchronous `borrow()` for poll sites, async `changed()` for future waiters; no existing site needs async waiting today (all are poll-and-skip); registration pattern (like Metrics) enables adding new subsystems with zero struct changes; `AtomicBool` exit criterion scoped to subsystem readiness flags only (pond, https, enrolled, dirty are unrelated); monitors rewired to take `Arc<Subsystems>` instead of `Arc<AtomicBool>`. Pattern deviations: ephemeral (Book I), infallible mutations (Book I), no internal `RwLock` (new — `watch::Sender` is inherently thread-safe, `HashMap` is frozen after registration). Size estimate revised ~900 → ~500-600 lines. See [ARCH-0023](ARCH-0023-subsystems-aggregate.md) for full record. | Chapter 1 re-evaluation of Book VI surfaced minimal blast radius (8 call sites total), no async waiters, and opportunity to use `watch` channels for richer readiness semantics. No material plan change — scope is a subset of what ARCH-0017 anticipated. |
-| 2026-04-12 | **Book V closed.** Catalog aggregate extracted as the fifth DDD bounded context — the first aggregate with typed `CatalogError` and the third persistent aggregate after Offerings and Topology. Chapters landed green: Ch1 ADR with 17 findings (cross-crate ManifestRegistry constraint, dual-rebuild invariant, 40-file blast radius, typed-errors deviation) → Ch2 module skeleton with pure type moves (`CompiledOffering`, `OfferingsIndex`, `OfferingsFingerprint` → `domain/catalog/{entry,index}.rs`, fingerprint helpers → `fingerprint.rs`, `CatalogCache` port + `FileCatalogCache` adapter in `cache.rs`) → Ch3 aggregate skeleton with typed commands (`load`, `rebuild`), typed queries (`get_manifest`, `find_hw_manifest`, `manifest_count`, `get_compiled`, `compiled_snapshot`, `stats`, `is_loaded`, `manifests`), `CatalogChanged` internal event (2 kinds: Loaded, Rebuilt), `CatalogError` typed enum (4 variants), `CatalogCache` BoxFut port, `Arc<Metrics>` injection, 21 unit tests → Ch4 full caller migration (21 files: 19 `state.manifest_registry` sites → `catalog.get_manifest`/`catalog.manifests()`, 20 `state.offerings_index.read()` sites → `catalog.get_compiled`/`catalog.compiled_snapshot`/`catalog.is_loaded`, all `ensure_offerings_index`/`get_compiled_offering` callers → `catalog.load()`/`catalog.rebuild()`/`catalog.get_compiled()`, `catalog-builder` and `hardware-detection` tasks wired to typed commands) → Ch5 legacy deletion (fields `AppState::manifest_registry` + `AppState::offerings_index` deleted, `domain/catalog/legacy.rs` deleted, `FromRef<AppState> for Arc<ManifestRegistry>` deleted, two handlers converted from `State<Arc<ManifestRegistry>>` to `State<Arc<Catalog>>`, 11 remaining multi-line `manifest_registry` sites caught and migrated) → Ch6 docs closure (context-map Catalog Absent → Full, target row ✅ COMPLETE, glossary additions, pattern spec "Typed errors" fourth deviation, `docs/scaffolding.md` `deferred-registry-loader-task-rename` entry, fingerprint functions flipped to `pub(super)`). Exit criteria all met. 692 tests (+21 over Book IV baseline). See ARCH-0022 for full record. | Book V exit criteria met; ready for Book VI (Subsystems). |
-| 2026-04-11 | Initial acceptance | Epic commits to 21-book arc |
-| 2026-04-11 | Added **Discovery Mandate** section; added re-evaluation step to Chapter 1 template; marked status as `accepted-living` | User directive: "As you navigate the repo, you'll discover new things. MANDATE: It's OK to backtrack, put on a specialist hat, and think 'What would a proper clean architecture look like?' and CHANGE the plan, the code, or both." |
-| 2026-04-11 | **Book V Ch1** — Catalog aggregate re-evaluation. Seventeen findings: `ManifestRegistry` is a cross-crate type (`garden_common::manifests::registry`) used by rake, orchestrators, and peer stones — Book V **cannot rename or restructure it**, only wrap it as an immutable `Arc<ManifestRegistry>` frozen-input field on the aggregate; `ManifestRegistry` is effectively immutable after bootstrap (0 mutation sites after `build_state()`), so no interior lock is needed; 19 `state.manifest_registry.*` read sites across 20 files become typed `catalog.get_manifest(name)` queries; 20 `state.offerings_index.read()/write()` sites across 13 files become typed `catalog.get_compiled(name)` / `catalog.compiled_snapshot()` queries; 25 free-function caller sites (`ensure_offerings_index`, `rebuild_offerings_index`, `get_compiled_offering`) collapse into two typed commands — `Catalog::load()` (idempotent, cache-first) for the `catalog-builder` task, `Catalog::rebuild()` (force-refresh with current capabilities) for `hardware-detection`; the `force: bool` parameter on `ensure_offerings_index` is a smell that conflates "load-from-cache" with "unconditional rebuild" and splits into two commands; the **dual-rebuild invariant** (catalog-builder runs early with zero/partial capabilities, hardware-detection runs later with the complete snapshot) is preserved — both entry points must tolerate being called before and after capabilities are ready; Catalog is the **third persistent aggregate** after Offerings and Topology, with a `CatalogCache` port (the existing `OfferingsCachePersistence` trait renamed and relocated from `domain/traits/offerings_cache.rs` into `domain/catalog/cache.rs`); the compiled types (`CompiledOffering`, `OfferingsFingerprint`, `OfferingsIndex`) are **not renamed** — they leak into 8 non-module files (placement, api, services_internal, service_lifecycle, offering_resolution, ceremony/phases/nourish, job_executors, api/v1/updates) and a cascade rename buys no architectural value; `domain/offerings/catalog.rs` (367 lines, misfiled per code-standards §14 — "catalog" is not part of the Offerings context) is **deleted** and its contents split across `domain/catalog/{aggregate,entry,index,fingerprint,event,error,cache,tests}.rs`; `moss_version_string` / `manifests_hash` / `current_capabilities_hash` become `pub(super)` module-private helpers of the `fingerprint.rs` submodule (no external callers); events are minimal — `CatalogChanged::Loaded` + `CatalogChanged::Rebuilt` are the only two kinds, since the catalog is mostly inert; `registry-loader` background task is misnamed (it reconciles Offerings against Docker, nothing to do with manifest registry) but renaming it cascades into the supervisor dependency graph and the `/api/v1/stone/tasks` wire format — **deferred** to `docs/scaffolding.md` under a new `deferred-registry-loader-task-rename` entry; blast radius of 40 files touched by catalog concepts. **New pattern deviation: typed errors.** Catalog is the first domain aggregate in the epic with a typed `CatalogError` enum — commands return `Result<T, CatalogError>` instead of `anyhow::Result<T>` (Metrics/Tool/Topology/Jobs were all infallible or propagated `anyhow::Result` at port boundaries). ARCH-0022 elevates typed errors to a first-class spec deviation (code-standards §10 already requires it; prior books ducked it by not having meaningful error shapes). Size estimate revised ~1400 → ~1800-2200 lines given the 25 free-function callers + 40-file blast radius. Five alternatives considered and rejected/deferred: splitting into two aggregates (A rejected — inseparable in practice), renaming `CompiledOffering` (B rejected — 8-file cascade with no value), persisting `ManifestRegistry` (C rejected — rebuilt from embedded assets + filesystem every startup, nothing to persist), collapsing `load`+`rebuild` into one command (D rejected — the `force` bool is the smell Book V exists to eliminate), ephemeral catalog with no persistence (E rejected — cold-start latency regression). See [ARCH-0022](ARCH-0022-catalog-aggregate.md) for full record. | Chapter 1 re-evaluation of Book V surfaced the cross-crate `ManifestRegistry` constraint (cannot rename), the dual-rebuild invariant (two entry points into `Catalog::load` / `Catalog::rebuild`), the 40-file blast radius, and the opportunity to introduce typed errors as the fourth first-class pattern deviation. User visibility only — no redirection needed. |
-| 2026-04-11 | **Book IV closed.** Jobs aggregate extracted as the fourth DDD bounded context — the first ephemeral aggregate with a periodic reaper task. Chapters landed green: Ch1 ADR with thirteen re-evaluation findings → Ch2 `Job` + `JobStatus` types moved from `app_state.rs` into `domain/jobs/entry.rs` via content extraction (not pure `git mv` — source file stays to host `AppState`) → Ch3 full aggregate skeleton with 7 typed commands (`submit`, `start`, `record_item_completed`, `record_item_failed`, `complete`, `fail`, `maintain`), 6 typed queries (`get`, `snapshot`, `list_active`, `active_count`, `find_active_by_prefix`, `changes`), `JobsChanged` internal event + parallel wire-format `JobEvent` emission through `EventBus`, `Arc<Metrics>` injection with register-with-kinds pattern (7 kinds), 22 unit tests, shared-`Arc` strangler wiring (both `AppState::jobs` legacy raw-map field and `AppState::jobs_aggregate` referenced the same `Arc<RwLock<HashMap>>` through Ch4) → Ch4 28 mutation sites in `tasks/job_executors.rs` migrated to typed commands across 5 executors (install_service_task, install_image_direct_task, install_batch_task, refresh_capabilities_task, add_capability_task), private `mark_job_failed` helper deleted, file shrank by 45 lines despite the more verbose command dispatch, `emit_job_started`/`emit_job_completed`/`emit_job_failed` helper calls removed (aggregate fires the wire event internally) → Ch5 10 remaining call sites migrated (`api/v1/jobs.rs` 2 reads → `Jobs::get`/`Jobs::snapshot`, `api/v1/offering_capabilities.rs` 4 sites → `Jobs::find_active_by_prefix` + `Jobs::submit`, `domain/service_lifecycle.rs` 2 inserts → `Jobs::submit`, `bootstrap/run.rs` 1 insert → `Jobs::submit`), `bootstrap/run.rs` 5-second completion-poll loop **deleted entirely** rather than rewritten as the planned `changes()` subscription (discovery: `install_batch_task().await` already guarantees terminal state after Ch4's typed-command finalization, so the poll was always redundant — simpler than the ADR plan), legacy `AppState::jobs: Arc<RwLock<HashMap>>` field deleted, `AppState::jobs` renamed from `jobs_aggregate` across 50 call sites, `JobsReaperTask` added to `task_registry` (10-minute interval, 24-hour terminal TTL enforced by `Jobs::maintain_with`) — closes the "jobs accumulate forever" memory-leak class identified in Ch1 → Ch6 docs closure (context-map Jobs Absent → Full, target-state row marked ✅ COMPLETE, `JobsStore` port removed from port inventory since Jobs is ephemeral, glossary additions, scaffolding.md deferred-job-offerings-field entry, ARCH-0021 frontmatter `completed: 2026-04-11`). Pattern deviations documented (no new spec entries, all three reuse prior books): **ephemeral aggregate** (Book I precedent — no Store port, no persistence, rebuilt empty on startup), **dual event streams** (Book II precedent — `JobsChanged` internal + preserved wire-format `JobEvent` since rake/dashboard SSE consumers already subscribe to the wire stream), **infallible mutations** (Book I precedent — no `JobsError`, warn-level no-op on unknown ids). Exit criteria all met: 0 `state.jobs.(read\|write)` sites, 0 `AppState::jobs: Arc<RwLock<HashMap>>`, 0 inline `Job { ... }` constructions outside `domain/jobs/`, 0 `mark_job_failed` helper, 0 `jobs_aggregate` refs; `JobsReaperTask` registered alongside `RegistryMaintenanceTask`; 671 tests pass (+22 new over the 649 Book III baseline). See ARCH-0021 for full record. | Book IV exit criteria met; ready for Book V (Catalog). |
-| 2026-04-11 | **Book IV Ch1** — Jobs aggregate re-evaluation. Thirteen findings: `Job` and `JobStatus` types live in `app_state.rs` (code-standards §14 violation, moved to `domain/jobs/entry.rs` in Ch2 as content extraction rather than pure `git mv`); 38 call sites across 5 files (28 of them in a single 1,980-line `tasks/job_executors.rs`, 4 in `api/v1/offering_capabilities.rs`, 2 each in `api/v1/jobs.rs` / `bootstrap/run.rs` / `domain/service_lifecycle.rs`); mutation patterns collapse to 6–7 typed commands (`submit`, `start`, `record_item_completed`, `record_item_failed`, `complete`, `fail`, `maintain`); a private `mark_job_failed` helper in `job_executors.rs:1787` already prefigures the command API; **no TTL or reaper exists today** — jobs accumulate forever in memory, so Book IV adds a `maintain` command + `JobsReaperTask` background task (24-hour TTL on terminal jobs) as operational hygiene folded into book scope; ephemeral aggregate (no `JobStore` port, matching Metrics/Tool); dual event streams — new internal `JobsChanged` via `Jobs::changes()` plus preserved wire-format `JobEvent` via `EventBus::emit()` for rake/dashboard SSE consumers (matches Book II `ToolDelta` precedent); `bootstrap/run.rs:1376-1403` 5-second completion-poll loop converted to subscribe to `Jobs::changes()` in Ch5 (clean "poll → subscribe" anti-pattern fix); duplicate-job detection prefix-scan promoted to typed query `Jobs::find_active_by_prefix`; `Job.offerings` semantic wart (holds service names OR capability names) **deferred** to post-epic API realignment via new `docs/scaffolding.md` Deferred Renames entry `deferred-job-offerings-field`; `JobStatus::Pending` variant kept for wire compatibility despite being dead state today; 404-stub body in `get_job_status` preserved (wire contract quirk out of scope); no persistence (Alt A rejected), no `JobEvent` collapse (Alt B rejected — public wire contract), no `Pending` removal (Alt C rejected), no field rename (Alt D deferred), no poll-loop retention (Alt E rejected). Size estimate revised ~700 → ~1,000-1,200 lines. No new pattern deviations — Book IV reuses Ephemeral aggregates and Dual event streams entries in `docs/specs/domain-aggregates.md`. See [ARCH-0021](ARCH-0021-jobs-aggregate.md) for full record. | Chapter 1 re-evaluation of Book IV surfaced type-location violation, the absence of any TTL/reaper (production memory leak bounded only by uptime), the dual-stream requirement due to pre-existing `JobEvent` wire contract, and one clean-architecture poll-loop fix eligible for Book IV scope rather than deferral. |
-| 2026-04-11 | **Book III closed.** Topology aggregate extracted. Chapters landed green: Ch1 ADR → Ch2 `topology.rs` → `topology/mod.rs` pure rename → Ch3 aggregate skeleton with `TopologyChanged` / `ToolError` / `ChirpTransport` / `TopologyStore` ports + Metrics integration → Ch4 9 `crate::announcement::announce` call sites migrated to `state.topology.chirp` → Ch5a command API (SelfEntryInputs + 5 self-entry commands) → Ch5b 5 AppState methods deleted + 18 caller sites migrated via composition helpers → Ch5c 19 `topology::` free-function callers migrated to typed queries; `start_discovery_listener` signature cleaned to take `Arc<Topology>` → Ch5d `current::Topology` sub-struct deleted; last 4 direct cache reads migrated → Ch6 cache/dirty handles internalized on the aggregate (constructor takes no handles); all free functions in `topology/mod.rs` downgraded from `pub` to `pub(super)`; `TopologyCache` / `TopologyDirtyFlag` type aliases flipped to `pub(crate)` (private to the topology module). Exit criteria all met: 0 AppState self-entry methods, 0 `current.topology.{cache,dirty}` sites, 0 `crate::announcement::announce` call sites outside transport adapter, 0 `pub type TopologyCache` / `pub type TopologyDirtyFlag`, 0 `crate::domain::topology::(upsert_from_chirp\|get_all_stones\|get_online_stones\|maintain_topology\|persist_topology\|flush_topology\|new_dirty_flag)` callers. `Topology` is the second persistent aggregate after `Offerings` (full `TopologyStore` port + `flush` command). See ARCH-0020 for full record. | Book III exit criteria met; ready for Book IV (Jobs). |
-| 2026-04-11 | **Book III Ch1** — Topology aggregate re-evaluation. Nine findings: ~80 total touch sites (42 `topology::` callers + 25 `current.topology.{cache,dirty}` + 14 non-AppState self-entry method callers), `current::Topology` is a hollow sub-struct that gets deleted in favour of top-level `state.topology`, `build_self_entry` takes a `SelfEntryInputs` struct rather than an `AppState` back-reference, `announce_resolution_change` keeps mDNS as an explicit input argument (Book X scope boundary), `upsert_from_chirp` / `upsert_from_chirp_dirty` collapse (always-dirty invariant), persistent aggregate with `TopologyStore` port (second persistent aggregate after Offerings), `TopologyChanged` only fires on interesting transitions (not every peer refresh), 9 `crate::announcement::announce` call sites migrate behind `ChirpTransport` port, existing `domain/topology.rs` (678 lines) splits into 9-file module per code-standards §14. See ARCH-0020 for full record. | Chapter 1 re-evaluation of Book III ahead of implementation; no user redirection needed — standard DDD aggregate pattern with documented deviations from Book II (persistent store, no dual-stream wire format). |
-| 2026-04-11 | **Book II closed.** Tool aggregate extracted as the second DDD bounded context after Metrics. Chapters landed green: Ch1 ADR with nine re-evaluation findings → Ch2 module consolidation (pure `git mv` of `garden_registry.rs` + `tools/` into `tool/`) → Ch3 `Tool` aggregate with typed commands/queries + `ToolChanged` event + Metrics injection + 15 unit tests (ARCH-0019 pattern refinement: field-level strangler instead of ActiveGuard wrapper) → Ch4 `ToolsBeaconTransport` port + `P2pBeaconTransport` adapter → Ch5 typed commands with 4 AppState methods deleted (`refresh_local_tools_projection`, `publish_tool_deltas`, `ingest_tools_beacon`, `remove_tools_for_stone`) + 8 caller sites migrated (gateway PUT/DELETE, registry reaper, offerings projection task, storage mutation edge, discovery STONE_GOODBYE + TOOLS_BEACON handlers, announcer, coordinator seed removal) + discovery task signature cleaned to take `Arc<Tool>` → Ch6 14 direct `.registry.read()` sites migrated to typed methods + singular `GET /api/v1/stone/tools/{fqid}` endpoint + pattern spec deviations section (Ephemeral aggregates, Dual event streams, Owned-value queries) + context-map / glossary / frontmatter / this revision history. Pattern deviation recorded: field-level strangler kept `pub(crate) registry` for the 25 remaining infra-layer struct-field sites (`StorageResolver`, `StorageHandle`, cloud filter adapters) that legitimately hold a raw GardenRegistry handle — API/domain/task layer boundary is clean, infra layer retains the handle as documented implementation surface. See ARCH-0019 for full record. | Book II exit criteria met (with documented deferral of the 25 infra-layer sites which are architecturally correct as-is); ready for Book III (Topology). |
-| 2026-04-11 | **Book II scope revised** per Discovery Mandate. Material plan changes: (1) Two modules exist today — `domain/tool/` (aggregate shell, 41 lines, `pub registry`) and `domain/tools/` (plural, ~395 lines, projector + capability orchestrator + events) — plus a free-standing `domain/garden_registry.rs` (1085 lines, the real state). Book II collapses all three into a single singular `domain/tool/` module per code-standards §14. (2) Two of the four planned `AppState` methods — `ingest_tools_beacon` and `remove_tools_for_stone` — are dead code; the real beacon ingress and goodbye-stone paths live in `tasks/discovery.rs` holding raw registry handles. Book II deletes the dead code and migrates the real sites to typed aggregate commands. (3) Fifty direct `tool.registry.read/write` sites across 20+ files (s3_gateway, garden_storage, portrait, webdav, service_discovery, announcer, etc.) — Book II adopts an `ActiveGuard` strangler for compile parity at Ch3 and retires it fully inside Ch6, not crossing into Book III (contrast with ARCH-0016's still-active guard). (4) The projector is deeply coupled to `AppState` (five field reads); Book II takes explicit `LocalProjectionInputs` rather than a back-reference. (5) Storage does not emit events today — Book II keeps imperative storage → tool refresh edges until Book VIII flips them. (6) `Tool::changes()` (domain) and `Tool::delta_stream()` (wire) coexist as a documented deviation — `ToolDelta` is an existing consumer-facing wire contract and cannot be collapsed. (7) New endpoint `GET /api/v1/stone/tools/{fqid}` added as a free win. (8) "Ephemeral aggregates" promoted to a first-class pattern deviation in `docs/specs/domain-aggregates.md` — Metrics, Resources, Tool all fit. Size estimate revised ~1800 → unbounded (user tenet: architectural leanness, not code leanness). See `ARCH-0019-tool-aggregate.md` for full detail. | Chapter 1 re-evaluation of Book II surfaced three active tool-concept modules, 50-site read/write fanout, and two dead-code methods that the original plan treated as live migration targets; user confirmed full-scope retire-inside-book strangler, singular lookup endpoint, and the "leanness of ARCHITECTURE" tenet. |
-| 2026-04-11 | **Book I closed.** Metrics aggregate extracted, Offerings retrofit complete, supervisor wired with lifecycle observability. Chapters landed green: Ch1 re-evaluation → Ch2 resources rename → Ch3 new aggregate (state/snapshot/event/tests) → Ch4 Offerings & supervisor integration → Ch5 HTTP read surface (7 handlers + SSE) → Ch6 docs closure (context-map, glossary, ARCH-0018 frontmatter). Pattern deviations documented: no Store port (ephemeral), infallible mutations (no `MetricsError`), no `affected` field on events. Register-with-kinds enables lock-free hot path. `PlacementMetrics` wire-format rename deferred to scaffolding.md for post-epic API realignment. See ARCH-0018 for full record. | Book I exit criteria met; ready for Book II (Tool aggregate). |
-| 2026-04-11 | **Book I scope revised** per Discovery Mandate. Material plan changes: (1) Existing `/api/v1/stone/metrics` endpoint (and `MetricsSnapshot` type, `metrics_collection` module, `StoneInfoApi::metrics()` client, manifest entry) is renamed to `/api/v1/stone/resources` — the existing content was always hardware resources, never observability metrics. This frees the "metrics" name for the new aggregate. (2) The new `Metrics` aggregate is **complementary to, not duplicative of,** `SupervisorHandle` from ARCH-0015 — the supervisor owns task *lifecycle state* (Waiting/Running/Completed); Metrics owns task *observability data* (timings, event counts, lag). `/api/v1/stone/tasks` and `/api/v1/stone/metrics/tasks/{name}` become separate endpoints with correlated data. (3) URL surface expands to four sibling top-level paths — `/capabilities` (static), `/resources` (dynamic hardware), `/tasks` (lifecycle), `/metrics` (observability) — with sub-paths inside `/metrics` for slices (`/global`, `/domains`, `/domains/{name}`, `/tasks`, `/tasks/{name}`, `/stream` for SSE). (4) Prometheus exporter explicitly out of Book I scope; deferred to a post-epic adapter (`?format=prometheus` or a separate `/prometheus` path can layer on later). (5) Minor improvement: singular `/api/v1/stone/tasks/{name}` endpoint added alongside the plural. Book I size estimate revised from ~1,500 to ~2,000 lines. See `ARCH-0018-metrics-aggregate.md` for full detail. | Chapter 1 re-evaluation of Book I surfaced name collision with existing hardware-resource endpoint and opportunity to split task lifecycle (supervisor) from task observability (metrics); user confirmed all four URL questions. |
+| Date | Change | ADR |
+|------|--------|-----|
+| 2026-04-12 | **Book VII closed.** Health — stateless probe facade, `HealthProbe` port, `DockerHealthProbe` adapter, 724 tests. | [ARCH-0024](ARCH-0024-health-aggregate.md) |
+| 2026-04-12 | **Book VI closed.** Subsystems — `watch` channels replace `AtomicBool` flags, lock-free state deviation, 707 tests. | [ARCH-0023](ARCH-0023-subsystems-aggregate.md) |
+| 2026-04-12 | **Book V closed.** Catalog — frozen `ManifestRegistry` + compiled index, first typed `CatalogError`, third persistent aggregate, 692 tests. | [ARCH-0022](ARCH-0022-catalog-aggregate.md) |
+| 2026-04-11 | **Book IV closed.** Jobs — ephemeral with `JobsReaperTask` (24h TTL), dual event streams, infallible mutations, 671 tests. | [ARCH-0021](ARCH-0021-jobs-aggregate.md) |
+| 2026-04-11 | **Book III closed.** Topology — persistent with `TopologyStore` + `ChirpTransport` ports, `SelfEntryInputs` composition, 649 tests. | [ARCH-0020](ARCH-0020-topology-aggregate.md) |
+| 2026-04-11 | **Book II closed.** Tool — field-level strangler, dual event streams, `ToolsBeaconTransport` port, 649 tests. | [ARCH-0019](ARCH-0019-tool-aggregate.md) |
+| 2026-04-11 | **Book I closed.** Metrics — register-with-kinds, lock-free hot path, 7 HTTP handlers + SSE, resources rename. | [ARCH-0018](ARCH-0018-metrics-aggregate.md) |
+| 2026-04-11 | **Book 0.** Prologue — pattern spec, context map, scaffolding tracker, glossary. | — |
+| 2026-04-11 | Initial acceptance. | Epic commits to 21-book arc |
+| 2026-04-11 | Added **Discovery Mandate**. Plan is a living hypothesis; Ch1 re-evaluates against code. | User directive |
 
 ## Context
 
@@ -827,78 +821,65 @@ impl BackgroundTask for <Consumer>ProjectionTask {
 
 ## The Chapter Template
 
-Every book (except the Prologue) has the same six-chapter structure:
+Every book (except the Prologue) follows this structure. Chapters may be
+combined when the scope is small (e.g., Ch2+Ch3, Ch4+Ch5).
+
+### Chapter 0 — Architecture Discussion *(conversation, no commit)*
+
+Required for complex domains (Books VIII+). Optional for simple extractions.
+
+- **Survey the code**: read domain files, count call sites, map data flow.
+- **Present the concept map**: how the code sees this domain today —
+  types, relationships, state locations, event flow.
+- **Propose the target model**: what the domain *should* look like,
+  grounded in the survey.
+- **Discuss**: the user reacts, redirects, refines. Converge on a
+  design. This becomes the input to Ch1's ADR.
+
+Ch0 exists because the most valuable architectural insights come from
+the collision between code facts and domain thinking — not from solo
+discovery. Books I–VII proved that the books requiring user redirection
+(II, VIII) were the ones where Ch0 would have saved time.
 
 ### Chapter 1 — Scope & ADR
 
 - **Re-evaluate the plan against the current code** (per [The
-  Discovery Mandate](#the-discovery-mandate)). Read the relevant
-  modules with clean-architecture eyes. Ask: is the plan for this
-  book still right? Is the context named correctly? Does it actually
-  hold what the plan says it holds? Does it have dependencies the
-  plan missed? Should it split, merge, or move?
-- **If the plan needs to change, change it now**, before writing any
-  code. Update the ARCH-0017 revision history. Update
-  [docs/reference/context-map.md](../reference/context-map.md).
-  Surface material changes to the user in the book's opening message.
+  Discovery Mandate](#the-discovery-mandate)). If Ch0 produced an
+  agreed model, Ch1 formalizes it as an ADR. If no Ch0, Ch1 does both
+  discovery and formalization.
 - Write the book's own ADR as `ARCH-NNNN-<book-name>.md`.
 - Define the bounded context's surface: state, events, ports, errors,
   commands, queries.
-- Declare which existing `AppState` fields/methods move into the
-  context.
-- Declare which existing call sites must migrate.
-- Declare removal triggers for any scaffolds introduced.
-- Commit: one ADR file (possibly alongside a small plan-amendment
-  commit to ARCH-0017 if the discovery warrants it).
+- Declare exit criteria.
+- Commit: docs-only.
 
-### Chapter 2 — Extract the aggregate
+### Chapters 2–5 — Build, wire, migrate, delete
 
-- Create `domain/<context>/` module with `mod.rs`, `aggregate.rs`,
-  `event.rs`, `error.rs`, `port.rs`, (`state.rs` if non-trivial).
-- Implement the aggregate per the pattern spec.
-- Implement the persistence port and file-backed adapter.
-- Wire the aggregate into bootstrap (construction only — no call site
-  migration yet).
-- Add `FromRef<AppState>` impl for the aggregate.
-- Commit: one commit introducing the context.
+The exact split varies by book. The common pattern:
 
-### Chapter 3 — Wire events & projections
+- **Extract**: create `domain/<context>/` module, aggregate, events,
+  ports, tests. Wire into bootstrap + `FromRef<AppState>`.
+- **Migrate**: move every call site to the aggregate's typed API.
+  Delete old `AppState` fields and free functions.
+- **Clean up**: delete scaffolds, re-exports, back-compat aliases.
+  Enter any cross-book scaffolds in `docs/scaffolding.md`.
 
-- Introduce any `BackgroundTask` projection subscribers.
-- Register them in `task_registry::build_task_registry`.
-- Wire Metrics integration (`record_domain_event`, `record_mutation_latency`).
-- Commit: one commit adding tasks and metrics wiring.
-
-### Chapter 4 — Migrate call sites
-
-- Every external call site that used to read or write through the old
-  surface now goes through the aggregate.
-- Old methods on `AppState` are deleted, not deprecated.
-- Old fields on `AppState` are deleted.
-- Test scaffold for the aggregate is written at this chapter (not
-  earlier, to avoid testing against an API that may still change).
-- Commit: one commit (possibly large) migrating all call sites.
-
-### Chapter 5 — Delete the old surface
-
-- Any residual shims, scaffolds, re-exports, or back-compat aliases that
-  were introduced in earlier chapters of this book are deleted here.
-- If the book introduces a scaffold for a future book, that scaffold is
-  entered in `docs/SCAFFOLDING.md` with its removal trigger.
-- Commit: one commit cleaning up.
+Each commit lands green on `dev`. A book may use 1–4 commits depending
+on blast radius.
 
 ### Chapter 6 — Verify & document
 
-- Run the verification invariants: `rg` patterns that must return 0
-  matches, `cargo build --package garden-moss`, `cargo test --package
-  garden-moss`, `cargo clippy -- -D warnings`.
+- Run exit-criteria `rg` patterns (must return 0 matches).
+- `cargo check --all && cargo test --package garden-moss --lib &&
+  cargo clippy --package garden-moss --lib -- -D warnings`
 - Update `docs/reference/context-map.md` with the finalized context.
-- Update `docs/reference/glossary.md` with any new terms.
-- Update the book's ADR status from "Proposed" to "Accepted".
-- Commit: one commit finalizing.
+- Update `docs/glossary.md` with any new terms.
+- Update the book's ADR frontmatter (`completed: <date>`).
+- Add a one-line entry to the ARCH-0017 revision history table.
+- Commit: docs-only.
 
-Total: 6 commits per book. A book is ~600–2000 lines of diff on average,
-with Storage (Book VIII) and HttpApi (Book XVII) being the outliers.
+**Not in Ch6**: memory file updates (MEMORY.md, project_arch0017_ddd_epic.md).
+These are AI session context, not project deliverables.
 
 ## The Book List
 
@@ -1501,12 +1482,19 @@ owning context.
 
 **Estimated size:** ~1500 lines (rename + final cleanup)
 
-### Book XX — Epilogue: CI Enforcement
+### Book XX — Epilogue: CI Enforcement + Deferred Renames
 
-**Scope:** Lock in the pattern with automated checks. Write the epic
-postmortem. Update all docs to reflect the final shape.
+**Scope:** Lock in the pattern with automated checks. Settle all
+deferred renames. Write the epic postmortem.
 
 **Deliverables:**
+- **Resolve all deferred renames** in `docs/scaffolding.md`. Every
+  entry's wire-format rename is coordinated across moss, rake, and
+  consumers in a single sweep. No deferred rename survives past this
+  book. Current entries:
+  - `deferred-placement-metrics` (Book I)
+  - `deferred-job-offerings-field` (Book IV)
+  - `deferred-registry-loader-task-rename` (Book V)
 - CI check: `cargo-modules` layering lint (`domain/` cannot import
   `infra/`)
 - CI check: custom script forbidding:
@@ -1516,20 +1504,17 @@ postmortem. Update all docs to reflect the final shape.
   - `anyhow::Error` in return types inside `domain/` modules
 - CI check: every `BackgroundTask` that subscribes to a `changes()`
   stream uses subscribe-before-seed pattern (heuristic grep)
-- Scaffolding tracker audit: `docs/SCAFFOLDING.md` should be empty of
-  active entries by this point
-- Epic postmortem: `docs/history/arch-0017-epic-postmortem.md` —
-  what landed, what took longer than expected, what design decisions
-  proved right, what we'd do differently
+- Scaffolding tracker audit: `docs/SCAFFOLDING.md` must be empty of
+  both active entries and deferred renames by this book's close
+- Epic postmortem: `docs/history/arch-0017-epic-postmortem.md`
 - Refresh `docs/reference/components.md`, `docs/specs/*`, and the
   project README to reflect the final architecture
-- No Rust code changes (or only CI/build-script changes)
 
 **Dependencies:** All prior books
 
 **Exit criteria:**
 - All CI checks enabled on `main`
-- `docs/SCAFFOLDING.md` has zero active entries
+- `docs/SCAFFOLDING.md` has zero entries (active or deferred)
 - Postmortem written and linked from `docs/history/`
 
 **Estimated size:** ~500 lines (mostly CI + docs)

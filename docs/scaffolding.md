@@ -203,9 +203,9 @@ check:
 
 A third category exists for renames that **were not performed** during the epic because the affected surface is part of an external wire contract (JSON response body, UDP payload, SSE event shape) consumed by another crate or another process. Renaming these would break Rake, orchestrators, or external dashboards.
 
-Each entry here is a **deliberate non-rename**. It is not a scaffold (no temporary code exists) and not a scaffold removal (nothing was deleted). It is a note that a better internal name was left alone, and a commitment to revisit when a coordinated API realignment can be done across moss, rake, and consumers.
+Each entry here is a **deliberate non-rename**. It is not a scaffold (no temporary code exists) and not a scaffold removal (nothing was deleted). It is a note that a better internal name was left alone, with a concrete resolution point.
 
-**Rule:** entries here do not block the epic. They do not run through `check-scaffolding.sh`. They exist as a searchable, durable record that survives the epic and feeds into a future "API realignment" effort.
+**Mandate:** All deferred renames are resolved in the **Epilogue (Book XX)**. Every entry's wire-format rename is coordinated across moss, rake, and consumers in a single sweep. No entry survives past the epic. See [ARCH-0017 Book XX](decisions/ARCH-0017-ddd-monolith-epic.md).
 
 ### deferred-registry-loader-task-rename: `registry-loader` task is misnamed
 
@@ -213,7 +213,7 @@ Each entry here is a **deliberate non-rename**. It is not a scaffold (no tempora
 id: deferred-registry-loader-task-rename
 kind: deferred-rename
 introduced_in: ARCH-0022 Book V Chapter 6
-revisit_when: Post-moss-epic task name realignment
+revisit_when: Epilogue (Book XX)
 ```
 
 **What would have been renamed:**
@@ -244,7 +244,7 @@ A future task-name cleanup (possibly Book XVIII or a post-epic effort) renames t
 id: deferred-placement-metrics
 kind: deferred-rename
 introduced_in: ARCH-0018 Book I Chapter 2
-revisit_when: Post-moss-epic API realignment
+revisit_when: Epilogue (Book XX)
 ```
 
 **What would have been renamed:**
@@ -282,7 +282,7 @@ The revisit is **not in scope** for any ARCH-0017 book. It is a separate effort 
 id: deferred-job-offerings-field
 kind: deferred-rename
 introduced_in: ARCH-0021 Book IV Chapter 1
-revisit_when: Post-moss-epic API realignment
+revisit_when: Epilogue (Book XX)
 ```
 
 **What would have been renamed:**

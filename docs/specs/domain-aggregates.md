@@ -1076,90 +1076,59 @@ Before opening a PR introducing a new bounded context, verify every box:
 
 ---
 
-## Documented deviations
+## Aggregate Shape Decisions
 
-The pattern below is the default shape. Five deviations are documented as first-class variants rather than special cases in individual ADRs:
+After seven books, the aggregate pattern is not a single shape with
+exceptions — it is a family of shapes. Each aggregate makes five design
+decisions. This section documents those decisions and when to choose each
+option.
 
-### Ephemeral aggregates (no Store port)
+### 1. Persistence: ephemeral vs persistent
 
-Some aggregates have no persistence — their state is rebuilt from other domains plus runtime sources on every startup, and no saved invariant survives a process restart. These aggregates are defined as **ephemeral**:
+| Shape | Store port | `load`/`save` | When to use |
+|-------|-----------|---------------|-------------|
+| **Ephemeral** | None | State starts empty on every boot | State is observation (Metrics), cache (Tool), or has no restart-to-restart continuity (Jobs, Subsystems, Health) |
+| **Persistent** | `Arc<dyn Store>` | `load` on construction, `save` after mutations | Aggregate owns domain truth that must survive restart (Offerings, Topology, Catalog) |
 
-- **No `Store` port** on the aggregate.
-- **No `load` on construction**.
-- **No `save` in `finalize`** — the `finalize` step only records metrics and emits events.
-- **Same typed-command, typed-query, `changes()` broadcast shape** as persistent aggregates otherwise.
+### 2. Error shape: infallible vs typed
 
-Current instances:
+| Shape | Return type | When to use |
+|-------|------------|-------------|
+| **Infallible** | `()` or value; warn-level no-op on bad input | No persistence port to fail, no cross-context invariants to violate (Metrics, Jobs, Subsystems, Health) |
+| **Typed errors** | `Result<T, DomainError>` with `thiserror` enum | Distinct I/O failure paths, or callers benefit from matching on variants (Catalog: `ManifestHashFailed`, `CompilationFailed`, `CacheReadFailed`, `CacheWriteFailed`) |
 
-| Aggregate | Rebuilt from | Book |
-|-----------|--------------|------|
-| **Metrics** | counters start at zero; state is observation data, not domain truth | I (ARCH-0018) |
-| **Resources** | `Current::Resources` hardware snapshots read from the OS on demand | I (rename only) |
-| **Tool** | `Offerings::changes()` projection + storage volumes + remote beacons + gateway TTL reaping | II (ARCH-0019) |
+### 3. Event streams: single vs dual
 
-**When to use**: the aggregate's state is **observation** (metrics, resources) or **cache** (tool registry rebuilt from source-of-truth domains + runtime events). Persistence would duplicate state that already has an authoritative source elsewhere.
+| Shape | Streams | When to use |
+|-------|---------|-------------|
+| **Single** | `changes() → broadcast::Receiver<XxxChanged>` | Greenfield aggregates that own their wire format (Metrics, Topology, Catalog, Subsystems, Health) |
+| **Dual** | `changes()` (internal) + wire-format stream via `EventBus` | A pre-existing wire contract (SSE, UDP beacon) cannot be collapsed. Both streams fed atomically from every command. (Tool: `ToolDelta`, Jobs: `JobEvent`) |
 
-**When NOT to use**: the aggregate owns domain truth that must survive restart (offerings, pond, harvests, nurturing). Those stay with `Store` ports.
+### 4. State locking: `RwLock` vs lock-free
 
-### Dual event streams (internal + wire format)
+| Shape | Interior | When to use |
+|-------|----------|-------------|
+| **`RwLock<State>`** | Standard read/write guard | State mutates structurally at runtime (Offerings, Topology, Catalog, Jobs, Tool) |
+| **Lock-free** | `HashMap` frozen after bootstrap; mutations via `watch::Sender::send_modify` or atomics | State map never structurally changes after a single-threaded registration phase (Subsystems, Metrics counter map) |
 
-Most aggregates expose a single `changes()` stream carrying a domain event type. Some — notably `Tool` — expose **two parallel streams** from the same command gateway:
+### 5. Query return: owned vs closure
 
-- `changes()` → internal `XxxChanged` domain event (rich metadata, process-local subscribers).
-- `delta_stream()` (or equivalent) → wire-format event type that predates the aggregate extraction and cannot be collapsed without breaking external consumers.
+| Shape | Call site | When to use |
+|-------|-----------|-------------|
+| **Owned clones** | `fn snapshot() → Vec<T>` | Default. Clone cost dwarfed by lock-acquire cost. Simpler call sites. |
+| **Closure-style** | `fn with_active<F, R>(&self, f: F) → R` | Proven hot-path regressions only. Never by default. |
 
-Both streams are fed atomically from every command. The wire format is a pre-existing consumer-facing contract (SSE clients, UDP beacon receivers, peer stones); the domain event is the refactor's richer shape that will never leave the process.
+### Decision matrix by aggregate
 
-**When to use**: an existing wire format is already consumed by clients that the book is not migrating. Keep both; document the deviation in the ADR.
-
-**When NOT to use**: greenfield aggregates that own their own wire format. Emit one event type.
-
-### Typed errors (first-class domain error enums)
-
-The pattern default is `anyhow::Result` for command return types — sufficient when the aggregate is infallible (Metrics, Jobs) or when failure modes are unstructured (Topology). When commands have structured, domain-meaningful failure modes worth propagating (disk I/O variants, per-item compilation errors, fingerprint hash failures), use a typed `thiserror` enum:
-
-```rust
-#[derive(Debug, thiserror::Error)]
-pub enum CatalogError {
-    #[error("failed to hash manifests for fingerprint")]
-    ManifestHashFailed(#[source] anyhow::Error),
-    #[error("failed to compile offering {offering}")]
-    CompilationFailed { offering: String, #[source] source: anyhow::Error },
-    #[error("failed to read catalog cache from disk")]
-    CacheReadFailed(#[source] anyhow::Error),
-    #[error("failed to write catalog cache to disk")]
-    CacheWriteFailed(#[source] anyhow::Error),
-}
-```
-
-Commands return `Result<(), CatalogError>`. API handlers at the boundary wrap into `anyhow::Error` for the existing 5xx path; domain-internal callers can pattern-match on failure mode.
-
-**When to use**: persistent aggregates with distinct I/O failure paths, or any aggregate where callers benefit from matching on error variants rather than parsing error messages.
-
-**When NOT to use**: ephemeral aggregates with no persistence and no domain invariants to violate (Metrics, Jobs). Use infallible mutations instead.
-
-**First application**: Catalog aggregate (ARCH-0022, Book V) — the first in the epic with typed `CatalogError`.
-
-### Owned-value queries (no borrowed references across locks)
-
-Query methods on an aggregate with `RwLock`-protected state cannot return references into the inner state because the lock guard drops at the method boundary. Two shapes are possible:
-
-1. Return owned clones (`Vec<Offering>`, `Option<RegistryEntry>`). Simple. Clone cost per call.
-2. Provide a `with_active<F, R>(&self, f: F) -> R` closure method that holds the guard for the closure's duration.
-
-The pattern default is **owned clones** — they are simpler at the call site, and the clone cost is dwarfed by the lock-acquire cost for all but the hottest paths. Hot-path callers get dedicated typed methods that return already-filtered results (`Tool::storage_primary`, `Tool::find_s3_gateways`) rather than iterating a cloned `Vec`.
-
-**When to use closure-style queries**: proven hot-path performance regressions. Never by default.
-
-### Lock-free state (no internal RwLock)
-
-The standard pattern uses `RwLock<State>` to protect the aggregate's mutable interior. Some aggregates have state that is structurally immutable after bootstrap (the shape of the `HashMap` never changes) and where mutations are handled by an inherently thread-safe primitive (`watch::Sender::send_modify`, atomic operations).
-
-In these cases, the `RwLock` is unnecessary overhead. The aggregate stores a plain `HashMap` populated during single-threaded bootstrap (via `register()` calls) and never structurally modified afterward. Mutations flow through the inherently thread-safe channel primitives.
-
-**When to use**: the aggregate's state map is frozen after a single-threaded registration phase, and mutations go through a thread-safe channel type.
-
-**Aggregate using this deviation**: Subsystems (Book VI — `HashMap<String, watch::Sender<bool>>`, frozen after bootstrap, mutated via `watch::Sender::send_modify`).
+| Aggregate | Persistence | Errors | Events | Locking | Queries | Book |
+|-----------|------------|--------|--------|---------|---------|------|
+| Metrics | Ephemeral | Infallible | Single | Lock-free (register-with-kinds) | Owned | I |
+| Tool | Ephemeral | Infallible | Dual (`ToolDelta` wire) | RwLock | Owned | II |
+| Topology | Persistent | Infallible | Single | RwLock | Owned | III |
+| Jobs | Ephemeral | Infallible | Dual (`JobEvent` wire) | RwLock | Owned | IV |
+| Catalog | Persistent | Typed (`CatalogError`) | Single | RwLock | Owned | V |
+| Subsystems | Ephemeral | Infallible | Single | Lock-free (`watch`) | Owned | VI |
+| Health | Ephemeral | Infallible | Single | — (stateless facade) | — | VII |
 
 ---
 

@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 /// - On `RoleChanged`: arm if promoted to Primary, disarm if demoted.
 pub fn start_s3_listener_lifecycle(state: AppState, token: CancellationToken) {
     tokio::spawn(async move {
-        let mut rx = state.subscribe_storage_changed();
+        let mut rx = state.current.storage.changed.subscribe();
 
         tracing::info!("S3 listener lifecycle task started (STORAGE-0016)");
 

@@ -1138,7 +1138,7 @@ pub async fn reassign_service_v1(
         &offering_id,
         &old_name,
         &new_name,
-        state.stone_name(),
+        &state.current.stone.name,
     ));
 
     tracing::info!(

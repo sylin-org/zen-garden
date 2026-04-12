@@ -951,7 +951,7 @@ async fn add_at_path(
     // Signal the volume watcher to re-scan. The existing pipeline will
     // re-classify this volume (finding the new manifest), update candidates
     // notification, emit pulses, and broadcast the beacon.
-    state.request_volume_rescan();
+    let _ = state.current.storage.coordination.rescan.try_send(());
 
     // STORAGE-0013: Emit domain event — beacon subscriber reacts
     state

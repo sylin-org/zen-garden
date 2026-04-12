@@ -112,7 +112,7 @@ pub async fn upsert(state: &AppState, offering: Offering) {
         state.event_bus.emit(OfferingEvent::deployed(
             &offering_id,
             &name,
-            state.stone_name(),
+            &state.current.stone.name,
             "", // image not known at upsert time
         ));
     }
@@ -131,7 +131,7 @@ pub async fn remove(state: &AppState, offering_id: &str, name: &str) {
     state.event_bus.emit(OfferingEvent::removed(
         offering_id,
         name,
-        state.stone_name(),
+        &state.current.stone.name,
     ));
 }
 
@@ -143,7 +143,7 @@ pub async fn remove_by_name(state: &AppState, name: &str) {
         state.event_bus.emit(OfferingEvent::removed(
             &offering_id,
             name,
-            state.stone_name(),
+            &state.current.stone.name,
         ));
     }
 }
@@ -192,7 +192,7 @@ pub async fn mark_running(state: &AppState, offering_id: &str, name: &str) {
         state.event_bus.emit(OfferingEvent::started(
             offering_id,
             name,
-            state.stone_name(),
+            &state.current.stone.name,
         ));
     }
 }
@@ -211,7 +211,7 @@ pub async fn mark_stopped(state: &AppState, offering_id: &str, name: &str) {
         state.event_bus.emit(OfferingEvent::stopped(
             offering_id,
             name,
-            state.stone_name(),
+            &state.current.stone.name,
         ));
     }
 }

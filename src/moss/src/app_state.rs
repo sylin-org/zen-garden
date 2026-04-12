@@ -1,17 +1,9 @@
-//! Application state shared across HTTP handlers
+//! Moss daemon runtime — the central dependency injection container.
 //!
-//! Holds all dependencies for moss daemon:
-//! - Offerings registry (Vec<Offering>)
-//! - Client manager
-//! - Manifest registry (unified software/hardware manifests)
-//! - Job tracking
-//! - Event broadcasting
-//! - Hardware capabilities cache
-//! - Console printer
-//! - mDNS handle for resolution announcements
-//! - Notification registry for cross-stone awareness tags
-//!
-//! This is the unified AppState used by both main.rs and all API handlers.
+//! After ARCH-0017 aggregate extraction, this struct holds `Arc<Aggregate>`
+//! fields for each bounded context plus cross-cutting infrastructure
+//! (shutdown token, event bus, console). The only method with logic is
+//! `emit_storage_changed`, which coordinates across multiple aggregates.
 
 use crate::domain::{
     Catalog, Health, Jobs, Metrics, Offerings, Security, Subsystems, Tool,
@@ -24,25 +16,13 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-// Job value objects moved to `domain/jobs/entry.rs` in Book IV Ch2 of
-// ARCH-0017. Re-exported here so `use crate::{Job, JobStatus}` at the
-// crate root keeps resolving for call sites during the Ch3–Ch5
-// migration.
-pub use crate::domain::jobs::{Job, JobStatus};
 
-// Offerings types moved to domain/catalog/ in Book V (ARCH-0022)
-pub use crate::domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndex};
-
-// Offering types (unified)
-pub use garden_common::{
-    AdoptedData, BorrowedData, ManagedData, Offering, OfferingLocation, OfferingMode,
-    OfferingModeData, OfferingStatus,
-};
-
-/// Application state for HTTP handlers
+/// Moss daemon runtime — central dependency injection container.
 ///
-/// This is the central dependency injection container for moss.
-/// All fields are wrapped in Arc for cheap cloning across tasks.
+/// Each domain aggregate is an `Arc<T>` field. Cross-cutting concerns
+/// (shutdown token, event bus, console, log channel) live here directly.
+/// The only method with logic is [`emit_storage_changed`](Self::emit_storage_changed),
+/// which coordinates across multiple bounded contexts.
 #[derive(Clone)]
 pub struct AppState {
     /// Current domain — this stone's identity, local storage, topology, capabilities, resources.
@@ -257,70 +237,20 @@ impl axum::extract::FromRef<AppState> for Arc<ConsolePrinter> {
 }
 
 // ============================================================================
-// Subsystem Readiness
+// Cross-cutting coordination (STORAGE-0013)
 // ============================================================================
 
 impl AppState {
-    /// Subscribe to the live log stream.
-    ///
-    /// Returns a broadcast receiver of log lines for SSE streaming.
-    pub fn log_stream(&self) -> tokio::sync::broadcast::Receiver<String> {
-        self.log.subscribe()
-    }
-
-    /// Subscribe to the unified pulse event stream.
-    ///
-    /// Returns a broadcast receiver of [`PulseEvent`] (domain + transport events).
-    /// Consumers: pulse SSE (full firehose), presence SSE (domain-only, translated).
-    pub fn pulse_stream(&self) -> tokio::sync::broadcast::Receiver<PulseEvent> {
-        self.pulse.subscribe()
-    }
-
-    /// Request the volume watcher to re-scan and re-classify all volumes.
-    ///
-    /// Non-blocking. If the channel is full (a rescan is already pending),
-    /// the request is silently dropped — one rescan is sufficient.
-    pub fn request_volume_rescan(&self) {
-        let _ = self.current.storage.coordination.rescan.try_send(());
-    }
-
-    /// Get stone ID (GUID v7)
-    pub fn stone_id(&self) -> &str {
-        &self.current.stone.id
-    }
-
-    /// Get stone name
-    pub fn stone_name(&self) -> &str {
-        &self.current.stone.name
-    }
-
-    // Self-entry construction and chirp methods moved to the Topology
-    // aggregate in ARCH-0020 Book III. Composition helpers at
-    // `crate::domain::topology::composition::*` assemble `SelfEntryInputs`
-    // from AppState and delegate to the aggregate's typed commands.
-
-    // ========================================================================
-    // The stone-health and resolution-change methods have moved to
-    // `crate::domain::topology::composition::*` per ARCH-0020 Book III.
-
-    /// Recover incomplete ceremonies from previous run.
-    ///
-    /// Delegates to the Security aggregate's `recover_ceremonies` command.
-    pub async fn recover_ceremonies(&self) -> anyhow::Result<usize> {
-        self.security.recover_ceremonies().await
-    }
-
-    // ========================================================================
-    // Storage Events (STORAGE-0013)
-    // ========================================================================
-
     /// Emit a storage domain event.
     ///
-    /// Subscribers (beacon, cloud filter, watcher, coordinator, projector)
-    /// react by pulling fresh state from AppState boundary methods.
-    /// Also emits through EventBus so PulseDomainBridge translates the event
-    /// for SSE consumers, and triggers an immediate tools projection refresh
-    /// so the registry stays coherent with storage state.
+    /// Coordinates across multiple bounded contexts: bridges the event to
+    /// `EventBus` (so `PulseDomainBridge` translates for SSE), sends on the
+    /// dedicated `StorageChanged` broadcast channel (infra subscribers),
+    /// triggers an immediate tools projection refresh, and nudges
+    /// orchestration so role resolution reacts to storage changes.
+    ///
+    /// This method is genuinely cross-cutting and cannot live in any single
+    /// aggregate — it stays on the root struct.
     pub async fn emit_storage_changed(&self, event: garden_common::storage::StorageChanged) {
         tracing::debug!(event = ?event, "Storage domain event");
 
@@ -335,24 +265,11 @@ impl AppState {
         // Refresh immediately so registry consumers see the change without polling.
         // The helper re-projects, reconciles into the Tool aggregate, and
         // publishes any wire deltas via the injected beacon transport so
-        // remote stones learn about the change. Storage will emit its own
-        // domain events in Book VIII; until then this imperative edge is
-        // the explicit coupling between the two bounded contexts.
+        // remote stones learn about the change.
         crate::domain::tool::projection::reproject_and_publish(self).await;
 
         // Nudge orchestration so role resolution (Primary/Dormant) reacts
         // immediately to connect/disconnect/role changes (STORAGE-0018).
         self.current.storage.coordination.nudge.notify_one();
-    }
-
-    /// Subscribe to storage domain events.
-    ///
-    /// Returns a broadcast receiver. Callers should `select!` on this alongside
-    /// their shutdown token. Missed events (lagged receiver) are non-fatal —
-    /// subscribers should do a full reconcile on lag.
-    pub fn subscribe_storage_changed(
-        &self,
-    ) -> tokio::sync::broadcast::Receiver<garden_common::storage::StorageChanged> {
-        self.current.storage.changed.subscribe()
     }
 }

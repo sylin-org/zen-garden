@@ -36,7 +36,7 @@ impl BackgroundTask for FsWatcherTask {
             }
             ctx.ready.signal();
 
-            let mut storage_rx = ctx.state.subscribe_storage_changed();
+            let mut storage_rx = ctx.state.current.storage.changed.subscribe();
             let heartbeat = tokio::time::Duration::from_secs(60);
 
             loop {

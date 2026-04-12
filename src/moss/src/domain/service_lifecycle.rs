@@ -76,7 +76,7 @@ pub async fn stop(state: &AppState, service_name: &str) -> Result<LifecycleOutco
     state.event_bus.emit(OfferingEvent::stopped(
         &offering_id,
         service_name,
-        state.stone_name(),
+        &state.current.stone.name,
     ));
 
     Ok(LifecycleOutcome {
@@ -225,7 +225,7 @@ pub async fn start(state: &AppState, service_name: &str) -> Result<LifecycleOutc
     state.event_bus.emit(OfferingEvent::started(
         &offering_id,
         service_name,
-        state.stone_name(),
+        &state.current.stone.name,
     ));
 
     Ok(LifecycleOutcome {
@@ -303,9 +303,9 @@ async fn remove_impl(
 
     // Emit domain event
     let event = if hard_delete {
-        OfferingEvent::destroyed(&offering_id, service_name, state.stone_name())
+        OfferingEvent::destroyed(&offering_id, service_name, &state.current.stone.name)
     } else {
-        OfferingEvent::removed(&offering_id, service_name, state.stone_name())
+        OfferingEvent::removed(&offering_id, service_name, &state.current.stone.name)
     };
     state.event_bus.emit(event);
 
@@ -728,7 +728,7 @@ pub async fn nourish(state: &AppState, service_name: &str) -> Result<NourishOutc
     state.event_bus.emit(OfferingEvent::updated(
         &offering_id,
         service_name,
-        state.stone_name(),
+        &state.current.stone.name,
         &old_image,
         &new_image,
     ));

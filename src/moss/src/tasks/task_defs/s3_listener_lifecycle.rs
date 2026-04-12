@@ -28,7 +28,7 @@ impl BackgroundTask for S3ListenerLifecycleTask {
                 return TaskOutcome::Cancelled;
             }
 
-            let mut rx = ctx.state.subscribe_storage_changed();
+            let mut rx = ctx.state.current.storage.changed.subscribe();
             tracing::info!("S3 listener lifecycle task started (STORAGE-0016)");
 
             // Initial arm for all existing primaries

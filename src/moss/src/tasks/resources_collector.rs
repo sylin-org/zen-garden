@@ -102,7 +102,7 @@ pub async fn run_resources_collector(state: AppState, token: tokio_util::sync::C
 
     // STORAGE-0013: Subscribe to StorageChanged for immediate candidates refresh.
     // Without this, candidates notification waits up to 30s for the next disk tick.
-    let mut storage_rx = state.subscribe_storage_changed();
+    let mut storage_rx = state.current.storage.changed.subscribe();
 
     loop {
         tokio::select! {

@@ -106,7 +106,7 @@ pub(crate) async fn start_background_tasks(
     }
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
-    match state.recover_ceremonies().await {
+    match state.security.recover_ceremonies().await {
         Ok(0) => tracing::debug!("No incomplete ceremonies to recover"),
         Ok(n) => tracing::warn!(count = n, "Recovered incomplete ceremonies"),
         Err(e) => tracing::error!(error = ?e, "Failed to recover ceremonies"),
@@ -264,7 +264,7 @@ pub(crate) async fn start_background_tasks(
             state.tool.registry.clone(),
             state.current.stone.id.clone(),
             state.current.storage.coordination.tick.raw.clone(),
-            state.subscribe_storage_changed(),
+            state.current.storage.changed.subscribe(),
             state.tool.delta_stream(),
             state.console.clone(),
             shutdown_token.child_token(),

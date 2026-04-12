@@ -32,7 +32,7 @@ impl BackgroundTask for StorageConsoleTask {
             ctx.ready.signal();
 
             let runtime = ctx.state.platform.runtime.clone();
-            let mut rx = ctx.state.subscribe_storage_changed();
+            let mut rx = ctx.state.current.storage.changed.subscribe();
 
             loop {
                 tokio::select! {

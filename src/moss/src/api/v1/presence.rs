@@ -69,7 +69,7 @@ pub async fn stream_stone_presence(
     let snapshot_json = serde_json::to_string(&snapshot).unwrap_or_default();
 
     // Subscribe to pulse channel (unified domain + transport events)
-    let rx = state.pulse_stream();
+    let rx = state.pulse.subscribe();
 
     // Create the inner event stream: snapshot first, then filtered domain events
     let inner = futures_util::stream::once(async move {

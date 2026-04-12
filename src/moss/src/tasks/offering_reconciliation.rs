@@ -280,7 +280,7 @@ impl ReconciliationCoordinator {
                         state.event_bus.emit(OfferingEvent::started(
                             &offering_id,
                             &name,
-                            state.stone_name(),
+                            &state.current.stone.name,
                         ));
 
                         if let Some(tracker) = backoff.lock().await.get_mut(&name) {

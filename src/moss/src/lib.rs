@@ -28,9 +28,17 @@ pub mod app_state;
 // Test support — available to integration tests (tests/ directory)
 pub mod testing;
 
-// Re-export AppState and related types
-pub use app_state::{
-    AppState, CompiledOffering, Job, JobStatus, OfferingsFingerprint, OfferingsIndex,
+// Re-export AppState
+pub use app_state::AppState;
+
+// Re-export domain types used by external consumers (rake, tests)
+pub use domain::jobs::{Job, JobStatus};
+pub use domain::{CompiledOffering, OfferingsFingerprint, OfferingsIndex};
+
+// Re-export offering types from garden_common
+pub use garden_common::{
+    AdoptedData, BorrowedData, ManagedData, Offering, OfferingLocation, OfferingMode,
+    OfferingModeData, OfferingStatus,
 };
 
 // Re-export API helpers from infra

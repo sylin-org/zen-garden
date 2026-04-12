@@ -89,7 +89,7 @@ pub async fn stream_logs(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     // MOSS-0004: child token for cooperative shutdown
     let token = state.shutdown_token.child_token();
-    let rx = state.log_stream();
+    let rx = state.log.subscribe();
     let inner = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(line) => Some(Event::default().data(line)),
         Err(_) => None,

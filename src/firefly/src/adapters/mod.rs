@@ -10,5 +10,7 @@
 //! [`Adapter`]: garden_companion_sdk::adapters::Adapter
 
 pub mod matrix;
+pub mod oled_v2;
 
 pub use matrix::MatrixFactory;
+pub use oled_v2::OledV2Factory;

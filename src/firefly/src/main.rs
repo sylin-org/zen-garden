@@ -17,7 +17,7 @@ mod adapters;
 mod animation;
 mod serial;
 
-use adapters::MatrixFactory;
+use adapters::{MatrixFactory, OledV2Factory};
 use serial::{
     detect_device_type, find_firefly_device, DetectedDevice, FireflyDeviceType, FireflySerial,
 };
@@ -129,14 +129,16 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss)"))?;
 
     let state_dir = cli.state_dir.as_deref().map(std::path::PathBuf::from);
-    let factory = MatrixFactory::new(cli.serial_port.clone(), state_dir.clone());
+    let matrix = MatrixFactory::new(cli.serial_port.clone(), state_dir.clone());
+    let oled_v2 = OledV2Factory::new(cli.serial_port.clone());
 
-    tracing::info!(stone = %stone, port = port, "Starting Garden Firefly (Ch1: matrix only)");
+    tracing::info!(stone = %stone, port = port, "Starting Garden Firefly (matrix + oled-v2)");
 
     let mut companion = Companion::new("firefly")
         .with_transport(SseTransport::new(stone))
         .with_transport(CommandTransport::new(port))
-        .with_adapter_factory(factory);
+        .with_adapter_factory(matrix)
+        .with_adapter_factory(oled_v2);
     if let Some(dir) = cli.state_dir.as_deref() {
         companion = companion.with_state_dir(dir);
     }

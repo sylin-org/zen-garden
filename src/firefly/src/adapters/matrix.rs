@@ -1,3 +1,8 @@
+// Legacy factory (MatrixFactory) retained while the migration from
+// factory-based to bus-based discovery settles. The bus path in
+// `adapters::bus_registrations` is the supported entry.
+#![allow(dead_code)]
+
 //! RP2040 5×5 LED matrix adapter.
 //!
 //! One [`MatrixAdapter`] per detected RP2040 device. The adapter owns:
@@ -105,11 +110,32 @@ impl AdapterFactory for MatrixFactory {
 pub struct MatrixAdapter {
     port_name: String,
     state_dir: Option<std::path::PathBuf>,
+    /// Pre-built connection supplied by the device bus. When `Some`,
+    /// `run()` skips the open-then-try_connect path and adopts the
+    /// bus's already-identified port directly.
+    prebuilt: Option<Arc<FireflyConnection>>,
 }
 
 impl MatrixAdapter {
     pub fn new(port_name: String, state_dir: Option<std::path::PathBuf>) -> Self {
-        Self { port_name, state_dir }
+        Self {
+            port_name,
+            state_dir,
+            prebuilt: None,
+        }
+    }
+
+    /// Construct from a pre-built connection (bus integration path).
+    pub fn from_connection(
+        connection: Arc<FireflyConnection>,
+        port_name: String,
+        state_dir: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            port_name,
+            state_dir,
+            prebuilt: Some(connection),
+        }
     }
 }
 
@@ -138,11 +164,17 @@ impl Adapter for MatrixAdapter {
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
         Box::pin(async move {
-            let connection = Arc::new(FireflyConnection::new(Some(self.port_name.clone())));
-            if let Err(e) = connection.try_connect() {
-                tracing::warn!(port = %self.port_name, error = %e, "matrix adapter could not open device");
-                return;
-            }
+            let connection = match self.prebuilt {
+                Some(conn) => conn,
+                None => {
+                    let conn = Arc::new(FireflyConnection::new(Some(self.port_name.clone())));
+                    if let Err(e) = conn.try_connect() {
+                        tracing::warn!(port = %self.port_name, error = %e, "matrix adapter could not open device");
+                        return;
+                    }
+                    conn
+                }
+            };
             let _ = connection.with_device(|s| s.clear());
 
             let animation = Arc::new(RwLock::new(Animation::new(self.state_dir.clone())));

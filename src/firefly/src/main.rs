@@ -6,18 +6,22 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use garden_companion_sdk::bus::DeviceBus;
 use garden_companion_sdk::garden::{CommandTransport, SseTransport};
 use garden_companion_sdk::prelude::*;
 use garden_companion_sdk::{
     check_dump_commands, CommandArg, CommandDef, CommandManifest,
 };
+use std::sync::Arc;
 use std::time::Duration;
 
 mod adapters;
 mod animation;
+mod identity;
 mod serial;
 
-use adapters::{MatrixFactory, OledV1Factory, OledV2Factory, TDisplayFactory};
+use adapters::bus_registrations;
+use identity::FireflyIdentityProtocol;
 use serial::{
     detect_device_type, find_firefly_device, DetectedDevice, FireflyDeviceType, FireflySerial,
 };
@@ -129,28 +133,45 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss)"))?;
 
     let state_dir = cli.state_dir.as_deref().map(std::path::PathBuf::from);
-    let matrix = MatrixFactory::new(cli.serial_port.clone(), state_dir.clone());
-    let oled_v1 = OledV1Factory::new(cli.serial_port.clone());
-    let oled_v2 = OledV2Factory::new(cli.serial_port.clone());
-    let tdisplay = TDisplayFactory::new(cli.serial_port.clone());
 
     tracing::info!(
         stone = %stone,
         port = port,
-        "Starting Garden Firefly (matrix + oled-v1 + oled-v2 + tdisplay)"
+        "Starting Garden Firefly (bus-driven: matrix + oled-v1 + oled-v2 + tdisplay)"
     );
 
     let mut companion = Companion::new("firefly")
         .with_transport(SseTransport::new(stone))
-        .with_transport(CommandTransport::new(port))
-        .with_adapter_factory(matrix)
-        .with_adapter_factory(oled_v1)
-        .with_adapter_factory(oled_v2)
-        .with_adapter_factory(tdisplay);
+        .with_transport(CommandTransport::new(port));
     if let Some(dir) = cli.state_dir.as_deref() {
         companion = companion.with_state_dir(dir);
     }
-    companion.run().await
+
+    // Wire the device bus to the companion's pulse + adapters
+    // supervisor. The bus runs alongside the companion's internal
+    // tasks and exits on the same shutdown token.
+    let pulse = companion.pulse();
+    let adapter_supervisor = companion.adapters();
+    let shutdown = companion.shutdown_token();
+
+    let mut bus_builder = DeviceBus::builder()
+        .with_identity_protocol(Arc::new(FireflyIdentityProtocol::new()));
+    for reg in bus_registrations(state_dir.clone()) {
+        bus_builder = bus_builder.with_registration(reg);
+    }
+    if let Some(dir) = &state_dir {
+        bus_builder = bus_builder.with_cache_path(dir.join("device-bus-cache.json"));
+    }
+    let bus = bus_builder.build(adapter_supervisor, pulse);
+
+    let bus_shutdown = shutdown.clone();
+    let bus_handle = tokio::spawn(async move { bus.run(bus_shutdown).await });
+
+    let result = companion.run().await;
+    // Ensure the bus exits with the companion — it already listens on
+    // the same shutdown token, so this is just a clean await.
+    let _ = bus_handle.await;
+    result
 }
 
 // ---------------------------------------------------------------------------

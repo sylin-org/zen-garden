@@ -1,3 +1,7 @@
+// Legacy factory retained for backward compatibility during the bus
+// migration window; bus_registrations() is the supported path.
+#![allow(dead_code)]
+
 //! ESP8266 OLED v2 adapter (dual-zone yellow/blue icon dashboard).
 //!
 //! Factory scans USB for CH340 devices, briefly opens each to probe the
@@ -165,11 +169,23 @@ fn probe_is_v2(port_name: &str) -> anyhow::Result<bool> {
 
 pub struct OledV2Adapter {
     port_name: String,
+    prebuilt: Option<Arc<FireflyConnection>>,
 }
 
 impl OledV2Adapter {
     pub fn new(port_name: String) -> Self {
-        Self { port_name }
+        Self {
+            port_name,
+            prebuilt: None,
+        }
+    }
+
+    /// Construct from a pre-built bus connection.
+    pub fn from_connection(connection: Arc<FireflyConnection>, port_name: String) -> Self {
+        Self {
+            port_name,
+            prebuilt: Some(connection),
+        }
     }
 }
 
@@ -198,15 +214,21 @@ impl Adapter for OledV2Adapter {
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
         Box::pin(async move {
-            let connection = Arc::new(FireflyConnection::new(Some(self.port_name.clone())));
-            if let Err(e) = connection.try_connect() {
-                tracing::warn!(
-                    port = %self.port_name,
-                    error = %e,
-                    "oled-v2 adapter could not open device"
-                );
-                return;
-            }
+            let connection = match self.prebuilt {
+                Some(conn) => conn,
+                None => {
+                    let conn = Arc::new(FireflyConnection::new(Some(self.port_name.clone())));
+                    if let Err(e) = conn.try_connect() {
+                        tracing::warn!(
+                            port = %self.port_name,
+                            error = %e,
+                            "oled-v2 adapter could not open device"
+                        );
+                        return;
+                    }
+                    conn
+                }
+            };
             let _ = connection.with_device(|s| s.clear());
 
             let state = Arc::new(Mutex::new(DashboardState::default()));

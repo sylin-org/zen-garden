@@ -1,3 +1,7 @@
+// Legacy factory retained for backward compatibility during the bus
+// migration window; bus_registrations() is the supported path.
+#![allow(dead_code)]
+
 //! ESP32 T-Display adapter (`firefly-tdisplay` firmware, 135x240 ST7789).
 //!
 //! Full-color TFT drawn from two complementary event shapes:
@@ -189,11 +193,23 @@ fn probe_is_tdisplay(port_name: &str) -> anyhow::Result<bool> {
 
 pub struct TDisplayAdapter {
     port_name: String,
+    prebuilt: Option<Arc<FireflyConnection>>,
 }
 
 impl TDisplayAdapter {
     pub fn new(port_name: String) -> Self {
-        Self { port_name }
+        Self {
+            port_name,
+            prebuilt: None,
+        }
+    }
+
+    /// Construct from a pre-built bus connection.
+    pub fn from_connection(connection: Arc<FireflyConnection>, port_name: String) -> Self {
+        Self {
+            port_name,
+            prebuilt: Some(connection),
+        }
     }
 }
 
@@ -222,15 +238,21 @@ impl Adapter for TDisplayAdapter {
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
         Box::pin(async move {
-            let connection = Arc::new(FireflyConnection::new(Some(self.port_name.clone())));
-            if let Err(e) = connection.try_connect() {
-                tracing::warn!(
-                    port = %self.port_name,
-                    error = %e,
-                    "tdisplay adapter could not open device"
-                );
-                return;
-            }
+            let connection = match self.prebuilt {
+                Some(conn) => conn,
+                None => {
+                    let conn = Arc::new(FireflyConnection::new(Some(self.port_name.clone())));
+                    if let Err(e) = conn.try_connect() {
+                        tracing::warn!(
+                            port = %self.port_name,
+                            error = %e,
+                            "tdisplay adapter could not open device"
+                        );
+                        return;
+                    }
+                    conn
+                }
+            };
             let _ = connection.with_device(|s| s.clear());
 
             let state = Arc::new(Mutex::new(TDisplayState::default()));

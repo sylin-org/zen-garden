@@ -101,9 +101,14 @@ pub struct DetectedDevice {
     pub pid: u16,
 }
 
-/// Firefly serial connection
+/// Firefly serial connection.
+///
+/// Internally the port lives behind `Arc<Mutex<…>>` so the bus (which
+/// opened the port during identification) and the adapter (which drives
+/// it for the remainder of the device's attached life) can share a
+/// single OS-level file descriptor without dropping and reopening.
 pub struct FireflySerial {
-    port: Mutex<Box<dyn SerialPort>>,
+    port: std::sync::Arc<Mutex<Box<dyn SerialPort>>>,
     port_name: String,
     device_type: FireflyDeviceType,
 }
@@ -169,10 +174,31 @@ impl FireflySerial {
         tracing::debug!("Serial port ready, buffers cleared");
 
         Ok(Self {
-            port: Mutex::new(port),
+            port: std::sync::Arc::new(Mutex::new(port)),
             port_name: port_name.to_string(),
             device_type,
         })
+    }
+
+    /// Wrap a pre-opened serial port (handed over by the device bus
+    /// after its identity probe) into a `FireflySerial`. No `open`
+    /// is performed — the caller retains an `Arc` clone of the port
+    /// and hands one to us.
+    ///
+    /// Used by the bus integration in [`crate::adapters`]: the bus
+    /// opened the port for its identity probe and passes the same
+    /// handle to the adapter builder so the ESP device only resets
+    /// once, never three times.
+    pub fn adopt(
+        port: std::sync::Arc<Mutex<Box<dyn SerialPort>>>,
+        device_type: FireflyDeviceType,
+        port_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            port,
+            port_name: port_name.into(),
+            device_type,
+        }
     }
 
     /// Send command and wait for response
@@ -511,6 +537,23 @@ impl FireflyConnection {
         Self {
             serial: Mutex::new(None),
             device_type: Mutex::new(FireflyDeviceType::Unknown),
+            preferred_port,
+        }
+    }
+
+    /// Build a `FireflyConnection` around an already-constructed
+    /// [`FireflySerial`] (typically produced via
+    /// [`FireflySerial::adopt`] from a bus-supplied open port).
+    ///
+    /// Skips the discovery / verify_protocol path — the bus already
+    /// did that work during identification. The connection starts in
+    /// the `connected` state with the given device type.
+    pub fn from_serial(serial: FireflySerial) -> Self {
+        let device_type = serial.device_type();
+        let preferred_port = Some(serial.port_name().to_string());
+        Self {
+            serial: Mutex::new(Some(serial)),
+            device_type: Mutex::new(device_type),
             preferred_port,
         }
     }

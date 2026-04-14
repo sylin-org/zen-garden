@@ -262,14 +262,9 @@ impl Adapter for TDisplayAdapter {
                     _ = shutdown.cancelled() => break,
                     maybe = events.recv() => match maybe {
                         Some(event) => {
+                            // Device lifecycle is a bus concern; we exit
+                            // only on shutdown/closed-channel.
                             handle_event(&event, &connection, &state, &pulse).await;
-                            if !connection.is_connected() {
-                                tracing::info!(
-                                    port = %self.port_name,
-                                    "tdisplay device disconnected — adapter exiting"
-                                );
-                                break;
-                            }
                         }
                         None => break,
                     },

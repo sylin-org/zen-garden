@@ -228,14 +228,9 @@ impl Adapter for OledV1Adapter {
                     _ = shutdown.cancelled() => break,
                     maybe = events.recv() => match maybe {
                         Some(event) => {
+                            // Device lifecycle is a bus concern; we exit
+                            // only on shutdown/closed-channel.
                             handle_event(&event, &connection, &state, &pulse).await;
-                            if !connection.is_connected() {
-                                tracing::info!(
-                                    port = %self.port_name,
-                                    "oled-v1 device disconnected — adapter exiting"
-                                );
-                                break;
-                            }
                         }
                         None => break,
                     },

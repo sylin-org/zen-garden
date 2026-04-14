@@ -185,11 +185,11 @@ impl Adapter for MatrixAdapter {
                     _ = shutdown.cancelled() => break,
                     maybe = events.recv() => match maybe {
                         Some(event) => {
+                            // Device lifecycle is the bus's concern. We
+                            // exit only on shutdown or closed channel;
+                            // transient serial errors are logged inside
+                            // the connection and the loop continues.
                             handle_event(&event, &connection, &animation, &pulse).await;
-                            if !connection.is_connected() {
-                                tracing::info!(port = %self.port_name, "matrix device disconnected — adapter exiting");
-                                break;
-                            }
                         }
                         None => break,
                     },

@@ -710,25 +710,16 @@ impl FireflyConnection {
             }
         };
 
-        // Check if the error indicates disconnection
+        // Command errors are command errors. Device lifecycle is a
+        // bus concern (COMPANION-0012): the enumerator's `Detached`
+        // signal is the authoritative "device gone." Earlier revisions
+        // of this method auto-disconnected on any timeout, which
+        // mistook slow firmware for an unplugged cable and caused
+        // adapters to self-exit after a single laggy frame. Keep the
+        // surface clean: errors bubble to the caller; the bus handles
+        // unplug.
         if let Err(ref e) = result {
-            let error_str = e.to_string().to_lowercase();
-            // Detect disconnection errors: timeout, I/O errors, device not found,
-            // EOF-loop (Linux returns Ok(0) on a deleted USB-serial fd), and the
-            // overall read-deadline guard.
-            if error_str.contains("timed out")
-                || error_str.contains("i/o error")
-                || error_str.contains("access is denied")
-                || error_str.contains("device not found")
-                || error_str.contains("no such file")
-                || error_str.contains("broken pipe")
-                || error_str.contains("connection reset")
-                || error_str.contains("disconnected")
-                || error_str.contains("deadline exceeded")
-            {
-                tracing::warn!(error = %e, "Device communication failed, marking as disconnected");
-                self.disconnect();
-            }
+            tracing::debug!(error = %e, "device command failed");
         }
 
         result

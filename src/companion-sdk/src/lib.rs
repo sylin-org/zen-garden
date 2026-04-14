@@ -49,6 +49,7 @@
 //! - [`handler`] - Command handler trait
 //! - [`state`] - Companion state management (on/off, persistence)
 
+pub mod adapters;
 pub mod cli;
 pub mod dependencies;
 pub mod garden;
@@ -62,6 +63,10 @@ pub mod state;
 pub mod prelude {
     pub use crate::cli::CompanionConfig;
     pub use crate::dependencies::{ensure_dependencies, DependencyCheckResult, SystemDependency};
+    pub use crate::adapters::{
+        Adapter, AdapterFactory, AdapterInfo, AdapterProfile, AdapterStatus, Adapters,
+        DeliveryPolicy,
+    };
     pub use crate::garden::{
         BoxFuture, CommandInvocation, CommandOutcome, CommandResult, CommandTransport, DynPayload,
         Event, EventId, EventPayload, Garden, GardenSnapshot, GardenState, GardenSubscription,

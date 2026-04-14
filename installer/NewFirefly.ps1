@@ -13,10 +13,23 @@
     Auto-detects connected hardware and applies appropriate firmware.
 
 .PARAMETER Force
-    Skip confirmation prompts.
+    Skip confirmation prompts. For ESP8266 OLED, auto-selects v2 firmware.
+
+.PARAMETER OledVersion
+    ESP8266 OLED firmware variant: "prompt" (default, interactive menu),
+    "v1" (classic status screen), or "v2" (icon dashboard).
 
 .EXAMPLE
     .\NewFirefly.ps1
+    Interactive install — shows OLED variant menu when an ESP8266 is detected.
+
+.EXAMPLE
+    .\NewFirefly.ps1 -OledVersion v2
+    Install v2 icon dashboard firmware without prompting.
+
+.EXAMPLE
+    .\NewFirefly.ps1 -Force -OledVersion v1
+    Unattended install of the classic v1 OLED firmware.
 
 .NOTES
     Requires: Windows 10/11, Python (for ESP8266/ESP32), Internet connection
@@ -25,7 +38,13 @@
 
 [CmdletBinding()]
 param(
-    [switch]$Force  # Skip confirmation prompts
+    [switch]$Force,  # Skip confirmation prompts
+
+    # ESP8266 OLED firmware version. "prompt" (default) asks interactively when
+    # an OLED device is detected. "v1" = classic status screen. "v2" = dense
+    # icon dashboard. Used with -Force for unattended installs.
+    [ValidateSet("prompt", "v1", "v2")]
+    [string]$OledVersion = "prompt"
 )
 
 Set-StrictMode -Version Latest
@@ -49,14 +68,36 @@ $script:Config = @{
         MicroPythonUrl = "https://micropython.org/resources/firmware/ESP8266_GENERIC-20251209-v1.27.0.bin"
         I2C_SCL        = 12  # D6
         I2C_SDA        = 14  # D5
-        # Resources to upload: @{Local="path"; Remote="filename"}
-        # Using .mpy bytecode for smaller footprint (compiled with mpy-cross)
-        Resources      = @(
-            @{Local="micropython\boot.py"; Remote="boot.py"}
-            @{Local="micropython\firefly_oled.mpy"; Remote="firefly_oled.mpy"}
-            @{Local="micropython\main.py"; Remote="main.py"}
-            @{Local="etc\esp8266\profont_10.mpy"; Remote="profont_10.mpy"}
-        )
+
+        # Firmware variants for the ESP8266 + SSD1306 OLED. Each variant lists
+        # its own resource set. Pick at install time via interactive menu or
+        # -OledVersion switch.
+        #
+        # v1: classic status screen (stone name, health icon, CPU/MEM bars)
+        # v2: dense icon dashboard with Open Iconic glyphs (FIREFLY-0004)
+        Variants = @{
+            v1 = @{
+                Label       = "v1 - Classic status screen"
+                Description = "Stone name + health icon + CPU/MEM bars (simple, proven)"
+                Resources   = @(
+                    @{Local="micropython\boot.py"; Remote="boot.py"}
+                    @{Local="micropython\firefly_oled.mpy"; Remote="firefly_oled.mpy"}
+                    @{Local="micropython\main.py"; Remote="main.py"}
+                    @{Local="etc\esp8266\profont_10.mpy"; Remote="profont_10.mpy"}
+                )
+            }
+            v2 = @{
+                Label       = "v2 - Icon dashboard (Open Iconic)"
+                Description = "Dense layout: CPU/MEM/DSK bars + offerings/network/uptime panel"
+                Resources   = @(
+                    @{Local="micropython\v2\boot.py"; Remote="boot.py"}
+                    @{Local="micropython\v2\firefly_oled_v2.py"; Remote="firefly_oled_v2.py"}
+                    @{Local="micropython\v2\icons.py"; Remote="icons.py"}
+                    @{Local="micropython\v2\main.py"; Remote="main.py"}
+                    @{Local="etc\esp8266\profont_10.mpy"; Remote="profont_10.mpy"}
+                )
+            }
+        }
     }
 
     # FIREFLY-0003: ESP32 T-Display (TENSTAR / LilyGO TTGO)
@@ -136,6 +177,56 @@ function Confirm-Action {
     }
 
     return @("y", "yes") -contains $answer.Trim().ToLowerInvariant()
+}
+
+function Select-ESP8266Variant {
+    <#
+    .SYNOPSIS
+        Prompt the user to pick an OLED firmware variant.
+    .DESCRIPTION
+        Honors the -OledVersion parameter: "v1"/"v2" skip the menu, "prompt"
+        (default) shows an interactive selection. -Force with "prompt" picks
+        v2 (the current default) so unattended installs stay deterministic.
+    #>
+    $variants = $script:Config.ESP8266.Variants
+
+    # Non-interactive paths first
+    if ($OledVersion -ne "prompt") {
+        $chosen = $variants[$OledVersion]
+        Write-Step "ESP8266 OLED variant: $($chosen.Label) (from -OledVersion)" "OK"
+        return $OledVersion
+    }
+    if ($Force) {
+        Write-Step "ESP8266 OLED variant: v2 (auto-select with -Force)" "OK"
+        return "v2"
+    }
+
+    # Interactive menu
+    Write-Host ""
+    Write-Host "  Two OLED firmware variants are available:" -ForegroundColor Cyan
+    Write-Host ""
+    $keys = @($variants.Keys | Sort-Object)
+    for ($i = 0; $i -lt $keys.Count; $i++) {
+        $v = $variants[$keys[$i]]
+        Write-Host "    [$($i + 1)] " -ForegroundColor Yellow -NoNewline
+        Write-Host $v.Label -ForegroundColor White
+        Write-Host "        $($v.Description)" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+
+    while ($true) {
+        $answer = Read-Host "  Select variant [1-$($keys.Count)] (default: $($keys.Count))"
+        if ([string]::IsNullOrWhiteSpace($answer)) {
+            $answer = "$($keys.Count)"  # default to last entry (latest version)
+        }
+        $idx = 0
+        if ([int]::TryParse($answer.Trim(), [ref]$idx) -and $idx -ge 1 -and $idx -le $keys.Count) {
+            $chosen = $keys[$idx - 1]
+            Write-Step "Selected: $($variants[$chosen].Label)" "OK"
+            return $chosen
+        }
+        Write-Host "  Invalid selection. Please enter 1-$($keys.Count)." -ForegroundColor Yellow
+    }
 }
 
 function Initialize-Cache {
@@ -547,9 +638,18 @@ function Send-ESP8266File {
 }
 
 function Install-ESP8266Resources {
-    param([string]$Port)
+    param(
+        [string]$Port,
+        [ValidateSet("v1", "v2")]
+        [string]$Variant = "v2"
+    )
 
-    $resources = $script:Config.ESP8266.Resources
+    $variantConfig = $script:Config.ESP8266.Variants[$Variant]
+    if (-not $variantConfig) {
+        Write-Step "Unknown ESP8266 variant: $Variant" "FAIL"
+        return
+    }
+    $resources = $variantConfig.Resources
     if (-not $resources) { return }
 
     foreach ($res in $resources) {
@@ -679,6 +779,11 @@ function Invoke-ESP8266Handler {
         return
     }
 
+    # Select firmware variant BEFORE any destructive action — if the user
+    # cancels, we haven't touched the device yet.
+    $variant = Select-ESP8266Variant
+    $variantConfig = $script:Config.ESP8266.Variants[$variant]
+
     # Always do a clean install: erase flash + re-flash MicroPython + upload resources.
     # This ensures no stale files and consistent behavior.
     Write-Step "Erasing and flashing MicroPython..." "..."
@@ -686,7 +791,7 @@ function Invoke-ESP8266Handler {
     Write-Step "Waiting for reboot..." "WAIT"
     Start-Sleep -Seconds 3
 
-    Install-ESP8266Resources -Port $port
+    Install-ESP8266Resources -Port $port -Variant $variant
     Invoke-ESP8266VisualTest -Port $port
 
     # Final reset to let main.py auto-start (visual test leaves device in REPL).
@@ -697,9 +802,10 @@ function Invoke-ESP8266Handler {
     Write-Panel -Title "ESP8266-OLED Firefly Ready!" -Color "Green" -Lines @(
         "Installation complete."
         ""
-        "Device: NodeMCU ESP8266 + OLED"
-        "Port: $port"
+        "Device:  NodeMCU ESP8266 + OLED"
+        "Port:    $port"
         "Display: SSD1306 128x64 I2C"
+        "Variant: $($variantConfig.Label)"
         ""
         "Firefly firmware is running!"
     )

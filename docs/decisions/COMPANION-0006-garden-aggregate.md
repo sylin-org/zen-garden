@@ -4,12 +4,13 @@ doc_type: decision
 status: accepted
 last_verified: 2026-04-13
 canonical: true
+completed: 2026-04-13
 ---
 
 # COMPANION-0006: Garden Aggregate — Book V of COMPANION-0001
 
 **Date**: 2026-04-13
-**Status**: Accepted
+**Status**: Completed (2026-04-13)
 **Book**: V of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0003](COMPANION-0003-pulse.md), [COMPANION-0005](COMPANION-0005-domain-types.md), [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 
@@ -178,6 +179,30 @@ Each chapter ships green to `dev`.
 | State-delta event emission back to Pulse (e.g. `HealthChanged` derived events) | Book VIII if adapters need it |
 | Garbage-collecting stale offerings over time | Not needed — presence snapshots re-seed the list |
 | Multi-stone Garden (cross-stone federation) | Future post-epic work |
+
+## Closure notes (2026-04-13)
+
+Book V closed with all exit criteria met. Summary:
+
+- **`Garden` aggregate** at `src/companion-sdk/src/garden/garden.rs` with `Arc<RwLock<GardenState>>` private state, `Arc<Pulse>` handle, seven typed accessors, `snapshot()` full clone, `subscribe()` returning a [`GardenSubscription`], and `spawn_projection(shutdown) -> JoinHandle`.
+- **`GardenSnapshot` payload** (`core.garden.snapshot`) — non-coalescing, serializable, carries full `GardenState`.
+- **`GardenSubscription { snapshot: Event, receiver }`** as the subscribe return type — honest API, no broadcast-wrapping gymnastics.
+- **Projection** `project(state, event)` — pure function, unknown kinds no-op, uses Book IV extension traits for wire→domain conversion at the boundary.
+- **Default impls added to Book IV types** (Health::Dormant, Pond::Solo, Load::ZERO).
+- **14 new tests**, 99 SDK garden tests total. `cargo check --all`, `cargo test`, `cargo clippy --all -- -D warnings` — all green.
+
+### Minor refinements during implementation
+
+- **Module name collision resolved** with `#[allow(clippy::module_inception)]` on `garden::garden`. The module name matches the type; this is the natural DDD shape and we keep it.
+- **`StorageRemovedPayload` by-name matching.** Only clears the seed-bank when the removal event's name matches the currently-tracked bank. Prevents a second bank's removal event from clearing the primary.
+- **`ServiceStartedPayload` idempotent append.** Re-applying a start event for the same service is a no-op rather than a duplicate entry — matches expected adapter semantics.
+
+### Follow-on work picked up by later books
+
+- Book VI (Adapters) consumes `Garden::subscribe()` and `Garden::is_ready()` in its adapter supervisor; delivery filtering happens on top of this.
+- Book VII (Companion) wires `Garden::new(pulse)` + `spawn_projection(shutdown)` into its builder.
+- Book VIII adapters query typed properties (`garden.health()`, `garden.load()`, ...) during rendering.
+- Optional post-epic: state-delta event emission (e.g. `HealthChanged` derived events published when projection transitions health state).
 
 ## References
 

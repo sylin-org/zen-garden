@@ -9,7 +9,7 @@ canonical: true
 # COMPANION-0010: Integration Testing Foundation — Book IX of COMPANION-0001
 
 **Date**: 2026-04-14
-**Status**: Accepted — **implementation pending**
+**Status**: Accepted — **implemented 2026-04-13**
 **Book**: IX of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0008](COMPANION-0008-companion.md), [COMPANION-0007](COMPANION-0007-adapters.md), [COMPANION-0009](COMPANION-0009-companion-rebuild.md)
 

@@ -18,6 +18,7 @@ Unlike typical ADRs which are immutable after acceptance, COMPANION-0001 is a **
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-13 | **Book II closed.** Pulse — the orchestrator. Single fan-in point owning dedup (bounded FIFO cache of `EventId`), validation (syntactic kind format + namespace registration + kind/payload coherence), coalescing (per-kind map flushed by `flush_coalesced`), fan-out (`tokio::sync::broadcast`), and atomic metrics (9 counters). Zero new workspace deps — stdlib `Mutex`/`RwLock`/`HashSet`/`VecDeque` for bounded critical sections; `broadcast` was already a `companion-sdk` direct dep via `sse.rs`. 16 unit tests, all green. `cargo check --all` green. No plan change. | [COMPANION-0003](COMPANION-0003-pulse.md) |
 | 2026-04-13 | **Book I closed.** Event Envelope — `Event`, `EventId` (GUIDv7), `EventPayload` trait, kind validation. Discovery: Rust associated-`const` rules make `dyn EventPayload` not object-safe; introduced object-safe `DynPayload` auto-implemented via blanket impl. User-facing API unchanged (users still only implement `EventPayload`); pattern spec §The event envelope amended to reflect the two-trait shape. 22 unit tests + 5 doctests, all green. Full workspace `cargo check --all` green. | [COMPANION-0002](COMPANION-0002-event-envelope.md) |
 | 2026-04-13 | Initial acceptance. Epic commits to 11-artifact arc (Prologue + Books I–IX + Epilogue). | — |
 

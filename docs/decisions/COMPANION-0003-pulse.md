@@ -4,12 +4,13 @@ doc_type: decision
 status: accepted
 last_verified: 2026-04-13
 canonical: true
+completed: 2026-04-13
 ---
 
 # COMPANION-0003: Pulse — Book II of COMPANION-0001
 
 **Date**: 2026-04-13
-**Status**: Accepted
+**Status**: Completed (2026-04-13)
 **Book**: II of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0002](COMPANION-0002-event-envelope.md) (event envelope), [COMPANION-0001](COMPANION-0001-companion-integration-epic.md) (epic + pattern spec)
 
@@ -221,6 +222,31 @@ Each chapter ships green to `dev`.
 | Named subscribers / per-subscriber routing | Book VI's supervisor wraps `subscribe()` to filter per `AdapterProfile::subscriptions` |
 | Persistence of the dedup cache across process restarts | Not needed — companion process restart is rare and dedup protects a small time window |
 | Distributed dedup across multiple companion processes | Not a requirement — each companion has its own Pulse |
+
+## Closure notes (2026-04-13)
+
+Book II closed with all exit criteria met. Summary of what shipped:
+
+- **`Pulse` aggregate** at `src/companion-sdk/src/garden/pulse.rs` with the ingest / validate / dedup / coalesce / fan-out pipeline documented in this ADR.
+- **Public types** added to the prelude and `garden` module: `Pulse`, `PulseConfig`, `PulseMetricsSnapshot`, `IngestResult`, `RejectReason`. Book I's `DynPayload` was also promoted from `pub` (crate root) to prelude since `Pulse::ingest` reads `event.payload.kind()` through it.
+- **Zero new workspace dependencies.** FIFO dedup cache built from `HashSet<EventId>` + `VecDeque<EventId>` under a `Mutex`; coalesce map is `Mutex<HashMap<&'static str, Event>>`; namespaces are `RwLock<HashSet<&'static str>>`; metrics are `AtomicU64`. All critical sections are single insert/contains/drain, non-async, and never held across an `.await`.
+- **Tests**: 16 unit tests in `garden::pulse::tests`, all green.
+- **Verification**: `cargo check --all`, `cargo test --package garden-companion-sdk garden::pulse`, `cargo test --package garden-companion-sdk --doc`, `cargo clippy --package garden-companion-sdk -- -D warnings` — all green.
+
+### Minor scope additions (not plan changes)
+
+Two items were specified in the ADR but worth surfacing as things the code ended up doing:
+
+- **`fan_out` helper** (private) consolidates the `broadcast::Sender::send` + metric-update logic between the ingest path and the flush-coalesced path. Keeps the two call sites honest about metric increments.
+- **`Debug` impl** on `Pulse` summarizes receiver count + metrics snapshot — useful for tracing.
+
+Neither expands the book's scope; both are mechanical housekeeping inside the module.
+
+### Follow-on work picked up by later books
+
+- Book VII (Companion) wires `tokio::time::interval` that calls `flush_coalesced` periodically (default 50ms per the pattern spec).
+- Book VI (Adapters) wraps `subscribe()` with per-adapter subscription filters and delivery policy enforcement.
+- Book III (Transport) calls `ingest()` from the SSE/Command transports.
 
 ## References
 

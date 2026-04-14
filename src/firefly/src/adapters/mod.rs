@@ -12,7 +12,9 @@
 pub mod matrix;
 pub mod oled_v1;
 pub mod oled_v2;
+pub mod tdisplay;
 
 pub use matrix::MatrixFactory;
 pub use oled_v1::OledV1Factory;
 pub use oled_v2::OledV2Factory;
+pub use tdisplay::TDisplayFactory;

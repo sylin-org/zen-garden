@@ -17,7 +17,7 @@ mod adapters;
 mod animation;
 mod serial;
 
-use adapters::{MatrixFactory, OledV1Factory, OledV2Factory};
+use adapters::{MatrixFactory, OledV1Factory, OledV2Factory, TDisplayFactory};
 use serial::{
     detect_device_type, find_firefly_device, DetectedDevice, FireflyDeviceType, FireflySerial,
 };
@@ -132,15 +132,21 @@ async fn main() -> Result<()> {
     let matrix = MatrixFactory::new(cli.serial_port.clone(), state_dir.clone());
     let oled_v1 = OledV1Factory::new(cli.serial_port.clone());
     let oled_v2 = OledV2Factory::new(cli.serial_port.clone());
+    let tdisplay = TDisplayFactory::new(cli.serial_port.clone());
 
-    tracing::info!(stone = %stone, port = port, "Starting Garden Firefly (matrix + oled-v1 + oled-v2)");
+    tracing::info!(
+        stone = %stone,
+        port = port,
+        "Starting Garden Firefly (matrix + oled-v1 + oled-v2 + tdisplay)"
+    );
 
     let mut companion = Companion::new("firefly")
         .with_transport(SseTransport::new(stone))
         .with_transport(CommandTransport::new(port))
         .with_adapter_factory(matrix)
         .with_adapter_factory(oled_v1)
-        .with_adapter_factory(oled_v2);
+        .with_adapter_factory(oled_v2)
+        .with_adapter_factory(tdisplay);
     if let Some(dir) = cli.state_dir.as_deref() {
         companion = companion.with_state_dir(dir);
     }

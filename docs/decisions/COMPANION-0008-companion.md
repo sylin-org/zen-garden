@@ -4,12 +4,13 @@ doc_type: decision
 status: accepted
 last_verified: 2026-04-14
 canonical: true
+completed: 2026-04-14
 ---
 
 # COMPANION-0008: Companion Top-Level Runtime — Book VII of COMPANION-0001
 
 **Date**: 2026-04-14
-**Status**: Accepted
+**Status**: Completed (2026-04-14)
 **Book**: VII of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0003](COMPANION-0003-pulse.md), [COMPANION-0004](COMPANION-0004-transport.md), [COMPANION-0006](COMPANION-0006-garden-aggregate.md), [COMPANION-0007](COMPANION-0007-adapters.md)
 

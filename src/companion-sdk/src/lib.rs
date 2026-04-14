@@ -51,6 +51,7 @@
 
 pub mod adapters;
 pub mod cli;
+pub mod companion;
 pub mod dependencies;
 pub mod garden;
 pub mod handler;
@@ -67,6 +68,7 @@ pub mod prelude {
         Adapter, AdapterFactory, AdapterInfo, AdapterProfile, AdapterStatus, Adapters,
         DeliveryPolicy,
     };
+    pub use crate::companion::Companion;
     pub use crate::garden::{
         BoxFuture, CommandInvocation, CommandOutcome, CommandResult, CommandTransport, DynPayload,
         Event, EventId, EventPayload, Garden, GardenSnapshot, GardenState, GardenSubscription,

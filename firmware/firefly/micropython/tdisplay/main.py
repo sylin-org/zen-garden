@@ -36,21 +36,19 @@ from machine import Pin, SPI, unique_id
 import ubinascii
 
 
+# FIREFLY-0004: firmware-side runtime truth only. Everything else
+# (family, variant, display, capabilities) lives in /zen-garden.json
+# — written at provisioning time by NewFirefly.ps1.
 _FW_VERSION = "1.0.0"
-_CAPABILITIES = [
-    "json-push",
-    "load-incremental",
-    "service-deltas",
-    "wipe-animations",
-]
+_PROCESSOR = "esp32"
 
 
-def _read_device_id():
+def _load_descriptor():
     try:
-        with open("/device_id.txt", "r") as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+        with open("/zen-garden.json", "r") as f:
+            return json.loads(f.read())
+    except (OSError, ValueError):
+        return {}
 
 
 def _hardware_id():
@@ -60,22 +58,16 @@ def _hardware_id():
         return ""
 
 
-_DEVICE_ID = _read_device_id()
-_HARDWARE_ID = _hardware_id()
+_DESCRIPTOR = _load_descriptor()
 
 
 def descriptor_json():
-    """FIREFLY-0004 descriptor for the T-Display."""
-    return json.dumps({
-        "device_id": _DEVICE_ID,
-        "family": "firefly",
-        "variant": "tdisplay",
-        "version": _FW_VERSION,
-        "processor": "esp32",
-        "hardware_id": _HARDWARE_ID,
-        "display": {"resolution": "135x240", "type": "st7789-tft"},
-        "capabilities": _CAPABILITIES,
-    })
+    """Merge runtime-truth fields into the provisioned descriptor."""
+    d = dict(_DESCRIPTOR)
+    d["hardware_id"] = _hardware_id()
+    d["version"] = _FW_VERSION
+    d["processor"] = _PROCESSOR
+    return json.dumps(d)
 
 
 def hello_frame():

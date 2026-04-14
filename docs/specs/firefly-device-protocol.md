@@ -116,12 +116,32 @@ Running `newfirefly.ps1` against a connected device performs:
 1. **Detect** the attached device + variant.
 2. **Mint** a GUIDv7 via the PowerShell helper.
 3. **Prompt** for an optional human label (stored in the roster, not on the device).
-4. **Embed** the GUID. MicroPython devices get a `/device_id.txt` file uploaded; CircuitPython devices get the same file copied to the `CIRCUITPY` drive.
-5. **Flash / reset** firmware so the new file is picked up on the next boot.
-6. **Append** an entry to `~/.zen-garden/firefly-roster.json` (host-side inventory).
-7. **Verify** by reading the first HELLO frame and confirming the returned `device_id` matches what was minted.
+4. **Compose** the descriptor from the per-variant template (`family`, `variant`, `display`, `capabilities`) + the minted `device_id`.
+5. **Upload** `/zen-garden.json` to the device filesystem:
+   - MicroPython ESP8266: `Send-ESP8266File` raw-REPL upload.
+   - MicroPython ESP32: `mpremote cp` (after a readiness probe).
+   - CircuitPython RP2040: `Copy-Item` onto the `CIRCUITPY` drive.
+6. **Reset** firmware so the new descriptor is picked up on the next boot.
+7. **Append** an entry to `~/.zen-garden/firefly-roster.json` (host-side inventory), including the declared capability list.
+8. **Verify** by reading the first HELLO frame and confirming the returned `device_id` matches what was minted.
 
-Re-running `newfirefly.ps1` against the same device mints a fresh GUID by design. To keep an existing identity across firmware updates, operators re-upload the same `device_id.txt` — which is exactly what the roster preserves.
+On the device side, firmware reads `/zen-garden.json` once at module load, overlays two runtime-truth fields, and emits the merged object:
+
+```python
+descriptor = json.loads(open("/zen-garden.json").read())
+descriptor["hardware_id"] = _read_chip_id()   # factory-unique chip id
+descriptor["version"]     = _FW_VERSION        # compile-time constant
+descriptor["processor"]   = _PROCESSOR         # compile-time constant
+uart.write("* HELLO," + json.dumps(descriptor) + "\n")
+```
+
+Why overlay instead of pure file-in-file-out:
+
+- `hardware_id` — the forensic field; must reflect the chip that actually booted, not what the operator wrote.
+- `version` — a property of the firmware binary, not the operator's provisioning.
+- `processor` — binary-specific; the descriptor is portable across variants but firmware knows what silicon it compiled for.
+
+Re-running `newfirefly.ps1` against the same physical device mints a fresh GUID by design. To update the firmware binary *without* rotating identity, reflash without `esptool erase_flash` (MicroPython's LittleFS / CircuitPython's CIRCUITPY drive preserves `zen-garden.json` across a plain `write_flash`).
 
 ---
 

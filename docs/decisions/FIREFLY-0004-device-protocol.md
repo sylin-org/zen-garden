@@ -80,25 +80,46 @@ For backward-compatibility within the firmware lifetime (e.g. firmware that boot
 
 Bus sends `I` only if no HELLO arrived within the 3-second window after port open. Eliminates the active-probe path on healthy boots; provides a fallback for cold-boot timing edge cases.
 
-### 4. Provenance — `newfirefly.ps1` mints, firmware embeds
+### 4. Provenance — `newfirefly.ps1` mints and writes `/zen-garden.json`
 
 Identity flow:
 
 ```
 newfirefly.ps1 (host)
   1. Detect attached device + variant
-  2. Mint GUIDv7 (PowerShell helper; .NET 9 has Guid.CreateVersion7(),
-     earlier versions use a small inline implementation)
+  2. Mint GUIDv7 (PowerShell helper implementing RFC 9562 §5.7)
   3. Prompt operator for an optional human label ("garage-fountain")
-  4. Generate firmware/include/device_id.h:
-        #define DEVICE_ID "01938abc-de01-7234-89ab-cdef01234567"
-  5. Build firmware (per-device build artifact)
-  6. Flash firmware
-  7. Append entry to ~/.zen-garden/firefly-roster.json
-  8. Verify HELLO frame round-trips with the new device_id
+  4. Build the full descriptor JSON for this variant — device_id,
+     family, variant, display, capabilities — from the variant's
+     descriptor template.
+  5. Upload the descriptor to the device as /zen-garden.json
+     (Send-ESP8266File on ESP8266, mpremote cp on ESP32,
+      Copy-Item on the CIRCUITPY drive for RP2040).
+  6. Append entry to ~/.zen-garden/firefly-roster.json
+     (records the capability list alongside the device_id so
+      `garden-rake firefly inventory` can show what the device
+      advertises).
+  7. Reset the device and read back the first HELLO frame to
+     verify the round-trip.
 ```
 
-Firmware emits `DEVICE_ID` from the generated header in every HELLO and `I` response. The header is the single source of truth on the device side; nothing else — no NVS write, no first-boot generation, no device-side RNG path.
+**On the device side**, firmware reads `/zen-garden.json` once on boot, overlays two runtime-truth fields, and emits the result:
+
+```python
+descriptor = json.loads(open("/zen-garden.json").read())
+descriptor["hardware_id"] = _read_chip_id()   # factory-unique chip id
+descriptor["version"] = _FW_VERSION           # compile-time constant
+uart.write("* HELLO," + json.dumps(descriptor) + "\n")
+```
+
+**Why two overlays, not pure file-in-file-out:**
+
+- `hardware_id` — the whole point of this forensic field is comparing *what the chip says it is* against *what the roster says this device is*. If it came from the file, swapping the chip physically while keeping the file would silently lie. Keep it runtime-sourced.
+- `version` — a property of the firmware binary, not the operator's provisioning. If the operator flashes 2.5.0 but the file says 2.0.0, the host would have stale info. Firmware is the authority for what's actually running.
+
+Everything else — `device_id`, `family`, `variant`, `display`, `capabilities` — is operator-declared via `/zen-garden.json`.
+
+**Trust-model implication**: capabilities become operator-attestable rather than firmware-attested. Fine for local-env trust. Documented here so future external deployments remember that an operator can declare a capability the firmware does not implement — the daemon would send frames the firmware drops. See the [Trust modes](#6-lenient-by-default-trust-mode) section for the daemon-side posture.
 
 ### 5. Roster file — `~/.zen-garden/firefly-roster.json`
 
@@ -162,10 +183,10 @@ Firmware updates can advertise new capability strings; adapter code checks at co
 
 **Chapter 1** — Schema spec doc + `newfirefly.ps1` rewrite:
 - New `docs/specs/firefly-device-protocol.md` carrying the schema, HELLO frame format, capability registry, roster file format.
-- Rewrite `installer/newfirefly.ps1`: mint GUIDv7, prompt label, generate `device_id.h`, append roster.
+- Rewrite `installer/newfirefly.ps1`: mint GUIDv7, prompt label, write the per-variant `zen-garden.json` descriptor to the device filesystem, append roster.
 
 **Chapter 2** — Firmware updates (one variant per chapter increment):
-- Each firmware variant gains a `device_id.h` include slot, emits HELLO on boot, accepts `I` returning the same descriptor.
+- Each firmware variant reads `/zen-garden.json` on boot, overlays its own `hardware_id` + `version`, emits HELLO on boot, accepts `I` returning the same descriptor.
 - Land per-variant: oled-v1 (Ch2a), oled-v2 (Ch2b), tdisplay (Ch2c), matrix (Ch2d). Each is a small focused commit.
 
 **Chapter 3** — Bus integration (depends on COMPANION-0012 Ch4 landing first):
@@ -190,6 +211,13 @@ Each chapter ships green to `dev`. The local environment reflashes per chapter �
 | Garden-wide pond-replicated roster | Phase 2 of operator tooling; Phase 1 is manual `rake firefly roster push` |
 | `device_id` rotation without reflash | Re-run `newfirefly.ps1` mints a fresh GUID; rotation = reflash by design |
 | HELLO frame in CBOR / msgpack instead of JSON | Bytes saved are not worth the operator-debuggability loss |
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-04-14 | Initial acceptance. `/device_id.txt` + firmware-built descriptor. |
+| 2026-04-14 | **Single descriptor file.** `/device_id.txt` replaced by `/zen-garden.json` carrying the full descriptor (device_id, family, variant, display, capabilities). Firmware overlays runtime-truth `hardware_id` + binary-truth `version` before emitting HELLO. `newfirefly.ps1` writes the per-variant descriptor from a host-side template. Net effect: firmware thins to ~3 lines of emit logic; capabilities become operator-declared; reflashing the firmware binary without `erase_flash` preserves identity across updates. Trust-model shift noted inline — capabilities are now operator-attestable rather than firmware-attested. |
 
 ## References
 

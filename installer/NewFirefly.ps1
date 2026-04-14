@@ -385,11 +385,15 @@ function Test-FireflyBootPy {
 #endregion
 
 #region Provisioning (FIREFLY-0004)
-# Mint a GUIDv7, stage device_id.txt, upload to the device filesystem,
-# append a roster entry. Dispatches upload path on device type:
-# - RP2040  : Copy-Item into CIRCUITPY drive
-# - ESP8266 : mpremote cp device_id.txt :/device_id.txt
-# - ESP32   : mpremote cp device_id.txt :/device_id.txt
+# Mint a GUIDv7, stage /zen-garden.json with the full descriptor for
+# this variant, upload it to the device filesystem, append a roster
+# entry. Dispatches upload path on device type:
+#   RP2040   : Copy-Item into CIRCUITPY drive
+#   ESP8266  : Send-ESP8266File (raw-REPL chunked write)
+#   ESP32    : mpremote cp (after Wait-MpremoteReady)
+#
+# Firmware reads the file on boot, overlays runtime-truth
+# `hardware_id` + `version`, and emits the merged object as HELLO.
 function Invoke-Provisioning {
     param(
         [Parameter(Mandatory)][hashtable]$Device,
@@ -400,7 +404,7 @@ function Invoke-Provisioning {
 
     $deviceId = New-FireflyGuidV7
     $stagingDir = Join-Path $script:Config.CacheDir "provisioning"
-    $staged = Save-FireflyDeviceIdFile -DeviceId $deviceId -StagingDir $stagingDir
+    $staged = Save-FireflyDescriptor -DeviceId $deviceId -Variant $Variant -StagingDir $stagingDir
 
     $uploaded = $false
     switch ($Device["Type"]) {
@@ -410,31 +414,30 @@ function Invoke-Provisioning {
                 Write-Step "Provisioning: no CircuitPython drive present" "WARN"
                 return
             }
-            Write-Step "Uploading device_id.txt to $drive" "..."
+            Write-Step "Uploading zen-garden.json to $drive" "..."
             try {
-                Copy-Item -Path $staged -Destination (Join-Path $drive "device_id.txt") -Force
+                Copy-Item -Path $staged -Destination (Join-Path $drive "zen-garden.json") -Force
                 $uploaded = $true
-                Write-Step "device_id.txt written" "OK"
+                Write-Step "zen-garden.json written" "OK"
             } catch {
-                Write-Step "device_id.txt write failed: $_" "FAIL"
+                Write-Step "zen-garden.json write failed: $_" "FAIL"
             }
         }
         "ESP8266" {
             # ESP8266 has 80KB RAM and a flaky mpremote `cp` path — use
             # the same Send-ESP8266File raw-REPL protocol the firmware
-            # resource uploads use. Proven on this device, same buffer
-            # discipline.
+            # resource uploads use.
             $port = $Device["ComPort"]
             if (-not $port) {
                 Write-Step "Provisioning: no COM port present" "WARN"
                 return
             }
-            Write-Step "Uploading device_id.txt to $port" "..."
-            if (Send-ESP8266File -Port $port -LocalPath $staged -RemoteName "device_id.txt") {
+            Write-Step "Uploading zen-garden.json to $port" "..."
+            if (Send-ESP8266File -Port $port -LocalPath $staged -RemoteName "zen-garden.json") {
                 $uploaded = $true
-                Write-Step "device_id.txt written" "OK"
+                Write-Step "zen-garden.json written" "OK"
             } else {
-                Write-Step "device_id.txt write failed" "FAIL"
+                Write-Step "zen-garden.json write failed" "FAIL"
             }
         }
         "ESP32" {
@@ -447,19 +450,19 @@ function Invoke-Provisioning {
             # Validate the REPL is ready before cp — same rationale as
             # Install-ESP32Resources (see Wait-MpremoteReady).
             [void](Wait-MpremoteReady -Port $port)
-            Write-Step "Uploading device_id.txt to $port" "..."
-            & $pythonCmd -m mpremote connect $port cp $staged ":device_id.txt" 2>&1 | Out-Null
+            Write-Step "Uploading zen-garden.json to $port" "..."
+            & $pythonCmd -m mpremote connect $port cp $staged ":zen-garden.json" 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 $uploaded = $true
-                Write-Step "device_id.txt written" "OK"
+                Write-Step "zen-garden.json written" "OK"
             } else {
-                Write-Step "device_id.txt write failed" "FAIL"
+                Write-Step "zen-garden.json write failed" "FAIL"
             }
         }
     }
 
     if (-not $uploaded) {
-        Write-Step "Provisioning skipped — device_id NOT persisted" "WARN"
+        Write-Step "Provisioning skipped — zen-garden.json NOT persisted" "WARN"
         return
     }
 

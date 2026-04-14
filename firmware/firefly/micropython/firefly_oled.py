@@ -19,19 +19,26 @@ import ujson
 import profont_10 as font
 
 
+# FIREFLY-0004: firmware-side runtime truth. Everything else (family,
+# variant, display shape, capabilities) lives in /zen-garden.json —
+# written at provisioning time by NewFirefly.ps1. Firmware overlays
+# these two fields before emitting the HELLO frame.
 _FW_VERSION = "0.2.0"
-_FAMILY = "firefly"
-_VARIANT = "oled"
 _PROCESSOR = "esp8266"
-_CAPABILITIES = ["wipe-animations", "brightness"]
 
 
-def _read_device_id():
+def _load_descriptor():
+    """Read the operator-provisioned descriptor once at module load.
+
+    Returns an empty dict if /zen-garden.json is missing or malformed
+    so the bus can classify the device as unprovisioned distinctly
+    from 'no firefly-style response at all'.
+    """
     try:
-        with open("/device_id.txt", "r") as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+        with open("/zen-garden.json", "r") as f:
+            return ujson.loads(f.read())
+    except (OSError, ValueError):
+        return {}
 
 
 def _hardware_id():
@@ -41,22 +48,16 @@ def _hardware_id():
         return ""
 
 
-_DEVICE_ID = _read_device_id()
-_HARDWARE_ID = _hardware_id()
+_DESCRIPTOR = _load_descriptor()
 
 
 def descriptor_json():
-    """FIREFLY-0004 identification descriptor as a JSON string."""
-    return ujson.dumps({
-        "device_id": _DEVICE_ID,
-        "family": _FAMILY,
-        "variant": _VARIANT,
-        "version": _FW_VERSION,
-        "processor": _PROCESSOR,
-        "hardware_id": _HARDWARE_ID,
-        "display": {"resolution": "128x64", "type": "oled-dual-zone"},
-        "capabilities": _CAPABILITIES,
-    })
+    """Merge runtime-truth fields into the provisioned descriptor."""
+    d = dict(_DESCRIPTOR)
+    d["hardware_id"] = _hardware_id()
+    d["version"] = _FW_VERSION
+    d["processor"] = _PROCESSOR
+    return ujson.dumps(d)
 
 
 def hello_frame():

@@ -18,7 +18,8 @@ garden-companion-sdk = { path = "../companion-sdk" }
 
 # Core
 anyhow.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "fs", "signal"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "fs", "signal", "sync"] }
+tokio-util = "0.7"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

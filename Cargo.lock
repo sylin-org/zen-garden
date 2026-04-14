@@ -1500,6 +1500,7 @@ dependencies = [
  "serde_yml",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

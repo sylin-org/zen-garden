@@ -1,26 +1,27 @@
-// Garden Cricket - Ambient Audio Companion for Stone Presence
-// Provides audio feedback for garden events and stone presence
+// Garden Cricket — ambient audio companion.
+// Rewritten onto the companion-sdk event mesh per COMPANION-0009 Ch5.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::sync::Arc;
-
+use garden_companion_sdk::garden::{CommandTransport, SseTransport};
+use garden_companion_sdk::prelude::*;
 use garden_companion_sdk::{
-    check_dump_commands, CommandArg, CommandDef, CommandManifest, CompanionRuntime, CompanionState,
+    check_dump_commands, CommandArg, CommandDef, CommandManifest,
 };
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-mod events;
-mod handler;
+mod adapters;
 mod manifest;
 mod mixer;
 mod test_mode;
 
-use events::CricketEvents;
-use handler::CricketCommands;
+use adapters::AudioFactory;
 use manifest::Tunes;
 use mixer::Mixer;
 
-/// Build Cricket's command manifest
+/// Build Cricket's command manifest (consumed by moss's companion registry
+/// via the `--dump-commands` flag).
 fn build_manifest() -> CommandManifest {
     CommandManifest::new(
         "cricket",
@@ -31,7 +32,6 @@ fn build_manifest() -> CommandManifest {
     .command(
         CommandDef::new("select", "Switch active tune")
             .arg(CommandArg::required_string("tune", "Tune name to activate"))
-            .example("Switch to mr-robot tune", "hey tell cricket select mr-robot")
             .example("Switch to zen-tech tune", "hey tell cricket select zen-tech")
             .see_also("list")
             .see_also("volume"),
@@ -40,12 +40,10 @@ fn build_manifest() -> CommandManifest {
         CommandDef::new("volume", "Set master volume")
             .arg(CommandArg::required_int("level", "Volume level (0-100)", 0, 100))
             .example("Set volume to 50%", "hey tell cricket volume 50")
-            .example("Mute", "hey tell cricket volume 0")
-            .see_also("select"),
+            .example("Mute", "hey tell cricket volume 0"),
     )
     .command(
         CommandDef::new("list", "List available tunes")
-            .long_desc("Shows all tunes available from embedded assets and filesystem. Filesystem tunes override embedded tunes with the same name.")
             .example("List all tunes", "hey tell cricket list")
             .see_also("select")
             .see_also("show"),
@@ -53,55 +51,38 @@ fn build_manifest() -> CommandManifest {
     .command(
         CommandDef::new("show", "Show tune details")
             .arg(CommandArg::required_string("tune", "Tune name to inspect"))
-            .long_desc("Displays tune metadata, mapped events, and resource files.")
-            .example("Show zen-tech tune details", "hey tell cricket show zen-tech")
-            .see_also("list")
-            .see_also("select"),
+            .example("Show zen-tech tune", "hey tell cricket show zen-tech"),
     )
     .command(
         CommandDef::new("play", "Play an event sound")
             .arg(CommandArg::required_string("event", "Event name to play"))
-            .long_desc("Triggers the sound for a specific event from the current tune. Useful for testing.")
-            .example("Play stone online sound", "hey tell cricket play stone-online")
-            .example("Play service started", "hey tell cricket play service-started")
-            .see_also("select"),
+            .example("Play stone online sound", "hey tell cricket play stone.tended"),
     )
-    .command(
-        CommandDef::new("stop", "Stop all playing sounds")
-            .example("Stop all sounds", "hey tell cricket stop")
-            .see_also("volume"),
-    )
+    .command(CommandDef::new("stop", "Stop all playing sounds"))
 }
 
 #[derive(Parser, Debug)]
 #[command(name = "garden-cricket")]
-#[command(about = "Ambient audio Companion for Zen Garden stone presence")]
+#[command(about = "Ambient audio companion for Zen Garden")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Stone endpoint (e.g., http://10.0.0.5:7185)
     #[arg(short, long, env = "GARDEN_STONE")]
     stone: Option<String>,
 
-    /// Tunes directory (contains tune.yaml files)
     #[arg(long, env = "CRICKET_TUNES_DIR")]
     tunes_dir: Option<String>,
 
-    /// Active tune name
     #[arg(long, env = "CRICKET_TUNE", default_value = "zen-tech")]
     tune: String,
 
-    /// Master volume (0-100)
     #[arg(long, env = "CRICKET_VOLUME", default_value = "50")]
     volume: u8,
 
-    /// Command server port (for receiving hey-tell commands)
-    /// Default is computed from Companion ID (7188-7199 range)
     #[arg(long, env = "CRICKET_PORT")]
     port: Option<u16>,
 
-    /// State directory for persisting settings
     #[arg(long, env = "CRICKET_STATE_DIR")]
     state_dir: Option<String>,
 }
@@ -110,27 +91,18 @@ struct Cli {
 enum Commands {
     /// List available tunes
     Load {
-        /// Tunes directory
         #[arg(long)]
         tunes_dir: Option<String>,
     },
-
-    /// Test mode: interactively trigger tune events with keyboard
+    /// Interactive test mode with keyboard-driven events
     Test {
-        /// Tune name to test
         tune: String,
-
-        /// Tunes directory
         #[arg(long)]
         tunes_dir: Option<String>,
     },
-
     /// Show tune details
     Show {
-        /// Tune name
         tune: String,
-
-        /// Tunes directory
         #[arg(long)]
         tunes_dir: Option<String>,
     },
@@ -138,70 +110,39 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Check for --dump-commands before any other processing
-    // This is used by Moss Companion registry to discover Cricket's commands
     check_dump_commands(&build_manifest());
-
-    // Initialize tracing (from SDK)
     garden_companion_sdk::runtime::init_tracing();
 
     let cli = Cli::parse();
-
-    // Resolve tunes directory
     let tunes_dir = resolve_tunes_dir(cli.tunes_dir.as_deref());
 
-    // Handle subcommands
     if let Some(cmd) = cli.command {
-        match cmd {
-            Commands::Load {
-                tunes_dir: override_dir,
-            } => {
-                let dir = resolve_tunes_dir(override_dir.as_deref());
-                return list_tunes(&dir);
+        return match cmd {
+            Commands::Load { tunes_dir: d } => list_tunes(&resolve_tunes_dir(d.as_deref())),
+            Commands::Test { tune, tunes_dir: d } => {
+                test_mode::run(&tune, &resolve_tunes_dir(d.as_deref())).await
             }
-            Commands::Test {
-                tune,
-                tunes_dir: override_dir,
-            } => {
-                let dir = resolve_tunes_dir(override_dir.as_deref());
-                return test_mode::run(&tune, &dir).await;
+            Commands::Show { tune, tunes_dir: d } => {
+                show_tune(&tune, &resolve_tunes_dir(d.as_deref()))
             }
-            Commands::Show {
-                tune,
-                tunes_dir: override_dir,
-            } => {
-                let dir = resolve_tunes_dir(override_dir.as_deref());
-                return show_tune(&tune, &dir);
-            }
-        }
+        };
     }
 
-    // Normal mode: require stone endpoint and port
     let stone = cli
         .stone
-        .ok_or_else(|| anyhow::anyhow!("--stone endpoint required (or use 'test' subcommand)"))?;
+        .ok_or_else(|| anyhow::anyhow!("--stone endpoint required (or use a subcommand)"))?;
+    let port = cli
+        .port
+        .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss)"))?;
 
-    // Port is assigned by Moss and passed via --port
-    let port = cli.port.ok_or_else(|| {
-        anyhow::anyhow!("--port required (assigned by Moss when starting Companion)")
-    })?;
-
-    // Create Companion state (handles on/off persistence)
-    let state_dir = cli.state_dir.map(std::path::PathBuf::from);
-    let companion_state = Arc::new(CompanionState::new(state_dir));
-
-    // Ensure audio dependencies are installed (alsa-utils on Linux)
     mixer::ensure_audio_dependencies()?;
+    mixer::init_system_audio(cli.volume)?;
 
-    // Initialize system audio (unmute, set volume) on Linux
-    mixer::init_system_audio(50)?;
-
-    // Initialize domain components
     let mixer = Arc::new(Mixer::new(cli.volume as f32 / 100.0)?);
     let tunes = Arc::new(Tunes::new(Some(&tunes_dir))?);
-
-    // Select initial tune
     tunes.select(&cli.tune)?;
+
+    let enabled = Arc::new(Mutex::new(load_enabled(cli.state_dir.as_deref())));
 
     tracing::info!(
         stone = %stone,
@@ -211,102 +152,79 @@ async fn main() -> Result<()> {
         "Starting Garden Cricket"
     );
 
-    // Create handlers
-    let commands = CricketCommands::new(
-        Arc::clone(&mixer),
-        Arc::clone(&tunes),
-        Arc::clone(&companion_state),
-    );
-    let events = CricketEvents::new(
-        Arc::clone(&mixer),
-        Arc::clone(&tunes),
-        Arc::clone(&companion_state),
-    );
+    let factory = AudioFactory::new(mixer.clone(), tunes.clone(), enabled.clone());
 
-    // Build and run Companion using SDK runtime
-    let config = garden_companion_sdk::CompanionConfig {
-        stone: Some(stone),
-        port: Some(port),
-        dump_commands: false,
-    };
-
-    CompanionRuntime::new(config, "cricket")
-        .command_handler(commands)
-        .event_handler(events)
-        .run()
-        .await
+    let mut companion = Companion::new("cricket")
+        .with_transport(SseTransport::new(stone))
+        .with_transport(CommandTransport::new(port))
+        .with_adapter_factory(factory);
+    if let Some(dir) = cli.state_dir.as_deref() {
+        companion = companion.with_state_dir(dir);
+    }
+    companion.run().await
 }
 
-/// Resolve tunes directory with fallbacks
+// ---------------------------------------------------------------------------
+// Subcommand impls (unchanged from legacy cricket)
+// ---------------------------------------------------------------------------
+
 fn resolve_tunes_dir(override_path: Option<&str>) -> String {
     if let Some(path) = override_path {
         return path.to_string();
     }
-
-    // Check standard locations
-    let candidates = [
+    for candidate in [
         "./tunes",
         "/usr/share/garden-cricket/tunes",
         "/etc/zen-garden/cricket/tunes",
-    ];
-
-    for candidate in candidates {
+    ] {
         if std::path::Path::new(candidate).exists() {
             return candidate.to_string();
         }
     }
-
-    // Default
     "./tunes".to_string()
 }
 
-/// List available tunes
 fn list_tunes(tunes_dir: &str) -> Result<()> {
     let tunes = Tunes::new(Some(tunes_dir))?.list_tunes();
-
     if tunes.is_empty() {
         println!("No tunes found in {}", tunes_dir);
-        println!();
-        println!("Create a tune by adding a tune.yaml file:");
-        println!("  {}/my-tune/tune.yaml", tunes_dir);
         return Ok(());
     }
-
-    println!("Available Tunes:");
-    println!();
-
+    println!("Available Tunes:\n");
     for tune in tunes {
-        let source = if tune.embedded {
-            "[embedded]"
-        } else {
-            "[filesystem]"
-        };
+        let source = if tune.embedded { "[embedded]" } else { "[filesystem]" };
         println!("  {} (v{}) {}", tune.name, tune.version, source);
         println!("    {}", tune.description);
-        println!("    Events: {}", tune.event_count);
-        println!();
+        println!("    Events: {}\n", tune.event_count);
     }
-
     Ok(())
 }
 
-/// Show tune details
 fn show_tune(name: &str, tunes_dir: &str) -> Result<()> {
     let tune = Tunes::new(Some(tunes_dir))?
         .get_tune(name)
         .ok_or_else(|| anyhow::anyhow!("Tune '{}' not found", name))?;
-
     println!("{}", tune.name);
     println!("  Version:     {}", tune.version);
     println!("  Description: {}", tune.description);
     println!("  Author:      {}", tune.author);
-    println!("  License:     {}", tune.license);
-    println!();
+    println!("  License:     {}\n", tune.license);
     println!("Event Mappings:");
-
     for (event, mapping) in &tune.events {
         println!("  {} → {} ({})", event, mapping.resource, mapping.channel);
     }
-
     Ok(())
+}
+
+/// Load the persisted on/off flag from the state directory, defaulting
+/// to `true` when no state dir is configured. Mirrors the legacy
+/// `CompanionState` behaviour so an operator who disabled cricket
+/// keeps that preference across the rewrite.
+fn load_enabled(state_dir: Option<&str>) -> bool {
+    let Some(dir) = state_dir else { return true };
+    let path = std::path::Path::new(dir).join("enabled");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => s.trim() != "off",
+        Err(_) => true,
+    }
 }

@@ -53,6 +53,11 @@ struct ActiveAdapter {
     shutdown: CancellationToken,
     status: Arc<Mutex<AdapterStatus>>,
     last_seen: Instant,
+    /// `true` when the adapter was spawned by an external lifecycle
+    /// manager (the device bus). The factory-discovery grace-window
+    /// reap logic skips these; they are reaped only via explicit
+    /// [`Adapters::reap_id`] calls.
+    external: bool,
     /// Task running adapter.run(). We await this on reap to ensure clean
     /// shutdown (with timeout).
     run_handle: Option<JoinHandle<()>>,
@@ -233,8 +238,10 @@ impl Adapters {
             }
         }
 
-        // Find active adapters whose id is not in present_ids for longer
-        // than grace_window. Reap them.
+        // Find factory-spawned adapters whose id is not in present_ids
+        // for longer than grace_window. Externally-managed adapters
+        // (bus-spawned) are not reaped here — they are reaped via the
+        // explicit `reap_id` path triggered by a `Detached` bus event.
         let to_reap: Vec<String> = {
             let active = self
                 .active
@@ -243,7 +250,8 @@ impl Adapters {
             active
                 .iter()
                 .filter(|(id, a)| {
-                    !present_ids.contains(id.as_str())
+                    !a.external
+                        && !present_ids.contains(id.as_str())
                         && now.duration_since(a.last_seen) >= self.grace_window
                 })
                 .map(|(id, _)| id.clone())
@@ -255,9 +263,32 @@ impl Adapters {
         }
     }
 
+    /// Spawn an adapter supplied by an external lifecycle manager
+    /// (the device bus). The returned id is the key the caller uses
+    /// with [`Adapters::reap_id`] when the device detaches.
+    ///
+    /// External adapters are *not* reaped by the factory-discovery
+    /// grace-window path — they are only reaped via an explicit
+    /// `reap_id` call triggered by a bus `Detached` event.
+    pub fn spawn_external(&self, adapter: Box<dyn Adapter>) -> String {
+        let id = adapter.info().id.clone();
+        self.spawn_inner(adapter, Instant::now(), true);
+        id
+    }
+
+    /// Reap an adapter by id (factory-spawned or external). Idempotent:
+    /// a second call for the same id is a no-op.
+    pub async fn reap_id(&self, id: &str) {
+        self.reap(id).await;
+    }
+
     /// Spawn a new adapter. Creates the filter task + run task under a
     /// tracing span and stores the bookkeeping entry.
     fn spawn(&self, adapter: Box<dyn Adapter>, now: Instant) {
+        self.spawn_inner(adapter, now, false);
+    }
+
+    fn spawn_inner(&self, adapter: Box<dyn Adapter>, now: Instant, external: bool) {
         let info = adapter.info();
         let profile = adapter.profile();
 
@@ -311,6 +342,7 @@ impl Adapters {
             shutdown,
             status,
             last_seen: now,
+            external,
             run_handle: Some(run_handle),
             filter_handle: Some(filter_handle),
         };

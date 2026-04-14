@@ -105,7 +105,6 @@ mod tests {
     use super::super::resource::ResourceClass;
     use super::*;
     use crate::adapters::{Adapter, AdapterInfo, AdapterProfile, adapter::BoxFuture};
-    use crate::bus::device::OpenedDevice;
     use crate::garden::{Event, Garden, Pulse};
     use serde_json::json;
     use std::sync::Arc;

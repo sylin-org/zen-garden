@@ -38,10 +38,12 @@
 
 pub mod fake_factory;
 pub mod harness;
+pub mod mock_bus;
 pub mod mock_transport;
 pub mod recording_adapter;
 
 pub use fake_factory::FakeFactory;
 pub use harness::{RunningHarness, TestHarness};
+pub use mock_bus::MockBus;
 pub use mock_transport::{MOCK_EMITTED_KINDS, MockTransport};
 pub use recording_adapter::RecordingAdapter;

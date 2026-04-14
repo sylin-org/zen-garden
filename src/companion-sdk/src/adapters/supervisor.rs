@@ -79,11 +79,20 @@ pub struct Adapters {
     pulse: Arc<Pulse>,
     discovery_interval: Duration,
     grace_window: Duration,
+
+    /// Sender side of the adapter-exit event channel. The wrapper task
+    /// spawned for each adapter publishes here when the run-future
+    /// completes.
+    exit_tx: tokio::sync::mpsc::UnboundedSender<crate::adapters::exit::AdapterExited>,
+    /// Receiver side, taken once via [`Adapters::subscribe_exits`].
+    /// Single-consumer model — the device bus is the canonical owner.
+    exit_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<crate::adapters::exit::AdapterExited>>>,
 }
 
 impl Adapters {
     /// Construct an empty supervisor bound to a [`Garden`] + [`Pulse`].
     pub fn new(garden: Arc<Garden>, pulse: Arc<Pulse>) -> Self {
+        let (exit_tx, exit_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             factories: RwLock::new(Vec::new()),
             active: Arc::new(RwLock::new(HashMap::new())),
@@ -91,7 +100,19 @@ impl Adapters {
             pulse,
             discovery_interval: DEFAULT_DISCOVERY_INTERVAL,
             grace_window: DEFAULT_GRACE_WINDOW,
+            exit_tx,
+            exit_rx: Mutex::new(Some(exit_rx)),
         }
+    }
+
+    /// Take the exit-event receiver. Returns `None` after the first
+    /// call — the channel is single-consumer because adapter exits
+    /// drive port-ownership reclamation, which has exactly one
+    /// authoritative owner (the device bus).
+    pub fn subscribe_exits(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<crate::adapters::exit::AdapterExited>> {
+        self.exit_rx.lock().expect("Adapters exit_rx lock poisoned").take()
     }
 
     /// Override the default discovery interval.
@@ -329,12 +350,32 @@ impl Adapters {
         let garden = self.garden.clone();
         let pulse = self.pulse.clone();
         let run_shutdown = shutdown.clone();
-
-        let run_handle = tokio::spawn(
+        let inner = tokio::spawn(
             adapter
                 .run(rx, garden, pulse, run_shutdown)
                 .instrument(run_span),
         );
+
+        // Wrapper: observe completion, derive exit reason, publish.
+        // The supervisor stores this outer handle so reap_id awaits
+        // both the adapter's run and the exit-event delivery.
+        let exit_tx = self.exit_tx.clone();
+        let exit_id = info.id.clone();
+        let exit_shutdown = shutdown.clone();
+        let run_handle = tokio::spawn(async move {
+            let join = inner.await;
+            let reason = if join.is_err() {
+                crate::adapters::exit::AdapterExitReason::Panicked
+            } else if exit_shutdown.is_cancelled() {
+                crate::adapters::exit::AdapterExitReason::Reaped
+            } else {
+                crate::adapters::exit::AdapterExitReason::SelfExit
+            };
+            let _ = exit_tx.send(crate::adapters::exit::AdapterExited {
+                id: exit_id,
+                reason,
+            });
+        });
 
         let id = info.id.clone();
         let entry = ActiveAdapter {
@@ -810,5 +851,144 @@ mod tests {
     struct SupHandle<T> {
         join: JoinHandle<()>,
         supervisor: Arc<T>,
+    }
+
+    // ---------------------------------------------------------------
+    // AdapterExited event tests (COMPANION-0012 follow-up)
+    // ---------------------------------------------------------------
+
+    use super::super::exit::{AdapterExitReason, AdapterExited};
+
+    /// Adapter that returns immediately — used to exercise SelfExit.
+    struct ImmediateExitAdapter {
+        id: String,
+    }
+    impl Adapter for ImmediateExitAdapter {
+        fn info(&self) -> AdapterInfo {
+            AdapterInfo {
+                kind: "test.immediate-exit",
+                id: self.id.clone(),
+                device: None,
+            }
+        }
+        fn profile(&self) -> AdapterProfile {
+            AdapterProfile::default()
+        }
+        fn run(
+            self: Box<Self>,
+            _events: mpsc::Receiver<Event>,
+            _garden: Arc<Garden>,
+            _pulse: Arc<Pulse>,
+            _shutdown: CancellationToken,
+        ) -> super::super::adapter::BoxFuture<'static, ()> {
+            Box::pin(async {})
+        }
+    }
+
+    /// Adapter that runs forever until shutdown. Exercises Reaped.
+    struct LongRunAdapter {
+        id: String,
+    }
+    impl Adapter for LongRunAdapter {
+        fn info(&self) -> AdapterInfo {
+            AdapterInfo {
+                kind: "test.long-run",
+                id: self.id.clone(),
+                device: None,
+            }
+        }
+        fn profile(&self) -> AdapterProfile {
+            AdapterProfile::default()
+        }
+        fn run(
+            self: Box<Self>,
+            _events: mpsc::Receiver<Event>,
+            _garden: Arc<Garden>,
+            _pulse: Arc<Pulse>,
+            shutdown: CancellationToken,
+        ) -> super::super::adapter::BoxFuture<'static, ()> {
+            Box::pin(async move {
+                shutdown.cancelled().await;
+            })
+        }
+    }
+
+    /// Adapter that panics. Exercises Panicked.
+    struct PanicAdapter {
+        id: String,
+    }
+    impl Adapter for PanicAdapter {
+        fn info(&self) -> AdapterInfo {
+            AdapterInfo {
+                kind: "test.panic",
+                id: self.id.clone(),
+                device: None,
+            }
+        }
+        fn profile(&self) -> AdapterProfile {
+            AdapterProfile::default()
+        }
+        fn run(
+            self: Box<Self>,
+            _events: mpsc::Receiver<Event>,
+            _garden: Arc<Garden>,
+            _pulse: Arc<Pulse>,
+            _shutdown: CancellationToken,
+        ) -> super::super::adapter::BoxFuture<'static, ()> {
+            Box::pin(async {
+                panic!("boom");
+            })
+        }
+    }
+
+    async fn next_exit(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<AdapterExited>,
+    ) -> AdapterExited {
+        tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("no AdapterExited within 1s")
+            .expect("exit channel closed")
+    }
+
+    #[tokio::test]
+    async fn self_exit_reports_self_exit() {
+        let (s, _) = fixture();
+        let mut rx = s.subscribe_exits().expect("first subscribe should succeed");
+        s.spawn_external(Box::new(ImmediateExitAdapter {
+            id: "se-1".into(),
+        }));
+        let exit = next_exit(&mut rx).await;
+        assert_eq!(exit.id, "se-1");
+        assert_eq!(exit.reason, AdapterExitReason::SelfExit);
+    }
+
+    #[tokio::test]
+    async fn reap_id_reports_reaped() {
+        let (s, _) = fixture();
+        let mut rx = s.subscribe_exits().unwrap();
+        s.spawn_external(Box::new(LongRunAdapter { id: "lr-1".into() }));
+        // Give the adapter a moment to actually start awaiting shutdown.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        s.reap_id("lr-1").await;
+        let exit = next_exit(&mut rx).await;
+        assert_eq!(exit.id, "lr-1");
+        assert_eq!(exit.reason, AdapterExitReason::Reaped);
+    }
+
+    #[tokio::test]
+    async fn panic_reports_panicked() {
+        let (s, _) = fixture();
+        let mut rx = s.subscribe_exits().unwrap();
+        s.spawn_external(Box::new(PanicAdapter { id: "p-1".into() }));
+        let exit = next_exit(&mut rx).await;
+        assert_eq!(exit.id, "p-1");
+        assert_eq!(exit.reason, AdapterExitReason::Panicked);
+    }
+
+    #[tokio::test]
+    async fn subscribe_exits_is_single_consumer() {
+        let (s, _) = fixture();
+        assert!(s.subscribe_exits().is_some());
+        assert!(s.subscribe_exits().is_none());
     }
 }

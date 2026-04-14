@@ -11,11 +11,13 @@
 //! [COMPANION-0007]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0007-adapters.md
 
 pub mod adapter;
+pub mod exit;
 pub mod factory;
 pub mod status;
 pub mod supervisor;
 
 pub use adapter::{Adapter, AdapterInfo, AdapterProfile, DeliveryPolicy};
+pub use exit::{AdapterExitReason, AdapterExited};
 pub use factory::AdapterFactory;
 pub use status::AdapterStatus;
 pub use supervisor::Adapters;

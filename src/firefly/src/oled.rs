@@ -20,7 +20,7 @@ pub fn format_uptime(seconds: u64) -> String {
     }
 }
 
-/// Send a full OLED snapshot (name, health, metrics)
+/// Send a full OLED snapshot (name, health, metrics) — v1 display
 pub fn send_oled_snapshot(
     connection: &FireflyConnection,
     stone_name: &str,
@@ -34,6 +34,30 @@ pub fn send_oled_snapshot(
         serial.oled_stone_name(stone_name)?;
         serial.oled_health(health)?;
         serial.oled_metrics(cpu, memory, &uptime)?;
+        Ok(())
+    })
+}
+
+/// Send a full OLED v2 snapshot (name, health, dashboard) — v2 icon display
+#[allow(clippy::too_many_arguments)]
+pub fn send_oled_v2_snapshot(
+    connection: &FireflyConnection,
+    stone_name: &str,
+    health: &str,
+    cpu: u8,
+    memory: u8,
+    disk: u8,
+    uptime_seconds: u64,
+    offerings: usize,
+    stones: usize,
+    net_bps: u64,
+    seed_bank: bool,
+) -> Result<()> {
+    let uptime = format_uptime(uptime_seconds);
+    connection.with_device(|serial| {
+        serial.oled_stone_name(stone_name)?;
+        serial.oled_health(health)?;
+        serial.oled_v2_dashboard(cpu, memory, disk, &uptime, offerings, stones, net_bps, seed_bank)?;
         Ok(())
     })
 }

@@ -137,13 +137,18 @@ pub enum Override {
     StorageRemoved,
 }
 
+/// Health override display duration before yielding to baseline
+const HEALTH_DISPLAY_SECS: u64 = 10;
+/// Cooldown between health override cycles (baseline shows during this window)
+const HEALTH_COOLDOWN_SECS: u64 = 5;
+
 impl Override {
     /// How long this override lasts
     fn duration(&self) -> Duration {
         match self {
             Override::Tended => Duration::from_secs(3),
-            Override::HealthWarning => Duration::from_secs(60), // Re-evaluated by events
-            Override::HealthError => Duration::from_secs(60),
+            Override::HealthWarning => Duration::from_secs(HEALTH_DISPLAY_SECS),
+            Override::HealthError => Duration::from_secs(HEALTH_DISPLAY_SECS),
             Override::ServiceStarted => Duration::from_millis(1500),
             Override::ServiceStopped => Duration::from_millis(1000),
             Override::StorageDetected => Duration::from_millis(2000),
@@ -171,6 +176,8 @@ pub struct Animation {
     pub health_label: String,
     /// Active override (if any)
     pub active_override: Option<(Override, Instant)>,
+    /// Health cooldown: baseline shows until this instant, then health re-triggers
+    health_cooldown_until: Option<Instant>,
     /// Whether animation should run
     pub enabled: bool,
     /// User-configured brightness (0-100), persisted
@@ -178,15 +185,33 @@ pub struct Animation {
     /// State directory for persistence
     state_dir: Option<std::path::PathBuf>,
 
-    // OLED-specific state (stored for metrics updates)
-    /// Stone name for OLED display
+    // Cached metrics (for OLED/T-Display updates and reconnect state)
+    /// Stone name for display
     pub stone_name: Option<String>,
-    /// Uptime in seconds for OLED metrics
+    /// Uptime in seconds
     pub uptime_seconds: u64,
-    /// CPU percentage for OLED metrics
+    /// CPU percentage
     pub cpu_percent: u8,
-    /// Memory percentage for OLED metrics
+    /// Memory percentage
     pub memory_percent: u8,
+    /// Disk usage percentage
+    pub disk_percent: u8,
+    /// I/O activity percentage
+    pub io_percent: u8,
+    /// GPU utilization percentage
+    pub gpu_percent: u8,
+    /// Whether GPU is actively processing
+    pub gpu_active: bool,
+    /// Whether stone has a GPU
+    pub has_gpu: bool,
+    /// Whether stone is lantern
+    pub is_lantern: bool,
+    /// Whether cricket companion is present
+    pub has_cricket: bool,
+    /// Whether pond is active
+    pub pond_active: bool,
+    /// Current hour as decimal (e.g., 14.5 = 2:30 PM)
+    pub hour: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -220,14 +245,24 @@ impl Animation {
             health: Health::Thriving,
             health_label: DEFAULT_HEALTH_LABEL.to_string(),
             active_override: None,
+            health_cooldown_until: None,
             enabled: true,
             brightness,
             state_dir,
-            // OLED-specific state
+            // Cached metrics
             stone_name: None,
             uptime_seconds: 0,
             cpu_percent: 0,
             memory_percent: 0,
+            disk_percent: 0,
+            io_percent: 0,
+            gpu_percent: 0,
+            gpu_active: false,
+            has_gpu: false,
+            is_lantern: false,
+            has_cricket: false,
+            pond_active: false,
+            hour: 0.0,
         }
     }
 
@@ -257,20 +292,53 @@ impl Animation {
 
     /// Trigger an override animation
     pub fn trigger_override(&mut self, override_type: Override) {
+        // Starting a health override clears any pending cooldown
+        if matches!(override_type, Override::HealthWarning | Override::HealthError) {
+            self.health_cooldown_until = None;
+        }
         self.active_override = Some((override_type, Instant::now()));
     }
 
     /// Clear override (e.g., health recovered)
     pub fn clear_override(&mut self) {
         self.active_override = None;
+        self.health_cooldown_until = None;
     }
 
-    /// Check if override has expired
+    /// Check if override has expired; health overrides enter cooldown instead of clearing forever
     pub fn update_override(&mut self) {
         if let Some((ref override_type, start)) = self.active_override
-            && start.elapsed() >= override_type.duration() {
-                self.active_override = None;
+            && start.elapsed() >= override_type.duration()
+        {
+            match override_type {
+                Override::HealthWarning | Override::HealthError => {
+                    // Enter cooldown — baseline shows, then health re-triggers
+                    self.active_override = None;
+                    self.health_cooldown_until =
+                        Some(Instant::now() + Duration::from_secs(HEALTH_COOLDOWN_SECS));
+                }
+                _ => {
+                    self.active_override = None;
+                }
             }
+        }
+    }
+
+    /// Re-trigger health override after cooldown expires (if health is still bad)
+    pub fn maybe_retrigger_health(&mut self) {
+        if self.active_override.is_some() {
+            return;
+        }
+        if let Some(until) = self.health_cooldown_until
+            && Instant::now() >= until
+        {
+            self.health_cooldown_until = None;
+            match self.health {
+                Health::Withering => self.trigger_override(Override::HealthWarning),
+                Health::Wilting => self.trigger_override(Override::HealthError),
+                Health::Thriving => {} // recovered during cooldown — no re-trigger
+            }
+        }
     }
 }
 
@@ -371,7 +439,7 @@ impl AnimationEngine {
                 // Advance swarm frame
                 self.swarm_frame += 1;
 
-                // Update/expire override
+                // Update/expire override (health overrides enter cooldown)
                 self.context.write().await.update_override();
                 self.was_in_override = true;
             } else {
@@ -385,6 +453,9 @@ impl AnimationEngine {
                 }
                 // Baseline firefly animation
                 self.update_baseline().await;
+
+                // Re-trigger health override after cooldown (if health still bad)
+                self.context.write().await.maybe_retrigger_health();
             }
         }
     }
@@ -496,6 +567,12 @@ impl AnimationEngine {
     }
 
     /// Pick firefly color based on context
+    ///
+    /// Each accent color gets an independent 10% probability window:
+    ///   - Green (seed-bank): rolls 0.00–0.10
+    ///   - Blue (services):   rolls 0.10–0.20
+    ///
+    /// Both can coexist without stealing probability from each other.
     fn pick_color(&mut self, has_seed_bank: bool, has_services: bool) -> (u8, u8, u8) {
         let roll: f32 = self.rng.random();
 
@@ -504,8 +581,8 @@ impl AnimationEngine {
             return STORAGE_GREEN;
         }
 
-        // 10% chance for blue if services running
-        if has_services && roll < 0.20 {
+        // 10% chance for blue if services running (independent window)
+        if has_services && (0.10..0.20).contains(&roll) {
             return SERVICE_BLUE;
         }
 

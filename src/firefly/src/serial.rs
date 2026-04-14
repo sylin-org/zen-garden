@@ -12,7 +12,19 @@ use anyhow::{Context, Result};
 use serialport::SerialPort;
 use std::io::{Read, Write};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Overall per-command read deadline. The serialport per-read timeout (2s)
+/// does NOT fire when a USB device is hot-unplugged on Linux — the kernel
+/// returns `Ok(0)` EOF-style reads on the dangling fd instead of an error,
+/// which would spin the `loop` forever. This cap bounds the worst case.
+const READ_DEADLINE: Duration = Duration::from_millis(3000);
+
+/// Consecutive `Ok(0)` reads that indicate a disconnected device. Kept small
+/// so we escape fast, with a 10ms sleep between each to avoid a CPU-burning
+/// busy-loop.
+const MAX_ZERO_READS: u32 = 100;
+const ZERO_READ_SLEEP: Duration = Duration::from_millis(10);
 
 /// Known USB Vendor IDs
 const VID_RASPBERRY_PI: u16 = 0x2e8a; // Native RP2040 / Pico SDK
@@ -24,8 +36,10 @@ const VID_CH340: u16 = 0x1a86; // CH340 (ESP8266 NodeMCU)
 pub enum FireflyDeviceType {
     /// Waveshare RP2040-Matrix with 5×5 RGB LED matrix
     Rp2040Matrix,
-    /// ESP8266 NodeMCU with 128×64 SSD1306 OLED display
+    /// ESP8266 NodeMCU with 128×64 SSD1306 OLED display (v1)
     Esp8266Oled,
+    /// ESP8266 NodeMCU with 128×64 SSD1306 OLED display (v2 icon dashboard)
+    Esp8266OledV2,
     /// ESP32 T-Display with 135×240 ST7789 color TFT (FIREFLY-0003)
     Esp32TDisplay,
     /// Unknown device type (responds to protocol but unrecognized VID)
@@ -38,6 +52,7 @@ impl std::fmt::Display for FireflyDeviceType {
         match self {
             FireflyDeviceType::Rp2040Matrix => write!(f, "RP2040-Matrix"),
             FireflyDeviceType::Esp8266Oled => write!(f, "ESP8266-OLED"),
+            FireflyDeviceType::Esp8266OledV2 => write!(f, "ESP8266-OLED-v2"),
             FireflyDeviceType::Esp32TDisplay => write!(f, "ESP32-TDisplay"),
             FireflyDeviceType::Unknown => write!(f, "Unknown"),
         }
@@ -63,6 +78,8 @@ impl FireflyDeviceType {
     pub fn refine_from_info(current: Self, info_response: &str) -> Self {
         if info_response.contains("firefly-tdisplay") {
             FireflyDeviceType::Esp32TDisplay
+        } else if info_response.contains("firefly-oled-v2") {
+            FireflyDeviceType::Esp8266OledV2
         } else {
             current
         }
@@ -122,10 +139,10 @@ impl FireflySerial {
         // Stabilization: all devices need a moment after port open
         // Opening a serial port can toggle DTR/RTS which may reset the device
         let stabilize_ms = match device_type {
-            FireflyDeviceType::Esp8266Oled => 2000, // MicroPython boot takes longer
-            FireflyDeviceType::Esp32TDisplay => 2000, // ESP32 MicroPython boot
-            FireflyDeviceType::Rp2040Matrix => 2000, // CircuitPython boot + animation
-            FireflyDeviceType::Unknown => 500,      // Conservative default
+            FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => 2000,
+            FireflyDeviceType::Esp32TDisplay => 2000,
+            FireflyDeviceType::Rp2040Matrix => 2000,
+            FireflyDeviceType::Unknown => 500,
         };
 
         tracing::debug!(
@@ -170,13 +187,27 @@ impl FireflySerial {
             .context("Failed to write command")?;
         port.flush().context("Failed to flush")?;
 
-        // Read response byte-by-byte until newline (avoids BufReader buffering issues)
+        // Read response byte-by-byte until newline (avoids BufReader buffering issues).
+        //
+        // Two safeguards against hot-unplug:
+        //   1. `deadline` — overall read budget. A dangling fd may keep returning
+        //      data at an arbitrary rate; cap total time spent here.
+        //   2. `zero_reads` — on Linux, `read()` from a deleted USB-serial fd returns
+        //      `Ok(0)` (EOF) repeatedly instead of an error. The per-read `timeout`
+        //      configured on the port does not fire for `Ok(0)`, so without this
+        //      guard the `loop` spins forever, deadlocking the outer Mutex chain.
         let mut response = Vec::with_capacity(256);
         let mut buf = [0u8; 1];
+        let deadline = Instant::now() + READ_DEADLINE;
+        let mut zero_reads: u32 = 0;
 
         loop {
+            if Instant::now() >= deadline {
+                return Err(anyhow::anyhow!("Command read deadline exceeded"));
+            }
             match port.read(&mut buf) {
                 Ok(1) => {
+                    zero_reads = 0;
                     if buf[0] == b'\n' {
                         break;
                     }
@@ -184,7 +215,18 @@ impl FireflySerial {
                         response.push(buf[0]);
                     }
                 }
-                Ok(_) => continue, // 0 bytes read, retry
+                Ok(_) => {
+                    // 0-byte read: could be transient, or a disconnected device
+                    // returning EOF. Cap the count and sleep briefly between retries.
+                    zero_reads += 1;
+                    if zero_reads > MAX_ZERO_READS {
+                        return Err(anyhow::anyhow!(
+                            "Device appears disconnected (EOF loop after {} zero-byte reads)",
+                            zero_reads
+                        ));
+                    }
+                    std::thread::sleep(ZERO_READ_SLEEP);
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     // Debug level - callers decide severity based on context
                     // (timeouts are expected during device detection/reconnection)
@@ -320,6 +362,66 @@ impl FireflySerial {
     /// Send seed bank removed (T-Display only)
     pub fn tdisplay_seed_bank_removed(&self) -> Result<String> {
         self.send_command_no_wait("SR")
+    }
+
+    // ==================== ESP8266 OLED v2 Commands ====================
+
+    /// All-in-one dashboard update (OLED v2 only)
+    /// D,cpu,mem,disk,uptime,offerings,stones,net_bps,seed_bank
+    #[allow(clippy::too_many_arguments)]
+    pub fn oled_v2_dashboard(
+        &self,
+        cpu: u8,
+        mem: u8,
+        disk: u8,
+        uptime: &str,
+        offerings: usize,
+        stones: usize,
+        net_bps: u64,
+        seed_bank: bool,
+    ) -> Result<String> {
+        self.send_command(&format!(
+            "D,{},{},{},{},{},{},{},{}",
+            cpu.min(100),
+            mem.min(100),
+            disk.min(100),
+            uptime,
+            offerings,
+            stones,
+            net_bps,
+            if seed_bank { 1 } else { 0 },
+        ))
+    }
+
+    /// Update garden context (OLED v2 only)
+    /// G,offerings,stones,net_bps,seed_bank
+    #[allow(dead_code)] // Protocol command for API completeness
+    pub fn oled_v2_garden(
+        &self,
+        offerings: usize,
+        stones: usize,
+        net_bps: u64,
+        seed_bank: bool,
+    ) -> Result<String> {
+        self.send_command(&format!(
+            "G,{},{},{},{}",
+            offerings,
+            stones,
+            net_bps,
+            if seed_bank { 1 } else { 0 },
+        ))
+    }
+
+    /// Extended metrics (OLED v2 only): cpu, memory, disk (0-100), uptime string
+    #[allow(dead_code)] // Protocol command for API completeness
+    pub fn oled_v2_metrics(&self, cpu: u8, mem: u8, disk: u8, uptime: &str) -> Result<String> {
+        self.send_command(&format!(
+            "M,{},{},{},{}",
+            cpu.min(100),
+            mem.min(100),
+            disk.min(100),
+            uptime,
+        ))
     }
 
     // ==================== ESP8266 OLED Commands ====================
@@ -564,7 +666,9 @@ impl FireflyConnection {
         // Check if the error indicates disconnection
         if let Err(ref e) = result {
             let error_str = e.to_string().to_lowercase();
-            // Detect disconnection errors: timeout, I/O errors, device not found
+            // Detect disconnection errors: timeout, I/O errors, device not found,
+            // EOF-loop (Linux returns Ok(0) on a deleted USB-serial fd), and the
+            // overall read-deadline guard.
             if error_str.contains("timed out")
                 || error_str.contains("i/o error")
                 || error_str.contains("access is denied")
@@ -572,6 +676,8 @@ impl FireflyConnection {
                 || error_str.contains("no such file")
                 || error_str.contains("broken pipe")
                 || error_str.contains("connection reset")
+                || error_str.contains("disconnected")
+                || error_str.contains("deadline exceeded")
             {
                 tracing::warn!(error = %e, "Device communication failed, marking as disconnected");
                 self.disconnect();
@@ -641,8 +747,9 @@ pub fn find_firefly_devices() -> Result<Vec<DetectedDevice>> {
     candidates.sort_by_key(|d| match d.device_type {
         FireflyDeviceType::Rp2040Matrix => 0,
         FireflyDeviceType::Esp32TDisplay => 1,
-        FireflyDeviceType::Esp8266Oled => 2,
-        FireflyDeviceType::Unknown => 3,
+        FireflyDeviceType::Esp8266OledV2 => 2,
+        FireflyDeviceType::Esp8266Oled => 3,
+        FireflyDeviceType::Unknown => 4,
     });
 
     Ok(candidates)
@@ -823,6 +930,15 @@ mod tests {
             "OK,firefly-oled,esp8266,128x64",
         );
         assert_eq!(refined, FireflyDeviceType::Esp8266Oled);
+    }
+
+    #[test]
+    fn test_refine_from_info_oled_v2() {
+        let refined = FireflyDeviceType::refine_from_info(
+            FireflyDeviceType::Esp8266Oled,
+            "OK,firefly-oled-v2,esp8266,128x64,dual-zone:yellow:16:blue:48,v2.0.0",
+        );
+        assert_eq!(refined, FireflyDeviceType::Esp8266OledV2);
     }
 
     #[test]

@@ -174,19 +174,21 @@ impl SseClient {
     }
 
     /// Parse SSE event from text
+    ///
+    /// Per the SSE spec, multiple `data:` lines are concatenated with newlines.
     fn parse_event(text: &str) -> Option<SseEvent> {
         let mut event_type = String::new();
-        let mut data = String::new();
+        let mut data_lines: Vec<&str> = Vec::new();
 
         for line in text.lines() {
             if let Some(value) = line.strip_prefix("event:") {
                 event_type = value.trim().to_string();
             } else if let Some(value) = line.strip_prefix("data:") {
-                data = value.trim().to_string();
+                data_lines.push(value.trim());
             }
         }
 
-        if event_type.is_empty() && data.is_empty() {
+        if event_type.is_empty() && data_lines.is_empty() {
             return None;
         }
 
@@ -194,6 +196,8 @@ impl SseClient {
         if event_type.is_empty() {
             event_type = "message".to_string();
         }
+
+        let data = data_lines.join("\n");
 
         Some(SseEvent { event_type, data })
     }

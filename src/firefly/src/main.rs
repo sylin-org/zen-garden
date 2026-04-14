@@ -244,7 +244,31 @@ async fn main() -> Result<()> {
                         let _ = conn_for_retry.with_device(|serial| serial.clear());
 
                         let device_type = conn_for_retry.device_type();
-                        if device_type == FireflyDeviceType::Esp8266Oled {
+                        if device_type == FireflyDeviceType::Esp8266OledV2 {
+                            // OLED v2: Send name, health, then full dashboard
+                            let ctx = ctx_for_retry.read().await;
+                            if let Some(name) = &ctx.stone_name {
+                                let uptime = oled::format_uptime(ctx.uptime_seconds);
+                                let _ = conn_for_retry.with_device(|serial| {
+                                    serial.oled_stone_name(name)?;
+                                    serial.oled_health(&ctx.health_label)?;
+                                    serial.oled_v2_dashboard(
+                                        ctx.cpu_percent,
+                                        ctx.memory_percent,
+                                        ctx.disk_percent,
+                                        &uptime,
+                                        ctx.offering_count,
+                                        0,
+                                        0,
+                                        ctx.has_seed_bank,
+                                    )
+                                });
+                            } else {
+                                tracing::debug!(
+                                    "OLED v2 reconnected but no cached stone name available"
+                                );
+                            }
+                        } else if device_type == FireflyDeviceType::Esp8266Oled {
                             let (stone_name, health, cpu, memory, uptime) = {
                                 let ctx = ctx_for_retry.read().await;
                                 (
@@ -278,17 +302,17 @@ async fn main() -> Result<()> {
                                     "h": ctx.health_label,
                                     "c": ctx.cpu_percent,
                                     "m": ctx.memory_percent,
-                                    "d": 0,
-                                    "i": 0,
-                                    "g": 0,
-                                    "ga": 0,
+                                    "d": ctx.disk_percent,
+                                    "i": ctx.io_percent,
+                                    "g": ctx.gpu_percent,
+                                    "ga": ctx.gpu_active as u8,
                                     "up": ctx.uptime_seconds,
                                     "sv": ctx.offering_count,
-                                    "hg": 0,
-                                    "il": 0,
-                                    "hc": 0,
-                                    "pa": 0,
-                                    "hr": 12,
+                                    "hg": ctx.has_gpu as u8,
+                                    "il": ctx.is_lantern as u8,
+                                    "hc": ctx.has_cricket as u8,
+                                    "pa": ctx.pond_active as u8,
+                                    "hr": ctx.hour,
                                 });
                                 let json_str = json.to_string();
                                 let _ = conn_for_retry
@@ -404,6 +428,7 @@ fn list_ports() -> Result<()> {
                 let device_tag = match device_type {
                     FireflyDeviceType::Rp2040Matrix => " [RP2040-Matrix]",
                     FireflyDeviceType::Esp8266Oled => " [ESP8266-OLED]",
+                    FireflyDeviceType::Esp8266OledV2 => " [ESP8266-OLED-v2]",
                     FireflyDeviceType::Esp32TDisplay => " [ESP32-TDisplay]",
                     FireflyDeviceType::Unknown => "",
                 };
@@ -445,6 +470,20 @@ async fn test_mode(port_override: Option<String>) -> Result<()> {
 
     // Test sequence depends on device type
     let tests: Vec<(&str, &str)> = match detected.device_type {
+        FireflyDeviceType::Esp8266OledV2 => vec![
+            ("I", "Get device info"),
+            ("C", "Clear display"),
+            ("S,STONE-TEST", "Set stone name"),
+            ("H,thriving", "Set health: thriving"),
+            ("D,42,65,30,1h,7,3,1200,1", "Dashboard update (CPU 42%, MEM 65%, DSK 30%, 7 offerings, 3 stones, 1.2KB/s, seed-bank)"),
+            ("D,85,90,50,3h,4,1,0,0", "Dashboard update (high load, no seed-bank)"),
+            ("H,withering", "Health: withering"),
+            ("D,95,92,50,3h,4,1,0,0", "Dashboard update (withering)"),
+            ("H,wilting", "Health: wilting"),
+            ("WIPE-IN,ZEN GARDEN,TESTING", "Wipe-in animation"),
+            ("H,thriving", "Health: thriving"),
+            ("D,20,45,30,5h,7,3,51200,1", "Dashboard update (idle, 50KB/s net)"),
+        ],
         FireflyDeviceType::Esp8266Oled => vec![
             ("I", "Get device info"),
             ("C", "Clear display"),
@@ -525,8 +564,8 @@ fn probe_device(port_override: Option<String>) -> Result<()> {
             // Parse response based on device type
             let parts: Vec<&str> = response.split(',').collect();
             match detected.device_type {
-                FireflyDeviceType::Esp8266Oled => {
-                    // OK,firefly-oled,esp8266,128x64,...
+                FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => {
+                    // OK,firefly-oled[-v2],esp8266,128x64,...
                     if parts.len() >= 4 {
                         println!();
                         println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));

@@ -134,6 +134,23 @@ impl FireflyEvents {
         );
     }
 
+    /// Send a full OLED v2 snapshot (name, health, dashboard)
+    fn send_oled_v2_snapshot(&self, snapshot: &PresenceSnapshot) {
+        let _ = oled::send_oled_v2_snapshot(
+            self.connection.as_ref(),
+            &snapshot.stone.name,
+            &snapshot.stone.health,
+            snapshot.stone.cpu_percent as u8,
+            snapshot.stone.memory_percent as u8,
+            snapshot.stone.disk_percent as u8,
+            snapshot.stone.uptime_seconds,
+            snapshot.offerings.len(),
+            0, // stones count not in snapshot — updated via garden context
+            snapshot.stone.net_rx_bytes_per_sec + snapshot.stone.net_tx_bytes_per_sec,
+            snapshot.stone.seed_bank.is_some(),
+        );
+    }
+
     /// Send OLED command for health change
     fn send_oled_health(&self, health: &str) {
         let _ = self
@@ -219,9 +236,14 @@ impl EventHandler for FireflyEvents {
                         "Received presence snapshot"
                     );
 
-                    // For OLED: Send display commands directly
+                    // For OLED v1: Send display commands directly
                     if device_type == FireflyDeviceType::Esp8266Oled {
                         self.send_oled_snapshot(&snapshot);
+                    }
+
+                    // For OLED v2: Send name, health, then full dashboard
+                    if device_type == FireflyDeviceType::Esp8266OledV2 {
+                        self.send_oled_v2_snapshot(&snapshot);
                     }
 
                     // For T-Display: Send full JSON push (FIREFLY-0003)
@@ -245,9 +267,18 @@ impl EventHandler for FireflyEvents {
                         / 200.0) as f32;
                     ctx.load = ctx.load.clamp(0.0, 1.0);
 
-                    // Store CPU/memory for OLED
+                    // Cache metrics for display updates and reconnect
                     ctx.cpu_percent = snapshot.stone.cpu_percent as u8;
                     ctx.memory_percent = snapshot.stone.memory_percent as u8;
+                    ctx.disk_percent = snapshot.stone.disk_percent as u8;
+                    ctx.io_percent = snapshot.stone.io_percent as u8;
+                    ctx.gpu_percent = snapshot.stone.gpu_percent as u8;
+                    ctx.gpu_active = snapshot.stone.gpu_active;
+                    ctx.has_gpu = snapshot.stone.has_gpu;
+                    ctx.is_lantern = snapshot.stone.is_lantern;
+                    ctx.has_cricket = snapshot.stone.has_cricket;
+                    ctx.pond_active = snapshot.stone.pond_active;
+                    ctx.hour = snapshot.stone.hour;
 
                     // Update offering count (affects activity level)
                     ctx.offering_count = snapshot.offerings.len();
@@ -255,11 +286,8 @@ impl EventHandler for FireflyEvents {
                     // Update service presence (for blue fireflies)
                     ctx.has_services = !snapshot.offerings.is_empty();
 
-                    // Check for seed-bank (storage service)
-                    ctx.has_seed_bank = snapshot
-                        .offerings
-                        .iter()
-                        .any(|s| s.name.contains("seed-bank") || s.name.contains("storage"));
+                    // Check for seed-bank (storage attached to stone)
+                    ctx.has_seed_bank = snapshot.stone.seed_bank.is_some();
 
                     // Trigger health override if not thriving (Matrix only)
                     if device_type == FireflyDeviceType::Rp2040Matrix {
@@ -278,7 +306,7 @@ impl EventHandler for FireflyEvents {
                     tracing::info!(service = %evt.service, "Service started");
 
                     match device_type {
-                        FireflyDeviceType::Esp8266Oled => {
+                        FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => {
                             self.send_oled_wipe_in(&evt.service.to_uppercase(), "STARTED");
                         }
                         FireflyDeviceType::Esp32TDisplay => {
@@ -301,7 +329,7 @@ impl EventHandler for FireflyEvents {
                     tracing::info!(service = %evt.service, "Service stopped");
 
                     match device_type {
-                        FireflyDeviceType::Esp8266Oled => {
+                        FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => {
                             self.send_oled_wipe_out(&evt.service.to_uppercase(), "STOPPED");
                         }
                         FireflyDeviceType::Esp32TDisplay => {
@@ -322,8 +350,8 @@ impl EventHandler for FireflyEvents {
                 if let Ok(evt) = serde_json::from_str::<StoneHealthChangedPayload>(&event.data) {
                     tracing::info!(health = %evt.health, "Stone health changed");
 
-                    // For OLED: Send health command
-                    if device_type == FireflyDeviceType::Esp8266Oled {
+                    // For OLED (v1 and v2): Send health command
+                    if matches!(device_type, FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2) {
                         self.send_oled_health(&evt.health);
                     }
 
@@ -352,7 +380,7 @@ impl EventHandler for FireflyEvents {
             // Stone load updated - update tempo / metrics
             event_types::STONE_LOAD_UPDATED => {
                 if let Ok(evt) = serde_json::from_str::<StoneLoadUpdatedPayload>(&event.data) {
-                    // For OLED: Send metrics update
+                    // For OLED v1: Send metrics update
                     if device_type == FireflyDeviceType::Esp8266Oled {
                         let ctx = self.context.read().await;
                         self.send_oled_metrics(
@@ -360,6 +388,24 @@ impl EventHandler for FireflyEvents {
                             evt.memory_percent,
                             ctx.uptime_seconds,
                         );
+                    }
+
+                    // For OLED v2: Send all-in-one dashboard update
+                    if device_type == FireflyDeviceType::Esp8266OledV2 {
+                        let ctx = self.context.read().await;
+                        let uptime = oled::format_uptime(ctx.uptime_seconds);
+                        let _ = self.connection.with_device(|s| {
+                            s.oled_v2_dashboard(
+                                evt.cpu_percent as u8,
+                                evt.memory_percent as u8,
+                                evt.disk_percent as u8,
+                                &uptime,
+                                ctx.offering_count,
+                                0, // stones count — updated separately
+                                evt.net_rx_bytes_per_sec + evt.net_tx_bytes_per_sec,
+                                ctx.has_seed_bank,
+                            )
+                        });
                     }
 
                     // For T-Display: Send incremental load update (FIREFLY-0003)
@@ -381,6 +427,10 @@ impl EventHandler for FireflyEvents {
                     ctx.load = ctx.load.clamp(0.0, 1.0);
                     ctx.cpu_percent = evt.cpu_percent as u8;
                     ctx.memory_percent = evt.memory_percent as u8;
+                    ctx.disk_percent = evt.disk_percent as u8;
+                    ctx.io_percent = evt.io_percent as u8;
+                    ctx.gpu_percent = evt.gpu_percent as u8;
+                    ctx.gpu_active = evt.gpu_active;
                 }
             }
 
@@ -390,7 +440,7 @@ impl EventHandler for FireflyEvents {
                     tracing::info!("Stone tended - showing appreciation");
 
                     match device_type {
-                        FireflyDeviceType::Esp8266Oled => {
+                        FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => {
                             self.send_oled_wipe_in("ZEN GARDEN", "TENDING");
                         }
                         FireflyDeviceType::Esp32TDisplay => {
@@ -417,7 +467,7 @@ impl EventHandler for FireflyEvents {
                     tracing::info!(name = %evt.name, "Storage connected");
 
                     match device_type {
-                        FireflyDeviceType::Esp8266Oled => {
+                        FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => {
                             self.send_oled_wipe_in("STORAGE", "CONNECTED");
                         }
                         FireflyDeviceType::Esp32TDisplay => {
@@ -449,7 +499,7 @@ impl EventHandler for FireflyEvents {
                     tracing::info!(name = %evt.name, "Seed bank removed");
 
                     match device_type {
-                        FireflyDeviceType::Esp8266Oled => {
+                        FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => {
                             self.send_oled_wipe_out("SEED BANK", "REMOVED");
                         }
                         FireflyDeviceType::Esp32TDisplay => {

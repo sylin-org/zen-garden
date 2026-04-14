@@ -233,7 +233,7 @@ impl Adapter for TDisplayAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _garden: Arc<Garden>,
+        garden: Arc<Garden>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -256,6 +256,26 @@ impl Adapter for TDisplayAdapter {
             let _ = connection.with_device(|s| s.clear());
 
             let state = Arc::new(Mutex::new(TDisplayState::default()));
+
+            // Rehydrate from Garden's read-model — see oled_v2 for
+            // rationale.
+            if garden.is_ready() {
+                let gs = garden.snapshot();
+                {
+                    let mut s = state.lock().await;
+                    s.stone_name = gs.stone_name.clone().unwrap_or_default();
+                    s.health = gs.health.to_string();
+                    s.cpu = gs.load.cpu.as_u8();
+                    s.mem = gs.load.memory.as_u8();
+                    s.disk = gs.load.disk.as_u8();
+                    s.io = gs.load.io.as_u8();
+                    s.gpu = gs.load.gpu.as_u8();
+                    s.gpu_active = bool_u8(gs.load.gpu_active);
+                    s.offerings = gs.offerings.len();
+                }
+                let snapshot = state.lock().await.clone();
+                push_full_snapshot(&connection, &snapshot);
+            }
 
             loop {
                 tokio::select! {

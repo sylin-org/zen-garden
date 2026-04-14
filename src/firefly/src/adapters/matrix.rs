@@ -159,7 +159,7 @@ impl Adapter for MatrixAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _garden: Arc<Garden>,
+        garden: Arc<Garden>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -178,6 +178,30 @@ impl Adapter for MatrixAdapter {
             let _ = connection.with_device(|s| s.clear());
 
             let animation = Arc::new(RwLock::new(Animation::new(self.state_dir.clone())));
+
+            // Rehydrate the animation context from Garden's read-model
+            // before starting the engine, so the very first frame
+            // reflects current health/load instead of defaulted state.
+            if garden.is_ready() {
+                let gs = garden.snapshot();
+                let mut ctx = animation.write().await;
+                ctx.stone_name = gs.stone_name.clone();
+                ctx.health_label = gs.health.to_string();
+                ctx.health = parse_health(&ctx.health_label);
+                ctx.cpu_percent = gs.load.cpu.as_u8();
+                ctx.memory_percent = gs.load.memory.as_u8();
+                ctx.disk_percent = gs.load.disk.as_u8();
+                ctx.io_percent = gs.load.io.as_u8();
+                ctx.gpu_percent = gs.load.gpu.as_u8();
+                ctx.gpu_active = gs.load.gpu_active;
+                ctx.load = ((ctx.cpu_percent as f32 + ctx.memory_percent as f32) / 200.0)
+                    .clamp(0.0, 1.0);
+                ctx.offering_count = gs.offerings.len();
+                ctx.has_services = !gs.offerings.is_empty();
+                ctx.has_seed_bank = gs.seed_bank.is_some();
+                trigger_health(&mut ctx);
+            }
+
             let engine = start_animation(connection.clone(), animation.clone());
 
             loop {

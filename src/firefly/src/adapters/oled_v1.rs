@@ -199,7 +199,7 @@ impl Adapter for OledV1Adapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _garden: Arc<Garden>,
+        garden: Arc<Garden>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -222,6 +222,22 @@ impl Adapter for OledV1Adapter {
             let _ = connection.with_device(|s| s.clear());
 
             let state = Arc::new(Mutex::new(V1State::default()));
+
+            // Rehydrate from Garden's read-model — see oled_v2 for
+            // rationale. Without this, the firmware sticks on its
+            // boot-time placeholder until the next live event.
+            if garden.is_ready() {
+                let gs = garden.snapshot();
+                {
+                    let mut s = state.lock().await;
+                    s.stone_name = gs.stone_name.clone();
+                    s.health_label = gs.health.to_string();
+                    s.cpu_percent = gs.load.cpu.as_u8();
+                    s.memory_percent = gs.load.memory.as_u8();
+                }
+                let snapshot = state.lock().await.clone();
+                push_full_snapshot(&connection, &snapshot);
+            }
 
             loop {
                 tokio::select! {

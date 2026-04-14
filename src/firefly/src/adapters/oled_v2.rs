@@ -209,7 +209,7 @@ impl Adapter for OledV2Adapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _garden: Arc<Garden>,
+        garden: Arc<Garden>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -232,6 +232,32 @@ impl Adapter for OledV2Adapter {
             let _ = connection.with_device(|s| s.clear());
 
             let state = Arc::new(Mutex::new(DashboardState::default()));
+
+            // Rehydrate from Garden's read-model. If Garden already has
+            // a snapshot (SSE projected before this adapter spawned),
+            // populate the dashboard immediately so the operator sees
+            // real data instead of the firmware's boot-time placeholder.
+            // No-op when Garden hasn't received its first snapshot yet —
+            // the live event loop below will fill state in then.
+            if garden.is_ready() {
+                let gs = garden.snapshot();
+                {
+                    let mut s = state.lock().await;
+                    s.stone_name = gs.stone_name.clone();
+                    s.health_label = gs.health.to_string();
+                    s.cpu_percent = gs.load.cpu.as_u8();
+                    s.memory_percent = gs.load.memory.as_u8();
+                    s.disk_percent = gs.load.disk.as_u8();
+                    s.offering_count = gs.offerings.len();
+                    s.net_bps =
+                        gs.load.net_rx_bytes_per_sec + gs.load.net_tx_bytes_per_sec;
+                    s.has_seed_bank = gs.seed_bank.is_some();
+                    // uptime_seconds is not in GardenState; first
+                    // stone.load.updated event will set it.
+                }
+                let snapshot = state.lock().await.clone();
+                push_full_snapshot(&connection, &snapshot);
+            }
 
             loop {
                 tokio::select! {

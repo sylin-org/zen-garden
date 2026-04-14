@@ -21,14 +21,20 @@
 //!
 //! [COMPANION-0012]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0012-device-bus.md
 
+pub mod claim;
 pub mod descriptor;
 pub mod device;
 pub mod identity;
+pub mod predicate;
+pub mod registration;
 pub mod resource;
 pub mod usb_serial;
 
+pub use claim::{ClaimOutcome, pick_winner};
 pub use descriptor::Identification;
 pub use device::{Device, DeviceHandle, OpenedDevice};
-pub use identity::IdentityProtocol;
+pub use identity::{IdentifyError, IdentifyResult, IdentityProtocol};
+pub use predicate::Predicate;
+pub use registration::{AdapterBuilder, AdapterRegistration};
 pub use resource::ResourceClass;
-pub use usb_serial::{UsbSerialEnumerator, UsbSerialPort};
+pub use usb_serial::{ScanDelta, UsbSerialEnumerator, UsbSerialPort};

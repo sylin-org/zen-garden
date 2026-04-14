@@ -358,6 +358,10 @@ def cmd(line):
 def main():
     global needs, last_rx
     r("Firefly OLED v2 starting...")
+    # FIREFLY-0004: unsolicited HELLO frame so the bus identifies us
+    # before the `I` fallback timeout elapses.
+    from firefly_oled_v2 import hello_frame
+    r(hello_frame())
     if not init_display():
         r("ERR,failed_to_init_display")
         return

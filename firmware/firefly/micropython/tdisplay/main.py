@@ -32,7 +32,55 @@ import time
 import json
 import select
 
-from machine import Pin, SPI
+from machine import Pin, SPI, unique_id
+import ubinascii
+
+
+_FW_VERSION = "1.0.0"
+_CAPABILITIES = [
+    "json-push",
+    "load-incremental",
+    "service-deltas",
+    "wipe-animations",
+]
+
+
+def _read_device_id():
+    try:
+        with open("/device_id.txt", "r") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _hardware_id():
+    try:
+        return "esp32-" + ubinascii.hexlify(unique_id()).decode("ascii")
+    except Exception:
+        return ""
+
+
+_DEVICE_ID = _read_device_id()
+_HARDWARE_ID = _hardware_id()
+
+
+def descriptor_json():
+    """FIREFLY-0004 descriptor for the T-Display."""
+    return json.dumps({
+        "device_id": _DEVICE_ID,
+        "family": "firefly",
+        "variant": "tdisplay",
+        "version": _FW_VERSION,
+        "processor": "esp32",
+        "hardware_id": _HARDWARE_ID,
+        "display": {"resolution": "135x240", "type": "st7789-tft"},
+        "capabilities": _CAPABILITIES,
+    })
+
+
+def hello_frame():
+    """FIREFLY-0004 unsolicited HELLO frame."""
+    return "* HELLO," + descriptor_json()
 
 # Try to import st7789 driver
 try:
@@ -158,7 +206,7 @@ def handle_command(line):
 
     try:
         if cmd == "I":
-            uart_reply("OK,firefly-tdisplay,esp32,135x240")
+            uart_reply("OK," + descriptor_json())
             return
 
         if cmd == "C":
@@ -262,6 +310,9 @@ def main():
     global scene, last_rx, tick, state
 
     uart_reply("Firefly T-Display starting...")
+    # FIREFLY-0004: unsolicited HELLO so the bus identifies us during
+    # the ESP32 boot window without needing an active `I` probe.
+    uart_reply(hello_frame())
 
     if not init_display():
         uart_reply("ERR,failed_to_init_display")

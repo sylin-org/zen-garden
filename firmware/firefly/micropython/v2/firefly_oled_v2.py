@@ -18,9 +18,61 @@ I2C Pins (NodeMCU V3 datasheet):
   SDA: GPIO14 (D5)
 """
 
-from machine import Pin, SoftI2C
+from machine import Pin, SoftI2C, unique_id
 import ssd1306
+import ubinascii
+import ujson
 import profont_10 as font
+
+
+_FW_VERSION = "2.0.0"
+_FAMILY = "firefly"
+_VARIANT = "oled"
+_PROCESSOR = "esp8266"
+_CAPABILITIES = [
+    "dashboard",
+    "wipe-animations",
+    "brightness",
+    "seed-bank-icon",
+]
+
+
+def _read_device_id():
+    try:
+        with open("/device_id.txt", "r") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _hardware_id():
+    try:
+        return "esp8266-" + ubinascii.hexlify(unique_id()).decode("ascii")
+    except Exception:
+        return ""
+
+
+_DEVICE_ID = _read_device_id()
+_HARDWARE_ID = _hardware_id()
+
+
+def descriptor_json():
+    """FIREFLY-0004 identification descriptor as a JSON string."""
+    return ujson.dumps({
+        "device_id": _DEVICE_ID,
+        "family": _FAMILY,
+        "variant": _VARIANT,
+        "version": _FW_VERSION,
+        "processor": _PROCESSOR,
+        "hardware_id": _HARDWARE_ID,
+        "display": {"resolution": "128x64", "type": "oled-dual-zone"},
+        "capabilities": _CAPABILITIES,
+    })
+
+
+def hello_frame():
+    """FIREFLY-0004 unsolicited HELLO emitted on boot."""
+    return "* HELLO," + descriptor_json()
 from icons import (
     ICON_CPU, ICON_MEM, ICON_DSK, ICON_USB,
     ICON_GEAR, ICON_NET, ICON_CLOCK, ICON_STONES,
@@ -142,7 +194,8 @@ class FireflyOLED:
             self.seed_bank = bool(seed_bank)
 
     def device_info(self):
-        return "OK,firefly-oled-v2,esp8266,128x64,dual-zone:yellow:16:blue:48,v2.0.0"
+        """FIREFLY-0004 descriptor framed as `OK,{...}` for the `I` command."""
+        return "OK," + descriptor_json()
 
     # --- Dashboard rendering ---
 

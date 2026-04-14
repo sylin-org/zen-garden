@@ -307,6 +307,10 @@ def cmd(line):
 def main():
     global needs, last_rx
     r("Firefly OLED starting...")
+    # FIREFLY-0004: emit the unsolicited HELLO frame as soon as the
+    # serial port is ready — the bus is listening with a ~3s timeout.
+    from firefly_oled import hello_frame
+    r(hello_frame())
     if not init_display():
         r("ERR,failed_to_init_display")
         return

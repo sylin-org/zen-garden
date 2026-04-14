@@ -11,10 +11,57 @@ I2C Pins (from datasheet):
   - SDA: GPIO12 (D6)
 """
 
-from machine import Pin, SoftI2C
+from machine import Pin, SoftI2C, unique_id
 import ssd1306
 import time
+import ubinascii
+import ujson
 import profont_10 as font
+
+
+_FW_VERSION = "0.2.0"
+_FAMILY = "firefly"
+_VARIANT = "oled"
+_PROCESSOR = "esp8266"
+_CAPABILITIES = ["wipe-animations", "brightness"]
+
+
+def _read_device_id():
+    try:
+        with open("/device_id.txt", "r") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _hardware_id():
+    try:
+        return "esp8266-" + ubinascii.hexlify(unique_id()).decode("ascii")
+    except Exception:
+        return ""
+
+
+_DEVICE_ID = _read_device_id()
+_HARDWARE_ID = _hardware_id()
+
+
+def descriptor_json():
+    """FIREFLY-0004 identification descriptor as a JSON string."""
+    return ujson.dumps({
+        "device_id": _DEVICE_ID,
+        "family": _FAMILY,
+        "variant": _VARIANT,
+        "version": _FW_VERSION,
+        "processor": _PROCESSOR,
+        "hardware_id": _HARDWARE_ID,
+        "display": {"resolution": "128x64", "type": "oled-dual-zone"},
+        "capabilities": _CAPABILITIES,
+    })
+
+
+def hello_frame():
+    """FIREFLY-0004 unsolicited HELLO frame emitted on boot."""
+    return "* HELLO," + descriptor_json()
 
 # Hardware configuration (from module datasheet)
 I2C_SCL_PIN = 12  # D6
@@ -238,8 +285,12 @@ class FireflyOLED:
             self.health_state = state
 
     def device_info(self):
-        """Return device identification string."""
-        return f"OK,firefly-oled,esp8266,{DISPLAY_WIDTH}x{DISPLAY_HEIGHT},dual-zone:yellow:16:blue:48,v0.2.0"
+        """Return the descriptor JSON framed as `OK,{...}` for the `I` command.
+
+        FIREFLY-0004 protocol: emits the same descriptor as HELLO does on
+        boot. Keeps a single source of truth via descriptor_json().
+        """
+        return "OK," + descriptor_json()
 
     # ==================== ANIMATIONS ====================
 

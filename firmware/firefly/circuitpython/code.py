@@ -14,10 +14,56 @@
 #   ?             - Help
 
 import board
+import microcontroller
 import neopixel
 import time
 import supervisor
 import sys
+import json
+
+
+# FIREFLY-0004 descriptor metadata.
+_FW_VERSION = "1.0.0"
+_CAPABILITIES = ["pixel-control", "animation-engine", "brightness"]
+
+
+def _read_device_id():
+    try:
+        with open("/device_id.txt", "r") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _hardware_id():
+    try:
+        uid = microcontroller.cpu.uid
+        return "rp2040-" + "".join("{:02x}".format(b) for b in uid)
+    except Exception:
+        return ""
+
+
+_DEVICE_ID = _read_device_id()
+_HARDWARE_ID = _hardware_id()
+
+
+def descriptor_json():
+    """FIREFLY-0004 descriptor for the RP2040 matrix."""
+    return json.dumps({
+        "device_id": _DEVICE_ID,
+        "family": "firefly",
+        "variant": "matrix",
+        "version": _FW_VERSION,
+        "processor": "rp2040",
+        "hardware_id": _HARDWARE_ID,
+        "display": {"resolution": "5x5", "type": "rgb-matrix"},
+        "capabilities": _CAPABILITIES,
+    })
+
+
+def hello_frame():
+    """Unsolicited HELLO emitted on boot."""
+    return "* HELLO," + descriptor_json()
 
 # Configuration
 NUM_LEDS = 25
@@ -268,8 +314,8 @@ def process_command(line):
             return "OK"
 
         elif cmd == "I":
-            # Info
-            return "OK,firefly-v0,rp2040-matrix,5x5"
+            # FIREFLY-0004 structured descriptor (JSON).
+            return "OK," + descriptor_json()
 
         elif cmd == "?":
             # Help
@@ -305,6 +351,10 @@ def boot_animation():
 # Main
 print("Firefly V0 - Zen Garden LED Controller")
 print("Ready. Send ? for help.")
+# FIREFLY-0004: unsolicited HELLO frame for the device bus. Bus opens
+# the port after CircuitPython has auto-started this script, so the
+# frame fits within the 3s listen window before the `I` fallback.
+print(hello_frame())
 
 boot_animation()
 

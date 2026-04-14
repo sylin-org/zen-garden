@@ -50,6 +50,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# FIREFLY-0004 provisioning helpers (GUIDv7 mint + roster management).
+Import-Module (Join-Path $PSScriptRoot "FireflyDeviceId.psm1") -Force
+
 #region Configuration
 # Centralized config to avoid magic strings and make firmware/runtime updates easy.
 $script:Config = @{
@@ -286,6 +289,78 @@ function Get-ConnectedDevices {
 }
 #endregion
 
+#region Provisioning (FIREFLY-0004)
+# Mint a GUIDv7, stage device_id.txt, upload to the device filesystem,
+# append a roster entry. Dispatches upload path on device type:
+# - RP2040  : Copy-Item into CIRCUITPY drive
+# - ESP8266 : mpremote cp device_id.txt :/device_id.txt
+# - ESP32   : mpremote cp device_id.txt :/device_id.txt
+function Invoke-Provisioning {
+    param(
+        [Parameter(Mandatory)][hashtable]$Device,
+        [string]$Variant,
+        [string]$FirmwareVersion,
+        [string]$Label
+    )
+
+    $deviceId = New-FireflyGuidV7
+    $stagingDir = Join-Path $script:Config.CacheDir "provisioning"
+    $staged = Save-FireflyDeviceIdFile -DeviceId $deviceId -StagingDir $stagingDir
+
+    $uploaded = $false
+    switch ($Device["Type"]) {
+        "RP2040" {
+            $drive = $Device["CircuitPyDrive"]
+            if (-not $drive) {
+                Write-Step "Provisioning: no CircuitPython drive present" "WARN"
+                return
+            }
+            Write-Step "Uploading device_id.txt to $drive" "..."
+            try {
+                Copy-Item -Path $staged -Destination (Join-Path $drive "device_id.txt") -Force
+                $uploaded = $true
+                Write-Step "device_id.txt written" "OK"
+            } catch {
+                Write-Step "device_id.txt write failed: $_" "FAIL"
+            }
+        }
+        { $_ -eq "ESP8266" -or $_ -eq "ESP32" } {
+            $port = $Device["ComPort"]
+            if (-not $port) {
+                Write-Step "Provisioning: no COM port present" "WARN"
+                return
+            }
+            $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+            Write-Step "Uploading device_id.txt to $port" "..."
+            & $pythonCmd -m mpremote connect $port cp $staged ":device_id.txt" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $uploaded = $true
+                Write-Step "device_id.txt written" "OK"
+            } else {
+                Write-Step "device_id.txt write failed" "FAIL"
+            }
+        }
+    }
+
+    if (-not $uploaded) {
+        Write-Step "Provisioning skipped — device_id NOT persisted" "WARN"
+        return
+    }
+
+    Add-FireflyRosterEntry `
+        -DeviceId $deviceId `
+        -Variant $Variant `
+        -Label $Label `
+        -FirmwareVersionAtProvisioning $FirmwareVersion
+
+    Write-Panel -Title "Device provisioned" -Color "Cyan" -Lines @(
+        "device_id: $deviceId"
+        "variant:   $Variant"
+        "roster:    ~/.zen-garden/firefly-roster.json"
+    )
+}
+#endregion
+
 #region RP2040 Handler
 # CircuitPython runtime + NeoPixel library + Firefly firmware (code.py).
 function Get-RP2040Runtime {
@@ -489,6 +564,7 @@ function Invoke-RP2040Handler {
         Write-Step "CircuitPython at $($Device['CircuitPyDrive'])" "OK"
         Install-RP2040Firmware -Drive $Device["CircuitPyDrive"]
         Start-Sleep -Seconds 3
+        Invoke-Provisioning -Device $Device -Variant "matrix" -FirmwareVersion "1.0.0"
     }
 
     if ($Device["ComPort"]) {
@@ -792,6 +868,10 @@ function Invoke-ESP8266Handler {
     Start-Sleep -Seconds 3
 
     Install-ESP8266Resources -Port $port -Variant $variant
+    # Firmware-version-at-provisioning is recorded as 0.2.0 until the
+    # per-variant firmware HELLO work in FIREFLY-0004 Ch2 reports the
+    # actual semver on the first boot post-flash.
+    Invoke-Provisioning -Device $Device -Variant "oled-$variant" -FirmwareVersion "0.2.0"
     Invoke-ESP8266VisualTest -Port $port
 
     # Final reset to let main.py auto-start (visual test leaves device in REPL).
@@ -907,6 +987,7 @@ function Invoke-ESP32Handler {
     Start-Sleep -Seconds 5
 
     Install-ESP32Resources -Port $port
+    Invoke-Provisioning -Device $Device -Variant "tdisplay" -FirmwareVersion "1.0.0"
 
     # Reset to start firmware
     Write-Step "Starting firmware..." "..."

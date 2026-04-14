@@ -12,12 +12,24 @@
 //! [COMPANION-0001]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0001-companion-integration-epic.md
 //! [Adapters]: super
 
+pub mod core_payloads;
 pub mod event;
 pub mod pulse;
+pub mod sse_transport;
+pub mod transport;
 
+pub use core_payloads::{
+    KIND_PRESENCE_SNAPSHOT, KIND_SERVICE_STARTED, KIND_SERVICE_STOPPED,
+    KIND_STONE_HEALTH_CHANGED, KIND_STONE_LOAD_UPDATED, KIND_STONE_TENDED,
+    KIND_STORAGE_CONNECTED, KIND_STORAGE_DETECTED, KIND_STORAGE_REMOVED,
+    ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
+    StorageDetectedPayload, StorageRemovedPayload, wire_to_core_kind,
+};
 pub use event::{
     DynPayload, Event, EventId, EventPayload, is_valid_kind, kind_namespace, new_event_id,
 };
 pub use pulse::{
     IngestResult, Pulse, PulseConfig, PulseMetricsSnapshot, RejectReason,
 };
+pub use sse_transport::SseTransport;
+pub use transport::{BoxFuture, Transport};

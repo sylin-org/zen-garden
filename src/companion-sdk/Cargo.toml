@@ -37,6 +37,9 @@ serde_json.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 chrono = { workspace = true, features = ["serde"] }
 
+# Transport trait shutdown signalling (COMPANION-0004 — Book III of COMPANION-0001)
+tokio-util = "0.7"
+
 [lints]
 workspace = true
 

@@ -13,7 +13,11 @@
 //! [Adapters]: super
 
 pub mod event;
+pub mod pulse;
 
 pub use event::{
-    Event, EventId, EventPayload, is_valid_kind, kind_namespace, new_event_id,
+    DynPayload, Event, EventId, EventPayload, is_valid_kind, kind_namespace, new_event_id,
+};
+pub use pulse::{
+    IngestResult, Pulse, PulseConfig, PulseMetricsSnapshot, RejectReason,
 };

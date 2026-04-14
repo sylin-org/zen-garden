@@ -62,7 +62,10 @@ pub mod state;
 pub mod prelude {
     pub use crate::cli::CompanionConfig;
     pub use crate::dependencies::{ensure_dependencies, DependencyCheckResult, SystemDependency};
-    pub use crate::garden::{Event, EventId, EventPayload, is_valid_kind, kind_namespace, new_event_id};
+    pub use crate::garden::{
+        DynPayload, Event, EventId, EventPayload, IngestResult, Pulse, PulseConfig,
+        PulseMetricsSnapshot, RejectReason, is_valid_kind, kind_namespace, new_event_id,
+    };
     pub use crate::handler::CommandHandler;
     pub use crate::runtime::CompanionRuntime;
     pub use crate::sse::{EventHandler, SseClient, SseEvent};

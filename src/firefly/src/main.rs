@@ -109,7 +109,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     check_dump_commands(&build_manifest());
-    garden_companion_sdk::runtime::init_tracing();
+    garden_companion_sdk::init_tracing();
 
     let cli = Cli::parse();
 

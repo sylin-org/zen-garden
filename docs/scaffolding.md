@@ -160,10 +160,10 @@ New epics that produce scaffolds allocate a new prefix and document it here.
 
 ```yaml
 id: companion-old-sse-client
-status: active
+status: removed
 introduced_in: COMPANION-0004 (Book III of COMPANION-0001)
 removal_trigger: Book VIII Chapter 6 — Companion Rebuild cleanup
-removal_commit:
+removed_in: COMPANION-0009 Book VIII Ch6 (this commit)
 check:
   - pattern: "pub struct SseClient"
     paths:
@@ -194,10 +194,10 @@ check:
 
 ```yaml
 id: companion-old-command-handler
-status: active
+status: removed
 introduced_in: COMPANION-0004 (Book III of COMPANION-0001)
 removal_trigger: Book VIII Chapter 6 — Companion Rebuild cleanup
-removal_commit:
+removed_in: COMPANION-0009 Book VIII Ch6 (this commit)
 check:
   - pattern: "pub trait CommandHandler"
     paths:
@@ -226,10 +226,10 @@ check:
 
 ```yaml
 id: companion-old-companion-runtime
-status: active
+status: removed
 introduced_in: COMPANION-0004 (Book III of COMPANION-0001)
 removal_trigger: Book VIII Chapter 6 — Companion Rebuild cleanup
-removal_commit:
+removed_in: COMPANION-0009 Book VIII Ch6 (this commit)
 check:
   - pattern: "pub struct CompanionRuntime"
     paths:

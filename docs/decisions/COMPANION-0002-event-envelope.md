@@ -4,12 +4,13 @@ doc_type: decision
 status: accepted
 last_verified: 2026-04-13
 canonical: true
+completed: 2026-04-13
 ---
 
 # COMPANION-0002: Event Envelope — Book I of COMPANION-0001
 
 **Date**: 2026-04-13
-**Status**: Accepted
+**Status**: Completed (2026-04-13)
 **Book**: I of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0001](COMPANION-0001-companion-integration-epic.md) (epic + pattern spec)
 
@@ -177,6 +178,27 @@ Ships green to `dev` at each chapter commit.
 | `GardenSnapshot` synthetic event | Book V |
 | Command payload types and `core.command.result` | Book III (CommandTransport) |
 | Derive macro for `EventPayload` (`#[derive(EventPayload)]`) | Deferred — only if Book V–VIII boilerplate becomes painful |
+
+## Closure notes (2026-04-13)
+
+Book I closed with all exit criteria met. Summary of what shipped:
+
+- **Foundation types** at `src/companion-sdk/src/garden/{mod,event}.rs`: `Event`, `EventId`, `EventPayload` (user-facing trait with consts), `DynPayload` (object-safe internal trait, auto-implemented via blanket impl), `new_event_id()`, `is_valid_kind()`, `kind_namespace()`.
+- **Dependencies** added to `src/companion-sdk/Cargo.toml`: `uuid = { workspace = true, features = ["v7"] }` and `chrono = { workspace = true, features = ["serde"] }`. Both already workspace deps; promoted to direct to expose in public API.
+- **Tests**: 22 unit tests + 5 doctests, all green.
+- **Verification**: `cargo check --all`, `cargo test --package garden-companion-sdk`, `cargo clippy --package garden-companion-sdk -- -D warnings` — all green.
+
+### Material discovery: two-trait shape
+
+The pattern spec's `Arc<dyn EventPayload>` doesn't compile because Rust's associated-`const` rules make a trait with `const KIND` not object-safe. Book I introduced the `DynPayload` trait (object-safe, method-based) alongside `EventPayload` (user-facing, const-based), wired by a blanket impl:
+
+```rust
+impl<T: EventPayload> DynPayload for T { ... }
+```
+
+Users see only `EventPayload` — call sites generic over `T: EventPayload` work unchanged. `DynPayload` surfaces only in the concrete type of `Event::payload: Arc<dyn DynPayload>`. Documented in-code and in the pattern spec's §The event envelope.
+
+This counts as a **material plan refinement, not a plan change** — Book I's scope and deliverables are unchanged; the refinement is an implementation detail that preserves the intended user-facing API.
 
 ## References
 

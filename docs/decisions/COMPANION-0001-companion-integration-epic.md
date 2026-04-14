@@ -18,6 +18,7 @@ Unlike typical ADRs which are immutable after acceptance, COMPANION-0001 is a **
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-13 | **Book I closed.** Event Envelope — `Event`, `EventId` (GUIDv7), `EventPayload` trait, kind validation. Discovery: Rust associated-`const` rules make `dyn EventPayload` not object-safe; introduced object-safe `DynPayload` auto-implemented via blanket impl. User-facing API unchanged (users still only implement `EventPayload`); pattern spec §The event envelope amended to reflect the two-trait shape. 22 unit tests + 5 doctests, all green. Full workspace `cargo check --all` green. | [COMPANION-0002](COMPANION-0002-event-envelope.md) |
 | 2026-04-13 | Initial acceptance. Epic commits to 11-artifact arc (Prologue + Books I–IX + Epilogue). | — |
 
 ## Context

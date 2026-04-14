@@ -69,11 +69,12 @@ pub struct Event {
     pub id: EventId,                        // GUIDv7
     pub timestamp: DateTime<Utc>,
     pub kind: &'static str,                 // namespaced identifier
-    pub payload: Arc<dyn EventPayload>,     // type-erased, downcastable
+    pub payload: Arc<dyn DynPayload>,       // type-erased, downcastable (see note)
 }
 
 pub type EventId = uuid::Uuid;              // generated with GUIDv7 for time-ordering
 
+/// User-facing trait. Implement this for your payload types.
 pub trait EventPayload: std::any::Any + Send + Sync + std::fmt::Debug {
     /// Stable type identifier. Must match the kind on any `Event` that carries this payload.
     const KIND: &'static str;
@@ -81,12 +82,40 @@ pub trait EventPayload: std::any::Any + Send + Sync + std::fmt::Debug {
     /// State-delta events that should coalesce under rapid bursts set this to true.
     /// Discrete events that must fire once leave it at the default (false).
     const COALESCING: bool = false;
+
+    /// Downcast handle — implementations return `self`.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Runtime accessor for COALESCING. Default impl returns `Self::COALESCING`.
+    fn is_coalescing(&self) -> bool { Self::COALESCING }
+}
+
+/// Object-safe runtime trait. Auto-implemented for every `EventPayload` via a
+/// blanket impl; users never implement this directly.
+///
+/// The two-trait design exists because Rust's associated-`const` rules make
+/// a trait with `const KIND` not object-safe — `dyn EventPayload` would not
+/// compile. `DynPayload` exposes the same information through methods,
+/// which is object-safe, so `Arc<dyn DynPayload>` works as the payload
+/// storage in `Event`.
+pub trait DynPayload: std::any::Any + Send + Sync + std::fmt::Debug {
+    fn kind(&self) -> &'static str;
+    fn is_coalescing(&self) -> bool;
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+impl<T: EventPayload> DynPayload for T {
+    fn kind(&self) -> &'static str { T::KIND }
+    fn is_coalescing(&self) -> bool { <T as EventPayload>::is_coalescing(self) }
+    fn as_any(&self) -> &dyn std::any::Any { <T as EventPayload>::as_any(self) }
 }
 
 impl Event {
+    pub fn new<P: EventPayload>(payload: P) -> Self;
+
     pub fn payload<T: EventPayload>(&self) -> Option<&T> {
         if self.kind == T::KIND {
-            (self.payload.as_ref() as &dyn std::any::Any).downcast_ref::<T>()
+            self.payload.as_any().downcast_ref::<T>()
         } else {
             None
         }
@@ -105,6 +134,8 @@ impl Event {
     }
 }
 ```
+
+**On the two-trait shape**: users see only `EventPayload`. The blanket impl of `DynPayload` for every `EventPayload` is invisible at call sites — `Event::new(my_payload)` works for any type implementing `EventPayload`, and `event.payload::<T>()` works for any `T: EventPayload`. The `DynPayload` trait is a purely internal mechanism that surfaces only when inspecting the concrete type of `Event::payload`. This was a Book I discovery documented in [COMPANION-0002](../decisions/COMPANION-0002-event-envelope.md).
 
 ### Concrete payloads
 

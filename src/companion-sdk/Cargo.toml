@@ -46,3 +46,6 @@ workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile.workspace = true
+# HTTP client for integration tests (COMPANION-0010 Book IX)
+reqwest = { workspace = true, features = ["json"] }
+serde_json.workspace = true

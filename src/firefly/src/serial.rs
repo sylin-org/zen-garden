@@ -1,4 +1,8 @@
-//! Serial communication with Firefly devices
+//! Serial communication with Firefly devices.
+//!
+//! OLED v1/v2 and T-Display protocol methods are temporarily marked
+//! `#[allow(dead_code)]` until Book VIII Ch2-4 adapters consume them.
+#![allow(dead_code)]
 //!
 //! Supports multiple device types:
 //! - RP2040-Matrix: 5×5 RGB LED matrix (VID: 0x2e8a Raspberry Pi, 0x239a Adafruit)

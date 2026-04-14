@@ -10,8 +10,10 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tokio::sync::RwLock;
 
-use crate::oled::DEFAULT_HEALTH_LABEL;
 use crate::serial::FireflyConnection;
+
+/// Default health label when none is available.
+pub const DEFAULT_HEALTH_LABEL: &str = "thriving";
 
 /// Matrix dimensions
 const GRID_SIZE: u8 = 5;

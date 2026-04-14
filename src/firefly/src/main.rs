@@ -1,39 +1,33 @@
-// Garden Firefly - Visual Status Indicator Companion
-// Supports: Waveshare RP2040-Matrix (5x5 RGB LED) and ESP8266-OLED (128x64 SSD1306)
+// Garden Firefly — visual status indicator companion.
+// Rewritten onto the companion-sdk event mesh per COMPANION-0009.
+//
+// Ch1 ships only the RP2040 matrix adapter; OLED v1/v2 and T-Display
+// adapters land in subsequent chapters.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::sync::Arc;
+use garden_companion_sdk::garden::{CommandTransport, SseTransport};
+use garden_companion_sdk::prelude::*;
+use garden_companion_sdk::{
+    check_dump_commands, CommandArg, CommandDef, CommandManifest,
+};
 use std::time::Duration;
 
-use garden_companion_sdk::{
-    check_dump_commands, sse::SseClientConfig, CommandArg, CommandDef, CommandManifest,
-    CompanionRuntime, CompanionState, SseClient,
-};
-
+mod adapters;
 mod animation;
-mod events;
-mod handler;
-mod oled;
 mod serial;
-mod tdisplay;
 
-use animation::{start_animation, Animation};
-use events::FireflyEvents;
-use handler::FireflyCommands;
+use adapters::MatrixFactory;
 use serial::{
-    detect_device_type, find_firefly_device, DetectedDevice, FireflyConnection, FireflyDeviceType,
-    FireflySerial,
+    detect_device_type, find_firefly_device, DetectedDevice, FireflyDeviceType, FireflySerial,
 };
-use tokio::sync::RwLock;
 
-/// Build Firefly's command manifest
 fn build_manifest() -> CommandManifest {
     CommandManifest::new(
         "firefly",
         "Garden Firefly",
         env!("CARGO_PKG_VERSION"),
-        "Visual status indicator (RP2040-Matrix 5x5 LED or ESP8266 OLED 128x64)",
+        "Visual status indicator (RP2040-Matrix; OLED v1/v2 and T-Display in subsequent chapters)",
     )
     .command(
         CommandDef::new("status", "Show status indicator")
@@ -41,53 +35,28 @@ fn build_manifest() -> CommandManifest {
                 "state",
                 "Status state: healthy, warning, error, or offline",
             ))
-            .example("Show healthy status", "hey tell firefly status healthy")
-            .example("Show warning status", "hey tell firefly status warning")
-            .example("Show error status", "hey tell firefly status error")
-            .see_also("animate")
-            .see_also("clear"),
+            .example("Show healthy status", "hey tell firefly status healthy"),
     )
     .command(
         CommandDef::new("pixel", "Set single pixel color")
             .arg(CommandArg::required_int("x", "X coordinate (0-4)", 0, 4))
             .arg(CommandArg::required_int("y", "Y coordinate (0-4)", 0, 4))
-            .arg(CommandArg::required_string(
-                "color",
-                "Color as hex (ff0000) or r,g,b",
-            ))
-            .example("Red center pixel", "hey tell firefly pixel 2 2 ff0000")
-            .example("Blue corner", "hey tell firefly pixel 0 0 0000ff")
-            .see_also("fill")
-            .see_also("clear"),
+            .arg(CommandArg::required_string("color", "Color as hex (ff0000) or r,g,b"))
+            .example("Red center pixel", "hey tell firefly pixel 2 2 ff0000"),
     )
     .command(
         CommandDef::new("fill", "Fill all pixels with color")
-            .arg(CommandArg::required_string(
-                "color",
-                "Color as hex (ff0000) or r,g,b",
-            ))
-            .example("Fill with green", "hey tell firefly fill 00ff00")
-            .example("Fill with white", "hey tell firefly fill ffffff")
-            .see_also("pixel")
-            .see_also("clear"),
+            .arg(CommandArg::required_string("color", "Color as hex (ff0000) or r,g,b"))
+            .example("Fill with green", "hey tell firefly fill 00ff00"),
     )
     .command(
         CommandDef::new("clear", "Turn off all LEDs")
-            .example("Clear display", "hey tell firefly clear")
-            .see_also("fill")
-            .see_also("stop"),
+            .example("Clear display", "hey tell firefly clear"),
     )
     .command(
         CommandDef::new("brightness", "Set LED brightness")
-            .arg(CommandArg::required_int(
-                "percent",
-                "Brightness 0-100%",
-                0,
-                100,
-            ))
-            .example("Set to 50%", "hey tell firefly brightness 50")
-            .example("Full brightness", "hey tell firefly brightness 100")
-            .see_also("fill"),
+            .arg(CommandArg::required_int("percent", "Brightness 0-100%", 0, 100))
+            .example("Set to 50%", "hey tell firefly brightness 50"),
     )
     .command(
         CommandDef::new("animate", "Start animation")
@@ -95,44 +64,28 @@ fn build_manifest() -> CommandManifest {
                 "name",
                 "Animation: rainbow, pulse, chase, or sparkle",
             ))
-            .example("Rainbow cycle", "hey tell firefly animate rainbow")
-            .example("Breathing pulse", "hey tell firefly animate pulse")
-            .see_also("stop")
-            .see_also("status"),
+            .example("Rainbow cycle", "hey tell firefly animate rainbow"),
     )
-    .command(
-        CommandDef::new("stop", "Stop current animation")
-            .example("Stop animation", "hey tell firefly stop")
-            .see_also("animate")
-            .see_also("clear"),
-    )
-    .command(
-        CommandDef::new("info", "Show device information")
-            .example("Get device info", "hey tell firefly info")
-            .see_also("status"),
-    )
+    .command(CommandDef::new("stop", "Stop current animation"))
+    .command(CommandDef::new("info", "Show device information"))
 }
 
 #[derive(Parser, Debug)]
 #[command(name = "garden-firefly")]
-#[command(about = "Visual status indicator Companion for Zen Garden")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Stone endpoint (e.g., http://10.0.0.5:7185)
     #[arg(short, long, env = "GARDEN_STONE")]
     stone: Option<String>,
 
-    /// Serial port for RP2040-Matrix (auto-detects if not specified)
+    /// Pin a specific serial port (otherwise auto-discover).
     #[arg(long, env = "FIREFLY_PORT")]
     serial_port: Option<String>,
 
-    /// Command server port (assigned by Moss)
     #[arg(long, env = "FIREFLY_HTTP_PORT")]
     port: Option<u16>,
 
-    /// State directory for persisting settings
     #[arg(long, env = "FIREFLY_STATE_DIR")]
     state_dir: Option<String>,
 }
@@ -141,17 +94,13 @@ struct Cli {
 enum Commands {
     /// List available serial ports
     Ports,
-
-    /// Test mode: send commands directly to device
+    /// Test mode: send a sequence of commands directly to the device
     Test {
-        /// Serial port to use
         #[arg(long)]
         port: Option<String>,
     },
-
     /// Probe device and show info
     Probe {
-        /// Serial port to use
         #[arg(long)]
         port: Option<String>,
     },
@@ -159,294 +108,78 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Check for --dump-commands before any other processing
     check_dump_commands(&build_manifest());
-
-    // Initialize tracing
     garden_companion_sdk::runtime::init_tracing();
 
     let cli = Cli::parse();
 
-    // Handle subcommands
     if let Some(cmd) = cli.command {
-        match cmd {
-            Commands::Ports => {
-                return list_ports();
-            }
-            Commands::Test { port } => {
-                return test_mode(port).await;
-            }
-            Commands::Probe { port } => {
-                return probe_device(port);
-            }
-        }
+        return match cmd {
+            Commands::Ports => list_ports(),
+            Commands::Test { port } => test_mode(port).await,
+            Commands::Probe { port } => probe_device(port),
+        };
     }
 
-    // Normal Companion mode: require stone and port
-    let stone = cli.stone.ok_or_else(|| {
-        anyhow::anyhow!("--stone endpoint required (or use 'test'/'probe' subcommand)")
-    })?;
-
+    let stone = cli
+        .stone
+        .ok_or_else(|| anyhow::anyhow!("--stone endpoint required (or use a subcommand)"))?;
     let port = cli
         .port
         .ok_or_else(|| anyhow::anyhow!("--port required (assigned by Moss)"))?;
 
-    // Create Companion state (handles on/off persistence)
-    let state_dir = cli.state_dir.map(std::path::PathBuf::from);
-    let companion_state = Arc::new(CompanionState::new(state_dir.clone()));
+    let state_dir = cli.state_dir.as_deref().map(std::path::PathBuf::from);
+    let factory = MatrixFactory::new(cli.serial_port.clone(), state_dir.clone());
 
-    // Create animation context (handles brightness persistence)
-    let animation = Arc::new(RwLock::new(Animation::new(state_dir)));
+    tracing::info!(stone = %stone, port = port, "Starting Garden Firefly (Ch1: matrix only)");
 
-    // Create connection manager (doesn't require device to be present)
-    let connection = Arc::new(FireflyConnection::new(cli.serial_port));
-
-    // Try initial connection (non-fatal if it fails)
-    match connection.try_connect() {
-        Ok(()) => {
-            tracing::info!("Firefly device connected on startup");
-            // Clear display on startup for clean slate
-            let _ = connection.with_device(|serial| serial.clear());
-        }
-        Err(e) => {
-            tracing::info!(error = %e, "No Firefly device found on startup, will retry every 10s");
-        }
+    let mut companion = Companion::new("firefly")
+        .with_transport(SseTransport::new(stone))
+        .with_transport(CommandTransport::new(port))
+        .with_adapter_factory(factory);
+    if let Some(dir) = cli.state_dir.as_deref() {
+        companion = companion.with_state_dir(dir);
     }
-
-    tracing::info!(
-        stone = %stone,
-        port = port,
-        connected = connection.is_connected(),
-        "Starting Garden Firefly"
-    );
-
-    // Spawn background task to monitor connection and retry every 5 seconds
-    let conn_for_retry = Arc::clone(&connection);
-    let ctx_for_retry = Arc::clone(&animation);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-
-            if conn_for_retry.is_connected() {
-                // Verify device is still responding with a quick info command
-                // This detects silent disconnections (device unplugged between commands)
-                if conn_for_retry.with_device(|serial| serial.info()).is_err() {
-                    // with_device already called disconnect() on error
-                    tracing::debug!("Health check failed, device marked disconnected");
-                }
-            } else {
-                // Try to reconnect
-                match conn_for_retry.try_connect() {
-                    Ok(()) => {
-                        tracing::info!("Firefly device reconnected");
-                        // Clear display on reconnect for clean slate
-                        let _ = conn_for_retry.with_device(|serial| serial.clear());
-
-                        let device_type = conn_for_retry.device_type();
-                        if device_type == FireflyDeviceType::Esp8266OledV2 {
-                            // OLED v2: Send name, health, then full dashboard
-                            let ctx = ctx_for_retry.read().await;
-                            if let Some(name) = &ctx.stone_name {
-                                let uptime = oled::format_uptime(ctx.uptime_seconds);
-                                let _ = conn_for_retry.with_device(|serial| {
-                                    serial.oled_stone_name(name)?;
-                                    serial.oled_health(&ctx.health_label)?;
-                                    serial.oled_v2_dashboard(
-                                        ctx.cpu_percent,
-                                        ctx.memory_percent,
-                                        ctx.disk_percent,
-                                        &uptime,
-                                        ctx.offering_count,
-                                        0,
-                                        0,
-                                        ctx.has_seed_bank,
-                                    )
-                                });
-                            } else {
-                                tracing::debug!(
-                                    "OLED v2 reconnected but no cached stone name available"
-                                );
-                            }
-                        } else if device_type == FireflyDeviceType::Esp8266Oled {
-                            let (stone_name, health, cpu, memory, uptime) = {
-                                let ctx = ctx_for_retry.read().await;
-                                (
-                                    ctx.stone_name.clone(),
-                                    ctx.health_label.clone(),
-                                    ctx.cpu_percent,
-                                    ctx.memory_percent,
-                                    ctx.uptime_seconds,
-                                )
-                            };
-                            if let Some(name) = stone_name {
-                                let _ = oled::send_oled_snapshot(
-                                    conn_for_retry.as_ref(),
-                                    &name,
-                                    &health,
-                                    cpu,
-                                    memory,
-                                    uptime,
-                                );
-                            } else {
-                                tracing::debug!(
-                                    "Firefly reconnected but no cached stone name available"
-                                );
-                            }
-                        } else if device_type == FireflyDeviceType::Esp32TDisplay {
-                            // T-Display: Send cached state as compact JSON
-                            let ctx = ctx_for_retry.read().await;
-                            if let Some(name) = &ctx.stone_name {
-                                let json = serde_json::json!({
-                                    "n": name,
-                                    "h": ctx.health_label,
-                                    "c": ctx.cpu_percent,
-                                    "m": ctx.memory_percent,
-                                    "d": ctx.disk_percent,
-                                    "i": ctx.io_percent,
-                                    "g": ctx.gpu_percent,
-                                    "ga": ctx.gpu_active as u8,
-                                    "up": ctx.uptime_seconds,
-                                    "sv": ctx.offering_count,
-                                    "hg": ctx.has_gpu as u8,
-                                    "il": ctx.is_lantern as u8,
-                                    "hc": ctx.has_cricket as u8,
-                                    "pa": ctx.pond_active as u8,
-                                    "hr": ctx.hour,
-                                });
-                                let json_str = json.to_string();
-                                let _ = conn_for_retry
-                                    .with_device(|serial| serial.tdisplay_json_push(&json_str));
-                            } else {
-                                tracing::debug!(
-                                    "T-Display reconnected but no cached stone name available"
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        // Log at debug level to help diagnose issues without spamming
-                        tracing::debug!(error = %e, "Firefly device not found, will retry");
-                    }
-                }
-            }
-        }
-    });
-
-    // Start the animation engine (runs the baseline firefly animation)
-    let _animation_handle = start_animation(Arc::clone(&connection), Arc::clone(&animation));
-    tracing::info!("Animation engine started");
-
-    // Start SSE client to receive presence events from Moss
-    // Path defaults to PRESENCE_STREAM_PATH from garden_common
-    let sse_config = SseClientConfig::new(&stone);
-    let events = Arc::new(FireflyEvents::new(
-        Arc::clone(&animation),
-        Arc::clone(&connection),
-        Arc::clone(&companion_state),
-    ));
-    let _sse_handle = SseClient::start(sse_config, events);
-    tracing::info!(endpoint = %stone, "SSE client started for presence events");
-
-    // Create command handler
-    let commands = FireflyCommands::new(
-        Arc::clone(&connection),
-        Arc::clone(&companion_state),
-        Arc::clone(&animation),
-    );
-
-    // Build and run Companion
-    let config = garden_companion_sdk::CompanionConfig {
-        stone: Some(stone),
-        port: Some(port),
-        dump_commands: false,
-    };
-
-    // Clone connection for shutdown handler
-    let conn_for_shutdown = Arc::clone(&connection);
-
-    // Run Companion with graceful shutdown
-    tokio::select! {
-        result = CompanionRuntime::new(config, "firefly")
-            .command_handler(commands)
-            .run() => {
-            // Companion stopped normally - clear display
-            tracing::info!("Companion stopped, clearing display");
-            let _ = conn_for_shutdown.with_device(|serial| serial.clear());
-            result
-        }
-        _ = shutdown_signal() => {
-            // Received shutdown signal - clear display
-            tracing::info!("Shutdown signal received, clearing display");
-            let _ = conn_for_shutdown.with_device(|serial| serial.clear());
-            Ok(())
-        }
-    }
+    companion.run().await
 }
 
-/// Wait for shutdown signal (SIGTERM on Unix, Ctrl+C everywhere)
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-        let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
-        tokio::select! {
-            _ = sigterm.recv() => {}
-            _ = sigint.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    }
-}
+// ---------------------------------------------------------------------------
+// Subcommands (unchanged from legacy firefly)
+// ---------------------------------------------------------------------------
 
-/// List available serial ports
 fn list_ports() -> Result<()> {
     let ports = serialport::available_ports()?;
-
     if ports.is_empty() {
         println!("No serial ports found");
         return Ok(());
     }
-
     println!("Available serial ports:\n");
-
     for port in &ports {
         let port_type = match &port.port_type {
             serialport::SerialPortType::UsbPort(info) => {
-                let vid_pid = format!("{:04x}:{:04x}", info.vid, info.pid);
-                let product = info.product.as_deref().unwrap_or("Unknown");
-                let manufacturer = info.manufacturer.as_deref().unwrap_or("");
-
-                // Detect device type from VID
                 let device_type = FireflyDeviceType::from_vid(info.vid);
-                let device_tag = match device_type {
+                let tag = match device_type {
                     FireflyDeviceType::Rp2040Matrix => " [RP2040-Matrix]",
                     FireflyDeviceType::Esp8266Oled => " [ESP8266-OLED]",
                     FireflyDeviceType::Esp8266OledV2 => " [ESP8266-OLED-v2]",
                     FireflyDeviceType::Esp32TDisplay => " [ESP32-TDisplay]",
                     FireflyDeviceType::Unknown => "",
                 };
-
-                format!("USB {} {} {}{}", vid_pid, product, manufacturer, device_tag)
+                format!(
+                    "USB {:04x}:{:04x} {}{}",
+                    info.vid,
+                    info.pid,
+                    info.product.as_deref().unwrap_or("Unknown"),
+                    tag
+                )
             }
-            serialport::SerialPortType::PciPort => "PCI".to_string(),
-            serialport::SerialPortType::BluetoothPort => "Bluetooth".to_string(),
-            serialport::SerialPortType::Unknown => "Unknown".to_string(),
+            other => format!("{:?}", other),
         };
-
         println!("  {} - {}", port.port_name, port_type);
     }
-
     Ok(())
 }
 
-/// Test mode: interactive serial communication
 async fn test_mode(port_override: Option<String>) -> Result<()> {
     let detected = match port_override {
         Some(p) => {
@@ -461,51 +194,11 @@ async fn test_mode(port_override: Option<String>) -> Result<()> {
         None => find_firefly_device()?,
     };
 
-    println!("Firefly Test Mode");
-    println!("Port: {}", detected.port_name);
-    println!("Type: {}", detected.device_type);
-    println!();
+    println!("Firefly Test Mode\nPort: {}\nType: {}\n", detected.port_name, detected.device_type);
 
     let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;
 
-    // Test sequence depends on device type
     let tests: Vec<(&str, &str)> = match detected.device_type {
-        FireflyDeviceType::Esp8266OledV2 => vec![
-            ("I", "Get device info"),
-            ("C", "Clear display"),
-            ("S,STONE-TEST", "Set stone name"),
-            ("H,thriving", "Set health: thriving"),
-            ("D,42,65,30,1h,7,3,1200,1", "Dashboard update (CPU 42%, MEM 65%, DSK 30%, 7 offerings, 3 stones, 1.2KB/s, seed-bank)"),
-            ("D,85,90,50,3h,4,1,0,0", "Dashboard update (high load, no seed-bank)"),
-            ("H,withering", "Health: withering"),
-            ("D,95,92,50,3h,4,1,0,0", "Dashboard update (withering)"),
-            ("H,wilting", "Health: wilting"),
-            ("WIPE-IN,ZEN GARDEN,TESTING", "Wipe-in animation"),
-            ("H,thriving", "Health: thriving"),
-            ("D,20,45,30,5h,7,3,51200,1", "Dashboard update (idle, 50KB/s net)"),
-        ],
-        FireflyDeviceType::Esp8266Oled => vec![
-            ("I", "Get device info"),
-            ("C", "Clear display"),
-            ("S,STONE-TEST", "Set stone name"),
-            ("H,thriving", "Set health: thriving"),
-            ("M,42,65,1h", "Update metrics"),
-            ("WIPE-IN,ZEN GARDEN,TESTING", "Wipe-in animation"),
-            ("BLINK,2", "Blink animation"),
-            ("PULSE,2", "Pulse animation"),
-            ("R", "Refresh display"),
-        ],
-        FireflyDeviceType::Esp32TDisplay => vec![
-            ("I", "Get device info"),
-            ("C", "Clear display"),
-            ("J,{\"n\":\"STONE-TEST\",\"h\":\"thriving\",\"c\":42,\"m\":65,\"d\":30,\"i\":5,\"g\":0,\"ga\":0,\"up\":3600,\"sv\":2,\"hg\":0,\"il\":0,\"hc\":0,\"pa\":0,\"hr\":14}", "JSON push snapshot"),
-            ("L,55,70,40,10,80,1", "Load update"),
-            ("H,withering", "Health: withering"),
-            ("+,lantern,h", "Service started"),
-            ("-,lantern", "Service stopped"),
-            ("T,admin,local", "Stone tended"),
-            ("H,thriving", "Health: thriving"),
-        ],
         FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => vec![
             ("I", "Get device info"),
             ("C", "Clear display"),
@@ -516,26 +209,21 @@ async fn test_mode(port_override: Option<String>) -> Result<()> {
             ("T,healthy", "Status: healthy"),
             ("C", "Clear"),
         ],
+        _ => vec![("I", "Get device info"), ("C", "Clear display")],
     };
 
     for (cmd, desc) in tests {
         println!("{}: {}", desc, cmd);
-
         match serial.send_command(cmd) {
             Ok(response) => println!("  -> {}", response),
             Err(e) => println!("  -> ERROR: {}", e),
         }
-
         tokio::time::sleep(Duration::from_millis(1500)).await;
     }
-
-    println!();
-    println!("Test complete!");
-
+    println!("\nTest complete!");
     Ok(())
 }
 
-/// Probe device and show info
 fn probe_device(port_override: Option<String>) -> Result<()> {
     let detected = match port_override {
         Some(p) => {
@@ -550,59 +238,15 @@ fn probe_device(port_override: Option<String>) -> Result<()> {
         None => find_firefly_device()?,
     };
 
-    println!("Probing Firefly device on {}", detected.port_name);
-    println!("Detected type: {}", detected.device_type);
-    println!();
+    println!("Probing Firefly device on {}\nDetected type: {}\n", detected.port_name, detected.device_type);
 
     let serial = FireflySerial::new(&detected.port_name, detected.device_type)?;
-
-    // Get info
     match serial.send_command("I") {
-        Ok(response) => {
-            println!("Device Info: {}", response);
-
-            // Parse response based on device type
-            let parts: Vec<&str> = response.split(',').collect();
-            match detected.device_type {
-                FireflyDeviceType::Esp8266Oled | FireflyDeviceType::Esp8266OledV2 => {
-                    // OK,firefly-oled[-v2],esp8266,128x64,...
-                    if parts.len() >= 4 {
-                        println!();
-                        println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));
-                        println!("  Hardware: {}", parts.get(2).unwrap_or(&"unknown"));
-                        println!("  Display:  {}", parts.get(3).unwrap_or(&"unknown"));
-                    }
-                }
-                FireflyDeviceType::Esp32TDisplay => {
-                    // OK,firefly-tdisplay,esp32,135x240,...
-                    if parts.len() >= 4 {
-                        println!();
-                        println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));
-                        println!("  Hardware: {}", parts.get(2).unwrap_or(&"unknown"));
-                        println!("  Display:  {}", parts.get(3).unwrap_or(&"unknown"));
-                    }
-                }
-                FireflyDeviceType::Rp2040Matrix | FireflyDeviceType::Unknown => {
-                    // OK,firefly-v0,rp2040-matrix,5x5
-                    if parts.len() >= 4 {
-                        println!();
-                        println!("  Firmware: {}", parts.get(1).unwrap_or(&"unknown"));
-                        println!("  Hardware: {}", parts.get(2).unwrap_or(&"unknown"));
-                        println!("  Matrix:   {}", parts.get(3).unwrap_or(&"unknown"));
-                    }
-                }
-            }
-        }
+        Ok(response) => println!("Device Info: {}", response),
         Err(e) => {
             println!("Failed to communicate: {}", e);
             return Err(e);
         }
     }
-
-    // Get help (optional, may not be supported)
-    if let Ok(response) = serial.send_command("?") {
-        println!("  Commands: {}", response.trim_start_matches("OK,"));
-    }
-
     Ok(())
 }

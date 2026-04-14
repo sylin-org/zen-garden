@@ -289,6 +289,46 @@ function Get-ConnectedDevices {
 }
 #endregion
 
+#region MicroPython readiness probe
+
+# Poll mpremote until the device's raw-REPL handshake succeeds.
+#
+# After `esptool write_flash` the ESP device hard-resets and walks
+# through its boot sequence; mpremote's first `cp` often races against
+# that boot and fails with a TimeoutError or "could not enter raw
+# repl". Instead of blind retries with fixed sleeps, we run the
+# cheapest `mpremote exec` possible — that exercises the exact same
+# raw-REPL handshake `cp` needs. Once the probe returns OK, every
+# subsequent `cp` on this port is safe.
+function Wait-MpremoteReady {
+    param(
+        [Parameter(Mandatory)][string]$Port,
+        [int]$TimeoutSec = 20
+    )
+
+    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+    $deadline  = (Get-Date).AddSeconds($TimeoutSec)
+    $attempt   = 0
+
+    while ((Get-Date) -lt $deadline) {
+        $attempt++
+        # `exec` wraps the command in a raw-REPL Ctrl-A/Ctrl-D round-trip
+        # — same path as `cp` — and prints the result. A short sentinel
+        # keeps the output unambiguous.
+        $out = & $pythonCmd -m mpremote connect $Port exec "print('mpready')" 2>&1
+        if ($LASTEXITCODE -eq 0 -and "$out" -match "mpready") {
+            Write-Step "Device REPL ready (attempt $attempt)" "OK"
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    Write-Step "Device REPL did not respond within $TimeoutSec s" "WARN"
+    return $false
+}
+
+#endregion
+
 #region Provisioning (FIREFLY-0004)
 # Mint a GUIDv7, stage device_id.txt, upload to the device filesystem,
 # append a roster entry. Dispatches upload path on device type:
@@ -331,6 +371,9 @@ function Invoke-Provisioning {
                 return
             }
             $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+            # Validate the REPL is ready before cp — same rationale as
+            # Install-ESP32Resources (see Wait-MpremoteReady).
+            [void](Wait-MpremoteReady -Port $port)
             Write-Step "Uploading device_id.txt to $port" "..."
             & $pythonCmd -m mpremote connect $port cp $staged ":device_id.txt" 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
@@ -942,6 +985,12 @@ function Install-ESP32Resources {
         & $pythonCmd -m pip install mpremote --quiet
     }
 
+    # Probe the REPL before the first `cp` so we don't race the boot.
+    # Previously the first upload (boot.py) frequently failed and the
+    # operator saw [x] Failed to upload boot.py — the device was mid-
+    # boot when mpremote tried to enter raw REPL.
+    [void](Wait-MpremoteReady -Port $Port)
+
     $firmwareDir = $script:Config.FirmwareDir
     foreach ($res in $script:Config.ESP32.Resources) {
         $localPath = Join-Path $firmwareDir $res.Local
@@ -983,8 +1032,10 @@ function Invoke-ESP32Handler {
 
     Write-Step "Erasing and flashing MicroPython..." "..."
     Install-ESP32Runtime -Port $port
-    Write-Step "Waiting for reboot..." "WAIT"
-    Start-Sleep -Seconds 5
+    # Install-ESP32Resources starts with Wait-MpremoteReady — no
+    # need for a blind fixed sleep here. A tiny pause lets the reset
+    # actually happen before the probe starts.
+    Start-Sleep -Milliseconds 500
 
     Install-ESP32Resources -Port $port
     Invoke-Provisioning -Device $Device -Variant "tdisplay" -FirmwareVersion "1.0.0"

@@ -419,7 +419,25 @@ function Invoke-Provisioning {
                 Write-Step "device_id.txt write failed: $_" "FAIL"
             }
         }
-        { $_ -eq "ESP8266" -or $_ -eq "ESP32" } {
+        "ESP8266" {
+            # ESP8266 has 80KB RAM and a flaky mpremote `cp` path — use
+            # the same Send-ESP8266File raw-REPL protocol the firmware
+            # resource uploads use. Proven on this device, same buffer
+            # discipline.
+            $port = $Device["ComPort"]
+            if (-not $port) {
+                Write-Step "Provisioning: no COM port present" "WARN"
+                return
+            }
+            Write-Step "Uploading device_id.txt to $port" "..."
+            if (Send-ESP8266File -Port $port -LocalPath $staged -RemoteName "device_id.txt") {
+                $uploaded = $true
+                Write-Step "device_id.txt written" "OK"
+            } else {
+                Write-Step "device_id.txt write failed" "FAIL"
+            }
+        }
+        "ESP32" {
             $port = $Device["ComPort"]
             if (-not $port) {
                 Write-Step "Provisioning: no COM port present" "WARN"
@@ -971,14 +989,10 @@ function Invoke-ESP8266Handler {
     # actual semver on the first boot post-flash.
     Invoke-Provisioning -Device $Device -Variant "oled-$variant" -FirmwareVersion "0.2.0"
 
-    # Post-install check: ensure boot.py actually landed and disables
-    # WiFi. The boot.py source lives in the variant's resource list —
-    # pick it out.
-    $bootResource = $variantConfig.Resources | Where-Object { $_.Remote -eq 'boot.py' } | Select-Object -First 1
-    if ($bootResource) {
-        $bootLocal = Join-Path $script:Config.FirmwareDir $bootResource.Local
-        [void](Test-FireflyBootPy -Port $port -LocalBootPyPath $bootLocal)
-    }
+    # ESP8266 post-install check happens inline in Install-ESP8266Resources:
+    # Send-ESP8266File reports per-file success/failure directly against
+    # the raw REPL, so a successful boot.py upload is authoritative
+    # (mpremote fs cat is unreliable on 80KB-RAM ESP8266).
 
     Invoke-ESP8266VisualTest -Port $port
 

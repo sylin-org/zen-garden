@@ -341,6 +341,52 @@ Terms used across [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and its 
 
 **Lurk-listener** - A passive mDNS browse task that listens for `_moss._tcp` service announcements from peer stones. Discovered peers are fed to the Topology aggregate via `topology.upsert_from_chirp()`. The lurk-listener is infrastructure (Koi browse API wrapping) — it lives in `domain/discovery/mdns.rs` as a free function, not as an aggregate command.
 
+### Companion integration platform terms (COMPANION-0001)
+
+**Companion integration platform** - The architectural reframing codified by [COMPANION-0001](decisions/COMPANION-0001-companion-integration-epic.md): the companion runtime is a local-process **event integration hub**, not a device-driver framework. Hardware drivers, audio sinks, observability exporters, and external-system bridges are all the same type of thing — extensions that consume garden events and produce local effects. See [companion-architecture.md](specs/companion-architecture.md) for the pattern spec.
+
+**Companion (struct)** - The top-level runtime of a companion binary. Replaces `CompanionRuntime` per code standards §3 (drops the `Runtime` suffix — the concept is already the runtime). Built by a fluent API: `Companion::new(config).with_transport(...).with_adapter_factory(...).run()`. Owns `Pulse`, `Garden`, and `Adapters` plus the shutdown token and transport list.
+
+**Garden context** - The bounded context within the companion SDK that owns event ingestion, canonicalization, projection, and fan-out. Holds `Pulse`, `Garden`, and the `Transport` trait. Never knows which adapters exist; adapters subscribe to it. One of two bounded contexts in the SDK (see **Adapters context**).
+
+**Adapters context** - The bounded context within the companion SDK that owns extension lifecycle: the `Adapter` trait, `AdapterFactory` registry, device/endpoint discovery, supervisor loop, and all cross-cutting concerns (subscription filtering, delivery policy, hydration, structured logging, dependencies, grace windows, persisted state). Spawns adapters; adapters consume Garden events. One of two bounded contexts in the SDK.
+
+**Event (companion sense)** - The uniform envelope every companion-internal communication uses: `{ id: EventId, timestamp: DateTime<Utc>, kind: &'static str, payload: Arc<dyn EventPayload> }`. Presence events from moss, HTTP commands, inter-adapter messages, and future external-source messages all share this shape. Distinct from `PulseEvent` in moss (which is moss-internal). See [companion-architecture.md §The event envelope](specs/companion-architecture.md#the-event-envelope).
+
+**EventId** - A GUIDv7 (`uuid::Uuid` generated with time-ordered semantics). Primary key for deduplication, sort key for replay, correlation anchor for distributed tracing. Every event carries one; the generator lives in the SDK.
+
+**EventPayload** - The trait that every event payload implements. Provides `KIND: &'static str` (the canonical kind tag matching the envelope's `kind` field) and `COALESCING: bool` (whether the orchestrator may coalesce rapid bursts into the latest value). Downcastable from `Arc<dyn EventPayload>` via `Event::payload::<T>()`.
+
+**Kind (event)** - The namespaced string identifier for an event type. Reserved prefix `core.*` for SDK-defined events (e.g., `core.stone.health.changed`). Companions use their crate name as the namespace (`firefly.*`, `cricket.*`). Commands are kinds: `firefly.command.brightness` is an event kind like any other. Validated at ingest time by `Pulse`. See [companion-architecture.md §Kind namespace convention](specs/companion-architecture.md#kind-namespace-convention).
+
+**Pulse (companion SDK)** - The orchestrator in the Garden context — the single fan-in point for all events. Owns deduplication (bounded LRU by `EventId`), validation (namespace + kind/payload match), coalescing (per-kind for `EventPayload::COALESCING=true`), fan-out (broadcast channel), and metrics. Named symmetrically with moss's `state.pulse` broadcast — same concept, richer implementation on the receiving side. Distinct naming scope: moss's Pulse and companion's Pulse are separate codebases with parallel roles.
+
+**Garden (companion SDK)** - The client-side CQRS projection of moss state. Read-model aggregate exposing **properties** (synchronous queries: `garden.health()`, `garden.load()`, `garden.offerings()`, etc.) and an **event stream** (`garden.events()`). Projects raw presence events from `Pulse` into typed domain state. First event any subscriber receives is a synthetic `GardenSnapshot` — hydration without special-cased init. Shares domain types with moss via `garden-common::domain`.
+
+**GardenSnapshot** - The synthetic event emitted to every new `Garden::events()` subscriber as its first event. Carries the current `GardenState`. Unifies adapter initialization and crash recovery under a single code path — there is no distinct "startup" code in an adapter, only event handling.
+
+**Transport** - The trait defining event sources (and sinks, for request-response patterns). Implementations: `SseTransport` (consumes moss `/presence/stream`), `CommandTransport` (HTTP server publishing command events and correlating result events back to HTTP responses). Part of the Garden context. Adapters never see transports. New event sources (MQTT, webhook, file watch) are new `Transport` implementations without touching the rest of the architecture.
+
+**Adapter** - The extension contract in the companion SDK. A trait with three methods: `info()` (identity), `profile()` (subscriptions + delivery policy + dependencies + state persistence opt-in), `run()` (the event loop, receiving a filtered event stream and a `Garden` handle). One instance per physical device / logical endpoint. Owned by the Adapters context.
+
+**AdapterProfile** - Declared metadata that tells the supervisor how to dispatch events to an adapter: which event kinds it cares about (subscriptions), how often it wants them delivered (`DeliveryPolicy`: All / LatestEvery / Debounced), what system dependencies its factory requires, and whether it opts into typed state persistence. Avoids adapters implementing per-adapter filtering and throttling themselves.
+
+**AdapterFactory** - Produces `Adapter` instances for currently-present devices or endpoints. Methods: `kind()` (the factory's adapter-kind identifier), `required_dependencies()` (system deps installed/verified before any instance spawns), `discover()` (scan and return candidate adapters). Registered with `Companion` at wire-up; the supervisor polls `discover()` periodically.
+
+**Adapters (aggregate)** - The supervisor struct in the Adapters context. Owns the factory registry, tracks running adapter instances by `AdapterInfo::id`, runs the discovery loop, applies cross-cutting concerns (filtering, delivery, logging spans, grace windows), and reaps disconnected adapters. Plural because it's the aggregate holding many `Adapter` entities — same naming shape as moss's `Offerings`, `Storage`, `Topology`.
+
+**DeliveryPolicy** - How the supervisor paces event delivery to a specific adapter: `All` (every event), `LatestEvery(Duration)` (coalesce to latest at interval — e.g., matrix adapter at 30fps), `Debounced(Duration)` (quiet window after each delivery — e.g., cricket's tend sparkle). Declared in `AdapterProfile`; enforced by the supervisor before the adapter sees events. Orthogonal to (and layered above) `Pulse`'s global per-kind coalescing.
+
+**Command-as-event** - The architectural commitment that HTTP commands flow through the same `Pulse` bus as every other event. `POST /command { raw_args: [...] }` becomes an event with `kind = "<companion>.command.<action>"` and a correlation ID. Adapters subscribe to command kinds they handle and publish `core.command.result` events. `CommandTransport` correlates the results and synthesizes the HTTP response. No adapter imports HTTP; commands gain for-free properties (correlation, fan-out to multiple adapters, idempotency, timeout at transport level).
+
+**Correlation ID** - The identifier that ties a command event to its result event(s). Generated by `CommandTransport` when a command arrives; embedded in the command event's payload; echoed by adapters in their `core.command.result` payloads. The transport's correlation map awaits matching results within a timeout window, aggregates, and returns the HTTP response. Distinct from `EventId` — correlation ID scopes a request/response pair; `EventId` scopes a single event.
+
+**Hexagonal architecture (companion)** - The organizing principle: a pure event-driven core (Garden + Pulse + GardenState projection) surrounded by pluggable ports. Transports are input ports (and output ports, for command responses). Adapters are output ports. The core knows neither. See [companion-architecture.md §Architecture overview](specs/companion-architecture.md#architecture-overview).
+
+**Break-and-rebuild (COMPANION-0001 tenet)** - The methodological commitment that, where existing shape prevents a clean design, we rebuild rather than migrate. Under this tenet, Book VIII replaces the firefly and cricket crates wholesale without long-lived coexistence scaffolding. Contrast with ARCH-0017, which used strangler-style migration extensively. The difference is scale: the companion segment has no external consumers of its internals, so atomic replacement is cheaper than compatibility.
+
+**Cross-cutting-concerns-at-owning-layer (COMPANION-0001 tenet)** - The generalization of the deduplication decision that seeded COMPANION-0001: any concern that three adapters would implement the same pattern for belongs at a higher layer. The adapter trait stays small; the supervisor (or orchestrator) owns filtering, delivery shaping, hydration, logging context, dependencies, cleanup, and state persistence. See [companion-architecture.md §Cross-cutting concerns matrix](specs/companion-architecture.md#cross-cutting-concerns-matrix).
+
 ### Tool aggregate terms (Book II / ARCH-0019)
 
 **Tool (bounded context)** - The aggregate owning the garden-wide registry of `GardenTool` entries (offerings + seed-banks + gateway registrations + remote-announced tools from peer stones) on a single stone. Typed commands (`upsert`, `register_gateway`, `deregister_gateway`, `reap_expired_gateways`, `reconcile_local`, `apply_remote_beacon`, `remove_stone`) own the write path; typed queries return owned values without leaking references across the lock boundary. See `/api/v1/stone/tools/{fqid}` and `/api/v1/garden/tools`.

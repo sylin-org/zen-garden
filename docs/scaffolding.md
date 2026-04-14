@@ -7,7 +7,7 @@ last_verified: 2026-04-12
 
 # Scaffolding Tracker
 
-**Purpose:** Every piece of intermediate-state code introduced during [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) is tracked here with an explicit removal trigger and action.
+**Purpose:** Every piece of intermediate-state code introduced during [ARCH-0017](decisions/ARCH-0017-ddd-monolith-epic.md) and [COMPANION-0001](decisions/COMPANION-0001-companion-integration-epic.md) is tracked here with an explicit removal trigger and action.
 **Audience:** Developers adding or removing temporary scaffolds; reviewers verifying a book's cleanup is complete.
 
 > **The scaffolding contract is part of the epic's shippability rule.** A scaffold whose removal trigger has landed but is still present in the tree is a bug, enforced by [scripts/check-scaffolding.sh](../scripts/check-scaffolding.sh). A scaffold that lives longer than its documented trigger is a bug. A `TODO: migrate later` comment with no entry here is a bug.
@@ -143,9 +143,22 @@ The permanent record of removed scaffolds is how the epic's postmortem (Book XX)
 
 ---
 
+## ID namespaces
+
+Scaffold entries use a prefix that identifies the owning epic:
+
+- `arch-*` — ARCH-0017 (moss DDD monolith epic)
+- `companion-*` — COMPANION-0001 (companion integration platform epic)
+
+New epics that produce scaffolds allocate a new prefix and document it here.
+
+---
+
 ## Active scaffolds
 
 *(Empty. All scaffolds have been removed.)*
+
+COMPANION-0001 operates under the **break-and-rebuild** tenet (see [COMPANION-0001 §Tenets](decisions/COMPANION-0001-companion-integration-epic.md#the-tenets)). Long-lived coexistence scaffolding is not expected for companion-epic books; Book VIII replaces the firefly and cricket crates wholesale. Any `companion-*` scaffold that is introduced here is a signal that the book author could not find a break-and-rebuild path and should be scrutinized accordingly.
 
 ---
 

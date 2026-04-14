@@ -2,14 +2,15 @@
 audience: [developer, ai]
 doc_type: decision
 status: accepted
-last_verified: 2026-04-13
+last_verified: 2026-04-14
 canonical: true
+completed: 2026-04-14
 ---
 
 # COMPANION-0007: Adapters — Book VI of COMPANION-0001
 
 **Date**: 2026-04-13
-**Status**: Accepted
+**Status**: Completed (2026-04-14)
 **Book**: VI of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0006](COMPANION-0006-garden-aggregate.md), [COMPANION-0003](COMPANION-0003-pulse.md), [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 
@@ -244,6 +245,38 @@ Each chapter ships green to `dev`.
 | AdapterStatus HTTP exposure | Book VII (CommandTransport gains `/status`) |
 | Per-adapter metrics aggregation | Book VII / post-epic |
 | Cross-adapter coordination primitives | Out of epic scope |
+
+## Closure notes (2026-04-14)
+
+Book VI closed with all exit criteria met. Critical path through Book VI is complete; Books VII (Companion), VIII (Rebuild), and IX (Integration tests) now parallelize.
+
+Summary:
+
+- **Adapter bounded context** at `src/companion-sdk/src/adapters/` with five files: `adapter.rs`, `factory.rs`, `status.rs`, `supervisor.rs`, `mod.rs`.
+- **Trait frozen after Ch0 dual-prototype validation** — matrix (hardware, complex) and audio (singleton) fit without changes.
+- **Supervisor** handles discovery loop, filter task (tracing span per adapter + subscription filtering), spawn, grace-window reap, clean shutdown, and AdapterStatus tracking.
+- **17 adapter tests** (4 trait + 3 factory + 3 status + 7 supervisor including async integration cases). 133 companion-sdk tests total.
+- **Zero new workspace deps** — supervisor uses stdlib + already-direct `tokio-util` and `tracing`.
+
+### Minor refinements during implementation
+
+- **mpsc::Receiver<Event> instead of broadcast::Receiver<Event>** for the adapter's event stream. Declared in the ADR and executed here: supervisor's filter task owns the broadcast subscription and pumps only subscribed kinds into the per-adapter mpsc. Clearer boundary; per-adapter backpressure.
+- **Send-safety in tick()**: `RwLockReadGuard` is not Send, so we collect all factory candidates into a Vec before the first await. Documented inline; covered by the fact that the code compiles under the strict `Send` bounds of `tokio::spawn`.
+- **Tick cadence**: first tick fires immediately (not after `discovery_interval`), so adapters come up without an initial delay. The built-in interval's "missed tick" behavior is set to `Delay` so late ticks don't burst.
+- **Status transitions**: supervisor + filter task both hold `Arc<Mutex<AdapterStatus>>`. Filter task transitions `Spawning → Running` on first forwarded event and increments `events_handled` thereafter. Reap sets `Stopped`. `Degraded` is reserved for a future hook (no auto-transition).
+
+### Deferred work (tracked)
+
+- `DeliveryPolicy::LatestEvery` + `Debounced` enforcement (timer tasks).
+- Typed state persistence I/O (the `persisted_state: bool` field is stubbed today).
+- `AdapterStatus` HTTP exposure — Book VII's CommandTransport wires `/status`.
+- Degraded-state hook for adapters to report their own health.
+
+### Follow-on work picked up by later books
+
+- Book VII (Companion) wires `Adapters::new(garden, pulse)` + `Adapters::run(shutdown)` into the top-level runtime and exposes `/status` via CommandTransport.
+- Book VIII implements real `firefly-matrix`, `firefly-oled-v1/v2`, `firefly-tdisplay`, and `cricket-audio` adapters against the frozen trait.
+- Book IX provides `MockTransport` + `MockAdapter` integration test harness.
 
 ## References
 

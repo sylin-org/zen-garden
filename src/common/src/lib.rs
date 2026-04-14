@@ -11,6 +11,7 @@ pub mod console;
 pub mod constants;
 pub mod detection;
 pub mod discovery;
+pub mod domain;
 pub mod election;
 pub mod errors;
 pub mod events;

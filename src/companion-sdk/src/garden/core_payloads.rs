@@ -19,6 +19,7 @@
 //! [`wire_to_core_kind`]: self::wire_to_core_kind
 
 use super::event::EventPayload;
+use garden_common::domain::{Health, Load, Pond, SeedBank};
 use garden_common::presence::{PresenceSnapshot, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
 use serde::{Deserialize, Serialize};
 use std::any::Any;
@@ -235,6 +236,87 @@ pub(crate) const WIRE_KIND_MAP: &[(&str, &str)] = &[
     ),
 ];
 
+// ---------------------------------------------------------------------------
+// Typed domain accessors — added in COMPANION-0005 (Book IV)
+// ---------------------------------------------------------------------------
+
+/// Typed-domain extension methods on [`StoneHealthChangedPayload`].
+pub trait StoneHealthChangedExt {
+    /// Parse the wire `health` string into a typed [`Health`] value.
+    ///
+    /// Returns [`Health::Dormant`] for unrecognized values, so callers that
+    /// don't care about the distinction get sensible default behaviour
+    /// (treating unknown as offline).
+    fn health_domain(&self) -> Health;
+}
+
+impl StoneHealthChangedExt for StoneHealthChangedPayload {
+    fn health_domain(&self) -> Health {
+        Health::parse(&self.health).unwrap_or(Health::Dormant)
+    }
+}
+
+/// Typed-domain extension methods on [`StoneLoadUpdatedPayload`].
+pub trait StoneLoadUpdatedExt {
+    /// Typed snapshot of this load event.
+    fn load_domain(&self) -> Load;
+}
+
+impl StoneLoadUpdatedExt for StoneLoadUpdatedPayload {
+    fn load_domain(&self) -> Load {
+        Load::from(self)
+    }
+}
+
+/// Typed-domain extension methods on [`PresenceSnapshot`].
+pub trait PresenceSnapshotExt {
+    /// Stone's health, parsed from the wire string. Falls back to
+    /// [`Health::Dormant`] for unrecognized values.
+    fn stone_health(&self) -> Health;
+
+    /// Stone's resource load as a cohesive [`Load`] value.
+    fn stone_load(&self) -> Load;
+
+    /// Stone's seed-bank summary, if any is attached.
+    fn seed_bank(&self) -> Option<SeedBank>;
+
+    /// Stone's pond membership state (best-effort — wire shape only
+    /// carries a boolean, so we cannot distinguish Member from
+    /// Cornerstone here).
+    fn pond(&self) -> Pond;
+}
+
+impl PresenceSnapshotExt for PresenceSnapshot {
+    fn stone_health(&self) -> Health {
+        Health::parse(&self.stone.health).unwrap_or(Health::Dormant)
+    }
+
+    fn stone_load(&self) -> Load {
+        Load {
+            cpu: garden_common::domain::Percent::new(self.stone.cpu_percent),
+            memory: garden_common::domain::Percent::new(self.stone.memory_percent),
+            disk: garden_common::domain::Percent::new(self.stone.disk_percent),
+            io: garden_common::domain::Percent::new(self.stone.io_percent),
+            gpu: garden_common::domain::Percent::new(self.stone.gpu_percent),
+            gpu_active: self.stone.gpu_active,
+            net_rx_bytes_per_sec: self.stone.net_rx_bytes_per_sec,
+            net_tx_bytes_per_sec: self.stone.net_tx_bytes_per_sec,
+        }
+    }
+
+    fn seed_bank(&self) -> Option<SeedBank> {
+        self.stone.seed_bank.as_ref().map(SeedBank::from)
+    }
+
+    fn pond(&self) -> Pond {
+        Pond::from_active_flag(self.stone.pond_active)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SSE transport kind catalog
+// ---------------------------------------------------------------------------
+
 /// All canonical kinds SseTransport may emit. Used by
 /// [`Transport::emitted_kinds`] so Companion can register the namespaces.
 ///
@@ -400,5 +482,74 @@ mod tests {
             WIRE_KIND_MAP.iter().map(|(_, c)| *c).collect();
         let emitted: std::collections::HashSet<&str> = SSE_EMITTED_KINDS.iter().copied().collect();
         assert_eq!(map_cores, emitted);
+    }
+
+    // --- Typed domain accessors (COMPANION-0005 Book IV) ---
+
+    #[test]
+    fn health_domain_parses_known_wire_string() {
+        let payload = StoneHealthChangedPayload {
+            health: "thriving".into(),
+            cpu_percent: 10.0,
+            memory_percent: 20.0,
+        };
+        assert_eq!(payload.health_domain(), Health::Thriving);
+    }
+
+    #[test]
+    fn health_domain_defaults_to_dormant_for_unknown() {
+        let payload = StoneHealthChangedPayload {
+            health: "something-unrecognized".into(),
+            cpu_percent: 0.0,
+            memory_percent: 0.0,
+        };
+        assert_eq!(payload.health_domain(), Health::Dormant);
+    }
+
+    #[test]
+    fn load_domain_builds_typed_snapshot() {
+        let payload = StoneLoadUpdatedPayload {
+            cpu_percent: 42.0,
+            memory_percent: 55.0,
+            disk_percent: 30.0,
+            io_percent: 12.0,
+            gpu_percent: 80.0,
+            gpu_active: true,
+            net_rx_bytes_per_sec: 1_000,
+            net_tx_bytes_per_sec: 500,
+        };
+        let load = payload.load_domain();
+        assert_eq!(load.cpu.value(), 42.0);
+        assert_eq!(load.memory.value(), 55.0);
+        assert_eq!(load.net_total_bytes_per_sec(), 1_500);
+        assert!(load.gpu_active);
+    }
+
+    #[test]
+    fn snapshot_typed_accessors_reflect_stone_state() {
+        let mut snap = fresh_snapshot();
+        snap.stone.health = "wilting".into();
+        snap.stone.cpu_percent = 95.5;
+        snap.stone.pond_active = true;
+
+        assert_eq!(snap.stone_health(), Health::Wilting);
+        assert_eq!(snap.stone_load().cpu.as_u8(), 96);
+        assert_eq!(snap.pond(), garden_common::domain::Pond::Member);
+        assert!(snap.seed_bank().is_none());
+    }
+
+    #[test]
+    fn snapshot_seed_bank_accessor_passes_through_when_present() {
+        let mut snap = fresh_snapshot();
+        snap.stone.seed_bank = Some(garden_common::presence::StoragePresence {
+            name: "primary".into(),
+            used_gb: 100,
+            total_gb: 500,
+        });
+
+        let bank = snap.seed_bank().unwrap();
+        assert_eq!(bank.name, "primary");
+        assert_eq!(bank.used_gb, 100);
+        assert_eq!(bank.free_gb(), 400);
     }
 }

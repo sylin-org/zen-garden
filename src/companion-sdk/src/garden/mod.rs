@@ -23,7 +23,8 @@ pub use core_payloads::{
     KIND_PRESENCE_SNAPSHOT, KIND_SERVICE_STARTED, KIND_SERVICE_STOPPED,
     KIND_STONE_HEALTH_CHANGED, KIND_STONE_LOAD_UPDATED, KIND_STONE_TENDED,
     KIND_STORAGE_CONNECTED, KIND_STORAGE_DETECTED, KIND_STORAGE_REMOVED,
-    ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
+    PresenceSnapshotExt, ServiceStartedPayload, ServiceStoppedPayload,
+    StoneHealthChangedExt, StoneLoadUpdatedExt, StoneTendedPayload, StorageConnectedPayload,
     StorageDetectedPayload, StorageRemovedPayload, wire_to_core_kind,
 };
 pub use event::{

@@ -40,6 +40,10 @@ chrono = { workspace = true, features = ["serde"] }
 # Transport trait shutdown signalling (COMPANION-0004 — Book III of COMPANION-0001)
 tokio-util = "0.7"
 
+# Device bus (COMPANION-0012)
+serialport = "4.3"
+thiserror = "2"
+
 [lints]
 workspace = true
 

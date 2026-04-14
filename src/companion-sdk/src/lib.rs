@@ -37,6 +37,7 @@
 //! [`Adapters`]: adapters::Adapters
 
 pub mod adapters;
+pub mod bus;
 pub mod cli;
 pub mod companion;
 pub mod dependencies;

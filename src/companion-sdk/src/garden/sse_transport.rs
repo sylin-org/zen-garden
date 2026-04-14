@@ -291,7 +291,7 @@ fn build_event(wire_kind: &str, data: &str) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::garden::{IngestResult, PulseConfig};
+    use crate::garden::PulseConfig;
 
     fn core_pulse() -> Arc<Pulse> {
         let pulse = Arc::new(Pulse::new(PulseConfig {

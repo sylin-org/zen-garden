@@ -12,6 +12,7 @@
 //! [COMPANION-0001]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0001-companion-integration-epic.md
 //! [Adapters]: super
 
+pub mod command_transport;
 pub mod core_payloads;
 pub mod event;
 pub mod pulse;
@@ -30,6 +31,10 @@ pub use event::{
 };
 pub use pulse::{
     IngestResult, Pulse, PulseConfig, PulseMetricsSnapshot, RejectReason,
+};
+pub use command_transport::{
+    CommandInvocation, CommandOutcome, CommandResult, CommandTransport, KIND_COMMAND_INVOCATION,
+    KIND_COMMAND_RESULT,
 };
 pub use sse_transport::SseTransport;
 pub use transport::{BoxFuture, Transport};

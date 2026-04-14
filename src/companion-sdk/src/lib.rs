@@ -63,9 +63,10 @@ pub mod prelude {
     pub use crate::cli::CompanionConfig;
     pub use crate::dependencies::{ensure_dependencies, DependencyCheckResult, SystemDependency};
     pub use crate::garden::{
-        BoxFuture, DynPayload, Event, EventId, EventPayload, IngestResult, Pulse, PulseConfig,
-        PulseMetricsSnapshot, RejectReason, ServiceStartedPayload, ServiceStoppedPayload,
-        SseTransport, StoneTendedPayload, StorageConnectedPayload, StorageDetectedPayload,
+        BoxFuture, CommandInvocation, CommandOutcome, CommandResult, CommandTransport, DynPayload,
+        Event, EventId, EventPayload, IngestResult, Pulse, PulseConfig, PulseMetricsSnapshot,
+        RejectReason, ServiceStartedPayload, ServiceStoppedPayload, SseTransport,
+        StoneTendedPayload, StorageConnectedPayload, StorageDetectedPayload,
         StorageRemovedPayload, Transport, is_valid_kind, kind_namespace, new_event_id,
         wire_to_core_kind,
     };

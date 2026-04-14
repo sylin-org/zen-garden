@@ -377,14 +377,14 @@ mod tests {
 
     #[test]
     fn stone_load_updated_is_coalescing_and_non_load_is_not() {
-        assert!(StoneLoadUpdatedPayload::COALESCING);
-        assert!(!StoneHealthChangedPayload::COALESCING);
-        assert!(!StoneTendedPayload::COALESCING);
-        assert!(!ServiceStartedPayload::COALESCING);
-        assert!(!ServiceStoppedPayload::COALESCING);
-        assert!(!StorageConnectedPayload::COALESCING);
-        assert!(!StorageDetectedPayload::COALESCING);
-        assert!(!StorageRemovedPayload::COALESCING);
+        const { assert!(StoneLoadUpdatedPayload::COALESCING) };
+        const { assert!(!StoneHealthChangedPayload::COALESCING) };
+        const { assert!(!StoneTendedPayload::COALESCING) };
+        const { assert!(!ServiceStartedPayload::COALESCING) };
+        const { assert!(!ServiceStoppedPayload::COALESCING) };
+        const { assert!(!StorageConnectedPayload::COALESCING) };
+        const { assert!(!StorageDetectedPayload::COALESCING) };
+        const { assert!(!StorageRemovedPayload::COALESCING) };
     }
 
     #[test]

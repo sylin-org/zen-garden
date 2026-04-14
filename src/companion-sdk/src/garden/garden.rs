@@ -622,6 +622,6 @@ mod tests {
     #[test]
     fn garden_snapshot_payload_is_not_coalescing() {
         // Synthetic events must fire every time (they carry per-subscriber state).
-        assert!(!GardenSnapshot::COALESCING);
+        const { assert!(!GardenSnapshot::COALESCING) };
     }
 }

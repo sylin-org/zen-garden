@@ -485,7 +485,7 @@ mod tests {
         let kinds = transport.emitted_kinds();
         assert!(kinds.contains(&"core.presence.snapshot"));
         assert!(kinds.contains(&"core.stone.load.updated"));
-        assert!(kinds.contains(&"core.command.invocation") == false); // SSE does not emit command events
+        assert!(!kinds.contains(&"core.command.invocation")); // SSE does not emit command events
     }
 
     #[test]

@@ -442,8 +442,8 @@ mod tests {
 
     #[test]
     fn invocation_is_not_coalescing() {
-        assert!(!CommandInvocation::COALESCING);
-        assert!(!CommandResult::COALESCING);
+        const { assert!(!CommandInvocation::COALESCING) };
+        const { assert!(!CommandResult::COALESCING) };
     }
 
     // --- Emitted kinds ---

@@ -564,9 +564,9 @@ mod tests {
 
     #[test]
     fn coalescing_const_is_accessible_without_instance() {
-        assert!(LoadUpdated::COALESCING);
-        assert!(!Tended::COALESCING);
-        assert!(!HealthChanged::COALESCING);
+        const { assert!(LoadUpdated::COALESCING) };
+        const { assert!(!Tended::COALESCING) };
+        const { assert!(!HealthChanged::COALESCING) };
     }
 
     // --- Kind validation ---

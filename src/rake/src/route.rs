@@ -316,6 +316,25 @@ pub async fn route(
         }
 
         // =================================================================
+        // Firefly operator tooling (FIREFLY-0004 Ch4)
+        // =================================================================
+
+        "firefly" => {
+            use commands::firefly::FireflyCommand;
+            match m.subcommand() {
+                Some(("inventory", _)) => Inv::local(FireflyCommand::inventory(g.quiet)),
+                Some(("roster", roster_m)) => match roster_m.subcommand() {
+                    Some(("push", push_m)) => Inv::local(FireflyCommand::roster_push(
+                        req(push_m, "stone")?,
+                        g.quiet,
+                    )),
+                    _ => anyhow::bail!("Usage: garden-rake firefly roster push <stone>"),
+                },
+                _ => anyhow::bail!("Usage: garden-rake firefly <inventory|roster push <stone>>"),
+            }
+        }
+
+        // =================================================================
         // Adoption
         // =================================================================
 

@@ -14,6 +14,7 @@ pub mod admin;
 pub mod adoption;
 pub mod discovery;
 pub mod election;
+pub mod firefly;
 pub mod lifecycle;
 pub mod local;
 pub mod management;

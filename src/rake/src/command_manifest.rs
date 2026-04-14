@@ -87,6 +87,9 @@ pub mod cmd {
     // Manifest authoring
     pub const MANIFEST_CMD: &str = "manifest";
 
+    // Firefly operator tooling (FIREFLY-0004 Ch4)
+    pub const FIREFLY_CMD: &str = "firefly";
+
     // Storage
     pub const STORAGE: &str = "storage";
     pub const STORE: &str = "store";
@@ -1639,6 +1642,55 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
     });
 
     // =================================================================
+    // FIREFLY OPERATOR TOOLING (FIREFLY-0004 Ch4)
+    // =================================================================
+
+    manifest.add(CommandDef {
+        name: cmd::FIREFLY_CMD,
+        aliases: &[],
+        category: CommandCategory::System,
+        description: "Firefly device inventory and roster management",
+        long_description: "Operator-side firefly tooling.\n\n\
+            Subcommands:\n\
+            - inventory: list every firefly provisioned via NewFirefly.ps1\n\
+            - roster push: sync the local roster to a stone (scp+ssh)",
+        remote_capable: false,
+        args: vec![],
+        subcommands: vec![
+            SubDef {
+                name: "inventory",
+                description: "List provisioned fireflies (reads local roster file)",
+                args: vec![],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "roster",
+                description: "Sync the local roster file to a stone",
+                args: vec![],
+                subcommands: vec![SubDef {
+                    name: "push",
+                    description: "Push the local roster to a stone",
+                    args: vec![ArgSpec::positional("stone", "Stone hostname").required()],
+                    subcommands: vec![],
+                }],
+            },
+        ],
+        examples: vec![
+            CommandExample {
+                description: "List all known fireflies",
+                syntax: "garden-rake firefly inventory",
+            },
+            CommandExample {
+                description: "Push roster to stone-coral-prairie",
+                syntax: "garden-rake firefly roster push stone-coral-prairie",
+            },
+        ],
+        see_also: vec![],
+        hidden: false,
+        subcommand_negates_reqs: false,
+    });
+
+    // =================================================================
     // STONE ADMINISTRATION (grouped)
     // =================================================================
 
@@ -1994,6 +2046,8 @@ pub fn validate_manifest() {
         "store",
         // Manifest authoring
         "manifest",
+        // Firefly operator tooling
+        "firefly",
         // Local utility
         "launch",
         "commands",

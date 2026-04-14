@@ -15,6 +15,7 @@ pub mod domain;
 pub mod election;
 pub mod errors;
 pub mod events;
+pub mod firefly_roster;
 pub mod infra;
 pub mod jobs;
 pub mod manifests;

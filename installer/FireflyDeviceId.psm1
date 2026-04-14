@@ -112,10 +112,23 @@ function Read-FireflyRoster {
 
     try {
         $raw = Get-Content -Path $Path -Raw -Encoding UTF8
-        $parsed = $raw | ConvertFrom-Json -AsHashtable
-        if (-not $parsed.ContainsKey('version'))   { $parsed.version = 1 }
-        if (-not $parsed.ContainsKey('fireflies')) { $parsed.fireflies = @() }
-        return $parsed
+        # PowerShell 5 lacks -AsHashtable; round-trip via PSCustomObject
+        # and rebuild into a hashtable manually.
+        $parsed = $raw | ConvertFrom-Json
+        $result = @{ version = 1; fireflies = @() }
+        if ($parsed.PSObject.Properties['version']) {
+            $result.version = $parsed.version
+        }
+        if ($parsed.PSObject.Properties['fireflies']) {
+            foreach ($ff in @($parsed.fireflies)) {
+                $entry = @{}
+                foreach ($p in $ff.PSObject.Properties) {
+                    $entry[$p.Name] = $p.Value
+                }
+                $result.fireflies += $entry
+            }
+        }
+        return $result
     } catch {
         Write-Warning "Firefly roster at $Path is corrupt ($_); starting fresh."
         return @{ version = 1; fireflies = @() }

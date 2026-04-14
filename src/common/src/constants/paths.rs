@@ -17,6 +17,35 @@ pub fn first_run_flag() -> String {
         .unwrap_or_else(|_| "/etc/zen-garden/.first-run-complete".to_string())
 }
 
+/// Operator-local firefly roster path.
+///
+/// FIREFLY-0004: `newfirefly.ps1` writes here on the operator's machine;
+/// `garden-rake firefly inventory` reads it; `garden-rake firefly roster
+/// push <stone>` copies it to `{data_dir}/firefly-roster.json` on the
+/// target stone.
+///
+/// Default:
+/// - Linux/macOS: `$HOME/.zen-garden/firefly-roster.json`
+/// - Windows:    `%USERPROFILE%\.zen-garden\firefly-roster.json`
+///
+/// Overridable via `GARDEN_FIREFLY_ROSTER`.
+pub fn operator_firefly_roster() -> std::path::PathBuf {
+    if let Ok(v) = std::env::var("GARDEN_FIREFLY_ROSTER") {
+        return std::path::PathBuf::from(v);
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    home.join(".zen-garden").join("firefly-roster.json")
+}
+
+/// Stone-local firefly roster path (synced from an operator via
+/// `garden-rake firefly roster push`).
+pub fn stone_firefly_roster() -> String {
+    format!("{}/firefly-roster.json", data_dir())
+}
+
 /// Get stone username (default: stone)
 pub fn stone_user() -> String {
     std::env::var("GARDEN_STONE_USER").unwrap_or_else(|_| "stone".to_string())

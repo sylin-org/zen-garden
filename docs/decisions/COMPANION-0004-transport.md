@@ -4,12 +4,13 @@ doc_type: decision
 status: accepted
 last_verified: 2026-04-13
 canonical: true
+completed: 2026-04-13
 ---
 
 # COMPANION-0004: Transport — Book III of COMPANION-0001
 
 **Date**: 2026-04-13
-**Status**: Accepted
+**Status**: Completed (2026-04-13)
 **Book**: III of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0003](COMPANION-0003-pulse.md) (Pulse orchestrator), [COMPANION-0002](COMPANION-0002-event-envelope.md) (event envelope), [COMPANION-0001](COMPANION-0001-companion-integration-epic.md) (epic + pattern spec)
 
@@ -263,6 +264,30 @@ Each chapter ships green to `dev`.
 | Additional transports (MQTT, file-watch, webhook) | Future targeted ADRs after the epic closes |
 | Removing `SseClient` / `CompanionRuntime` / `CommandHandler` | Book VIII Ch6 |
 
+## Closure notes (2026-04-13)
+
+Book III closed with all exit criteria met. Summary of what shipped:
+
+- **Three new modules** under `src/companion-sdk/src/garden/`: `transport.rs` (`Transport` trait + `BoxFuture` alias), `core_payloads.rs` (9 typed payloads + `wire_to_core_kind` anti-corruption translator + `WIRE_KIND_MAP` / `SSE_EMITTED_KINDS`), `sse_transport.rs` (`SseTransport` with salvaged frame parser, exponential backoff, cancellation-aware main loop), `command_transport.rs` (`CommandTransport` + `CommandInvocation`/`CommandResult`/`CommandOutcome` payloads + correlation map + axum HTTP server + result aggregation).
+- **`EventPayload` impls on three `garden-common::presence` wire types** (PresenceSnapshot, StoneHealthChangedPayload, StoneLoadUpdatedPayload) — via orphan rule, local trait on foreign types. Six new SDK-local typed payloads for discrete events (Tended, ServiceStarted/Stopped, StorageConnected/Detected/Removed).
+- **One new direct dep**: `tokio-util = "0.7"` for `CancellationToken`, matching moss's existing pattern.
+- **Three scaffold entries** registered in [scaffolding.md](../scaffolding.md): `companion-old-sse-client`, `companion-old-command-handler`, `companion-old-companion-runtime`. All three removal-triggered by Book VIII Chapter 6.
+- **58 new tests** (2 transport, 9 core_payloads, 14 sse_transport, 13 command_transport, plus the in-module tests in transport.rs). **80 total garden tests** passing across Books I-III.
+- **Verification**: `cargo check --all`, `cargo test --package garden-companion-sdk garden::`, `cargo clippy --package garden-companion-sdk -- -D warnings` — all green.
+
+### Minor refinements during implementation (not plan changes)
+
+- **`GenericWirePayload` dropped.** The initial draft included a generic JSON-carrying payload for kinds we hadn't typed yet. The blanket `DynPayload` impl makes runtime-kind-bearing payloads awkward (the const is the only source of truth). Rewrote to define one typed payload per supported kind instead; unknown wire kinds log at trace and are skipped. Cleaner end-state, no hack.
+- **`SSE_EMITTED_KINDS` / `WIRE_KIND_MAP` as crate-visible constants.** Used by `SseTransport::emitted_kinds` and by the integrity test that asserts the two sets match. Guarantees adding a new supported kind can't drift.
+- **Per-kind dispatch in `build_event`.** `match core_kind { KIND_X => from_str::<X>(data).ok().map(Event::new), ... }` — the same kind string appears in the `EventPayload` impl and in this dispatcher. Slightly repetitive but completely explicit; Book V can reconsider if a declarative registry is wanted.
+
+### Follow-on work picked up by later books
+
+- Book IV (Domain) promotes shared domain types into `garden-common::domain` and wires them through Garden's projection.
+- Book V (Garden) consumes these core payloads and maintains the read-model.
+- Book VII (Companion) wires `Companion::run` to walk transports + call `pulse.register_namespace` for every namespace in `transport.emitted_kinds()`.
+- Book VIII Chapter 6 deletes `SseClient`, `CommandHandler`, `CompanionRuntime` and the scaffolding entries collapse to zero.
+
 ## References
 
 - [COMPANION-0001](COMPANION-0001-companion-integration-epic.md) — the epic
@@ -270,3 +295,4 @@ Each chapter ships green to `dev`.
 - [COMPANION-0003](COMPANION-0003-pulse.md) — Pulse orchestrator (Book II)
 - [companion-architecture.md §Transport trait](../specs/companion-architecture.md#transport-trait)
 - [companion-architecture.md §Commands as events](../specs/companion-architecture.md) (Principle 7)
+- [scaffolding.md §Active scaffolds](../scaffolding.md#active-scaffolds) — three `companion-old-*` entries awaiting Book VIII Ch6

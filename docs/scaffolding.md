@@ -156,9 +156,109 @@ New epics that produce scaffolds allocate a new prefix and document it here.
 
 ## Active scaffolds
 
-*(Empty. All scaffolds have been removed.)*
+### companion-old-sse-client: Legacy SseClient coexists with SseTransport
 
-COMPANION-0001 operates under the **break-and-rebuild** tenet (see [COMPANION-0001 §Tenets](decisions/COMPANION-0001-companion-integration-epic.md#the-tenets)). Long-lived coexistence scaffolding is not expected for companion-epic books; Book VIII replaces the firefly and cricket crates wholesale. Any `companion-*` scaffold that is introduced here is a signal that the book author could not find a break-and-rebuild path and should be scrutinized accordingly.
+```yaml
+id: companion-old-sse-client
+status: active
+introduced_in: COMPANION-0004 (Book III of COMPANION-0001)
+removal_trigger: Book VIII Chapter 6 — Companion Rebuild cleanup
+removal_commit:
+check:
+  - pattern: "pub struct SseClient"
+    paths:
+      - src/companion-sdk/src
+  - pattern: "pub trait EventHandler"
+    paths:
+      - src/companion-sdk/src
+  - pattern: "pub struct SseEvent"
+    paths:
+      - src/companion-sdk/src
+```
+
+**What:** `src/companion-sdk/src/sse.rs` continues to export `SseClient`, `SseEvent`, and the `EventHandler` trait. These are the pre-COMPANION-0001 mechanism for consuming moss's SSE stream. They coexist with the new `SseTransport` in `garden/sse_transport.rs` during Books III-VII.
+
+**Where:**
+
+- `src/companion-sdk/src/sse.rs` — the full module
+- `src/companion-sdk/src/lib.rs` — `pub mod sse;` + re-exports
+
+**Removal action:**
+
+1. Book VIII Chapter 6 migrates firefly and cricket to the new `Companion` + `SseTransport` wiring.
+2. Once no consumer of `SseClient` / `EventHandler` / `SseEvent` remains, delete `src/companion-sdk/src/sse.rs`.
+3. Remove the `pub mod sse` declaration and all SSE-related re-exports from `src/companion-sdk/src/lib.rs`.
+4. Run `./scripts/check-scaffolding.sh`; all four `check` patterns return zero matches.
+
+### companion-old-command-handler: Legacy CommandHandler coexists with CommandTransport
+
+```yaml
+id: companion-old-command-handler
+status: active
+introduced_in: COMPANION-0004 (Book III of COMPANION-0001)
+removal_trigger: Book VIII Chapter 6 — Companion Rebuild cleanup
+removal_commit:
+check:
+  - pattern: "pub trait CommandHandler"
+    paths:
+      - src/companion-sdk/src
+  - pattern: "pub async fn start_server"
+    paths:
+      - src/companion-sdk/src
+```
+
+**What:** `src/companion-sdk/src/handler.rs` (`CommandHandler` trait) and `src/companion-sdk/src/server.rs` (standalone axum HTTP server dispatching to `CommandHandler::handle`) are the pre-COMPANION-0001 mechanism for handling HTTP commands. They coexist with the new `CommandTransport` in `garden/command_transport.rs` during Books III-VII.
+
+**Where:**
+
+- `src/companion-sdk/src/handler.rs`
+- `src/companion-sdk/src/server.rs`
+- `src/companion-sdk/src/lib.rs` — `pub mod handler;`, `pub mod server;` + re-exports
+
+**Removal action:**
+
+1. Book VIII Chapter 6 migrates firefly and cricket to adapters that publish `CommandResult` events in response to `CommandInvocation` events on the bus.
+2. Once no `impl CommandHandler for ...` remains in-tree, delete `handler.rs` and `server.rs`.
+3. Remove the module declarations and re-exports from `src/companion-sdk/src/lib.rs`.
+4. Run `./scripts/check-scaffolding.sh`; both `check` patterns return zero matches.
+
+### companion-old-companion-runtime: Legacy CompanionRuntime coexists with Companion (Book VII)
+
+```yaml
+id: companion-old-companion-runtime
+status: active
+introduced_in: COMPANION-0004 (Book III of COMPANION-0001)
+removal_trigger: Book VIII Chapter 6 — Companion Rebuild cleanup
+removal_commit:
+check:
+  - pattern: "pub struct CompanionRuntime"
+    paths:
+      - src/companion-sdk/src
+  - pattern: "\\bCompanionRuntime::new\\b"
+    paths:
+      - src/firefly/src
+      - src/cricket/src
+```
+
+**What:** `src/companion-sdk/src/runtime.rs` (`CompanionRuntime`) is the pre-COMPANION-0001 top-level orchestrator that wires the legacy `SseClient` + `CommandHandler` into a running companion. Book VII introduces `Companion` (no `Runtime` suffix, per code-standards §3) which uses the new Transport/Pulse/Garden/Adapters machinery. `CompanionRuntime` coexists until firefly and cricket migrate.
+
+**Where:**
+
+- `src/companion-sdk/src/runtime.rs`
+- `src/companion-sdk/src/lib.rs` — `pub mod runtime;` + re-export
+- `src/firefly/src/main.rs` — constructs `CompanionRuntime::new(config, "firefly")`
+- `src/cricket/src/main.rs` — constructs `CompanionRuntime::new(config, "cricket")`
+
+**Removal action:**
+
+1. Book VIII Chapter 1 rewrites `src/firefly/src/main.rs` to use `Companion::new(config).with_transport(...).with_adapter_factory(...).run()`.
+2. Book VIII Chapter 5 does the same for `src/cricket/src/main.rs`.
+3. Book VIII Chapter 6 deletes `src/companion-sdk/src/runtime.rs` and removes the module declaration + re-export from `lib.rs`.
+4. Run `./scripts/check-scaffolding.sh`; both `check` patterns return zero matches.
+
+---
+
+COMPANION-0001 operates under the **break-and-rebuild** tenet (see [COMPANION-0001 §Tenets](decisions/COMPANION-0001-companion-integration-epic.md#the-tenets)). Long-lived coexistence scaffolding is not expected for companion-epic books; Book VIII replaces the firefly and cricket crates wholesale. The three entries above are the minimum-necessary coexistence surface to let Books III-VII land green on `dev` without breaking the existing consumers — all three have the same removal trigger (Book VIII Ch6), so the active set collapses to zero in a single coordinated cleanup chapter.
 
 ---
 

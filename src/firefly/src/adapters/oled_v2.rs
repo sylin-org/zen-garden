@@ -25,7 +25,8 @@ use garden_companion_sdk::garden::{
     ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
     StorageRemovedPayload,
 };
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
@@ -67,11 +68,19 @@ struct DashboardState {
 
 pub struct OledV2Factory {
     preferred_port: Option<String>,
+    /// Ports confirmed as v2 firmware on a previous discovery tick. See
+    /// [`oled_v1::OledV1Factory::claimed`] for rationale — re-probing a
+    /// port the adapter already owns fails with "access denied" and
+    /// causes reap/respawn churn.
+    claimed: StdMutex<HashSet<String>>,
 }
 
 impl OledV2Factory {
     pub fn new(preferred_port: Option<String>) -> Self {
-        Self { preferred_port }
+        Self {
+            preferred_port,
+            claimed: StdMutex::new(HashSet::new()),
+        }
     }
 }
 
@@ -88,6 +97,18 @@ impl AdapterFactory for OledV2Factory {
                 return Vec::new();
             }
         };
+
+        let current_ports: HashSet<String> = devices
+            .iter()
+            .filter(|d| d.device_type == FireflyDeviceType::Esp8266Oled)
+            .map(|d| d.port_name.clone())
+            .collect();
+
+        {
+            let mut claimed = self.claimed.lock().unwrap();
+            claimed.retain(|p| current_ports.contains(p));
+        }
+
         devices
             .into_iter()
             // VID 0x1a86 — classified as Esp8266Oled by from_vid; refine
@@ -98,16 +119,31 @@ impl AdapterFactory for OledV2Factory {
                     .as_ref()
                     .is_none_or(|p| p.eq_ignore_ascii_case(&d.port_name))
             })
-            .filter_map(|d| match probe_is_v2(&d.port_name) {
-                Ok(true) => Some(Box::new(OledV2Adapter::new(d.port_name)) as Box<dyn Adapter>),
-                Ok(false) => None,
-                Err(e) => {
-                    tracing::debug!(
-                        port = %d.port_name,
-                        error = %e,
-                        "oled-v2 probe failed — leaving for another factory"
+            .filter_map(|d| {
+                let already_claimed = self
+                    .claimed
+                    .lock()
+                    .unwrap()
+                    .contains(&d.port_name);
+                if already_claimed {
+                    return Some(
+                        Box::new(OledV2Adapter::new(d.port_name)) as Box<dyn Adapter>
                     );
-                    None
+                }
+                match probe_is_v2(&d.port_name) {
+                    Ok(true) => {
+                        self.claimed.lock().unwrap().insert(d.port_name.clone());
+                        Some(Box::new(OledV2Adapter::new(d.port_name)) as Box<dyn Adapter>)
+                    }
+                    Ok(false) => None,
+                    Err(e) => {
+                        tracing::debug!(
+                            port = %d.port_name,
+                            error = %e,
+                            "oled-v2 probe failed — leaving for another factory"
+                        );
+                        None
+                    }
                 }
             })
             .collect()

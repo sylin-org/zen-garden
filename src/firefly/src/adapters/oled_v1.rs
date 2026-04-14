@@ -23,7 +23,8 @@ use garden_companion_sdk::garden::{
     ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
     StorageRemovedPayload,
 };
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
@@ -57,11 +58,20 @@ struct V1State {
 
 pub struct OledV1Factory {
     preferred_port: Option<String>,
+    /// Ports confirmed as v1 firmware on a previous discovery tick.
+    /// Keeps the adapter present across ticks even while it holds the
+    /// port open (re-probing would fail with "access denied" and the
+    /// supervisor would reap + respawn — causing visible blank/refill
+    /// churn on the display).
+    claimed: StdMutex<HashSet<String>>,
 }
 
 impl OledV1Factory {
     pub fn new(preferred_port: Option<String>) -> Self {
-        Self { preferred_port }
+        Self {
+            preferred_port,
+            claimed: StdMutex::new(HashSet::new()),
+        }
     }
 }
 
@@ -78,6 +88,19 @@ impl AdapterFactory for OledV1Factory {
                 return Vec::new();
             }
         };
+
+        let current_ports: HashSet<String> = devices
+            .iter()
+            .filter(|d| d.device_type == FireflyDeviceType::Esp8266Oled)
+            .map(|d| d.port_name.clone())
+            .collect();
+
+        // Prune claimed entries whose ports have physically vanished.
+        {
+            let mut claimed = self.claimed.lock().unwrap();
+            claimed.retain(|p| current_ports.contains(p));
+        }
+
         devices
             .into_iter()
             .filter(|d| d.device_type == FireflyDeviceType::Esp8266Oled)
@@ -86,16 +109,31 @@ impl AdapterFactory for OledV1Factory {
                     .as_ref()
                     .is_none_or(|p| p.eq_ignore_ascii_case(&d.port_name))
             })
-            .filter_map(|d| match probe_is_v1(&d.port_name) {
-                Ok(true) => Some(Box::new(OledV1Adapter::new(d.port_name)) as Box<dyn Adapter>),
-                Ok(false) => None,
-                Err(e) => {
-                    tracing::debug!(
-                        port = %d.port_name,
-                        error = %e,
-                        "oled-v1 probe failed — leaving for another factory"
+            .filter_map(|d| {
+                let already_claimed = self
+                    .claimed
+                    .lock()
+                    .unwrap()
+                    .contains(&d.port_name);
+                if already_claimed {
+                    return Some(
+                        Box::new(OledV1Adapter::new(d.port_name)) as Box<dyn Adapter>
                     );
-                    None
+                }
+                match probe_is_v1(&d.port_name) {
+                    Ok(true) => {
+                        self.claimed.lock().unwrap().insert(d.port_name.clone());
+                        Some(Box::new(OledV1Adapter::new(d.port_name)) as Box<dyn Adapter>)
+                    }
+                    Ok(false) => None,
+                    Err(e) => {
+                        tracing::debug!(
+                            port = %d.port_name,
+                            error = %e,
+                            "oled-v1 probe failed — leaving for another factory"
+                        );
+                        None
+                    }
                 }
             })
             .collect()

@@ -59,6 +59,7 @@ pub mod runtime;
 pub mod server;
 pub mod sse;
 pub mod state;
+pub mod testing;
 
 /// Prelude for convenient imports
 pub mod prelude {

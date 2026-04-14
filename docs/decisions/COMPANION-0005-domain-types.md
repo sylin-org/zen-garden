@@ -4,12 +4,13 @@ doc_type: decision
 status: accepted
 last_verified: 2026-04-13
 canonical: true
+completed: 2026-04-13
 ---
 
 # COMPANION-0005: Domain Types — Book IV of COMPANION-0001
 
 **Date**: 2026-04-13
-**Status**: Accepted
+**Status**: Completed (2026-04-13)
 **Book**: IV of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0002](COMPANION-0002-event-envelope.md), [COMPANION-0004](COMPANION-0004-transport.md), [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 
@@ -218,6 +219,29 @@ Each chapter ships green to `dev`.
 | Defining all domain operations (e.g. `Stone::promote_to_cornerstone()`) | Out of scope — Book IV is *vocabulary*, not behavior |
 | Tool / offering domain taxonomy beyond re-export | Post-epic refactor; moss already has rich `OfferingFqn` |
 | Custom serde for `Load` wire compat with flat JSON | Not needed — `StoneLoadUpdatedPayload` stays the wire type; `Load` is the typed view accessed via conversion |
+
+## Closure notes (2026-04-13)
+
+Book IV closed with all exit criteria met. Summary of what shipped:
+
+- **`garden-common::domain` module** at `src/common/src/domain/` with four new files (`health.rs`, `load.rs`, `pond.rs`, `seed_bank.rs`) plus a module root that re-exports canonical types (`Stone`, `OfferingFqn`, `StoneStatus`) for a single domain import path.
+- **Five typed values**: `Health`, `Load`, `Percent`, `SeedBank`, `Pond`. All `Debug + Clone + Serialize + Deserialize`; small ones are `Copy`.
+- **Wire conversions**: `From<&StoneLoadUpdatedPayload> for Load` (clamps out-of-range values), `From<&StoragePresence> for SeedBank`, `Health::parse` / `Pond::from_active_flag` for string/bool boundaries.
+- **SDK extension traits** in `core_payloads.rs`: `StoneHealthChangedExt`, `StoneLoadUpdatedExt`, `PresenceSnapshotExt`. All re-exported through the SDK prelude.
+- **Zero new workspace deps.**
+- **36 new tests** (31 in garden-common, 5 in companion-sdk), all green. 85 SDK garden tests overall.
+
+### Minor refinements during implementation
+
+- **`Offering` not re-exported from `domain`**: discovered during compile that `garden-common::offerings` exports `OfferingFqn` (the identity type) but `Offering` is moss-internal. The ADR mentioned both; implementation kept only `OfferingFqn`. Future books may promote a shared `Offering` view if needed. Noted in the module doc.
+- **`StoneStatus` re-exported from `types::discovery`**, not `stone` — caught at compile time. Final placement documented in the module.
+- **`Percent` is `serde(transparent)`** — wire-compatible with bare numbers in JSON, but serde does not clamp on deserialize. Callers should normalize at the boundary via `Percent::new`. Documented in the module doc and covered by an explicit test.
+
+### Follow-on work picked up by later books
+
+- Book V (Garden) uses the `PresenceSnapshotExt` typed accessors to populate the Garden aggregate's read-model state — no string handling in the projection code.
+- Book VI (Adapters) adapters receive the `Garden` handle and query typed properties (`garden.health() -> Health`, `garden.load() -> Load`).
+- Moss migration to typed `Health` / `Load` fields is deferred post-epic. When an adopter needs it, `Health::parse` + `as_str()` make the transition incremental.
 
 ## References
 

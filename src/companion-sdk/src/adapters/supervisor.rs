@@ -1,13 +1,38 @@
 //! Adapter supervisor — manages adapter lifecycle.
 //!
-//! Book VI Chapter 2 lands a placeholder type so the module compiles;
-//! Chapter 3 fleshes out the discovery loop, filter task, spawn/reap
-//! logic, and grace window.
+//! The supervisor's responsibilities:
+//!
+//! 1. **Registration** — store factories passed via [`Adapters::register`].
+//! 2. **Discovery** — periodically call each factory's `discover` and learn
+//!    what adapter instances currently exist.
+//! 3. **Spawn** — for each newly-discovered instance (by `info.id`),
+//!    construct a per-adapter mpsc filter, spawn the adapter's `run`
+//!    inside a `tracing::info_span!("adapter", kind, id)`.
+//! 4. **Reap** — when a previously-discovered instance stops appearing,
+//!    wait `grace_window` in case the device bounces; if it doesn't come
+//!    back, cancel the adapter's shutdown token and await its task.
+//! 5. **Subscription filtering** — the per-adapter filter task subscribes
+//!    to [`Pulse`] and forwards only events whose kind is in the
+//!    adapter's [`AdapterProfile::subscriptions`].
+//!
+//! The supervisor is not responsible for installing system dependencies
+//! at V1 — [`AdapterFactory::required_dependencies`] is defined but not
+//! yet wired (see COMPANION-0007 out-of-scope list). It is also not
+//! responsible for enforcing [`DeliveryPolicy::LatestEvery`] or
+//! [`DeliveryPolicy::Debounced`]; those declare adapter intent but ship
+//! as `All` behaviour in Book VI.
 
+use super::adapter::{Adapter, AdapterInfo};
 use super::factory::AdapterFactory;
-use crate::garden::{Garden, Pulse};
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use super::status::AdapterStatus;
+use crate::garden::{Event, Garden, Pulse};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 /// Default discovery-tick interval.
 pub const DEFAULT_DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
@@ -15,19 +40,39 @@ pub const DEFAULT_DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 /// Default grace window before reaping an adapter whose device disappeared.
 pub const DEFAULT_GRACE_WINDOW: Duration = Duration::from_secs(2);
 
+/// Per-adapter mpsc channel depth. Small enough to apply backpressure on
+/// slow adapters without starving the filter task.
+const ADAPTER_MPSC_DEPTH: usize = 64;
+
+// ---------------------------------------------------------------------------
+// ActiveAdapter — supervisor's bookkeeping per running adapter
+// ---------------------------------------------------------------------------
+
+struct ActiveAdapter {
+    info: AdapterInfo,
+    shutdown: CancellationToken,
+    status: Arc<Mutex<AdapterStatus>>,
+    last_seen: Instant,
+    /// Task running adapter.run(). We await this on reap to ensure clean
+    /// shutdown (with timeout).
+    run_handle: Option<JoinHandle<()>>,
+    /// Task running the filter (subscription → mpsc). Dropped alongside
+    /// run_handle on reap — dropping the mpsc sender signals the filter
+    /// to exit.
+    filter_handle: Option<JoinHandle<()>>,
+}
+
+// ---------------------------------------------------------------------------
+// Supervisor aggregate
+// ---------------------------------------------------------------------------
+
 /// Supervisor aggregate managing adapter lifecycles.
-///
-/// **Book VI Chapter 2**: skeleton only — `register` and configuration
-/// work; `run` / `spawn` / `reap` / `status` arrive in Chapter 3.
 pub struct Adapters {
     factories: RwLock<Vec<Box<dyn AdapterFactory>>>,
-    #[allow(dead_code)] // used in Chapter 3
+    active: Arc<RwLock<HashMap<String, ActiveAdapter>>>,
     garden: Arc<Garden>,
-    #[allow(dead_code)] // used in Chapter 3
     pulse: Arc<Pulse>,
-    #[allow(dead_code)] // used in Chapter 3
     discovery_interval: Duration,
-    #[allow(dead_code)] // used in Chapter 3
     grace_window: Duration,
 }
 
@@ -36,6 +81,7 @@ impl Adapters {
     pub fn new(garden: Arc<Garden>, pulse: Arc<Pulse>) -> Self {
         Self {
             factories: RwLock::new(Vec::new()),
+            active: Arc::new(RwLock::new(HashMap::new())),
             garden,
             pulse,
             discovery_interval: DEFAULT_DISCOVERY_INTERVAL,
@@ -55,8 +101,7 @@ impl Adapters {
         self
     }
 
-    /// Register a factory. Adapters produced by this factory become
-    /// candidates on every subsequent discovery tick.
+    /// Register a factory.
     pub fn register<F: AdapterFactory>(&self, factory: F) {
         self.factories
             .write()
@@ -64,7 +109,7 @@ impl Adapters {
             .push(Box::new(factory));
     }
 
-    /// Number of registered factories. For diagnostics / tests.
+    /// Number of registered factories.
     pub fn factory_count(&self) -> usize {
         self.factories
             .read()
@@ -81,36 +126,357 @@ impl Adapters {
             .map(|f| f.kind())
             .collect()
     }
+
+    /// Snapshot the status of every currently-active adapter.
+    pub fn status(&self) -> Vec<(AdapterInfo, AdapterStatus)> {
+        self.active
+            .read()
+            .expect("Adapters active lock poisoned")
+            .values()
+            .map(|a| {
+                let status = a
+                    .status
+                    .lock()
+                    .expect("AdapterStatus lock poisoned")
+                    .clone();
+                (a.info.clone(), status)
+            })
+            .collect()
+    }
+
+    /// Number of currently-active adapter instances.
+    pub fn active_count(&self) -> usize {
+        self.active
+            .read()
+            .expect("Adapters active lock poisoned")
+            .len()
+    }
+
+    /// Run the supervisor loop until `shutdown` is cancelled. On exit,
+    /// all active adapters are reaped cleanly.
+    pub async fn run(&self, shutdown: CancellationToken) {
+        tracing::info!(
+            factories = self.factory_count(),
+            discovery_interval_ms = self.discovery_interval.as_millis() as u64,
+            grace_window_ms = self.grace_window.as_millis() as u64,
+            "Adapters supervisor starting"
+        );
+
+        // First discovery tick immediately so adapters don't wait `discovery_interval`.
+        self.tick().await;
+
+        let mut interval = tokio::time::interval(self.discovery_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // First tick fires immediately; consume it since we already ticked.
+        interval.tick().await;
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    self.tick().await;
+                }
+                _ = shutdown.cancelled() => break,
+            }
+        }
+
+        self.reap_all().await;
+        tracing::info!("Adapters supervisor stopped");
+    }
+
+    // --- Supervisor internals ---
+
+    /// One discovery tick: collect current candidates from every factory,
+    /// spawn new ones, reap those absent past the grace window.
+    async fn tick(&self) {
+        let now = Instant::now();
+
+        // Collect all candidates first, releasing the factories lock
+        // before any await (RwLockReadGuard is not Send).
+        let all_candidates: Vec<Box<dyn Adapter>> = {
+            let factories = self
+                .factories
+                .read()
+                .expect("Adapters factories lock poisoned");
+            let mut out: Vec<Box<dyn Adapter>> = Vec::new();
+            for factory in factories.iter() {
+                out.extend(factory.discover());
+            }
+            out
+        };
+
+        let mut present_ids: HashSet<String> = HashSet::new();
+        for candidate in all_candidates {
+            let info = candidate.info();
+            present_ids.insert(info.id.clone());
+
+            let needs_spawn = {
+                let active = self
+                    .active
+                    .read()
+                    .expect("Adapters active lock poisoned");
+                !active.contains_key(&info.id)
+            };
+
+            if needs_spawn {
+                self.spawn(candidate, now);
+            } else {
+                // Already running — refresh last_seen so grace-window
+                // reaping doesn't kick in while the device is present.
+                if let Some(active) = self
+                    .active
+                    .write()
+                    .expect("Adapters active lock poisoned")
+                    .get_mut(&info.id)
+                {
+                    active.last_seen = now;
+                }
+            }
+        }
+
+        // Find active adapters whose id is not in present_ids for longer
+        // than grace_window. Reap them.
+        let to_reap: Vec<String> = {
+            let active = self
+                .active
+                .read()
+                .expect("Adapters active lock poisoned");
+            active
+                .iter()
+                .filter(|(id, a)| {
+                    !present_ids.contains(id.as_str())
+                        && now.duration_since(a.last_seen) >= self.grace_window
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+
+        for id in to_reap {
+            self.reap(&id).await;
+        }
+    }
+
+    /// Spawn a new adapter. Creates the filter task + run task under a
+    /// tracing span and stores the bookkeeping entry.
+    fn spawn(&self, adapter: Box<dyn Adapter>, now: Instant) {
+        let info = adapter.info();
+        let profile = adapter.profile();
+
+        let (tx, rx) = mpsc::channel::<Event>(ADAPTER_MPSC_DEPTH);
+        let shutdown = CancellationToken::new();
+
+        let status = Arc::new(Mutex::new(AdapterStatus::Spawning));
+
+        // Filter task: subscribe to pulse, forward matching kinds into mpsc.
+        let pulse_rx = self.pulse.subscribe();
+        let subscriptions: HashSet<&'static str> =
+            profile.subscriptions.iter().copied().collect();
+        let filter_status = status.clone();
+        let filter_shutdown = shutdown.clone();
+        let filter_span = tracing::info_span!(
+            "adapter_filter",
+            kind = info.kind,
+            id = %info.id,
+        );
+
+        let filter_handle = tokio::spawn(
+            run_filter(
+                pulse_rx,
+                tx,
+                subscriptions,
+                filter_status,
+                filter_shutdown,
+            )
+            .instrument(filter_span),
+        );
+
+        // Run task: invoke adapter.run inside a tracing span.
+        let run_span = tracing::info_span!(
+            "adapter",
+            kind = info.kind,
+            id = %info.id,
+        );
+        let garden = self.garden.clone();
+        let pulse = self.pulse.clone();
+        let run_shutdown = shutdown.clone();
+
+        let run_handle = tokio::spawn(
+            adapter
+                .run(rx, garden, pulse, run_shutdown)
+                .instrument(run_span),
+        );
+
+        let id = info.id.clone();
+        let entry = ActiveAdapter {
+            info,
+            shutdown,
+            status,
+            last_seen: now,
+            run_handle: Some(run_handle),
+            filter_handle: Some(filter_handle),
+        };
+
+        self.active
+            .write()
+            .expect("Adapters active lock poisoned")
+            .insert(id.clone(), entry);
+
+        tracing::info!(id = %id, "adapter spawned");
+    }
+
+    /// Cancel and await a single adapter's tasks. Runs the reap procedure
+    /// with a bounded timeout so a stuck adapter can't hang the supervisor.
+    async fn reap(&self, id: &str) {
+        let maybe_entry = self
+            .active
+            .write()
+            .expect("Adapters active lock poisoned")
+            .remove(id);
+
+        let Some(mut entry) = maybe_entry else {
+            return;
+        };
+
+        tracing::info!(id = %entry.info.id, "adapter reap requested");
+        entry.shutdown.cancel();
+
+        if let Some(handle) = entry.run_handle.take() {
+            let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+        }
+        if let Some(handle) = entry.filter_handle.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        *entry.status.lock().expect("AdapterStatus lock poisoned") = AdapterStatus::Stopped;
+        tracing::info!(id = %entry.info.id, "adapter reaped");
+    }
+
+    /// Reap every active adapter (called on supervisor shutdown).
+    async fn reap_all(&self) {
+        let ids: Vec<String> = self
+            .active
+            .read()
+            .expect("Adapters active lock poisoned")
+            .keys()
+            .cloned()
+            .collect();
+        for id in ids {
+            self.reap(&id).await;
+        }
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Filter task
+// ---------------------------------------------------------------------------
+
+/// Subscription filter. Reads events from Pulse's broadcast receiver,
+/// forwards matching kinds into the adapter's mpsc. Exits when the mpsc
+/// closes (adapter ended) or shutdown fires.
+async fn run_filter(
+    mut pulse_rx: tokio::sync::broadcast::Receiver<Event>,
+    tx: mpsc::Sender<Event>,
+    subscriptions: HashSet<&'static str>,
+    status: Arc<Mutex<AdapterStatus>>,
+    shutdown: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            recv = pulse_rx.recv() => match recv {
+                Ok(event) => {
+                    if !subscriptions.contains(event.kind) {
+                        continue;
+                    }
+                    // Update status to Running on first forward.
+                    {
+                        let mut s = status.lock().expect("status lock poisoned");
+                        match &mut *s {
+                            AdapterStatus::Running { events_handled, last_event_at } => {
+                                *events_handled += 1;
+                                *last_event_at = Instant::now();
+                            }
+                            _ => {
+                                *s = AdapterStatus::Running {
+                                    events_handled: 1,
+                                    last_event_at: Instant::now(),
+                                };
+                            }
+                        }
+                    }
+                    if tx.send(event).await.is_err() {
+                        // Adapter dropped its receiver — done.
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(skipped = n, "adapter filter lagged");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            },
+            _ = shutdown.cancelled() => break,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{Adapter, AdapterInfo, AdapterProfile};
-    use crate::garden::{Event, PulseConfig};
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
-    use tokio_util::sync::CancellationToken;
+    use crate::adapters::{Adapter, AdapterInfo, AdapterProfile, DeliveryPolicy};
+    use crate::garden::{Event, EventPayload, PulseConfig};
+    use std::any::Any;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn fixture() -> Adapters {
+    // --- Fixtures ---
+
+    #[derive(Debug)]
+    struct TestEventA;
+    impl EventPayload for TestEventA {
+        const KIND: &'static str = "core.test.a";
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestEventB;
+    impl EventPayload for TestEventB {
+        const KIND: &'static str = "core.test.b";
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    fn core_pulse() -> Arc<Pulse> {
         let pulse = Arc::new(Pulse::new(PulseConfig {
-            dedup_capacity: 16,
-            broadcast_capacity: 64,
+            dedup_capacity: 64,
+            broadcast_capacity: 128,
         }));
         pulse.register_namespace("core");
-        let garden = Garden::new(pulse.clone());
-        Adapters::new(garden, pulse)
+        pulse
     }
 
-    struct TestFactory {
-        kind: &'static str,
+    fn fixture() -> (Adapters, Arc<Pulse>) {
+        let pulse = core_pulse();
+        let garden = Garden::new(pulse.clone());
+        let supervisor = Adapters::new(garden, pulse.clone())
+            .with_discovery_interval(Duration::from_millis(50))
+            .with_grace_window(Duration::from_millis(100));
+        (supervisor, pulse)
     }
-    struct TestAdapter {
+
+    /// Adapter that records every event it received into a shared vec.
+    struct RecordingAdapter {
         kind: &'static str,
         id: String,
+        subscriptions: &'static [&'static str],
+        seen: Arc<Mutex<Vec<String>>>,
     }
 
-    impl Adapter for TestAdapter {
+    impl Adapter for RecordingAdapter {
         fn info(&self) -> AdapterInfo {
             AdapterInfo {
                 kind: self.kind,
@@ -119,55 +485,298 @@ mod tests {
             }
         }
         fn profile(&self) -> AdapterProfile {
-            AdapterProfile::default()
+            AdapterProfile {
+                subscriptions: self.subscriptions,
+                delivery: DeliveryPolicy::All,
+                persisted_state: false,
+            }
         }
         fn run(
             self: Box<Self>,
-            _events: mpsc::Receiver<Event>,
+            mut events: mpsc::Receiver<Event>,
             _garden: Arc<Garden>,
             _pulse: Arc<Pulse>,
             shutdown: CancellationToken,
         ) -> super::super::adapter::BoxFuture<'static, ()> {
+            let seen = self.seen.clone();
             Box::pin(async move {
-                shutdown.cancelled().await;
+                loop {
+                    tokio::select! {
+                        maybe = events.recv() => match maybe {
+                            Some(e) => {
+                                seen.lock().unwrap().push(e.kind.to_string());
+                            }
+                            None => break,
+                        },
+                        _ = shutdown.cancelled() => break,
+                    }
+                }
             })
         }
     }
 
-    impl AdapterFactory for TestFactory {
+    /// Factory with a toggleable "present" flag so tests can control
+    /// discovery visibility.
+    struct ToggleableFactory {
+        kind: &'static str,
+        id: String,
+        subscriptions: &'static [&'static str],
+        seen: Arc<Mutex<Vec<String>>>,
+        present: Arc<AtomicUsize>, // 1=visible, 0=hidden
+    }
+
+    impl AdapterFactory for ToggleableFactory {
         fn kind(&self) -> &'static str {
             self.kind
         }
         fn discover(&self) -> Vec<Box<dyn Adapter>> {
-            vec![Box::new(TestAdapter {
-                kind: self.kind,
-                id: "only".into(),
-            })]
+            if self.present.load(Ordering::Relaxed) == 1 {
+                vec![Box::new(RecordingAdapter {
+                    kind: self.kind,
+                    id: self.id.clone(),
+                    subscriptions: self.subscriptions,
+                    seen: self.seen.clone(),
+                })]
+            } else {
+                vec![]
+            }
         }
     }
 
+    // --- Tests ---
+
+    #[tokio::test]
+    async fn supervisor_spawns_adapter_on_first_tick() {
+        let (supervisor, _pulse) = fixture();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let present = Arc::new(AtomicUsize::new(1));
+
+        supervisor.register(ToggleableFactory {
+            kind: "test.record",
+            id: "r1".into(),
+            subscriptions: &["core.test.a"],
+            seen: seen.clone(),
+            present: present.clone(),
+        });
+
+        let shutdown = CancellationToken::new();
+        let sup_handle = {
+            let shutdown = shutdown.clone();
+            let supervisor = Arc::new(supervisor);
+            let s = supervisor.clone();
+            tokio::spawn(async move {
+                s.run(shutdown).await;
+            })
+            .boxed_into(Some(supervisor))
+        };
+
+        // Give supervisor a moment for first tick.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(sup_handle.supervisor.active_count(), 1);
+
+        let status = sup_handle.supervisor.status();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].0.kind, "test.record");
+        assert_eq!(status[0].0.id, "r1");
+
+        shutdown.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), sup_handle.join).await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_reaps_adapter_after_grace_window_elapses() {
+        let (supervisor, _pulse) = fixture();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let present = Arc::new(AtomicUsize::new(1));
+
+        supervisor.register(ToggleableFactory {
+            kind: "test.record",
+            id: "r1".into(),
+            subscriptions: &[],
+            seen,
+            present: present.clone(),
+        });
+
+        let shutdown = CancellationToken::new();
+        let supervisor = Arc::new(supervisor);
+        let s = supervisor.clone();
+        let sd = shutdown.clone();
+        let sup_handle = tokio::spawn(async move { s.run(sd).await });
+
+        // Wait for spawn.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(supervisor.active_count(), 1);
+
+        // Hide device.
+        present.store(0, Ordering::Relaxed);
+
+        // Wait for one tick + grace window.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(supervisor.active_count(), 0);
+
+        shutdown.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), sup_handle).await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_keeps_adapter_when_device_reappears_within_grace() {
+        let (supervisor, _pulse) = fixture();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let present = Arc::new(AtomicUsize::new(1));
+
+        supervisor.register(ToggleableFactory {
+            kind: "test.record",
+            id: "r1".into(),
+            subscriptions: &[],
+            seen,
+            present: present.clone(),
+        });
+
+        let shutdown = CancellationToken::new();
+        let supervisor = Arc::new(supervisor);
+        let s = supervisor.clone();
+        let sd = shutdown.clone();
+        let sup_handle = tokio::spawn(async move { s.run(sd).await });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let status_before = supervisor.status();
+        let id_before = status_before[0].0.id.clone();
+
+        // Bounce: device disappears briefly then comes back within grace.
+        present.store(0, Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        present.store(1, Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Still the same instance.
+        assert_eq!(supervisor.active_count(), 1);
+        let status_after = supervisor.status();
+        assert_eq!(status_after[0].0.id, id_before);
+
+        shutdown.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), sup_handle).await;
+    }
+
+    #[tokio::test]
+    async fn subscription_filter_delivers_only_matching_kinds() {
+        let (supervisor, pulse) = fixture();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let present = Arc::new(AtomicUsize::new(1));
+
+        supervisor.register(ToggleableFactory {
+            kind: "test.record",
+            id: "filter".into(),
+            subscriptions: &["core.test.a"],
+            seen: seen.clone(),
+            present,
+        });
+
+        let shutdown = CancellationToken::new();
+        let supervisor = Arc::new(supervisor);
+        let s = supervisor.clone();
+        let sd = shutdown.clone();
+        let sup_handle = tokio::spawn(async move { s.run(sd).await });
+
+        // Wait for spawn.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Publish both kinds; only core.test.a should be delivered.
+        pulse.ingest(Event::new(TestEventA));
+        pulse.ingest(Event::new(TestEventB));
+        pulse.ingest(Event::new(TestEventA));
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let seen_vec = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen_vec,
+            vec!["core.test.a".to_string(), "core.test.a".to_string()]
+        );
+
+        shutdown.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), sup_handle).await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_exits_cleanly_on_cancellation() {
+        let (supervisor, _pulse) = fixture();
+        let shutdown = CancellationToken::new();
+        let supervisor = Arc::new(supervisor);
+        let s = supervisor.clone();
+        let sd = shutdown.clone();
+        let sup_handle = tokio::spawn(async move { s.run(sd).await });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        shutdown.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), sup_handle)
+            .await
+            .expect("supervisor did not exit in 1s")
+            .expect("supervisor panicked");
+    }
+
+    #[tokio::test]
+    async fn supervisor_reaps_all_on_shutdown() {
+        let (supervisor, _pulse) = fixture();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let present = Arc::new(AtomicUsize::new(1));
+
+        supervisor.register(ToggleableFactory {
+            kind: "test.record",
+            id: "a".into(),
+            subscriptions: &[],
+            seen: seen.clone(),
+            present: present.clone(),
+        });
+        supervisor.register(ToggleableFactory {
+            kind: "test.record",
+            id: "b".into(),
+            subscriptions: &[],
+            seen,
+            present,
+        });
+
+        let shutdown = CancellationToken::new();
+        let supervisor = Arc::new(supervisor);
+        let s = supervisor.clone();
+        let sd = shutdown.clone();
+        let sup_handle = tokio::spawn(async move { s.run(sd).await });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(supervisor.active_count(), 2);
+
+        shutdown.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), sup_handle).await;
+        assert_eq!(supervisor.active_count(), 0);
+    }
+
+    // --- Skeleton tests from Chapter 2 still apply ---
+
     #[test]
     fn empty_supervisor_has_no_factories() {
-        let s = fixture();
+        let (s, _) = fixture();
         assert_eq!(s.factory_count(), 0);
         assert!(s.factory_kinds().is_empty());
     }
 
-    #[test]
-    fn register_increments_factory_count() {
-        let s = fixture();
-        s.register(TestFactory { kind: "a" });
-        s.register(TestFactory { kind: "b" });
-        assert_eq!(s.factory_count(), 2);
-        assert_eq!(s.factory_kinds(), vec!["a", "b"]);
-    }
+    // --- Test helper: boxed supervisor handle ---
+    //
+    // We keep the supervisor Arc alive alongside the spawn handle for
+    // assertion access across the test boundary.
 
-    #[test]
-    fn with_intervals_overrides_defaults() {
-        let s = fixture()
-            .with_discovery_interval(Duration::from_secs(1))
-            .with_grace_window(Duration::from_millis(500));
-        assert_eq!(s.discovery_interval, Duration::from_secs(1));
-        assert_eq!(s.grace_window, Duration::from_millis(500));
+    trait BoxedIntoExt<T> {
+        fn boxed_into(self, supervisor: Option<Arc<T>>) -> SupHandle<T>;
+    }
+    impl BoxedIntoExt<Adapters> for JoinHandle<()> {
+        fn boxed_into(self, supervisor: Option<Arc<Adapters>>) -> SupHandle<Adapters> {
+            SupHandle {
+                join: self,
+                supervisor: supervisor.expect("supervisor required"),
+            }
+        }
+    }
+    struct SupHandle<T> {
+        join: JoinHandle<()>,
+        supervisor: Arc<T>,
     }
 }

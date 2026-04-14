@@ -329,6 +329,61 @@ function Wait-MpremoteReady {
 
 #endregion
 
+#region Post-install verification (FIREFLY-0004)
+
+# Reads /boot.py back from the device via `mpremote fs cat`, verifies
+# it contains the WiFi-disable pattern, and re-uploads once if the
+# read fails or the pattern is missing.
+#
+# Rationale: fireflies are USB-tethered by design. A stone running
+# with an unexpected WiFi AP advertising the garden is a real
+# operational smell; discovering it weeks later via network scans is
+# worse than catching it at install time.
+function Test-FireflyBootPy {
+    param(
+        [Parameter(Mandatory)][string]$Port,
+        [Parameter(Mandatory)][string]$LocalBootPyPath
+    )
+
+    if (-not (Test-Path $LocalBootPyPath)) {
+        Write-Step "Post-install: local boot.py missing at $LocalBootPyPath" "WARN"
+        return $false
+    }
+
+    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+
+    # `mpremote fs cat` enters raw-REPL, reads the file, exits.
+    $output = & $pythonCmd -m mpremote connect $Port fs cat ':boot.py' 2>&1
+    $readOk = ($LASTEXITCODE -eq 0)
+
+    if (-not $readOk) {
+        Write-Step "Post-install: /boot.py missing on device, retrying upload" "WARN"
+        & $pythonCmd -m mpremote connect $Port cp $LocalBootPyPath ':boot.py' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Step "Post-install: boot.py re-upload failed — WiFi may be ACTIVE" "FAIL"
+            return $false
+        }
+        $output = & $pythonCmd -m mpremote connect $Port fs cat ':boot.py' 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Step "Post-install: /boot.py still unreadable after retry" "FAIL"
+            return $false
+        }
+    }
+
+    $content = "$output"
+    # Match either WLAN(...).active(False) or the STA_IF/AP_IF symbols
+    # — robust against minor reformatting of boot.py.
+    if ($content -match 'WLAN\s*\(' -and $content -match 'active\(\s*False\s*\)') {
+        Write-Step "Post-install: /boot.py verified (WiFi off)" "OK"
+        return $true
+    }
+
+    Write-Step "Post-install: /boot.py present but no WiFi-disable pattern — check firmware source" "WARN"
+    return $false
+}
+
+#endregion
+
 #region Provisioning (FIREFLY-0004)
 # Mint a GUIDv7, stage device_id.txt, upload to the device filesystem,
 # append a roster entry. Dispatches upload path on device type:
@@ -915,6 +970,16 @@ function Invoke-ESP8266Handler {
     # per-variant firmware HELLO work in FIREFLY-0004 Ch2 reports the
     # actual semver on the first boot post-flash.
     Invoke-Provisioning -Device $Device -Variant "oled-$variant" -FirmwareVersion "0.2.0"
+
+    # Post-install check: ensure boot.py actually landed and disables
+    # WiFi. The boot.py source lives in the variant's resource list —
+    # pick it out.
+    $bootResource = $variantConfig.Resources | Where-Object { $_.Remote -eq 'boot.py' } | Select-Object -First 1
+    if ($bootResource) {
+        $bootLocal = Join-Path $script:Config.FirmwareDir $bootResource.Local
+        [void](Test-FireflyBootPy -Port $port -LocalBootPyPath $bootLocal)
+    }
+
     Invoke-ESP8266VisualTest -Port $port
 
     # Final reset to let main.py auto-start (visual test leaves device in REPL).
@@ -1039,6 +1104,10 @@ function Invoke-ESP32Handler {
 
     Install-ESP32Resources -Port $port
     Invoke-Provisioning -Device $Device -Variant "tdisplay" -FirmwareVersion "1.0.0"
+
+    # Post-install check: verify /boot.py landed and disables WiFi + BT.
+    $bootLocal = Join-Path $script:Config.FirmwareDir 'micropython\tdisplay\boot.py'
+    [void](Test-FireflyBootPy -Port $port -LocalBootPyPath $bootLocal)
 
     # Reset to start firmware
     Write-Step "Starting firmware..." "..."

@@ -2,6 +2,10 @@
 
 All notable changes to Zen Garden will be documented in this file.
 
+## 2026-04-14
+
+- **COMPANION-0001**: Companion Integration Platform epic closed. Event-mesh architecture replaces the legacy `SseClient` + `CommandHandler` + `CompanionRuntime` stack for every Zen Garden companion. `garden-companion-sdk` now ships `Pulse` (orchestrator with dedup / validation / coalescing / fan-out), `Garden` (CQRS read model), typed `Event<P: EventPayload>` envelope, `SseTransport` + `CommandTransport`, `Adapter` / `AdapterFactory` / `Adapters` supervisor, `Companion` top-level runtime, and a `testing` module (`MockTransport`, `RecordingAdapter`, `FakeFactory`, `TestHarness`). Five production adapters: `cricket.audio` plus `firefly.{matrix, oled-v1, oled-v2, tdisplay}`. Each adapter owns its device lifecycle, subscribes to a declared set of `core.*` kinds, and round-trips commands via `core.command.invocation` → `CommandResult` events — no adapter touches HTTP directly. Integration test coverage: 6 end-to-end scenarios (pipeline / command round-trip / coalescing / lifecycle / filtering / shutdown). Legacy SDK code (~694 LOC in `sse.rs` / `handler.rs` / `server.rs` / `runtime.rs`) deleted in Ch6. See [COMPANION-0001](decisions/COMPANION-0001-companion-integration-epic.md).
+
 ## 2026-04-04
 
 - **Pre-start ETXTBSY fix**: `ExecStartPre` self-upgrade replaced silent `remove_file` + `copy` with rename-then-copy pattern (`rename(2)` atomically detaches the directory entry while the kernel keeps the old inode alive for any running process). Same pattern applied to `linux.rs` installer. Prevents permanent crash loops when pre-start cannot replace its own running binary. Also fixed in `deploy_scripts` for scripts landing in `/usr/local/bin/`.

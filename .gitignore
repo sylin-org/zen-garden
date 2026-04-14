@@ -24,3 +24,4 @@ rake-errors.txt
 /src/orchestrators/ollama/target
 /src/orchestrators/target
 src/orchestrators/ai/dashboard/node_modules/
+installer/build-all-platforms copy.ps1

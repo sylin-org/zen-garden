@@ -1,7 +1,7 @@
 ---
 audience: [developer, ai]
 doc_type: decision
-status: accepted-living
+status: completed
 last_verified: 2026-04-13
 canonical: true
 ---
@@ -18,6 +18,8 @@ Unlike typical ADRs which are immutable after acceptance, COMPANION-0001 is a **
 
 | Date | Change | ADR |
 |------|--------|-----|
+| 2026-04-14 | **Epic closed. Book X (Epilogue) complete.** Status flipped from `accepted-living` to `completed`. All ten success criteria verified with grep-backed evidence in §Success criteria; postmortem added. Scaffolding check green (3 `companion-old-*` entries `status: removed`, 0 active). SDK test suite: 151 unit + 7 integration, all green. Five production adapters shipped: cricket.audio + firefly.{matrix,oled-v1,oled-v2,tdisplay}. Legacy quartet (`SseClient` / `CommandHandler` / axum server / `CompanionRuntime`) deleted. Pattern spec (`docs/specs/companion-architecture.md`) and glossary confirmed aligned with live code. Post-epic follow-ups: supervisor-level "owned candidates" API to generalize the per-factory `claimed` cache (surfaced by OLED refresh-churn bug); CloudEvents alignment; config-driven adapter composition; Prometheus exporter demo crate. | [COMPANION-0011](COMPANION-0011-epilogue.md) |
+| 2026-04-14 | **Book VIII closed.** Companion Rebuild complete. Five adapters shipped across six chapters: cricket.audio (Ch5, 2026-04-13), firefly.matrix (Ch1, 2026-04-14), firefly.oled-v2 (Ch3, 2026-04-14 — reordered ahead of Ch2 because stone-golden-summit had v2 hardware plugged), firefly.oled-v1 (Ch2, 2026-04-14 — stone-coral-prairie hardware gate), firefly.tdisplay (Ch4, 2026-04-14). Legacy quartet deleted in Ch6 (`sse.rs` / `handler.rs` / `server.rs` / `runtime.rs`, ~694 lines out). One in-book bugfix (2026-04-14, `fe410011`): OLED probe/reap/respawn churn — each OLED/TDisplay factory now caches `claimed` ports so re-probe-while-port-is-owned doesn't produce an empty discover set. `init_tracing` moved to the crate root. 17 firefly tests + 7 cricket tests + 158 SDK tests, all green. | [COMPANION-0009](COMPANION-0009-companion-rebuild.md) |
 | 2026-04-13 | **Book IX closed.** Integration Testing Foundation. New `companion-sdk::testing` module exports `MockTransport`, `RecordingAdapter` (with `RecordingHandleExt`), `FakeFactory`, `TestHarness` + `RunningHarness`. Six integration scenarios at `src/companion-sdk/tests/` — `full_pipeline_snapshot_to_render`, `command_round_trip`, `coalescing_load_updates`, `adapter_lifecycle` (spawn + reap + shutdown), `subscription_filtering`, `shutdown_completeness`. All 7 integration tests + 159 unit tests pass. New dev-deps: `reqwest` + `serde_json` + `tokio` macros (for the HTTP round-trip scenario). Guide at `docs/guides/companion-integration-testing.md`. 15 pre-existing SDK clippy warnings (unrelated to Book IX scope) deferred to Book X epilogue cleanup. | [COMPANION-0010](COMPANION-0010-integration-tests.md) |
 | 2026-04-14 | **Book VII closed.** Companion top-level runtime. `Companion` struct with fluent builder (`new`/`with_state_dir`/`with_flush_interval`/`with_transport`/`with_adapter_factory`) and async `run()` method. Absorbs the legacy `CompanionState` enabled flag (persisted to `{state_dir}/enabled` matching the `"on"`/`"off"` format). `run` auto-registers namespaces from every transport's `emitted_kinds`, spawns the coalesced-event flush timer (default 50ms), Garden's projection task, Adapters' supervisor, and each transport — converging on a shared `CancellationToken` with a 10s bounded join on shutdown. 11 new tests including end-to-end `POST /command → CommandTransport → EchoAdapter → aggregated response`. 144 companion-sdk tests total, all green. | [COMPANION-0008](COMPANION-0008-companion.md) |
 | 2026-04-14 | **Book VI closed — critical path complete.** Adapters bounded context. New `adapters/` module with `Adapter` trait (uses mpsc::Receiver, not raw broadcast), `AdapterFactory` trait, `AdapterProfile` (subscriptions + DeliveryPolicy + persisted_state), `AdapterInfo`, `AdapterStatus`, `Adapters` supervisor. Supervisor: discovery loop (default 5s interval), filter task per adapter (tracing span, forwards subscribed kinds only), spawn with tracing span, reap after grace window (default 2s), clean shutdown. DeliveryPolicy::All enforced; LatestEvery / Debounced are type-level commitments with `All` behaviour — full timer-driven enforcement deferred. Dual-prototype Ch0 gate validated trait shape against matrix (hardware, complex) and audio (singleton) scenarios with no redesign. 17 adapter tests (traits + supervisor spawn/reap/bounce/filter/shutdown). 133 companion-sdk tests total, all green. Books VII-IX now parallelizable. | [COMPANION-0007](COMPANION-0007-adapters.md) |
@@ -439,16 +441,36 @@ Items deliberately deferred to later targeted ADRs, with reason:
 
 At epilogue close, the following are true:
 
-1. **Adapter count is data, not code.** Adding a new adapter (device variant or otherwise) is a new `AdapterFactory` implementation. No other code changes required in the SDK.
-2. **Device-type dispatch sites: 0** (was ~33).
-3. **Shared-mutex device-port pattern: 0** (was 1, `FireflyConnection`).
-4. **Integration test coverage of event pipeline: > 0** (was 0).
-5. **`PresenceSnapshot` in `garden-common::domain`** — not duplicated in firefly.
-6. **Every adapter's event interests are declared, not implicit.**
-7. **Every command round-trips through `Pulse`.** No adapter owns HTTP plumbing.
-8. **`companion-sdk` can be used by a third adapter** (a Prometheus exporter, a webhook bridge, whatever) without any SDK modifications.
-9. **Pattern spec matches live code** with no drift.
-10. **Scaffolding tracker: zero active companion entries.**
+1. **Adapter count is data, not code.** Adding a new adapter (device variant or otherwise) is a new `AdapterFactory` implementation. No other code changes required in the SDK. **Verified 2026-04-14:** `rg "impl AdapterFactory" src/cricket src/firefly` → 5 factories (audio, matrix, oled_v1, oled_v2, tdisplay); each is a pure factory registration in its companion's `main.rs`.
+2. **Centralized device-type dispatch sites: 0** (was ~33 in legacy `events.rs`). **Verified 2026-04-14:** the 10 remaining `device_type ==` matches in `src/firefly/` are all per-factory VID filters (e.g. `OledV1Factory::discover` keeps only ports classified as `Esp8266Oled`) — the intended adapter-scoped filtering, not cross-device dispatch. The legacy one-match-rules-them-all pattern is gone.
+3. **Shared-mutex device-port pattern: 0** (was 1, one `FireflyConnection` shared across the firefly daemon). **Verified 2026-04-14:** each adapter owns its own `FireflyConnection` bound to a specific port — the hot-unplug logic inside `FireflyConnection` is kept; the sharing-across-device-types that the criterion targeted is gone.
+4. **Integration test coverage of event pipeline: > 0** (was 0). **Verified 2026-04-14:** `src/companion-sdk/tests/` contains 6 scenarios — full_pipeline_snapshot_to_render, command_round_trip, coalescing_load_updates, adapter_lifecycle, subscription_filtering, shutdown_completeness. All green.
+5. **`PresenceSnapshot` in `garden-common::presence`** — not duplicated in firefly or cricket. **Verified 2026-04-14:** `rg "struct PresenceSnapshot" src/firefly src/cricket` → 0 matches.
+6. **Every adapter's event interests are declared, not implicit.** **Verified 2026-04-14:** every `impl Adapter` in `src/cricket` + `src/firefly` exposes `fn profile()` returning an `AdapterProfile` with an explicit `subscriptions: &[&str]` constant slice.
+7. **Every command round-trips through `Pulse`.** No adapter owns HTTP plumbing. **Verified 2026-04-14:** `rg "impl CommandHandler" src/` → 0. Commands arrive as `core.command.invocation` events; results publish back via `pulse.ingest(Event::new(CommandResult { ... }))`.
+8. **`companion-sdk` can be used by a third adapter** (a Prometheus exporter, a webhook bridge, whatever) without any SDK modifications. **Verified indirectly 2026-04-14:** Book IX's `RecordingAdapter` (in `companion-sdk::testing`) is exactly such a third adapter — pure SDK consumption, no SDK patches. A scratch `PrometheusExporter` crate would follow the same shape.
+9. **Pattern spec matches live code** with no drift. See Book X Ch2 in the revision history.
+10. **Scaffolding tracker: zero active companion entries.** **Verified 2026-04-14:** `bash scripts/check-scaffolding.sh` reports all three `companion-old-*` scaffolds `status: removed` and clean of residual patterns.
+
+### Postmortem
+
+**What went well**
+
+- **Dual-prototype Ch0 gate** (Book VI) caught trait-surface issues before they baked into production code — the `DynPayload` two-trait discovery, mpsc-vs-broadcast choice, and `GardenSubscription` shape all came out of prototype work rather than in-epic refactors.
+- **Break-and-rebuild** held up cleanly. The legacy `FireflyConnection` reap/respawn bug surfaced in hours, not weeks, because adapters own their state end-to-end instead of sharing a blob.
+- **Hardware-validation gates per chapter** (cricket Ch5 → matrix Ch1 → oled-v2 Ch3 → oled-v1 Ch2) caught real integration issues (refresh-churn bug; book-ordering reversal driven by plugged-in hardware) that unit tests never would.
+- **Testing module published up-front** (Book IX Ch2) made every adapter chapter's tests trivial to write.
+
+**What didn't**
+
+- **Book ordering in VIII drifted under hardware pressure.** The ADR recommended Ch5 (cricket) → Ch1 (matrix) → Ch2-4 in any order. The reality was Ch5 → Ch1 → Ch3 → Ch2 → Ch4, driven by which devices were on the validation stones. Not a problem — the ADR explicitly allowed this — but worth noting that hardware availability drives real-world sequencing more than ADR recommendations.
+- **OLED refresh-churn** (the probe/reap/respawn cycle) was not foreseen. The root cause is a legitimate architectural gap: `AdapterFactory::discover` contract doesn't distinguish "I still own this port" from "this port still exists as my device type". Fixed in-book with per-factory `claimed` caches; a post-epic ADR could generalize this into a supervisor-level "owned candidates" API.
+
+**Notes for the next epic**
+
+- Chapter-level commits with validation gates worked well. Future epics should default to this grain instead of single book-closing commits.
+- The `scaffolding.md` + `check-scaffolding.sh` discipline caught us at Ch6 — keep it. The minor false-positive (ActiveGuard documentation comment) suggests the check should support a `negate: "//! The pattern was removed in"` marker.
+- `Arc<dyn DynPayload>` + blanket `impl<T: EventPayload> DynPayload for T` is a solid answer to Rust's associated-const + object-safety collision. Document it as a reusable pattern.
 
 ## References
 

@@ -9,7 +9,7 @@ canonical: true
 # COMPANION-0011: Epilogue — Book X of COMPANION-0001
 
 **Date**: 2026-04-14
-**Status**: Accepted — **implementation pending**
+**Status**: Accepted — **implemented 2026-04-14**
 **Book**: X (closing) of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0009](COMPANION-0009-companion-rebuild.md), [COMPANION-0010](COMPANION-0010-integration-tests.md)
 

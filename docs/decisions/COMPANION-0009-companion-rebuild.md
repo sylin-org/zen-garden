@@ -9,7 +9,7 @@ canonical: true
 # COMPANION-0009: Companion Rebuild — Book VIII of COMPANION-0001
 
 **Date**: 2026-04-14
-**Status**: Accepted — **implementation pending**
+**Status**: Accepted — **implemented 2026-04-14**
 **Book**: VIII of [COMPANION-0001](COMPANION-0001-companion-integration-epic.md)
 **Depends on**: [COMPANION-0008](COMPANION-0008-companion.md) (Companion runtime), [COMPANION-0007](COMPANION-0007-adapters.md), [COMPANION-0006](COMPANION-0006-garden-aggregate.md), [COMPANION-0005](COMPANION-0005-domain-types.md), [COMPANION-0004](COMPANION-0004-transport.md)
 

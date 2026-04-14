@@ -15,6 +15,8 @@
 pub mod command_transport;
 pub mod core_payloads;
 pub mod event;
+#[allow(clippy::module_inception)]
+pub mod garden;
 pub mod pulse;
 pub mod sse_transport;
 pub mod transport;
@@ -37,5 +39,6 @@ pub use command_transport::{
     CommandInvocation, CommandOutcome, CommandResult, CommandTransport, KIND_COMMAND_INVOCATION,
     KIND_COMMAND_RESULT,
 };
+pub use garden::{Garden, GardenSnapshot, GardenState, GardenSubscription};
 pub use sse_transport::SseTransport;
 pub use transport::{BoxFuture, Transport};

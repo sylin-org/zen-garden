@@ -45,6 +45,13 @@ impl Pond {
     }
 }
 
+impl Default for Pond {
+    /// Default is [`Pond::Solo`] — a stone starts out in no pond.
+    fn default() -> Self {
+        Pond::Solo
+    }
+}
+
 impl std::fmt::Display for Pond {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {

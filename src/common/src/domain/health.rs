@@ -104,6 +104,15 @@ impl From<Health> for String {
     }
 }
 
+impl Default for Health {
+    /// Default is [`Health::Dormant`] — safest assumption when we don't
+    /// have a known value (e.g. fresh `GardenState` before the first
+    /// presence event arrives).
+    fn default() -> Self {
+        Health::Dormant
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

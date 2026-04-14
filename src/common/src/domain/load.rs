@@ -91,6 +91,14 @@ impl Load {
     }
 }
 
+impl Default for Load {
+    /// Default is [`Load::ZERO`] — all gauges at 0%, no GPU activity, no
+    /// network throughput.
+    fn default() -> Self {
+        Load::ZERO
+    }
+}
+
 impl From<&StoneLoadUpdatedPayload> for Load {
     fn from(p: &StoneLoadUpdatedPayload) -> Self {
         Self {

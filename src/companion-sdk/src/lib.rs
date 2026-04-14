@@ -41,6 +41,7 @@
 //!
 //! # Modules
 //!
+//! - [`garden`] - Garden bounded context (event envelope today; Pulse, Garden aggregate, and Transport in subsequent COMPANION-0001 books)
 //! - [`server`] - HTTP server with standard Companion endpoints
 //! - [`sse`] - SSE client for presence event subscription
 //! - [`runtime`] - Main loop and shutdown coordination
@@ -50,6 +51,7 @@
 
 pub mod cli;
 pub mod dependencies;
+pub mod garden;
 pub mod handler;
 pub mod runtime;
 pub mod server;
@@ -60,6 +62,7 @@ pub mod state;
 pub mod prelude {
     pub use crate::cli::CompanionConfig;
     pub use crate::dependencies::{ensure_dependencies, DependencyCheckResult, SystemDependency};
+    pub use crate::garden::{Event, EventId, EventPayload, is_valid_kind, kind_namespace, new_event_id};
     pub use crate::handler::CommandHandler;
     pub use crate::runtime::CompanionRuntime;
     pub use crate::sse::{EventHandler, SseClient, SseEvent};

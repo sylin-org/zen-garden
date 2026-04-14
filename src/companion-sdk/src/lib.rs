@@ -42,6 +42,7 @@ pub mod cli;
 pub mod companion;
 pub mod dependencies;
 pub mod garden;
+pub mod moss_client;
 pub mod state;
 pub mod testing;
 
@@ -68,12 +69,12 @@ pub mod prelude {
     pub use crate::dependencies::{ensure_dependencies, DependencyCheckResult, SystemDependency};
     pub use crate::garden::{
         BoxFuture, CommandInvocation, CommandOutcome, CommandResult, CommandTransport, DynPayload,
-        Event, EventId, EventPayload, Garden, GardenSnapshot, GardenState, GardenSubscription,
-        IngestResult, Pulse, PulseConfig, PulseMetricsSnapshot, RejectReason,
-        ServiceStartedPayload, ServiceStoppedPayload, SseTransport, StoneTendedPayload,
-        StorageConnectedPayload, StorageDetectedPayload, StorageRemovedPayload, Transport,
-        is_valid_kind, kind_namespace, new_event_id, wire_to_core_kind,
+        Event, EventId, EventPayload, IngestResult, Pulse, PulseConfig, PulseMetricsSnapshot,
+        RejectReason, ServiceStartedPayload, ServiceStoppedPayload, SseTransport,
+        StoneTendedPayload, StorageConnectedPayload, StorageDetectedPayload, StorageRemovedPayload,
+        Transport, is_valid_kind, kind_namespace, new_event_id, wire_to_core_kind,
     };
+    pub use crate::moss_client::MossLocalClient;
     pub use crate::state::CompanionState;
     pub use anyhow::Result;
     pub use garden_common::command_manifest::CommandResponse;

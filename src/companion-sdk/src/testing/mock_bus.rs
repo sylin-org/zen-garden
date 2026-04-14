@@ -66,7 +66,8 @@ mod tests {
     use super::*;
     use crate::adapters::{Adapter, AdapterInfo, AdapterProfile, Adapters, adapter::BoxFuture};
     use crate::bus::{AdapterRegistration, Device, Predicate, ResourceClass};
-    use crate::garden::{Event, Garden, Pulse};
+    use crate::garden::{Event, Pulse};
+    use crate::moss_client::MossLocalClient;
     use serde_json::json;
     use std::sync::{
         Arc,
@@ -93,7 +94,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             mut events: mpsc::Receiver<Event>,
-            _g: Arc<Garden>,
+            _g: Arc<MossLocalClient>,
             _p: Arc<Pulse>,
             shutdown: CancellationToken,
         ) -> BoxFuture<'static, ()> {
@@ -146,8 +147,8 @@ mod tests {
     #[tokio::test]
     async fn attach_spawns_owned_adapter() {
         let pulse = Arc::new(Pulse::with_defaults());
-        let garden = Garden::new(pulse.clone());
-        let adapters = Arc::new(Adapters::new(garden, pulse.clone()));
+        let moss = Arc::new(crate::moss_client::MossLocalClient::new("http://127.0.0.1:0"));
+        let adapters = Arc::new(Adapters::new(moss, pulse.clone()));
 
         let flag = Arc::new(AtomicBool::new(false));
         let bus = DeviceBus::builder()
@@ -170,8 +171,8 @@ mod tests {
     #[tokio::test]
     async fn detach_reaps_adapter() {
         let pulse = Arc::new(Pulse::with_defaults());
-        let garden = Garden::new(pulse.clone());
-        let adapters = Arc::new(Adapters::new(garden, pulse.clone()));
+        let moss = Arc::new(crate::moss_client::MossLocalClient::new("http://127.0.0.1:0"));
+        let adapters = Arc::new(Adapters::new(moss, pulse.clone()));
 
         let flag = Arc::new(AtomicBool::new(false));
         let bus = DeviceBus::builder()
@@ -196,8 +197,8 @@ mod tests {
         let pulse = Arc::new(Pulse::with_defaults());
         // Telemetry events share the `core` namespace with presence events.
         pulse.register_namespace("core");
-        let garden = Garden::new(pulse.clone());
-        let adapters = Arc::new(Adapters::new(garden, pulse.clone()));
+        let moss = Arc::new(crate::moss_client::MossLocalClient::new("http://127.0.0.1:0"));
+        let adapters = Arc::new(Adapters::new(moss, pulse.clone()));
 
         let mut rx = pulse.subscribe();
 

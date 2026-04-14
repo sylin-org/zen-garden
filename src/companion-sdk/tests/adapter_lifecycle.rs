@@ -7,7 +7,8 @@
 use garden_companion_sdk::adapters::{Adapter, AdapterFactory, AdapterInfo, AdapterProfile};
 use garden_companion_sdk::testing::{RecordingAdapter, TestHarness};
 use garden_companion_sdk::companion::Companion;
-use garden_companion_sdk::garden::{Event, Garden, Pulse};
+use garden_companion_sdk::garden::{Event, Pulse};
+use garden_companion_sdk::moss_client::MossLocalClient;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,7 +113,7 @@ impl Adapter for LifecycleAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _g: Arc<Garden>,
+        _g: Arc<MossLocalClient>,
         _p: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> garden_companion_sdk::adapters::adapter::BoxFuture<'static, ()> {

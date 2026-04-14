@@ -11,7 +11,8 @@ use garden_companion_sdk::adapters::{
     Adapter, AdapterInfo, AdapterProfile, adapter::BoxFuture,
 };
 use garden_companion_sdk::testing::{FakeFactory, MockTransport, TestHarness};
-use garden_companion_sdk::garden::{Event, Garden, Pulse};
+use garden_companion_sdk::garden::{Event, Pulse};
+use garden_companion_sdk::moss_client::MossLocalClient;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -42,7 +43,7 @@ impl Adapter for ObservableAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _g: Arc<Garden>,
+        _g: Arc<MossLocalClient>,
         _p: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {

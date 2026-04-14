@@ -128,6 +128,21 @@ pub async fn stream_stone_presence(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// GET /api/v1/stone/presence — current snapshot, not a stream.
+///
+/// Returns the same `PresenceSnapshot` shape that the SSE stream emits
+/// as its first event. Used by local companions (firefly OLED, etc.)
+/// for deterministic hydration: HTTP request → JSON response, no race
+/// against subscription timing.
+///
+/// Companion-side consumer: `MossLocalClient::presence_snapshot()`
+/// (companion-sdk per COMPANION-0014).
+pub async fn get_stone_presence_snapshot(
+    State(state): State<Moss>,
+) -> Json<PresenceSnapshot> {
+    Json(generate_snapshot(&state).await)
+}
+
 /// Generate presence snapshot from current state
 pub(crate) async fn generate_snapshot(state: &Moss) -> PresenceSnapshot {
     // Map all offerings (managed + adopted + borrowed)

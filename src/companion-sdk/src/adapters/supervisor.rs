@@ -25,7 +25,8 @@
 use super::adapter::{Adapter, AdapterInfo};
 use super::factory::AdapterFactory;
 use super::status::AdapterStatus;
-use crate::garden::{Event, Garden, Pulse};
+use crate::garden::{Event, Pulse};
+use crate::moss_client::MossLocalClient;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -75,7 +76,7 @@ struct ActiveAdapter {
 pub struct Adapters {
     factories: RwLock<Vec<Box<dyn AdapterFactory>>>,
     active: Arc<RwLock<HashMap<String, ActiveAdapter>>>,
-    garden: Arc<Garden>,
+    moss: Arc<MossLocalClient>,
     pulse: Arc<Pulse>,
     discovery_interval: Duration,
     grace_window: Duration,
@@ -90,13 +91,15 @@ pub struct Adapters {
 }
 
 impl Adapters {
-    /// Construct an empty supervisor bound to a [`Garden`] + [`Pulse`].
-    pub fn new(garden: Arc<Garden>, pulse: Arc<Pulse>) -> Self {
+    /// Construct an empty supervisor bound to a [`MossLocalClient`] +
+    /// [`Pulse`]. The moss client is the canonical read-path adapters
+    /// hydrate from at spawn time (COMPANION-0014).
+    pub fn new(moss: Arc<MossLocalClient>, pulse: Arc<Pulse>) -> Self {
         let (exit_tx, exit_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             factories: RwLock::new(Vec::new()),
             active: Arc::new(RwLock::new(HashMap::new())),
-            garden,
+            moss,
             pulse,
             discovery_interval: DEFAULT_DISCOVERY_INTERVAL,
             grace_window: DEFAULT_GRACE_WINDOW,
@@ -347,12 +350,12 @@ impl Adapters {
             kind = info.kind,
             id = %info.id,
         );
-        let garden = self.garden.clone();
+        let moss = self.moss.clone();
         let pulse = self.pulse.clone();
         let run_shutdown = shutdown.clone();
         let inner = tokio::spawn(
             adapter
-                .run(rx, garden, pulse, run_shutdown)
+                .run(rx, moss, pulse, run_shutdown)
                 .instrument(run_span),
         );
 
@@ -534,8 +537,10 @@ mod tests {
 
     fn fixture() -> (Adapters, Arc<Pulse>) {
         let pulse = core_pulse();
-        let garden = Garden::new(pulse.clone());
-        let supervisor = Adapters::new(garden, pulse.clone())
+        // Tests don't actually hit moss; a placeholder URL is fine —
+        // adapters constructed in tests use `_moss` (no read calls).
+        let moss = Arc::new(MossLocalClient::new("http://127.0.0.1:0"));
+        let supervisor = Adapters::new(moss, pulse.clone())
             .with_discovery_interval(Duration::from_millis(50))
             .with_grace_window(Duration::from_millis(100));
         (supervisor, pulse)
@@ -567,7 +572,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             mut events: mpsc::Receiver<Event>,
-            _garden: Arc<Garden>,
+            _moss: Arc<MossLocalClient>,
             _pulse: Arc<Pulse>,
             shutdown: CancellationToken,
         ) -> super::super::adapter::BoxFuture<'static, ()> {
@@ -877,7 +882,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             _events: mpsc::Receiver<Event>,
-            _garden: Arc<Garden>,
+            _moss: Arc<MossLocalClient>,
             _pulse: Arc<Pulse>,
             _shutdown: CancellationToken,
         ) -> super::super::adapter::BoxFuture<'static, ()> {
@@ -903,7 +908,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             _events: mpsc::Receiver<Event>,
-            _garden: Arc<Garden>,
+            _moss: Arc<MossLocalClient>,
             _pulse: Arc<Pulse>,
             shutdown: CancellationToken,
         ) -> super::super::adapter::BoxFuture<'static, ()> {
@@ -931,7 +936,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             _events: mpsc::Receiver<Event>,
-            _garden: Arc<Garden>,
+            _moss: Arc<MossLocalClient>,
             _pulse: Arc<Pulse>,
             _shutdown: CancellationToken,
         ) -> super::super::adapter::BoxFuture<'static, ()> {

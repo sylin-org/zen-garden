@@ -105,7 +105,8 @@ mod tests {
     use super::super::resource::ResourceClass;
     use super::*;
     use crate::adapters::{Adapter, AdapterInfo, AdapterProfile, adapter::BoxFuture};
-    use crate::garden::{Event, Garden, Pulse};
+    use crate::garden::{Event, Pulse};
+    use crate::moss_client::MossLocalClient;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -126,7 +127,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             _e: mpsc::Receiver<Event>,
-            _g: Arc<Garden>,
+            _g: Arc<MossLocalClient>,
             _p: Arc<Pulse>,
             _s: CancellationToken,
         ) -> BoxFuture<'static, ()> {

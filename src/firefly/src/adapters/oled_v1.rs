@@ -22,8 +22,9 @@ use garden_common::presence::{
 use garden_companion_sdk::adapters::{
     Adapter, AdapterFactory, AdapterInfo, AdapterProfile, DeliveryPolicy, adapter::BoxFuture,
 };
+use garden_companion_sdk::moss_client::MossLocalClient;
 use garden_companion_sdk::garden::{
-    CommandInvocation, CommandOutcome, CommandResult, Event, Garden, Pulse,
+    CommandInvocation, CommandOutcome, CommandResult, Event, Pulse,
     ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
     StorageRemovedPayload,
 };
@@ -199,7 +200,7 @@ impl Adapter for OledV1Adapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        garden: Arc<Garden>,
+        moss: Arc<MossLocalClient>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -223,20 +224,26 @@ impl Adapter for OledV1Adapter {
 
             let state = Arc::new(Mutex::new(V1State::default()));
 
-            // Rehydrate from Garden's read-model — see oled_v2 for
-            // rationale. Without this, the firmware sticks on its
-            // boot-time placeholder until the next live event.
-            if garden.is_ready() {
-                let gs = garden.snapshot();
-                {
+            // Hydrate from moss's HTTP API (COMPANION-0014).
+            match moss.presence_snapshot().await {
+                Ok(p) => {
                     let mut s = state.lock().await;
-                    s.stone_name = gs.stone_name.clone();
-                    s.health_label = gs.health.to_string();
-                    s.cpu_percent = gs.load.cpu.as_u8();
-                    s.memory_percent = gs.load.memory.as_u8();
+                    s.stone_name = Some(p.stone.name.clone());
+                    s.health_label = p.stone.health.clone();
+                    s.cpu_percent = p.stone.cpu_percent as u8;
+                    s.memory_percent = p.stone.memory_percent as u8;
+                    s.uptime_seconds = p.stone.uptime_seconds;
+                    let snapshot = s.clone();
+                    drop(s);
+                    push_full_snapshot(&connection, &snapshot);
                 }
-                let snapshot = state.lock().await.clone();
-                push_full_snapshot(&connection, &snapshot);
+                Err(e) => {
+                    tracing::warn!(
+                        port = %self.port_name,
+                        error = %e,
+                        "oled-v1 hydrate from moss failed; will rely on live deltas"
+                    );
+                }
             }
 
             loop {

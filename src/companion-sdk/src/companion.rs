@@ -23,7 +23,8 @@
 //! [COMPANION-0008]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0008-companion.md
 
 use crate::adapters::{AdapterFactory, Adapters};
-use crate::garden::{Garden, Pulse, Transport, kind_namespace};
+use crate::garden::{Pulse, Transport, kind_namespace};
+use crate::moss_client::MossLocalClient;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,22 +34,28 @@ use tokio_util::sync::CancellationToken;
 /// Default coalesced-event flush cadence per the pattern spec.
 pub const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Default moss endpoint — every companion is stone-local by design.
+pub const DEFAULT_MOSS_URL: &str = "http://127.0.0.1:7185";
+
 /// File name used for the enabled-flag persistence inside `state_dir`.
 const ENABLED_FILENAME: &str = "enabled";
 
-/// Top-level companion runtime. Wires together the Garden-context
-/// (Pulse, Garden, transports) and the Adapters-context (supervisor,
-/// factories) into a single runnable unit.
+/// Top-level companion runtime. Wires together Pulse + transports +
+/// the adapter supervisor into a single runnable unit.
 ///
 /// Construct via [`Companion::new`], attach transports and factories
 /// with the fluent `with_*` methods, and call [`Companion::run`] to
 /// start. `run` returns when the shutdown token is cancelled (via
 /// OS signal, `CommandTransport`'s `/shutdown`, or programmatic
 /// [`Companion::shutdown_token`] cancellation).
+///
+/// Adapters consume stone state via [`MossLocalClient`] passed to
+/// `Adapter::run` — the bus's read path. Live deltas continue to flow
+/// through Pulse from the SSE transport.
 pub struct Companion {
     name: String,
     pulse: Arc<Pulse>,
-    garden: Arc<Garden>,
+    moss: Arc<MossLocalClient>,
     adapters: Arc<Adapters>,
     transports: Vec<Box<dyn Transport>>,
     enabled: Arc<AtomicBool>,
@@ -60,14 +67,16 @@ pub struct Companion {
 impl Companion {
     /// Construct with a companion name. Name is used in log spans and
     /// health responses; it need not be unique across processes.
+    /// Defaults to the loopback moss endpoint
+    /// ([`DEFAULT_MOSS_URL`]); override via [`Companion::with_moss_url`].
     pub fn new(name: impl Into<String>) -> Self {
         let pulse = Arc::new(Pulse::with_defaults());
-        let garden = Garden::new(pulse.clone());
-        let adapters = Arc::new(Adapters::new(garden.clone(), pulse.clone()));
+        let moss = Arc::new(MossLocalClient::new(DEFAULT_MOSS_URL));
+        let adapters = Arc::new(Adapters::new(moss.clone(), pulse.clone()));
         Self {
             name: name.into(),
             pulse,
-            garden,
+            moss,
             adapters,
             transports: Vec::new(),
             enabled: Arc::new(AtomicBool::new(true)),
@@ -75,6 +84,20 @@ impl Companion {
             shutdown: CancellationToken::new(),
             flush_interval: DEFAULT_FLUSH_INTERVAL,
         }
+    }
+
+    /// Override the moss endpoint URL. Default is loopback
+    /// [`DEFAULT_MOSS_URL`]. Use this only for tests or non-loopback
+    /// deployments — companions are stone-local by design.
+    pub fn with_moss_url(mut self, url: impl Into<String>) -> Self {
+        let moss = Arc::new(MossLocalClient::new(url));
+        // Adapters supervisor was constructed with the previous moss
+        // client; rebuild it so adapters spawned after this call get
+        // the new endpoint. Safe because `with_moss_url` runs at
+        // builder time, before any adapter has been spawned.
+        self.moss = moss.clone();
+        self.adapters = Arc::new(Adapters::new(moss, self.pulse.clone()));
+        self
     }
 
     /// Set the state directory for persistent flags. If the `enabled`
@@ -118,8 +141,8 @@ impl Companion {
         self.pulse.clone()
     }
 
-    pub fn garden(&self) -> Arc<Garden> {
-        self.garden.clone()
+    pub fn moss(&self) -> Arc<MossLocalClient> {
+        self.moss.clone()
     }
 
     pub fn adapters(&self) -> Arc<Adapters> {
@@ -160,7 +183,7 @@ impl Companion {
         let Self {
             name,
             pulse,
-            garden,
+            moss: _moss,
             adapters,
             transports,
             enabled: _,
@@ -200,10 +223,11 @@ impl Companion {
             })
         };
 
-        // 3. Garden projection.
-        let projection_handle = garden.spawn_projection(shutdown.clone());
+        // (Garden projection task removed in COMPANION-0014: adapters
+        // now query moss directly via MossLocalClient instead of
+        // consuming a client-side projection of state.)
 
-        // 4. Adapters supervisor.
+        // 3. Adapters supervisor.
         let supervisor_handle = {
             let adapters = adapters.clone();
             let shutdown = shutdown.clone();
@@ -238,7 +262,6 @@ impl Companion {
         // 7. Bounded join.
         let _ = tokio::time::timeout(Duration::from_secs(10), async {
             let _ = flush_handle.await;
-            let _ = projection_handle.await;
             let _ = supervisor_handle.await;
             for h in transport_handles {
                 let _ = h.await;
@@ -389,7 +412,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             mut events: mpsc::Receiver<Event>,
-            _garden: Arc<Garden>,
+            _moss: Arc<MossLocalClient>,
             pulse: Arc<Pulse>,
             shutdown: CancellationToken,
         ) -> crate::adapters::adapter::BoxFuture<'static, ()> {

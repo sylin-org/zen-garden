@@ -26,8 +26,9 @@ use garden_common::presence::{
 use garden_companion_sdk::adapters::{
     Adapter, AdapterFactory, AdapterInfo, AdapterProfile, DeliveryPolicy, adapter::BoxFuture,
 };
+use garden_companion_sdk::moss_client::MossLocalClient;
 use garden_companion_sdk::garden::{
-    CommandInvocation, CommandOutcome, CommandResult, Event, Garden, Pulse,
+    CommandInvocation, CommandOutcome, CommandResult, Event, Pulse,
     ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
     StorageRemovedPayload,
 };
@@ -159,7 +160,7 @@ impl Adapter for MatrixAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        garden: Arc<Garden>,
+        moss: Arc<MossLocalClient>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -179,27 +180,36 @@ impl Adapter for MatrixAdapter {
 
             let animation = Arc::new(RwLock::new(Animation::new(self.state_dir.clone())));
 
-            // Rehydrate the animation context from Garden's read-model
-            // before starting the engine, so the very first frame
-            // reflects current health/load instead of defaulted state.
-            if garden.is_ready() {
-                let gs = garden.snapshot();
-                let mut ctx = animation.write().await;
-                ctx.stone_name = gs.stone_name.clone();
-                ctx.health_label = gs.health.to_string();
-                ctx.health = parse_health(&ctx.health_label);
-                ctx.cpu_percent = gs.load.cpu.as_u8();
-                ctx.memory_percent = gs.load.memory.as_u8();
-                ctx.disk_percent = gs.load.disk.as_u8();
-                ctx.io_percent = gs.load.io.as_u8();
-                ctx.gpu_percent = gs.load.gpu.as_u8();
-                ctx.gpu_active = gs.load.gpu_active;
-                ctx.load = ((ctx.cpu_percent as f32 + ctx.memory_percent as f32) / 200.0)
-                    .clamp(0.0, 1.0);
-                ctx.offering_count = gs.offerings.len();
-                ctx.has_services = !gs.offerings.is_empty();
-                ctx.has_seed_bank = gs.seed_bank.is_some();
-                trigger_health(&mut ctx);
+            // Hydrate the animation context from moss's HTTP API
+            // (COMPANION-0014). First frame reflects current state
+            // immediately; no race against SSE timing.
+            match moss.presence_snapshot().await {
+                Ok(p) => {
+                    let mut ctx = animation.write().await;
+                    ctx.stone_name = Some(p.stone.name.clone());
+                    ctx.health_label = p.stone.health.clone();
+                    ctx.health = parse_health(&ctx.health_label);
+                    ctx.cpu_percent = p.stone.cpu_percent as u8;
+                    ctx.memory_percent = p.stone.memory_percent as u8;
+                    ctx.disk_percent = p.stone.disk_percent as u8;
+                    ctx.io_percent = p.stone.io_percent as u8;
+                    ctx.gpu_percent = p.stone.gpu_percent as u8;
+                    ctx.gpu_active = p.stone.gpu_active;
+                    ctx.uptime_seconds = p.stone.uptime_seconds;
+                    ctx.load = ((ctx.cpu_percent as f32 + ctx.memory_percent as f32) / 200.0)
+                        .clamp(0.0, 1.0);
+                    ctx.offering_count = p.offerings.len();
+                    ctx.has_services = !p.offerings.is_empty();
+                    ctx.has_seed_bank = p.stone.seed_bank.is_some();
+                    trigger_health(&mut ctx);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        port = %self.port_name,
+                        error = %e,
+                        "matrix hydrate from moss failed; will rely on live deltas"
+                    );
+                }
             }
 
             let engine = start_animation(connection.clone(), animation.clone());

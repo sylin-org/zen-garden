@@ -8,7 +8,8 @@ use crate::adapters::{
     Adapter, AdapterInfo, AdapterProfile, DeliveryPolicy,
     adapter::BoxFuture,
 };
-use crate::garden::{Event, Garden, Pulse};
+use crate::garden::{Event, Pulse};
+use crate::moss_client::MossLocalClient;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -116,7 +117,7 @@ impl Adapter for RecordingAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _garden: Arc<Garden>,
+        _moss: Arc<MossLocalClient>,
         _pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -221,11 +222,11 @@ mod tests {
         let (tx, rx) = mpsc::channel::<Event>(8);
         let shutdown = CancellationToken::new();
         let pulse = Arc::new(crate::garden::Pulse::with_defaults());
-        let garden = Garden::new(pulse.clone());
+        let moss = Arc::new(MossLocalClient::new("http://127.0.0.1:0"));
 
         let sh = shutdown.clone();
         let run_handle = tokio::spawn(async move {
-            Box::new(adapter).run(rx, garden, pulse, sh).await;
+            Box::new(adapter).run(rx, moss, pulse, sh).await;
         });
 
         tx.send(Event::new(Probe)).await.unwrap();
@@ -250,11 +251,11 @@ mod tests {
         let (tx, rx) = mpsc::channel::<Event>(1);
         let shutdown = CancellationToken::new();
         let pulse = Arc::new(crate::garden::Pulse::with_defaults());
-        let garden = Garden::new(pulse.clone());
+        let moss = Arc::new(MossLocalClient::new("http://127.0.0.1:0"));
 
         let sh = shutdown.clone();
         let run_handle = tokio::spawn(async move {
-            Box::new(adapter).run(rx, garden, pulse, sh).await;
+            Box::new(adapter).run(rx, moss, pulse, sh).await;
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;

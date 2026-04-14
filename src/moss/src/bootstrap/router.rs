@@ -200,6 +200,10 @@ pub fn configure_public(state: Moss) -> Router {
             get(api::v1::presence::stream_stone_presence),
         )
         .route(
+            "/api/v1/stone/presence",
+            get(api::v1::presence::get_stone_presence_snapshot),
+        )
+        .route(
             "/api/v1/stone/pulse/stream",
             get(api::v1::pulse::stream_pulse),
         )
@@ -839,6 +843,10 @@ pub fn configure(state: Moss) -> Router {
         .route(
             "/api/v1/stone/presence/stream",
             get(api::v1::presence::stream_stone_presence),
+        )
+        .route(
+            "/api/v1/stone/presence",
+            get(api::v1::presence::get_stone_presence_snapshot),
         )
         .route(
             "/api/v1/stone/presence/notify",

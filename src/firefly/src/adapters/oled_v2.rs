@@ -24,8 +24,9 @@ use garden_common::presence::{
 use garden_companion_sdk::adapters::{
     Adapter, AdapterFactory, AdapterInfo, AdapterProfile, DeliveryPolicy, adapter::BoxFuture,
 };
+use garden_companion_sdk::moss_client::MossLocalClient;
 use garden_companion_sdk::garden::{
-    CommandInvocation, CommandOutcome, CommandResult, Event, Garden, Pulse,
+    CommandInvocation, CommandOutcome, CommandResult, Event, Pulse,
     ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
     StorageRemovedPayload,
 };
@@ -209,7 +210,7 @@ impl Adapter for OledV2Adapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        garden: Arc<Garden>,
+        moss: Arc<MossLocalClient>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -233,30 +234,33 @@ impl Adapter for OledV2Adapter {
 
             let state = Arc::new(Mutex::new(DashboardState::default()));
 
-            // Rehydrate from Garden's read-model. If Garden already has
-            // a snapshot (SSE projected before this adapter spawned),
-            // populate the dashboard immediately so the operator sees
-            // real data instead of the firmware's boot-time placeholder.
-            // No-op when Garden hasn't received its first snapshot yet —
-            // the live event loop below will fill state in then.
-            if garden.is_ready() {
-                let gs = garden.snapshot();
-                {
+            // Hydrate from moss's HTTP API (COMPANION-0014).
+            // Deterministic: request → response. No race against SSE
+            // subscription timing.
+            match moss.presence_snapshot().await {
+                Ok(p) => {
                     let mut s = state.lock().await;
-                    s.stone_name = gs.stone_name.clone();
-                    s.health_label = gs.health.to_string();
-                    s.cpu_percent = gs.load.cpu.as_u8();
-                    s.memory_percent = gs.load.memory.as_u8();
-                    s.disk_percent = gs.load.disk.as_u8();
-                    s.offering_count = gs.offerings.len();
-                    s.net_bps =
-                        gs.load.net_rx_bytes_per_sec + gs.load.net_tx_bytes_per_sec;
-                    s.has_seed_bank = gs.seed_bank.is_some();
-                    // uptime_seconds is not in GardenState; first
-                    // stone.load.updated event will set it.
+                    s.stone_name = Some(p.stone.name.clone());
+                    s.health_label = p.stone.health.clone();
+                    s.cpu_percent = p.stone.cpu_percent as u8;
+                    s.memory_percent = p.stone.memory_percent as u8;
+                    s.disk_percent = p.stone.disk_percent as u8;
+                    s.uptime_seconds = p.stone.uptime_seconds;
+                    s.offering_count = p.offerings.len();
+                    s.net_bps = p.stone.net_rx_bytes_per_sec
+                        + p.stone.net_tx_bytes_per_sec;
+                    s.has_seed_bank = p.stone.seed_bank.is_some();
+                    let snapshot = s.clone();
+                    drop(s);
+                    push_full_snapshot(&connection, &snapshot);
                 }
-                let snapshot = state.lock().await.clone();
-                push_full_snapshot(&connection, &snapshot);
+                Err(e) => {
+                    tracing::warn!(
+                        port = %self.port_name,
+                        error = %e,
+                        "oled-v2 hydrate from moss failed; will rely on live deltas"
+                    );
+                }
             }
 
             loop {

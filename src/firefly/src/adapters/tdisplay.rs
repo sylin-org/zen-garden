@@ -29,8 +29,9 @@ use garden_common::presence::{
 use garden_companion_sdk::adapters::{
     Adapter, AdapterFactory, AdapterInfo, AdapterProfile, DeliveryPolicy, adapter::BoxFuture,
 };
+use garden_companion_sdk::moss_client::MossLocalClient;
 use garden_companion_sdk::garden::{
-    CommandInvocation, CommandOutcome, CommandResult, Event, Garden, Pulse,
+    CommandInvocation, CommandOutcome, CommandResult, Event, Pulse,
     ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
     StorageRemovedPayload,
 };
@@ -233,7 +234,7 @@ impl Adapter for TDisplayAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        garden: Arc<Garden>,
+        moss: Arc<MossLocalClient>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
@@ -257,24 +258,36 @@ impl Adapter for TDisplayAdapter {
 
             let state = Arc::new(Mutex::new(TDisplayState::default()));
 
-            // Rehydrate from Garden's read-model — see oled_v2 for
-            // rationale.
-            if garden.is_ready() {
-                let gs = garden.snapshot();
-                {
+            // Hydrate from moss's HTTP API (COMPANION-0014).
+            match moss.presence_snapshot().await {
+                Ok(p) => {
                     let mut s = state.lock().await;
-                    s.stone_name = gs.stone_name.clone().unwrap_or_default();
-                    s.health = gs.health.to_string();
-                    s.cpu = gs.load.cpu.as_u8();
-                    s.mem = gs.load.memory.as_u8();
-                    s.disk = gs.load.disk.as_u8();
-                    s.io = gs.load.io.as_u8();
-                    s.gpu = gs.load.gpu.as_u8();
-                    s.gpu_active = bool_u8(gs.load.gpu_active);
-                    s.offerings = gs.offerings.len();
+                    s.stone_name = p.stone.name.clone();
+                    s.health = p.stone.health.clone();
+                    s.cpu = p.stone.cpu_percent as u8;
+                    s.mem = p.stone.memory_percent as u8;
+                    s.disk = p.stone.disk_percent as u8;
+                    s.io = p.stone.io_percent as u8;
+                    s.gpu = p.stone.gpu_percent as u8;
+                    s.gpu_active = bool_u8(p.stone.gpu_active);
+                    s.uptime = p.stone.uptime_seconds;
+                    s.offerings = p.offerings.len();
+                    s.has_gpu = bool_u8(p.stone.has_gpu);
+                    s.is_lantern = bool_u8(p.stone.is_lantern);
+                    s.has_cricket = bool_u8(p.stone.has_cricket);
+                    s.pond_active = bool_u8(p.stone.pond_active);
+                    s.hour = p.stone.hour;
+                    let snapshot = s.clone();
+                    drop(s);
+                    push_full_snapshot(&connection, &snapshot);
                 }
-                let snapshot = state.lock().await.clone();
-                push_full_snapshot(&connection, &snapshot);
+                Err(e) => {
+                    tracing::warn!(
+                        port = %self.port_name,
+                        error = %e,
+                        "tdisplay hydrate from moss failed; will rely on live deltas"
+                    );
+                }
             }
 
             loop {

@@ -14,7 +14,8 @@
 
 use crate::adapters::{AdapterFactory, Adapters};
 use crate::companion::Companion;
-use crate::garden::{Event, EventPayload, Garden, IngestResult, Pulse, Transport};
+use crate::garden::{Event, EventPayload, IngestResult, Pulse, Transport};
+use crate::moss_client::MossLocalClient;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -58,9 +59,9 @@ impl TestHarness {
         self.companion.pulse()
     }
 
-    /// Access the Garden before starting.
-    pub fn garden(&self) -> Arc<Garden> {
-        self.companion.garden()
+    /// Access the moss client before starting.
+    pub fn moss(&self) -> Arc<MossLocalClient> {
+        self.companion.moss()
     }
 
     /// Access the adapter supervisor before starting — useful for
@@ -73,7 +74,7 @@ impl TestHarness {
     /// handle must be awaited to ensure clean exit.
     pub async fn start(self) -> RunningHarness {
         let pulse = self.companion.pulse();
-        let garden = self.companion.garden();
+        let moss = self.companion.moss();
         let adapters = self.companion.adapters();
         let shutdown = self.companion.shutdown_token();
 
@@ -81,14 +82,14 @@ impl TestHarness {
             self.companion.run().await
         });
 
-        // Brief pause so background tasks (flush timer, Garden projection,
-        // supervisor, transports) spin up before the first test assertion.
+        // Brief pause so background tasks (flush timer, supervisor,
+        // transports) spin up before the first test assertion.
         tokio::task::yield_now().await;
         tokio::time::sleep(Duration::from_millis(5)).await;
 
         RunningHarness {
             pulse,
-            garden,
+            moss,
             adapters,
             shutdown,
             run_handle,
@@ -99,7 +100,7 @@ impl TestHarness {
 /// Test-scope wrapper — running phase.
 pub struct RunningHarness {
     pulse: Arc<Pulse>,
-    garden: Arc<Garden>,
+    moss: Arc<MossLocalClient>,
     adapters: Arc<Adapters>,
     shutdown: CancellationToken,
     run_handle: JoinHandle<anyhow::Result<()>>,
@@ -110,8 +111,8 @@ impl RunningHarness {
         self.pulse.clone()
     }
 
-    pub fn garden(&self) -> Arc<Garden> {
-        self.garden.clone()
+    pub fn moss(&self) -> Arc<MossLocalClient> {
+        self.moss.clone()
     }
 
     pub fn adapters(&self) -> Arc<Adapters> {
@@ -127,22 +128,6 @@ impl RunningHarness {
     /// care about transport behaviour.
     pub fn publish<P: EventPayload>(&self, payload: P) -> IngestResult {
         self.pulse.ingest(Event::new(payload))
-    }
-
-    /// Wait up to `timeout` for Garden to report ready (i.e. a
-    /// `PresenceSnapshot` has been projected). Returns `true` on ready,
-    /// `false` on timeout.
-    pub async fn wait_ready(&self, timeout: Duration) -> bool {
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            if self.garden.is_ready() {
-                return true;
-            }
-            if std::time::Instant::now() >= deadline {
-                return false;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
     }
 
     /// Cancel the shutdown token and await the companion's `run` task.
@@ -179,10 +164,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn harness_builder_preserves_pulse_and_garden() {
+    async fn harness_builder_preserves_pulse_and_moss() {
         let h = TestHarness::new("x");
         let _p: Arc<Pulse> = h.pulse();
-        let _g: Arc<Garden> = h.garden();
+        let _m: Arc<MossLocalClient> = h.moss();
     }
 
     #[tokio::test]

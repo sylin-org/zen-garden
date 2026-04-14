@@ -13,9 +13,10 @@ use garden_common::command_manifest::CommandResponse;
 use garden_companion_sdk::adapters::{
     Adapter, AdapterInfo, AdapterProfile, adapter::BoxFuture,
 };
+use garden_companion_sdk::moss_client::MossLocalClient;
 use garden_companion_sdk::testing::{FakeFactory, TestHarness};
 use garden_companion_sdk::garden::{
-    CommandInvocation, CommandOutcome, CommandResult, CommandTransport, Event, Garden, Pulse,
+    CommandInvocation, CommandOutcome, CommandResult, CommandTransport, Event, Pulse,
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -45,7 +46,7 @@ impl Adapter for EchoAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _garden: Arc<Garden>,
+        _moss: Arc<MossLocalClient>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {

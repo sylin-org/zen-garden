@@ -83,7 +83,8 @@ pub trait AdapterFactory: Send + Sync + 'static {
 mod tests {
     use super::*;
     use crate::adapters::{AdapterInfo, AdapterProfile};
-    use crate::garden::{Event, Garden, Pulse};
+    use crate::garden::{Event, Pulse};
+    use crate::moss_client::MossLocalClient;
     use std::sync::Arc;
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
@@ -107,7 +108,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             _events: mpsc::Receiver<Event>,
-            _garden: Arc<Garden>,
+            _moss: Arc<MossLocalClient>,
             _pulse: Arc<Pulse>,
             shutdown: CancellationToken,
         ) -> super::super::adapter::BoxFuture<'static, ()> {

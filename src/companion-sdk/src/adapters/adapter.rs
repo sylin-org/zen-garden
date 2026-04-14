@@ -13,7 +13,8 @@
 //! [`Adapters`]: super::Adapters
 //! [COMPANION-0007]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0007-adapters.md
 
-use crate::garden::{Event, Garden, Pulse};
+use crate::garden::{Event, Pulse};
+use crate::moss_client::MossLocalClient;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -62,7 +63,7 @@ pub trait Adapter: Send + 'static {
     fn run(
         self: Box<Self>,
         events: mpsc::Receiver<Event>,
-        garden: Arc<Garden>,
+        moss: Arc<MossLocalClient>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()>;
@@ -189,7 +190,7 @@ mod tests {
         fn run(
             self: Box<Self>,
             _events: mpsc::Receiver<Event>,
-            _garden: Arc<Garden>,
+            _moss: Arc<MossLocalClient>,
             _pulse: Arc<Pulse>,
             shutdown: CancellationToken,
         ) -> BoxFuture<'static, ()> {

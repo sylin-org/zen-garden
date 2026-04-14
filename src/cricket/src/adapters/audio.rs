@@ -17,8 +17,9 @@ use crate::mixer::{Channel, Mixer};
 use garden_companion_sdk::adapters::{
     Adapter, AdapterFactory, AdapterInfo, AdapterProfile, DeliveryPolicy, adapter::BoxFuture,
 };
+use garden_companion_sdk::moss_client::MossLocalClient;
 use garden_companion_sdk::garden::{
-    CommandInvocation, CommandOutcome, CommandResult, Event, Garden, Pulse,
+    CommandInvocation, CommandOutcome, CommandResult, Event, Pulse,
 };
 use garden_common::command_manifest::CommandResponse;
 use std::collections::HashMap;
@@ -120,7 +121,7 @@ impl Adapter for AudioAdapter {
     fn run(
         self: Box<Self>,
         mut events: mpsc::Receiver<Event>,
-        _garden: Arc<Garden>,
+        _moss: Arc<MossLocalClient>,
         pulse: Arc<Pulse>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {

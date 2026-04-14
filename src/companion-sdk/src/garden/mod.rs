@@ -1,22 +1,18 @@
-//! Garden bounded context.
+//! Event mesh — Pulse, Transports, Event envelope, and core payload
+//! types.
 //!
-//! Owns event ingestion, canonicalization, projection, and fan-out. Under
-//! [COMPANION-0001] this is one of two bounded contexts inside the SDK (the
-//! other is [Adapters]). Adapters subscribe to Garden's event stream and
-//! query Garden's read-model; Garden never knows which adapters exist.
+//! Originally also housed the client-side `Garden` aggregate; that was
+//! retired in [COMPANION-0014]. Companions now query moss directly via
+//! [`crate::moss_client::MossLocalClient`] for state and use this
+//! module strictly for the live-event delta path.
 //!
-//! Book I lands [`event`] — the uniform event envelope. Subsequent books
-//! add sibling modules (`pulse`, `transport`, `garden` aggregate, core
-//! payload types).
+//! Module name is preserved to avoid touching every adapter import.
 //!
-//! [COMPANION-0001]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0001-companion-integration-epic.md
-//! [Adapters]: super
+//! [COMPANION-0014]: https://github.com/zen-garden/zen-garden/blob/dev/docs/decisions/COMPANION-0014-companions-query-moss-directly.md
 
 pub mod command_transport;
 pub mod core_payloads;
 pub mod event;
-#[allow(clippy::module_inception)]
-pub mod garden;
 pub mod pulse;
 pub mod sse_transport;
 pub mod transport;
@@ -39,6 +35,5 @@ pub use command_transport::{
     CommandInvocation, CommandOutcome, CommandResult, CommandTransport, KIND_COMMAND_INVOCATION,
     KIND_COMMAND_RESULT,
 };
-pub use garden::{Garden, GardenSnapshot, GardenState, GardenSubscription};
 pub use sse_transport::SseTransport;
 pub use transport::{BoxFuture, Transport};

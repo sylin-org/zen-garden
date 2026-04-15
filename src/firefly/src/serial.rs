@@ -16,7 +16,18 @@ use anyhow::{Context, Result};
 use serialport::SerialPort;
 use std::io::{Read, Write};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
+
+/// Consecutive `with_device` failures required before the connection is
+/// eligible to be declared lost. Keeps a single slow frame from tripping
+/// self-exit.
+const LOST_FAILURE_THRESHOLD: u32 = 5;
+
+/// Minimum elapsed time since the last successful `with_device` call before
+/// the connection is declared lost. Keeps a burst of timeouts on an
+/// otherwise-healthy device from tripping self-exit.
+const LOST_DURATION: Duration = Duration::from_secs(15);
 
 /// Overall per-command read deadline. The serialport per-read timeout (2s)
 /// does NOT fire when a USB device is hot-unplugged on Linux — the kernel
@@ -529,6 +540,9 @@ pub struct FireflyConnection {
     serial: Mutex<Option<FireflySerial>>,
     device_type: Mutex<FireflyDeviceType>,
     preferred_port: Option<String>,
+    /// COMPANION-0015: health tracking for silent-replug detection.
+    consecutive_failures: AtomicU32,
+    last_success: Mutex<Instant>,
 }
 
 impl FireflyConnection {
@@ -538,6 +552,8 @@ impl FireflyConnection {
             serial: Mutex::new(None),
             device_type: Mutex::new(FireflyDeviceType::Unknown),
             preferred_port,
+            consecutive_failures: AtomicU32::new(0),
+            last_success: Mutex::new(Instant::now()),
         }
     }
 
@@ -555,6 +571,8 @@ impl FireflyConnection {
             serial: Mutex::new(Some(serial)),
             device_type: Mutex::new(device_type),
             preferred_port,
+            consecutive_failures: AtomicU32::new(0),
+            last_success: Mutex::new(Instant::now()),
         }
     }
 
@@ -718,11 +736,48 @@ impl FireflyConnection {
         // adapters to self-exit after a single laggy frame. Keep the
         // surface clean: errors bubble to the caller; the bus handles
         // unplug.
-        if let Err(ref e) = result {
-            tracing::debug!(error = %e, "device command failed");
+        //
+        // COMPANION-0015: silent replug (kernel re-assigns the same
+        // /dev/ttyUSB* node without emitting detach) leaves this fd
+        // dead. Track consecutive failures and time-since-success so
+        // adapters can observe `is_lost()` and self-exit — the bus
+        // then runs a fresh identity dance against the cached port.
+        match &result {
+            Ok(_) => {
+                self.consecutive_failures.store(0, Ordering::Relaxed);
+                if let Ok(mut t) = self.last_success.lock() {
+                    *t = Instant::now();
+                }
+            }
+            Err(e) => {
+                self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+                tracing::debug!(error = %e, "device command failed");
+            }
         }
 
         result
+    }
+
+    /// True when the connection appears stale enough that adapters
+    /// should self-exit and let the bus re-identify the port.
+    ///
+    /// Both gates must be crossed: ≥ `LOST_FAILURE_THRESHOLD` consecutive
+    /// failures AND no successful I/O for ≥ `LOST_DURATION`. See
+    /// COMPANION-0015.
+    pub fn is_lost(&self) -> bool {
+        if self.consecutive_failures.load(Ordering::Relaxed) < LOST_FAILURE_THRESHOLD {
+            return false;
+        }
+        self.last_success
+            .lock()
+            .ok()
+            .map(|t| t.elapsed() >= LOST_DURATION)
+            .unwrap_or(false)
+    }
+
+    /// Port name this connection was opened against, for diagnostics.
+    pub fn port_name(&self) -> Option<String> {
+        self.preferred_port.clone()
     }
 }
 

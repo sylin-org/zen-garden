@@ -246,9 +246,23 @@ impl Adapter for OledV1Adapter {
                 }
             }
 
+            let mut health = tokio::time::interval(std::time::Duration::from_secs(5));
+            health.tick().await; // consume immediate tick
+
             loop {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
+                    _ = health.tick() => {
+                        // COMPANION-0015: detect silent replug (fd alive,
+                        // device gone). Self-exit → bus re-identifies.
+                        if connection.is_lost() {
+                            tracing::warn!(
+                                port = ?connection.port_name(),
+                                "connection appears lost — self-exiting for re-identification"
+                            );
+                            break;
+                        }
+                    }
                     maybe = events.recv() => match maybe {
                         Some(event) => {
                             // Device lifecycle is a bus concern; we exit

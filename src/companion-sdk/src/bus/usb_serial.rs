@@ -118,6 +118,21 @@ impl UsbSerialEnumerator {
     pub fn tracked_count(&self) -> usize {
         self.known.lock().unwrap().len()
     }
+
+    /// Snapshot of currently-tracked ports that pass the class filter.
+    /// Used by the bus to retry unowned ports on subsequent ticks —
+    /// an attach delta fires only once per (port, scan) transition, so
+    /// a port whose initial identity probe fails would otherwise be
+    /// abandoned. Backoff-gated retry is the bus's responsibility;
+    /// this method just exposes the candidate set.
+    pub fn tracked_ports(&self) -> Vec<UsbSerialPort> {
+        let known = self.known.lock().unwrap();
+        known
+            .values()
+            .filter(|p| self.filter.matches_usb(p.vid, p.pid))
+            .cloned()
+            .collect()
+    }
 }
 
 fn extract_usb_ports(ports: &[serialport::SerialPortInfo]) -> Vec<UsbSerialPort> {

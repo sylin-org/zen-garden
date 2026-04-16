@@ -230,11 +230,34 @@ impl DeviceBus {
             }
         };
 
+        if !delta.attached.is_empty() || !delta.detached.is_empty() {
+            tracing::debug!(
+                attached = delta.attached.len(),
+                detached = delta.detached.len(),
+                tracked = self.enumerator.tracked_count(),
+                owned = self.owned_count(),
+                "bus tick delta"
+            );
+        }
+
         for handle in delta.detached {
             self.handle_detach(handle).await;
         }
 
-        for port in delta.attached {
+        // Retry every currently-tracked port we don't own. `attached`
+        // fires only once per transition; identity-probe failures (ESP
+        // not yet booted post-replug, serial line noise, etc.) must be
+        // retried on subsequent ticks or the port is silently
+        // abandoned. Backoff gates the retry cadence so a genuinely
+        // broken port doesn't get hammered.
+        let owned_handles: std::collections::HashSet<String> = {
+            let owned = self.owned.lock().unwrap();
+            owned.keys().map(|h| h.as_str().to_string()).collect()
+        };
+        for port in self.enumerator.tracked_ports() {
+            if owned_handles.contains(&port.port_name) {
+                continue;
+            }
             if !self.backoff.is_eligible(&port.port_name) {
                 continue;
             }
@@ -291,6 +314,12 @@ impl DeviceBus {
                     "identity protocols returned malformed; backing off"
                 );
             } else {
+                tracing::debug!(
+                    port = %port_name,
+                    vid = ?device.vid,
+                    pid = ?device.pid,
+                    "no identity protocol claimed device; will retry after backoff"
+                );
                 let _ = self.pulse.ingest(Event::new(DeviceForeign {
                     port: port_name.clone(),
                     vid: device.vid,
@@ -305,6 +334,11 @@ impl DeviceBus {
         // Guard against missing `device_id`. Descriptor parsed but no
         // identity means the firmware is running without provisioning.
         if id.device_id.is_empty() {
+            tracing::debug!(
+                port = %port_name,
+                ecosystem = %id.ecosystem,
+                "identity parsed but device_id empty; will retry after backoff"
+            );
             let _ = self.pulse.ingest(Event::new(DeviceUnprovisioned {
                 port: port_name.clone(),
                 ecosystem: id.ecosystem.clone(),
@@ -343,6 +377,11 @@ impl DeviceBus {
                 self.spawn_owned(&reg, device, port.clone(), opened, &id).await;
             }
             ClaimOutcome::Unmatched => {
+                tracing::debug!(
+                    port = %port_name,
+                    device_id = %id.device_id,
+                    "no registration matched device; will retry after backoff"
+                );
                 let _ = self.pulse.ingest(Event::new(DeviceUnclaimed {
                     port: port_name.clone(),
                     device_id: id.device_id.clone(),

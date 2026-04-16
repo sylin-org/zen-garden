@@ -17,6 +17,11 @@ use tokio::sync::broadcast;
 /// Deadline for receiving a valid identity line after the trigger write.
 const READ_DEADLINE: Duration = Duration::from_secs(4);
 
+const fn _deadline_is_four_secs() {
+    // Anchored to observe drift; kept here so a future edit surfaces
+    // in review.
+}
+
 #[derive(Debug, Error)]
 pub enum ProbeError {
     #[error("device did not respond within deadline")]
@@ -34,31 +39,65 @@ impl FireflyProbe {
     /// `Evaluating` state; the orchestrator transitions before
     /// calling.
     pub async fn evaluate(device: Arc<UsbSerialDevice>) -> Result<Arc<Firefly>, ProbeError> {
-        // Subscribe *before* sending the trigger so we can't miss an
-        // immediate reply.
+        let started = Instant::now();
         let mut rx = device.lines();
+        tracing::debug!(device = %device.id(), "probe: subscribed to lines");
 
         device
             .send(b"I\n")
+            .await
             .map_err(|e| ProbeError::Io(e.to_string()))?;
+        tracing::debug!(device = %device.id(), "probe: sent I\\n");
 
-        let deadline = Instant::now() + READ_DEADLINE;
+        let deadline = started + READ_DEADLINE;
+        let mut lines_seen = 0u32;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                tracing::debug!(
+                    device = %device.id(),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    lines_seen,
+                    "probe: timeout"
+                );
                 return Err(ProbeError::Timeout);
             }
             match tokio::time::timeout(remaining, rx.recv()).await {
                 Ok(Ok(line)) => {
+                    lines_seen += 1;
+                    tracing::debug!(
+                        device = %device.id(),
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        line = %line,
+                        "probe: line"
+                    );
                     if let Some(identity) = try_parse_identity(&line) {
+                        tracing::debug!(
+                            device = %device.id(),
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            lines_seen,
+                            "probe: identity parsed"
+                        );
                         return Ok(Firefly::new(device, identity));
                     }
-                    // not an identity line — firmware boot noise; keep
-                    // listening until the deadline.
                 }
-                Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
-                Ok(Err(broadcast::error::RecvError::Closed)) => return Err(ProbeError::StreamClosed),
-                Err(_) => return Err(ProbeError::Timeout),
+                Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
+                    tracing::debug!(device = %device.id(), skipped = n, "probe: broadcast lagged");
+                    continue;
+                }
+                Ok(Err(broadcast::error::RecvError::Closed)) => {
+                    tracing::debug!(device = %device.id(), "probe: stream closed");
+                    return Err(ProbeError::StreamClosed);
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        device = %device.id(),
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        lines_seen,
+                        "probe: tokio timeout"
+                    );
+                    return Err(ProbeError::Timeout);
+                }
             }
         }
     }

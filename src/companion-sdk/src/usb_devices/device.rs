@@ -1,45 +1,46 @@
-//! [`UsbSerialDevice`] — the core entity of the USB devices domain.
+//! [`UsbSerialDevice`] — owns its port via a single driver task.
 //!
-//! Owns the serial fd, spawns a blocking reader task that parses
-//! incoming bytes into lines, and exposes:
+//! One serial port, one thread, one work queue. Writes enter the
+//! queue and are executed by the driver; reads happen in the same
+//! driver between queue drains and are broadcast as lines. No
+//! mutex, no split fds, no contention. Callers hand in a write +
+//! optional ack receiver; the driver does the work and replies.
 //!
-//! - [`UsbSerialDevice::send`] — synchronous write (holds a short lock).
+//! The entity exposes:
+//!
+//! - [`UsbSerialDevice::send`] — async, enqueues a write and awaits
+//!   the driver's ack.
 //! - [`UsbSerialDevice::lines`] — `broadcast::Receiver<String>` of
-//!   complete lines parsed by the reader.
-//! - [`UsbSerialDevice::state_changes`] — `watch::Receiver<DeviceState>`
-//!   for lifecycle observation.
+//!   complete lines the driver has read.
+//! - [`UsbSerialDevice::state_changes`] — `watch::Receiver<DeviceState>`.
 //! - [`UsbSerialDevice::begin_evaluation`], [`accept`], [`reject`],
 //!   [`dispose`] — state transitions.
-//!
-//! Instances are handed out as `Arc<UsbSerialDevice>`; callers hold
-//! their reference permanently for the device's lifetime.
 
 use super::state::{DeviceState, StateError};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{Read, Write};
+use std::sync::mpsc as stdmpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 const LINES_BROADCAST_CAPACITY: usize = 64;
-const READ_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const READ_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_LINE_LEN: usize = 8192;
 /// Sustained-EOF reads on a dangling Linux fd before self-dispose.
 const MAX_ZERO_READS: u32 = 100;
+/// Driver queue depth. Commands beyond this block the `send` caller
+/// (backpressure). Small so we feel it in tests if the driver stalls.
+const QUEUE_DEPTH: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Value objects
 // ---------------------------------------------------------------------------
 
-/// Stable identity for a USB serial device. Preference at detection:
-/// 1. `usb:{serial}:{vid:04x}:{pid:04x}` if the device exposes a
-///    USB serial number — survives replug to any port.
-/// 2. `sys:{syspath}` — stable across replug to the same port.
-/// 3. `port:{name}` — last-resort fallback.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DeviceId(String);
 
@@ -58,7 +59,6 @@ impl fmt::Display for DeviceId {
     }
 }
 
-/// OS-level port handle (`/dev/ttyUSB0`, `COM5`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PortPath(String);
 
@@ -77,7 +77,6 @@ impl fmt::Display for PortPath {
     }
 }
 
-/// USB-level descriptor, set at attach time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsbDescriptor {
     pub id: DeviceId,
@@ -89,29 +88,38 @@ pub struct UsbDescriptor {
 }
 
 // ---------------------------------------------------------------------------
+// Driver command
+// ---------------------------------------------------------------------------
+
+/// One unit of work for the driver task.
+enum DriverCommand {
+    /// Write bytes to the port, then flush. Ack fires with the result.
+    Write {
+        bytes: Vec<u8>,
+        ack: oneshot::Sender<Result<()>>,
+    },
+}
+
+// ---------------------------------------------------------------------------
 // UsbSerialDevice
 // ---------------------------------------------------------------------------
 
-/// A USB serial device owned by the registry. The entity holds its
-/// fd, its reader task, and its state; references flow to orchestrator,
-/// wrapper entities (e.g. `Firefly`), and adapters via `Arc`.
 pub struct UsbSerialDevice {
     descriptor: UsbDescriptor,
-    port: Mutex<Option<Box<dyn serialport::SerialPort + Send>>>,
+    queue: stdmpsc::SyncSender<DriverCommand>,
     state_tx: watch::Sender<DeviceState>,
     lines_tx: broadcast::Sender<String>,
-    reader: Mutex<Option<JoinHandle<()>>>,
+    driver: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl UsbSerialDevice {
-    /// Open the OS port and construct an entity. Runs the blocking
-    /// open + stabilization delay on a worker thread. Spawns the
-    /// reader task before returning. Initial state is [`DeviceState::New`].
+    /// Open the OS port and construct an entity. Spawns the driver
+    /// task before returning. Initial state is [`DeviceState::New`].
     pub async fn open(descriptor: UsbDescriptor, baud: u32) -> Result<Arc<Self>> {
         let port_name = descriptor.port.0.clone();
         let port = tokio::task::spawn_blocking(move || {
             serialport::new(&port_name, baud)
-                .timeout(Duration::from_millis(2500))
+                .timeout(READ_POLL_INTERVAL)
                 .data_bits(serialport::DataBits::Eight)
                 .stop_bits(serialport::StopBits::One)
                 .parity(serialport::Parity::None)
@@ -122,24 +130,24 @@ impl UsbSerialDevice {
         .await
         .map_err(|e| anyhow!("spawn_blocking join: {e}"))??;
 
-        // ESP devices auto-reset on open; give the firmware time to
-        // boot before we start reading. Handled here so every
-        // downstream reader sees a stable stream.
+        // ESP devices auto-reset on open; wait for boot before the
+        // driver starts reading.
         tokio::time::sleep(Duration::from_millis(2500)).await;
 
         let (state_tx, _) = watch::channel(DeviceState::New);
         let (lines_tx, _) = broadcast::channel(LINES_BROADCAST_CAPACITY);
+        let (queue_tx, queue_rx) = stdmpsc::sync_channel(QUEUE_DEPTH);
 
         let device = Arc::new(Self {
             descriptor,
-            port: Mutex::new(Some(port)),
+            queue: queue_tx,
             state_tx,
             lines_tx,
-            reader: Mutex::new(None),
+            driver: Mutex::new(None),
         });
 
-        let reader = spawn_reader(Arc::clone(&device));
-        *device.reader.lock().unwrap() = Some(reader);
+        let driver_handle = spawn_driver(Arc::clone(&device), port, queue_rx);
+        *device.driver.lock().unwrap() = Some(driver_handle);
 
         Ok(device)
     }
@@ -168,34 +176,29 @@ impl UsbSerialDevice {
         self.lines_tx.subscribe()
     }
 
-    /// Write bytes to the device. Returns an error if the device is
-    /// disposed or the write fails.
-    pub fn send(&self, bytes: &[u8]) -> Result<()> {
-        let mut guard = self
-            .port
-            .lock()
-            .map_err(|_| anyhow!("port mutex poisoned"))?;
-        let port = guard.as_mut().ok_or_else(|| anyhow!("device disposed"))?;
-        port.write_all(bytes).map_err(|e| anyhow!("write: {e}"))?;
-        port.flush().map_err(|e| anyhow!("flush: {e}"))?;
-        Ok(())
+    /// Enqueue a write; await the driver's ack.
+    pub async fn send(&self, bytes: &[u8]) -> Result<()> {
+        let (ack_tx, ack_rx) = oneshot::channel();
+        self.queue
+            .send(DriverCommand::Write {
+                bytes: bytes.to_vec(),
+                ack: ack_tx,
+            })
+            .map_err(|_| anyhow!("driver queue closed (device disposed)"))?;
+        ack_rx
+            .await
+            .map_err(|_| anyhow!("driver dropped write without ack"))?
     }
 
-    /// Transition New → Evaluating. Called by the orchestrator
-    /// before running identity probes.
     pub fn begin_evaluation(&self) -> std::result::Result<(), StateError> {
         self.transition(|s| s.can_begin_evaluation(), DeviceState::Evaluating, "Evaluating")
     }
 
-    /// Transition Evaluating → Accepted(kind). Called after a
-    /// successful probe.
     pub fn accept(&self, kind: impl Into<String>) -> std::result::Result<(), StateError> {
         let next = DeviceState::Accepted { kind: kind.into() };
         self.transition(|s| s.can_accept(), next, "Accepted")
     }
 
-    /// Transition Evaluating|New → Rejected(reason). Called after a
-    /// failed probe or an unmatched device.
     pub fn reject(&self, reason: impl Into<String>) -> std::result::Result<(), StateError> {
         let next = DeviceState::Rejected {
             reason: reason.into(),
@@ -203,20 +206,13 @@ impl UsbSerialDevice {
         self.transition(|s| s.can_reject(), next, "Rejected")
     }
 
-    /// Transition any → Disposed. Idempotent. Closes the fd and
-    /// publishes the state change; the reader task observes and exits.
+    /// Transition to Disposed. Idempotent. The driver task observes
+    /// this on its next loop iteration and exits, closing the port.
     pub fn dispose(&self) {
-        let mut state = self.state_tx.borrow().clone();
-        if state.is_disposed() {
+        if self.state_tx.borrow().is_disposed() {
             return;
         }
-        state = DeviceState::Disposed;
-        let _ = self.state_tx.send(state);
-        // Close the fd synchronously so an outstanding reader.read()
-        // unblocks promptly.
-        if let Ok(mut guard) = self.port.lock() {
-            *guard = None;
-        }
+        self.state_tx.send_replace(DeviceState::Disposed);
         info!(device = %self.descriptor.id, "device disposed");
     }
 
@@ -236,14 +232,14 @@ impl UsbSerialDevice {
                 to: label,
             });
         }
-        let _ = self.state_tx.send(next);
+        self.state_tx.send_replace(next);
         Ok(())
     }
 }
 
 impl Drop for UsbSerialDevice {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.reader.lock()
+        if let Ok(mut guard) = self.driver.lock()
             && let Some(handle) = guard.take()
         {
             handle.abort();
@@ -262,55 +258,60 @@ impl fmt::Debug for UsbSerialDevice {
 }
 
 // ---------------------------------------------------------------------------
-// Reader task
+// Driver task — single owner of the port
 // ---------------------------------------------------------------------------
 
-fn spawn_reader(device: Arc<UsbSerialDevice>) -> JoinHandle<()> {
-    tokio::task::spawn_blocking(move || reader_loop(device))
+fn spawn_driver(
+    device: Arc<UsbSerialDevice>,
+    port: Box<dyn serialport::SerialPort + Send>,
+    queue: stdmpsc::Receiver<DriverCommand>,
+) -> JoinHandle<()> {
+    tokio::task::spawn_blocking(move || driver_loop(device, port, queue))
 }
 
-fn reader_loop(device: Arc<UsbSerialDevice>) {
+fn driver_loop(
+    device: Arc<UsbSerialDevice>,
+    mut port: Box<dyn serialport::SerialPort + Send>,
+    queue: stdmpsc::Receiver<DriverCommand>,
+) {
+    let port_name = device.descriptor.port.clone();
     let mut line_buf: Vec<u8> = Vec::with_capacity(512);
     let mut scratch = [0u8; 256];
     let mut zero_reads: u32 = 0;
-    let port_name = device.descriptor.port.clone();
 
     loop {
         if device.state().is_disposed() {
             break;
         }
 
-        // Hold the lock only for the duration of one read attempt so
-        // `send()` callers aren't starved.
-        let read_outcome: ReadOutcome = {
-            let mut guard = match device.port.lock() {
-                Ok(g) => g,
-                Err(_) => return,
-            };
-            match guard.as_mut() {
-                None => ReadOutcome::Disposed,
-                Some(port) => {
-                    let _ = port.set_timeout(READ_POLL_INTERVAL);
-                    match port.read(&mut scratch) {
-                        Ok(0) => ReadOutcome::Zero,
-                        Ok(n) => ReadOutcome::Bytes(n),
-                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => ReadOutcome::Timeout,
-                        Err(e) => ReadOutcome::IoError(e.to_string()),
+        // Drain every queued write before reading. Writes ack as they
+        // complete, so callers block no longer than one read-poll
+        // interval plus their own write time.
+        loop {
+            match queue.try_recv() {
+                Ok(DriverCommand::Write { bytes, ack }) => {
+                    let result = (|| {
+                        port.write_all(&bytes)?;
+                        port.flush()
+                    })()
+                    .map_err(|e| anyhow!("{e}"));
+                    if let Err(ref e) = result {
+                        warn!(port = %port_name, error = %e, "driver write failed");
                     }
+                    let _ = ack.send(result);
+                }
+                Err(stdmpsc::TryRecvError::Empty) => break,
+                Err(stdmpsc::TryRecvError::Disconnected) => {
+                    // All senders dropped — device is being torn down.
+                    device.dispose();
+                    return;
                 }
             }
-        };
+        }
 
-        match read_outcome {
-            ReadOutcome::Bytes(n) => {
-                zero_reads = 0;
-                line_buf.extend_from_slice(&scratch[..n]);
-                drain_lines(&mut line_buf, &device.lines_tx);
-                if line_buf.len() > MAX_LINE_LEN {
-                    line_buf.clear();
-                }
-            }
-            ReadOutcome::Zero => {
+        // Poll for bytes.
+        match port.read(&mut scratch) {
+            Ok(0) => {
                 zero_reads += 1;
                 if zero_reads > MAX_ZERO_READS {
                     info!(port = %port_name, "sustained EOF; self-disposing");
@@ -319,29 +320,26 @@ fn reader_loop(device: Arc<UsbSerialDevice>) {
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            ReadOutcome::Timeout => {
-                // No data yet; this is normal polling, not an error.
+            Ok(n) => {
+                zero_reads = 0;
+                line_buf.extend_from_slice(&scratch[..n]);
+                drain_lines(&mut line_buf, &device.lines_tx);
+                if line_buf.len() > MAX_LINE_LEN {
+                    line_buf.clear();
+                }
             }
-            ReadOutcome::IoError(msg) => {
-                warn!(port = %port_name, error = %msg, "reader io error; self-disposing");
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                // Polling heartbeat.
+            }
+            Err(e) => {
+                warn!(port = %port_name, error = %e, "driver read failed; self-disposing");
                 device.dispose();
-                break;
-            }
-            ReadOutcome::Disposed => {
                 break;
             }
         }
     }
 
-    debug!(port = %port_name, "reader loop exiting");
-}
-
-enum ReadOutcome {
-    Bytes(usize),
-    Zero,
-    Timeout,
-    IoError(String),
-    Disposed,
+    debug!(port = %port_name, "driver loop exiting");
 }
 
 fn drain_lines(buf: &mut Vec<u8>, tx: &broadcast::Sender<String>) {

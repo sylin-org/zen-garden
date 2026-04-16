@@ -204,13 +204,13 @@ async fn handle_event(
         }
         "core.stone.tended" => {
             if event.payload::<StoneTendedPayload>().is_some() {
-                let _ = firefly.oled_wipe_in("ZEN GARDEN", "TENDING");
+                let _ = firefly.oled_wipe_in("ZEN GARDEN", "TENDING").await;
             }
         }
         "core.service.started" => {
             if let Some(p) = event.payload::<ServiceStartedPayload>() {
                 let label = p.service.to_uppercase();
-                let _ = firefly.oled_wipe_in(&label, "STARTED");
+                let _ = firefly.oled_wipe_in(&label, "STARTED").await;
                 let snapshot = {
                     let mut s = state.lock().await;
                     s.offering_count = s.offering_count.saturating_add(1);
@@ -222,7 +222,7 @@ async fn handle_event(
         "core.service.stopped" => {
             if let Some(p) = event.payload::<ServiceStoppedPayload>() {
                 let label = p.service.to_uppercase();
-                let _ = firefly.oled_wipe_out(&label, "STOPPED");
+                let _ = firefly.oled_wipe_out(&label, "STOPPED").await;
                 let snapshot = {
                     let mut s = state.lock().await;
                     s.offering_count = s.offering_count.saturating_sub(1);
@@ -234,7 +234,7 @@ async fn handle_event(
         "core.storage.connected" => {
             if event.payload::<StorageConnectedPayload>().is_some() {
                 state.lock().await.has_seed_bank = true;
-                let _ = firefly.oled_wipe_in("STORAGE", "CONNECTED");
+                let _ = firefly.oled_wipe_in("STORAGE", "CONNECTED").await;
                 let snapshot = state.lock().await.clone();
                 push_dashboard(firefly, &snapshot).await;
             }
@@ -242,7 +242,7 @@ async fn handle_event(
         "core.storage.removed" => {
             if event.payload::<StorageRemovedPayload>().is_some() {
                 state.lock().await.has_seed_bank = false;
-                let _ = firefly.oled_wipe_out("SEED BANK", "REMOVED");
+                let _ = firefly.oled_wipe_out("SEED BANK", "REMOVED").await;
                 let snapshot = state.lock().await.clone();
                 push_dashboard(firefly, &snapshot).await;
             }

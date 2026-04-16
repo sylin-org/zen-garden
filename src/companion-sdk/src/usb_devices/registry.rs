@@ -76,11 +76,10 @@ impl UsbRegistry {
                 _ = shutdown.cancelled() => break,
                 next = monitor.next() => match next {
                     Some(MonitorEvent::Added(descriptor)) => {
-                        let this = Arc::clone(&self);
-                        // Opening the port is async (blocking syscall
-                        // on a worker thread). Fan out so one slow
-                        // open doesn't stall other events.
-                        tokio::spawn(async move { this.handle_added(descriptor).await; });
+                        // Serialize inline so a second udev ADD for the
+                        // same device can't race past the `contains_key`
+                        // check before the first open completes.
+                        self.handle_added(descriptor).await;
                     }
                     Some(MonitorEvent::Removed(id)) => {
                         self.handle_removed(id);
@@ -104,7 +103,7 @@ impl UsbRegistry {
         info!("UsbRegistry stopped");
     }
 
-    async fn handle_added(self: Arc<Self>, descriptor: UsbDescriptor) {
+    async fn handle_added(&self, descriptor: UsbDescriptor) {
         // If an id is already present (noisy re-ADD from udev or a
         // stuck-Rejected carry-over), skip. The disposal path is the
         // only way a device leaves the registry.

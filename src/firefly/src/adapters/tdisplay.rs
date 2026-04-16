@@ -235,7 +235,7 @@ async fn handle_event(
         "core.stone.tended" => {
             if let Some(p) = event.payload::<StoneTendedPayload>() {
                 let by = if p.by.is_empty() { "unknown" } else { p.by.as_str() };
-                let _ = firefly.tdisplay_tended(by, &p.from);
+                let _ = firefly.tdisplay_tended(by, &p.from).await;
             }
         }
         "core.service.started" => {
@@ -244,7 +244,7 @@ async fn handle_event(
                     let mut s = state.lock().await;
                     s.offerings = s.offerings.saturating_add(1);
                 }
-                let _ = firefly.tdisplay_service_started(&p.service, "healthy");
+                let _ = firefly.tdisplay_service_started(&p.service, "healthy").await;
             }
         }
         "core.service.stopped" => {
@@ -253,17 +253,17 @@ async fn handle_event(
                     let mut s = state.lock().await;
                     s.offerings = s.offerings.saturating_sub(1);
                 }
-                let _ = firefly.tdisplay_service_stopped(&p.service);
+                let _ = firefly.tdisplay_service_stopped(&p.service).await;
             }
         }
         "core.storage.connected" => {
             if let Some(p) = event.payload::<StorageConnectedPayload>() {
-                let _ = firefly.tdisplay_seed_bank_detected(&p.name, 0, p.capacity_gb);
+                let _ = firefly.tdisplay_seed_bank_detected(&p.name, 0, p.capacity_gb).await;
             }
         }
         "core.storage.removed" => {
             if event.payload::<StorageRemovedPayload>().is_some() {
-                let _ = firefly.tdisplay_seed_bank_removed();
+                let _ = firefly.tdisplay_seed_bank_removed().await;
             }
         }
         _ => {}

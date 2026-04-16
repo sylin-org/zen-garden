@@ -184,27 +184,27 @@ async fn handle_event(
         }
         "core.stone.tended" => {
             if event.payload::<StoneTendedPayload>().is_some() {
-                let _ = firefly.oled_wipe_in("ZEN GARDEN", "TENDING");
+                let _ = firefly.oled_wipe_in("ZEN GARDEN", "TENDING").await;
             }
         }
         "core.service.started" => {
             if let Some(p) = event.payload::<ServiceStartedPayload>() {
-                let _ = firefly.oled_wipe_in(&p.service.to_uppercase(), "STARTED");
+                let _ = firefly.oled_wipe_in(&p.service.to_uppercase(), "STARTED").await;
             }
         }
         "core.service.stopped" => {
             if let Some(p) = event.payload::<ServiceStoppedPayload>() {
-                let _ = firefly.oled_wipe_out(&p.service.to_uppercase(), "STOPPED");
+                let _ = firefly.oled_wipe_out(&p.service.to_uppercase(), "STOPPED").await;
             }
         }
         "core.storage.connected" => {
             if event.payload::<StorageConnectedPayload>().is_some() {
-                let _ = firefly.oled_wipe_in("STORAGE", "CONNECTED");
+                let _ = firefly.oled_wipe_in("STORAGE", "CONNECTED").await;
             }
         }
         "core.storage.removed" => {
             if event.payload::<StorageRemovedPayload>().is_some() {
-                let _ = firefly.oled_wipe_out("SEED BANK", "REMOVED");
+                let _ = firefly.oled_wipe_out("SEED BANK", "REMOVED").await;
             }
         }
         _ => {}

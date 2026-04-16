@@ -150,11 +150,11 @@ impl Firefly {
 
     // ---- Low-level command helpers -------------------------------------
 
-    /// Send a command without awaiting a response. Useful for
-    /// fire-and-forget animations the firmware won't ACK.
-    pub fn send_no_wait(&self, command: &str) -> Result<()> {
+    /// Send a command without awaiting a response. Returns as soon
+    /// as the driver has written + flushed the bytes.
+    pub async fn send_no_wait(&self, command: &str) -> Result<()> {
         let bytes = format!("{}\n", command);
-        self.device.send(bytes.as_bytes())
+        self.device.send(bytes.as_bytes()).await
     }
 
     /// Send a command and await the next line as response. Subscribes
@@ -162,7 +162,7 @@ impl Firefly {
     /// reply to a TOCTOU race.
     pub async fn send_await(&self, command: &str) -> Result<String> {
         let mut rx = self.device.lines();
-        self.send_no_wait(command)?;
+        self.send_no_wait(command).await?;
         let deadline = Instant::now() + REPLY_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -232,12 +232,12 @@ impl Firefly {
             .await
     }
 
-    pub fn oled_wipe_in(&self, line1: &str, line2: &str) -> Result<()> {
-        self.send_no_wait(&format!("WIPE-IN,{},{}", line1, line2))
+    pub async fn oled_wipe_in(&self, line1: &str, line2: &str) -> Result<()> {
+        self.send_no_wait(&format!("WIPE-IN,{},{}", line1, line2)).await
     }
 
-    pub fn oled_wipe_out(&self, line1: &str, line2: &str) -> Result<()> {
-        self.send_no_wait(&format!("WIPE-OUT,{},{}", line1, line2))
+    pub async fn oled_wipe_out(&self, line1: &str, line2: &str) -> Result<()> {
+        self.send_no_wait(&format!("WIPE-OUT,{},{}", line1, line2)).await
     }
 
     // ---- OLED v2 dashboard --------------------------------------------
@@ -300,29 +300,29 @@ impl Firefly {
         self.send_await(&format!("H,{}", health)).await
     }
 
-    pub fn tdisplay_service_started(&self, name: &str, health: &str) -> Result<()> {
+    pub async fn tdisplay_service_started(&self, name: &str, health: &str) -> Result<()> {
         let health_char = match health {
             "healthy" => "h",
             "unhealthy" | "withering" => "w",
             _ => "h",
         };
-        self.send_no_wait(&format!("+,{},{}", name, health_char))
+        self.send_no_wait(&format!("+,{},{}", name, health_char)).await
     }
 
-    pub fn tdisplay_service_stopped(&self, name: &str) -> Result<()> {
-        self.send_no_wait(&format!("-,{}", name))
+    pub async fn tdisplay_service_stopped(&self, name: &str) -> Result<()> {
+        self.send_no_wait(&format!("-,{}", name)).await
     }
 
-    pub fn tdisplay_tended(&self, client: &str, host: &str) -> Result<()> {
-        self.send_no_wait(&format!("T,{},{}", client, host))
+    pub async fn tdisplay_tended(&self, client: &str, host: &str) -> Result<()> {
+        self.send_no_wait(&format!("T,{},{}", client, host)).await
     }
 
-    pub fn tdisplay_seed_bank_detected(&self, name: &str, used: u64, total: u64) -> Result<()> {
-        self.send_no_wait(&format!("SD,{},{},{}", name, used, total))
+    pub async fn tdisplay_seed_bank_detected(&self, name: &str, used: u64, total: u64) -> Result<()> {
+        self.send_no_wait(&format!("SD,{},{},{}", name, used, total)).await
     }
 
-    pub fn tdisplay_seed_bank_removed(&self) -> Result<()> {
-        self.send_no_wait("SR")
+    pub async fn tdisplay_seed_bank_removed(&self) -> Result<()> {
+        self.send_no_wait("SR").await
     }
 }
 

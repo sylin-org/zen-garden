@@ -10,7 +10,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tokio::sync::RwLock;
 
-use crate::serial::FireflyConnection;
+use crate::firefly::{Firefly, FireflyKind};
 
 /// Default health label when none is available.
 pub const DEFAULT_HEALTH_LABEL: &str = "thriving";
@@ -55,7 +55,7 @@ const EDGE_PIXELS: [(u8, u8); 16] = [
     (0, 1), // left edge (excluding corners)
 ];
 
-/// Firefly lifecycle phase
+/// Sprite lifecycle phase
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
     FadeIn,
@@ -65,9 +65,11 @@ enum Phase {
     Dormant,
 }
 
-/// A single firefly pixel
+/// A single pixel-level animation sprite (the "firefly" of the matrix
+/// animation, renamed from `Firefly` to avoid collision with the
+/// domain entity in `crate::firefly`).
 #[derive(Debug, Clone)]
-struct Firefly {
+struct Sprite {
     x: u8,
     y: u8,
     color: (u8, u8, u8),
@@ -78,7 +80,7 @@ struct Firefly {
     phase_start: Instant,
 }
 
-impl Firefly {
+impl Sprite {
     fn new_at(x: u8, y: u8, color: (u8, u8, u8)) -> Self {
         Self {
             x,
@@ -372,9 +374,9 @@ impl Tempo {
 
 /// The animation engine
 pub struct AnimationEngine {
-    connection: Arc<FireflyConnection>,
+    firefly: Arc<Firefly>,
     context: Arc<RwLock<Animation>>,
-    fireflies: Vec<Firefly>,
+    sprites: Vec<Sprite>,
     last_spawn: Instant,
     /// Track which pixels are occupied (for spawning logic)
     occupied: [bool; TOTAL_PIXELS],
@@ -388,11 +390,11 @@ pub struct AnimationEngine {
 }
 
 impl AnimationEngine {
-    pub fn new(connection: Arc<FireflyConnection>, context: Arc<RwLock<Animation>>) -> Self {
+    pub fn new(firefly: Arc<Firefly>, context: Arc<RwLock<Animation>>) -> Self {
         Self {
-            connection,
+            firefly,
             context,
-            fireflies: Vec::new(),
+            sprites: Vec::new(),
             last_spawn: Instant::now(),
             occupied: [false; TOTAL_PIXELS],
             prev_lit: [false; TOTAL_PIXELS],
@@ -416,8 +418,7 @@ impl AnimationEngine {
             // Check if disabled - clear and wait
             if !ctx.enabled {
                 drop(ctx);
-                self.clear_all();
-                // Wait a bit before checking again
+                self.clear_all().await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
@@ -435,7 +436,7 @@ impl AnimationEngine {
 
                 // Handle override animation (one frame at a time)
                 if let Some(ref ov) = override_type {
-                    self.render_override_frame(ov);
+                    self.render_override_frame(ov).await;
                 }
 
                 // Advance swarm frame
@@ -447,7 +448,7 @@ impl AnimationEngine {
             } else {
                 // Transitioning from override back to baseline - clear for fresh start
                 if self.was_in_override {
-                    self.clear_all();
+                    self.clear_all().await;
                     self.reset_fireflies();
                     self.was_in_override = false;
                     self.swarm_frame = 0;
@@ -464,9 +465,8 @@ impl AnimationEngine {
 
     /// Update and render baseline firefly animation
     async fn update_baseline(&mut self) {
-        // The pixel animation is RP2040-Matrix only. T-Display and OLED manage
-        // their own display state; the host only pushes state updates via events.rs.
-        if self.connection.device_type() != crate::serial::FireflyDeviceType::Rp2040Matrix {
+        // Pixel animations only apply to the RP2040 matrix.
+        if self.firefly.kind != FireflyKind::Rp2040Matrix {
             return;
         }
 
@@ -478,21 +478,16 @@ impl AnimationEngine {
         let brightness = ctx.brightness;
         drop(ctx);
 
-        // Update existing fireflies
         self.update_fireflies(&tempo);
-
-        // Maybe spawn new firefly
         self.maybe_spawn_firefly(&tempo, has_seed_bank, has_services);
-
-        // Render to device with user brightness
-        self.render_fireflies(brightness);
+        self.render_fireflies(brightness).await;
     }
 
     /// Update firefly phases and progress
     fn update_fireflies(&mut self, tempo: &Tempo) {
         let now = Instant::now();
 
-        for firefly in &mut self.fireflies {
+        for firefly in &mut self.sprites {
             let elapsed = now.duration_since(firefly.phase_start);
             let phase_duration = match firefly.phase {
                 Phase::FadeIn => tempo.fade_in,
@@ -517,7 +512,7 @@ impl AnimationEngine {
         }
 
         // Remove dormant fireflies and free their positions
-        self.fireflies.retain(|f| {
+        self.sprites.retain(|f| {
             if f.phase == Phase::Dormant {
                 let idx = (f.y as usize) * GRID_SIZE as usize + (f.x as usize);
                 self.occupied[idx] = false;
@@ -536,7 +531,7 @@ impl AnimationEngine {
         }
 
         // Check concurrent limit
-        if self.fireflies.len() >= tempo.max_concurrent {
+        if self.sprites.len() >= tempo.max_concurrent {
             return;
         }
 
@@ -562,7 +557,7 @@ impl AnimationEngine {
         let color = self.pick_color(has_seed_bank, has_services);
 
         self.occupied[idx] = true;
-        self.fireflies.push(Firefly::new_at(x, y, color));
+        self.sprites.push(Sprite::new_at(x, y, color));
         self.last_spawn = Instant::now();
 
         tracing::trace!(x, y, "Spawned firefly");
@@ -592,111 +587,93 @@ impl AnimationEngine {
         WARM_WHITE
     }
 
-    /// Render current fireflies to device
-    fn render_fireflies(&mut self, brightness: u8) {
-        // Apply user brightness as a multiplier (0-100 -> 0.0-1.0)
+    /// Render current sprites to the device.
+    async fn render_fireflies(&mut self, brightness: u8) {
         let brightness_factor = brightness as f32 / 100.0;
 
-        // Build pixel buffer with brightness applied
         let mut pixels: [(u8, u8, u8); TOTAL_PIXELS] = [(0, 0, 0); TOTAL_PIXELS];
         let mut currently_lit = [false; TOTAL_PIXELS];
 
-        for firefly in &self.fireflies {
-            let idx = (firefly.y as usize) * GRID_SIZE as usize + (firefly.x as usize);
-            let (r, g, b) = firefly.current_rgb();
+        for sprite in &self.sprites {
+            let idx = (sprite.y as usize) * GRID_SIZE as usize + (sprite.x as usize);
+            let (r, g, b) = sprite.current_rgb();
             let adjusted = (
                 (r as f32 * brightness_factor) as u8,
                 (g as f32 * brightness_factor) as u8,
                 (b as f32 * brightness_factor) as u8,
             );
-            // Only consider it "lit" if brightness is noticeable
             if adjusted.0 > 2 || adjusted.1 > 2 || adjusted.2 > 2 {
                 pixels[idx] = adjusted;
                 currently_lit[idx] = true;
             }
         }
 
-        // Send to device
-        if let Err(e) = self.connection.with_device(|serial| {
-            // Clear pixels that were lit before but aren't now
-            for (idx, (&prev, &curr)) in self.prev_lit.iter().zip(currently_lit.iter()).enumerate()
-            {
-                if prev && !curr {
-                    let x = (idx % GRID_SIZE as usize) as u8;
-                    let y = (idx / GRID_SIZE as usize) as u8;
-                    serial.pixel(x, y, 0, 0, 0)?;
-                }
+        // Clear pixels that were lit before but aren't now.
+        for (idx, (&prev, &curr)) in self.prev_lit.iter().zip(currently_lit.iter()).enumerate() {
+            if prev && !curr {
+                let x = (idx % GRID_SIZE as usize) as u8;
+                let y = (idx / GRID_SIZE as usize) as u8;
+                let _ = self.firefly.pixel(x, y, 0, 0, 0).await;
             }
-            // Set currently lit pixels
-            for (idx, &(r, g, b)) in pixels.iter().enumerate() {
-                if currently_lit[idx] {
-                    let x = (idx % GRID_SIZE as usize) as u8;
-                    let y = (idx / GRID_SIZE as usize) as u8;
-                    serial.pixel(x, y, r, g, b)?;
-                }
+        }
+        // Set currently lit pixels.
+        for (idx, &(r, g, b)) in pixels.iter().enumerate() {
+            if currently_lit[idx] {
+                let x = (idx % GRID_SIZE as usize) as u8;
+                let y = (idx / GRID_SIZE as usize) as u8;
+                let _ = self.firefly.pixel(x, y, r, g, b).await;
             }
-            Ok(())
-        }) {
-            tracing::trace!(error = %e, "Failed to render fireflies");
         }
 
-        // Remember what's lit for next frame
         self.prev_lit = currently_lit;
     }
 
-    /// Render a single frame of override animation
-    fn render_override_frame(&mut self, override_type: &Override) {
-        // Override animations use RP2040-Matrix pixel/animate commands.
-        // T-Display and OLED handle their own visuals via events.rs.
-        if self.connection.device_type() != crate::serial::FireflyDeviceType::Rp2040Matrix {
+    /// Render a single frame of override animation.
+    async fn render_override_frame(&mut self, override_type: &Override) {
+        if self.firefly.kind != FireflyKind::Rp2040Matrix {
             return;
         }
         match override_type {
             Override::Tended => {
-                // Use firmware sparkle animation (only send once at start)
                 if self.swarm_frame == 0 {
-                    let _ = self
-                        .connection
-                        .with_device(|serial| serial.animate("sparkle"));
+                    let _ = self.firefly.animate("sparkle").await;
                 }
             }
             Override::HealthWarning => {
                 if self.swarm_frame == 0 {
-                    let _ = self
-                        .connection
-                        .with_device(|serial| serial.status("warning"));
+                    let _ = self.firefly.status("warning").await;
                 }
             }
             Override::HealthError => {
                 if self.swarm_frame == 0 {
-                    let _ = self.connection.with_device(|serial| serial.status("error"));
+                    let _ = self.firefly.status("error").await;
                 }
             }
             Override::ServiceStarted => {
                 if self.swarm_frame == 0 {
-                    let _ = self.connection.with_device(|serial| serial.fill(0, 180, 0));
+                    let _ = self.firefly.fill(0, 180, 0).await;
                 }
             }
             Override::ServiceStopped => {
                 // Brief dim then restore
                 if self.swarm_frame == 0 {
-                    let _ = self.connection.with_device(|serial| serial.brightness(20));
+                    let _ = self.firefly.brightness(20).await;
                 } else if self.swarm_frame == 15 {
                     // ~500ms at 30fps
-                    let _ = self.connection.with_device(|serial| serial.brightness(50));
+                    let _ = self.firefly.brightness(50).await;
                 }
             }
             Override::StorageDetected => {
-                self.render_swarm_converge_frame();
+                self.render_swarm_converge_frame().await;
             }
             Override::StorageRemoved => {
-                self.render_swarm_disperse_frame();
+                self.render_swarm_disperse_frame().await;
             }
         }
     }
 
     /// Render one frame of converging swarm animation (storage connected)
-    fn render_swarm_converge_frame(&mut self) {
+    async fn render_swarm_converge_frame(&mut self) {
         let frame = self.swarm_frame;
         let total_frames = 60;
         let settle_start = 45;
@@ -706,7 +683,7 @@ impl AnimationEngine {
         }
 
         // Clear previous frame
-        let _ = self.connection.with_device(|serial| serial.clear());
+        let _ = self.firefly.clear().await;
 
         if frame < settle_start {
             // Phase 1: Swarm converging inward
@@ -730,15 +707,16 @@ impl AnimationEngine {
                     let brightness =
                         0.5 + 0.5 * ((frame as f32 * 0.3 + i as f32).sin() * 0.5 + 0.5);
                     let (r, g, b) = STORAGE_GREEN;
-                    let _ = self.connection.with_device(|serial| {
-                        serial.pixel(
+                    let _ = self
+                        .firefly
+                        .pixel(
                             x.round() as u8,
                             y.round() as u8,
                             (r as f32 * brightness) as u8,
                             (g as f32 * brightness) as u8,
                             (b as f32 * brightness) as u8,
                         )
-                    });
+                        .await;
                 }
             }
         } else {
@@ -755,34 +733,35 @@ impl AnimationEngine {
                     let intensity = pulse * (1.0 - dist * 0.3);
 
                     let (r, g, b) = STORAGE_GREEN;
-                    let _ = self.connection.with_device(|serial| {
-                        serial.pixel(
+                    let _ = self
+                        .firefly
+                        .pixel(
                             px,
                             py,
                             (r as f32 * intensity) as u8,
                             (g as f32 * intensity) as u8,
                             (b as f32 * intensity) as u8,
                         )
-                    });
+                        .await;
                 }
             }
         }
     }
 
     /// Render one frame of dispersing swarm animation (storage removed)
-    fn render_swarm_disperse_frame(&mut self) {
+    async fn render_swarm_disperse_frame(&mut self) {
         let frame = self.swarm_frame;
         let total_frames = 45;
         let liftoff_frames = 15;
 
         if frame >= total_frames {
             // Final clear after animation
-            let _ = self.connection.with_device(|serial| serial.clear());
+            let _ = self.firefly.clear().await;
             return;
         }
 
         // Clear previous frame
-        let _ = self.connection.with_device(|serial| serial.clear());
+        let _ = self.firefly.clear().await;
 
         if frame < liftoff_frames {
             // Phase 1: Fireflies lifting off
@@ -790,15 +769,16 @@ impl AnimationEngine {
 
             let center_brightness = 1.0 - liftoff_progress * 0.5;
             let (r, g, b) = STORAGE_AMBER;
-            let _ = self.connection.with_device(|serial| {
-                serial.pixel(
+            let _ = self
+                .firefly
+                .pixel(
                     CENTER.0,
                     CENTER.1,
                     (r as f32 * center_brightness) as u8,
                     (g as f32 * center_brightness) as u8,
                     (b as f32 * center_brightness) as u8,
                 )
-            });
+                .await;
 
             let num_fireflies = (liftoff_progress * 8.0) as usize;
             for i in 0..num_fireflies {
@@ -810,9 +790,10 @@ impl AnimationEngine {
                 if (0.0..=4.0).contains(&x) && (0.0..=4.0).contains(&y) {
                     let flicker = !(frame + i * 7).is_multiple_of(3);
                     if flicker {
-                        let _ = self.connection.with_device(|serial| {
-                            serial.pixel(x.round() as u8, y.round() as u8, r, g, b)
-                        });
+                        let _ = self
+                            .firefly
+                            .pixel(x.round() as u8, y.round() as u8, r, g, b)
+                            .await;
                     }
                 }
             }
@@ -836,28 +817,29 @@ impl AnimationEngine {
 
                 if (0.0..=4.0).contains(&x) && (0.0..=4.0).contains(&y) && flicker && fade > 0.1 {
                     let (r, g, b) = STORAGE_AMBER;
-                    let _ = self.connection.with_device(|serial| {
-                        serial.pixel(
+                    let _ = self
+                        .firefly
+                        .pixel(
                             x.round() as u8,
                             y.round() as u8,
                             (r as f32 * fade) as u8,
                             (g as f32 * fade) as u8,
                             (b as f32 * fade) as u8,
                         )
-                    });
+                        .await;
                 }
             }
         }
     }
 
-    /// Clear all pixels
-    fn clear_all(&self) {
-        let _ = self.connection.with_device(|serial| serial.clear());
+    /// Clear all pixels.
+    async fn clear_all(&self) {
+        let _ = self.firefly.clear().await;
     }
 
     /// Reset firefly state for fresh start after override
     fn reset_fireflies(&mut self) {
-        self.fireflies.clear();
+        self.sprites.clear();
         self.occupied = [false; TOTAL_PIXELS];
         self.prev_lit = [false; TOTAL_PIXELS];
         self.last_spawn = Instant::now();
@@ -866,7 +848,7 @@ impl AnimationEngine {
 
 /// Start the animation engine as a background task
 pub fn start_animation(
-    connection: Arc<FireflyConnection>,
+    connection: Arc<Firefly>,
     context: Arc<RwLock<Animation>>,
 ) -> tokio::task::JoinHandle<()> {
     let engine = AnimationEngine::new(connection, context);

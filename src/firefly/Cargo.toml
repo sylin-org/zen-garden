@@ -29,8 +29,9 @@ clap = { workspace = true, features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true
 
-# Serial port communication
+# Serial port communication (only for `ports` subcommand diagnostic)
 serialport = "4.3"
+thiserror = "2"
 
 # Random for firefly animation
 rand = "0.9"

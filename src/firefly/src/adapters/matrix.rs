@@ -1,43 +1,23 @@
-// Legacy factory (MatrixFactory) retained while the migration from
-// factory-based to bus-based discovery settles. The bus path in
-// `adapters::bus_registrations` is the supported entry.
-#![allow(dead_code)]
-
 //! RP2040 5×5 LED matrix adapter.
-//!
-//! One [`MatrixAdapter`] per detected RP2040 device. The adapter owns:
-//!
-//! - A [`FireflyConnection`] bound to a single port (legacy wrapper kept
-//!   for its hot-unplug detection — auto-marks-disconnected on I/O fail).
-//! - The mutable [`Animation`] state that the engine reads each frame.
-//! - A spawned animation engine task whose handle is aborted on shutdown.
-//!
-//! Subscriptions cover every presence kind that a matrix-visible
-//! override can react to, plus the command channel.
 
 use crate::animation::{start_animation, Animation, Health, Override};
-use crate::serial::{
-    find_firefly_devices, parse_color, FireflyConnection, FireflyDeviceType,
-};
+use crate::firefly::{parse_color, Firefly};
 use garden_common::command_manifest::CommandResponse;
-use garden_common::presence::{
-    PresenceSnapshot, StoneHealthChangedPayload, StoneLoadUpdatedPayload,
-};
+use garden_common::presence::{PresenceSnapshot, StoneHealthChangedPayload, StoneLoadUpdatedPayload};
 use garden_companion_sdk::adapters::{
-    Adapter, AdapterFactory, AdapterInfo, AdapterProfile, DeliveryPolicy, adapter::BoxFuture,
+    adapter::BoxFuture, Adapter, AdapterInfo, AdapterProfile, DeliveryPolicy,
+};
+use garden_companion_sdk::garden::{
+    CommandInvocation, CommandOutcome, CommandResult, Event, Pulse, ServiceStartedPayload,
+    ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload, StorageRemovedPayload,
 };
 use garden_companion_sdk::moss_client::MossLocalClient;
-use garden_companion_sdk::garden::{
-    CommandInvocation, CommandOutcome, CommandResult, Event, Pulse,
-    ServiceStartedPayload, ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload,
-    StorageRemovedPayload,
-};
+use garden_companion_sdk::usb_devices::DeviceState;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 
-/// All kinds the matrix adapter cares about.
-const MATRIX_SUBSCRIPTIONS: &[&str] = &[
+const SUBSCRIPTIONS: &[&str] = &[
     "core.command.invocation",
     "core.presence.snapshot",
     "core.stone.health.changed",
@@ -49,94 +29,14 @@ const MATRIX_SUBSCRIPTIONS: &[&str] = &[
     "core.storage.removed",
 ];
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-/// Discovers connected RP2040 matrix devices and produces a
-/// [`MatrixAdapter`] per device. The supervisor's `(kind, id)` dedup
-/// keeps a single adapter alive per port.
-pub struct MatrixFactory {
-    /// Optional user-pinned port. When set, only that port is considered.
-    preferred_port: Option<String>,
-    /// State directory for animation persistence.
-    state_dir: Option<std::path::PathBuf>,
-}
-
-impl MatrixFactory {
-    pub fn new(preferred_port: Option<String>, state_dir: Option<std::path::PathBuf>) -> Self {
-        Self {
-            preferred_port,
-            state_dir,
-        }
-    }
-}
-
-impl AdapterFactory for MatrixFactory {
-    fn kind(&self) -> &'static str {
-        "firefly.matrix"
-    }
-
-    fn discover(&self) -> Vec<Box<dyn Adapter>> {
-        let devices = match find_firefly_devices() {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::debug!(error = %e, "matrix discovery: USB scan failed");
-                return Vec::new();
-            }
-        };
-        devices
-            .into_iter()
-            .filter(|d| d.device_type == FireflyDeviceType::Rp2040Matrix)
-            .filter(|d| {
-                self.preferred_port
-                    .as_ref()
-                    .is_none_or(|p| p.eq_ignore_ascii_case(&d.port_name))
-            })
-            .map(|d| {
-                Box::new(MatrixAdapter::new(d.port_name, self.state_dir.clone()))
-                    as Box<dyn Adapter>
-            })
-            .collect()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Adapter
-// ---------------------------------------------------------------------------
-
-/// Single-device matrix adapter. Lives for the duration the device is
-/// plugged in; exits its run loop when the device disconnects so the
-/// supervisor reaps and respawns on next discovery.
 pub struct MatrixAdapter {
-    port_name: String,
+    firefly: Arc<Firefly>,
     state_dir: Option<std::path::PathBuf>,
-    /// Pre-built connection supplied by the device bus. When `Some`,
-    /// `run()` skips the open-then-try_connect path and adopts the
-    /// bus's already-identified port directly.
-    prebuilt: Option<Arc<FireflyConnection>>,
 }
 
 impl MatrixAdapter {
-    pub fn new(port_name: String, state_dir: Option<std::path::PathBuf>) -> Self {
-        Self {
-            port_name,
-            state_dir,
-            prebuilt: None,
-        }
-    }
-
-    /// Construct from a pre-built connection (bus integration path).
-    pub fn from_connection(
-        connection: Arc<FireflyConnection>,
-        port_name: String,
-        state_dir: Option<std::path::PathBuf>,
-    ) -> Self {
-        Self {
-            port_name,
-            state_dir,
-            prebuilt: Some(connection),
-        }
+    pub fn new(firefly: Arc<Firefly>, state_dir: Option<std::path::PathBuf>) -> Self {
+        Self { firefly, state_dir }
     }
 }
 
@@ -144,14 +44,14 @@ impl Adapter for MatrixAdapter {
     fn info(&self) -> AdapterInfo {
         AdapterInfo {
             kind: "firefly.matrix",
-            id: self.port_name.clone(),
-            device: Some(format!("RP2040-Matrix on {}", self.port_name)),
+            id: self.firefly.device.id().to_string(),
+            device: Some(format!("RP2040-Matrix on {}", self.firefly.device.port())),
         }
     }
 
     fn profile(&self) -> AdapterProfile {
         AdapterProfile {
-            subscriptions: MATRIX_SUBSCRIPTIONS,
+            subscriptions: SUBSCRIPTIONS,
             delivery: DeliveryPolicy::All,
             persisted_state: false,
         }
@@ -165,24 +65,13 @@ impl Adapter for MatrixAdapter {
         shutdown: CancellationToken,
     ) -> BoxFuture<'static, ()> {
         Box::pin(async move {
-            let connection = match self.prebuilt {
-                Some(conn) => conn,
-                None => {
-                    let conn = Arc::new(FireflyConnection::new(Some(self.port_name.clone())));
-                    if let Err(e) = conn.try_connect() {
-                        tracing::warn!(port = %self.port_name, error = %e, "matrix adapter could not open device");
-                        return;
-                    }
-                    conn
-                }
-            };
-            let _ = connection.with_device(|s| s.clear());
+            let Self { firefly, state_dir } = *self;
+            let port = firefly.device.port().to_string();
+            let mut state_rx = firefly.device.state_changes();
+            let _ = firefly.clear().await;
 
-            let animation = Arc::new(RwLock::new(Animation::new(self.state_dir.clone())));
+            let animation = Arc::new(RwLock::new(Animation::new(state_dir)));
 
-            // Hydrate the animation context from moss's HTTP API
-            // (COMPANION-0014). First frame reflects current state
-            // immediately; no race against SSE timing.
             match moss.presence_snapshot().await {
                 Ok(p) => {
                     let mut ctx = animation.write().await;
@@ -204,65 +93,43 @@ impl Adapter for MatrixAdapter {
                     trigger_health(&mut ctx);
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        port = %self.port_name,
-                        error = %e,
-                        "matrix hydrate from moss failed; will rely on live deltas"
-                    );
+                    tracing::warn!(port = %port, error = %e, "matrix hydrate failed");
                 }
             }
 
-            let engine = start_animation(connection.clone(), animation.clone());
-
-            let mut health = tokio::time::interval(std::time::Duration::from_secs(5));
-            health.tick().await; // consume immediate tick
+            let engine = start_animation(Arc::clone(&firefly), animation.clone());
 
             loop {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
-                    _ = health.tick() => {
-                        // COMPANION-0015: detect silent replug (fd alive,
-                        // device gone). Self-exit → bus re-identifies.
-                        if connection.is_lost() {
-                            tracing::warn!(
-                                port = ?connection.port_name(),
-                                "connection appears lost — self-exiting for re-identification"
-                            );
+                    changed = state_rx.changed() => {
+                        if changed.is_err() || matches!(*state_rx.borrow(), DeviceState::Disposed) {
+                            tracing::info!(port = %port, "device disposed; exiting");
                             break;
                         }
                     }
                     maybe = events.recv() => match maybe {
-                        Some(event) => {
-                            // Device lifecycle is the bus's concern. We
-                            // exit only on shutdown or closed channel;
-                            // transient serial errors are logged inside
-                            // the connection and the loop continues.
-                            handle_event(&event, &connection, &animation, &pulse).await;
-                        }
+                        Some(event) => handle_event(&event, &firefly, &animation, &pulse).await,
                         None => break,
-                    },
+                    }
                 }
             }
 
             engine.abort();
-            let _ = connection.with_device(|s| s.clear());
+            let _ = firefly.clear().await;
         })
     }
 }
 
-// ---------------------------------------------------------------------------
-// Event dispatch
-// ---------------------------------------------------------------------------
-
 async fn handle_event(
     event: &Event,
-    connection: &Arc<FireflyConnection>,
+    firefly: &Arc<Firefly>,
     animation: &Arc<RwLock<Animation>>,
     pulse: &Arc<Pulse>,
 ) {
     if event.kind == "core.command.invocation" {
         if let Some(inv) = event.payload::<CommandInvocation>() {
-            let response = handle_command(&inv.raw_args, connection, animation).await;
+            let response = handle_command(&inv.raw_args, firefly, animation).await;
             let outcome = if response.is_success() {
                 CommandOutcome::Success {
                     output: Some(response.message.clone()),
@@ -381,7 +248,7 @@ fn trigger_health(ctx: &mut Animation) {
 
 async fn handle_command(
     args: &[String],
-    connection: &Arc<FireflyConnection>,
+    firefly: &Arc<Firefly>,
     animation: &Arc<RwLock<Animation>>,
 ) -> CommandResponse {
     let Some((cmd, rest)) = args.split_first() else {
@@ -389,21 +256,21 @@ async fn handle_command(
     };
     let cmd = cmd.to_lowercase();
     match cmd.as_str() {
-        "status" | "state" => cmd_status(rest, connection),
-        "pixel" | "px" => cmd_pixel(rest, connection),
-        "fill" => cmd_fill(rest, connection),
-        "clear" => cmd_clear(connection),
+        "status" | "state" => cmd_status(rest, firefly).await,
+        "pixel" | "px" => cmd_pixel(rest, firefly).await,
+        "fill" => cmd_fill(rest, firefly).await,
+        "clear" => cmd_clear(firefly).await,
         "brightness" | "bright" | "dim" => cmd_brightness(rest, animation).await,
-        "animate" | "anim" | "animation" => cmd_animate(rest, connection),
-        "stop" => cmd_stop(connection),
-        "info" => cmd_info(connection),
+        "animate" | "anim" | "animation" => cmd_animate(rest, firefly).await,
+        "stop" => cmd_stop(firefly).await,
+        "info" => cmd_info(firefly).await,
         "on" => cmd_on(animation).await,
-        "off" => cmd_off(connection, animation).await,
+        "off" => cmd_off(firefly, animation).await,
         _ => CommandResponse::error(format!("Unknown command: {}", cmd)),
     }
 }
 
-fn cmd_status(args: &[String], connection: &FireflyConnection) -> CommandResponse {
+async fn cmd_status(args: &[String], firefly: &Firefly) -> CommandResponse {
     let Some(state) = args.first() else {
         return CommandResponse::error("Usage: status <healthy|warning|error|offline>");
     };
@@ -411,13 +278,13 @@ fn cmd_status(args: &[String], connection: &FireflyConnection) -> CommandRespons
     if !["healthy", "warning", "error", "offline"].contains(&state.as_str()) {
         return CommandResponse::error(format!("Invalid status: {}", state));
     }
-    match connection.with_device(|s| s.status(&state)) {
-        Ok(_) => CommandResponse::success(format!("Status set to {}", state)),
-        Err(e) => CommandResponse::error(format!("Device error: {}", e)),
+    match firefly.status(&state).await {
+        Ok(_) => CommandResponse::success(format!("Status set to {state}")),
+        Err(e) => CommandResponse::error(format!("Device error: {e}")),
     }
 }
 
-fn cmd_pixel(args: &[String], connection: &FireflyConnection) -> CommandResponse {
+async fn cmd_pixel(args: &[String], firefly: &Firefly) -> CommandResponse {
     if args.len() < 3 {
         return CommandResponse::error("Usage: pixel <x> <y> <color>");
     }
@@ -432,32 +299,32 @@ fn cmd_pixel(args: &[String], connection: &FireflyConnection) -> CommandResponse
     }
     let (r, g, b) = match parse_color(&args[2]) {
         Ok(c) => c,
-        Err(e) => return CommandResponse::error(format!("Invalid color: {}", e)),
+        Err(e) => return CommandResponse::error(format!("Invalid color: {e}")),
     };
-    match connection.with_device(|s| s.pixel(x, y, r, g, b)) {
-        Ok(_) => CommandResponse::success(format!("Pixel ({},{}) set to RGB({},{},{})", x, y, r, g, b)),
-        Err(e) => CommandResponse::error(format!("Device error: {}", e)),
+    match firefly.pixel(x, y, r, g, b).await {
+        Ok(_) => CommandResponse::success(format!("Pixel ({x},{y}) set to RGB({r},{g},{b})")),
+        Err(e) => CommandResponse::error(format!("Device error: {e}")),
     }
 }
 
-fn cmd_fill(args: &[String], connection: &FireflyConnection) -> CommandResponse {
+async fn cmd_fill(args: &[String], firefly: &Firefly) -> CommandResponse {
     let Some(color) = args.first() else {
         return CommandResponse::error("Usage: fill <color>");
     };
     let (r, g, b) = match parse_color(color) {
         Ok(c) => c,
-        Err(e) => return CommandResponse::error(format!("Invalid color: {}", e)),
+        Err(e) => return CommandResponse::error(format!("Invalid color: {e}")),
     };
-    match connection.with_device(|s| s.fill(r, g, b)) {
-        Ok(_) => CommandResponse::success(format!("Filled with RGB({},{},{})", r, g, b)),
-        Err(e) => CommandResponse::error(format!("Device error: {}", e)),
+    match firefly.fill(r, g, b).await {
+        Ok(_) => CommandResponse::success(format!("Filled with RGB({r},{g},{b})")),
+        Err(e) => CommandResponse::error(format!("Device error: {e}")),
     }
 }
 
-fn cmd_clear(connection: &FireflyConnection) -> CommandResponse {
-    match connection.with_device(|s| s.clear()) {
+async fn cmd_clear(firefly: &Firefly) -> CommandResponse {
+    match firefly.clear().await {
         Ok(_) => CommandResponse::success("Display cleared"),
-        Err(e) => CommandResponse::error(format!("Device error: {}", e)),
+        Err(e) => CommandResponse::error(format!("Device error: {e}")),
     }
 }
 
@@ -473,35 +340,34 @@ async fn cmd_brightness(args: &[String], animation: &Arc<RwLock<Animation>>) -> 
         return CommandResponse::error("Brightness must be 0-100");
     }
     animation.write().await.set_brightness(v);
-    CommandResponse::success(format!("Brightness set to {}% (saved)", v))
+    CommandResponse::success(format!("Brightness set to {v}% (saved)"))
 }
 
-fn cmd_animate(args: &[String], connection: &FireflyConnection) -> CommandResponse {
+async fn cmd_animate(args: &[String], firefly: &Firefly) -> CommandResponse {
     let Some(name) = args.first() else {
         return CommandResponse::error("Usage: animate <rainbow|pulse|chase|sparkle>");
     };
     let name = name.to_lowercase();
     if !["rainbow", "pulse", "chase", "sparkle"].contains(&name.as_str()) {
-        return CommandResponse::error(format!("Unknown animation: {}", name));
+        return CommandResponse::error(format!("Unknown animation: {name}"));
     }
-    match connection.with_device(|s| s.animate(&name)) {
-        Ok(_) => CommandResponse::success(format!("Playing animation: {}", name)),
-        Err(e) => CommandResponse::error(format!("Device error: {}", e)),
+    match firefly.animate(&name).await {
+        Ok(_) => CommandResponse::success(format!("Playing animation: {name}")),
+        Err(e) => CommandResponse::error(format!("Device error: {e}")),
     }
 }
 
-fn cmd_stop(connection: &FireflyConnection) -> CommandResponse {
-    match connection.with_device(|s| s.stop()) {
+async fn cmd_stop(firefly: &Firefly) -> CommandResponse {
+    match firefly.stop().await {
         Ok(_) => CommandResponse::success("Animation stopped"),
-        Err(e) => CommandResponse::error(format!("Device error: {}", e)),
+        Err(e) => CommandResponse::error(format!("Device error: {e}")),
     }
 }
 
-fn cmd_info(connection: &FireflyConnection) -> CommandResponse {
-    let status = connection.status_info();
-    match connection.with_device(|s| s.info()) {
-        Ok(response) => CommandResponse::success(format!("{}\n{}", status, response)),
-        Err(e) => CommandResponse::error(format!("Communication error: {}", e)),
+async fn cmd_info(firefly: &Firefly) -> CommandResponse {
+    match firefly.info().await {
+        Ok(response) => CommandResponse::success(response),
+        Err(e) => CommandResponse::error(format!("Communication error: {e}")),
     }
 }
 
@@ -510,15 +376,11 @@ async fn cmd_on(animation: &Arc<RwLock<Animation>>) -> CommandResponse {
     CommandResponse::success("Firefly enabled — animation running")
 }
 
-async fn cmd_off(connection: &FireflyConnection, animation: &Arc<RwLock<Animation>>) -> CommandResponse {
+async fn cmd_off(firefly: &Firefly, animation: &Arc<RwLock<Animation>>) -> CommandResponse {
     animation.write().await.enabled = false;
-    let _ = connection.with_device(|s| s.clear());
+    let _ = firefly.clear().await;
     CommandResponse::success("Firefly disabled — display cleared")
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -530,12 +392,5 @@ mod tests {
         assert_eq!(parse_health("withering"), Health::Withering);
         assert_eq!(parse_health("wilting"), Health::Wilting);
         assert_eq!(parse_health("unknown"), Health::Thriving);
-    }
-
-    #[test]
-    fn subscriptions_cover_command_and_presence() {
-        assert!(MATRIX_SUBSCRIPTIONS.contains(&"core.command.invocation"));
-        assert!(MATRIX_SUBSCRIPTIONS.contains(&"core.presence.snapshot"));
-        assert!(MATRIX_SUBSCRIPTIONS.contains(&"core.stone.health.changed"));
     }
 }

@@ -36,8 +36,10 @@ const PORT_LEDGER_FILE: &str = "companion-ports.json";
 /// State file name for persisting Companion enabled/disabled state
 const STATE_FILE: &str = "Companion-state.json";
 
-/// Runtime file name for persisting running Companion PIDs (for restart recovery)
-const RUNTIME_FILE: &str = "Companion-runtime.json";
+/// Loopback timeout for companion `/health` probes during reconciliation.
+/// Probes are sent over loopback to a process expected to respond
+/// instantly; 500ms is generous and bounds worst-case startup.
+const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Companion enabled/disabled state ledger - persisted to disk
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -81,60 +83,6 @@ impl CompanionStateLedger {
     /// Set Companion enabled state
     fn set_enabled(&mut self, companion_id: &str, enabled: bool) {
         self.enabled.insert(companion_id.to_string(), enabled);
-    }
-}
-
-/// Runtime ledger - tracks currently running Companion PIDs
-/// Persisted to disk for restart recovery
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct RuntimeLedger {
-    /// Map of companion_id -> (pid, port)
-    running: HashMap<String, (u32, u16)>,
-}
-
-impl RuntimeLedger {
-    /// Load from disk or create new
-    async fn load(data_path: &Path) -> Self {
-        let runtime_path = data_path.join(RUNTIME_FILE);
-        if runtime_path.exists() {
-            match tokio::fs::read_to_string(&runtime_path).await {
-                Ok(content) => match serde_json::from_str(&content) {
-                    Ok(ledger) => return ledger,
-                    Err(e) => debug!(error = %e, "Failed to parse runtime ledger, starting fresh"),
-                },
-                Err(e) => debug!(error = %e, "Failed to read runtime ledger, starting fresh"),
-            }
-        }
-        Self::default()
-    }
-
-    /// Save to disk
-    async fn save(&self, data_path: &Path) -> Result<()> {
-        let runtime_path = data_path.join(RUNTIME_FILE);
-        let content = serde_json::to_string_pretty(self)?;
-        tokio::fs::write(&runtime_path, content).await?;
-        Ok(())
-    }
-
-    /// Record an Companion as running
-    fn set_running(&mut self, companion_id: &str, pid: u32, port: u16) {
-        self.running.insert(companion_id.to_string(), (pid, port));
-    }
-
-    /// Record an Companion as stopped
-    fn set_stopped(&mut self, companion_id: &str) {
-        self.running.remove(companion_id);
-    }
-
-    /// Get running Companion info
-    #[expect(dead_code)]
-    fn get(&self, companion_id: &str) -> Option<(u32, u16)> {
-        self.running.get(companion_id).copied()
-    }
-
-    /// Get all running Companions
-    fn all_running(&self) -> impl Iterator<Item = (&String, &(u32, u16))> {
-        self.running.iter()
     }
 }
 
@@ -217,14 +165,23 @@ pub struct RegisteredCompanion {
     /// Command manifest (parsed from --dump-commands output)
     pub manifest: CommandManifest,
 
-    /// Running process handle (if started)
+    /// Running process handle (if started by us)
     process: Option<Child>,
 
-    /// Process ID (cached for quick checks)
+    /// Process ID. Present when we spawned the process; may be `None`
+    /// for adopted companions whose `Child` handle we lost across a moss
+    /// restart. Adoption-time PID lookup is best-effort and not required
+    /// for liveness — see [COMPANION-0016].
     pid: Option<u32>,
 
-    /// Assigned command server port (when running)
+    /// Assigned command server port (always set after registration).
     assigned_port: Option<u16>,
+
+    /// Liveness flag — see [COMPANION-0016]. Set by `start` (we just
+    /// spawned it) or `mark_adopted` (a `/health` probe succeeded).
+    /// Cleared by `stop`. Authoritative for `is_running`; PID is
+    /// bookkeeping only.
+    alive: bool,
 }
 
 impl Clone for RegisteredCompanion {
@@ -237,23 +194,23 @@ impl Clone for RegisteredCompanion {
             process: None,
             pid: self.pid,
             assigned_port: self.assigned_port,
+            alive: self.alive,
         }
     }
 }
 
 impl RegisteredCompanion {
-    /// Check if the Companion process is running
+    /// Whether the Companion is considered alive. Source of truth is the
+    /// `alive` flag, which is set by spawn or by a successful `/health`
+    /// probe at adoption time. PID is no longer consulted.
     pub fn is_running(&self) -> bool {
-        if let Some(pid) = self.pid {
-            is_process_alive(pid)
-        } else {
-            false
-        }
+        self.alive
     }
 
-    /// Get the process ID if running
+    /// Get the process ID if running and known. May return `None` for
+    /// adopted companions whose PID was never resolved.
     pub fn pid(&self) -> Option<u32> {
-        if self.is_running() { self.pid } else { None }
+        if self.alive { self.pid } else { None }
     }
 
     /// Get the assigned command port (always available once registered)
@@ -279,19 +236,16 @@ pub struct CompanionRegistry {
 
     /// Companion enabled/disabled state ledger
     state_ledger: Arc<RwLock<CompanionStateLedger>>,
-
-    /// Runtime ledger - tracks running PIDs for restart recovery
-    runtime_ledger: Arc<RwLock<RuntimeLedger>>,
 }
 
 impl CompanionRegistry {
-    /// Create a new Companion registry
-    /// Loads port ledger, state ledger, and runtime ledger from disk
+    /// Create a new Companion registry. Loads port and state ledgers
+    /// from disk; liveness is determined at reconcile time via
+    /// `/health` probes (COMPANION-0016) — no PID ledger is persisted.
     pub async fn new() -> Self {
         let data_path = PathBuf::from(data_dir());
         let port_ledger = PortLedger::load(&data_path).await;
         let state_ledger = CompanionStateLedger::load(&data_path).await;
-        let runtime_ledger = RuntimeLedger::load(&data_path).await;
 
         Self {
             companions: Arc::new(RwLock::new(HashMap::new())),
@@ -299,7 +253,6 @@ impl CompanionRegistry {
             data_path,
             port_ledger: Arc::new(RwLock::new(port_ledger)),
             state_ledger: Arc::new(RwLock::new(state_ledger)),
-            runtime_ledger: Arc::new(RwLock::new(runtime_ledger)),
         }
     }
 
@@ -307,7 +260,6 @@ impl CompanionRegistry {
     pub async fn with_path(companions_path: PathBuf, data_path: PathBuf) -> Self {
         let port_ledger = PortLedger::load(&data_path).await;
         let state_ledger = CompanionStateLedger::load(&data_path).await;
-        let runtime_ledger = RuntimeLedger::load(&data_path).await;
 
         Self {
             companions: Arc::new(RwLock::new(HashMap::new())),
@@ -315,7 +267,6 @@ impl CompanionRegistry {
             data_path,
             port_ledger: Arc::new(RwLock::new(port_ledger)),
             state_ledger: Arc::new(RwLock::new(state_ledger)),
-            runtime_ledger: Arc::new(RwLock::new(runtime_ledger)),
         }
     }
 
@@ -452,6 +403,7 @@ impl CompanionRegistry {
             process: None,
             pid: None,
             assigned_port: Some(port),
+            alive: false,
         };
 
         let mut companions = self.companions.write().await;
@@ -578,15 +530,7 @@ impl CompanionRegistry {
         companion.process = Some(child);
         companion.pid = Some(pid);
         companion.assigned_port = Some(port);
-
-        // Persist to runtime ledger for restart recovery
-        {
-            let mut runtime_ledger = self.runtime_ledger.write().await;
-            runtime_ledger.set_running(id, pid, port);
-            if let Err(e) = runtime_ledger.save(&self.data_path).await {
-                warn!(companion = %id, error = %e, "Failed to persist runtime ledger");
-            }
-        }
+        companion.alive = true;
 
         info!(companion = %id, pid = pid, port = port, "Companion started");
         Ok(pid)
@@ -654,7 +598,6 @@ impl CompanionRegistry {
     /// Returns the number of processes reaped.
     pub async fn reap_terminated(&self) -> usize {
         let mut companions = self.companions.write().await;
-        let mut runtime_ledger = self.runtime_ledger.write().await;
         let mut reaped = 0;
 
         for (id, c) in companions.iter_mut() {
@@ -667,7 +610,6 @@ impl CompanionRegistry {
             // Try to collect exit status without blocking
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    // Process has exited - reap it
                     let pid = c.pid.unwrap_or(0);
                     if status.success() {
                         info!(companion = %id, pid = pid, "Companion exited normally");
@@ -675,134 +617,106 @@ impl CompanionRegistry {
                         warn!(companion = %id, pid = pid, status = ?status, "Companion exited with error");
                     }
 
-                    // Clear process state
                     c.process = None;
                     c.pid = None;
-                    runtime_ledger.set_stopped(id);
+                    c.alive = false;
                     reaped += 1;
                 }
                 Ok(None) => {
                     // Process still running - nothing to do
                 }
                 Err(e) => {
-                    // Error checking status - log but don't clear
                     warn!(companion = %id, error = %e, "Failed to check companion process status");
                 }
             }
         }
 
-        // Persist runtime ledger if anything changed
         if reaped > 0 {
-            if let Err(e) = runtime_ledger.save(&self.data_path).await {
-                warn!(error = %e, "Failed to persist runtime ledger after reaping");
-            }
             debug!(reaped = reaped, "Reaped terminated Companion processes");
         }
 
         reaped
     }
 
-    /// Reconcile running Companions after Moss restart
+    /// Reconcile running Companions after Moss restart.
     ///
-    /// On restart, Moss loses process handles but Companions may still be running
-    /// (due to kill_on_drop(false)). This method:
-    /// 1. Loads the runtime ledger (PIDs from before restart)
-    /// 2. Checks which processes are still alive
-    /// 3. Adopts still-running Companions (updates internal state, no process handle)
-    /// 4. Cleans up entries for dead processes
+    /// On restart, Moss has no `Child` handle for Companions that
+    /// survived the previous session (they were spawned with
+    /// `kill_on_drop(false)`). Liveness is determined by probing
+    /// `GET http://127.0.0.1:{port}/health` on each registered
+    /// Companion's assigned port — a companion's HTTP service is the
+    /// authoritative liveness signal (COMPANION-0016).
     ///
-    /// Returns (adopted_count, dead_count)
+    /// Returns `(adopted_count, _dead_unused)`. The second value is
+    /// retained for callsite signature stability and is always 0; the
+    /// PID-ledger "dead" notion is gone with the ledger itself.
     pub async fn reconcile_running_companions(&self) -> (usize, usize) {
-        let runtime_ledger = self.runtime_ledger.read().await;
-        let mut to_adopt = Vec::new();
-        let mut to_remove = Vec::new();
+        // Snapshot (id, port) under read lock; probe outside the lock
+        // so concurrent calls aren't serialized on each other.
+        let to_probe: Vec<(String, u16)> = {
+            let companions = self.companions.read().await;
+            companions
+                .iter()
+                .filter_map(|(id, c)| c.assigned_port.map(|p| (id.clone(), p)))
+                .collect()
+        };
 
-        // Check each entry in runtime ledger
-        for (companion_id, (pid, port)) in runtime_ledger.all_running() {
-            if is_process_alive(*pid) {
-                to_adopt.push((companion_id.clone(), *pid, *port));
-            } else {
-                to_remove.push(companion_id.clone());
-            }
-        }
-        drop(runtime_ledger);
-
-        let adopted = to_adopt.len();
-        let dead = to_remove.len();
-
-        // Adopt still-running Companions
-        if !to_adopt.is_empty() {
-            let mut companions_guard = self.companions.write().await;
-            for (companion_id, pid, port) in to_adopt {
-                if let Some(c) = companions_guard.get_mut(&companion_id) {
-                    // Companion is registered - update its state
-                    // Note: we don't have a process handle (can't reattach to running process)
-                    // but we can track the PID for is_running() checks
-                    c.pid = Some(pid);
-                    c.assigned_port = Some(port);
+        let mut adopted = 0;
+        let mut companions_guard = self.companions.write().await;
+        for (id, port) in to_probe {
+            if companion_health_probe(port).await {
+                if let Some(c) = companions_guard.get_mut(&id) {
+                    c.alive = true;
+                    // PID intentionally not resolved — adoption only
+                    // needs liveness. Shutdown targeting handles a
+                    // missing PID via HTTP /shutdown + best-effort
+                    // port→PID lookup.
+                    c.pid = None;
                     info!(
-                        companion = %companion_id,
-                        pid = pid,
+                        companion = %id,
                         port = port,
-                        "Adopted running Companion from previous session"
+                        "Adopted running Companion via /health probe"
                     );
-                } else {
-                    // Companion not registered (binary removed?) - kill orphan
-                    warn!(
-                        companion = %companion_id,
-                        pid = pid,
-                        "Found orphaned Companion process, killing"
-                    );
-                    kill_process_by_pid(pid);
-                    to_remove.push(companion_id);
+                    adopted += 1;
                 }
+            } else {
+                debug!(
+                    companion = %id,
+                    port = port,
+                    "Companion did not respond to /health — will spawn fresh"
+                );
             }
         }
 
-        // Clean up dead entries from runtime ledger
-        if !to_remove.is_empty() {
-            let mut runtime_ledger = self.runtime_ledger.write().await;
-            for companion_id in &to_remove {
-                runtime_ledger.set_stopped(companion_id);
-            }
-            if let Err(e) = runtime_ledger.save(&self.data_path).await {
-                warn!(error = %e, "Failed to persist runtime ledger after reconciliation");
-            }
+        if adopted > 0 {
+            info!(adopted = adopted, "Reconciled Companion processes via health probe");
         }
 
-        if adopted > 0 || dead > 0 {
-            info!(
-                adopted = adopted,
-                dead = dead,
-                "Reconciled Companion processes from previous session"
-            );
-        }
-
-        (adopted, dead)
+        (adopted, 0)
     }
 
-    /// Internal stop implementation
+    /// Internal stop implementation. Prefers the `Child` handle when we
+    /// own it (freshly-spawned companions) and falls back to PID-based
+    /// kill — resolving the PID via `find_pid_on_port` for adopted
+    /// companions whose handle we lost across a restart.
     async fn stop_internal(&self, id: &str) -> Result<()> {
         let mut companions_guard = self.companions.write().await;
         let c = companions_guard
             .get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("Companion not found: {}", id))?;
 
-        if let Some(pid) = c.pid
-            && is_process_alive(pid)
-        {
-            info!(companion = %id, pid = pid, "Stopping Companion");
+        if c.alive {
+            info!(companion = %id, pid = ?c.pid, "Stopping Companion");
 
-            // Try graceful shutdown first via process handle
             if let Some(ref mut child) = c.process {
                 if let Err(e) = child.kill().await {
                     warn!(companion = %id, error = %e, "Failed to kill Companion via handle, trying by PID");
-                    kill_process_by_pid(pid);
+                    if let Some(pid) = c.pid {
+                        kill_process_by_pid(pid);
+                    }
                 }
-                // Reap the process to prevent zombie
                 let _ = child.wait().await;
-            } else {
-                // No handle, kill by PID
+            } else if let Some(pid) = c.pid.or_else(|| c.assigned_port.and_then(find_pid_on_port)) {
                 kill_process_by_pid(pid);
             }
 
@@ -811,15 +725,7 @@ impl CompanionRegistry {
 
         c.process = None;
         c.pid = None;
-
-        // Remove from runtime ledger
-        {
-            let mut runtime_ledger = self.runtime_ledger.write().await;
-            runtime_ledger.set_stopped(id);
-            if let Err(e) = runtime_ledger.save(&self.data_path).await {
-                warn!(companion = %id, error = %e, "Failed to persist runtime ledger");
-            }
-        }
+        c.alive = false;
 
         Ok(())
     }
@@ -832,11 +738,15 @@ impl CompanionRegistry {
     pub async fn sigterm_all(&self) {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
-            if let Some(pid) = c.pid
-                && is_process_alive(pid)
-            {
+            if !c.alive {
+                continue;
+            }
+            let pid = c.pid.or_else(|| c.assigned_port.and_then(find_pid_on_port));
+            if let Some(pid) = pid {
                 info!(companion = %id, pid = pid, "Sending SIGTERM to Companion");
                 sigterm_process_by_pid(pid);
+            } else {
+                debug!(companion = %id, "SIGTERM skipped — no PID resolvable");
             }
         }
     }
@@ -848,7 +758,11 @@ impl CompanionRegistry {
     pub async fn kill_all_survivors(&self) {
         let companions = self.companions.read().await;
         for (id, c) in companions.iter() {
-            if let Some(pid) = c.pid
+            if !c.alive {
+                continue;
+            }
+            let pid = c.pid.or_else(|| c.assigned_port.and_then(find_pid_on_port));
+            if let Some(pid) = pid
                 && is_process_alive(pid)
             {
                 warn!(companion = %id, pid = pid, "Companion still alive after drain, sending SIGKILL");
@@ -984,6 +898,73 @@ impl crate::domain::traits::CompanionOps for CompanionRegistry {
 
     async fn kill_all_survivors(&self) {
         CompanionRegistry::kill_all_survivors(self).await
+    }
+}
+
+/// Probe a Companion's `/health` endpoint. Returns true on a 2xx
+/// response within `HEALTH_PROBE_TIMEOUT`. Source of truth for
+/// adoption — see COMPANION-0016.
+async fn companion_health_probe(port: u16) -> bool {
+    let url = format!("http://127.0.0.1:{}/health", port);
+    match crate::http::COMPANION
+        .get(&url)
+        .timeout(HEALTH_PROBE_TIMEOUT)
+        .send()
+        .await
+    {
+        Ok(r) => r.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+/// Best-effort lookup of the PID listening on a TCP port (loopback).
+/// Used only as a fallback when shutting down an adopted Companion
+/// whose `Child` handle was lost across a moss restart. Returns `None`
+/// if the lookup is unsupported on this platform or finds nothing.
+fn find_pid_on_port(port: u16) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::process::Command as StdCommand;
+        // ss -H -t -l -n -p sport = :PORT  →  one line per match
+        let out = StdCommand::new("ss")
+            .args([
+                "-Htlnp",
+                "sport",
+                &format!("= :{}", port),
+            ])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        // ss -p emits e.g.  users:(("garden-firefly",pid=1373,fd=12))
+        for chunk in text.split("pid=").skip(1) {
+            let digits: String = chunk.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(pid) = digits.parse::<u32>() {
+                return Some(pid);
+            }
+        }
+        None
+    }
+    #[cfg(windows)]
+    {
+        use std::process::Command as StdCommand;
+        let out = StdCommand::new("netstat").args(["-ano", "-p", "TCP"]).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let needle = format!(":{} ", port);
+        for line in text.lines() {
+            if line.contains(&needle)
+                && line.contains("LISTENING")
+                && let Some(pid_str) = line.split_whitespace().last()
+                && let Ok(pid) = pid_str.parse::<u32>()
+            {
+                return Some(pid);
+            }
+        }
+        None
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = port;
+        None
     }
 }
 

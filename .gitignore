@@ -25,3 +25,6 @@ rake-errors.txt
 /src/orchestrators/target
 src/orchestrators/ai/dashboard/node_modules/
 installer/build-all-platforms copy.ps1
+
+# Local dev sandbox (scripts/dev-firefly.ps1, scripts/dev-run-moss.ps1)
+dev/

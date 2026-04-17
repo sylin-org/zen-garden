@@ -17,10 +17,11 @@ use tokio::sync::broadcast;
 /// Deadline for receiving a valid identity line after the trigger write.
 const READ_DEADLINE: Duration = Duration::from_secs(4);
 
-const fn _deadline_is_four_secs() {
-    // Anchored to observe drift; kept here so a future edit surfaces
-    // in review.
-}
+const _: () = assert!(
+    READ_DEADLINE.as_secs() == 4,
+    "READ_DEADLINE changed — review firefly handshake latency assumptions \
+     (ESP boot: ~2.5s; identity emit: ~200ms; budget for USB hiccups: ~1.3s)"
+);
 
 #[derive(Debug, Error)]
 pub enum ProbeError {

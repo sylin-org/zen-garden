@@ -17,14 +17,13 @@
 //!   [`dispose`] — state transitions.
 
 use super::state::{DeviceState, StateError};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{Read, Write};
-use std::sync::mpsc as stdmpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
@@ -33,7 +32,7 @@ const READ_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_LINE_LEN: usize = 8192;
 /// Sustained-EOF reads on a dangling Linux fd before self-dispose.
 const MAX_ZERO_READS: u32 = 100;
-/// Driver queue depth. Commands beyond this block the `send` caller
+/// Driver queue depth. Commands beyond this await asynchronously
 /// (backpressure). Small so we feel it in tests if the driver stalls.
 const QUEUE_DEPTH: usize = 64;
 
@@ -100,16 +99,27 @@ enum DriverCommand {
     },
 }
 
+/// The driver's scoped dependency surface — the channels and port it
+/// owns. Passed by value at spawn; never shared with the aggregate
+/// outside of the `state` and `lines` clones.
+struct DriverDeps {
+    port_path: PortPath,
+    port: Box<dyn serialport::SerialPort + Send>,
+    queue: mpsc::Receiver<DriverCommand>,
+    state: Arc<watch::Sender<DeviceState>>,
+    lines: broadcast::Sender<String>,
+}
+
 // ---------------------------------------------------------------------------
 // UsbSerialDevice
 // ---------------------------------------------------------------------------
 
 pub struct UsbSerialDevice {
     descriptor: UsbDescriptor,
-    queue: stdmpsc::SyncSender<DriverCommand>,
-    state_tx: watch::Sender<DeviceState>,
-    lines_tx: broadcast::Sender<String>,
-    driver: Mutex<Option<JoinHandle<()>>>,
+    queue: mpsc::Sender<DriverCommand>,
+    state: Arc<watch::Sender<DeviceState>>,
+    lines: broadcast::Sender<String>,
+    driver: JoinHandle<()>,
 }
 
 impl UsbSerialDevice {
@@ -134,22 +144,25 @@ impl UsbSerialDevice {
         // driver starts reading.
         tokio::time::sleep(Duration::from_millis(2500)).await;
 
-        let (state_tx, _) = watch::channel(DeviceState::New);
-        let (lines_tx, _) = broadcast::channel(LINES_BROADCAST_CAPACITY);
-        let (queue_tx, queue_rx) = stdmpsc::sync_channel(QUEUE_DEPTH);
+        let state = Arc::new(watch::channel(DeviceState::New).0);
+        let (lines, _) = broadcast::channel(LINES_BROADCAST_CAPACITY);
+        let (queue, queue_rx) = mpsc::channel(QUEUE_DEPTH);
 
-        let device = Arc::new(Self {
-            descriptor,
-            queue: queue_tx,
-            state_tx,
-            lines_tx,
-            driver: Mutex::new(None),
+        let driver = spawn_driver(DriverDeps {
+            port_path: descriptor.port.clone(),
+            port,
+            queue: queue_rx,
+            state: Arc::clone(&state),
+            lines: lines.clone(),
         });
 
-        let driver_handle = spawn_driver(Arc::clone(&device), port, queue_rx);
-        *device.driver.lock().unwrap() = Some(driver_handle);
-
-        Ok(device)
+        Ok(Arc::new(Self {
+            descriptor,
+            queue,
+            state,
+            lines,
+            driver,
+        }))
     }
 
     pub fn id(&self) -> &DeviceId {
@@ -165,15 +178,15 @@ impl UsbSerialDevice {
     }
 
     pub fn state(&self) -> DeviceState {
-        self.state_tx.borrow().clone()
+        self.state.borrow().clone()
     }
 
     pub fn state_changes(&self) -> watch::Receiver<DeviceState> {
-        self.state_tx.subscribe()
+        self.state.subscribe()
     }
 
     pub fn lines(&self) -> broadcast::Receiver<String> {
-        self.lines_tx.subscribe()
+        self.lines.subscribe()
     }
 
     /// Enqueue a write; await the driver's ack.
@@ -184,6 +197,7 @@ impl UsbSerialDevice {
                 bytes: bytes.to_vec(),
                 ack: ack_tx,
             })
+            .await
             .map_err(|_| anyhow!("driver queue closed (device disposed)"))?;
         ack_rx
             .await
@@ -191,7 +205,11 @@ impl UsbSerialDevice {
     }
 
     pub fn begin_evaluation(&self) -> std::result::Result<(), StateError> {
-        self.transition(|s| s.can_begin_evaluation(), DeviceState::Evaluating, "Evaluating")
+        self.transition(
+            |s| s.can_begin_evaluation(),
+            DeviceState::Evaluating,
+            "Evaluating",
+        )
     }
 
     pub fn accept(&self, kind: impl Into<String>) -> std::result::Result<(), StateError> {
@@ -209,10 +227,10 @@ impl UsbSerialDevice {
     /// Transition to Disposed. Idempotent. The driver task observes
     /// this on its next loop iteration and exits, closing the port.
     pub fn dispose(&self) {
-        if self.state_tx.borrow().is_disposed() {
+        if self.state.borrow().is_disposed() {
             return;
         }
-        self.state_tx.send_replace(DeviceState::Disposed);
+        self.state.send_replace(DeviceState::Disposed);
         info!(device = %self.descriptor.id, "device disposed");
     }
 
@@ -225,25 +243,21 @@ impl UsbSerialDevice {
     where
         F: FnOnce(&DeviceState) -> bool,
     {
-        let current = self.state_tx.borrow().clone();
+        let current = self.state.borrow().clone();
         if !guard(&current) {
             return Err(StateError::InvalidTransition {
                 from: current,
                 to: label,
             });
         }
-        self.state_tx.send_replace(next);
+        self.state.send_replace(next);
         Ok(())
     }
 }
 
 impl Drop for UsbSerialDevice {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.driver.lock()
-            && let Some(handle) = guard.take()
-        {
-            handle.abort();
-        }
+        self.driver.abort();
     }
 }
 
@@ -261,26 +275,24 @@ impl fmt::Debug for UsbSerialDevice {
 // Driver task — single owner of the port
 // ---------------------------------------------------------------------------
 
-fn spawn_driver(
-    device: Arc<UsbSerialDevice>,
-    port: Box<dyn serialport::SerialPort + Send>,
-    queue: stdmpsc::Receiver<DriverCommand>,
-) -> JoinHandle<()> {
-    tokio::task::spawn_blocking(move || driver_loop(device, port, queue))
+fn spawn_driver(deps: DriverDeps) -> JoinHandle<()> {
+    tokio::task::spawn_blocking(move || driver_loop(deps))
 }
 
-fn driver_loop(
-    device: Arc<UsbSerialDevice>,
-    mut port: Box<dyn serialport::SerialPort + Send>,
-    queue: stdmpsc::Receiver<DriverCommand>,
-) {
-    let port_name = device.descriptor.port.clone();
+fn driver_loop(deps: DriverDeps) {
+    let DriverDeps {
+        port_path,
+        mut port,
+        mut queue,
+        state,
+        lines,
+    } = deps;
     let mut line_buf: Vec<u8> = Vec::with_capacity(512);
     let mut scratch = [0u8; 256];
     let mut zero_reads: u32 = 0;
 
     loop {
-        if device.state().is_disposed() {
+        if state.borrow().is_disposed() {
             break;
         }
 
@@ -296,34 +308,42 @@ fn driver_loop(
                     })()
                     .map_err(|e| anyhow!("{e}"));
                     if let Err(ref e) = result {
-                        warn!(port = %port_name, error = %e, "driver write failed");
+                        warn!(port = %port_path, error = %e, "driver write failed");
                     }
-                    let _ = ack.send(result);
+                    if let Err(unsent) = ack.send(result) {
+                        debug!(
+                            port = %port_path,
+                            write = if unsent.is_ok() { "succeeded" } else { "failed" },
+                            "ack receiver dropped before driver completed write"
+                        );
+                    }
                 }
-                Err(stdmpsc::TryRecvError::Empty) => break,
-                Err(stdmpsc::TryRecvError::Disconnected) => {
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
                     // All senders dropped — device is being torn down.
-                    device.dispose();
+                    state.send_replace(DeviceState::Disposed);
                     return;
                 }
             }
         }
 
-        // Poll for bytes.
+        // Poll for bytes. The port is opened with `timeout(READ_POLL_INTERVAL)`,
+        // so `port.read()` paces the loop itself: ~20ms on quiet lines
+        // (returns TimedOut), immediate on data or EOF.
         match port.read(&mut scratch) {
             Ok(0) => {
+                // Dangling Linux fd — dispose-fast signal, not a pacing hint.
                 zero_reads += 1;
                 if zero_reads > MAX_ZERO_READS {
-                    info!(port = %port_name, "sustained EOF; self-disposing");
-                    device.dispose();
+                    info!(port = %port_path, "sustained EOF; self-disposing");
+                    state.send_replace(DeviceState::Disposed);
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(10));
             }
             Ok(n) => {
                 zero_reads = 0;
                 line_buf.extend_from_slice(&scratch[..n]);
-                drain_lines(&mut line_buf, &device.lines_tx);
+                drain_lines(&mut line_buf, &lines);
                 if line_buf.len() > MAX_LINE_LEN {
                     line_buf.clear();
                 }
@@ -332,14 +352,14 @@ fn driver_loop(
                 // Polling heartbeat.
             }
             Err(e) => {
-                warn!(port = %port_name, error = %e, "driver read failed; self-disposing");
-                device.dispose();
+                warn!(port = %port_path, error = %e, "driver read failed; self-disposing");
+                state.send_replace(DeviceState::Disposed);
                 break;
             }
         }
     }
 
-    debug!(port = %port_name, "driver loop exiting");
+    debug!(port = %port_path, "driver loop exiting");
 }
 
 fn drain_lines(buf: &mut Vec<u8>, tx: &broadcast::Sender<String>) {

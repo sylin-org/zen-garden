@@ -161,19 +161,24 @@ pub fn staging_dir() -> String {
     std::env::var("GARDEN_STAGING_DIR").unwrap_or_else(|_| format!("{}/staging", data_dir()))
 }
 
-/// Get Companions/services directory
-/// Contains subdirectories with Companion executables
+/// Get companions directory. Contains one subdirectory per companion,
+/// each holding a `garden-{id}[.exe]` executable.
+///
+/// Overridable via `GARDEN_COMPANIONS_DIR`. The legacy mixed-case name
+/// `GARDEN_companions_dir` is also accepted for backwards compatibility.
 pub fn companions_dir() -> String {
-    std::env::var("GARDEN_companions_dir").unwrap_or_else(|_| {
-        #[cfg(target_os = "windows")]
-        {
-            format!(r"{}\companions", data_dir())
-        }
-        #[cfg(target_os = "linux")]
-        {
-            "/usr/local/bin/companions".to_string()
-        }
-    })
+    std::env::var("GARDEN_COMPANIONS_DIR")
+        .or_else(|_| std::env::var("GARDEN_companions_dir"))
+        .unwrap_or_else(|_| {
+            #[cfg(target_os = "windows")]
+            {
+                format!(r"{}\companions", data_dir())
+            }
+            #[cfg(target_os = "linux")]
+            {
+                "/usr/local/bin/companions".to_string()
+            }
+        })
 }
 
 /// Get logs directory for daemon file logging

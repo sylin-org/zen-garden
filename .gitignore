@@ -19,6 +19,7 @@ rake-errors.txt
 # Lantern frontend build artifacts
 /src/lantern/frontend/node_modules
 /src/lantern/frontend/dist
+/src/orchestrators/ai/target
 /src/orchestrators/common/target
 /src/orchestrators/mongodb/target
 /src/orchestrators/ollama/target

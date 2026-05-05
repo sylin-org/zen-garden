@@ -1,23 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "*",
-      "Bash(*)",
-      "Bash(cargo check:*)",
-      "Bash(pwsh -NoProfile -Command \"try { [System.Management.Automation.Language.Parser]::ParseFile\\(''f:/Replica/NAS/Files/repo/github/zen-garden/installer/push2all.ps1'', [ref]$null, [ref]$null\\) | Out-Null; Write-Host ''Syntax OK'' } catch { Write-Host \"\"Syntax error: $_\" }\")",
-      "Bash(pwsh:*)",
-      "Bash(*)",
-      "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix\\(moss\\): resolve IP detection issues and add resolution change handling\n\n- Add diagnostic logging to network.rs for IP detection debugging\n- Create MdnsHandle with reregister\\(\\) for IP/MAC change announcements  \n- Add loopback IP gate to prevent advertising bad mDNS resolution info\n- Add AppState.announce_resolution_change\\(\\) for proper SoC\n- Add IP change handler in run.rs using NetworkMonitor events\n- Update push2all.ps1 with loopback address fallback resolution\n- Add parallel package deployment \\(now default, use -Sequential for old behavior\\)\n\nThis fixes the issue where all stones show 127.0.0.1 in topology by:\n1. Improving IP detection with better logging and fallbacks\n2. Deferring mDNS registration until valid IP is available\n3. Re-announcing via mDNS+UDP when IP changes\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "WebFetch(domain:linux-hardware.org)",
-      "WebFetch(*)",
-      "Bash(for dir in ai auth automation cache dashboard data devops messaging networking observability proxy secrets storage templates timeseries vector)",
-      "Bash(do if [ -d \"$dir\" ])",
-      "Bash(then mv \"$dir\" sw/)",
-      "Bash(fi)",
-      "Bash(done)",
-      "Bash(cargo test:*)",
-      "Bash(cargo metadata:*)"
+      "Bash",
+      "PowerShell",
+      "Read",
+      "Write",
+      "Edit",
+      "MultiEdit",
+      "Glob",
+      "Grep",
+      "LS",
+      "Task",
+      "WebFetch",
+      "WebSearch",
+      "Bash(rm -f \"F:ReplicaNASFilesrepogithubsylin-orgzen-garden.claudebuild-linux-x64.log\" \"F:ReplicaNASFilesrepogithubsylin-orgzen-gardeninstallerbuild-linux-x64.log\" .claude/build-linux-x64-3.log .claude/build-linux-x64.log 2>&1)"
+    ],
+    "additionalDirectories": [
+      "F:\\Replica\\NAS\\Files\\repo\\github\\sylin-org\\zen-garden\\.claude"
     ]
   }
 }

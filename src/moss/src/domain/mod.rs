@@ -40,6 +40,7 @@ pub mod modes;
 pub mod naming;
 pub mod network;
 pub mod nurturing;
+pub mod offering_events;
 pub mod offering_lifecycle;
 pub mod offering_resolution;
 pub mod offerings;

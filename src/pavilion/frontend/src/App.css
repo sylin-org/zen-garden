@@ -569,3 +569,107 @@
   letter-spacing: 0.02em;
   text-align: right;
 }
+
+/* ─── Command palette ─────────────────────────────────────── */
+
+.statusbar-shortcut {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  color: var(--s5);
+}
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: start center;
+  padding-top: 12vh;
+  z-index: 1000;
+}
+
+.palette {
+  width: min(640px, 92vw);
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.palette-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--s9);
+  font-family: var(--sans);
+  font-size: 1rem;
+  padding: 0.95rem 1.1rem;
+  border-bottom: 1px solid var(--vb);
+}
+
+.palette-input::placeholder {
+  color: var(--s4);
+}
+
+.palette-results {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.palette-empty {
+  padding: 1rem 1.1rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--s5);
+}
+
+.palette-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.55rem 1.1rem;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease);
+}
+
+.palette-row-label {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  color: var(--s9);
+}
+
+.palette-row-hint {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--s5);
+  letter-spacing: 0.02em;
+}
+
+.palette-row-selected {
+  background: var(--vb);
+}
+
+.palette-row-selected .palette-row-label {
+  color: var(--gold);
+}
+
+.palette-footer {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.5rem 1.1rem;
+  border-top: 1px solid var(--vb);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--s5);
+  letter-spacing: 0.04em;
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
+import { CommandPalette } from "./views/CommandPalette"
 import { HomeView } from "./views/Home"
 import { PondView } from "./views/Pond"
 import { ServicesView } from "./views/Services"
@@ -35,6 +36,7 @@ function App(): JSX.Element {
   const [stones, setStones] = useState<AwareStone[]>([])
   const [tended, setTended] = useState<TendedStone | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [paletteOpen, setPaletteOpen] = useState<boolean>(false)
 
   // Shell-level state — drives the status bar and the sidebar
   // active row. Per-view state stays inside the view components.
@@ -102,6 +104,22 @@ function App(): JSX.Element {
 
   const goHome = useCallback(() => setView("home"), [])
 
+  // Global Ctrl+K (and Cmd+K on Mac) opens the command palette.
+  // The palette itself owns its escape / arrow / enter handling
+  // once focused.
+  useEffect(() => {
+    function handler(e: globalThis.KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault()
+        setPaletteOpen((open) => !open)
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => {
+      window.removeEventListener("keydown", handler)
+    }
+  }, [])
+
   return (
     <div className="pavilion-shell">
       <aside className="sidebar">
@@ -152,7 +170,16 @@ function App(): JSX.Element {
         {statusText}
         <span className="sep">·</span>
         <span>{quietHoursLabel}</span>
+        <span className="sep">·</span>
+        <span className="statusbar-shortcut">⌃K palette</span>
       </footer>
+
+      {paletteOpen && (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          onNavigate={(v) => setView(v)}
+        />
+      )}
     </div>
   )
 }

@@ -15,6 +15,7 @@ pub mod aggregate;
 pub mod event;
 pub mod probe;
 pub mod system;
+pub mod wait;
 
 #[cfg(test)]
 mod tests;
@@ -26,3 +27,4 @@ pub use system::{
     build_disk_component, build_memory_component, check_disk_health, check_memory_health,
     determine_overall_status,
 };
+pub use wait::{HEALTH_POLL_INTERVAL, poll_until_healthy};

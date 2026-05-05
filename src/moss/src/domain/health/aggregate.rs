@@ -48,6 +48,15 @@ impl Health {
         }
     }
 
+    /// Borrow the injected probe port. Used by sibling modules
+    /// inside `domain/health/` (e.g. `wait`) to drive the same
+    /// probe without re-injecting it. Not exposed to the rest of
+    /// the crate — callers there should use the higher-level
+    /// methods on `Health` (e.g. [`Health::wait_until_healthy`]).
+    pub(super) fn probe(&self) -> &dyn HealthProbe {
+        self.probe.as_ref()
+    }
+
     // =========================================================================
     // Commands
     // =========================================================================

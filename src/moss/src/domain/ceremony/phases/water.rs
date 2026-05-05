@@ -2,6 +2,11 @@
 //!
 //! Starts the newly created container and waits for it to become healthy.
 //! If health check fails and auto_rollback is enabled, restores from harvest.
+//!
+//! The wait-for-healthy polling logic lives in
+//! [`crate::domain::health::wait`] so plant flows (ORCH-0039) can
+//! reuse it without dragging in ceremony state management. Water
+//! drives the same primitive plus the rollback bookkeeping.
 
 use crate::Moss;
 use crate::domain::traits::HarvestOps;
@@ -10,9 +15,6 @@ use std::time::Duration;
 
 /// Default health check timeout
 const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 120;
-
-/// Health check polling interval
-const HEALTH_POLL_INTERVAL_SECS: u64 = 3;
 
 /// Execute the water phase
 ///
@@ -38,7 +40,7 @@ pub async fn execute(
 
     // Step 2: Wait for health
     let timeout = Duration::from_secs(DEFAULT_HEALTH_TIMEOUT_SECS);
-    let healthy = wait_for_health(state, offering, timeout).await;
+    let healthy = state.health.wait_until_healthy(offering, timeout).await;
 
     if healthy {
         tracing::info!(offering, "Service is healthy - water phase completed");
@@ -80,7 +82,10 @@ pub async fn execute(
             .context("Failed to start container after rollback")?;
 
         // Verify rollback succeeded
-        let rollback_healthy = wait_for_health(state, offering, Duration::from_secs(60)).await;
+        let rollback_healthy = state
+            .health
+            .wait_until_healthy(offering, Duration::from_secs(60))
+            .await;
 
         if rollback_healthy {
             anyhow::bail!("Health check failed after nourishment, rolled back to previous version");
@@ -96,40 +101,6 @@ pub async fn execute(
             harvest_id.is_some()
         );
     }
-}
-
-/// Wait for container to become healthy
-///
-/// Polls health status until healthy or timeout expires.
-async fn wait_for_health(state: &Moss, offering: &str, timeout: Duration) -> bool {
-    let start = std::time::Instant::now();
-    let poll_interval = Duration::from_secs(HEALTH_POLL_INTERVAL_SECS);
-
-    while start.elapsed() < timeout {
-        match state.platform.container.get_service_health(offering).await {
-            Ok(health) => {
-                if health == garden_common::ServiceHealthStatus::Healthy {
-                    return true;
-                }
-                tracing::debug!(
-                    offering = offering,
-                    health = ?health,
-                    elapsed = ?start.elapsed(),
-                    "Waiting for health..."
-                );
-            }
-            Err(e) => {
-                tracing::debug!(
-                    offering = offering,
-                    error = %e,
-                    "Health check error, retrying..."
-                );
-            }
-        }
-        tokio::time::sleep(poll_interval).await;
-    }
-
-    false
 }
 
 #[cfg(test)]

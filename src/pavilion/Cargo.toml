@@ -80,5 +80,12 @@ windows-sys = { version = "0.52", features = [
     "Win32_Storage_CloudFilters",
 ] }
 
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+# Integration tests for ceremony.rs and announce::observer spin up real
+# axum fixtures (no mocks) so wire-format drift in koi_common::ceremony
+# or the storage SSE stream surfaces as a test failure rather than a
+# silent runtime breakage at the user.
+axum = { workspace = true }
+
 [lints]
 workspace = true

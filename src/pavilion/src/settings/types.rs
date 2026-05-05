@@ -235,6 +235,7 @@ mod tests {
             }),
             suppressed_kinds: None,
             autostart_enabled: None,
+            onboarded: None,
         });
         assert!(s.quiet_hours.enabled);
         assert_eq!(s.quiet_hours.start, "22:00"); // unchanged default

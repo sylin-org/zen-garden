@@ -2361,6 +2361,7 @@ name = "garden-pavilion"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "cloud-filter",
  "dirs 5.0.1",
